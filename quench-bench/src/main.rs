@@ -33,10 +33,14 @@ const DEFAULT_TIMEOUT_MS: u64 = 300_000;
 const MEASUREMENT_ENV: &[&str] = &["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TZ"];
 const QUENCH_WASM_EMSCRIPTEN_MEMCPY_DIRECT: &str = "QUENCH_WASM_EMSCRIPTEN_MEMCPY_DIRECT";
 const QUENCH_WASM_EMSCRIPTEN_MEMCPY_RAW_I32: &str = "QUENCH_WASM_EMSCRIPTEN_MEMCPY_RAW_I32";
-const QUENCH_WASM_EMSCRIPTEN_MEMCPY_EARLY_IMPORT: &str = "QUENCH_WASM_EMSCRIPTEN_MEMCPY_EARLY_IMPORT";
+const QUENCH_WASM_EMSCRIPTEN_MEMCPY_EARLY_IMPORT: &str =
+    "QUENCH_WASM_EMSCRIPTEN_MEMCPY_EARLY_IMPORT";
+const QUENCH_WASM_JIT_EMSCRIPTEN_MEMCPY_LEAF: &str = "QUENCH_WASM_JIT_EMSCRIPTEN_MEMCPY_LEAF";
 const QUENCH_WASM_JIT_DIRECT_COMPARE_BRANCHES: &str = "QUENCH_WASM_JIT_DIRECT_COMPARE_BRANCHES";
+const QUENCH_WASM_JIT_AFFINE_PAIR: &str = "QUENCH_WASM_JIT_AFFINE_PAIR";
+const QUENCH_WASM_JIT_REFERENCE_BODY_CACHE: &str = "QUENCH_WASM_JIT_REFERENCE_BODY_CACHE";
 const FIXED_WORK_REPORT_SCHEMA: u32 = 5;
-const SUITE_REPORT_SCHEMA: u32 = 13;
+const SUITE_REPORT_SCHEMA: u32 = 15;
 const FIXED_WORK_MEASUREMENT_MODE: &str = "fixed_work_diagnostic";
 const FIXED_WORK_MARKER_PREFIX: &str = "__quenchFixedWork:";
 const FIXED_WORK_SUITE_COUNT: usize = 1;
@@ -416,6 +420,15 @@ struct SuiteRecord {
     /// Paired QuickSort-Wasm diagnostic for direct Wasm compare-branch lowering.
     #[serde(default)]
     jit_wasm_compare_branch_ab: bool,
+    /// Paired GCC-Wasm diagnostic for affine pair-loop vectorization.
+    #[serde(default)]
+    jit_wasm_affine_pair_ab: bool,
+    /// Paired TSF-Wasm diagnostic for same-artifact indirect-call body pointers.
+    #[serde(default)]
+    jit_wasm_reference_body_cache_ab: bool,
+    /// Paired GCC-Wasm diagnostic for a native Emscripten memcpy leaf call.
+    #[serde(default)]
+    jit_wasm_memcpy_leaf_ab: bool,
     created_unix_ns: u128,
     rounds_requested: usize,
     timeout_ms: u64,
@@ -571,6 +584,9 @@ struct Options {
     jit_wasm_memcpy_raw_ab: bool,
     jit_wasm_memcpy_early_ab: bool,
     jit_wasm_compare_branch_ab: bool,
+    jit_wasm_affine_pair_ab: bool,
+    jit_wasm_reference_body_cache_ab: bool,
+    jit_wasm_memcpy_leaf_ab: bool,
     fixture: Option<String>,
     fixtures: Option<Vec<String>>,
     all: bool,
@@ -650,6 +666,9 @@ fn main() {
         jit_wasm_memcpy_raw_ab: options.jit_wasm_memcpy_raw_ab,
         jit_wasm_memcpy_early_ab: options.jit_wasm_memcpy_early_ab,
         jit_wasm_compare_branch_ab: options.jit_wasm_compare_branch_ab,
+        jit_wasm_affine_pair_ab: options.jit_wasm_affine_pair_ab,
+        jit_wasm_reference_body_cache_ab: options.jit_wasm_reference_body_cache_ab,
+        jit_wasm_memcpy_leaf_ab: options.jit_wasm_memcpy_leaf_ab,
         created_unix_ns: now_ns(),
         rounds_requested: options.rounds,
         timeout_ms: options.timeout_ms,
@@ -738,6 +757,9 @@ fn main() {
         && !options.jit_wasm_memcpy_raw_ab
         && !options.jit_wasm_memcpy_early_ab
         && !options.jit_wasm_compare_branch_ab
+        && !options.jit_wasm_affine_pair_ab
+        && !options.jit_wasm_reference_body_cache_ab
+        && !options.jit_wasm_memcpy_leaf_ab
         && report
             .fixtures
             .values()
@@ -891,6 +913,9 @@ fn resume_metadata_matches(saved: &SuiteRecord, expected: &SuiteRecord) -> bool 
         && saved.jit_wasm_memcpy_raw_ab == expected.jit_wasm_memcpy_raw_ab
         && saved.jit_wasm_memcpy_early_ab == expected.jit_wasm_memcpy_early_ab
         && saved.jit_wasm_compare_branch_ab == expected.jit_wasm_compare_branch_ab
+        && saved.jit_wasm_affine_pair_ab == expected.jit_wasm_affine_pair_ab
+        && saved.jit_wasm_reference_body_cache_ab == expected.jit_wasm_reference_body_cache_ab
+        && saved.jit_wasm_memcpy_leaf_ab == expected.jit_wasm_memcpy_leaf_ab
         && saved.rounds_requested == expected.rounds_requested
         && saved.timeout_ms == expected.timeout_ms
         && saved.source_revision == expected.source_revision
@@ -992,9 +1017,10 @@ fn jit_wasm_memcpy_ab_error(options: &Options) -> Option<&'static str> {
             .then_some("--preflight-only cannot select fixtures");
     }
     let one_pinned_fixture = options.fixture.as_deref() == Some("gcc-loops-wasm")
-        || options.fixtures.as_ref().is_some_and(|fixtures| {
-            fixtures.len() == 1 && fixtures[0] == "gcc-loops-wasm"
-        });
+        || options
+            .fixtures
+            .as_ref()
+            .is_some_and(|fixtures| fixtures.len() == 1 && fixtures[0] == "gcc-loops-wasm");
     (!one_pinned_fixture || options.all).then_some(if raw_i32 {
         "--jit-wasm-memcpy-raw-ab is pinned to the single JetStream fixture gcc-loops-wasm"
     } else if early_import {
@@ -1025,18 +1051,147 @@ fn jit_wasm_compare_branch_ab_error(options: &Options) -> Option<&'static str> {
         || options.fixed_work
         || options.quench_peer.is_some()
     {
-        return Some("--jit-wasm-compare-branch-ab requires --suite jetstream3 --jit, at least 3 rounds, and no other JIT diagnostic modes");
+        return Some(
+            "--jit-wasm-compare-branch-ab requires --suite jetstream3 --jit, at least 3 rounds, and no other JIT diagnostic modes",
+        );
     }
     if options.preflight_only {
         return (options.fixture.is_some() || options.fixtures.is_some() || options.all)
             .then_some("--preflight-only cannot select fixtures");
     }
     let one_pinned_fixture = options.fixture.as_deref() == Some("quicksort-wasm")
-        || options.fixtures.as_ref().is_some_and(|fixtures| {
-            fixtures.len() == 1 && fixtures[0] == "quicksort-wasm"
-        });
-    (!one_pinned_fixture || options.all)
-        .then_some("--jit-wasm-compare-branch-ab is pinned to the single JetStream fixture quicksort-wasm")
+        || options
+            .fixtures
+            .as_ref()
+            .is_some_and(|fixtures| fixtures.len() == 1 && fixtures[0] == "quicksort-wasm");
+    (!one_pinned_fixture || options.all).then_some(
+        "--jit-wasm-compare-branch-ab is pinned to the single JetStream fixture quicksort-wasm",
+    )
+}
+
+fn jit_wasm_affine_pair_ab_error(options: &Options) -> Option<&'static str> {
+    if !options.jit_wasm_affine_pair_ab {
+        return None;
+    }
+    if options.jit_wasm_memcpy_ab
+        || options.jit_wasm_memcpy_raw_ab
+        || options.jit_wasm_memcpy_early_ab
+        || options.jit_wasm_compare_branch_ab
+    {
+        return Some("--jit-wasm-affine-pair-ab cannot be combined with another JIT A/B mode");
+    }
+    if options.suite != Suite::JetStream3
+        || options.jit_mode != JitMode::Jit
+        || options.rounds < MIN_DIAGNOSTIC_SCREEN_ROUNDS
+        || options.jit_diagnostics
+        || options.jit_wasm_root.is_some()
+        || options.jit_wasm_root_only
+        || options.jit_wasm_root_first
+        || options.jit_wasm_selective
+        || options.fixed_work
+        || options.quench_peer.is_some()
+    {
+        return Some(
+            "--jit-wasm-affine-pair-ab requires --suite jetstream3 --jit, at least 3 rounds, and no other JIT diagnostic modes",
+        );
+    }
+    if options.preflight_only {
+        return (options.fixture.is_some() || options.fixtures.is_some() || options.all)
+            .then_some("--preflight-only cannot select fixtures");
+    }
+    let one_pinned_fixture = options.fixture.as_deref() == Some("gcc-loops-wasm")
+        || options
+            .fixtures
+            .as_ref()
+            .is_some_and(|fixtures| fixtures.len() == 1 && fixtures[0] == "gcc-loops-wasm");
+    (!one_pinned_fixture || options.all).then_some(
+        "--jit-wasm-affine-pair-ab is pinned to the single JetStream fixture gcc-loops-wasm",
+    )
+}
+
+fn jit_wasm_reference_body_cache_ab_error(options: &Options) -> Option<&'static str> {
+    if !options.jit_wasm_reference_body_cache_ab {
+        return None;
+    }
+    if options.jit_wasm_memcpy_ab
+        || options.jit_wasm_memcpy_raw_ab
+        || options.jit_wasm_memcpy_early_ab
+        || options.jit_wasm_compare_branch_ab
+        || options.jit_wasm_affine_pair_ab
+    {
+        return Some(
+            "--jit-wasm-reference-body-cache-ab cannot be combined with another JIT A/B mode",
+        );
+    }
+    if options.suite != Suite::JetStream3
+        || options.jit_mode != JitMode::Jit
+        || options.rounds < MIN_DIAGNOSTIC_SCREEN_ROUNDS
+        || options.jit_diagnostics
+        || options.jit_wasm_root.is_some()
+        || options.jit_wasm_root_only
+        || options.jit_wasm_root_first
+        || options.jit_wasm_selective
+        || options.fixed_work
+        || options.quench_peer.is_some()
+    {
+        return Some(
+            "--jit-wasm-reference-body-cache-ab requires --suite jetstream3 --jit, at least 3 rounds, and no other JIT diagnostic modes",
+        );
+    }
+    if options.preflight_only {
+        return (options.fixture.is_some() || options.fixtures.is_some() || options.all)
+            .then_some("--preflight-only cannot select fixtures");
+    }
+    let one_pinned_fixture = options.fixture.as_deref() == Some("tsf-wasm")
+        || options
+            .fixtures
+            .as_ref()
+            .is_some_and(|fixtures| fixtures.len() == 1 && fixtures[0] == "tsf-wasm");
+    (!one_pinned_fixture || options.all).then_some(
+        "--jit-wasm-reference-body-cache-ab is pinned to the single JetStream fixture tsf-wasm",
+    )
+}
+
+fn jit_wasm_memcpy_leaf_ab_error(options: &Options) -> Option<&'static str> {
+    if !options.jit_wasm_memcpy_leaf_ab {
+        return None;
+    }
+    if options.jit_wasm_memcpy_ab
+        || options.jit_wasm_memcpy_raw_ab
+        || options.jit_wasm_memcpy_early_ab
+        || options.jit_wasm_compare_branch_ab
+        || options.jit_wasm_affine_pair_ab
+        || options.jit_wasm_reference_body_cache_ab
+    {
+        return Some("--jit-wasm-memcpy-leaf-ab cannot be combined with another JIT A/B mode");
+    }
+    if options.suite != Suite::JetStream3
+        || options.jit_mode != JitMode::Jit
+        || options.rounds < MIN_DIAGNOSTIC_SCREEN_ROUNDS
+        || options.jit_diagnostics
+        || options.jit_wasm_root.is_some()
+        || options.jit_wasm_root_only
+        || options.jit_wasm_root_first
+        || options.jit_wasm_selective
+        || options.fixed_work
+        || options.quench_peer.is_some()
+    {
+        return Some(
+            "--jit-wasm-memcpy-leaf-ab requires --suite jetstream3 --jit, at least 3 rounds, and no other JIT diagnostic modes",
+        );
+    }
+    if options.preflight_only {
+        return (options.fixture.is_some() || options.fixtures.is_some() || options.all)
+            .then_some("--preflight-only cannot select fixtures");
+    }
+    let one_pinned_fixture = options.fixture.as_deref() == Some("gcc-loops-wasm")
+        || options
+            .fixtures
+            .as_ref()
+            .is_some_and(|fixtures| fixtures.len() == 1 && fixtures[0] == "gcc-loops-wasm");
+    (!one_pinned_fixture || options.all).then_some(
+        "--jit-wasm-memcpy-leaf-ab is pinned to the single JetStream fixture gcc-loops-wasm",
+    )
 }
 
 fn parse_options() -> Options {
@@ -1060,6 +1215,9 @@ fn parse_options_from(args: impl IntoIterator<Item = String>) -> Options {
         jit_wasm_memcpy_raw_ab: false,
         jit_wasm_memcpy_early_ab: false,
         jit_wasm_compare_branch_ab: false,
+        jit_wasm_affine_pair_ab: false,
+        jit_wasm_reference_body_cache_ab: false,
+        jit_wasm_memcpy_leaf_ab: false,
         fixture: None,
         fixtures: None,
         all: first == "--all",
@@ -1108,6 +1266,9 @@ fn parse_options_from(args: impl IntoIterator<Item = String>) -> Options {
             "--jit-wasm-memcpy-raw-ab" => options.jit_wasm_memcpy_raw_ab = true,
             "--jit-wasm-memcpy-early-ab" => options.jit_wasm_memcpy_early_ab = true,
             "--jit-wasm-compare-branch-ab" => options.jit_wasm_compare_branch_ab = true,
+            "--jit-wasm-affine-pair-ab" => options.jit_wasm_affine_pair_ab = true,
+            "--jit-wasm-reference-body-cache-ab" => options.jit_wasm_reference_body_cache_ab = true,
+            "--jit-wasm-memcpy-leaf-ab" => options.jit_wasm_memcpy_leaf_ab = true,
             "--jit-wasm-root-only" => options.jit_wasm_root_only = true,
             "--jit-wasm-root-first" => options.jit_wasm_root_first = true,
             "--jit-wasm-root" => {
@@ -1211,6 +1372,15 @@ fn parse_options_from(args: impl IntoIterator<Item = String>) -> Options {
     if let Some(error) = jit_wasm_compare_branch_ab_error(&options) {
         usage(error);
     }
+    if let Some(error) = jit_wasm_affine_pair_ab_error(&options) {
+        usage(error);
+    }
+    if let Some(error) = jit_wasm_reference_body_cache_ab_error(&options) {
+        usage(error);
+    }
+    if let Some(error) = jit_wasm_memcpy_leaf_ab_error(&options) {
+        usage(error);
+    }
     if options.quench_peer.is_some() && !options.fixed_work {
         usage("--quench-peer requires --fixed-work");
     }
@@ -1284,15 +1454,50 @@ fn fixture_selection_is_valid(suite: Suite, files: &[PathBuf]) -> bool {
 }
 
 fn prepare_engines(options: &Options) -> Vec<EngineSpec> {
-    let engines = if options.jit_wasm_compare_branch_ab {
+    let engines = if options.jit_wasm_memcpy_leaf_ab {
+        let [leaf_off, leaf_on] = quench_memcpy_leaf_ab_pair(options);
+        vec![leaf_off, leaf_on, bun_engine(options), node_engine(options)]
+    } else if options.jit_wasm_reference_body_cache_ab {
+        let [cache_off, cache_on] = quench_reference_body_cache_ab_pair(options);
+        vec![
+            cache_off,
+            cache_on,
+            bun_engine(options),
+            node_engine(options),
+        ]
+    } else if options.jit_wasm_affine_pair_ab {
+        let [affine_off, affine_on] = quench_affine_pair_ab_pair(options);
+        vec![
+            affine_off,
+            affine_on,
+            bun_engine(options),
+            node_engine(options),
+        ]
+    } else if options.jit_wasm_compare_branch_ab {
         let [branch_off, branch_on] = quench_compare_branch_ab_pair(options);
-        vec![branch_off, branch_on, bun_engine(options), node_engine(options)]
+        vec![
+            branch_off,
+            branch_on,
+            bun_engine(options),
+            node_engine(options),
+        ]
     } else if options.jit_wasm_memcpy_early_ab {
         let [early_off, early_on] = quench_memcpy_early_ab_pair(options);
-        vec![early_off, early_on, bun_engine(options), node_engine(options)]
+        vec![
+            early_off,
+            early_on,
+            bun_engine(options),
+            node_engine(options),
+        ]
     } else if options.jit_wasm_memcpy_ab || options.jit_wasm_memcpy_raw_ab {
-        let [direct_off, direct_on] = quench_memcpy_ab_pair(options, options.jit_wasm_memcpy_raw_ab);
-        vec![direct_off, direct_on, bun_engine(options), node_engine(options)]
+        let [direct_off, direct_on] =
+            quench_memcpy_ab_pair(options, options.jit_wasm_memcpy_raw_ab);
+        vec![
+            direct_off,
+            direct_on,
+            bun_engine(options),
+            node_engine(options),
+        ]
     } else {
         options
             .suite
@@ -1314,6 +1519,50 @@ fn prepare_engines(options: &Options) -> Vec<EngineSpec> {
             engine
         })
         .collect()
+}
+
+fn quench_affine_pair_ab_pair(options: &Options) -> [EngineSpec; 2] {
+    let mut affine_off = quench_engine(options);
+    let mut affine_on = quench_engine(options);
+    affine_off.name = "quench_affine_pair_off";
+    affine_on.name = "quench_affine_pair_on";
+    affine_off
+        .env
+        .insert(QUENCH_WASM_JIT_AFFINE_PAIR.into(), "0".into());
+    affine_on
+        .env
+        .insert(QUENCH_WASM_JIT_AFFINE_PAIR.into(), "1".into());
+    affine_off.jit_proof = format!(
+        "{}; diagnostic affine-pair A/B arm with {QUENCH_WASM_JIT_AFFINE_PAIR}=0",
+        affine_off.jit_proof
+    );
+    affine_on.jit_proof = format!(
+        "{}; diagnostic affine-pair A/B arm with {QUENCH_WASM_JIT_AFFINE_PAIR}=1",
+        affine_on.jit_proof
+    );
+    [affine_off, affine_on]
+}
+
+fn quench_reference_body_cache_ab_pair(options: &Options) -> [EngineSpec; 2] {
+    let mut cache_off = quench_engine(options);
+    let mut cache_on = quench_engine(options);
+    cache_off.name = "quench_reference_body_cache_off";
+    cache_on.name = "quench_reference_body_cache_on";
+    cache_off
+        .env
+        .insert(QUENCH_WASM_JIT_REFERENCE_BODY_CACHE.into(), "0".into());
+    cache_on
+        .env
+        .insert(QUENCH_WASM_JIT_REFERENCE_BODY_CACHE.into(), "1".into());
+    cache_off.jit_proof = format!(
+        "{}; diagnostic reference-body-cache A/B arm with {QUENCH_WASM_JIT_REFERENCE_BODY_CACHE}=0",
+        cache_off.jit_proof
+    );
+    cache_on.jit_proof = format!(
+        "{}; diagnostic reference-body-cache A/B arm with {QUENCH_WASM_JIT_REFERENCE_BODY_CACHE}=1",
+        cache_on.jit_proof
+    );
+    [cache_off, cache_on]
 }
 
 fn quench_compare_branch_ab_pair(options: &Options) -> [EngineSpec; 2] {
@@ -1345,10 +1594,9 @@ fn quench_memcpy_ab_pair(options: &Options, raw_i32: bool) -> [EngineSpec; 2] {
         direct_off.name = "quench_memcpy_raw_i32_off";
         direct_on.name = "quench_memcpy_raw_i32_on";
         for engine in [&mut direct_off, &mut direct_on] {
-            engine.env.insert(
-                QUENCH_WASM_EMSCRIPTEN_MEMCPY_DIRECT.into(),
-                "1".into(),
-            );
+            engine
+                .env
+                .insert(QUENCH_WASM_EMSCRIPTEN_MEMCPY_DIRECT.into(), "1".into());
         }
         direct_off
             .env
@@ -1391,14 +1639,12 @@ fn quench_memcpy_early_ab_pair(options: &Options) -> [EngineSpec; 2] {
     early_off.name = "quench_memcpy_early_import_off";
     early_on.name = "quench_memcpy_early_import_on";
     for engine in [&mut early_off, &mut early_on] {
-        engine.env.insert(
-            QUENCH_WASM_EMSCRIPTEN_MEMCPY_DIRECT.into(),
-            "1".into(),
-        );
-        engine.env.insert(
-            QUENCH_WASM_EMSCRIPTEN_MEMCPY_RAW_I32.into(),
-            "1".into(),
-        );
+        engine
+            .env
+            .insert(QUENCH_WASM_EMSCRIPTEN_MEMCPY_DIRECT.into(), "1".into());
+        engine
+            .env
+            .insert(QUENCH_WASM_EMSCRIPTEN_MEMCPY_RAW_I32.into(), "1".into());
     }
     early_off.env.insert(
         QUENCH_WASM_EMSCRIPTEN_MEMCPY_EARLY_IMPORT.into(),
@@ -1417,6 +1663,40 @@ fn quench_memcpy_early_ab_pair(options: &Options) -> [EngineSpec; 2] {
         early_on.jit_proof
     );
     [early_off, early_on]
+}
+
+fn quench_memcpy_leaf_ab_pair(options: &Options) -> [EngineSpec; 2] {
+    let mut leaf_off = quench_engine(options);
+    let mut leaf_on = quench_engine(options);
+    leaf_off.name = "quench_memcpy_native_leaf_off";
+    leaf_on.name = "quench_memcpy_native_leaf_on";
+    for engine in [&mut leaf_off, &mut leaf_on] {
+        engine
+            .env
+            .insert(QUENCH_WASM_EMSCRIPTEN_MEMCPY_DIRECT.into(), "1".into());
+        engine
+            .env
+            .insert(QUENCH_WASM_EMSCRIPTEN_MEMCPY_RAW_I32.into(), "1".into());
+        engine.env.insert(
+            QUENCH_WASM_EMSCRIPTEN_MEMCPY_EARLY_IMPORT.into(),
+            "1".into(),
+        );
+    }
+    leaf_off
+        .env
+        .insert(QUENCH_WASM_JIT_EMSCRIPTEN_MEMCPY_LEAF.into(), "0".into());
+    leaf_on
+        .env
+        .insert(QUENCH_WASM_JIT_EMSCRIPTEN_MEMCPY_LEAF.into(), "1".into());
+    leaf_off.jit_proof = format!(
+        "{}; diagnostic native memcpy leaf A/B arm with {QUENCH_WASM_EMSCRIPTEN_MEMCPY_DIRECT}=1, {QUENCH_WASM_EMSCRIPTEN_MEMCPY_RAW_I32}=1, {QUENCH_WASM_EMSCRIPTEN_MEMCPY_EARLY_IMPORT}=1, and {QUENCH_WASM_JIT_EMSCRIPTEN_MEMCPY_LEAF}=0; not for qualification",
+        leaf_off.jit_proof
+    );
+    leaf_on.jit_proof = format!(
+        "{}; diagnostic native memcpy leaf A/B arm with {QUENCH_WASM_EMSCRIPTEN_MEMCPY_DIRECT}=1, {QUENCH_WASM_EMSCRIPTEN_MEMCPY_RAW_I32}=1, {QUENCH_WASM_EMSCRIPTEN_MEMCPY_EARLY_IMPORT}=1, and {QUENCH_WASM_JIT_EMSCRIPTEN_MEMCPY_LEAF}=1; not for qualification",
+        leaf_on.jit_proof
+    );
+    [leaf_off, leaf_on]
 }
 
 /// Runs `typeof WebAssembly` with the engine's measurement arguments and environment.
@@ -2988,7 +3268,7 @@ pub(crate) fn now_ns() -> u128 {
 
 fn usage(message: &str) -> ! {
     eprintln!(
-        "{message}\nusage: quench-bench <fixture.js>|--all|--fixtures NAME,NAME,... [--suite v8-v7|jetstream3] [--jit] [--jit-diagnostics] [--jit-wasm-root ID] [--jit-wasm-root-only] [--jit-wasm-root-first] [--jit-wasm-selective] [--jit-wasm-memcpy-ab] [--jit-wasm-memcpy-raw-ab] [--jit-wasm-memcpy-early-ab] [--jit-wasm-compare-branch-ab] [--fixed-work] [--quench PATH] [--quench-peer PATH] [--qjs PATH] [--bun PATH] [--node PATH] [--runs N] [--timeout-ms N] [--checkpoint PATH|--resume PATH] [--out PATH]\n       quench-bench --preflight-only [--suite v8-v7|jetstream3] [--jit] [--jit-diagnostics] [--jit-wasm-root ID] [--jit-wasm-root-only] [--jit-wasm-root-first] [--jit-wasm-selective] [--jit-wasm-memcpy-ab] [--jit-wasm-memcpy-raw-ab] [--jit-wasm-memcpy-early-ab] [--jit-wasm-compare-branch-ab] [engine options]\n       quench-bench --analyze REPORT [--out JSON]"
+        "{message}\nusage: quench-bench <fixture.js>|--all|--fixtures NAME,NAME,... [--suite v8-v7|jetstream3] [--jit] [--jit-diagnostics] [--jit-wasm-root ID] [--jit-wasm-root-only] [--jit-wasm-root-first] [--jit-wasm-selective] [--jit-wasm-memcpy-ab] [--jit-wasm-memcpy-raw-ab] [--jit-wasm-memcpy-early-ab] [--jit-wasm-memcpy-leaf-ab] [--jit-wasm-compare-branch-ab] [--jit-wasm-affine-pair-ab] [--jit-wasm-reference-body-cache-ab] [--fixed-work] [--quench PATH] [--quench-peer PATH] [--qjs PATH] [--bun PATH] [--node PATH] [--runs N] [--timeout-ms N] [--checkpoint PATH|--resume PATH] [--out PATH]\n       quench-bench --preflight-only [--suite v8-v7|jetstream3] [--jit] [--jit-diagnostics] [--jit-wasm-root ID] [--jit-wasm-root-only] [--jit-wasm-root-first] [--jit-wasm-selective] [--jit-wasm-memcpy-ab] [--jit-wasm-memcpy-raw-ab] [--jit-wasm-memcpy-early-ab] [--jit-wasm-memcpy-leaf-ab] [--jit-wasm-compare-branch-ab] [--jit-wasm-affine-pair-ab] [--jit-wasm-reference-body-cache-ab] [engine options]\n       quench-bench --analyze REPORT [--out JSON]"
     );
     std::process::exit(2)
 }
@@ -3000,7 +3280,7 @@ fn fail(message: &str) -> ! {
 
 #[cfg(test)]
 mod fixture_selection_tests {
-    use super::{fixture_selection_is_valid, Suite};
+    use super::{Suite, fixture_selection_is_valid};
 
     #[test]
     fn jetstream_subset_accepts_only_unique_pinned_lane_fixtures() {
@@ -3035,8 +3315,8 @@ mod fixture_selection_tests {
 #[cfg(test)]
 mod jit_wasm_root_only_tests {
     use super::{
-        jit_wasm_root_first_error, jit_wasm_root_only_error, jit_wasm_selective_error,
-        parse_options_from, quench_engine, JitMode, Options, Suite,
+        JitMode, Options, Suite, jit_wasm_root_first_error, jit_wasm_root_only_error,
+        jit_wasm_selective_error, parse_options_from, quench_engine,
     };
 
     #[test]
@@ -3111,14 +3391,10 @@ mod jit_wasm_root_only_tests {
         assert!(
             jit_wasm_root_first_error(Suite::V8V7, JitMode::Jit, Some(19), true, false).is_some()
         );
-        assert!(jit_wasm_root_first_error(
-            Suite::JetStream3,
-            JitMode::NoJit,
-            Some(19),
-            true,
-            false
-        )
-        .is_some());
+        assert!(
+            jit_wasm_root_first_error(Suite::JetStream3, JitMode::NoJit, Some(19), true, false)
+                .is_some()
+        );
         assert!(
             jit_wasm_root_first_error(Suite::JetStream3, JitMode::Jit, Some(19), true, true)
                 .is_some()
@@ -3151,6 +3427,9 @@ mod jit_wasm_root_only_tests {
             jit_wasm_memcpy_raw_ab: false,
             jit_wasm_memcpy_early_ab: false,
             jit_wasm_compare_branch_ab: false,
+            jit_wasm_affine_pair_ab: false,
+            jit_wasm_reference_body_cache_ab: false,
+            jit_wasm_memcpy_leaf_ab: false,
             fixture: None,
             fixtures: Some(vec!["HashSet-wasm".into()]),
             all: false,
@@ -3195,6 +3474,9 @@ mod jit_wasm_root_only_tests {
             jit_wasm_memcpy_raw_ab: false,
             jit_wasm_memcpy_early_ab: false,
             jit_wasm_compare_branch_ab: false,
+            jit_wasm_affine_pair_ab: false,
+            jit_wasm_reference_body_cache_ab: false,
+            jit_wasm_memcpy_leaf_ab: false,
             fixture: None,
             fixtures: Some(vec!["gcc-loops-wasm".into()]),
             all: false,
@@ -3229,10 +3511,9 @@ mod jit_wasm_root_only_tests {
 #[cfg(test)]
 mod jit_wasm_memcpy_ab_tests {
     use super::{
-        jit_wasm_memcpy_ab_error, parse_options_from, quench_memcpy_ab_pair,
-        quench_memcpy_early_ab_pair, JitMode, Suite,
-        QUENCH_WASM_EMSCRIPTEN_MEMCPY_DIRECT, QUENCH_WASM_EMSCRIPTEN_MEMCPY_RAW_I32,
-        QUENCH_WASM_EMSCRIPTEN_MEMCPY_EARLY_IMPORT,
+        JitMode, QUENCH_WASM_EMSCRIPTEN_MEMCPY_DIRECT, QUENCH_WASM_EMSCRIPTEN_MEMCPY_EARLY_IMPORT,
+        QUENCH_WASM_EMSCRIPTEN_MEMCPY_RAW_I32, Suite, jit_wasm_memcpy_ab_error, parse_options_from,
+        quench_memcpy_ab_pair, quench_memcpy_early_ab_pair,
     };
 
     fn gcc_wasm_ab_options() -> super::Options {
@@ -3426,8 +3707,8 @@ mod jit_wasm_memcpy_ab_tests {
 #[cfg(test)]
 mod jit_wasm_compare_branch_ab_tests {
     use super::{
-        jit_wasm_compare_branch_ab_error, parse_options_from, quench_compare_branch_ab_pair,
-        JitMode, Suite, QUENCH_WASM_JIT_DIRECT_COMPARE_BRANCHES,
+        JitMode, QUENCH_WASM_JIT_DIRECT_COMPARE_BRANCHES, Suite, jit_wasm_compare_branch_ab_error,
+        parse_options_from, quench_compare_branch_ab_pair,
     };
 
     fn quicksort_ab_options() -> super::Options {
@@ -3494,10 +3775,235 @@ mod jit_wasm_compare_branch_ab_tests {
 }
 
 #[cfg(test)]
+mod jit_wasm_affine_pair_ab_tests {
+    use super::{
+        JitMode, QUENCH_WASM_JIT_AFFINE_PAIR, Suite, jit_wasm_affine_pair_ab_error,
+        parse_options_from, quench_affine_pair_ab_pair,
+    };
+
+    fn gcc_affine_pair_options() -> super::Options {
+        parse_options_from(
+            [
+                "gcc-loops-wasm",
+                "--suite",
+                "jetstream3",
+                "--jit",
+                "--jit-wasm-affine-pair-ab",
+                "--runs",
+                "3",
+            ]
+            .map(str::to_string),
+        )
+    }
+
+    #[test]
+    fn diagnostic_mode_is_pinned_to_gcc_and_allows_three_rounds() {
+        let options = gcc_affine_pair_options();
+        assert_eq!(options.suite, Suite::JetStream3);
+        assert_eq!(options.jit_mode, JitMode::Jit);
+        assert!(options.jit_wasm_affine_pair_ab);
+        assert_eq!(options.rounds, 3);
+        assert_eq!(options.fixture.as_deref(), Some("gcc-loops-wasm"));
+        assert!(jit_wasm_affine_pair_ab_error(&options).is_none());
+
+        let mut wrong_fixture = options;
+        wrong_fixture.fixture = Some("quicksort-wasm".into());
+        assert!(jit_wasm_affine_pair_ab_error(&wrong_fixture).is_some());
+
+        let mut too_few_rounds = gcc_affine_pair_options();
+        too_few_rounds.rounds = 2;
+        assert!(jit_wasm_affine_pair_ab_error(&too_few_rounds).is_some());
+    }
+
+    #[test]
+    fn quench_arms_share_the_binary_and_differ_only_by_the_affine_switch() {
+        let mut options = gcc_affine_pair_options();
+        options.quench = std::env::current_exe().expect("test executable path");
+        let [affine_off, affine_on] = quench_affine_pair_ab_pair(&options);
+
+        assert_eq!(affine_off.name, "quench_affine_pair_off");
+        assert_eq!(affine_on.name, "quench_affine_pair_on");
+        assert_eq!(affine_off.argv, vec!["--jit".to_string()]);
+        assert_eq!(affine_on.argv, affine_off.argv);
+        assert_eq!(affine_off.executable, affine_on.executable);
+        assert_eq!(affine_off.executable_sha256, affine_on.executable_sha256);
+        let mut off_environment = affine_off.env.clone();
+        let mut on_environment = affine_on.env.clone();
+        assert_eq!(
+            off_environment
+                .remove(QUENCH_WASM_JIT_AFFINE_PAIR)
+                .as_deref(),
+            Some("0")
+        );
+        assert_eq!(
+            on_environment
+                .remove(QUENCH_WASM_JIT_AFFINE_PAIR)
+                .as_deref(),
+            Some("1")
+        );
+        assert_eq!(off_environment, on_environment);
+    }
+}
+
+#[cfg(test)]
+mod jit_wasm_reference_body_cache_ab_tests {
+    use super::{
+        JitMode, QUENCH_WASM_JIT_REFERENCE_BODY_CACHE, Suite,
+        jit_wasm_reference_body_cache_ab_error, parse_options_from,
+        quench_reference_body_cache_ab_pair,
+    };
+
+    fn tsf_reference_cache_options() -> super::Options {
+        parse_options_from(
+            [
+                "tsf-wasm",
+                "--suite",
+                "jetstream3",
+                "--jit",
+                "--jit-wasm-reference-body-cache-ab",
+                "--runs",
+                "3",
+            ]
+            .map(str::to_string),
+        )
+    }
+
+    #[test]
+    fn diagnostic_mode_is_pinned_to_tsf_and_allows_three_rounds() {
+        let options = tsf_reference_cache_options();
+        assert_eq!(options.suite, Suite::JetStream3);
+        assert_eq!(options.jit_mode, JitMode::Jit);
+        assert!(options.jit_wasm_reference_body_cache_ab);
+        assert_eq!(options.rounds, 3);
+        assert_eq!(options.fixture.as_deref(), Some("tsf-wasm"));
+        assert!(jit_wasm_reference_body_cache_ab_error(&options).is_none());
+
+        let mut wrong_fixture = options;
+        wrong_fixture.fixture = Some("gcc-loops-wasm".into());
+        assert!(jit_wasm_reference_body_cache_ab_error(&wrong_fixture).is_some());
+
+        let mut too_few_rounds = tsf_reference_cache_options();
+        too_few_rounds.rounds = 2;
+        assert!(jit_wasm_reference_body_cache_ab_error(&too_few_rounds).is_some());
+    }
+
+    #[test]
+    fn quench_arms_share_the_binary_and_differ_only_by_the_cache_switch() {
+        let mut options = tsf_reference_cache_options();
+        options.quench = std::env::current_exe().expect("test executable path");
+        let [cache_off, cache_on] = quench_reference_body_cache_ab_pair(&options);
+
+        assert_eq!(cache_off.name, "quench_reference_body_cache_off");
+        assert_eq!(cache_on.name, "quench_reference_body_cache_on");
+        assert_eq!(cache_off.argv, vec!["--jit".to_string()]);
+        assert_eq!(cache_on.argv, cache_off.argv);
+        assert_eq!(cache_off.executable, cache_on.executable);
+        assert_eq!(cache_off.executable_sha256, cache_on.executable_sha256);
+        let mut off_environment = cache_off.env.clone();
+        let mut on_environment = cache_on.env.clone();
+        assert_eq!(
+            off_environment
+                .remove(QUENCH_WASM_JIT_REFERENCE_BODY_CACHE)
+                .as_deref(),
+            Some("0")
+        );
+        assert_eq!(
+            on_environment
+                .remove(QUENCH_WASM_JIT_REFERENCE_BODY_CACHE)
+                .as_deref(),
+            Some("1")
+        );
+        assert_eq!(off_environment, on_environment);
+    }
+}
+
+#[cfg(test)]
+mod jit_wasm_memcpy_leaf_ab_tests {
+    use super::{
+        JitMode, QUENCH_WASM_JIT_EMSCRIPTEN_MEMCPY_LEAF, Suite, jit_wasm_memcpy_leaf_ab_error,
+        parse_options_from, quench_memcpy_leaf_ab_pair,
+    };
+
+    fn gcc_memcpy_leaf_options() -> super::Options {
+        parse_options_from(
+            [
+                "gcc-loops-wasm",
+                "--suite",
+                "jetstream3",
+                "--jit",
+                "--jit-wasm-memcpy-leaf-ab",
+                "--runs",
+                "3",
+            ]
+            .map(str::to_string),
+        )
+    }
+
+    #[test]
+    fn diagnostic_mode_is_pinned_to_gcc_and_allows_three_rounds() {
+        let options = gcc_memcpy_leaf_options();
+        assert_eq!(options.suite, Suite::JetStream3);
+        assert_eq!(options.jit_mode, JitMode::Jit);
+        assert!(options.jit_wasm_memcpy_leaf_ab);
+        assert_eq!(options.rounds, 3);
+        assert_eq!(options.fixture.as_deref(), Some("gcc-loops-wasm"));
+        assert!(jit_wasm_memcpy_leaf_ab_error(&options).is_none());
+
+        let mut wrong_fixture = options;
+        wrong_fixture.fixture = Some("quicksort-wasm".into());
+        assert!(jit_wasm_memcpy_leaf_ab_error(&wrong_fixture).is_some());
+
+        let mut too_few_rounds = gcc_memcpy_leaf_options();
+        too_few_rounds.rounds = 2;
+        assert!(jit_wasm_memcpy_leaf_ab_error(&too_few_rounds).is_some());
+
+        let mut no_jit = gcc_memcpy_leaf_options();
+        no_jit.jit_mode = JitMode::NoJit;
+        assert!(jit_wasm_memcpy_leaf_ab_error(&no_jit).is_some());
+
+        let mut conflicting_mode = gcc_memcpy_leaf_options();
+        conflicting_mode.jit_wasm_memcpy_early_ab = true;
+        assert!(jit_wasm_memcpy_leaf_ab_error(&conflicting_mode).is_some());
+    }
+
+    #[test]
+    fn quench_arms_share_binary_and_differ_only_by_the_leaf_switch() {
+        let mut options = gcc_memcpy_leaf_options();
+        options.quench = std::env::current_exe().expect("test executable path");
+        let [leaf_off, leaf_on] = quench_memcpy_leaf_ab_pair(&options);
+
+        assert_eq!(leaf_off.name, "quench_memcpy_native_leaf_off");
+        assert_eq!(leaf_on.name, "quench_memcpy_native_leaf_on");
+        assert_eq!(leaf_off.argv, vec!["--jit".to_string()]);
+        assert_eq!(leaf_on.argv, leaf_off.argv);
+        assert_eq!(leaf_off.executable, leaf_on.executable);
+        assert_eq!(leaf_off.executable_sha256, leaf_on.executable_sha256);
+        let mut off_environment = leaf_off.env.clone();
+        let mut on_environment = leaf_on.env.clone();
+        assert_eq!(
+            off_environment
+                .remove(QUENCH_WASM_JIT_EMSCRIPTEN_MEMCPY_LEAF)
+                .as_deref(),
+            Some("0")
+        );
+        assert_eq!(
+            on_environment
+                .remove(QUENCH_WASM_JIT_EMSCRIPTEN_MEMCPY_LEAF)
+                .as_deref(),
+            Some("1")
+        );
+        assert_eq!(off_environment, on_environment);
+        assert!(leaf_off.jit_proof.contains("native memcpy leaf A/B arm"));
+        assert!(leaf_on.jit_proof.contains("native memcpy leaf A/B arm"));
+        assert!(leaf_off.jit_proof.contains("not for qualification"));
+    }
+}
+
+#[cfg(test)]
 mod fixed_work_tests {
     use super::{
-        contention, fixed_work_marker, fixed_work_runner, parse_cpu_consumers, parse_load_average,
-        FixedWorkPlan, HostSnapshot, LoadAverage, Sample, FIXED_WORK_PLANS, FIXTURES,
+        FIXED_WORK_PLANS, FIXTURES, FixedWorkPlan, HostSnapshot, LoadAverage, Sample, contention,
+        fixed_work_marker, fixed_work_runner, parse_cpu_consumers, parse_load_average,
     };
     use std::collections::BTreeMap;
 
@@ -3709,9 +4215,9 @@ mod fixed_work_tests {
 #[cfg(all(test, unix, not(target_os = "macos")))]
 mod tests {
     use super::{
-        artifact, fixture_artifact, now_ns, peak_rss_bytes, read_checkpoint,
-        resume_metadata_matches, validate_resume, wait_child, write_checkpoint, CorpusRecord,
-        FixtureRecord, HostRecord, SuiteRecord,
+        CorpusRecord, FixtureRecord, HostRecord, SuiteRecord, artifact, fixture_artifact, now_ns,
+        peak_rss_bytes, read_checkpoint, resume_metadata_matches, validate_resume, wait_child,
+        write_checkpoint,
     };
     use std::process::Command;
     use std::{
@@ -3780,6 +4286,9 @@ mod tests {
             jit_wasm_memcpy_raw_ab: false,
             jit_wasm_memcpy_early_ab: false,
             jit_wasm_compare_branch_ab: false,
+            jit_wasm_affine_pair_ab: false,
+            jit_wasm_reference_body_cache_ab: false,
+            jit_wasm_memcpy_leaf_ab: false,
             created_unix_ns: now_ns(),
             rounds_requested: 11,
             timeout_ms: 300_000,
@@ -3883,6 +4392,20 @@ mod tests {
             &compare_branch_ab
         ));
         assert!(!resume_metadata_matches(&raw_ab_loaded, &compare_branch_ab));
+
+        let memcpy_leaf_ab_path = directory.join("memcpy-leaf-ab-report.json");
+        let mut memcpy_leaf_ab = expected.clone();
+        memcpy_leaf_ab.jit_wasm_root = None;
+        memcpy_leaf_ab.jit_wasm_root_only = false;
+        memcpy_leaf_ab.jit_wasm_memcpy_leaf_ab = true;
+        write_checkpoint(&memcpy_leaf_ab_path, &memcpy_leaf_ab);
+        let memcpy_leaf_ab_loaded = read_checkpoint(&memcpy_leaf_ab_path);
+        assert!(memcpy_leaf_ab_loaded.jit_wasm_memcpy_leaf_ab);
+        assert!(resume_metadata_matches(
+            &memcpy_leaf_ab_loaded,
+            &memcpy_leaf_ab
+        ));
+        assert!(!resume_metadata_matches(&loaded, &memcpy_leaf_ab));
         fs::remove_dir_all(directory).expect("remove checkpoint test directory");
     }
 
