@@ -50,6 +50,9 @@ impl FunctionCompiler<'_, '_> {
         if value.operator == UnaryOperator::Delete {
             return self.delete_expression(&value.argument);
         }
+        if let Some(constant) = binding_time::unary(value).static_value() {
+            return self.literal(constant);
+        }
         let input = if value.operator == UnaryOperator::Typeof {
             let mut operand = &value.argument;
             while let Expression::ParenthesizedExpression(parenthesized) = operand {
