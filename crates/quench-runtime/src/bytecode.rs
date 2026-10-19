@@ -339,6 +339,19 @@ pub(crate) enum FieldLookup {
     Site(usize),
 }
 
+impl Op {
+    /// Whether an instruction of this op with field `b` names an atom by its immediate: an
+    /// atom index, or a field lookup by name (`FieldLookup::Atom`; through a nested field
+    /// site it names the site).
+    pub(crate) fn immediate_names_atom(self, b: u16) -> bool {
+        match self.immediate_role() {
+            ImmediateRole::AtomIndex => true,
+            ImmediateRole::FieldLookup => b != FieldBase::NESTED,
+            _ => false,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct NumericLocalStoreTarget {
     pub(crate) register: Register,
@@ -2840,6 +2853,22 @@ impl ResidualProgram {
 
     pub fn read_binary(path: &std::path::Path) -> Result<Self, String> {
         binary::read_program(path)
+    }
+
+    /// The compile-cache form of this program (`binary::encode_compact_program`) and the atom
+    /// ids its table names, in order.
+    pub(crate) fn encode_compact(&self) -> (Vec<u8>, Vec<u32>) {
+        binary::encode_compact_program(self)
+    }
+
+    /// Decodes `encode_compact`'s bytes with `intern`'s ids and `text` as the source; the
+    /// caller sets the atom table and validates.
+    pub(crate) fn decode_compact(
+        bytes: &[u8],
+        intern: &mut dyn FnMut(&str) -> u32,
+        text: SourceText,
+    ) -> Result<Self, String> {
+        binary::decode_compact_program(bytes, intern, text)
     }
 }
 mod binary;

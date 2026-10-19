@@ -950,7 +950,8 @@ impl<'a, H: Host> NativeContext<'a, H> {
 
     /// Compile and evaluate a host wrapper `prefix + body + suffix` whose body is static
     /// host text (an embedded library module): the program retains the body instead of a
-    /// copy of the wrapped source, and positions start at the wrapper origin.
+    /// copy of the wrapped source, and positions start at the wrapper origin. The compiled
+    /// program goes through the host's compile cache (`Host::kept_compiled_program`).
     pub fn evaluate_specialized_static_body_rooted(
         &mut self,
         prefix: &str,
@@ -958,9 +959,32 @@ impl<'a, H: Host> NativeContext<'a, H> {
         suffix: &str,
         name: &str,
     ) -> Result<RootId, RootedError> {
+        self.evaluate_library_body(prefix, crate::bytecode::SourceText::Static(body), suffix, name)
+    }
+
+    /// `evaluate_specialized_static_body_rooted` for a library module text the host derived
+    /// from its embedded text (a projection), which the program retains instead.
+    pub fn evaluate_specialized_library_body_rooted(
+        &mut self,
+        prefix: &str,
+        body: String,
+        suffix: &str,
+        name: &str,
+    ) -> Result<RootId, RootedError> {
+        let body = crate::bytecode::SourceText::Shared(std::sync::Arc::from(body));
+        self.evaluate_library_body(prefix, body, suffix, name)
+    }
+
+    fn evaluate_library_body(
+        &mut self,
+        prefix: &str,
+        body: crate::bytecode::SourceText,
+        suffix: &str,
+        name: &str,
+    ) -> Result<RootId, RootedError> {
         let result = self
             .vm
-            .prepare_embedding_static_body(prefix, body, suffix, name)
+            .prepare_embedding_library_body_kept(prefix, body, suffix, name)
             .and_then(|prepared| self.vm.evaluate_embedding_prepared_script(&prepared));
         self.completion(result)
     }

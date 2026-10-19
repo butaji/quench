@@ -93,6 +93,16 @@ pub trait Host {
     /// depends on. At these boundaries the code about to run differs from the code that ran.
     fn at_collection_boundary(&mut self) {}
 
+    /// A compiled host program kept across runs: the bytes `keep_compiled_program` was given
+    /// for compiling `parts` (the program's text, in order) under `name` in this build. The
+    /// runtime decodes them under its own atoms and compiles when they do not decode.
+    fn kept_compiled_program(&mut self, _name: &str, _parts: &[&str]) -> Option<Vec<u8>> {
+        None
+    }
+
+    /// Offers the host a compiled host program's compact form (`kept_compiled_program`).
+    fn keep_compiled_program(&mut self, _name: &str, _parts: &[&str], _bytes: &[u8]) {}
+
     /// A WebAssembly module's native compilation, which runs once per module, is about to
     /// start: like `at_collection_boundary`, the code about to run (the code generator)
     /// differs from the code that ran before it (loading, linking, instantiation).
