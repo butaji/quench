@@ -1470,6 +1470,9 @@ struct Compiler<'a> {
     dynamic_binding_scopes: u32,
     /// The replays of functions finished and released during the load.
     early_replays: FxHashMap<u32, replay::FunctionReplay>,
+    /// The source starts of function expressions called where they are made, which run at
+    /// once and so keep their records (`note_invoked_callee`).
+    invoked_functions: FxHashSet<u32>,
     /// How each replayable function was compiled, with the cursors it started from.
     replay_calls: FxHashMap<u32, (replay::TableCursors, replay::ReplayCall)>,
     /// In a replay, the function it recompiles and where the load left each function.
@@ -1836,6 +1839,7 @@ impl<'a> Compiler<'a> {
             function_facts: Vec::new(),
             dynamic_binding_scopes: 0,
             early_replays: FxHashMap::default(),
+            invoked_functions: FxHashSet::default(),
             replay_calls: FxHashMap::default(),
             replay_target: None,
             source_type: oxc_span::SourceType::default(),
@@ -1903,6 +1907,29 @@ impl<'a> Compiler<'a> {
         self.function_facts[id] = facts;
     }
 
+    /// Notes a function expression called where it is made: `(function () {})()`, an arrow
+    /// likewise, or either through `.call` or `.apply`. A replay of it would only compile it
+    /// again a moment after its load did.
+    fn note_invoked_callee(&mut self, callee: &Expression<'_>) {
+        let callee = match callee.without_parentheses() {
+            Expression::StaticMemberExpression(member)
+                if matches!(member.property.name.as_str(), "call" | "apply") =>
+            {
+                member.object.without_parentheses()
+            }
+            callee => callee,
+        };
+        match callee {
+            Expression::FunctionExpression(function) => {
+                self.invoked_functions.insert(function.span.start);
+            }
+            Expression::ArrowFunctionExpression(arrow) => {
+                self.invoked_functions.insert(arrow.span.start);
+            }
+            _ => {}
+        }
+    }
+
     /// Keeps how function `id` was compiled from `entry`, unless it resolved private names:
     /// their identities are numbered over the whole program, which a replay does not see.
     fn record_replay_call(
@@ -1912,7 +1939,13 @@ impl<'a> Compiler<'a> {
         private_names: (u64, usize),
         call: replay::ReplayCall,
     ) {
+        let invoked = self
+            .functions
+            .get(id)
+            .and_then(|function| function.source_span)
+            .is_some_and(|span| self.invoked_functions.remove(&span.start));
         if self.replay_target.is_none()
+            && !invoked
             && private_names == (self.private_name_references, self.private_name_ids.len())
         {
             self.replay_calls.insert(id, (entry, call));
