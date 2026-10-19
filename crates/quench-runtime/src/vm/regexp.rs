@@ -922,8 +922,8 @@ impl<H: Host> Vm<H> {
     /// strings. A scanner alternates matches over its input with checks of short tokens, so
     /// remembering a few keeps the input's preparation across them.
     fn regexp_subject(&mut self, input: &JsString) -> Rc<quench_regexp::Subject> {
-        let flat = input.flat();
-        let text = match flat {
+        let flat = input.flat_unkept();
+        let text = match &*flat {
             // A short subject is copied inline and has no shared storage to recognize it by, so
             // it neither consults nor displaces the cache. The last one is kept by content, as
             // routers match one short path against many patterns; otherwise its slot is reused
@@ -945,7 +945,7 @@ impl<H: Host> Vm<H> {
                 self.regexp_short_subject = Some(Rc::clone(&subject));
                 return subject;
             }
-            FlatUnits::Ascii(_) | FlatUnits::AsciiSlice(_) | FlatUnits::Wide(_) => flat,
+            FlatUnits::Ascii(_) | FlatUnits::AsciiSlice(_) | FlatUnits::Wide(_) => &*flat,
         };
         let cached = self.regexp_subjects.iter().position(|subject| match text {
             FlatUnits::Wide(units) => subject.is_text_of(units),
