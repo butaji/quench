@@ -153,6 +153,15 @@ impl Value {
         Self(TAG_DELETED | ENVIRONMENT_INDEX_BIT | u64::from(index))
     }
 
+    /// How the `environment_index` word `self` orders against the number `index`: the
+    /// number fills the low payload bits under one fixed tag, so the words order as their
+    /// numbers do and a search needs no decoding.
+    #[inline(always)]
+    pub(crate) fn cmp_environment_index(self, index: u32) -> std::cmp::Ordering {
+        debug_assert!(self.as_environment_index().is_some());
+        self.0.cmp(&Self::environment_index(index).0)
+    }
+
     /// The number of an `environment_index`.
     #[inline(always)]
     pub(crate) fn as_environment_index(self) -> Option<u32> {

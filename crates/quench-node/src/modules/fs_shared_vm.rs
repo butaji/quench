@@ -2125,20 +2125,25 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
 }
 
 /// Builds the members of `fs` (the lazy group `module` defines) when a script first observes
-/// one, and checks they are exactly `MODULE_MEMBERS`.
+/// one, and checks they are exactly `MODULE_MEMBERS`, ahead of any key a script added.
 pub(crate) fn initialize_module(
     context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId],
 ) -> Result<RootId, RootedError> {
     let module = context.host_function_data()?;
     build_module(context, module)?;
     install_library_policy(context, module)?;
+    // A script may add keys to `fs` before it first reads a lazy member; string keys it adds
+    // follow the group in key order and symbol keys are listed apart, so the module's own
+    // members are the leading string keys.
     let keys = context.own_keys_rooted(module)?;
     let mut names = Vec::with_capacity(keys.len());
     for key in keys {
-        names.push(context.to_string(key)?);
+        if !context.is_symbol_rooted(key)? {
+            names.push(context.to_string(key)?);
+        }
     }
     let expected = std::iter::once("readFileSync").chain(MODULE_MEMBERS.iter().map(|(name, _)| *name));
-    if !names.iter().map(String::as_str).eq(expected) {
+    if !names.iter().map(String::as_str).take(expected.clone().count()).eq(expected) {
         return Err(RootedError::host(format!("fs members differ from MODULE_MEMBERS: {names:?}")));
     }
     Ok(context.undefined())

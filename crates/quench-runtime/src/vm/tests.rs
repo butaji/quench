@@ -203,9 +203,9 @@ fn promoted_locals_preserve_order_and_survive_collection() {
     );
 
     // Every binding here stays in a register, including those written inside expressions.
-    assert_eq!(program.functions[1].local_registers.len(), 3);
-    assert_eq!(program.functions[2].local_registers.len(), 1);
-    assert_eq!(program.functions[3].local_registers.len(), 1);
+    assert_eq!(program.function(1).local_registers.len(), 3);
+    assert_eq!(program.function(2).local_registers.len(), 1);
+    assert_eq!(program.function(3).local_registers.len(), 1);
 }
 
 #[test]
@@ -423,6 +423,7 @@ fn repeated_normal_closures_reuse_function_descriptor_shapes() {
         "closure-shape-transition.js",
     )
     .unwrap();
+    program.compile_released();
     let closure_id = program
         .functions
         .iter()
@@ -459,6 +460,7 @@ fn closures_share_on_demand_function_source_and_program_roots_it() {
         "closure-source-cache.js",
     )
     .unwrap();
+    program.compile_released();
     let inner = program
         .functions
         .iter()
@@ -800,6 +802,7 @@ fn loop_clones_reset_bindings_of_scopes_out_of_reach() {
         "loop-clone-reset.js",
     )
     .unwrap();
+    program.compile_released();
     let plans: Vec<_> = program
         .functions
         .iter()
@@ -2939,7 +2942,7 @@ fn module_namespace_operations_share_uninitialized_export_errors() {
             let namespace = vm.object();
             let atom = vm.intern_atom("answer");
             vm.set_property(namespace, atom, Value::UNDEFINED).unwrap();
-            let slot = program.functions[0]
+            let slot = program.function(0)
                 .local_atoms
                 .iter()
                 .position(|candidate| *candidate == atom)
@@ -2947,7 +2950,7 @@ fn module_namespace_operations_share_uninitialized_export_errors() {
             let environment = vm.heap.alloc(crate::heap::Cell::Environment {
                 parent: Value::NULL,
                 function: super::ROOT_FUNCTION_ID,
-                slots: vec![Value::DELETED; program.functions[0].local_atoms.len()]
+                slots: vec![Value::DELETED; program.function(0).local_atoms.len()]
                     .into_boxed_slice()
                     .into(),
                 scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
@@ -4711,6 +4714,7 @@ fn wasm_retirement_invalidates_register_reuse_after_shrinking() {
     // initialize the retired buffer, rather than set its length past capacity.
     let mut program =
         Engine::specialize("function identity(x) { return x; }", "retired-frame.js").unwrap();
+    program.compile_released();
     let function = &mut program.functions[1];
     function.registers = u16::MAX;
     function.register_roots = crate::bytecode::RegisterRoots::new(true);
@@ -10715,6 +10719,7 @@ fn lexical_slots_read_only_after_initialization_become_plain_and_keep_their_dead
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::new(RecordingHost(output.clone()));
     let program = Engine::specialize(source, "lexical-initialization.js").unwrap();
+    program.compile_released();
     let proven = program
         .functions
         .iter()
@@ -10752,6 +10757,7 @@ fn anonymous_function_definitions_are_named_by_their_plan() {
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::new(RecordingHost(output.clone()));
     let program = Engine::specialize(source, "named-definitions.js").unwrap();
+    program.compile_released();
     // Closures made straight into the named value are created with the name
     // (`inferred_name`); classes, computed keys and static field values are named at run time.
     for name in ["arrow", "expression", "fallback", "method"] {
@@ -10767,6 +10773,63 @@ fn anonymous_function_definitions_are_named_by_their_plan() {
         output.borrow().as_slice(),
         ["arrow,expression,fallback,method,computed,field,klass"]
     );
+}
+
+#[test]
+fn lane_regexp_exec_keeps_last_index_and_coercion_order() {
+    // Exec calls made from frameless activations: a global pattern advances `lastIndex`,
+    // an object `lastIndex` is still converted exactly once per call, and a frozen global
+    // pattern still throws when exec writes `lastIndex`.
+    let source = r#"
+      function step(re, text) { return re.exec(text); }
+      function match(layer, text) { return step(layer.re, text); }
+      const global = { re: /a/g };
+      const seen = [];
+      for (let i = 0; i < 3; i++) {
+        const found = match(global, 'aab');
+        seen.push(found ? found.index : 'null', global.re.lastIndex);
+      }
+      let conversions = 0;
+      const plain = { re: /b/ };
+      plain.re.lastIndex = { valueOf() { conversions++; return 0; } };
+      for (let i = 0; i < 2; i++) seen.push(match(plain, 'ab').index);
+      seen.push(conversions);
+      const frozen = { re: Object.freeze(/a/g) };
+      try { match(frozen, 'a'); seen.push('no throw'); } catch (error) { seen.push(error.constructor.name); }
+      print(seen.join(','));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "lane-regexp-exec.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["0,1,1,2,null,0,1,1,2,TypeError"]);
+}
+
+#[test]
+fn catch_bindings_live_in_registers_and_keep_their_thrown_values() {
+    // A catch binding read only by its block moves into a register: the wrapper calls no
+    // frame of its own, and each catch still sees the value its own throw made.
+    let source = r#"
+      function wrap(layer, path) { try { return layer.match(path); } catch (err) { return err; } }
+      const ok = { match(path) { return 'ok:' + path; } };
+      const bad = { match(path) { throw new Error('bad:' + path); } };
+      const seen = [];
+      for (let i = 0; i < 3; i++) {
+        seen.push(wrap(ok, i));
+        seen.push(wrap(bad, i).message);
+      }
+      print(seen.join(','));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    let program = Engine::specialize(source, "catch-register.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["ok:0,bad:0,ok:1,bad:1,ok:2,bad:2"]);
+    let wrap = program.function(1);
+    assert!(wrap.handlers.iter().all(|handler| matches!(
+        handler.slot,
+        Some(crate::bytecode::ThrownValueSlot::Register(_))
+    )));
+    assert!(wrap.call_plan(&program).registers_only);
 }
 
 #[test]

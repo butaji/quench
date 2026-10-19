@@ -1070,7 +1070,7 @@ impl<H: Host> Vm<H> {
             return None;
         };
         let program = self.programs.get(*program_id)?;
-        let metadata = program.functions.get(*function_id as usize)?;
+        let metadata = program.function_get(*function_id as usize)?;
         if metadata.params != 3
             || metadata.inherited_with_scope
             || !metadata.binding_sites.is_empty()
@@ -1141,7 +1141,7 @@ impl<H: Host> Vm<H> {
             if environment == owner_environment {
                 let owner_program_id = super::program_store::ProgramId::from_raw(scope.program()?);
                 let owner_program = self.programs.get(owner_program_id)?;
-                let owner_metadata = owner_program.functions.get(*owner_function as usize)?;
+                let owner_metadata = owner_program.function_get(*owner_function as usize)?;
                 let owns_atom = if *owner_function == super::ROOT_FUNCTION_ID {
                     owner_metadata.declares_global_lexical(view_atom)
                         || (owner_program.root_variables_are_local()
