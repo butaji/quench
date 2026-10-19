@@ -474,6 +474,25 @@ impl Heap {
         }
     }
 
+    /// The object a record holds for `value` (`record_object`), a direct object's first.
+    #[inline(always)]
+    pub(crate) fn record_object_value(&self, value: Value) -> Option<&Object> {
+        match value.direct_object_index() {
+            Some(record_id) => Some(self.object_record_by_id(record_id)),
+            None => self.record_object(value.heap_reference()?),
+        }
+    }
+
+    /// `object`'s prototype where a record holds it (`record_object_value`): read from the
+    /// stored link, an object record's without decoding it.
+    #[inline(always)]
+    pub(crate) fn record_prototype(&self, object: &Object) -> Option<&Object> {
+        match object.proto_link().object_record_id() {
+            Some(record_id) => Some(self.object_record_by_id(record_id)),
+            None => self.record_object(object.proto().heap_reference()?),
+        }
+    }
+
     pub(crate) fn object_record_by_id(&self, record_id: u32) -> &Object {
         // SAFETY: direct-object Values name live records, retired after weak pruning.
         unsafe { self.object_records.get_live(record_id) }

@@ -1292,7 +1292,9 @@ impl<H: Host> Vm<H> {
         site: u16,
     ) -> Option<Value> {
         debug_assert!(self.lane_admits(p));
-        let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
+        // Any record receiver, an array's too: entries name only shape slots, which an
+        // array's length and elements are not.
+        let receiver = self.heap.record_object_value(object)?;
         let index = self.field_cache_index(site);
         // SAFETY: compiler-produced sites index exactly-sized cache vectors;
         // every non-sentinel index was installed together with its table.
@@ -1317,7 +1319,7 @@ impl<H: Host> Vm<H> {
                 self.profile.field_cache_hit(2, 0);
                 return Some(value);
             }
-            let holder = self.heap.object_record(receiver.proto())?;
+            let holder = self.heap.record_prototype(receiver)?;
             if holder.is_module_namespace() {
                 return None;
             }
@@ -1337,8 +1339,8 @@ impl<H: Host> Vm<H> {
                 self.profile.field_cache_hit(2, 0);
                 return Some(value);
             }
-            // A prototype outside the object records takes the slow path.
-            let holder = self.heap.object_record(receiver.proto())?;
+            // A prototype outside the records takes the slow path.
+            let holder = self.heap.record_prototype(receiver)?;
             if holder.is_module_namespace() || holder.shape() != entry.holder {
                 continue;
             }
@@ -1674,13 +1676,14 @@ impl<H: Host> Vm<H> {
         receiver: &Object,
         atom: Atom,
     ) -> Option<FieldCacheHit> {
-        let holder_value = receiver.proto();
-        // An ordinary record prototype is the holder as it stands: entries record only holder
-        // shapes whose lookup answered the atom (`shape_property_lookup`), and a shape fixes
-        // its dictionary state and keys, so a matching entry proves what the lookup would.
-        let holder = match self.heap.object_record(holder_value) {
+        // A record prototype (an object's, or an array's as `Array.prototype`) is the holder as
+        // it stands: entries record only holder shapes whose lookup answered the atom
+        // (`shape_property_lookup`), and a shape fixes its dictionary state and keys, so a
+        // matching entry proves what the lookup would. An array's length and elements are no
+        // shape slots, so no entry names them.
+        let holder = match self.heap.record_prototype(receiver) {
             Some(holder) if !holder.is_module_namespace() => holder,
-            _ => self.shape_property_lookup(holder_value, atom)?,
+            _ => self.shape_property_lookup(receiver.proto(), atom)?,
         };
         // SAFETY: the active program's layout reserves every compiler-emitted site.
         let cache = unsafe { *self.field_caches.get_unchecked(site) };
