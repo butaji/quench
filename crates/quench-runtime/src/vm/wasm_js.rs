@@ -148,7 +148,7 @@ pub(super) fn emscripten_memcpy_early_import_switch() -> &'static str {
     }
 }
 
-fn copy_within_relative_index(index: i64, length: usize) -> usize {
+pub(super) fn copy_within_relative_index(index: i64, length: usize) -> usize {
     if index < 0 {
         let magnitude = usize::try_from(index.unsigned_abs()).unwrap_or(usize::MAX);
         length.saturating_sub(magnitude)
