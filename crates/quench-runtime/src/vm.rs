@@ -55,7 +55,6 @@ struct RuntimeAtoms {
     empty: Atom,
 }
 pub(crate) mod activation;
-mod activation_lifecycle;
 mod agent;
 mod arguments;
 mod array;
@@ -123,6 +122,7 @@ mod module;
 mod number;
 mod object;
 mod shape_memo;
+mod symbol_write_proof;
 mod name_atom_memo;
 mod object_assignment;
 mod object_array;
@@ -136,7 +136,6 @@ mod object_symbols;
 #[cfg(test)]
 mod object_tests;
 mod property_key;
-use activation::{Continuation, SuspendedEntry};
 use call_arguments::CallArguments;
 use object::AtomClass;
 pub(crate) use program_store::ProgramId;
@@ -1374,8 +1373,6 @@ pub(crate) struct Vm<H> {
     /// the only source of with objects, so until it runs no environment
     /// carries any.
     with_scope_entered: bool,
-    suspended: Vec<SuspendedEntry>,
-    suspended_free: Vec<u32>,
     test262_agent: Test262AgentState,
     shared_async_waiters:Vec<atomics::SharedAsyncWaiter>,
     programs: ProgramStore,
@@ -1401,6 +1398,7 @@ pub(crate) struct Vm<H> {
     shape_accessors: Vec<ShapeAccessors>,
     transitions: shape_transitions::ShapeTransitionIndex,
     shape_slot_memo: shape_memo::ShapeSlotMemo,
+    symbol_write_proofs: symbol_write_proof::SymbolWriteProofs,
     shape_attribute_memo: shape_memo::ShapeAttributeMemo,
     name_atom_memo: name_atom_memo::NameAtomMemo,
     atom_text: AtomTable,
@@ -1933,13 +1931,10 @@ impl<H: Host> Vm<H> {
         eprintln!("{{\"kind\":\"quench-live-cells\",\"top\":{:?}}}", &kinds[..kinds.len().min(8)]);
         let promise = &self.realm.promise;
         eprintln!(
-            "{{\"kind\":\"quench-vm-tables\",\"live_slots\":{},\"suspended\":{},\"suspended_free\":{},\"thenable_jobs\":{},\"reaction_capabilities\":{},\"async_resume_jobs\":{},\"jobs\":{},\"descriptors\":{},\"function_values\":{},\"frames\":{},\"active_call_roots\":{}}}",
+            "{{\"kind\":\"quench-vm-tables\",\"live_slots\":{},\"thenable_jobs\":{},\"reaction_capabilities\":{},\"jobs\":{},\"descriptors\":{},\"function_values\":{},\"frames\":{},\"active_call_roots\":{}}}",
             self.heap.live_slots(),
-            self.suspended.len(),
-            self.suspended_free.len(),
             promise.thenable_jobs.len(),
             promise.reaction_capabilities.len(),
-            promise.async_resume_jobs.len(),
             self.realm.jobs.len(),
             self.descriptors.len(),
             self.function_values.len(),
@@ -2190,8 +2185,6 @@ impl<H: Host> Vm<H> {
         self.realm.global_lexical_bindings.clear();
         self.realm.immutable_global_lexical_bindings.clear();
         self.with_stack.clear();
-        self.suspended.clear();
-        self.suspended_free.clear();
         self.direct_eval = false;
         self.parameter_eval = false;
         self.eval_script_context = false;
@@ -2202,6 +2195,7 @@ impl<H: Host> Vm<H> {
         self.shapes[0].last_child.set(NO_LAST_CHILD);
         self.transitions.clear();
         self.shape_slot_memo.clear();
+        self.symbol_write_proofs.clear();
         self.shape_attribute_memo.clear();
         self.atom_strings.clear();
         // The sealed holders and their shapes belong to the discarded heap.

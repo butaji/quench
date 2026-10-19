@@ -557,16 +557,13 @@ fn cell_bytes(cell: &Cell) -> usize {
             | Cell::Iterator { .. }
             | Cell::Proxy { .. }
             | Cell::ArrayFromAsyncState(_)
+            | Cell::AwaitState(_)
             | Cell::WasmBits64(_)
             | Cell::WasmV128(_)
             | Cell::WasmExtern(_)
             | Cell::WasmTag { .. }
             | Cell::WasmGlobal { .. }
             | Cell::BindingReference { .. } => 0,
-            Cell::Promise { record, .. } => {
-                size_of::<crate::heap::PromiseRecord>()
-                    + record.reactions.capacity() * size_of::<crate::heap::PromiseReaction>()
-            }
             Cell::WasmHostFunction { .. } | Cell::WasmException { .. } => {
                 Heap::cell_payload_bytes(cell)
             }
@@ -595,6 +592,10 @@ fn cell_bytes(cell: &Cell) -> usize {
             Cell::String(value) => value.capacity(),
             Cell::BigInt(value) => crate::bigint::magnitude_bytes(value),
             Cell::Error(value) => value.capacity(),
+            Cell::Promise(promise) => {
+                size_of::<super::PromiseCell>()
+                    + promise.record.reactions.capacity() * size_of::<super::PromiseReaction>()
+            }
             Cell::Symbol(value) => value.as_ref().map_or(0, |description| description.len()),
             Cell::Date { .. } => 0,
             Cell::RegExp { meta, .. } => meta.source.capacity() + meta.flags.capacity(),

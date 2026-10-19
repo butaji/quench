@@ -192,7 +192,7 @@ impl<H: Host> Vm<H> {
             || !owner
                 .functions
                 .get(function as usize)
-                .is_some_and(|function| function.call_plan(p).in_loop)
+                .is_some_and(|function| function.call_plan(owner).in_loop)
         {
             return None;
         }
@@ -683,12 +683,7 @@ impl<H: Host> Vm<H> {
                 }
             }
             Op::MakeArray => {
-                let v = self.heap.alloc(Cell::Array {
-                    object: crate::heap::ArrayObject::new(
-                        Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
-                        Rc::new(vec![Value::DELETED; i.array_length()]),
-                    ),
-                });
+                let v = self.hole_array(i.array_length());
                 self.write(f, i.result_register(), v);
             }
             Op::MakeConstArray => {

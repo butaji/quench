@@ -8,6 +8,14 @@ impl<H: Host> Vm<H> {
             .intersects(AtomClass::PRIVATE | AtomClass::VIRTUAL_FIELD)
     }
 
+    /// `field_cache_atom_eligible` for a cached add, whose every hit first proves an ordinary
+    /// receiver: an ordinary object stores the virtual field names like any other property
+    /// (`shape_answers`), so only a private name stays out.
+    #[inline(always)]
+    pub(super) fn field_add_atom_eligible(&self, atom: Atom) -> bool {
+        !self.is_private_name(atom)
+    }
+
     // Shapes prove ordinary data storage only when no exotic or virtual lookup intervenes.
     pub(super) fn shape_property_lookup(&self, value: Value, atom: Atom) -> Option<&Object> {
         if let Some(object) = self.heap.object_record(value) {
@@ -29,7 +37,7 @@ impl<H: Host> Vm<H> {
     ) -> Option<&'a Object> {
         let class = self.atom_class(atom);
         let kind = match cell {
-            Cell::Object(_) | Cell::Promise { .. } => ReceiverKind::Ordinary,
+            Cell::Object(_) | Cell::Promise(_) => ReceiverKind::Ordinary,
             Cell::Proxy { .. } => return None,
             Cell::Array { .. } if class.contains(AtomClass::ARRAY_INDEX) => return None,
             Cell::TypedArray { .. } if class.contains(AtomClass::TYPED_ARRAY_INDEX) => {

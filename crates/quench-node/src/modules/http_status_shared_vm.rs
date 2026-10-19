@@ -12,8 +12,7 @@ fn get(c: &mut Context<'_>, object: RootId, name: &str) -> Result<RootId, Rooted
     c.get_named_property_rooted(object, name)
 }
 fn set(c: &mut Context<'_>, object: RootId, name: &str, value: RootId) -> Result<(), RootedError> {
-    let key = c.string_rooted(name);
-    if !c.set_property_rooted(object, key, value, object)? {
+    if !c.set_named_property_rooted(object, name, value)? {
         let error = c.type_error_rooted(&format!(
             "Cannot assign to read only property '{name}' of object '#<ServerResponse>'"
         ))?;
