@@ -602,6 +602,7 @@ const NATIVES: &[Native] = &[
     Native::AsyncGeneratorDelegateRejected,
     Native::WebAssemblyValidate, Native::WebAssemblyCompile, Native::WebAssemblyInstantiate,
     Native::WasmModule, Native::WasmModuleExports, Native::WasmModuleImports,
+    Native::WasmModuleCustomSections,
     Native::WasmInstance, Native::WasmInstanceExportsGetter,
     Native::WasmMemory, Native::WasmMemoryGrow, Native::WasmMemoryBufferGetter,
     Native::WasmTable, Native::WasmTableLengthGetter, Native::WasmTableGrow, Native::WasmTableGet,

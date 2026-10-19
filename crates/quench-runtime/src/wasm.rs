@@ -33,6 +33,7 @@ pub(crate) mod simd;
 pub(crate) mod table;
 pub(crate) use scalar::{ScalarBits, V128_BYTES, WasmSignatures};
 pub use scalar::{
+    WasmHostSignature,
     WasmCallableType, WasmFunctionBody, WasmFunctionImport, WasmReferenceKind, WasmSignature,
     WasmType, WasmValue,
 };
@@ -206,6 +207,15 @@ pub struct WasmModule {
     pub(crate) tags: Rc<[WasmTag]>,
     pub(crate) start: Option<u32>,
     pub(crate) exports: Rc<[WasmExport]>,
+    /// The custom sections in module order, for `WebAssembly.Module.customSections`.
+    pub(crate) custom_sections: Rc<[WasmCustomSection]>,
+}
+
+/// One custom section: its name and contents.
+#[derive(Clone, Debug)]
+pub struct WasmCustomSection {
+    pub name: Rc<str>,
+    pub bytes: Rc<[u8]>,
 }
 
 /// A typed entry derived from a module's canonical signature table.
@@ -363,6 +373,20 @@ impl WasmModule {
     pub fn with_exports(mut self, exports: Vec<WasmExport>) -> Self {
         self.exports = exports.into();
         self
+    }
+
+    /// Attach the module's custom sections in module order.
+    pub fn with_custom_sections(mut self, sections: Vec<WasmCustomSection>) -> Self {
+        self.custom_sections = sections.into();
+        self
+    }
+
+    /// The contents of the custom sections named `name`, in module order.
+    pub fn custom_sections_named<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a [u8]> {
+        self.custom_sections
+            .iter()
+            .filter(move |section| &*section.name == name)
+            .map(|section| &*section.bytes)
     }
 
     pub fn exports(&self) -> &[WasmExport] {
@@ -974,6 +998,7 @@ impl Engine {
             tags: tags.into(),
             start: None,
             exports: Rc::default(),
+            custom_sections: Rc::default(),
         })
     }
 }

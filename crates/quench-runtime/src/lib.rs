@@ -20,7 +20,7 @@ mod vm;
 mod wasm;
 pub use wasm::{
     WasmCallableType, WasmConstantExpression, WasmData, WasmDataMode, WasmElement, WasmElementMode,
-    WasmExport,
+    WasmCustomSection, WasmExport,
     WasmFunction, WasmFunctionBody, WasmFunctionImport, WasmGlobal, WasmGlobalInitializer,
     WasmI32Function, WasmImportName, WasmInstance, WasmMemory, WasmModule,
     WasmReferenceInitializer, WasmReferenceKind, WasmSignature, WasmTable, WasmTableInitializer,
