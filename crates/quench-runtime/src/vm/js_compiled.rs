@@ -5,7 +5,8 @@
 //! can load its rooted constant and preserve ordinary frame unwinding.
 
 use crate::bytecode::{
-    Constant, Function, Op, OperandKind, ProgramKind, RETURN_REGISTER, ResidualProgram,
+    Constant, FieldBase, FieldLookup, Function, Op, OperandKind, ProgramKind, RETURN_REGISTER,
+    ResidualProgram,
 };
 use cranelift_codegen::ir::{
     self, AbiParam, InstBuilder, UserFuncName, condcodes::FloatCC, immediates::Ieee64, types,
@@ -27,6 +28,7 @@ pub(super) struct JsJitArtifact {
 pub(super) enum JsJitResultKind {
     Number,
     NumberInterruptible,
+    StringHashLoop,
     StringReturnPc(Vec<(u32, u32)>),
     Boolean,
 }
@@ -46,6 +48,9 @@ pub(super) fn compile(program: &ResidualProgram, function_id: u32) -> Option<JsJ
         return None;
     }
     let function = program.functions.get(function_id as usize)?;
+    if string_hash_loop_candidate(program, function) {
+        return compile_string_hash_loop(program, function_id, function);
+    }
     if function.code.iter().any(|packed| {
         !packed.is_wide()
             && matches!(
@@ -59,6 +64,364 @@ pub(super) fn compile(program: &ResidualProgram, function_id: u32) -> Option<JsJ
     } else {
         compile_numeric(program, function_id)
     }
+}
+
+pub(super) fn has_string_hash_loop_candidate(
+    program: &ResidualProgram,
+    function: &Function,
+) -> bool {
+    string_hash_loop_candidate(program, function)
+}
+
+fn string_hash_loop_candidate(program: &ResidualProgram, function: &Function) -> bool {
+    if function.params != 1 || function.code.len() != 20 || !function.wide.is_empty() {
+        return false;
+    }
+    let Some(get_length) = function
+        .code
+        .get(2)
+        .map(|instruction| instruction.as_wide())
+    else {
+        return false;
+    };
+    let Some(get_char_code) = function
+        .code
+        .get(8)
+        .map(|instruction| instruction.as_wide())
+    else {
+        return false;
+    };
+    let field_is = |instruction: crate::bytecode::WideInstruction, name: &str| {
+        instruction.op() == Op::GetField
+            && matches!(
+                instruction.field_lookup(),
+                Some(FieldLookup::Atom {
+                    atom,
+                    base: FieldBase(0),
+                    ..
+                }) if (atom as usize) < program.atoms.len() && &program.atoms[atom as usize] == name
+            )
+    };
+    if !field_is(get_length, "length") || !field_is(get_char_code, "charCodeAt") {
+        return false;
+    }
+    let ops = [
+        Op::LoadConst,
+        Op::StoreLocalPlain,
+        Op::GetField,
+        Op::StoreLocalPlain,
+        Op::LoadLocalPlain,
+        Op::JumpBinaryFalse,
+        Op::LoadLocalPlain,
+        Op::Binary,
+        Op::GetField,
+        Op::LoadLocalPlain,
+        Op::Call,
+        Op::Binary,
+        Op::Binary,
+        Op::LoadLocalPlain,
+        Op::Binary,
+        Op::Jump,
+        Op::LoadLocalPlain,
+        Op::Binary,
+        Op::LoadConst,
+        Op::Return,
+    ];
+    if function
+        .code
+        .iter()
+        .zip(ops)
+        .any(|(packed, op)| packed.as_wide().op() != op)
+    {
+        return false;
+    }
+    let instruction = |pc: usize| function.code[pc].as_wide();
+    let constant = |pc: usize| match program.constants.get(instruction(pc).constant_index()) {
+        Some(Constant::Number(value)) => Some(*value),
+        _ => None,
+    };
+    let operand_constant = |operand: crate::bytecode::Operand| {
+        (operand.kind() == Some(OperandKind::Constant))
+            .then(|| program.constants.get(usize::from(operand.payload())))
+            .flatten()
+            .and_then(|constant| match constant {
+                Constant::Number(value) => Some(*value),
+                _ => None,
+            })
+    };
+    let jump = instruction(5);
+    let call = instruction(10);
+    constant(0) == Some(5381.0)
+        && instruction(1).local_slot() == 1
+        && instruction(2).field_lookup().is_some()
+        && instruction(3).local_slot() == 2
+        && instruction(4).local_slot() == 2
+        && instruction(0).result_register() == 2
+        && instruction(1).register_a() == 2
+        && instruction(2).result_register() == 2
+        && instruction(3).register_a() == 2
+        && instruction(4).result_register() == 2
+        && jump.jump_target() == 16
+        && super::operations::NumberRelation::from_operator(jump.binary_operator_field())
+            == Some(super::operations::NumberRelation::GreaterThan)
+        && jump.operand_b().kind() == Some(OperandKind::Register)
+        && jump.operand_b().payload() == 2
+        && operand_constant(jump.operand_c()) == Some(0.0)
+        && instruction(6).local_slot() == 1
+        && instruction(6).result_register() == 3
+        && instruction_binary_operator(instruction(7))
+            == Some(BinaryOperator::Multiplication as u32)
+        && instruction(7).result_register() == 4
+        && operand_register(instruction(7).operand_b()) == Some(3)
+        && operand_constant(instruction(7).operand_c()) == Some(33.0)
+        && instruction(8).result_register() == 5
+        && instruction(9).local_slot() == 2
+        && instruction(9).result_register() == 7
+        && call.register_b() == instruction(8).result_register()
+        && call.call_window().base == instruction(9).result_register()
+        && call.call_window().count == 1
+        && instruction_binary_operator(instruction(11)) == Some(BinaryOperator::BitwiseOR as u32)
+        && operand_register(instruction(11).operand_b()) == Some(8)
+        && operand_constant(instruction(11).operand_c()) == Some(0.0)
+        && instruction_binary_operator(instruction(12)) == Some(BinaryOperator::BitwiseXOR as u32)
+        && instruction(12).numeric_local_target() == Some(1)
+        && operand_register(instruction(12).operand_b()) == Some(4)
+        && operand_register(instruction(12).operand_c()) == Some(9)
+        && instruction(13).local_slot() == 2
+        && instruction(13).result_register() == 2
+        && instruction_binary_operator(instruction(14)) == Some(BinaryOperator::Subtraction as u32)
+        && instruction(14).numeric_local_target() == Some(2)
+        && operand_register(instruction(14).operand_b()) == Some(2)
+        && operand_constant(instruction(14).operand_c()) == Some(919.0)
+        && instruction(15).jump_target() == 4
+        && instruction(16).local_slot() == 1
+        && instruction(16).result_register() == 2
+        && instruction(17).returns_from_frame()
+        && instruction_binary_operator(instruction(17)) == Some(BinaryOperator::BitwiseOR as u32)
+        && operand_register(instruction(17).operand_b()) == Some(2)
+        && operand_constant(instruction(17).operand_c()) == Some(0.0)
+        && instruction(18).constant_index() < program.constants.len()
+        && instruction(18).result_register() == 2
+        && instruction(19).register_a() == instruction(18).result_register()
+}
+
+fn operand_register(operand: crate::bytecode::Operand) -> Option<u16> {
+    (operand.kind() == Some(OperandKind::Register)).then_some(operand.payload())
+}
+
+fn instruction_binary_operator(instruction: crate::bytecode::WideInstruction) -> Option<u32> {
+    match instruction.op().immediate_role() {
+        crate::bytecode::ImmediateRole::BinaryOperator
+        | crate::bytecode::ImmediateRole::AdditionOperator
+        | crate::bytecode::ImmediateRole::MultiplicationOperator => {
+            Some(instruction.binary_operator())
+        }
+        _ if instruction.op() == Op::JumpBinaryFalse => Some(instruction.binary_operator_field()),
+        _ => None,
+    }
+}
+
+fn compile_string_hash_loop(
+    program: &ResidualProgram,
+    function_id: u32,
+    function: &Function,
+) -> Option<JsJitArtifact> {
+    if !function_candidate(function, &program.atoms) {
+        // The string-hash matcher has already checked the bytecode shape; the
+        // regular candidate guard still enforces activation and size limits.
+        return None;
+    }
+    let mut flags = settings::builder();
+    flags.set("opt_level", "speed").ok()?;
+    let isa_builder = cranelift_native::builder().ok()?;
+    let isa = isa_builder.finish(settings::Flags::new(flags)).ok()?;
+    let mut signature = ir::Signature::new(isa.default_call_conv());
+    signature.params.push(AbiParam::new(isa.pointer_type()));
+    signature.params.push(AbiParam::new(isa.pointer_type()));
+    signature.params.push(AbiParam::new(types::I32));
+    signature.params.push(AbiParam::new(isa.pointer_type()));
+    signature.params.push(AbiParam::new(isa.pointer_type()));
+    signature.returns.push(AbiParam::new(types::F64));
+    let mut native =
+        ir::Function::with_name_signature(UserFuncName::user(0x5155_454e, function_id), signature);
+    let mut builder_context = FunctionBuilderContext::new();
+    let mut builder = FunctionBuilder::new(&mut native, &mut builder_context);
+    let entry = builder.create_block();
+    builder.append_block_params_for_function_params(entry);
+    builder.switch_to_block(entry);
+    let units = builder.block_params(entry)[0];
+    let length = builder.block_params(entry)[1];
+    let ascii = builder.block_params(entry)[2];
+    let interrupt = builder.block_params(entry)[3];
+    let status = builder.block_params(entry)[4];
+    let length = builder
+        .ins()
+        .load(isa.pointer_type(), ir::MemFlagsData::trusted(), length, 0);
+    let length = builder.ins().fcvt_from_uint(types::F64, length);
+    let index_variable = builder.declare_var(types::F64);
+    builder.def_var(index_variable, length);
+    let hash_variable = builder.declare_var(types::I32);
+    let hash = builder.ins().iconst(types::I32, 5381);
+    builder.def_var(hash_variable, hash);
+    let counter_variable = builder.declare_var(types::I32);
+    let zero = builder.ins().iconst(types::I32, 0);
+    builder.def_var(counter_variable, zero);
+    let header = builder.create_block();
+    let body = builder.create_block();
+    let load_character = builder.create_block();
+    let load_ascii_character = builder.create_block();
+    let load_wide_character = builder.create_block();
+    let zero_character = builder.create_block();
+    let join_character = builder.create_block();
+    let character = builder.append_block_param(join_character, types::I32);
+    let normal_exit = builder.create_block();
+    let interrupt_exit = builder.create_block();
+    let interrupt_status = builder.append_block_param(interrupt_exit, isa.pointer_type());
+    builder.ins().jump(header, &[]);
+
+    builder.switch_to_block(header);
+    let index = builder.use_var(index_variable);
+    let zero_number = builder.ins().f64const(Ieee64::with_bits(0.0f64.to_bits()));
+    let more = builder.ins().fcmp(FloatCC::GreaterThan, index, zero_number);
+    builder.ins().brif(more, body, &[], normal_exit, &[]);
+
+    builder.switch_to_block(body);
+    let index = builder.use_var(index_variable);
+    let in_range = builder.ins().fcmp(FloatCC::LessThan, index, length);
+    builder
+        .ins()
+        .brif(in_range, load_character, &[], zero_character, &[]);
+
+    builder.switch_to_block(load_character);
+    let index = builder.use_var(index_variable);
+    let index = builder.ins().fcvt_to_sint_sat(isa.pointer_type(), index);
+    let is_ascii =
+        builder
+            .ins()
+            .icmp_imm_u(cranelift_codegen::ir::condcodes::IntCC::Equal, ascii, 1);
+    builder.ins().brif(
+        is_ascii,
+        load_ascii_character,
+        &[],
+        load_wide_character,
+        &[],
+    );
+
+    builder.switch_to_block(load_ascii_character);
+    let address = builder.ins().iadd(units, index);
+    let code_unit = builder
+        .ins()
+        .load(types::I8, ir::MemFlagsData::trusted(), address, 0);
+    let code_unit = builder.ins().uextend(types::I32, code_unit);
+    builder
+        .ins()
+        .jump(join_character, &[ir::BlockArg::Value(code_unit)]);
+
+    builder.switch_to_block(load_wide_character);
+    let index = builder.use_var(index_variable);
+    let index = builder.ins().fcvt_to_sint_sat(isa.pointer_type(), index);
+    let byte_offset = builder.ins().ishl_imm_u(index, 1);
+    let address = builder.ins().iadd(units, byte_offset);
+    let code_unit = builder
+        .ins()
+        .load(types::I16, ir::MemFlagsData::trusted(), address, 0);
+    let code_unit = builder.ins().uextend(types::I32, code_unit);
+    builder
+        .ins()
+        .jump(join_character, &[ir::BlockArg::Value(code_unit)]);
+
+    builder.switch_to_block(zero_character);
+    let zero_character = builder.ins().iconst(types::I32, 0);
+    builder
+        .ins()
+        .jump(join_character, &[ir::BlockArg::Value(zero_character)]);
+
+    builder.switch_to_block(join_character);
+    let hash = builder.use_var(hash_variable);
+    let multiplier = builder.ins().iconst(types::I32, 33);
+    let hash = builder.ins().imul(hash, multiplier);
+    let hash = builder.ins().bxor(hash, character);
+    builder.def_var(hash_variable, hash);
+    let index = builder.use_var(index_variable);
+    let stride = builder
+        .ins()
+        .f64const(Ieee64::with_bits(919.0f64.to_bits()));
+    let index = builder.ins().fsub(index, stride);
+    builder.def_var(index_variable, index);
+    let counter = builder.use_var(counter_variable);
+    let counter = builder.ins().iadd_imm_s(counter, 1);
+    builder.def_var(counter_variable, counter);
+    let interval = builder.ins().band_imm_u(counter, 1023);
+    let should_poll =
+        builder
+            .ins()
+            .icmp_imm_u(cranelift_codegen::ir::condcodes::IntCC::Equal, interval, 0);
+    let poll = builder.create_block();
+    let continue_loop = builder.create_block();
+    builder
+        .ins()
+        .brif(should_poll, poll, &[], continue_loop, &[]);
+    builder.switch_to_block(poll);
+    let requested = builder
+        .ins()
+        .atomic_load(types::I8, ir::MemFlagsData::trusted(), interrupt);
+    let cancelled = builder.ins().icmp_imm_u(
+        cranelift_codegen::ir::condcodes::IntCC::NotEqual,
+        requested,
+        0,
+    );
+    let return_loop = builder.create_block();
+    builder.ins().brif(
+        cancelled,
+        interrupt_exit,
+        &[ir::BlockArg::Value(status)],
+        return_loop,
+        &[],
+    );
+    builder.switch_to_block(return_loop);
+    builder.ins().jump(continue_loop, &[]);
+    builder.switch_to_block(continue_loop);
+    builder.ins().jump(header, &[]);
+
+    builder.switch_to_block(normal_exit);
+    let hash = builder.use_var(hash_variable);
+    let result = builder.ins().fcvt_from_sint(types::F64, hash);
+    let complete = builder.ins().iconst(types::I32, 1);
+    builder
+        .ins()
+        .store(ir::MemFlagsData::trusted(), complete, status, 0);
+    builder.ins().return_(&[result]);
+    builder.switch_to_block(interrupt_exit);
+    let interrupted = builder.ins().iconst(types::I32, 0);
+    builder.ins().store(
+        ir::MemFlagsData::trusted(),
+        interrupted,
+        interrupt_status,
+        0,
+    );
+    let no_result = builder.ins().f64const(Ieee64::with_bits(0.0f64.to_bits()));
+    builder.ins().return_(&[no_result]);
+    builder.seal_all_blocks();
+    builder.finalize(isa.frontend_config());
+    let mut context = cranelift_codegen::Context::for_function(native);
+    let compiled = context
+        .compile(
+            &*isa,
+            &mut cranelift_codegen::control::ControlPlane::default(),
+        )
+        .ok()?;
+    if !compiled.buffer.relocs().is_empty() {
+        return None;
+    }
+    let code = compiled.code_buffer().to_vec();
+    if code.is_empty() || code.len() > MAX_CODE_BYTES {
+        return None;
+    }
+    Some(JsJitArtifact {
+        code,
+        params: 1,
+        result: JsJitResultKind::StringHashLoop,
+    })
 }
 
 pub(super) fn has_numeric_loop_candidate(function: &Function) -> bool {
@@ -1976,7 +2339,9 @@ fn comparison(
     registers: &[cranelift_frontend::Variable],
     strings: &[Option<StringJitRegister>],
 ) -> Option<ir::Value> {
-    let relation = super::operations::NumberRelation::from_operator(instruction.binary_operator())?;
+    let relation = super::operations::NumberRelation::from_operator(instruction_binary_operator(
+        instruction,
+    )?)?;
     let code = match relation {
         super::operations::NumberRelation::LessThan => FloatCC::LessThan,
         super::operations::NumberRelation::LessEqual => FloatCC::LessThanOrEqual,
