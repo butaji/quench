@@ -2226,6 +2226,18 @@ pub(super) struct CompiledJsFunction {
 #[derive(Clone, Copy)]
 enum CompiledJsEntry {
     Number(unsafe extern "C" fn(*const f64) -> f64),
+    NumberInterruptible(
+        unsafe extern "C" fn(*const f64, *const std::sync::atomic::AtomicBool, *mut u32) -> f64,
+    ),
+    StringHashLoop(
+        unsafe extern "C" fn(
+            *const u8,
+            *const usize,
+            u32,
+            *const std::sync::atomic::AtomicBool,
+            *mut u32,
+        ) -> f64,
+    ),
     StringReturnPc(unsafe extern "C" fn(*const f64) -> u32),
     Boolean(unsafe extern "C" fn(*const f64) -> u32),
 }
@@ -2249,6 +2261,38 @@ impl CompiledJsFunction {
                     )
                 };
                 (CompiledJsEntry::Number(entry), Vec::new())
+            }
+            super::js_compiled::JsJitResultKind::NumberInterruptible => {
+                // SAFETY: the loop compiler emits the matching guarded ABI and
+                // writes completion status before every return.
+                let entry = unsafe {
+                    std::mem::transmute::<
+                        *mut u8,
+                        unsafe extern "C" fn(
+                            *const f64,
+                            *const std::sync::atomic::AtomicBool,
+                            *mut u32,
+                        ) -> f64,
+                    >(code.pointer)
+                };
+                (CompiledJsEntry::NumberInterruptible(entry), Vec::new())
+            }
+            super::js_compiled::JsJitResultKind::StringHashLoop => {
+                // SAFETY: the string hash loop compiler emits the matching
+                // code-unit pointer, length, interrupt, and status ABI.
+                let entry = unsafe {
+                    std::mem::transmute::<
+                        *mut u8,
+                        unsafe extern "C" fn(
+                            *const u8,
+                            *const usize,
+                            u32,
+                            *const std::sync::atomic::AtomicBool,
+                            *mut u32,
+                        ) -> f64,
+                    >(code.pointer)
+                };
+                (CompiledJsEntry::StringHashLoop(entry), Vec::new())
             }
             super::js_compiled::JsJitResultKind::StringReturnPc(return_constants) => {
                 // SAFETY: the static-string compiler emits `fn(*const f64) -> u32`.
@@ -2284,7 +2328,11 @@ impl CompiledJsFunction {
         self.params
     }
 
-    pub(super) fn call(&self, arguments: &[f64]) -> CompiledJsResult {
+    pub(super) fn call(
+        &self,
+        arguments: &[f64],
+        interrupt: &std::sync::atomic::AtomicBool,
+    ) -> Option<CompiledJsResult> {
         #[cfg(test)]
         self.native_entries
             .set(self.native_entries.get().saturating_add(1));
@@ -2293,16 +2341,48 @@ impl CompiledJsFunction {
         unsafe {
             match self.entry {
                 CompiledJsEntry::Number(entry) => {
-                    CompiledJsResult::Number(entry(arguments.as_ptr()))
+                    Some(CompiledJsResult::Number(entry(arguments.as_ptr())))
                 }
+                CompiledJsEntry::NumberInterruptible(entry) => {
+                    let mut completed = 0_u32;
+                    let result = entry(arguments.as_ptr(), interrupt, &mut completed);
+                    (completed != 0).then_some(CompiledJsResult::Number(result))
+                }
+                CompiledJsEntry::StringHashLoop(_) => None,
                 CompiledJsEntry::StringReturnPc(entry) => {
-                    CompiledJsResult::StringReturnPc(entry(arguments.as_ptr()))
+                    Some(CompiledJsResult::StringReturnPc(entry(arguments.as_ptr())))
                 }
                 CompiledJsEntry::Boolean(entry) => {
-                    CompiledJsResult::Boolean(entry(arguments.as_ptr()) != 0)
+                    Some(CompiledJsResult::Boolean(entry(arguments.as_ptr()) != 0))
                 }
             }
         }
+    }
+
+    fn call_string_hash_loop(
+        &self,
+        units: crate::vm::wtf16::Units<'_>,
+        interrupt: &std::sync::atomic::AtomicBool,
+    ) -> Option<CompiledJsResult> {
+        #[cfg(test)]
+        self.native_entries
+            .set(self.native_entries.get().saturating_add(1));
+        let CompiledJsEntry::StringHashLoop(entry) = self.entry else {
+            return None;
+        };
+        let mut completed = 0_u32;
+        let (units_ptr, length, ascii) = match units {
+            crate::vm::wtf16::Units::Ascii(bytes) => (bytes.as_ptr(), bytes.len(), 1),
+            crate::vm::wtf16::Units::Wide(units) => (units.as_ptr().cast::<u8>(), units.len(), 0),
+        };
+        // SAFETY: `units` remains borrowed for the duration of the native call;
+        // the generated code selects the matching byte or UTF-16 load width.
+        let result = unsafe { entry(units_ptr, &length, ascii, interrupt, &mut completed) };
+        (completed != 0).then_some(CompiledJsResult::Number(result))
+    }
+
+    fn is_string_hash_loop(&self) -> bool {
+        matches!(self.entry, CompiledJsEntry::StringHashLoop(_))
     }
 
     pub(super) fn string_constant_for_return(&self, return_pc: u32) -> Option<u32> {
@@ -6237,8 +6317,7 @@ impl<H: Host> Vm<H> {
         self.js_tier_runs()
             && program.kind != crate::bytecode::ProgramKind::Wasm
             && program
-                .functions
-                .get(function as usize)
+                .function_get(function as usize)
                 .is_some_and(|body| super::js_compiled::function_candidate(body, program))
             && !self.programs.js_tier_declined(id, function)
     }
@@ -6270,9 +6349,23 @@ impl<H: Host> Vm<H> {
         if tier.is_none() && !super::js_compiled::function_candidate(function, program) {
             return None;
         }
+        let numeric_loop_candidate = super::js_compiled::has_numeric_loop_candidate(function);
 
         let params = usize::from(function.params);
         let registers = self.frames[frame].registers.get(..params)?;
+        let string_hash_candidate =
+            super::js_compiled::has_string_hash_loop_candidate(program, function)
+                && params == 1
+                && self.js_jit_string_hash_guard()
+                && matches!(self.heap.get(registers[0]), Some(Cell::String(_)));
+        let string_hash_units = if string_hash_candidate {
+            let Some(Cell::String(string)) = self.heap.get(registers[0]) else {
+                unreachable!("guarded JIT string argument changed")
+            };
+            Some(string.units())
+        } else {
+            None
+        };
         let mut arguments: smallvec::SmallVec<[f64; 8]> = smallvec::SmallVec::new();
         let mut numeric = true;
         for value in registers {
@@ -6291,7 +6384,9 @@ impl<H: Host> Vm<H> {
 
         let compiled = match tier {
             Some(super::program_store::JsTierState::Compiled(compiled)) => {
-                if !numeric {
+                if (!numeric && !compiled.is_string_hash_loop())
+                    || (compiled.is_string_hash_loop() && string_hash_units.is_none())
+                {
                     return None;
                 }
                 compiled
@@ -6300,10 +6395,12 @@ impl<H: Host> Vm<H> {
             Some(super::program_store::JsTierState::Hot { .. })
             | Some(super::program_store::JsTierState::PromotionPending)
             | None => {
-                if !self
-                    .programs
-                    .note_js_function_entry(program_id, function_id, numeric)
-                    || !numeric
+                if !self.programs.note_js_function_entry(
+                    program_id,
+                    function_id,
+                    numeric,
+                    (numeric && numeric_loop_candidate) || string_hash_units.is_some(),
+                ) || (!numeric && string_hash_units.is_none())
                 {
                     return None;
                 }
@@ -6349,7 +6446,13 @@ impl<H: Host> Vm<H> {
             self.programs
                 .record_js_jit_native_entry(program_id, function_id);
         }
-        match compiled.call(&arguments) {
+        let result = if compiled.is_string_hash_loop() {
+            compiled
+                .call_string_hash_loop(string_hash_units?, self.execution_interrupt.atomic_flag())?
+        } else {
+            compiled.call(&arguments, self.execution_interrupt.atomic_flag())?
+        };
+        match result {
             CompiledJsResult::Number(value) => {
                 let last_pc = function.code.len().checked_sub(1)?;
                 let terminal = function.code.get(last_pc)?.as_wide();
@@ -6383,6 +6486,16 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    fn js_jit_string_hash_guard(&self) -> bool {
+        let Some(atom) = self.lookup_atom("charCodeAt") else {
+            return false;
+        };
+        let Some(method) = self.own_property(self.string_proto, atom) else {
+            return false;
+        };
+        self.is_current_realm_native(method, Native::StringCharCodeAt)
+    }
+
     /// Call an already-promoted JavaScript tier before the generic path pushes
     /// a callee frame. The native subset is pure and has a guarded Number ABI;
     /// misses stay on the ordinary frame path.
@@ -6392,6 +6505,7 @@ impl<H: Host> Vm<H> {
         program: &ResidualProgram,
         function_id: u32,
         arguments: &[Value],
+        interrupt: &std::sync::atomic::AtomicBool,
     ) -> Option<Value> {
         if cfg!(any(
             feature = "profile-aggregate",
@@ -6419,7 +6533,7 @@ impl<H: Host> Vm<H> {
             programs.record_js_jit_entry(program_id, function_id, true);
             programs.record_js_jit_native_entry(program_id, function_id);
         }
-        match compiled.call(&numeric_arguments) {
+        match compiled.call(&numeric_arguments, interrupt)? {
             CompiledJsResult::Number(value) => Some(Value::number(value)),
             CompiledJsResult::Boolean(value) => {
                 Some(if value { Value::TRUE } else { Value::FALSE })
