@@ -643,7 +643,9 @@ impl<H: Host> Vm<H> {
                 .iter()
                 .map(|job| job.promise),
         );
-        roots.extend(self.realm.jobs.iter().flat_map(PendingJob::roots));
+        for job in &self.realm.jobs {
+            job.push_roots(&mut roots);
+        }
         roots.extend(self.realm.template_objects.values().copied());
         roots.extend(
             self.realm
@@ -967,17 +969,19 @@ impl<H: Host> Vm<H> {
         program: &ResidualProgram,
         job: PendingJob,
     ) -> Result<(), JsError> {
-        let roots = job.roots();
+        let start = self.active_call_roots.len();
+        job.push_roots(&mut self.active_call_roots);
         let previous = std::mem::replace(&mut self.native_microtask_running, true);
-        let result = self.with_call_roots(roots, |vm| match job {
+        let result = match job {
             PendingJob::Call {
                 callback,
                 this,
                 args,
-            } => vm.call_value(program, callback, this, &args).map(|_| ()),
-            PendingJob::Reaction(reaction) => vm.run_promise_reaction(program, reaction),
-        });
+            } => self.call_value(program, callback, this, &args).map(|_| ()),
+            PendingJob::Reaction(reaction) => self.run_promise_reaction(program, reaction),
+        };
         self.native_microtask_running = previous;
+        self.active_call_roots.truncate(start);
         result
     }
 

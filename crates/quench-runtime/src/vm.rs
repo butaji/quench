@@ -457,14 +457,18 @@ enum PendingJob {
 }
 
 impl PendingJob {
-    fn roots(&self) -> Vec<Value> {
+    /// Pushes the values the job holds onto `roots`, which keep them alive while it runs.
+    fn push_roots(&self, roots: &mut Vec<Value>) {
         match self {
             Self::Call {
                 callback,
                 this,
                 args,
-            } => [*callback, *this].into_iter().chain(args.iter().copied()).collect(),
-            Self::Reaction(job) => vec![job.realm, job.handler, job.next, job.value],
+            } => {
+                roots.extend([*callback, *this]);
+                roots.extend_from_slice(args);
+            }
+            Self::Reaction(job) => roots.extend([job.realm, job.handler, job.next, job.value]),
         }
     }
 }
