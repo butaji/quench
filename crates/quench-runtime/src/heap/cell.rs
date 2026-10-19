@@ -1536,6 +1536,9 @@ struct ObjectExtras {
     /// A `length` descriptor has been recorded for this object, as a non-writable array
     /// length is; never cleared.
     length_descriptor: bool,
+    /// Any property descriptor beside the shape has been recorded for this object
+    /// (`Vm::insert_descriptor`); never cleared.
+    side_descriptors: bool,
 }
 /// How structured serialization treats an object (HTML [[Serializable]] and
 /// [[Transferable]] host objects).
@@ -2039,6 +2042,15 @@ impl Object {
     }
     pub(crate) fn mark_length_descriptor(&mut self) {
         self.extras_mut().length_descriptor = true;
+    }
+    /// Whether the VM's descriptor table may hold an entry for this object: lookups of an
+    /// object without one need not probe the table.
+    #[inline(always)]
+    pub(crate) fn has_side_descriptors(&self) -> bool {
+        self.extras().is_some_and(|extras| extras.side_descriptors)
+    }
+    pub(crate) fn mark_side_descriptors(&mut self) {
+        self.extras_mut().side_descriptors = true;
     }
     pub(crate) fn is_raw_json(&self) -> bool {
         self.extras().is_some_and(|extras| extras.raw_json)

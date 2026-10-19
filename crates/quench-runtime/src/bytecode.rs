@@ -1777,7 +1777,7 @@ impl Function {
     }
 
     /// Whether an activation is fully described by the function's static layout: a nested,
-    /// non-arrow, non-derived function whose parameters all live in registers, with no rest
+    /// non-derived function whose parameters all live in registers, with no rest
     /// array, self binding, `arguments` object, parameter-scope `arguments` error, inherited
     /// `with` scope or observable implicit bindings. Such a frame needs only its storage sized
     /// (cleared when no root map lets the collector skip stale registers), its parameters
@@ -1797,8 +1797,10 @@ impl Function {
                 .filter(|entry| entry.local < self.params)
                 .count();
             // Plain but for an `arguments` binding.
+            // An arrow's `this` is its environment's, which its activation binds
+            // (`Vm::lexical_activation_this`); one reaching `super` keeps its frame.
             let ordinary = self.parent.is_some()
-                && !self.is_arrow
+                && !(self.is_arrow && self.super_home_atom.is_some())
                 && !self.derived_constructor
                 && !self.rest
                 && self.self_binding_slot.is_none()

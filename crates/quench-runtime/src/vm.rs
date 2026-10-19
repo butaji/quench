@@ -1205,17 +1205,26 @@ impl ShapeFacts {
     /// Some property of the chain was a `SLOT_GETTER` accessor, so a raw slot read must check
     /// whether the slot holds a getter rather than a value.
     const SLOT_GETTERS: u8 = 1 << 1;
+    /// Some property of the chain was made an accessor. Only a descriptor transition makes
+    /// one, as an add carries data attributes, so a chain without this fact holds data
+    /// properties alone and a read of any slot is its value.
+    const ACCESSORS: u8 = 1 << 2;
 
     fn extended_by(self, transition: ShapeTransition) -> Self {
         let introduced = |fact: bool, bit: u8| if fact { bit } else { 0 };
+        let descriptor = |test: fn(ShapeAttributes) -> bool| {
+            matches!(transition, ShapeTransition::Descriptor { attributes, .. } if test(attributes))
+        };
         Self(
             self.0
                 | introduced(transition.introduces_gc_roots(), Self::MAY_HAVE_GC_ROOTS)
-                | introduced(
-                    matches!(transition, ShapeTransition::Descriptor { attributes, .. } if attributes.slot_getter()),
-                    Self::SLOT_GETTERS,
-                ),
+                | introduced(descriptor(ShapeAttributes::slot_getter), Self::SLOT_GETTERS)
+                | introduced(descriptor(|attributes| attributes.accessor), Self::ACCESSORS),
         )
+    }
+
+    fn accessors(self) -> bool {
+        self.0 & Self::ACCESSORS != 0
     }
 
     fn may_have_gc_roots(self) -> bool {

@@ -470,7 +470,7 @@ impl<H: Host> Vm<H> {
             if !data.is_extensible()
                 || data.is_module_namespace()
                 || data.deferred_module().is_some()
-                || self.descriptors.contains_key(&(current, key))
+                || (data.has_side_descriptors() && self.descriptors.contains_key(&(current, key)))
             {
                 return None;
             }
@@ -530,12 +530,12 @@ impl<H: Host> Vm<H> {
             }
             let shape = data.shape();
             if let Some(slot) = self.property_shape_slot(shape, key) {
-                if self.slot_attributes(data, slot)?.accessor {
+                if self.shape_may_have_accessors(shape) && self.slot_attributes(data, slot)?.accessor {
                     return None;
                 }
                 return self.heap.property_get(data, slot).map(Some);
             }
-            if self.descriptors.contains_key(&(current, key)) {
+            if data.has_side_descriptors() && self.descriptors.contains_key(&(current, key)) {
                 return None;
             }
             let proto = data.proto();
