@@ -102,6 +102,9 @@ impl<H: Host> Vm<H> {
                 self.profile.index_get(ARRAY_INDEX_GET_DENSE);
                 return Ok(value);
             }
+            if let Some(value) = self.absent_array_element(object, key) {
+                return Ok(value);
+            }
             if let Some(value) = self.typed_array_get(object, index) {
                 return Ok(value);
             }
@@ -288,6 +291,47 @@ impl<H: Host> Vm<H> {
             .get(index)
             .copied()
             .filter(|value| !value.is_deleted())
+    }
+
+    /// `base[key]` for a non-negative integer key that names no element of a plain array
+    /// and that nothing on its prototype chain holds: `undefined`, as [[Get]] finds it. An
+    /// object on the chain holds the index as an element of an array, as a property keyed by
+    /// the index's canonical atom (none exists without one, `lookup_array_index_atom`), or
+    /// through exotic behaviour, where this declines.
+    pub(super) fn absent_array_element(&self, base: Value, key: Value) -> Option<Value> {
+        let index = usize::try_from(key.as_int()?).ok()?;
+        let elements = self.heap.array(base)?.elements();
+        if elements.get(index).is_some_and(|value| !value.is_deleted()) {
+            return None;
+        }
+        let atom = self.lookup_array_index_atom(index).map(PropertyKey::string);
+        let mut current = base;
+        loop {
+            let data = self.object_data(current)?;
+            if data.has_indexed_descriptors()
+                || data.is_arguments_object()
+                || data.boxed_primitive().is_some()
+                || data.is_module_namespace()
+                || data.deferred_module().is_some()
+                || self.heap.sparse_length(current).is_some()
+                || atom.is_some_and(|key| self.property_shape_slot(data.shape(), key).is_some())
+            {
+                return None;
+            }
+            match self.heap.array(current) {
+                Some(array) if array.elements().get(index).is_some_and(|value| !value.is_deleted()) => {
+                    return None;
+                }
+                Some(_) => {}
+                None => {
+                    self.heap.ordinary_object(current)?;
+                }
+            }
+            current = data.proto();
+            if current.is_null() {
+                return Some(Value::UNDEFINED);
+            }
+        }
     }
 
     /// The present dense element `base[key]` for a non-negative integer key: a data property.
