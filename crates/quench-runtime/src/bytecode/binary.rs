@@ -1,6 +1,6 @@
 use super::{
     AtomTable, BindingSite, Constant, DispatchClass, EvalBinding, EvalBindingDeclaration,
-    EvalBindingLocation, FieldBase, FieldSite, Function, Handler, InitialRegister, Instr,
+    EvalBindingLocation, FieldBase, FieldSite, Function, FunctionSlot, Handler, InitialRegister, Instr,
     LexicalBindingKind, LocalRegister, MethodSite, ModuleImportBinding, ModuleImportName,
     ModuleImportNameKind, ModuleLinkPlan, ModuleReexport, ModuleReexportKind, ModuleRequest,
     LiteralStep, ModuleRequestPhase, ObjectSite, Op, RegExpLiteralSite, SourcePosition, Superinstruction,
@@ -827,7 +827,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
         source,
         atoms,
         constants,
-        functions,
+        functions: functions.into_iter().map(FunctionSlot::compiled).collect(),
         cache_sites,
         method_sites,
         method_arguments,
@@ -836,6 +836,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
         regexp_literal_sites,
         literal_templates,
         superinstructions,
+        replay: None,
     };
     program.validate()?;
     Ok(program)
