@@ -4492,8 +4492,8 @@ lane_handler! {
         // A site calling a native takes the native handler from now on, which hands any other
         // callee back.
         if matches!(
-            vm.heap.get(callee),
-            Some(Cell::Function {
+            vm.heap.function(callee),
+            Some(FunctionRecord {
                 kind: FunctionKind::Native(_),
                 ..
             })
@@ -4567,8 +4567,8 @@ lane_handler! {
         let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
         if (returns && vm.lane_stack.activations.is_empty())
             || !matches!(
-                vm.heap.get(callee),
-                Some(Cell::Function {
+                vm.heap.function(callee),
+                Some(FunctionRecord {
                     kind: FunctionKind::Native(Native::Array),
                     ..
                 })
@@ -4671,8 +4671,8 @@ lane_handler! {
     fn lane_native_call<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         if !matches!(
-            vm.heap.get(r.get(i.b)),
-            Some(Cell::Function {
+            vm.heap.function(r.get(i.b)),
+            Some(FunctionRecord {
                 kind: FunctionKind::Native(_) | FunctionKind::NumericUser(..),
                 ..
             })
@@ -4680,8 +4680,8 @@ lane_handler! {
             sibling!(lane_frame_call::<H>, r, ip, Carried::SCRIPT)
         }
         if matches!(
-            vm.heap.get(r.get(i.b)),
-            Some(Cell::Function {
+            vm.heap.function(r.get(i.b)),
+            Some(FunctionRecord {
                 kind: FunctionKind::Native(Native::FunctionCall),
                 ..
             })
@@ -4697,8 +4697,8 @@ lane_handler! {
             return exit(ip);
         }
         let receiver = r.get(i.c);
-        let value = match vm.heap.get(r.get(i.b)) {
-            Some(Cell::Function {
+        let value = match vm.heap.function(r.get(i.b)) {
+            Some(FunctionRecord {
                 kind: FunctionKind::Native(Native::ArrayPush),
                 ..
             }) => {
@@ -4711,7 +4711,7 @@ lane_handler! {
                 };
                 vm.array_push_dense(receiver, args)
             }
-            Some(Cell::Function {
+            Some(FunctionRecord {
                 kind: FunctionKind::Native(Native::ArrayPop),
                 ..
             }) => vm.array_pop_dense(receiver),
@@ -4766,12 +4766,12 @@ fn lane_call_native<H: Host>(
     let vm = unsafe { vm(cx) };
     let callee = r.get(i.b);
     // A native the lane admits, or a numeric function, which its own executor runs.
-    let native = match vm.heap.get(callee) {
-        Some(Cell::Function {
+    let native = match vm.heap.function(callee) {
+        Some(FunctionRecord {
             kind: FunctionKind::Native(native),
             ..
         }) if native.runs_from_lane() => Some(*native),
-        Some(Cell::Function {
+        Some(FunctionRecord {
             kind: FunctionKind::NumericUser(..),
             ..
         }) => None,
@@ -5023,8 +5023,8 @@ fn lane_forwarded_construction<H: Host>(
         None => lane_cached_field(cx, code, function, method.apply.0, method.apply.1)?,
     };
     if !matches!(
-        vm.heap.get(apply),
-        Some(Cell::Function {
+        vm.heap.function(apply),
+        Some(FunctionRecord {
             kind: FunctionKind::Native(Native::FunctionApply),
             ..
         })
@@ -5073,7 +5073,7 @@ fn forwarded_resolution<H: Host>(
     }
     let prototype = vm.heap.object_record(plan.prototype)?;
     let (method_slot, found) = data_slot(prototype, method.method.0)?;
-    let Some(Cell::Function { object, .. }) = vm.heap.get(function) else {
+    let Some(FunctionRecord { object, .. }) = vm.heap.function(function) else {
         return None;
     };
     if found != function || vm.shape_slot(object.shape(), method.apply.0).is_some() {
@@ -5104,7 +5104,7 @@ fn lane_resolved_forwarding<H: Host>(cx: *mut LaneContext<H>, callee: Value) -> 
     let prototype = vm.heap.object_record(plan.prototype)?;
     // SAFETY: the plan's proof keeps the prototype's shape, which holds the slot.
     let function = unsafe { vm.heap.property_get_shaped(prototype, usize::from(resolution.method_slot)) }?;
-    let Some(Cell::Function { object, .. }) = vm.heap.get(function) else {
+    let Some(FunctionRecord { object, .. }) = vm.heap.function(function) else {
         return None;
     };
     if object.shape() != resolution.method_shape || object.proto() != resolution.apply_holder {
@@ -5114,8 +5114,8 @@ fn lane_resolved_forwarding<H: Host>(cx: *mut LaneContext<H>, callee: Value) -> 
     // SAFETY: the epoch the plan holds under keeps the holder's shape, which holds the slot.
     let apply = unsafe { vm.heap.property_get_shaped(holder, usize::from(resolution.apply_slot)) }?;
     if !matches!(
-        vm.heap.get(apply),
-        Some(Cell::Function {
+        vm.heap.function(apply),
+        Some(FunctionRecord {
             kind: FunctionKind::Native(Native::FunctionApply),
             ..
         })
@@ -5158,8 +5158,8 @@ fn lane_forward_activation<H: Host>(
     }
     let vm = unsafe { vm(cx) };
     if !matches!(
-        vm.heap.get(r.get(i.b)),
-        Some(Cell::Function {
+        vm.heap.function(r.get(i.b)),
+        Some(FunctionRecord {
             kind: FunctionKind::Native(Native::FunctionApply),
             ..
         })

@@ -1,5 +1,5 @@
 use super::{
-    ArrayObject, Cell, EnvironmentBindings, EnvironmentSlot, EnvironmentSlotState, EnvironmentSlots, Heap, Object,
+    ArrayObject, Cell, EnvironmentBindings, FunctionRecord, EnvironmentSlot, EnvironmentSlotState, EnvironmentSlots, Heap, Object,
 };
 use crate::bytecode::Atom;
 use crate::value::{HeapReference, Value};
@@ -197,7 +197,40 @@ impl Heap {
             // SAFETY: a direct-array Value names an initialized array record.
             return Some(unsafe { self.array_records.get_live(record_id) });
         }
+        if let Some(record_id) = value.direct_function_index() {
+            // SAFETY: a direct-function Value names an initialized function record.
+            return Some(&unsafe { self.function_records.get_live(record_id) }.object);
+        }
         self.get(value)?.object()
+    }
+
+    /// A function, in its record or in a slot (`FunctionRecord`).
+    #[inline(always)]
+    pub(crate) fn function(&self, value: Value) -> Option<&FunctionRecord> {
+        if let Some(record_id) = value.direct_function_index() {
+            // SAFETY: a direct-function Value names an initialized function record.
+            return Some(unsafe { self.function_records.get_live(record_id) });
+        }
+        match self.get(value)? {
+            Cell::Function(function) => Some(function),
+            _ => None,
+        }
+    }
+
+    /// `function`, mutably, past the write barrier.
+    pub(crate) fn function_mut(&mut self, value: Value) -> Option<&mut FunctionRecord> {
+        if let Some(record_id) = value.direct_function_index() {
+            // SAFETY: direct-function Values name live records; `&mut self` is exclusive.
+            return Some(unsafe { self.function_records.get_live_mut(record_id) });
+        }
+        match self.get_mut(value)? {
+            Cell::Function(function) => Some(function),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn is_function_value(&self, value: Value) -> bool {
+        self.function(value).is_some()
     }
 
     #[inline(always)]
@@ -209,6 +242,10 @@ impl Heap {
         if let Some(record_id) = value.direct_array_index() {
             // SAFETY: direct-array Values name live records; `&mut self` is exclusive.
             return Some(unsafe { self.array_records.get_live_mut(record_id) });
+        }
+        if let Some(record_id) = value.direct_function_index() {
+            // SAFETY: direct-function Values name live records; `&mut self` is exclusive.
+            return Some(&mut unsafe { self.function_records.get_live_mut(record_id) }.object);
         }
         self.get_mut(value)?.object_mut()
     }
@@ -224,6 +261,12 @@ impl Heap {
         if let Some(record_id) = value.direct_array_index() {
             // SAFETY: direct-array Values name live records; `&mut self` is exclusive.
             return Some(unsafe { self.array_records.get_live_mut_storing(record_id, stored) });
+        }
+        if let Some(record_id) = value.direct_function_index() {
+            // SAFETY: direct-function Values name live records; `&mut self` is exclusive.
+            return Some(
+                &mut unsafe { self.function_records.get_live_mut_storing(record_id, stored) }.object,
+            );
         }
         self.get_mut(value)?.object_mut()
     }
@@ -262,6 +305,7 @@ impl Heap {
         let Self {
             object_records,
             array_records,
+            function_records,
             slots,
             properties,
             ..
@@ -275,6 +319,10 @@ impl Heap {
             HeapReference::ArrayRecord(record_id) => unsafe {
                 array_records.get_live_mut(record_id)
             },
+            // SAFETY: direct-function Values name live records; `&mut self` is exclusive.
+            HeapReference::FunctionRecord(record_id) => {
+                &mut unsafe { function_records.get_live_mut(record_id) }.object
+            }
             HeapReference::LegacySlot(index) => {
                 slots.get_mut(index as usize)?.cell.as_mut()?.object_mut()?
             }
@@ -361,6 +409,9 @@ impl Heap {
         Some(self.object_record_by_id(record_id))
     }
 
+    /// The object of an object or array record, whose field reads the field cache answers
+    /// by shape alone. A function's restricted properties (`AtomClass`) need its kind, so a
+    /// function record, like a slot, takes the cell-aware path.
     pub(crate) fn record_object(&self, reference: HeapReference) -> Option<&Object> {
         match reference {
             HeapReference::ObjectRecord(record_id) => Some(self.object_record_by_id(record_id)),
@@ -368,7 +419,7 @@ impl Heap {
                 // SAFETY: the tagged Value identifies an initialized live array record.
                 Some(unsafe { self.array_records.get_live(record_id) })
             }
-            HeapReference::LegacySlot(_) => None,
+            HeapReference::FunctionRecord(_) | HeapReference::LegacySlot(_) => None,
         }
     }
 
@@ -391,6 +442,9 @@ impl Heap {
         if let Some(record_id) = value.direct_array_index() {
             return self.array_records.is_live(record_id);
         }
+        if let Some(record_id) = value.direct_function_index() {
+            return self.function_records.is_live(record_id);
+        }
         self.get(value).is_some()
     }
 
@@ -399,6 +453,8 @@ impl Heap {
             .for_each_live(|record_id, _| visit(Value::direct_object(record_id)));
         self.array_records
             .for_each_live(|record_id, _| visit(Value::direct_array(record_id)));
+        self.function_records
+            .for_each_live(|record_id, _| visit(Value::direct_function(record_id)));
         for (index, slot) in self.slots.iter().enumerate() {
             if slot.is_live() {
                 visit(Value::heap(index as u32));
