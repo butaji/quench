@@ -1,0 +1,32 @@
+richards: WIN (Quench worst 2496 KiB, best other 3216 KiB)
+  quench             2320    2404    2404 KiB
+  quench --jit       2492    2496    2496 KiB
+  qjs                3216    3324    3424 KiB
+  node --jitless    44424   44508   44640 KiB
+  node              55652   55732   56404 KiB
+  bun no-JIT        22612   22772   22860 KiB
+  bun               39396   39528   39888 KiB
+deltablue: WIN (Quench worst 3028 KiB, best other 3700 KiB)
+  quench             2804    2896    3028 KiB
+  quench --jit       2828    2892    2892 KiB
+  qjs                3700    3712    3900 KiB
+  node --jitless    46464   46556   46736 KiB
+  node              77416   92516   95996 KiB
+  bun no-JIT        23416   23500   24124 KiB
+  bun               44020   44640   44952 KiB
+crypto: WIN (Quench worst 3240 KiB, best other 3420 KiB)
+  quench             3080    3080    3080 KiB
+  quench --jit       3240    3240    3240 KiB
+  qjs                3420    3428    3548 KiB
+  node --jitless    44760   44860   44928 KiB
+  node              59536   59916   61152 KiB
+  bun no-JIT        23772   24064   25052 KiB
+  bun               47288   47940   48188 KiB
+raytrace: WIN (Quench worst 2952 KiB, best other 3352 KiB)
+  quench             2828    2832    2916 KiB
+  quench --jit       2952    2952    2952 KiB
+  qjs                3352    3432    3476 KiB
+  node --jitless    49496   51248   51300 KiB
+  node              74120   74608   75388 KiB
+  bun no-JIT        24288   24524   25600 KiB
+  bun               53456   54276   56436 KiB
