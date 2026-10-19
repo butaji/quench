@@ -202,9 +202,10 @@ impl GenerationalPacing {
 }
 
 /// Production pacing, memory-first on the owner's direction of 2026-10-17 (TOD-123): young
-/// collections every eighth of a live set (at least 384 weight; from half a live set: V8-v7
-/// max RSS EarleyBoyer 9136 -> 8324 KiB, RegExp 8460 -> 7940, the rest within noise, static
-/// x86_64, 2026-10-18), a full collection once the old
+/// collections every sixty-fourth of a live set (at least 384 weight; from an eighth, with
+/// read-only pages released after every collection: V8-v7 max RSS RegExp 7244-7500 -> 6852
+/// KiB, EarleyBoyer 7792-8000 -> 9040-9160, the floor-bound fixtures unchanged, static
+/// x86_64 unbolted, 2026-10-18; RSS is this lane's only criterion), a full collection once the old
 /// generation has doubled or one live set of allocation has passed since the last one, and,
 /// when more than half of young allocations survive, full collections with one live set
 /// between them, probing survival with a minor collection every fourth one. The minimums are
@@ -213,7 +214,7 @@ impl GenerationalPacing {
 /// per package (semver 27.6 -> 45.2, typescript-eslint 188 -> 226); the owner reaffirmed
 /// memory-first on 2026-10-18.
 pub(super) const PRODUCTION_PACING: GenerationalPacing = GenerationalPacing {
-    young: Ratio::new(1, 8),
+    young: Ratio::new(1, 64),
     minimum_young: MEMORY_FIRST_MINIMUM_ALLOCATION,
     old_growth: Ratio::new(1, 1),
     minimum_old_growth: MEMORY_FIRST_MINIMUM_ALLOCATION,

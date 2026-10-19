@@ -707,6 +707,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "fsBindingReaddirRecursive" (0) => crate::modules::fs_directory_shared_vm::readdir_recursive,
         method "fsPromisesGlobInitialize" (0) => crate::modules::fs_shared_vm::initialize_promises_glob_policy,
         method "fsReadStreamInitialize" (0) => crate::modules::fs_shared_vm::initialize_read_stream,
+        method "fsModuleInitialize" (0) => crate::modules::fs_shared_vm::initialize_module,
         method "perfHooksObserversInitialize" (0) => crate::modules::perf_hooks::initialize_observers,
         method "fsLibraryPolicyInitialize" (0) => crate::modules::fs_shared_vm::initialize_library_policy,
         method "fsWriteStreamInitialize" (0) => crate::modules::fs_shared_vm::write_stream::initialize,
@@ -1021,9 +1022,13 @@ impl quench_runtime::Host for NodeHost {
         self.shared_state.borrow().async_hooks.tracks_promises()
     }
 
-    /// The code a long run touched once (start-up, set-up, one-time paths) leaves the
-    /// resident set at each full collection; what still runs comes back from the page cache.
-    fn after_full_collection(&mut self) {
+    /// The code a run touched since the last collection leaves the resident set after each
+    /// collection, and before a full one; what still runs comes back from the page cache. The
+    /// collector's code and the program's are then resident one at a time, and the program's
+    /// only as much of it as ran since the last collection (V8-v7 RegExp max RSS, static
+    /// x86_64 unbolted, 2026-10-18: 7244-7500 -> 7136-7328 KiB at every collection's end;
+    /// Splay 39800 -> 38988 KiB with the release before full collections).
+    fn at_collection_boundary(&mut self) {
         crate::host::resident_pages::release_read_only_pages();
     }
 
@@ -1068,12 +1073,14 @@ impl quench_runtime::Host for NodeHost {
         bytes: &[u8],
         mode: quench_runtime::ExecutionMode,
     ) -> Result<quench_runtime::WasmModule, String> {
-        let module = quench_wasm::Engine::new()
-            .compile(bytes)
+        // Decoding with validation, and lowering, each run once per module and touch code
+        // the other does not: each phase's pages leave the resident set before the next
+        // phase, and the module runs.
+        let module = quench_wasm::Engine::new().compile(bytes);
+        crate::host::resident_pages::release_read_only_pages();
+        let module = module
             .and_then(|module| module.lower_shared_module_for(mode))
             .map_err(|error| error.to_string());
-        // Decoding, validation and lowering run once per module; their code leaves the
-        // resident set before the module runs.
         crate::host::resident_pages::release_read_only_pages();
         module
     }
