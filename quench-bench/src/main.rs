@@ -1895,6 +1895,11 @@ fn quench_engine(options: &Options) -> EngineSpec {
         environment.insert("QUENCH_WASM_JIT_STATS".into(), "1".into());
         environment.insert("QUENCH_JS_JIT_STATS".into(), "1".into());
     }
+    if options.jit_wasm_root.is_some() {
+        if let Ok(value) = std::env::var("QUENCH_WASM_JIT_ROOT_OPT_LEVEL") {
+            environment.insert("QUENCH_WASM_JIT_ROOT_OPT_LEVEL".into(), value);
+        }
+    }
     if options.jit_wasm_selective {
         environment.insert("QUENCH_WASM_JIT_SELECTIVE".into(), "1".into());
     }
