@@ -1199,6 +1199,12 @@ impl RegisterRoots {
         Self { covered, masks: std::cell::OnceCell::new() }
     }
 
+    /// The bytes of the masks derived so far (`QUENCH_MEMORY`).
+    #[cfg(feature = "profile-memory")]
+    pub(crate) fn bytes(&self) -> usize {
+        self.masks.get().map_or(0, |masks| size_of_val(&**masks))
+    }
+
     pub(crate) fn covered(&self) -> bool {
         self.covered
     }
