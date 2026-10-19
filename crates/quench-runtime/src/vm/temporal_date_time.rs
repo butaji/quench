@@ -136,7 +136,7 @@ impl<H: Host> Vm<H> {
             )?;
         }
         self.set_builtin_named(p, prototype, "equals", Native::TemporalPlainDateTimeEquals)?;
-        if let Some(symbol) = self.well_known_symbols.get("toStringTag").copied() {
+        if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::ToStringTag) {
             let value = self
                 .heap
                 .alloc(Cell::String("Temporal.PlainDateTime".into()));

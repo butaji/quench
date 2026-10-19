@@ -547,7 +547,7 @@ impl<H: Host> Vm<H> {
         weak_map_proto: Value,
         weak_set_proto: Value,
     ) -> Result<(), JsError> {
-        let iterator = self.well_known_symbols["iterator"];
+        let iterator = self.well_known_symbols[WellKnownSymbol::Iterator];
         for (prototype, method) in [(map_proto, "entries"), (set_proto, "values")] {
             let atom = self.intern_atom(method);
             let method = self
@@ -580,7 +580,7 @@ impl<H: Host> Vm<H> {
     }
 
     fn install_map_species(&mut self, map: Value) -> Result<(), JsError> {
-        let Some(species) = self.well_known_symbols.get("species").copied() else {
+        let Some(species) = self.well_known_symbols.get(WellKnownSymbol::Species) else {
             return Ok(());
         };
         let getter = self.native_value(Native::ArraySpecies);
@@ -602,7 +602,7 @@ impl<H: Host> Vm<H> {
     }
 
     fn install_set_species(&mut self, set: Value) -> Result<(), JsError> {
-        let Some(species) = self.well_known_symbols.get("species").copied() else {
+        let Some(species) = self.well_known_symbols.get(WellKnownSymbol::Species) else {
             return Ok(());
         };
         let getter = self.native_value(Native::SetSpeciesGetter);

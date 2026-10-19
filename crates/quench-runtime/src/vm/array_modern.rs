@@ -244,7 +244,7 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, "Array.from map function is not callable".into()));
         }
         let map_this = args.get(2).copied().unwrap_or(Value::UNDEFINED);
-        let iterator_symbol = self.well_known_symbols.get("iterator").copied();
+        let iterator_symbol = self.well_known_symbols.get(WellKnownSymbol::Iterator);
         let iterator_method = iterator_symbol
             .map(|symbol| self.get_index(p, source, symbol))
             .transpose()?
