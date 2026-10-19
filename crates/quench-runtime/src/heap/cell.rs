@@ -1475,6 +1475,9 @@ struct ObjectExtras {
     stack_data: Option<StackData>,
     /// An index-keyed property descriptor has been recorded for this object; never cleared.
     indexed_descriptors: bool,
+    /// A `length` descriptor has been recorded for this object, as a non-writable array
+    /// length is; never cleared.
+    length_descriptor: bool,
 }
 /// How structured serialization treats an object (HTML [[Serializable]] and
 /// [[Transferable]] host objects).
@@ -1950,6 +1953,12 @@ impl Object {
     }
     pub(crate) fn mark_indexed_descriptors(&mut self) {
         self.extras_mut().indexed_descriptors = true;
+    }
+    pub(crate) fn has_length_descriptor(&self) -> bool {
+        self.extras().is_some_and(|extras| extras.length_descriptor)
+    }
+    pub(crate) fn mark_length_descriptor(&mut self) {
+        self.extras_mut().length_descriptor = true;
     }
     pub(crate) fn is_raw_json(&self) -> bool {
         self.extras().is_some_and(|extras| extras.raw_json)
