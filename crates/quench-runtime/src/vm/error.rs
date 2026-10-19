@@ -139,6 +139,15 @@ impl JsError {
         Self(ErrorMessage { payload: Box::new(ErrorPayload { description: ErrorDescription::ExecutionTerminated, thrown: None, source_location: None }) })
     }
     /// A host termination is uncatchable, not a guest Error object or throw.
+    /// A JavaScript exception: thrown by guest code or raised as a JavaScript error, as
+    /// opposed to a Wasm exception, a trap, a link failure or a terminated execution.
+    pub fn is_javascript_exception(&self) -> bool {
+        matches!(
+            self.0.payload.description,
+            ErrorDescription::Text { .. } | ErrorDescription::DataClone(_)
+        )
+    }
+
     pub fn is_execution_terminated(&self)->bool { matches!(self.0.payload.description,ErrorDescription::ExecutionTerminated) }
 
     pub(crate) fn thrown(value: Value, message: String) -> Self {
