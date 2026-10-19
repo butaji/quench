@@ -3362,8 +3362,15 @@ impl<H: Host> Vm<H> {
     /// CreateIterResultObject: a fresh ordinary object whose `value` and `done` are data
     /// properties, laid out as the literal `{ value, done }`.
     pub(super) fn iterator_result(&mut self, value: Value, done: bool) -> Result<Value, JsError> {
-        let atoms = [self.intern_atom("value"), self.intern_atom("done")];
-        let shape = self.literal_shape(&atoms);
+        let shape = match self.iterator_result_shape {
+            Some(shape) => shape,
+            None => {
+                let atoms = [self.runtime_atoms.value, self.runtime_atoms.done];
+                let shape = self.literal_shape(&atoms);
+                self.iterator_result_shape = Some(shape);
+                shape
+            }
+        };
         let prototype = self.realm_object_prototype(self.realm.globals);
         Ok(self.heap.alloc_object_with_properties(
             prototype,
