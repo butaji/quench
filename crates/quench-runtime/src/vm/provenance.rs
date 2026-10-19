@@ -115,7 +115,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn set_function_debug_name(&mut self, function: Value, name: Atom) {
-        if matches!(self.heap.get(function), Some(Cell::Function { kind: FunctionKind::User(..) | FunctionKind::NumericUser(..), .. }))
+        if matches!(self.heap.function(function), Some(FunctionRecord { kind: FunctionKind::User(..) | FunctionKind::NumericUser(..), .. }))
             && self.original_function_name(function).is_some_and(|original| self.atom_units_equal_str(original, ""))
         {
             self.capture_function_name_atom(function, name);
@@ -124,7 +124,7 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn default_function_name_info(&self, function: Value, key: PropertyKey) -> bool {
         if !matches!(key, PropertyKey::String(atom) if self.atom_units_equal_str(atom, "name"))
-            || !matches!(self.heap.get(function), Some(Cell::Function { .. }))
+            || !self.heap.is_function_value(function)
         { return false; }
         let Some(object) = self.object_data(function) else { return false; };
         let (name, _, reconfigured) = shape_names(&self.shapes, object.shape());
@@ -135,7 +135,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn reconfigure_function_name(&mut self, function: Value, key: PropertyKey) {
-        if !matches!(self.heap.get(function), Some(Cell::Function { .. })) { return; }
+        if !self.heap.is_function_value(function) { return; }
         let Some(object) = self.object_data(function) else { return; };
         let (name, _, reconfigured) = shape_names(&self.shapes, object.shape());
         if name.is_none() { return; }
@@ -179,7 +179,7 @@ impl<H: Host> Vm<H> {
         while let Some(data) = self.object_data(object) {
             if self.proxy_parts(object).is_some() { return; }
             if self.own_property(object, atom).is_some() {
-                if matches!(self.heap.get(object), Some(Cell::Function { .. })) {
+                if self.heap.is_function_value(object) {
                     let (original, _, reconfigured) = shape_names(&self.shapes, data.shape());
                     let default = original.is_some() && if name { !reconfigured }
                         else { !shape_function_length_reconfigured(&self.shapes, data.shape()) };
@@ -208,7 +208,7 @@ impl<H: Host> Vm<H> {
     /// The source/debug name can differ from the public creation name: dynamic
     /// Function constructors expose "anonymous" while their source name is empty.
     pub(super) fn original_debug_name(&self, function: Value) -> Option<JsString> {
-        if let Some(Cell::Function { kind: FunctionKind::User(program, id) | FunctionKind::NumericUser(program, id), .. }) = self.heap.get(function) {
+        if let Some(FunctionRecord { kind: FunctionKind::User(program, id) | FunctionKind::NumericUser(program, id), .. }) = self.heap.function(function) {
             if self.programs.is_function_constructor_body(*program, *id) { return None; }
         }
         self.original_function_name(function).map(|name| self.atom_value(name))
@@ -296,7 +296,7 @@ impl<H: Host> Vm<H> {
         root: RootId,
     ) -> Result<Option<JsString>, JsError> {
         let value = self.embedding_value(root)?;
-        if !matches!(self.heap.get(value), Some(Cell::Function { kind, .. }) if !matches!(kind, FunctionKind::Native(Native::FunctionBoundCall)))
+        if !matches!(self.heap.function(value), Some(FunctionRecord { kind, .. }) if !matches!(kind, FunctionKind::Native(Native::FunctionBoundCall)))
         {
             return Ok(None);
         }
@@ -308,9 +308,7 @@ impl<H: Host> Vm<H> {
     /// A function's existing code kind and creation realm own its factory origin.
     /// Bound functions have no such ordinary-function constructor projection.
     fn function_factory_constructor(&self, value: Value) -> Option<Value> {
-        let Cell::Function { object, kind, .. } = self.heap.get(value)? else {
-            return None;
-        };
+        let FunctionRecord { realm, kind, .. } = self.heap.function(value)?;
         let intrinsic = match *kind {
             FunctionKind::User(program, id) | FunctionKind::NumericUser(program, id) => {
                 let program = self.programs.get(program)?;
@@ -328,7 +326,7 @@ impl<H: Host> Vm<H> {
         self.realm
             .intrinsics
             .function_constructors
-            .get(&(object.realm, intrinsic))
+            .get(&(*realm, intrinsic))
             .copied()
     }
 

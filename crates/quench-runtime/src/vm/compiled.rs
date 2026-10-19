@@ -917,8 +917,8 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
                         signature.results.first().copied(),
                     )
                 };
-                let same_program_function = match vm.heap.get(callee) {
-                    Some(Cell::Function {
+                let same_program_function = match vm.heap.function(callee) {
+                    Some(FunctionRecord {
                         kind: crate::heap::FunctionKind::User(target_program, function),
                         env,
                         ..
@@ -1418,8 +1418,8 @@ fn cached_direct_reference<H: Host>(
     if element != cache.target || vm.heap.weak_value(cache.target_weak) != Some(element) {
         return None;
     }
-    match vm.heap.get(element) {
-        Some(Cell::Function {
+    match vm.heap.function(element) {
+        Some(FunctionRecord {
             kind: crate::heap::FunctionKind::User(program, function),
             env,
             ..
@@ -1451,8 +1451,8 @@ fn reference_target_matches<H: Host>(
     env: Value,
 ) -> bool {
     matches!(
-        vm.heap.get(target),
-        Some(Cell::Function {
+        vm.heap.function(target),
+        Some(FunctionRecord {
             kind: crate::heap::FunctionKind::User(target_program, target_function),
             env: target_env,
             ..
@@ -6136,11 +6136,11 @@ impl<H: Host> Vm<H> {
         let Some(wrapper) = self.heap.environment_slot(instance_env, import_slot) else {
             return false;
         };
-        let Some(Cell::Function {
+        let Some(FunctionRecord {
             kind: FunctionKind::Native(Native::WasmHost),
             env: wrapper_env,
             ..
-        }) = self.heap.get(wrapper)
+        }) = self.heap.function(wrapper)
         else {
             return false;
         };
@@ -6263,8 +6263,8 @@ impl<H: Host> Vm<H> {
             && imported_name_is_emscripten_memcpy
             && super::wasm_js::emscripten_memcpy_raw_i32_enabled()
         {
-            match self.heap.get(callee) {
-                Some(Cell::Function {
+            match self.heap.function(callee) {
+                Some(FunctionRecord {
                     kind: FunctionKind::Native(Native::WasmHost),
                     env,
                     ..
@@ -6356,8 +6356,8 @@ impl<H: Host> Vm<H> {
                     return Ok(());
                 }
             }
-            let js_import = match self.heap.get(callee) {
-                Some(Cell::Function {
+            let js_import = match self.heap.function(callee) {
+                Some(FunctionRecord {
                     kind: FunctionKind::Native(Native::WasmHost),
                     env,
                     ..

@@ -1,4 +1,4 @@
-use super::{ArrayObject, Object};
+use super::{ArrayObject, FunctionRecord, Object};
 use crate::value::Value;
 use std::alloc::Layout;
 use std::alloc::{alloc, dealloc};
@@ -11,6 +11,7 @@ pub(super) type RecordId = u32;
 
 pub(super) type ObjectRecordSpace = RecordSpace<Object>;
 pub(super) type ArrayRecordSpace = RecordSpace<ArrayObject>;
+pub(super) type FunctionRecordSpace = RecordSpace<FunctionRecord>;
 
 const RECORDS_PER_BLOCK: usize = 1_024;
 const OCCUPANCY_WORD_BITS: usize = u64::BITS as usize;

@@ -287,8 +287,7 @@ impl<H: Host> Vm<H> {
         self.frames
             .iter()
             .for_each(|frame| reference(frame.program));
-        self.heap
-            .for_each_cell(|cell| cell.program_references(&mut reference));
+        self.heap.for_each_program_reference(&mut reference);
         let reclaimed = self.programs.reclaim_unreferenced(referenced);
         if reclaimed.is_empty() {
             return;

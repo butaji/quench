@@ -4351,11 +4351,9 @@ fn closure_identity_cache_rejects_reused_function_slots() {
     assert!(!vm.function_values.contains_key(&key));
     let mut reused = false;
     for _ in 0..allocation_bound {
-        let replacement = vm.heap.alloc(crate::heap::Cell::Function {
-            object: Box::new(crate::heap::FunctionObject {
-                object: Vm::<SilentHost>::empty_object(Value::NULL),
-                realm: Value::NULL,
-            }),
+        let replacement = vm.heap.alloc_function(crate::heap::FunctionRecord {
+            object: Vm::<SilentHost>::empty_object(Value::NULL),
+            realm: Value::NULL,
             kind: crate::heap::FunctionKind::User(key.0, key.1),
             env: Value::NULL,
         });
@@ -6310,7 +6308,7 @@ fn proxy_revocation_consumes_captured_ownership_and_preserves_kind() {
                     );
                     if owner != "proxy" {
                         assert!(
-                            matches!(vm.heap.get(revoke),Some(super::Cell::Function {env,..}) if env.is_null())
+                            matches!(vm.heap.function(revoke),Some(crate::heap::FunctionRecord {env,..}) if env.is_null())
                         );
                         assert_eq!(
                             vm.call_value(&program, revoke, Value::UNDEFINED, &[])

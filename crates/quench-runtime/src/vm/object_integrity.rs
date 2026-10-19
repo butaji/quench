@@ -709,10 +709,12 @@ impl<H: Host> Vm<H> {
         freeze: bool,
     ) -> Result<Value, JsError> {
         let source = args.first().copied().unwrap_or(Value::UNDEFINED);
-        if matches!(
-            self.heap.get(source),
-            Some(Cell::Proxy { .. } | Cell::TypedArray { .. } | Cell::Function { .. })
-        ) || self
+        if self.heap.is_function_value(source)
+            || matches!(
+                self.heap.get(source),
+                Some(Cell::Proxy { .. } | Cell::TypedArray { .. })
+            )
+            || self
             .object_data(source)
             .is_some_and(Object::is_module_namespace)
             || self.has_lazy_data_properties(source)
