@@ -6317,8 +6317,7 @@ impl<H: Host> Vm<H> {
         self.js_tier_runs()
             && program.kind != crate::bytecode::ProgramKind::Wasm
             && program
-                .functions
-                .get(function as usize)
+                .function_get(function as usize)
                 .is_some_and(|body| super::js_compiled::function_candidate(body, program))
             && !self.programs.js_tier_declined(id, function)
     }
