@@ -545,6 +545,52 @@ pub(super) fn is_direct_eval_call(call: &CallExpression<'_>) -> bool {
 
 struct DirectEvalFinder(bool);
 
+/// Whether a body (not its nested functions) may give the functions nested in it binding
+/// sites to resolve through: a direct eval, a `with` statement, or `delete` of a name.
+pub(super) fn body_may_bind_dynamically(
+    body: &[Statement<'_>],
+    expression: Option<&Expression<'_>>,
+) -> bool {
+    let mut finder = DynamicBindingFinder(false);
+    for statement in body {
+        finder.visit_statement(statement);
+    }
+    if let Some(expression) = expression {
+        finder.visit_expression(expression);
+    }
+    finder.0
+}
+
+struct DynamicBindingFinder(bool);
+
+impl<'a> Visit<'a> for DynamicBindingFinder {
+    fn visit_call_expression(&mut self, call: &oxc_ast::ast::CallExpression<'a>) {
+        if is_direct_eval_call(call) {
+            self.0 = true;
+        } else {
+            walk::walk_call_expression(self, call);
+        }
+    }
+
+    fn visit_with_statement(&mut self, _: &oxc_ast::ast::WithStatement<'a>) {
+        self.0 = true;
+    }
+
+    fn visit_unary_expression(&mut self, expression: &oxc_ast::ast::UnaryExpression<'a>) {
+        if expression.operator == oxc_syntax::operator::UnaryOperator::Delete
+            && matches!(expression.argument.without_parentheses(), Expression::Identifier(_))
+        {
+            self.0 = true;
+        } else {
+            walk::walk_unary_expression(self, expression);
+        }
+    }
+
+    fn visit_function(&mut self, _: &Function<'a>, _: ScopeFlags) {}
+
+    fn visit_arrow_function_expression(&mut self, _: &ArrowFunctionExpression<'a>) {}
+}
+
 impl<'a> Visit<'a> for DirectEvalFinder {
     fn visit_call_expression(&mut self, call: &oxc_ast::ast::CallExpression<'a>) {
         if is_direct_eval_call(call) {

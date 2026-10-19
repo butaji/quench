@@ -92,6 +92,14 @@ impl Compiler<'_> {
             &lexical_atoms,
             None,
         );
+        let binds_dynamically = dynamic_eval
+            || match &value.body {
+                oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) => {
+                    early::body_may_bind_dynamically(&body.statements, None)
+                }
+                body => early::body_may_bind_dynamically(&[], body.as_expression()),
+            };
+        self.dynamic_binding_scopes += u32::from(binds_dynamically);
         let mut function = FunctionCompiler::new(
             self,
             locals,
@@ -201,6 +209,7 @@ impl Compiler<'_> {
             initial_register: Default::default(),
         };
         self.functions.set(id, result);
+        self.dynamic_binding_scopes -= u32::from(binds_dynamically);
         self.record_function_exit(id);
         id
     }
