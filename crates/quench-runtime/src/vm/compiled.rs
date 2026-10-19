@@ -39,7 +39,6 @@ use cranelift_codegen::ir::{
     immediates::{Ieee32, Ieee64},
     types,
 };
-use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use std::cell::UnsafeCell;
 use std::rc::{Rc, Weak};
@@ -2227,6 +2226,10 @@ enum CompiledJsEntry {
             *mut u32,
         ) -> f64,
     ),
+    StringTransform {
+        entry: unsafe extern "C" fn(*const u8, usize, u32) -> u32,
+        transform: super::js_compiled::JsJitStringTransform,
+    },
     StringReturnPc(unsafe extern "C" fn(*const f64) -> u32),
     Boolean(unsafe extern "C" fn(*const f64) -> u32),
 }
@@ -2235,6 +2238,7 @@ pub(super) enum CompiledJsResult {
     Number(f64),
     StringReturnPc(u32),
     Boolean(bool),
+    StringTransform(super::js_compiled::JsJitStringTransform, bool),
 }
 
 impl CompiledJsFunction {
@@ -2283,6 +2287,18 @@ impl CompiledJsFunction {
                     >(code.pointer)
                 };
                 (CompiledJsEntry::StringHashLoop(entry), Vec::new())
+            }
+            super::js_compiled::JsJitResultKind::StringTransform(transform) => {
+                // SAFETY: the string transform compiler emits the matching code-unit ABI.
+                let entry = unsafe {
+                    std::mem::transmute::<*mut u8, unsafe extern "C" fn(*const u8, usize, u32) -> u32>(
+                        code.pointer,
+                    )
+                };
+                (
+                    CompiledJsEntry::StringTransform { entry, transform },
+                    Vec::new(),
+                )
             }
             super::js_compiled::JsJitResultKind::StringReturnPc(return_constants) => {
                 // SAFETY: the static-string compiler emits `fn(*const f64) -> u32`.
@@ -2344,6 +2360,7 @@ impl CompiledJsFunction {
                     (completed != 0).then_some(CompiledJsResult::Number(result))
                 }
                 CompiledJsEntry::StringHashLoop(_) => None,
+                CompiledJsEntry::StringTransform { .. } => None,
                 CompiledJsEntry::StringReturnPc(entry) => {
                     Some(CompiledJsResult::StringReturnPc(entry(arguments.as_ptr())))
                 }
@@ -2376,8 +2393,31 @@ impl CompiledJsFunction {
         (completed != 0).then_some(CompiledJsResult::Number(result))
     }
 
+    fn call_string_transform(
+        &self,
+        units: crate::vm::wtf16::Units<'_>,
+    ) -> Option<CompiledJsResult> {
+        #[cfg(test)]
+        self.native_entries
+            .set(self.native_entries.get().saturating_add(1));
+        let CompiledJsEntry::StringTransform { entry, transform } = self.entry else {
+            return None;
+        };
+        let (units_ptr, length, ascii) = match units {
+            crate::vm::wtf16::Units::Ascii(bytes) => (bytes.as_ptr(), bytes.len(), 1),
+            crate::vm::wtf16::Units::Wide(units) => (units.as_ptr().cast::<u8>(), units.len(), 0),
+        };
+        // SAFETY: `units` remains borrowed while native code reads its prefix.
+        let transformed = unsafe { entry(units_ptr, length, ascii) } != 0;
+        Some(CompiledJsResult::StringTransform(transform, transformed))
+    }
+
     fn is_string_hash_loop(&self) -> bool {
         matches!(self.entry, CompiledJsEntry::StringHashLoop(_))
+    }
+
+    fn is_string_transform(&self) -> bool {
+        matches!(self.entry, CompiledJsEntry::StringTransform { .. })
     }
 
     pub(super) fn string_constant_for_return(&self, return_pc: u32) -> Option<u32> {
@@ -6034,14 +6074,6 @@ fn link(bytes: &mut [u8], body: usize, call: &Call, callee: usize) -> Option<()>
 /// Code alignment for each compiled function.
 const FUNCTION_ALIGNMENT: usize = 64;
 
-fn target_isa(opt_level: &str) -> Option<std::sync::Arc<dyn cranelift_codegen::isa::TargetIsa>> {
-    let mut flags = settings::builder();
-    flags.set("opt_level", opt_level).ok()?;
-    flags.set("enable_verifier", "false").ok()?;
-    let builder = cranelift_native::builder().ok()?;
-    builder.finish(settings::Flags::new(flags)).ok()
-}
-
 impl<H: Host> Vm<H> {
     /// Invalidate artifact-local indirect-call certificates when VM state that
     /// native code cannot inspect directly changes: table contents or heap IDs.
@@ -6082,14 +6114,22 @@ impl<H: Host> Vm<H> {
         let function_id = self.frames[frame].function;
         let function = program.functions.get(function_id as usize)?;
         let tier = self.programs.js_tier(program_id, function_id);
+        let rejected_entry = if self.programs.js_jit_diagnostics_enabled()
+            && matches!(tier.as_ref(), Some(super::program_store::JsTierState::Rejected { .. }))
+        {
+            self.programs
+                .note_js_rejected_entry(program_id, function_id)
+        } else {
+            None
+        };
         if matches!(
             tier.as_ref(),
-            Some(super::program_store::JsTierState::Unsupported)
-        ) && !self.programs.js_jit_diagnostics_enabled()
+            Some(
+                super::program_store::JsTierState::Unsupported
+                    | super::program_store::JsTierState::Rejected { .. }
+            )
+        ) && (!self.programs.js_jit_diagnostics_enabled() || rejected_entry.is_none())
         {
-            return None;
-        }
-        if tier.is_none() && !super::js_compiled::function_candidate(function, &program.atoms) {
             return None;
         }
         let numeric_loop_candidate = super::js_compiled::has_numeric_loop_candidate(function);
@@ -6138,6 +6178,43 @@ impl<H: Host> Vm<H> {
         } else {
             None
         };
+        let string_transform = super::js_compiled::string_transform_candidate(program, function)
+            .filter(|kind| self.js_jit_string_transform_guard(*kind))
+            .filter(|_| {
+                matches!(
+                    first_argument.and_then(|value| self.heap.get(value)),
+                    Some(Cell::String(_))
+                )
+            });
+        let string_transform_units = string_transform.and_then(|_| {
+            let Some(Cell::String(string)) = first_argument.and_then(|value| self.heap.get(value))
+            else {
+                return None;
+            };
+            Some(string.units())
+        });
+        if let Some((entries, reason)) = rejected_entry {
+            self.programs
+                .record_js_jit_entry(program_id, function_id, numeric);
+            self.programs
+                .record_js_jit_rejection(program_id, function_id, reason, entries);
+            return None;
+        }
+        if tier.is_none() && !super::js_compiled::function_candidate(function, &program.atoms) {
+            let reason = super::js_compiled::candidate_rejection_reason(program, function_id);
+            let report_entries = self
+                .programs
+                .reject_js_function(program_id, function_id, reason);
+            if let Some(entries) = report_entries
+                && self.programs.js_jit_diagnostics_enabled()
+            {
+                self.programs
+                    .record_js_jit_entry(program_id, function_id, numeric);
+                self.programs
+                    .record_js_jit_rejection(program_id, function_id, reason, entries);
+            }
+            return None;
+        }
         if tier.is_none() && !function.wide.is_empty() && !numeric {
             return None;
         }
@@ -6148,14 +6225,18 @@ impl<H: Host> Vm<H> {
 
         let compiled = match tier {
             Some(super::program_store::JsTierState::Compiled(compiled)) => {
-                if (!numeric && !compiled.is_string_hash_loop())
+                if (!numeric && !compiled.is_string_hash_loop() && !compiled.is_string_transform())
                     || (compiled.is_string_hash_loop() && string_hash_units.is_none())
+                    || (compiled.is_string_transform() && string_transform_units.is_none())
                 {
                     return None;
                 }
                 compiled
             }
-            Some(super::program_store::JsTierState::Unsupported) => return None,
+            Some(
+                super::program_store::JsTierState::Unsupported
+                    | super::program_store::JsTierState::Rejected { .. },
+            ) => return None,
             Some(super::program_store::JsTierState::Hot { .. })
             | Some(super::program_store::JsTierState::PromotionPending)
             | None => {
@@ -6164,8 +6245,11 @@ impl<H: Host> Vm<H> {
                     function_id,
                     numeric,
                     (numeric && (numeric_loop_candidate || field_argument.is_some()))
-                        || string_hash_units.is_some(),
-                ) || (!numeric && string_hash_units.is_none())
+                        || string_hash_units.is_some()
+                        || string_transform_units.is_some(),
+                ) || (!numeric
+                    && string_hash_units.is_none()
+                    && string_transform_units.is_none())
                 {
                     return None;
                 }
@@ -6174,9 +6258,21 @@ impl<H: Host> Vm<H> {
                     .programs
                     .js_jit_diagnostics_enabled()
                     .then(std::time::Instant::now);
-                let compiled = super::js_compiled::compile(&residual, function_id)
+                let artifact = super::js_compiled::compile(&residual, function_id);
+                let artifact_failed = artifact.is_none();
+                let compile_rejection = artifact_failed.then(|| {
+                    super::js_compiled::candidate_rejection_reason(&residual, function_id)
+                });
+                let compiled = artifact
                     .and_then(CompiledJsFunction::from_artifact)
                     .map(Rc::new);
+                let compile_rejection = if artifact_failed {
+                    compile_rejection
+                } else if compiled.is_none() {
+                    Some("executable-memory-allocation-failed")
+                } else {
+                    None
+                };
                 let installed =
                     self.programs
                         .install_js_tier(program_id, function_id, compiled.clone());
@@ -6194,6 +6290,11 @@ impl<H: Host> Vm<H> {
                         u64::try_from(compile_started.elapsed().as_nanos()).unwrap_or(u64::MAX),
                         code_bytes,
                         installed,
+                        if !installed && compiled.is_some() {
+                            Some("shared-code-cache-budget-exhausted")
+                        } else {
+                            compile_rejection
+                        },
                     );
                 }
                 if !installed {
@@ -6214,6 +6315,8 @@ impl<H: Host> Vm<H> {
         let result = if compiled.is_string_hash_loop() {
             compiled
                 .call_string_hash_loop(string_hash_units?, self.execution_interrupt.atomic_flag())?
+        } else if compiled.is_string_transform() {
+            compiled.call_string_transform(string_transform_units?)?
         } else {
             compiled.call(&arguments, self.execution_interrupt.atomic_flag())?
         };
@@ -6248,6 +6351,36 @@ impl<H: Host> Vm<H> {
                     if value { Value::TRUE } else { Value::FALSE },
                 ))
             }
+            CompiledJsResult::StringTransform(transform, matched) => {
+                let last_pc = function.code.len().checked_sub(1)?;
+                let terminal = function.code.get(last_pc)?.as_wide();
+                if terminal.op() != Op::Return {
+                    return None;
+                }
+                let value = if !matched {
+                    first_argument?
+                } else {
+                    let Some(Cell::String(string)) = first_argument
+                        .and_then(|value| self.heap.get(value))
+                        .cloned()
+                    else {
+                        return None;
+                    };
+                    let units = string.units();
+                    match transform {
+                        super::js_compiled::JsJitStringTransform::PrefixUnderscore => {
+                            let mut output = Vec::with_capacity(units.len() + 1);
+                            output.push(u16::from(b'_'));
+                            output.extend(units.iter());
+                            self.string_from_units(&output).ok()?
+                        }
+                        super::js_compiled::JsJitStringTransform::RemoveLeadingUnderscore => self
+                            .string_from_unit_run(units.slice(1..units.len()))
+                            .ok()?,
+                    }
+                };
+                Some((last_pc, terminal.register_a(), value))
+            }
         }
     }
 
@@ -6259,6 +6392,23 @@ impl<H: Host> Vm<H> {
             return false;
         };
         self.is_current_realm_native(method, Native::StringCharCodeAt)
+    }
+
+    fn js_jit_string_transform_guard(
+        &self,
+        transform: super::js_compiled::JsJitStringTransform,
+    ) -> bool {
+        if !self.js_jit_string_hash_guard() {
+            return false;
+        }
+        if transform == super::js_compiled::JsJitStringTransform::PrefixUnderscore {
+            return true;
+        }
+        let Some(atom) = self.lookup_atom("substr") else {
+            return false;
+        };
+        self.own_property(self.string_proto, atom)
+            .is_some_and(|method| self.is_current_realm_native(method, Native::StringSubstr))
     }
 
     /// Call an already-promoted JavaScript tier before the generic path pushes
@@ -6286,7 +6436,7 @@ impl<H: Host> Vm<H> {
             super::program_store::JsTierState::Compiled(compiled) => compiled,
             _ => return None,
         };
-        if compiled.field_argument().is_some() {
+        if compiled.field_argument().is_some() || compiled.is_string_transform() {
             return None;
         }
         let params = usize::from(function.params);
@@ -6310,6 +6460,7 @@ impl<H: Host> Vm<H> {
                 let constant = compiled.string_constant_for_return(return_pc)?;
                 programs.constant(program_id, constant as usize)
             }
+            CompiledJsResult::StringTransform(_, _) => return None,
         }
     }
 
@@ -6557,7 +6708,7 @@ impl<H: Host> Vm<H> {
         if diagnostics_enabled {
             eprintln!("QUENCH_WASM_JIT_OPT_LEVEL {opt_level}");
         }
-        let isa = target_isa(opt_level)?;
+        let isa = super::jit_backend::target_isa(opt_level, false)?;
         // The full plan of a callable function, derived again where needed.
         let plan = |index: usize| analysis.plan(index, &callable, &mut memory_slot.clone());
         let mut reference_site_ids = vec![Vec::new(); count];
@@ -6976,7 +7127,7 @@ impl<H: Host> Vm<H> {
                         );
                     }
                     self.programs.set_compiled(program, compiled.clone());
-                    compiled
+                    self.programs.compiled(program).flatten()
                 } else if jit_wasm_selective_enabled()
                     && self
                         .programs
@@ -7012,7 +7163,7 @@ impl<H: Host> Vm<H> {
                         );
                     }
                     self.programs.set_compiled(program, compiled.clone());
-                    compiled
+                    self.programs.compiled(program).flatten()
                 }
             }
         };

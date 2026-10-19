@@ -15,6 +15,7 @@ struct JsJitCounters {
     promotions: u64,
     compile_attempts: u64,
     compile_successes: u64,
+    rejection_reason: Option<&'static str>,
     compile_ns: u64,
     native_entries: u64,
     code_bytes: usize,
@@ -28,12 +29,19 @@ pub(super) const JS_JIT_PROMOTION_LOOKS: [(u8, u8); 4] =
     [(32, 31), (64, 59), (128, 113), (255, 219)];
 const JS_JIT_MAX_FUNCTIONS: usize = 64;
 const JS_JIT_MAX_TRACKED_FUNCTIONS: usize = 256;
+const JS_JIT_MAX_REJECTED_FUNCTIONS: usize = 4096;
+const JS_JIT_REJECTION_DIAGNOSTIC_ENTRIES: u64 = 32;
 const JS_JIT_MAX_MAPPED_BYTES: usize = 64 * 1024;
 /// Promote a Wasm function only after repeated interpreter entries. Wasm
 /// signatures and bytecode are fixed, so this is a call-hotness gate.
 pub(super) const WASM_JIT_PROMOTION_ENTRIES: u8 = 32;
 const WASM_JIT_MAX_TIER_ROOTS: usize = 32;
 const WASM_JIT_MAX_TIER_MAPPED_BYTES: usize = 4 * 1024 * 1024;
+/// One process-local admission ceiling shared by JS and Wasm tiers. The
+/// language-specific limits above are additional policy caps, not separate
+/// executable-memory pools.
+const JIT_MAX_ARTIFACTS: usize = JS_JIT_MAX_FUNCTIONS + WASM_JIT_MAX_TIER_ROOTS;
+const JIT_MAX_MAPPED_BYTES: usize = WASM_JIT_MAX_TIER_MAPPED_BYTES;
 
 #[derive(Clone)]
 pub(super) enum JsTierState {
@@ -41,6 +49,10 @@ pub(super) enum JsTierState {
     /// A hot function whose promotion observation had a non-numeric argument;
     /// compile on its next numeric entry.
     PromotionPending,
+    Rejected {
+        entries: u64,
+        reason: &'static str,
+    },
     Unsupported,
     Compiled(Rc<super::compiled::CompiledJsFunction>),
 }
@@ -165,10 +177,14 @@ pub(crate) struct ProgramStore {
     unchecked_reclaimable: usize,
     /// VM-local bounds for the optional JavaScript tier cache.
     js_jit_tracked_functions: usize,
+    js_jit_rejected_functions: usize,
     js_jit_compiled_functions: usize,
     js_jit_mapped_bytes: usize,
     wasm_jit_tier_roots: usize,
     wasm_jit_tier_mapped_bytes: usize,
+    /// Shared JS/Wasm code-cache budget counters.
+    jit_compiled_artifacts: usize,
+    jit_mapped_bytes: usize,
     /// Allocated only when opt-in JavaScript JIT diagnostics are requested.
     js_jit_diagnostics: Option<FxHashMap<(u32, u32), JsJitCounters>>,
 }
@@ -182,10 +198,13 @@ impl Default for ProgramStore {
             reclaim_passes: 0,
             unchecked_reclaimable: 0,
             js_jit_tracked_functions: 0,
+            js_jit_rejected_functions: 0,
             js_jit_compiled_functions: 0,
             js_jit_mapped_bytes: 0,
             wasm_jit_tier_roots: 0,
             wasm_jit_tier_mapped_bytes: 0,
+            jit_compiled_artifacts: 0,
+            jit_mapped_bytes: 0,
             js_jit_diagnostics: std::env::var_os("QUENCH_JS_JIT_STATS")
                 .is_some_and(|value| value == "1")
                 .then(FxHashMap::default),
@@ -260,6 +279,8 @@ impl ProgramStore {
         let mut reclaimed = Vec::new();
         let mut reclaimed_tiers = (0usize, 0usize, 0usize);
         let mut reclaimed_wasm_tiers = (0usize, 0usize);
+        let mut reclaimed_wasm_baselines = (0usize, 0usize);
+        let mut reclaimed_rejected = 0usize;
         let mut pending = 0;
         for (index, slot) in self.programs.iter_mut().enumerate() {
             let Some(entry) = slot else { continue };
@@ -270,7 +291,16 @@ impl ProgramStore {
                 pending += 1;
                 continue;
             }
-            reclaimed_tiers.0 += entry.js_tiers.len();
+            reclaimed_tiers.0 += entry
+                .js_tiers
+                .values()
+                .filter(|state| !matches!(state, JsTierState::Rejected { .. }))
+                .count();
+            reclaimed_rejected += entry
+                .js_tiers
+                .values()
+                .filter(|state| matches!(state, JsTierState::Rejected { .. }))
+                .count();
             for state in entry.js_tiers.values() {
                 if let JsTierState::Compiled(compiled) = state {
                     reclaimed_tiers.1 += 1;
@@ -288,12 +318,19 @@ impl ProgramStore {
                 .values()
                 .filter(|state| state.compiled.is_some())
                 .count();
+            if let Some(compiled) = entry.compiled.as_ref().and_then(Option::as_ref) {
+                reclaimed_wasm_baselines.0 += 1;
+                reclaimed_wasm_baselines.1 += compiled.mapped_bytes();
+            }
             *slot = None;
             reclaimed.extend(ProgramId::from_index(index));
         }
         self.js_jit_tracked_functions = self
             .js_jit_tracked_functions
             .saturating_sub(reclaimed_tiers.0);
+        self.js_jit_rejected_functions = self
+            .js_jit_rejected_functions
+            .saturating_sub(reclaimed_rejected);
         self.js_jit_compiled_functions = self
             .js_jit_compiled_functions
             .saturating_sub(reclaimed_tiers.1);
@@ -304,6 +341,18 @@ impl ProgramStore {
         self.wasm_jit_tier_mapped_bytes = self
             .wasm_jit_tier_mapped_bytes
             .saturating_sub(reclaimed_wasm_tiers.1);
+        let reclaimed_artifacts = reclaimed_tiers
+            .1
+            .saturating_add(reclaimed_wasm_tiers.0)
+            .saturating_add(reclaimed_wasm_baselines.0);
+        let reclaimed_bytes = reclaimed_tiers
+            .2
+            .saturating_add(reclaimed_wasm_tiers.1)
+            .saturating_add(reclaimed_wasm_baselines.1);
+        self.jit_compiled_artifacts = self
+            .jit_compiled_artifacts
+            .saturating_sub(reclaimed_artifacts);
+        self.jit_mapped_bytes = self.jit_mapped_bytes.saturating_sub(reclaimed_bytes);
         self.unchecked_reclaimable = pending;
         if !reclaimed.is_empty() {
             let programs = &self.programs;
@@ -319,10 +368,13 @@ impl ProgramStore {
         self.programs.clear();
         self.unchecked_reclaimable = 0;
         self.js_jit_tracked_functions = 0;
+        self.js_jit_rejected_functions = 0;
         self.js_jit_compiled_functions = 0;
         self.js_jit_mapped_bytes = 0;
         self.wasm_jit_tier_roots = 0;
         self.wasm_jit_tier_mapped_bytes = 0;
+        self.jit_compiled_artifacts = 0;
+        self.jit_mapped_bytes = 0;
         if let Some(diagnostics) = &mut self.js_jit_diagnostics {
             diagnostics.clear();
         }
@@ -799,6 +851,28 @@ impl ProgramStore {
         id: ProgramId,
         compiled: Option<Rc<super::compiled::CompiledProgram>>,
     ) {
+        if let Some(previous_bytes) = self
+            .entry(id)
+            .and_then(|entry| entry.compiled.as_ref())
+            .and_then(Option::as_ref)
+            .map(|previous| previous.mapped_bytes())
+        {
+            self.jit_compiled_artifacts = self.jit_compiled_artifacts.saturating_sub(1);
+            self.jit_mapped_bytes = self
+                .jit_mapped_bytes
+                .saturating_sub(previous_bytes);
+        }
+        let compiled = compiled.filter(|compiled| {
+            self.jit_compiled_artifacts < JIT_MAX_ARTIFACTS
+                && self
+                    .jit_mapped_bytes
+                    .saturating_add(compiled.mapped_bytes())
+                    <= JIT_MAX_MAPPED_BYTES
+        });
+        if let Some(compiled) = &compiled {
+            self.jit_compiled_artifacts += 1;
+            self.jit_mapped_bytes += compiled.mapped_bytes();
+        }
         if let Some(entry) = self.entry_mut(id) {
             entry.compiled = Some(compiled);
         }
@@ -932,6 +1006,8 @@ impl ProgramStore {
                 .wasm_jit_tier_mapped_bytes
                 .saturating_add(bytes)
                 > WASM_JIT_MAX_TIER_MAPPED_BYTES
+            || self.jit_compiled_artifacts >= JIT_MAX_ARTIFACTS
+            || self.jit_mapped_bytes.saturating_add(bytes) > JIT_MAX_MAPPED_BYTES
         {
             return false;
         }
@@ -941,6 +1017,8 @@ impl ProgramStore {
         entry.wasm_tiers.entry(root).or_default().compiled = Some(compiled);
         self.wasm_jit_tier_roots += 1;
         self.wasm_jit_tier_mapped_bytes += bytes;
+        self.jit_compiled_artifacts += 1;
+        self.jit_mapped_bytes += bytes;
         true
     }
 
@@ -1040,7 +1118,9 @@ impl ProgramStore {
                         numeric
                     }
                 }
-                JsTierState::Unsupported | JsTierState::Compiled(_) => false,
+                JsTierState::Rejected { .. }
+                | JsTierState::Unsupported
+                | JsTierState::Compiled(_) => false,
             },
         };
         if inserted {
@@ -1050,6 +1130,56 @@ impl ProgramStore {
             self.record_js_jit_promotion(id, function);
         }
         should_compile
+    }
+
+    /// Memoize an unsupported bytecode shape separately from tier candidates.
+    /// Cold bootstrap helpers therefore cannot consume the hot-function
+    /// promotion table. Return its accumulated count only once diagnostic
+    /// reporting becomes useful.
+    pub(super) fn reject_js_function(
+        &mut self,
+        id: ProgramId,
+        function: u32,
+        reason: &'static str,
+    ) -> Option<u64> {
+        let can_reject = self.js_jit_rejected_functions < JS_JIT_MAX_REJECTED_FUNCTIONS;
+        let entry = self.entry_mut(id)?;
+        let mut inserted = false;
+        let count = match entry.js_tiers.entry(function) {
+            std::collections::hash_map::Entry::Vacant(slot) if can_reject => {
+                slot.insert(JsTierState::Rejected { entries: 1, reason });
+                inserted = true;
+                1
+            }
+            std::collections::hash_map::Entry::Occupied(mut slot) => {
+                let JsTierState::Rejected { entries, .. } = slot.get_mut() else {
+                    return None;
+                };
+                *entries = entries.saturating_add(1);
+                *entries
+            }
+            _ => return None,
+        };
+        if inserted {
+            self.js_jit_rejected_functions += 1;
+        }
+        (count >= JS_JIT_REJECTION_DIAGNOSTIC_ENTRIES).then_some(count)
+    }
+
+    pub(super) fn note_js_rejected_entry(
+        &mut self,
+        id: ProgramId,
+        function: u32,
+    ) -> Option<(u64, &'static str)> {
+        let JsTierState::Rejected { entries, reason } = self
+            .entry_mut(id)?
+            .js_tiers
+            .get_mut(&function)?
+        else {
+            return None;
+        };
+        *entries = entries.saturating_add(1);
+        (*entries >= JS_JIT_REJECTION_DIAGNOSTIC_ENTRIES).then_some((*entries, *reason))
     }
 
     pub(super) fn record_js_jit_entry(&mut self, id: ProgramId, function: u32, numeric: bool) {
@@ -1118,6 +1248,7 @@ impl ProgramStore {
         elapsed_ns: u64,
         code_bytes: usize,
         installed: bool,
+        rejection: Option<&'static str>,
     ) {
         if let Some(counters) = self
             .js_jit_diagnostics
@@ -1130,6 +1261,26 @@ impl ProgramStore {
                 .saturating_add(u64::from(installed));
             counters.compile_ns = counters.compile_ns.saturating_add(elapsed_ns);
             counters.code_bytes = counters.code_bytes.saturating_add(code_bytes);
+            if rejection.is_some() {
+                counters.rejection_reason = rejection;
+            }
+        }
+    }
+
+    pub(super) fn record_js_jit_rejection(
+        &mut self,
+        id: ProgramId,
+        function: u32,
+        reason: &'static str,
+        entries: u64,
+    ) {
+        if let Some(counters) = self
+            .js_jit_diagnostics
+            .as_mut()
+            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
+        {
+            counters.rejection_reason = Some(reason);
+            counters.entries = entries;
         }
     }
 
@@ -1158,10 +1309,17 @@ impl ProgramStore {
                     .js_jit_mapped_bytes
                     .saturating_add(compiled.mapped_bytes())
                     <= JS_JIT_MAX_MAPPED_BYTES
+                && self.jit_compiled_artifacts < JIT_MAX_ARTIFACTS
+                && self
+                    .jit_mapped_bytes
+                    .saturating_add(compiled.mapped_bytes())
+                    <= JIT_MAX_MAPPED_BYTES
         });
         if let Some(compiled) = &compiled {
             self.js_jit_compiled_functions += 1;
             self.js_jit_mapped_bytes += compiled.mapped_bytes();
+            self.jit_compiled_artifacts += 1;
+            self.jit_mapped_bytes += compiled.mapped_bytes();
         }
         if let Some(entry) = self.entry_mut(id) {
             entry.js_tiers.insert(
@@ -1176,6 +1334,11 @@ impl ProgramStore {
     #[cfg(test)]
     pub(super) fn js_jit_tracked_function_count(&self) -> usize {
         self.js_jit_tracked_functions
+    }
+
+    #[cfg(test)]
+    pub(super) fn jit_mapped_bytes(&self) -> usize {
+        self.jit_mapped_bytes
     }
 
     /// A program's lane views by function, derived on first use.
@@ -1318,6 +1481,7 @@ impl Drop for ProgramStore {
                 .map(|tier| match tier {
                     JsTierState::Hot { .. } => "hot",
                     JsTierState::PromotionPending => "promotion-pending",
+                    JsTierState::Rejected { .. } => "unsupported",
                     JsTierState::Unsupported => "unsupported",
                     JsTierState::Compiled(_) => "compiled",
                 })
@@ -1341,6 +1505,12 @@ impl Drop for ProgramStore {
             let _ = write_json_string(&mut stderr, function_name);
             let _ = write!(stderr, ",\"source_name\":");
             let _ = write_json_string(&mut stderr, source_name);
+            let _ = write!(stderr, ",\"rejection_reason\":");
+            if let Some(reason) = counters.rejection_reason {
+                let _ = write_json_string(&mut stderr, reason);
+            } else {
+                let _ = write!(stderr, "null");
+            }
             let _ = writeln!(
                 stderr,
                 ",\"status\":\"{status}\",\"entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"compile_ns\":{},\"native_entries\":{},\"code_bytes\":{}}}",
