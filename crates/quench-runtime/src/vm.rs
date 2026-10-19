@@ -1616,6 +1616,38 @@ struct IteratorRealmPrototypes {
     async_generator: Value,
 }
 impl<H: Host> Vm<H> {
+    /// Diagnostic: general-loop dispatches by the register width of their function, since
+    /// register liveness (and with it promotion and move coalescing) covers only functions
+    /// whose registers fit a root mask.
+    #[cfg(feature = "profile-aggregate")]
+    fn report_dispatch_by_register_width(&self) {
+        let mut rows = Vec::new();
+        for (program, functions) in self.profile.site_counts.iter().enumerate() {
+            let Some(residual) = self.programs.residual(ProgramId::from_raw(program as u32)) else {
+                continue;
+            };
+            for (function, sites) in functions.iter().enumerate() {
+                let total: u64 = sites.iter().sum();
+                if total == 0 {
+                    continue;
+                }
+                let Some(code) = residual.functions.get(function) else { continue };
+                rows.push((total, code.registers, code.local_atoms.len(), program, function));
+            }
+        }
+        let all: u64 = rows.iter().map(|row| row.0).sum();
+        let wide: u64 = rows
+            .iter()
+            .filter(|row| row.1 > crate::compile::liveness::ROOT_MAP_REGISTERS)
+            .map(|row| row.0)
+            .sum();
+        rows.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+        eprintln!("register-width: dispatches {all}, in functions over the root mask {wide}");
+        for (total, registers, locals, program, function) in rows.iter().take(15) {
+            eprintln!("  {total:>12} registers={registers} locals={locals} program={program} function={function}");
+        }
+    }
+
     pub(crate) fn execution_interrupt_handle(&self)->crate::ExecutionInterrupt { self.execution_interrupt.clone() }
     pub(super) fn check_execution_interrupt(&self)->Result<(),JsError> {
         if self.execution_interrupt.is_termination_requested() { Err(JsError::execution_terminated()) } else { Ok(()) }
@@ -2006,6 +2038,9 @@ impl<H: Host> Vm<H> {
             .profile
             .report_dispatch_census_if_enabled(ProgramId::MAIN.raw())
         {
+            if std::env::var_os("QUENCH_OPCODE_CENSUS").is_some_and(|census| census == "all") {
+                self.report_dispatch_by_register_width();
+            }
             self.profile
                 .report_object_literal_sites(ProgramId::MAIN.raw(), program);
             #[cfg(feature = "profile-memory")]
