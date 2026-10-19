@@ -874,8 +874,9 @@ impl Native {
 
     /// Natives a lane `Call` makes in place from the running frame (`lane_call_native`):
     /// the string, RegExp and `Math` functions, the Array, Object, Reflect and JSON
-    /// functions, `String.fromCharCode` and `fromCodePoint` and the primitive conversions, which read no caller state beyond the
-    /// frame's published PC and run guest code only through ordinary nested calls.
+    /// functions, `String.fromCharCode` and `fromCodePoint`, the primitive conversions and
+    /// embedder host functions, which read no caller state beyond the frame's published PC
+    /// and run guest code only through ordinary nested calls.
     pub(crate) fn runs_from_lane(self) -> bool {
         self.is_string_regexp_or_math()
             || matches!(
@@ -928,6 +929,7 @@ impl Native {
                     | Self::String
                     | Self::Number
                     | Self::Boolean
+                    | Self::HostFunction
             )
     }
 

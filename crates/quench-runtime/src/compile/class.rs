@@ -786,8 +786,11 @@ impl FunctionCompiler<'_, '_> {
                 }
                 _ => backing,
             };
-            let value = if let Some(constant) = class_field_constant(*field) {
-                self.literal(constant)
+            let value = if let Some(initializer) = initializer.filter(|initializer| {
+                observes_nothing(initializer) || self.function_initializer_inlines(initializer)
+            }) {
+                // Evaluating it here, in the constructor, is evaluating it in its initializer.
+                self.expression(initializer)
             } else if initializer.is_some() {
                 let atom = self.owner.atom(&class_field_initializer_name(span.start));
                 let callee = self.load_atom(atom);
@@ -891,6 +894,98 @@ fn class_field_span(field: ClassField<'_>) -> Span {
 
 fn class_field_initializer_name(start: u32) -> String {
     format!("\0quench:field-initializer:{start}")
+}
+
+/// The identifiers a function initializer references, and whether it reads `new.target` or
+/// calls `eval` directly, either of which ties it to its own activation.
+#[derive(Default)]
+struct InitializerReferences<'a> {
+    names: Vec<&'a str>,
+    activation_bound: bool,
+}
+
+impl<'a> oxc_ast_visit::Visit<'a> for InitializerReferences<'a> {
+    fn visit_identifier_reference(&mut self, identifier: &oxc_ast::ast::IdentifierReference<'a>) {
+        self.names.push(identifier.name.as_str());
+    }
+
+    fn visit_new_target(&mut self, _: &oxc_ast::ast::NewTarget) {
+        self.activation_bound = true;
+    }
+
+    fn visit_call_expression(&mut self, call: &oxc_ast::ast::CallExpression<'a>) {
+        if super::early::is_direct_eval_call(call) {
+            self.activation_bound = true;
+        }
+        oxc_ast_visit::walk::walk_call_expression(self, call);
+    }
+}
+
+impl FunctionCompiler<'_, '_> {
+    /// Whether a field initializer that is an arrow or function expression evaluates the same
+    /// in the constructor as in its initializer. Making the closure runs no code; the closure
+    /// captures the same `this` and home object, and its free names resolve the same when the
+    /// constructor binds none of them. `new.target` and direct `eval` see the activation.
+    fn function_initializer_inlines(&mut self, initializer: &Expression<'_>) -> bool {
+        use oxc_ast_visit::Visit;
+        let mut references = InitializerReferences::default();
+        let params = match initializer {
+            Expression::ArrowFunctionExpression(arrow) => {
+                references.visit_arrow_function_expression(arrow);
+                &arrow.params
+            }
+            Expression::FunctionExpression(function) => {
+                references.visit_function(function, oxc_syntax::scope::ScopeFlags::Function);
+                &function.params
+            }
+            _ => return false,
+        };
+        // A name the function binds as a parameter resolves inside it, to that parameter or
+        // an inner shadow, never to the constructor's binding.
+        let own = params
+            .items
+            .iter()
+            .flat_map(|param| param.pattern.get_binding_identifiers())
+            .map(|binding| binding.name.as_str())
+            .chain(
+                params
+                    .rest
+                    .iter()
+                    .flat_map(|rest| rest.rest.argument.get_binding_identifiers())
+                    .map(|binding| binding.name.as_str()),
+            )
+            .collect::<Vec<_>>();
+        !references.activation_bound
+            && references.names.iter().filter(|name| !own.contains(name)).all(|name| {
+                let atom = self.owner.atom(name);
+                !self.binds_name(atom)
+            })
+    }
+}
+
+/// Whether a field initializer reads nothing its scope or receiver could change: a static
+/// constant (`binding_time::expression`), or an array or object literal of static constants
+/// with plain keys. Each evaluation still makes a fresh array or object.
+fn observes_nothing(initializer: &Expression<'_>) -> bool {
+    let constant = |value: &Expression<'_>| binding_time::expression(value).static_value().is_some();
+    match initializer {
+        Expression::ParenthesizedExpression(inner) => observes_nothing(&inner.expression),
+        Expression::ArrayExpression(array) => array.elements.iter().all(|element| {
+            element.as_expression().is_some_and(constant)
+        }),
+        Expression::ObjectExpression(object) => object.properties.iter().all(|property| {
+            matches!(
+                property,
+                ObjectPropertyKind::ObjectProperty(property)
+                    if property.kind == PropertyKind::Init
+                        && !property.computed
+                        && !property.method
+                        && !property.shorthand
+                        && constant(&property.value)
+            )
+        }),
+        value => constant(value),
+    }
 }
 
 fn class_field_value<'a>(field: ClassField<'a>) -> Option<&'a Expression<'a>> {

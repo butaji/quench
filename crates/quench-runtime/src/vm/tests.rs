@@ -11196,6 +11196,145 @@ fn lane_closures_share_and_update_their_promoted_environment() {
 }
 
 #[test]
+fn unary_operators_on_literals_fold_to_their_constants() {
+    // `void` of a literal, `!` of a literal and the sign of a number fold at compile time;
+    // signed zero, NaN, BigInt operands and string coercions keep their run-time results.
+    let source = r#"
+      const out = [];
+      const z = -0, m = -(1), p = +2.5, n = -NaN;
+      out.push(Object.is(z, -0), Object.is(-0, 0), m, p, Number.isNaN(n), 1 / -0);
+      out.push(void 0, void "x", void (0), typeof void 0, void 0 === undefined);
+      out.push(!0, !1, !"", !"a", !null, !(0), !NaN, !-0, !!1, !void 0);
+      let x; out.push(x === void 0, x == void 0, x !== void 0);
+      const o = { a: void 0, b: !0, c: !1 }; out.push(JSON.stringify(o), "a" in o, o.a);
+      function f(a = void 0, b = !0) { return [a, b]; } out.push(f().join());
+      out.push([void 0, !0, -1, +3].map(String).join());
+      switch (!0) { case true: out.push("sw"); }
+      out.push(-(-1), !!!0, !(!0), -"3", +"4", !1n, !0n, -(2 ** 2));
+      out.push(typeof -0, (-0).toString(), 1 / (+(-0)));
+      print(out.join("|"));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "unary-folding.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["true|false|-1|2.5|true|-Infinity||||undefined|true|true|false|true|false|true|true|true|true|true|true|true|true|false|{\"b\":true,\"c\":false}|true||,true|undefined,true,-1,3|sw|1|true|false|-3|4|false|true|-4|number|0|-Infinity"]
+    );
+}
+
+#[test]
+fn lane_char_code_at_keeps_its_coercions_and_patched_methods() {
+    // `charCodeAt` of a string at an integer index runs in the lane; other receivers and
+    // indexes, out-of-range positions and a replaced method keep their semantics.
+    let source = r#"
+      const out = [];
+      function scan(s) { let t = 0; for (let i = -1; i <= s.length; i++) { const c = s.charCodeAt(i); t += Number.isNaN(c) ? 1000 : c; } return t; }
+      for (let k = 0; k < 3; k++) {
+        out.push(scan("abc"), scan(""), scan("é\u{1F600}"), "abc".charCodeAt(), "abc".charCodeAt(1.7), "abc".charCodeAt("2"), "abc".charCodeAt(NaN));
+        out.push(new String("xyz").charCodeAt(1), String.prototype.charCodeAt.call(12, 0), "a".charCodeAt(2 ** 31));
+        try { String.prototype.charCodeAt.call(null, 0); } catch (e) { out.push(e.constructor.name); }
+        const o = { valueOf() { out.push("vo"); return 1; } }; out.push("abc".charCodeAt(o));
+      }
+      const saved = String.prototype.charCodeAt;
+      String.prototype.charCodeAt = function (i) { return "patched" + i; };
+      out.push("abc".charCodeAt(1));
+      String.prototype.charCodeAt = saved;
+      out.push("abc".charCodeAt(1));
+      print(out.join(","));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "lane-char-code-at.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["2294,2000,114422,97,98,99,97,121,49,NaN,TypeError,vo,98,2294,2000,114422,97,98,99,97,121,49,NaN,TypeError,vo,98,2294,2000,114422,97,98,99,97,121,49,NaN,TypeError,vo,98,patched1,98"]
+    );
+}
+
+#[test]
+fn constant_field_initializers_evaluate_in_the_constructor() {
+    // Literal and literal-container initializers evaluate inline: order, signed zero, fresh
+    // containers per instance, `__proto__` keys, setters on the prototype and derived classes.
+    let source = r#"
+      const out = [];
+      let order = [];
+      const key = (k) => (order.push(k), k);
+      class Base { constructor() { out.push(Object.keys(this).join("+")); } }
+      class A extends Base {
+        n = -0; s = "str"; b = !0; u = void 0; arr = [1, "two", null]; obj = { a: 1, "b-c": 2, __proto__: null };
+        [key("computed")] = 5; later = this.n; #p = 7; e = [];
+        constructor(x) { super(); this.x = x; }
+        get p() { return this.#p; }
+      }
+      class B { set s(v) { out.push("setter"); } }
+      class C extends B { s = 1; }
+      class D { y = 1; constructor(y) { out.push(this.y); } }
+      for (let i = 0; i < 3; i++) {
+        const a = new A(i), a2 = new A(i);
+        out.push(Object.is(a.n, -0), a.s, a.b, a.u, a.arr.join("/"), a.arr !== a2.arr, a.e !== a2.e, Object.getPrototypeOf(a.obj) === null, a.obj["b-c"]);
+        out.push(Object.keys(a).join(","), a.computed, Object.is(a.later, -0), a.p, Object.getOwnPropertyDescriptor(a, "s").writable);
+        const c = new C(); out.push(c.s, Object.getOwnPropertyNames(c).join());
+        out.push(new D(5).y);
+      }
+      out.push(order.join());
+      print(out.join("|"));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "class-field-constants.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["||true|str|true||1/two/|true|true|true|2|n,s,b,u,arr,obj,computed,later,e,x|5|true|7|true|1|s|1|1|||true|str|true||1/two/|true|true|true|2|n,s,b,u,arr,obj,computed,later,e,x|5|true|7|true|1|s|1|1|||true|str|true||1/two/|true|true|true|2|n,s,b,u,arr,obj,computed,later,e,x|5|true|7|true|1|s|1|1|computed"]
+    );
+}
+
+#[test]
+fn function_field_initializers_keep_their_scope_and_activation() {
+    // Arrow and function initializers evaluate inline unless the constructor binds a name
+    // they read (their own parameters aside), or they read `new.target` or call `eval`.
+    let source = r#"
+      const out = [];
+      const tag = "outer";
+      class Base { hello() { return "base-hello"; } }
+      class A extends Base {
+        get = () => this.v;
+        shadow = () => tag;
+        nt = () => typeof new.target;
+        ev = () => eval("typeof tag");
+        sup = () => super.hello();
+        fn = function () { return this === undefined ? "u" : typeof this; };
+        named = () => 1;
+        constructor(v) { super(); this.v = v; }
+      }
+      class B {
+        shadow = () => tag;
+        self = () => this;
+        constructor(tag) { this.p = tag; }
+      }
+      class C { inc = () => ++this.n; n = 0; }
+      const e = "outer-e", x = "outer-x";
+      class M { own = (e, ...rest) => e + rest.length; reads = (y) => x + y; constructor(e, x) { this.e = e; } }
+      for (let i = 0; i < 3; i++) {
+        const a = new A(i), a2 = new A(i + 10);
+        out.push(a.get(), a2.get(), a.shadow(), a.nt(), a.ev(), a.sup(), a.fn(), a.fn.call(5), a.named.name, a.get.name, a.get !== a2.get);
+        const b = new B("ctor-param");
+        out.push(b.shadow(), b.self() === b, b.p, Object.keys(b).join());
+        const c = new C(); c.inc(); out.push(c.inc(), c.n);
+        const m = new M("ctor-e", "ctor-x"); out.push(m.own("arg", 1, 2), m.reads("!"), m.e);
+      }
+      print(out.join("|"));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "class-field-functions.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["0|10|outer|undefined|string|base-hello|object|number|named|get|true|outer|true|ctor-param|shadow,self,p|2|2|arg2|outer-x!|ctor-e|1|11|outer|undefined|string|base-hello|object|number|named|get|true|outer|true|ctor-param|shadow,self,p|2|2|arg2|outer-x!|ctor-e|2|12|outer|undefined|string|base-hello|object|number|named|get|true|outer|true|ctor-param|shadow,self,p|2|2|arg2|outer-x!|ctor-e"]
+    );
+}
+
+#[test]
 fn lane_arrows_take_this_from_their_environment() {
     // Arrows called as frameless activations read `this` from the environment they
     // closed over: call/apply/bind receivers are ignored, a derived constructor's

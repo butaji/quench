@@ -1937,3 +1937,76 @@ fn native_calls_reuse_root_lists_instead_of_accumulating_them() {
     let pooled = runtime.vm.native_root_lists.len();
     assert!(pooled <= 1, "{pooled} root lists pooled after sequential native calls");
 }
+
+#[derive(Default)]
+struct LaneHost;
+
+impl Host for LaneHost {
+    fn write_line(&mut self, _: &str) {}
+    fn clock_millis(&mut self) -> f64 {
+        0.0
+    }
+    fn functions(&self) -> &[HostFunction<Self>] {
+        crate::host_functions![
+            global "callBack" (2) => lane_call_back,
+            global "raise" (1) => lane_raise,
+            global "collected" (1) => lane_collected,
+        ]
+    }
+}
+
+fn lane_call_back(
+    ctx: &mut NativeContext<'_, LaneHost>,
+    receiver: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    ctx.call_rooted(args[0], receiver, &args[1..])
+}
+
+fn lane_raise(
+    ctx: &mut NativeContext<'_, LaneHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    Err(ctx.throw(args[0]))
+}
+
+fn lane_collected(
+    ctx: &mut NativeContext<'_, LaneHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    ctx.collect()?;
+    Ok(args[0])
+}
+
+#[test]
+fn host_functions_called_from_lane_frames_keep_reentry_errors_and_roots() {
+    // Host functions run in place from a frame's lane run: a guest callback they call
+    // sees its arguments, a thrown value reaches the guest's catch, and a collection
+    // inside the host keeps the frame's live registers.
+    let mut runtime = Runtime::new(LaneHost);
+    let program = Engine::specialize(
+        "function run(i) {
+           const o = { i };
+           const back = callBack((v) => v.i * 2, o);
+           let caught;
+           try { raise({ code: i }); } catch (e) { caught = e.code; }
+           const same = collected(o) === o;
+           return [back, caught, same, o.i].join(':');
+         }
+         var out = [];
+         for (let i = 0; i < 4; i++) out.push(run(i));
+         var result = out.join(',');",
+        "lane-host.js",
+    )
+    .unwrap();
+    runtime.execute(&program).unwrap();
+    let global = runtime.global_root().unwrap();
+    let key = runtime.string_rooted("result");
+    let result = runtime.get_property_rooted(global, key).unwrap();
+    assert_eq!(
+        runtime.string_text_rooted(result).unwrap().as_deref(),
+        Some("0:0:true:0,2:1:true:1,4:2:true:2,6:3:true:3")
+    );
+}

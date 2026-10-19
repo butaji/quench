@@ -44,6 +44,7 @@ pub(super) struct GenerationalPacing {
     pub(super) young: Ratio,
     /// The smallest allocation weight between collections, whatever survived.
     pub(super) minimum_young: usize,
+    pub(super) maximum_young: usize,
     /// Growth of the old generation since the last full collection, as a share of what that
     /// collection kept, that makes the next collection full.
     pub(super) old_growth: Ratio,
@@ -158,7 +159,10 @@ impl GenerationalPacing {
 
 
     pub(super) fn young_budget(&self, live: usize) -> usize {
-        self.young.of(live).max(self.minimum_young)
+        self.young
+            .of(live)
+            .min(self.maximum_young)
+            .max(self.minimum_young)
     }
 
     pub(super) fn full_due(&self, live_after_full: usize, live: usize, since_full: usize) -> bool {
@@ -190,6 +194,7 @@ impl GenerationalPacing {
         Self {
             young: ratio("QUENCH_GC_YOUNG", self.young),
             minimum_young: read("QUENCH_GC_MIN_YOUNG", self.minimum_young),
+            maximum_young: read("QUENCH_GC_MAX_YOUNG", self.maximum_young),
             old_growth: ratio("QUENCH_GC_OLD_GROWTH", self.old_growth),
             minimum_old_growth: read("QUENCH_GC_MIN_OLD_GROWTH", self.minimum_old_growth),
             allocation_cap: ratio("QUENCH_GC_ALLOCATION_CAP", self.allocation_cap),
@@ -216,6 +221,7 @@ impl GenerationalPacing {
 pub(super) const PRODUCTION_PACING: GenerationalPacing = GenerationalPacing {
     young: Ratio::new(1, 64),
     minimum_young: MEMORY_FIRST_MINIMUM_ALLOCATION,
+    maximum_young: MAXIMUM_YOUNG,
     old_growth: Ratio::new(1, 1),
     minimum_old_growth: MEMORY_FIRST_MINIMUM_ALLOCATION,
     allocation_cap: Ratio::new(1, 1),
@@ -228,6 +234,14 @@ pub(super) const PRODUCTION_PACING: GenerationalPacing = GenerationalPacing {
 /// The fewest allocations between collections, whatever survived: the pre-generational
 /// minimum headroom.
 const MEMORY_FIRST_MINIMUM_ALLOCATION: usize = 384;
+/// The most allocations between young collections, however large the live set. Without it
+/// the young budget is eight live sets: a server whose startup leaves a few hundred thousand
+/// live cells (the Node library plus a framework) allocated millions between collections,
+/// and its peak RSS was mostly garbage. Measured with the `gc-tuning` build, Linux x86_64,
+/// 4 vCPU, 500 connections (evidence/web-gc-young-cap-linux-2026-10-19): peak RSS hono
+/// 84 -> 53 MB, fastify 96 -> 72 MB, express 85 -> 53 MB; V8-v7 earley-boyer 46 -> 28 MB and
+/// splay 161 -> 92 MB, with Scores within the run-to-run band. 2^16 cut little more memory.
+const MAXIMUM_YOUNG: usize = 1 << 17;
 
 #[cfg(not(feature = "gc-tuning"))]
 pub(super) fn pacing() -> GenerationalPacing {
@@ -260,7 +274,10 @@ mod tests {
         assert!(pacing.full_due(live, live + growth, 0));
         assert!(pacing.full_due(live, live, pacing.allocation_cap.of(live)));
         assert_eq!(pacing.young_budget(0), pacing.minimum_young);
-        assert_eq!(pacing.young_budget(live), pacing.young.of(live));
+        let small = pacing.minimum_young / 4;
+        assert_eq!(pacing.young_budget(small), pacing.young.of(small));
+        let huge = pacing.maximum_young * 1024;
+        assert_eq!(pacing.young_budget(huge), pacing.maximum_young);
     }
 
     fn minor(live: usize, previous_live: usize, allocated: usize) -> CollectionOutcome {
