@@ -46,7 +46,7 @@ impl<H: Host> Vm<H> {
             return Some(source);
         }
         let residual = self.programs.residual(program)?;
-        let span = residual.functions.get(id as usize)?.source_span?;
+        let span = residual.functions.get(id as usize)?.header().source_span?;
         let text = residual.source.as_ref()?.slice(span.start, span.end)?;
         let source = self.heap.alloc(Cell::String(text.into()));
         self.programs

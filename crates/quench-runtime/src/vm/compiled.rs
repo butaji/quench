@@ -309,6 +309,10 @@ const JIT_ROOT_ONLY_ENV: &str = "QUENCH_WASM_JIT_ROOT_ONLY";
 const JIT_ROOT_FIRST_ENV: &str = "QUENCH_WASM_JIT_ROOT_FIRST";
 const JIT_WASM_SELECTIVE_ENV: &str = "QUENCH_WASM_JIT_SELECTIVE";
 const JIT_DIRECT_COMPARE_BRANCHES_ENV: &str = "QUENCH_WASM_JIT_DIRECT_COMPARE_BRANCHES";
+const JIT_AFFINE_PAIR_ENV: &str = "QUENCH_WASM_JIT_AFFINE_PAIR";
+const JIT_REFERENCE_BODY_CACHE_ENV: &str = "QUENCH_WASM_JIT_REFERENCE_BODY_CACHE";
+const JIT_EMSCRIPTEN_MEMCPY_LEAF_ENV: &str = "QUENCH_WASM_JIT_EMSCRIPTEN_MEMCPY_LEAF";
+const JIT_NATIVE_ENTRY_SAMPLE_INTERVAL: u64 = 256;
 const MAX_JIT_ROOT_FUNCTIONS: usize = 128;
 const MAX_JIT_ROOT_BYTECODES_PER_FUNCTION: usize = 80_000;
 const MAX_JIT_ROOT_CODE_BYTES: usize = 2 * 1024 * 1024;
@@ -344,6 +348,22 @@ fn jit_direct_compare_branches_enabled() -> bool {
         return enabled;
     }
     std::env::var(JIT_DIRECT_COMPARE_BRANCHES_ENV)
+        .is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+}
+
+/// Keep the screened affine pair loop opt-in; the benchmark harness can still
+/// run a same-binary, same-host comparison arm with it enabled.
+fn jit_affine_pair_enabled() -> bool {
+    std::env::var(JIT_AFFINE_PAIR_ENV).is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+}
+
+fn jit_reference_body_cache_enabled() -> bool {
+    std::env::var(JIT_REFERENCE_BODY_CACHE_ENV)
+        .is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+}
+
+fn jit_emscripten_memcpy_leaf_enabled() -> bool {
+    std::env::var(JIT_EMSCRIPTEN_MEMCPY_LEAF_ENV)
         .is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
 }
 
@@ -426,16 +446,20 @@ pub(super) fn with_jit_direct_compare_branches_for_test<R>(
 }
 
 fn jit_root_opt_level(root: Option<usize>, root_only: bool) -> Result<&'static str, ()> {
-    if root_only {
-        return Ok("none");
-    }
     if root.is_none() {
         return Ok("speed");
     }
-    let Some(level) = std::env::var_os(JIT_ROOT_OPT_LEVEL_ENV) else {
-        return Ok("speed");
+    match std::env::var_os(JIT_ROOT_OPT_LEVEL_ENV) {
+        Some(level) => parse_jit_root_opt_level(root_only, Some(level.to_str().ok_or(())?)),
+        None => parse_jit_root_opt_level(root_only, None),
+    }
+}
+
+fn parse_jit_root_opt_level(root_only: bool, level: Option<&str>) -> Result<&'static str, ()> {
+    let Some(level) = level else {
+        return Ok(if root_only { "none" } else { "speed" });
     };
-    match level.to_str().ok_or(())? {
+    match level {
         "none" => Ok("none"),
         "speed" => Ok("speed"),
         "speed_and_size" => Ok("speed_and_size"),
@@ -471,6 +495,7 @@ fn jit_memory_snapshot() -> Option<(u64, u64)> {
 /// the context.
 const RAISED_STATUS: i64 = TRAPS.len() as i64 + 1;
 const TERMINATED_STATUS: i64 = RAISED_STATUS + 1;
+const MEMCPY_LEAF_MISS_STATUS: i64 = RAISED_STATUS + 2;
 
 fn trap_status(trap: crate::WasmTrap) -> i64 {
     TRAPS
@@ -544,6 +569,15 @@ struct CallContext {
     emscripten_memcpy_raw_i32_hits: *mut u64,
     /// Diagnostic-only count proving the early callout handled the copy.
     emscripten_memcpy_early_import_hits: *mut u64,
+    /// Shared by nested native entries; host callouts invalidate the proof.
+    emscripten_memcpy_cache: *mut EmscriptenMemcpyCache,
+    /// Entry for the generated direct-copy leaf path.
+    emscripten_memcpy_leaf: usize,
+    /// Diagnostic-only count of direct leaf calls.
+    emscripten_memcpy_leaf_hits: *mut u64,
+    /// Per-import attribution, present only during opt-in diagnostic runs.
+    import_callout_counts: *const std::cell::Cell<u64>,
+    import_callout_count: usize,
 }
 
 impl CallContext {
@@ -583,6 +617,11 @@ impl CallContext {
             emscripten_memcpy_fast_path_hits: self.emscripten_memcpy_fast_path_hits,
             emscripten_memcpy_raw_i32_hits: self.emscripten_memcpy_raw_i32_hits,
             emscripten_memcpy_early_import_hits: self.emscripten_memcpy_early_import_hits,
+            emscripten_memcpy_cache: self.emscripten_memcpy_cache,
+            emscripten_memcpy_leaf: self.emscripten_memcpy_leaf,
+            emscripten_memcpy_leaf_hits: self.emscripten_memcpy_leaf_hits,
+            import_callout_counts: self.import_callout_counts,
+            import_callout_count: self.import_callout_count,
         }
     }
 }
@@ -608,10 +647,17 @@ const CONTEXT_REFERENCE_EPOCH: i32 = std::mem::offset_of!(CallContext, reference
 const CONTEXT_ENV: i32 = std::mem::offset_of!(CallContext, env) as i32;
 const CONTEXT_REFERENCE_FAST_CACHES: i32 =
     std::mem::offset_of!(CallContext, reference_fast_caches) as i32;
+const CONTEXT_EMSCRIPTEN_MEMCPY_CACHE: i32 =
+    std::mem::offset_of!(CallContext, emscripten_memcpy_cache) as i32;
+const CONTEXT_EMSCRIPTEN_MEMCPY_LEAF: i32 =
+    std::mem::offset_of!(CallContext, emscripten_memcpy_leaf) as i32;
+const MEMCPY_CACHE_VALID: i32 = std::mem::offset_of!(EmscriptenMemcpyCache, valid) as i32;
+const MEMCPY_CACHE_FUNCTION: i32 = std::mem::offset_of!(EmscriptenMemcpyCache, function) as i32;
 
 /// The callout's signature: (context, function index, arguments, result) ->
 /// status; arguments and result are Wasm bits, one word each.
 type Callout = unsafe extern "C" fn(*mut CallContext, u64, *const u64, *mut u64) -> i64;
+type DirectMemcpyLeaf = unsafe extern "C" fn(*mut CallContext, u64, i32, i32, i32) -> i64;
 type ReferenceCallout = unsafe extern "C" fn(
     *mut CallContext,
     u64,
@@ -624,9 +670,10 @@ type ReferenceCallout = unsafe extern "C" fn(
 ) -> i64;
 type DiagnosticReferenceCallout = ReferenceCallout;
 
-/// A monomorphic target certificate for one artifact-local indirect-call site.
-/// The VM publishes the epoch last after a successful target return and a
-/// table-slot recheck. A nonzero epoch is the validity bit.
+/// A monomorphic target certificate for one same-artifact indirect-call site.
+/// The body pointer is owned by this artifact's code mapping. The VM publishes
+/// the epoch last after a successful target return and a table-slot recheck;
+/// a nonzero epoch is the validity bit.
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct FastReferenceCache {
@@ -634,6 +681,7 @@ struct FastReferenceCache {
     env: Value,
     index: u64,
     function: u64,
+    body: u64,
 }
 
 impl Default for FastReferenceCache {
@@ -643,8 +691,20 @@ impl Default for FastReferenceCache {
             env: Value::NULL,
             index: 0,
             function: 0,
+            body: 0,
         }
     }
+}
+
+/// Per-top-level-call proof for the guarded Emscripten memcpy leaf. The VM
+/// publishes it after a full dynamic check and clears it before host code runs.
+#[repr(C)]
+#[derive(Default)]
+struct EmscriptenMemcpyCache {
+    valid: u64,
+    function: u64,
+    base: usize,
+    length: usize,
 }
 
 /// Fill an already bounds-checked range in the instance's unshared memory.
@@ -659,6 +719,61 @@ unsafe extern "C" fn compiled_memory_fill(address: u64, byte: u64, length: u64) 
     0
 }
 
+/// The dispatcher-free second-call path for the exact Emscripten helper.
+/// Its memory proof is scoped to one native invocation and ordinary callouts
+/// revoke it before guest JavaScript can mutate a view or grow memory.
+unsafe extern "C" fn compiled_emscripten_memcpy_leaf(
+    context: *mut CallContext,
+    function: u64,
+    destination: i32,
+    source: i32,
+    length: i32,
+) -> i64 {
+    if context.is_null() {
+        return MEMCPY_LEAF_MISS_STATUS;
+    }
+    // SAFETY: generated code passes its live context, and its cache points to
+    // storage owned by the suspended `run_compiled` activation.
+    let context = unsafe { &mut *context };
+    if context.emscripten_memcpy_cache.is_null() {
+        return MEMCPY_LEAF_MISS_STATUS;
+    }
+    let cache = unsafe { &mut *context.emscripten_memcpy_cache };
+    if cache.valid != 1 || cache.function != function || cache.base == 0 {
+        cache.valid = 0;
+        return MEMCPY_LEAF_MISS_STATUS;
+    }
+    if !context.interrupt.is_null()
+        && unsafe { &*context.interrupt }.load(std::sync::atomic::Ordering::Acquire)
+    {
+        return TERMINATED_STATUS;
+    }
+
+    let target = super::wasm_js::copy_within_relative_index(i64::from(destination), cache.length);
+    let start = super::wasm_js::copy_within_relative_index(i64::from(source), cache.length);
+    let raw_end = i64::from(source) + i64::from(length);
+    let end = super::wasm_js::copy_within_relative_index(raw_end, cache.length);
+    let count = end.saturating_sub(start).min(cache.length - target);
+    if count > 0 {
+        // SAFETY: the published certificate names the current full-length
+        // unshared Wasm view. All indices are clamped to that allocation.
+        unsafe {
+            std::ptr::copy(
+                (cache.base as *const u8).add(start),
+                (cache.base as *mut u8).add(target),
+                count,
+            );
+        }
+    }
+    if !context.emscripten_memcpy_leaf_hits.is_null() {
+        unsafe {
+            let hits = &mut *context.emscripten_memcpy_leaf_hits;
+            *hits = hits.saturating_add(1);
+        }
+    }
+    0
+}
+
 fn note_compiled_callout(counter: *mut u64) {
     if !counter.is_null() {
         // SAFETY: only diagnostic-enabled calls provide this pointer, and it
@@ -666,6 +781,82 @@ fn note_compiled_callout(counter: *mut u64) {
         unsafe {
             *counter = (*counter).saturating_add(1);
         }
+    }
+}
+
+fn native_entry_sample_due(entry_count: u64) -> bool {
+    entry_count > 0 && entry_count % JIT_NATIVE_ENTRY_SAMPLE_INTERVAL == 0
+}
+
+unsafe fn note_import_callout_target(
+    counters: *const std::cell::Cell<u64>,
+    counter_count: usize,
+    function: u64,
+) {
+    let Ok(index) = usize::try_from(function) else {
+        return;
+    };
+    if counters.is_null() || index >= counter_count {
+        return;
+    }
+    // SAFETY: diagnostic contexts point at `counter_count` initialized Cells
+    // owned by their CompiledProgram, which remains live across the callout.
+    let counter = unsafe { &*counters.add(index) };
+    counter.set(counter.get().saturating_add(1));
+}
+
+fn json_string(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len() + 2);
+    escaped.push('"');
+    for character in value.chars() {
+        match character {
+            '"' => escaped.push_str("\\\""),
+            '\\' => escaped.push_str("\\\\"),
+            '\u{08}' => escaped.push_str("\\b"),
+            '\u{0C}' => escaped.push_str("\\f"),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            character if character <= '\u{1F}' => {
+                use std::fmt::Write;
+                write!(escaped, "\\u{:04x}", character as u32)
+                    .expect("writing to a String cannot fail");
+            }
+            character => escaped.push(character),
+        }
+    }
+    escaped.push('"');
+    escaped
+}
+
+fn format_import_callout_targets(
+    names: &[(u32, u32, String, String)],
+    counters: &[std::cell::Cell<u64>],
+) -> String {
+    debug_assert_eq!(names.len(), counters.len());
+    names
+        .iter()
+        .zip(counters)
+        .filter_map(|((function, import_index, module, name), count)| {
+            let count = count.get();
+            (count > 0).then(|| {
+                format!(
+                    "{{\"function\":{function},\"import_index\":{import_index},\"module\":{},\"name\":{},\"count\":{count}}}",
+                    json_string(module),
+                    json_string(name)
+                )
+            })
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+#[inline]
+fn invalidate_emscripten_memcpy_cache(cache: *mut EmscriptenMemcpyCache) {
+    if !cache.is_null() {
+        // SAFETY: the pointer is the live cache owned by the suspended native
+        // invocation, and callout entry runs synchronously on that invocation.
+        unsafe { (*cache).valid = 0 };
     }
 }
 
@@ -840,6 +1031,10 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
     // SAFETY: generated code passes the context, table binding, table index,
     // signature index, argument words, and output storage for this call.
     let context = unsafe { &mut *context };
+    // Resolving or invoking a reference can execute arbitrary JS, enter an
+    // interpreted body, or grow the active Wasm memory. Revoke the raw view
+    // certificate before any of those paths can run.
+    invalidate_emscripten_memcpy_cache(context.emscripten_memcpy_cache);
     note_compiled_callout(context.reference_callouts);
     let vm_pointer = context.vm.cast::<Vm<H>>();
     let active = ACTIVE_CONTEXT.with(|current| current.replace(std::ptr::null_mut()));
@@ -848,7 +1043,7 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
     let mut same_artifact_direct_hit = false;
     let mut target_same_artifact_native = false;
     let mut reference_target_function = None;
-    let mut fast_target: Option<(usize, Value, Value, u32, u64)> = None;
+    let mut fast_target: Option<(usize, Value, Value, u32, u64, u64)> = None;
     let mut direct_target_root = None;
     let mut direct_status = None;
     let called = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -998,7 +1193,7 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
                     );
                 }
             }
-            compiled.note_direct_reference_entry(function);
+            let native_entry_should_sample = compiled.note_direct_reference_entry(function);
             let mut nested = context.nested_entry();
             nested.compiled = Rc::as_ptr(&compiled);
             nested.reference_fast_caches = compiled.reference_fast_caches_ptr();
@@ -1032,13 +1227,21 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
             native_target_hit = true;
             let same_artifact = !context.compiled.is_null()
                 && std::ptr::eq(context.compiled, Rc::as_ptr(&compiled));
-            if same_artifact {
-                fast_target = Some((function, callee, table, table_slot, index));
+            if same_artifact
+                && let Some(body) = compiled
+                    .table
+                    .get(function)
+                    .copied()
+                    .filter(|body| *body != 0)
+            {
+                fast_target = Some((function, callee, table, table_slot, index, body as u64));
             }
             if DIAGNOSTICS {
                 same_artifact_direct_hit = same_artifact;
                 target_same_artifact_native = same_artifact_direct_hit;
             }
+            let native_entry_sample_started =
+                native_entry_should_sample.then(std::time::Instant::now);
             let status = match guard_trampoline() {
                 Some(trampoline) => {
                     let outer = ACTIVE_CONTEXT.with(|active| active.replace(&mut nested));
@@ -1048,6 +1251,9 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
                 }
                 None => unsafe { entry(&mut nested, base, length, args, out) },
             };
+            if let Some(started) = native_entry_sample_started {
+                compiled.finish_native_entry_sample(function, started);
+            }
             if status == RAISED_STATUS as u32 {
                 match nested.raised.take() {
                     Some(Raised::Error(error)) => return Err(error),
@@ -1127,7 +1333,7 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
     }));
     ACTIVE_CONTEXT.with(|current| current.set(active));
     let vm = unsafe { &mut *vm_pointer };
-    if let Some((function, target, table, table_slot, index)) = fast_target {
+    if let Some((function, target, table, table_slot, index, body)) = fast_target {
         let target_still_matches = direct_target_root
             .and_then(|root| vm.heap.root_value(root))
             .is_some_and(|rooted| {
@@ -1153,6 +1359,7 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
                 cache.env = context.env;
                 cache.index = index;
                 cache.function = function as u64;
+                cache.body = body;
                 cache.epoch = vm.wasm_reference_epoch.get();
             }
         }
@@ -1185,6 +1392,10 @@ unsafe extern "C" fn import_callout<H: Host>(
     // SAFETY: compiled code passes the context `run_compiled` made, whose
     // VM is suspended in that call.
     let context = unsafe { &mut *context };
+    let memcpy_cache = context.emscripten_memcpy_cache;
+    // Host code can replace the captured view/method or grow memory. The fast
+    // certificate cannot survive any ordinary callout.
+    invalidate_emscripten_memcpy_cache(memcpy_cache);
     let vm = unsafe { &mut *context.vm.cast::<Vm<H>>() };
     let defined = vm
         .programs
@@ -1196,6 +1407,17 @@ unsafe extern "C" fn import_callout<H: Host>(
     } else {
         context.import_callouts
     });
+    if !defined && !context.import_callout_counts.is_null() {
+        // SAFETY: this pointer is non-null only when the owning compiled
+        // program enabled diagnostic counters for the full native call.
+        unsafe {
+            note_import_callout_target(
+                context.import_callout_counts,
+                context.import_callout_count,
+                function,
+            );
+        }
+    }
     // The VM's own code runs outside compiled code: no guard fault is ours.
     let active = ACTIVE_CONTEXT.with(|current| current.replace(std::ptr::null_mut()));
     let program = context.program;
@@ -1218,6 +1440,20 @@ unsafe extern "C" fn import_callout<H: Host>(
                 args,
             )
         } {
+            if jit_emscripten_memcpy_leaf_enabled()
+                && !memcpy_cache.is_null()
+                && let Some((base, length)) =
+                    super::dispatch_fast::unshared_memory(vm, current_memory)
+            {
+                // Publish validity last after the helper has checked the
+                // import binding, live view, method, and exact memory object.
+                unsafe {
+                    (*memcpy_cache).function = function;
+                    (*memcpy_cache).base = base as usize;
+                    (*memcpy_cache).length = length;
+                    (*memcpy_cache).valid = 1;
+                }
+            }
             Ok(())
         } else {
             unsafe {
@@ -1500,6 +1736,10 @@ struct WasmJitDiagnostics {
     mapped_bytes: usize,
     compile_ns: u128,
     native_entry_requests: Vec<std::cell::Cell<u64>>,
+    /// Deterministic 1-in-256 samples of inclusive native-entry wall time.
+    native_entry_samples: Vec<std::cell::Cell<u64>>,
+    /// Sum of sampled elapsed nanoseconds; nested native calls may overlap.
+    native_entry_sampled_ns: Vec<std::cell::Cell<u64>>,
     interpreter_fallback_entries: Vec<std::cell::Cell<u64>>,
     compiled_to_vm_callouts: std::cell::Cell<u64>,
     compiled_import_callouts: std::cell::Cell<u64>,
@@ -1508,6 +1748,9 @@ struct WasmJitDiagnostics {
     emscripten_memcpy_fast_path_hits: std::cell::Cell<u64>,
     emscripten_memcpy_raw_i32_hits: std::cell::Cell<u64>,
     emscripten_memcpy_early_import_hits: std::cell::Cell<u64>,
+    emscripten_memcpy_leaf_hits: std::cell::Cell<u64>,
+    import_callout_names: Vec<(u32, u32, String, String)>,
+    import_callout_counts: Vec<std::cell::Cell<u64>>,
     reference_call_sites: Vec<ReferenceCallSiteDiagnostics>,
 }
 
@@ -1523,6 +1766,18 @@ impl Drop for CompiledProgram {
             .filter_map(|(function, count)| {
                 let count = count.get();
                 (count > 0).then(|| format!("[{function},{count}]"))
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        let native_entry_samples = stats
+            .native_entry_samples
+            .iter()
+            .zip(&stats.native_entry_sampled_ns)
+            .enumerate()
+            .filter_map(|(function, (samples, elapsed_ns))| {
+                let samples = samples.get();
+                let elapsed_ns = elapsed_ns.get();
+                (samples > 0).then(|| format!("[{function},{samples},{elapsed_ns}]"))
             })
             .collect::<Vec<_>>()
             .join(",");
@@ -1567,13 +1822,27 @@ impl Drop for CompiledProgram {
             }
         }
         let reference_targets = reference_targets.join(",");
+        let import_callout_targets = format_import_callout_targets(
+            &stats.import_callout_names,
+            &stats.import_callout_counts,
+        );
+        let attributed_import_callouts = stats
+            .import_callout_counts
+            .iter()
+            .map(std::cell::Cell::get)
+            .fold(0u64, u64::saturating_add);
+        debug_assert_eq!(
+            attributed_import_callouts,
+            stats.compiled_import_callouts.get(),
+            "per-import attribution must account for every compiled import callout"
+        );
         let same_artifact_direct_hits = stats
             .reference_call_sites
             .iter()
             .map(|site| site.counts.get().same_artifact_direct)
             .fold(0u64, u64::saturating_add);
         eprintln!(
-            "QUENCH_WASM_JIT_STATS {{\"program\":{},\"compile_attempts\":1,\"compiled_functions\":{},\"total_functions\":{},\"code_bytes\":{},\"mapped_bytes\":{},\"compile_ns\":{},\"native_entry_requests\":[{}],\"interpreter_fallback_entries\":[{}],\"compiled_to_vm_callouts\":{},\"compiled_import_callouts\":{},\"compiled_known_callouts\":{},\"compiled_reference_callouts\":{},\"emscripten_memcpy_direct_copy_switch\":\"{}\",\"emscripten_memcpy_direct_copy_enabled\":{},\"emscripten_memcpy_fast_path_hits\":{},\"emscripten_memcpy_raw_i32_switch\":\"{}\",\"emscripten_memcpy_raw_i32_enabled\":{},\"emscripten_memcpy_raw_i32_hits\":{},\"emscripten_memcpy_early_import_switch\":\"{}\",\"emscripten_memcpy_early_import_enabled\":{},\"emscripten_memcpy_early_import_hits\":{},\"reference_call_sites\":[{}],\"same_artifact_direct_reference_hits\":{},\"reference_call_targets\":[{}]}}",
+            "QUENCH_WASM_JIT_STATS {{\"program\":{},\"compile_attempts\":1,\"compiled_functions\":{},\"total_functions\":{},\"code_bytes\":{},\"mapped_bytes\":{},\"compile_ns\":{},\"native_entry_requests\":[{}],\"native_entry_sampling_interval\":{},\"native_entry_samples\":[{}],\"interpreter_fallback_entries\":[{}],\"compiled_to_vm_callouts\":{},\"compiled_import_callouts\":{},\"compiled_known_callouts\":{},\"compiled_reference_callouts\":{},\"import_callout_targets\":[{}],\"emscripten_memcpy_direct_copy_switch\":\"{}\",\"emscripten_memcpy_direct_copy_enabled\":{},\"emscripten_memcpy_fast_path_hits\":{},\"emscripten_memcpy_raw_i32_switch\":\"{}\",\"emscripten_memcpy_raw_i32_enabled\":{},\"emscripten_memcpy_raw_i32_hits\":{},\"emscripten_memcpy_early_import_switch\":\"{}\",\"emscripten_memcpy_early_import_enabled\":{},\"emscripten_memcpy_early_import_hits\":{},\"emscripten_memcpy_leaf_switch\":\"{}\",\"emscripten_memcpy_leaf_hits\":{},\"reference_call_sites\":[{}],\"same_artifact_direct_reference_hits\":{},\"reference_call_targets\":[{}]}}",
             stats.program,
             stats.compiled_functions,
             stats.total_functions,
@@ -1581,11 +1850,14 @@ impl Drop for CompiledProgram {
             stats.mapped_bytes,
             stats.compile_ns,
             entries,
+            JIT_NATIVE_ENTRY_SAMPLE_INTERVAL,
+            native_entry_samples,
             fallbacks,
             stats.compiled_to_vm_callouts.get(),
             stats.compiled_import_callouts.get(),
             stats.compiled_known_callouts.get(),
             stats.compiled_reference_callouts.get(),
+            import_callout_targets,
             super::wasm_js::emscripten_memcpy_direct_copy_switch(),
             super::wasm_js::emscripten_memcpy_direct_copy_enabled(),
             stats.emscripten_memcpy_fast_path_hits.get(),
@@ -1595,6 +1867,12 @@ impl Drop for CompiledProgram {
             super::wasm_js::emscripten_memcpy_early_import_switch(),
             super::wasm_js::emscripten_memcpy_early_import_enabled(),
             stats.emscripten_memcpy_early_import_hits.get(),
+            if jit_emscripten_memcpy_leaf_enabled() {
+                "1"
+            } else {
+                "0"
+            },
+            stats.emscripten_memcpy_leaf_hits.get(),
             reference_sites,
             same_artifact_direct_hits,
             reference_targets,
@@ -1699,6 +1977,24 @@ impl CompiledProgram {
     }
 
     #[cfg(test)]
+    pub(super) fn reference_fast_cache_matches_target(
+        &self,
+        site: usize,
+        target_function: usize,
+    ) -> bool {
+        let Some(cache) = self.reference_fast_caches.get(site) else {
+            return false;
+        };
+        let Some(body) = self.table.get(target_function).copied() else {
+            return false;
+        };
+        // The VM has returned from native execution before tests inspect this
+        // cache, and only the owning artifact's callout writes the cell.
+        let cache = unsafe { *cache.get() };
+        cache.function == target_function as u64 && cache.body == body as u64 && body != 0
+    }
+
+    #[cfg(test)]
     pub(super) fn emscripten_memcpy_fast_path_hits(&self) -> u64 {
         self.diagnostics
             .as_ref()
@@ -1719,28 +2015,50 @@ impl CompiledProgram {
             .map_or(0, |stats| stats.emscripten_memcpy_early_import_hits.get())
     }
 
-    fn note_direct_reference_entry(&self, function: usize) {
-        self.note_native_entry(function);
+    fn note_direct_reference_entry(&self, function: usize) -> bool {
+        let native_entry_should_sample = self.note_native_entry(function);
         #[cfg(test)]
         if let Some(Some(function)) = self.functions.get(function) {
             function
                 .direct_reference_entries
                 .set(function.direct_reference_entries.get().saturating_add(1));
         }
+        native_entry_should_sample
     }
 
-    fn note_native_entry(&self, function: usize) {
-        if let Some(stats) = &self.diagnostics
+    fn note_native_entry(&self, function: usize) -> bool {
+        let native_entry_should_sample = if let Some(stats) = &self.diagnostics
             && let Some(entries) = stats.native_entry_requests.get(function)
         {
-            entries.set(entries.get().saturating_add(1));
-        }
+            let entry_count = entries.get().saturating_add(1);
+            entries.set(entry_count);
+            native_entry_sample_due(entry_count)
+        } else {
+            false
+        };
         #[cfg(test)]
         if let Some(Some(function)) = self.functions.get(function) {
             function
                 .native_entries
                 .set(function.native_entries.get().saturating_add(1));
         }
+        native_entry_should_sample
+    }
+
+    fn finish_native_entry_sample(&self, function: usize, started: std::time::Instant) {
+        let stats = self
+            .diagnostics
+            .as_ref()
+            .expect("sampled entries require JIT diagnostics");
+        let (Some(samples), Some(sampled_ns)) = (
+            stats.native_entry_samples.get(function),
+            stats.native_entry_sampled_ns.get(function),
+        ) else {
+            unreachable!("sampled function is present in diagnostic function tables");
+        };
+        let elapsed_ns = u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX);
+        samples.set(samples.get().saturating_add(1));
+        sampled_ns.set(sampled_ns.get().saturating_add(elapsed_ns));
     }
 
     pub(super) fn has_function(&self, function: usize) -> bool {
@@ -2023,6 +2341,332 @@ impl Plan {
     fn operand(&self, pc: usize) -> Slot {
         self.operands[pc].expect("reachable")
     }
+}
+
+/// A counted `i32` loop whose body computes two adjacent element-wise sums.
+/// The fast path is admitted only when the memory ranges are statically
+/// disjoint and fit memory32 without wrapping; a one-time runtime length guard
+/// falls back to the original scalar loop when the memory is too short.
+#[derive(Clone, Copy, Debug)]
+struct AffinePairLoop {
+    header: usize,
+    branch: usize,
+    exit: usize,
+    induction: u16,
+    bound: u32,
+    destination: u32,
+    left: u32,
+    right: u32,
+    max_end: u64,
+}
+
+fn affine_pair_loop(
+    parameter_registers: Option<u16>,
+    register_count: u16,
+    plan: &Plan,
+    instructions: &[WideInstruction],
+    memory_register: u16,
+) -> Option<AffinePairLoop> {
+    for branch_pc in 1..instructions.len() {
+        let branch = instructions[branch_pc];
+        if branch.op() != Op::WasmJumpI32NotEqualImmediate {
+            continue;
+        }
+        let header = branch.jump_target() as usize;
+        let induction = branch.a();
+        let Ok(bound) = u32::try_from(branch.b() as i16) else {
+            continue;
+        };
+        if header >= branch_pc || bound == 0 || bound % 4 != 0 {
+            continue;
+        }
+        let update = instructions[branch_pc - 1];
+        if update.op() != Op::WasmI32AddImmediate
+            || update.a() != induction
+            || update.b() != induction
+            || update.imm() as i32 != 2
+        {
+            continue;
+        }
+        let shift = instructions[header];
+        if shift.op() != Op::WasmI32ShiftLeftImmediate
+            || shift.b() != induction
+            || shift.imm() != 2
+            || shift.a() == induction
+        {
+            continue;
+        }
+        let scaled = shift.a();
+        let Some(parameter_base) = parameter_registers else {
+            continue;
+        };
+        if (usize::from(parameter_base)..usize::from(parameter_base) + plan.params.len())
+            .contains(&usize::from(induction))
+        {
+            continue;
+        }
+        if instructions[..header]
+            .iter()
+            .any(|instruction| writes_register(*instruction, induction))
+        {
+            continue;
+        }
+        // The activation initializes locals to zero, which makes the
+        // induction start valid only if the function reaches this header by
+        // its ordinary prefix. Keep that prefix straight-line; a jump into
+        // its middle could otherwise carry a value from an earlier visit to
+        // the loop.
+        if instructions[..header].iter().any(|instruction| {
+            matches!(
+                instruction.op().control_flow_layout(),
+                ControlFlowLayout::Jump
+                    | ControlFlowLayout::ConditionalJump
+                    | ControlFlowLayout::BranchTable
+                    | ControlFlowLayout::Terminal
+            )
+        }) {
+            continue;
+        }
+        // The recognized loop has one straight-line body, one counted
+        // backedge, and one fallthrough exit. Reject any external edge into
+        // its prefix or interior so a scalar entry cannot carry a different
+        // induction value through the one-time guard.
+        let external_edge = instructions.iter().enumerate().any(|(pc, instruction)| {
+            if (header..=branch_pc).contains(&pc) {
+                return false;
+            }
+            let targets: Vec<usize> = match instruction.op().control_flow_layout() {
+                ControlFlowLayout::Jump => vec![instruction.jump_target() as usize],
+                ControlFlowLayout::ConditionalJump => {
+                    vec![instruction.jump_target() as usize, pc + 1]
+                }
+                ControlFlowLayout::BranchTable => return true,
+                ControlFlowLayout::Terminal => vec![],
+                ControlFlowLayout::Call | ControlFlowLayout::Fallthrough => {
+                    if instruction.returns_from_frame() {
+                        vec![]
+                    } else {
+                        vec![pc + 1]
+                    }
+                }
+            };
+            targets
+                .into_iter()
+                .any(|target| target <= branch_pc && !(pc < header && target == pc + 1))
+        });
+        if external_edge {
+            continue;
+        }
+        if (header..branch_pc).any(|pc| {
+            !plan.reachable(pc)
+                || matches!(
+                    instructions[pc].op().control_flow_layout(),
+                    ControlFlowLayout::Jump
+                        | ControlFlowLayout::ConditionalJump
+                        | ControlFlowLayout::BranchTable
+                        | ControlFlowLayout::Terminal
+                )
+        }) || branch_pc + 1 >= instructions.len()
+            || !plan.reachable(branch_pc)
+            || !plan.reachable(branch_pc + 1)
+        {
+            continue;
+        }
+
+        let registers = usize::from(register_count);
+        let mut addresses = vec![None; registers];
+        let mut values = vec![None; registers];
+        let mut loads = 0usize;
+        let mut adds = 0usize;
+        let mut stores = Vec::with_capacity(2);
+        let mut address_adds = 0usize;
+        let mut written = Vec::new();
+        let mut supported = true;
+        for (pc, instruction) in instructions
+            .iter()
+            .copied()
+            .enumerate()
+            .take(branch_pc)
+            .skip(header)
+        {
+            if pc == header {
+                written.push(instruction.a());
+                continue;
+            }
+            let op = instruction.op();
+            if op == Op::WasmI32AddImmediate {
+                if pc == branch_pc - 1 {
+                    written.push(instruction.a());
+                    continue;
+                }
+                if instruction.b() != scaled || instruction.a() == scaled {
+                    supported = false;
+                    break;
+                }
+                if instruction.a() == induction {
+                    supported = false;
+                    break;
+                }
+                let offset = instruction.imm() as i32;
+                if offset < 0 {
+                    supported = false;
+                    break;
+                }
+                let destination = usize::from(instruction.a());
+                addresses[destination] = Some(offset as u32);
+                values[destination] = None;
+                address_adds += 1;
+                written.push(instruction.a());
+            } else if op == Op::WasmI32Load {
+                if instruction.b() != memory_register
+                    || instruction.imm() != 0
+                    || instruction.a() == induction
+                    || instruction.a() == scaled
+                {
+                    supported = false;
+                    break;
+                }
+                let Some(offset) = addresses[usize::from(instruction.c())].take() else {
+                    supported = false;
+                    break;
+                };
+                let destination = usize::from(instruction.a());
+                addresses[destination] = None;
+                values[destination] = Some([offset, u32::MAX]);
+                loads += 1;
+                written.push(instruction.a());
+            } else if op == Op::WasmI32Add {
+                if instruction.a() == induction || instruction.a() == scaled {
+                    supported = false;
+                    break;
+                }
+                let (Some(left), Some(right)) = (
+                    values[usize::from(instruction.b())].take(),
+                    values[usize::from(instruction.c())].take(),
+                ) else {
+                    supported = false;
+                    break;
+                };
+                if left[1] != u32::MAX || right[1] != u32::MAX {
+                    supported = false;
+                    break;
+                }
+                let destination = usize::from(instruction.a());
+                addresses[destination] = None;
+                values[destination] = Some([left[0], right[0]]);
+                adds += 1;
+                written.push(instruction.a());
+            } else if op == Op::WasmI32Store {
+                if instruction.b() != memory_register || instruction.imm() != 0 {
+                    supported = false;
+                    break;
+                }
+                let (Some(destination), Some(sources)) = (
+                    addresses[usize::from(instruction.c())].take(),
+                    values[usize::from(instruction.a())].take(),
+                ) else {
+                    supported = false;
+                    break;
+                };
+                if sources[1] == u32::MAX {
+                    supported = false;
+                    break;
+                }
+                stores.push((destination, sources));
+            } else {
+                supported = false;
+                break;
+            }
+        }
+        if !supported || loads != 4 || adds != 2 || stores.len() != 2 || address_adds != 6 {
+            continue;
+        }
+        let [(destination, sources), (second_destination, second_sources)] = stores.as_slice()
+        else {
+            continue;
+        };
+        if u64::from(*second_destination) != u64::from(*destination) + 4 {
+            continue;
+        }
+        let (left, right) = if u64::from(second_sources[0]) == u64::from(sources[0]) + 4
+            && u64::from(second_sources[1]) == u64::from(sources[1]) + 4
+        {
+            (sources[0], sources[1])
+        } else if u64::from(second_sources[0]) == u64::from(sources[1]) + 4
+            && u64::from(second_sources[1]) == u64::from(sources[0]) + 4
+        {
+            (sources[0], sources[1])
+        } else {
+            continue;
+        };
+        let range_end = |start: u32| u64::from(start) + u64::from(bound) * 4;
+        let destination_end = range_end(*destination);
+        let left_end = range_end(left);
+        let right_end = range_end(right);
+        let wasm_address_end = u64::from(u32::MAX) + 1;
+        if destination_end > wasm_address_end
+            || left_end > wasm_address_end
+            || right_end > wasm_address_end
+        {
+            continue;
+        }
+        let disjoint = |first_start: u32, first_end: u64, second_start: u32, second_end: u64| {
+            first_end <= u64::from(second_start) || second_end <= u64::from(first_start)
+        };
+        if !disjoint(*destination, destination_end, left, left_end)
+            || !disjoint(*destination, destination_end, right, right_end)
+        {
+            continue;
+        }
+        // No loop-local register may be observed after the loop before a
+        // scalar definition replaces it. This lets the vector loop jump
+        // directly to the scalar loop's exit without manufacturing unused
+        // interpreter temporaries.
+        let mut pending = written;
+        pending.sort_unstable();
+        pending.dedup();
+        let mut liveout_safe = true;
+        for instruction in instructions.iter().copied().skip(branch_pc + 1) {
+            if pending
+                .iter()
+                .any(|register| reads_register(instruction, *register))
+            {
+                liveout_safe = false;
+                break;
+            }
+            if has_ambiguous_register_write(instruction) {
+                liveout_safe = false;
+                break;
+            }
+            pending.retain(|register| !definitely_writes_register(instruction, *register));
+            if pending.is_empty() {
+                break;
+            }
+            if !matches!(
+                instruction.op().control_flow_layout(),
+                ControlFlowLayout::Fallthrough | ControlFlowLayout::Terminal
+            ) {
+                liveout_safe = false;
+                break;
+            }
+        }
+        if !liveout_safe {
+            continue;
+        }
+        let max_end = destination_end.max(left_end).max(right_end);
+        return Some(AffinePairLoop {
+            header,
+            branch: branch_pc,
+            exit: branch_pc + 1,
+            induction,
+            bound,
+            destination: *destination,
+            left,
+            right,
+            max_end,
+        });
+    }
+    None
 }
 
 /// The register a direct access of `instruction` reads its memory through.
@@ -2800,6 +3444,66 @@ fn writes_register(instruction: WideInstruction, register: u16) -> bool {
     })
 }
 
+/// Whether the instruction definitely replaces `register` with a new value.
+/// Register windows are excluded because the base alone does not prove that a
+/// particular register in the group is overwritten.
+fn definitely_writes_register(instruction: WideInstruction, register: u16) -> bool {
+    use crate::bytecode::{FieldLayout, InstructionField};
+    InstructionField::ALL.iter().any(|field| {
+        let operand = instruction.field_value(*field);
+        matches!(
+            instruction.op().field_layout(*field),
+            FieldLayout::ResultRegister
+                | FieldLayout::WriteRegister
+                | FieldLayout::ReadWriteRegister
+        ) && operand == register
+    })
+}
+
+/// Whether an instruction contains a register-group write whose exact set of
+/// destinations is not represented by `definitely_writes_register`.
+fn has_ambiguous_register_write(instruction: WideInstruction) -> bool {
+    use crate::bytecode::{FieldLayout, InstructionField};
+    InstructionField::ALL.iter().any(|field| {
+        matches!(
+            instruction.op().field_layout(*field),
+            FieldLayout::RegisterWindowBase
+                | FieldLayout::RegisterCount
+                | FieldLayout::ConstructArguments
+                | FieldLayout::NumericLocalTarget
+        )
+    })
+}
+
+/// Whether `instruction` reads `register`, including an immediate register
+/// pair or a register window. Window reads are deliberately conservative:
+/// they prevent a vector loop from bypassing any interpreter temporary that
+/// could be observed after its exit.
+fn reads_register(instruction: WideInstruction, register: u16) -> bool {
+    use crate::bytecode::{FieldLayout, ImmediateLayout, InstructionField};
+    let op = instruction.op();
+    if InstructionField::ALL.iter().copied().any(|field| {
+        let layout = op.field_layout(field);
+        if !layout.reads_register() {
+            return false;
+        }
+        match layout {
+            FieldLayout::RegisterWindowBase
+            | FieldLayout::RegisterCount
+            | FieldLayout::ConstructArguments
+            | FieldLayout::NumericLocalTarget => true,
+            _ => instruction.field_value(field) == register,
+        }
+    }) {
+        return true;
+    }
+    if op.immediate_layout() == ImmediateLayout::RegisterPair {
+        let (first, second) = ImmediateLayout::register_pair(instruction.imm());
+        return first == register || second == register;
+    }
+    false
+}
+
 /// Whether conditional jump `instruction` is taken when `register` holds
 /// `value`, if that alone decides it.
 fn decided_branch(instruction: WideInstruction, register: u16, value: i32) -> Option<bool> {
@@ -2936,6 +3640,10 @@ struct Emitter<'a, 'b, H: Host> {
     /// When enabled, branch-only i32 comparisons remain Cranelift booleans
     /// instead of being extended to a Wasm i32 and tested again.
     direct_compare_branches: bool,
+    /// Cache same-artifact Wasm body pointers at indirect-call sites.
+    reference_body_cache: bool,
+    /// Emit a guarded direct leaf for the canonical Emscripten memcpy import.
+    emscripten_memcpy_leaf: bool,
     /// Per `Region`, its alias region in this function.
     regions: [ir::AliasRegion; Region::COUNT],
     globals: &'a [u32],
@@ -2961,6 +3669,8 @@ struct Emitter<'a, 'b, H: Host> {
     plans: &'a [Option<Plan>],
     call_conv: cranelift_codegen::isa::CallConv,
     instructions: &'a [WideInstruction],
+    affine_loop: Option<AffinePairLoop>,
+    affine_attempt: Option<Variable>,
     /// Registers some branch table dispatches on.
     selectors: Vec<u16>,
     /// Selectors known to hold an i32 constant since the current block began.
@@ -3131,6 +3841,113 @@ impl<H: Host> Emitter<'_, '_, H> {
         self.builder.ins().brif(stop, termination, &[], next, &[]);
         self.builder.switch_to_block(next);
         self.builder.seal_block(next);
+    }
+
+    /// Try a full counted-loop SIMD replacement once on entry. If the memory
+    /// is too short, set the attempt marker and fall through to the original
+    /// scalar bytecodes; their backedge then bypasses this guard.
+    fn affine_pair_gate(&mut self) {
+        let candidate = self.affine_loop.expect("gate only for an affine loop");
+        let attempt = self
+            .affine_attempt
+            .expect("affine loop has an attempt variable");
+        let scalar = self.builder.create_block();
+        let first_attempt = self.builder.create_block();
+        let attempted = self.builder.use_var(attempt);
+        let already_attempted = self.builder.ins().icmp_imm_u(IntCC::NotEqual, attempted, 0);
+        self.builder
+            .ins()
+            .brif(already_attempted, scalar, &[], first_attempt, &[]);
+
+        self.builder.switch_to_block(first_attempt);
+        let one = self.builder.ins().iconst(types::I32, 1);
+        self.builder.def_var(attempt, one);
+        let memory_length = self.builder.ins().load(
+            types::I64,
+            MemFlagsData::trusted(),
+            self.context,
+            CONTEXT_MEMORY_LENGTH,
+        );
+        let minimum_length = self
+            .builder
+            .ins()
+            .iconst(types::I64, candidate.max_end as i64);
+        let in_bounds = self.builder.ins().icmp(
+            IntCC::UnsignedGreaterThanOrEqual,
+            memory_length,
+            minimum_length,
+        );
+        let vector = self.builder.create_block();
+        self.builder.ins().brif(in_bounds, vector, &[], scalar, &[]);
+
+        self.builder.switch_to_block(vector);
+        self.affine_pair_vector_loop(candidate);
+        self.builder.switch_to_block(scalar);
+    }
+
+    /// Emit the guarded vector body. Its induction range is proven to fit
+    /// memory32 without wrap, the input and output ranges are disjoint, and
+    /// it polls after each original pair of writes.
+    fn affine_pair_vector_loop(&mut self, candidate: AffinePairLoop) {
+        let loop_block = self.builder.create_block();
+        let index = self.builder.append_block_param(loop_block, types::I32);
+        let initial = self.builder.ins().iconst(types::I32, 0);
+        self.builder
+            .ins()
+            .jump(loop_block, &[ir::BlockArg::Value(initial)]);
+        self.builder.switch_to_block(loop_block);
+
+        let scaled = self.builder.ins().ishl_imm_u(index, 2);
+        let scaled = self.builder.ins().uextend(types::I64, scaled);
+        let address = |this: &mut Self, offset: u32| {
+            let address = this.builder.ins().iadd(this.base, scaled);
+            this.builder.ins().iadd_imm_s(address, i64::from(offset))
+        };
+        let left_address = address(self, candidate.left);
+        let right_address = address(self, candidate.right);
+        let destination_address = address(self, candidate.destination);
+        let flags = self.flags(Region::LinearMemory);
+        let left = self
+            .builder
+            .ins()
+            .load(types::I32X4, flags, left_address, 0);
+        let right = self
+            .builder
+            .ins()
+            .load(types::I32X4, flags, right_address, 0);
+        let sum = self.builder.ins().iadd(left, right);
+        let first_low = self.builder.ins().extractlane(sum, 0);
+        let first_high = self.builder.ins().extractlane(sum, 1);
+        let first_pair = self.builder.ins().iconcat(first_low, first_high);
+        self.builder
+            .ins()
+            .store(flags, first_pair, destination_address, 0);
+        self.interrupt_safepoint();
+
+        let second_low = self.builder.ins().extractlane(sum, 2);
+        let second_high = self.builder.ins().extractlane(sum, 3);
+        let second_pair = self.builder.ins().iconcat(second_low, second_high);
+        self.builder
+            .ins()
+            .store(flags, second_pair, destination_address, 8);
+        self.interrupt_safepoint();
+
+        let next_index = self.builder.ins().iadd_imm_s(index, 4);
+        let more =
+            self.builder
+                .ins()
+                .icmp_imm_u(IntCC::NotEqual, next_index, i64::from(candidate.bound));
+        let backedge = self.builder.create_block();
+        let done = self.builder.create_block();
+        self.builder.ins().brif(more, backedge, &[], done, &[]);
+        self.builder.switch_to_block(backedge);
+        self.interrupt_safepoint();
+        self.builder
+            .ins()
+            .jump(loop_block, &[ir::BlockArg::Value(next_index)]);
+        self.builder.switch_to_block(done);
+        let exit = self.edge(candidate.exit);
+        self.builder.ins().jump(exit, &[]);
     }
     fn finish_traps(&mut self) {
         if let Some(block) = self.termination_block {
@@ -3537,6 +4354,124 @@ impl<H: Host> Emitter<'_, '_, H> {
         signature: &crate::WasmSignature,
         instruction: WideInstruction,
     ) {
+        if self.emscripten_memcpy_leaf && self.is_emscripten_memcpy_import(function, signature) {
+            self.callout_emscripten_memcpy_leaf(function, instruction);
+            return;
+        }
+        self.callout_function_generic(function, signature, instruction);
+    }
+
+    fn is_emscripten_memcpy_import(&self, function: u32, signature: &crate::WasmSignature) -> bool {
+        let Some(signatures) = self
+            .analysis
+            .vm
+            .programs
+            .wasm_signatures(self.analysis.program)
+        else {
+            return false;
+        };
+        let Some(import) = usize::try_from(function)
+            .ok()
+            .and_then(|index| signatures.imports().get(index))
+        else {
+            return false;
+        };
+        import.name.name == "_emscripten_memcpy_js"
+            && signature.params.as_slice()
+                == [
+                    crate::WasmType::I32,
+                    crate::WasmType::I32,
+                    crate::WasmType::I32,
+                ]
+            && signature.results.is_empty()
+    }
+
+    fn callout_emscripten_memcpy_leaf(&mut self, function: u32, instruction: WideInstruction) {
+        let fast = self.builder.create_block();
+        let slow = self.builder.create_block();
+        let success = self.builder.create_block();
+        let done = self.builder.create_block();
+        let cache = self.builder.ins().load(
+            types::I64,
+            invariant(),
+            self.context,
+            CONTEXT_EMSCRIPTEN_MEMCPY_CACHE,
+        );
+        let valid = self.builder.ins().load(
+            types::I64,
+            MemFlagsData::trusted(),
+            cache,
+            MEMCPY_CACHE_VALID,
+        );
+        let valid = self.builder.ins().icmp_imm_u(IntCC::Equal, valid, 1);
+        let cached_function = self.builder.ins().load(
+            types::I64,
+            MemFlagsData::trusted(),
+            cache,
+            MEMCPY_CACHE_FUNCTION,
+        );
+        let matching_function =
+            self.builder
+                .ins()
+                .icmp_imm_u(IntCC::Equal, cached_function, i64::from(function));
+        let valid = self.builder.ins().band(valid, matching_function);
+        self.builder.ins().brif(valid, fast, &[], slow, &[]);
+
+        self.builder.switch_to_block(fast);
+        let window = instruction.call_window();
+        let args = (0..3)
+            .map(|offset| self.read(window.base + offset, Kind::I32))
+            .collect::<Vec<_>>();
+        let target = self.builder.ins().load(
+            types::I64,
+            invariant(),
+            self.context,
+            CONTEXT_EMSCRIPTEN_MEMCPY_LEAF,
+        );
+        let mut leaf = Signature::new(self.call_conv);
+        leaf.params.push(AbiParam::new(types::I64));
+        leaf.params.push(AbiParam::new(types::I64));
+        leaf.params
+            .extend((0..3).map(|_| AbiParam::new(types::I32)));
+        leaf.returns.push(AbiParam::new(types::I64));
+        let leaf = self.builder.import_signature(leaf);
+        let function_value = self.builder.ins().iconst(types::I64, i64::from(function));
+        let call = self.builder.ins().call_indirect(
+            leaf,
+            target,
+            &[self.context, function_value, args[0], args[1], args[2]],
+        );
+        let status = self.builder.inst_results(call)[0];
+        let miss = self
+            .builder
+            .ins()
+            .icmp_imm_u(IntCC::Equal, status, MEMCPY_LEAF_MISS_STATUS);
+        self.builder.ins().brif(miss, slow, &[], success, &[]);
+
+        self.builder.switch_to_block(success);
+        self.propagate(status);
+        self.write_constant(instruction.result_register(), Kind::I32, 0);
+        self.builder.ins().jump(done, &[]);
+
+        self.builder.switch_to_block(slow);
+        self.callout_function_generic(
+            function,
+            &crate::WasmSignature {
+                params: vec![crate::WasmType::I32; 3],
+                results: Vec::new(),
+            },
+            instruction,
+        );
+        self.builder.ins().jump(done, &[]);
+        self.builder.switch_to_block(done);
+    }
+
+    fn callout_function_generic(
+        &mut self,
+        function: u32,
+        signature: &crate::WasmSignature,
+        instruction: WideInstruction,
+    ) {
         let word = types::I64.bytes();
         let signature = signature.clone();
         let words = signature.params.len() + 1;
@@ -3767,27 +4702,49 @@ impl<H: Host> Emitter<'_, '_, H> {
             cached_function,
             self.plans.len() as i64,
         );
-        let lookup_entry = self.builder.create_block();
-        self.builder
-            .ins()
-            .brif(function_in_range, lookup_entry, &[], slow_call, &[]);
-        self.builder.seal_block(check_entry);
-        self.builder.switch_to_block(lookup_entry);
-        let artifact_table =
+        let body = if self.reference_body_cache {
+            let load_body = self.builder.create_block();
             self.builder
                 .ins()
-                .load(types::I64, invariant(), self.context, CONTEXT_TABLE);
-        let entry_offset = self.builder.ins().ishl_imm_u(cached_function, 3);
-        let entry_address = self.builder.ins().iadd(artifact_table, entry_offset);
-        let entry = self
-            .builder
-            .ins()
-            .load(types::I64, MemFlagsData::trusted(), entry_address, 0);
-        let entry_present = self.builder.ins().icmp_imm_u(IntCC::NotEqual, entry, 0);
-        self.builder
-            .ins()
-            .brif(entry_present, fast_call, &[], slow_call, &[]);
-        self.builder.seal_block(lookup_entry);
+                .brif(function_in_range, load_body, &[], slow_call, &[]);
+            self.builder.seal_block(check_entry);
+            self.builder.switch_to_block(load_body);
+            let body = self.builder.ins().load(
+                types::I64,
+                MemFlagsData::trusted(),
+                fast_cache,
+                std::mem::offset_of!(FastReferenceCache, body) as i32,
+            );
+            let body_present = self.builder.ins().icmp_imm_u(IntCC::NotEqual, body, 0);
+            self.builder
+                .ins()
+                .brif(body_present, fast_call, &[], slow_call, &[]);
+            self.builder.seal_block(load_body);
+            body
+        } else {
+            let lookup_entry = self.builder.create_block();
+            self.builder
+                .ins()
+                .brif(function_in_range, lookup_entry, &[], slow_call, &[]);
+            self.builder.seal_block(check_entry);
+            self.builder.switch_to_block(lookup_entry);
+            let artifact_table =
+                self.builder
+                    .ins()
+                    .load(types::I64, invariant(), self.context, CONTEXT_TABLE);
+            let entry_offset = self.builder.ins().ishl_imm_u(cached_function, 3);
+            let entry_address = self.builder.ins().iadd(artifact_table, entry_offset);
+            let entry =
+                self.builder
+                    .ins()
+                    .load(types::I64, MemFlagsData::trusted(), entry_address, 0);
+            let entry_present = self.builder.ins().icmp_imm_u(IntCC::NotEqual, entry, 0);
+            self.builder
+                .ins()
+                .brif(entry_present, fast_call, &[], slow_call, &[]);
+            self.builder.seal_block(lookup_entry);
+            entry
+        };
 
         self.builder.switch_to_block(fast_call);
         let mut direct_args = vec![self.context];
@@ -3816,7 +4773,7 @@ impl<H: Host> Emitter<'_, '_, H> {
         let call = self
             .builder
             .ins()
-            .call_indirect(entry_signature, entry, &direct_args);
+            .call_indirect(entry_signature, body, &direct_args);
         let fast_results = self.builder.inst_results(call).to_vec();
         let fast_status = fast_results[0];
         if let Some(result) = wasm_signature.results.first() {
@@ -4443,6 +5400,39 @@ impl<'a, H: Host> Analysis<'a, H> {
             .iter()
             .map(|packed| super::dispatch_fast::decoded_instruction(function, *packed))
             .collect();
+        let affine_loop = (self.code.kind == crate::bytecode::ProgramKind::Wasm
+            && jit_affine_pair_enabled())
+        .then(|| {
+            super::dispatch_fast::memory_register(function).and_then(|memory_register| {
+                affine_pair_loop(
+                    function.parameter_registers,
+                    function.registers,
+                    plan,
+                    &instructions,
+                    memory_register,
+                )
+            })
+        })
+        .flatten();
+        if diagnostics_enabled && let Some(candidate) = affine_loop {
+            eprintln!(
+                "QUENCH_WASM_JIT_AFFINE_PAIR function={index} header={} branch={} induction={} bound={} destination={} left={} right={} max_end={}",
+                candidate.header,
+                candidate.branch,
+                candidate.induction,
+                candidate.bound,
+                candidate.destination,
+                candidate.left,
+                candidate.right,
+                candidate.max_end
+            );
+        }
+        let affine_attempt = affine_loop.map(|_| {
+            let variable = builder.declare_var(types::I32);
+            let initial = builder.ins().iconst(types::I32, 0);
+            builder.def_var(variable, initial);
+            variable
+        });
         let mut selectors: Vec<u16> = instructions
             .iter()
             .enumerate()
@@ -4456,6 +5446,8 @@ impl<'a, H: Host> Analysis<'a, H> {
         let mut emitter = Emitter {
             guarded,
             direct_compare_branches: jit_direct_compare_branches_enabled(),
+            reference_body_cache: jit_reference_body_cache_enabled(),
+            emscripten_memcpy_leaf: jit_emscripten_memcpy_leaf_enabled(),
             regions,
             globals,
             analysis: self,
@@ -4476,6 +5468,8 @@ impl<'a, H: Host> Analysis<'a, H> {
             plans,
             call_conv,
             instructions: &instructions,
+            affine_loop,
+            affine_attempt,
             selectors,
             known: Vec::new(),
             threads: Vec::new(),
@@ -4552,6 +5546,12 @@ impl<'a, H: Host> Analysis<'a, H> {
                     emitter.builder.ins().jump(block, &[]);
                 }
                 emitter.builder.switch_to_block(block);
+                if emitter
+                    .affine_loop
+                    .is_some_and(|candidate| candidate.header == pc)
+                {
+                    emitter.affine_pair_gate();
+                }
             }
             open = emitter.instruction(function, pc, instruction);
             // A later jump may target the next instruction; give it a block
@@ -5093,12 +6093,14 @@ impl<H: Host> Vm<H> {
                 let compiled = super::js_compiled::compile(&residual, function_id)
                     .and_then(CompiledJsFunction::from_artifact)
                     .map(Rc::new);
-                let installed = self
-                    .programs
-                    .install_js_tier(program_id, function_id, compiled.clone());
+                let installed =
+                    self.programs
+                        .install_js_tier(program_id, function_id, compiled.clone());
                 if let Some(compile_started) = compile_started {
                     let code_bytes = if installed {
-                        compiled.as_ref().map_or(0, |compiled| compiled.mapped_bytes())
+                        compiled
+                            .as_ref()
+                            .map_or(0, |compiled| compiled.mapped_bytes())
                     } else {
                         0
                     };
@@ -5547,23 +6549,53 @@ impl<H: Host> Vm<H> {
             .iter()
             .filter(|function| function.is_some())
             .count();
-        let diagnostics = diagnostics_enabled.then(|| WasmJitDiagnostics {
-            program: program.raw(),
-            total_functions: count,
-            compiled_functions,
-            code_bytes: bytes.len(),
-            mapped_bytes,
-            compile_ns: compile_started.map_or(0, |started| started.elapsed().as_nanos()),
-            native_entry_requests: (0..count).map(|_| std::cell::Cell::new(0)).collect(),
-            interpreter_fallback_entries: (0..count).map(|_| std::cell::Cell::new(0)).collect(),
-            compiled_to_vm_callouts: std::cell::Cell::new(0),
-            compiled_import_callouts: std::cell::Cell::new(0),
-            compiled_known_callouts: std::cell::Cell::new(0),
-            compiled_reference_callouts: std::cell::Cell::new(0),
-            emscripten_memcpy_fast_path_hits: std::cell::Cell::new(0),
-            emscripten_memcpy_raw_i32_hits: std::cell::Cell::new(0),
-            emscripten_memcpy_early_import_hits: std::cell::Cell::new(0),
-            reference_call_sites,
+        let diagnostics = diagnostics_enabled.then(|| {
+            let import_callout_names = self
+                .programs
+                .wasm_signatures(program)
+                .map(|signatures| {
+                    signatures
+                        .imports()
+                        .iter()
+                        .enumerate()
+                        .map(|(function, import)| {
+                            (
+                                u32::try_from(function).expect("Wasm function indices fit in u32"),
+                                import.name.index,
+                                import.name.module.clone(),
+                                import.name.name.clone(),
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let import_callout_counts = import_callout_names
+                .iter()
+                .map(|_| std::cell::Cell::new(0))
+                .collect();
+            WasmJitDiagnostics {
+                program: program.raw(),
+                total_functions: count,
+                compiled_functions,
+                code_bytes: bytes.len(),
+                mapped_bytes,
+                compile_ns: compile_started.map_or(0, |started| started.elapsed().as_nanos()),
+                native_entry_requests: (0..count).map(|_| std::cell::Cell::new(0)).collect(),
+                native_entry_samples: (0..count).map(|_| std::cell::Cell::new(0)).collect(),
+                native_entry_sampled_ns: (0..count).map(|_| std::cell::Cell::new(0)).collect(),
+                interpreter_fallback_entries: (0..count).map(|_| std::cell::Cell::new(0)).collect(),
+                compiled_to_vm_callouts: std::cell::Cell::new(0),
+                compiled_import_callouts: std::cell::Cell::new(0),
+                compiled_known_callouts: std::cell::Cell::new(0),
+                compiled_reference_callouts: std::cell::Cell::new(0),
+                emscripten_memcpy_fast_path_hits: std::cell::Cell::new(0),
+                emscripten_memcpy_raw_i32_hits: std::cell::Cell::new(0),
+                emscripten_memcpy_early_import_hits: std::cell::Cell::new(0),
+                emscripten_memcpy_leaf_hits: std::cell::Cell::new(0),
+                import_callout_names,
+                import_callout_counts,
+                reference_call_sites,
+            }
         });
         Some(CompiledProgram {
             _code: memory,
@@ -5891,6 +6923,8 @@ impl<H: Host> Vm<H> {
             let mut emscripten_memcpy_fast_path_hits = 0u64;
             let mut emscripten_memcpy_raw_i32_hits = 0u64;
             let mut emscripten_memcpy_early_import_hits = 0u64;
+            let mut emscripten_memcpy_leaf_hits = 0u64;
+            let mut emscripten_memcpy_cache = EmscriptenMemcpyCache::default();
             let (
                 import_callouts_ptr,
                 known_callouts_ptr,
@@ -5898,26 +6932,36 @@ impl<H: Host> Vm<H> {
                 emscripten_memcpy_fast_path_hits_ptr,
                 emscripten_memcpy_raw_i32_hits_ptr,
                 emscripten_memcpy_early_import_hits_ptr,
-            ): (*mut u64, *mut u64, *mut u64, *mut u64, *mut u64, *mut u64) =
-                if compiled.diagnostics.is_some() {
-                    (
-                        &mut import_callouts as *mut u64,
-                        &mut known_callouts as *mut u64,
-                        &mut reference_callouts as *mut u64,
-                        &mut emscripten_memcpy_fast_path_hits as *mut u64,
-                        &mut emscripten_memcpy_raw_i32_hits as *mut u64,
-                        &mut emscripten_memcpy_early_import_hits as *mut u64,
-                    )
-                } else {
-                    (
-                        std::ptr::null_mut(),
-                        std::ptr::null_mut(),
-                        std::ptr::null_mut(),
-                        std::ptr::null_mut(),
-                        std::ptr::null_mut(),
-                        std::ptr::null_mut(),
-                    )
-                };
+                emscripten_memcpy_leaf_hits_ptr,
+            ): (
+                *mut u64,
+                *mut u64,
+                *mut u64,
+                *mut u64,
+                *mut u64,
+                *mut u64,
+                *mut u64,
+            ) = if compiled.diagnostics.is_some() {
+                (
+                    &mut import_callouts as *mut u64,
+                    &mut known_callouts as *mut u64,
+                    &mut reference_callouts as *mut u64,
+                    &mut emscripten_memcpy_fast_path_hits as *mut u64,
+                    &mut emscripten_memcpy_raw_i32_hits as *mut u64,
+                    &mut emscripten_memcpy_early_import_hits as *mut u64,
+                    &mut emscripten_memcpy_leaf_hits as *mut u64,
+                )
+            } else {
+                (
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                )
+            };
             let poll = self.execution_interrupt.poll_page();
             let mut context = CallContext {
                 stack_limit: stack_pointer.saturating_sub(COMPILED_STACK_BUDGET),
@@ -5959,9 +7003,28 @@ impl<H: Host> Vm<H> {
                 emscripten_memcpy_fast_path_hits: emscripten_memcpy_fast_path_hits_ptr,
                 emscripten_memcpy_raw_i32_hits: emscripten_memcpy_raw_i32_hits_ptr,
                 emscripten_memcpy_early_import_hits: emscripten_memcpy_early_import_hits_ptr,
+                emscripten_memcpy_cache: &mut emscripten_memcpy_cache,
+                emscripten_memcpy_leaf: if jit_emscripten_memcpy_leaf_enabled() {
+                    compiled_emscripten_memcpy_leaf as DirectMemcpyLeaf as usize
+                } else {
+                    0
+                },
+                emscripten_memcpy_leaf_hits: emscripten_memcpy_leaf_hits_ptr,
+                import_callout_counts: compiled
+                    .diagnostics
+                    .as_ref()
+                    .map_or(std::ptr::null(), |stats| {
+                        stats.import_callout_counts.as_ptr()
+                    }),
+                import_callout_count: compiled
+                    .diagnostics
+                    .as_ref()
+                    .map_or(0, |stats| stats.import_callout_counts.len()),
             };
             let mut out = 0u64;
-            compiled.note_native_entry(id as usize);
+            let native_entry_should_sample = compiled.note_native_entry(id as usize);
+            let native_entry_sample_started =
+                native_entry_should_sample.then(std::time::Instant::now);
             let status = match guard_trampoline() {
                 Some(trampoline) => {
                     // The trampoline gives this entry its own resumable stack
@@ -5990,6 +7053,9 @@ impl<H: Host> Vm<H> {
                     (function.entry)(&mut context, base, length, raw.as_ptr(), &mut out)
                 },
             };
+            if let Some(started) = native_entry_sample_started {
+                compiled.finish_native_entry_sample(id as usize, started);
+            }
             if let Some(stats) = &compiled.diagnostics {
                 stats.compiled_to_vm_callouts.set(
                     stats
@@ -6034,6 +7100,12 @@ impl<H: Host> Vm<H> {
                         .emscripten_memcpy_early_import_hits
                         .get()
                         .saturating_add(emscripten_memcpy_early_import_hits),
+                );
+                stats.emscripten_memcpy_leaf_hits.set(
+                    stats
+                        .emscripten_memcpy_leaf_hits
+                        .get()
+                        .saturating_add(emscripten_memcpy_leaf_hits),
                 );
             }
             if i64::from(status) == TERMINATED_STATUS {
@@ -6085,8 +7157,9 @@ impl<H: Host> Vm<H> {
         early_import_hits: *mut u64,
         args: *const u64,
     ) -> bool {
-        if !super::wasm_js::emscripten_memcpy_raw_i32_enabled()
-            || !super::wasm_js::emscripten_memcpy_early_import_enabled()
+        if !jit_emscripten_memcpy_leaf_enabled()
+            && (!super::wasm_js::emscripten_memcpy_raw_i32_enabled()
+                || !super::wasm_js::emscripten_memcpy_early_import_enabled())
         {
             return false;
         }
@@ -6422,10 +7495,250 @@ const VOID_RESULT_CONSTANT: usize = 1;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bytecode::Op;
+
+    fn memcpy_leaf_context(
+        cache: &mut EmscriptenMemcpyCache,
+        interrupt: &std::sync::atomic::AtomicBool,
+        hits: &mut u64,
+    ) -> CallContext {
+        CallContext {
+            stack_limit: 0,
+            interrupt,
+            table: std::ptr::null(),
+            vm: std::ptr::null_mut(),
+            env: Value::NULL,
+            entry_stack: 0,
+            guard_start: 0,
+            guard_end: 0,
+            // No poll page: compiled code checks the interrupt flag.
+            poll_start: 0,
+            poll_end: 0,
+            globals: std::ptr::null(),
+            callout: 0,
+            call_reference: 0,
+            compiled: std::ptr::null(),
+            program: ProgramId::MAIN,
+            import_callouts: std::ptr::null_mut(),
+            known_callouts: std::ptr::null_mut(),
+            reference_callouts: std::ptr::null_mut(),
+            memory: Value::NULL,
+            memory_length: 0,
+            raised: None,
+            call_reference_diagnostic: 0,
+            reference_call_sites: std::ptr::null(),
+            reference_call_site_count: 0,
+            reference_epoch: std::ptr::null(),
+            reference_fast_caches: std::ptr::null_mut(),
+            emscripten_memcpy_fast_path_hits: std::ptr::null_mut(),
+            emscripten_memcpy_raw_i32_hits: std::ptr::null_mut(),
+            emscripten_memcpy_early_import_hits: std::ptr::null_mut(),
+            emscripten_memcpy_cache: cache,
+            emscripten_memcpy_leaf: 0,
+            emscripten_memcpy_leaf_hits: hits,
+            import_callout_counts: std::ptr::null(),
+            import_callout_count: 0,
+        }
+    }
 
     #[test]
-    fn root_only_jit_forces_cranelift_opt_level_none() {
-        assert_eq!(jit_root_opt_level(Some(0), true), Ok("none"));
+    fn per_import_callout_counts_use_function_indices_and_escape_json_names() {
+        let names = vec![
+            (0, 2, "env".to_owned(), "copy\"fast".to_owned()),
+            (1, 5, "host\\api".to_owned(), "line\nfeed".to_owned()),
+        ];
+        let counters = [std::cell::Cell::new(0), std::cell::Cell::new(0)];
+        // SAFETY: the pointer covers both initialized counters for their
+        // entire use below.
+        unsafe {
+            note_import_callout_target(counters.as_ptr(), counters.len(), 1);
+            note_import_callout_target(counters.as_ptr(), counters.len(), 1);
+            note_import_callout_target(counters.as_ptr(), counters.len(), 99);
+        }
+        assert_eq!(counters[0].get(), 0);
+        assert_eq!(counters[1].get(), 2);
+        assert_eq!(
+            format_import_callout_targets(&names, &counters),
+            "{\"function\":1,\"import_index\":5,\"module\":\"host\\\\api\",\"name\":\"line\\nfeed\",\"count\":2}"
+        );
+        assert_eq!(json_string("\u{1}\t"), "\"\\u0001\\t\"");
+    }
+
+    #[test]
+    fn native_entry_sampling_is_sparse_and_deterministic() {
+        assert!(!native_entry_sample_due(0));
+        assert!(!native_entry_sample_due(1));
+        assert!(native_entry_sample_due(JIT_NATIVE_ENTRY_SAMPLE_INTERVAL));
+        assert!(!native_entry_sample_due(
+            JIT_NATIVE_ENTRY_SAMPLE_INTERVAL + 1
+        ));
+        assert!(native_entry_sample_due(
+            JIT_NATIVE_ENTRY_SAMPLE_INTERVAL * 2
+        ));
+    }
+
+    #[test]
+    fn emscripten_memcpy_leaf_copies_overlap_and_observes_cache_miss_and_interrupt() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        // Wasm memory bytes: an untyped literal would be `[i32; 6]`.
+        let mut bytes: [u8; 6] = [0, 1, 2, 3, 4, 5];
+        let mut cache = EmscriptenMemcpyCache {
+            valid: 1,
+            function: 7,
+            base: bytes.as_mut_ptr() as usize,
+            length: bytes.len(),
+        };
+        let interrupt = AtomicBool::new(false);
+        let mut hits = 0;
+        let mut context = memcpy_leaf_context(&mut cache, &interrupt, &mut hits);
+
+        let status = unsafe { compiled_emscripten_memcpy_leaf(&mut context, 7, 1, 0, 4) };
+        assert_eq!(status, 0);
+        assert_eq!(bytes, [0, 0, 1, 2, 3, 5]);
+        assert_eq!(hits, 1);
+
+        bytes = [0, 1, 2, 3, 4, 5];
+        let status = unsafe { compiled_emscripten_memcpy_leaf(&mut context, 7, 0, 1, 4) };
+        assert_eq!(status, 0);
+        assert_eq!(bytes, [1, 2, 3, 4, 4, 5]);
+        assert_eq!(hits, 2);
+
+        bytes = [0, 1, 2, 3, 4, 5];
+        let status = unsafe { compiled_emscripten_memcpy_leaf(&mut context, 7, -1, -4, 10) };
+        assert_eq!(status, 0);
+        assert_eq!(bytes, [0, 1, 2, 3, 4, 2]);
+        assert_eq!(hits, 3);
+
+        bytes = [0, 1, 2, 3, 4, 5];
+        let status = unsafe { compiled_emscripten_memcpy_leaf(&mut context, 7, 0, 2, -1) };
+        assert_eq!(status, 0);
+        assert_eq!(bytes, [0, 1, 2, 3, 4, 5]);
+        assert_eq!(hits, 4);
+
+        let status = unsafe { compiled_emscripten_memcpy_leaf(&mut context, 8, 0, 1, 3) };
+        assert_eq!(status, MEMCPY_LEAF_MISS_STATUS);
+        assert_eq!(cache.valid, 0);
+        assert_eq!(bytes, [0, 1, 2, 3, 4, 5]);
+        assert_eq!(hits, 4);
+
+        let mut interrupt_cache = EmscriptenMemcpyCache {
+            valid: 1,
+            function: 7,
+            base: bytes.as_mut_ptr() as usize,
+            length: bytes.len(),
+        };
+        let mut interrupt_context =
+            memcpy_leaf_context(&mut interrupt_cache, &interrupt, &mut hits);
+        interrupt.store(true, Ordering::Release);
+        let status = unsafe { compiled_emscripten_memcpy_leaf(&mut interrupt_context, 7, 0, 1, 3) };
+        assert_eq!(status, TERMINATED_STATUS);
+        assert_eq!(bytes, [0, 1, 2, 3, 4, 5]);
+        assert_eq!(hits, 4);
+    }
+
+    fn affine_pair_instructions(destination: u32, left: u32, right: u32) -> Vec<WideInstruction> {
+        vec![
+            WideInstruction::new(Op::WasmInstanceBinding, 0, 0, 0, 1),
+            WideInstruction::new(Op::WasmI32ShiftLeftImmediate, 1, 2, 0, 2),
+            WideInstruction::new(Op::WasmI32AddImmediate, 3, 1, 0, destination),
+            WideInstruction::new(Op::WasmI32AddImmediate, 4, 1, 0, left),
+            WideInstruction::new(Op::WasmI32Load, 4, 0, 4, 0),
+            WideInstruction::new(Op::WasmI32AddImmediate, 5, 1, 0, right),
+            WideInstruction::new(Op::WasmI32Load, 5, 0, 5, 0),
+            WideInstruction::new(Op::WasmI32Add, 4, 4, 5, 0),
+            WideInstruction::new(Op::WasmI32Store, 4, 0, 3, 0),
+            WideInstruction::new(Op::WasmI32AddImmediate, 3, 1, 0, destination + 4),
+            WideInstruction::new(Op::WasmI32AddImmediate, 4, 1, 0, left + 4),
+            WideInstruction::new(Op::WasmI32Load, 4, 0, 4, 0),
+            WideInstruction::new(Op::WasmI32AddImmediate, 5, 1, 0, right + 4),
+            WideInstruction::new(Op::WasmI32Load, 5, 0, 5, 0),
+            WideInstruction::new(Op::WasmI32Add, 4, 4, 5, 0),
+            WideInstruction::new(Op::WasmI32Store, 4, 0, 3, 0),
+            WideInstruction::new(Op::WasmI32AddImmediate, 2, 2, 0, 2),
+            WideInstruction::new(Op::WasmJumpI32NotEqualImmediate, 2, 256, 0, 1),
+            WideInstruction::new(Op::LoadConst, 3, 0, 0, 0),
+            WideInstruction::new(Op::Return, 3, 0, 0, 0),
+        ]
+    }
+
+    fn affine_pair_plan(instructions: &[WideInstruction]) -> Plan {
+        Plan {
+            params: Vec::new(),
+            result: None,
+            operands: vec![Some(Slot::Value(Kind::I32)); instructions.len()],
+        }
+    }
+
+    #[test]
+    fn affine_pair_loop_requires_static_disjoint_memory32_ranges() {
+        let instructions = affine_pair_instructions(77_456, 93_840, 85_648);
+        let plan = affine_pair_plan(&instructions);
+        let candidate = affine_pair_loop(Some(0), 6, &plan, &instructions, 0)
+            .expect("disjoint affine pair is admitted");
+        assert_eq!(candidate.header, 1);
+        assert_eq!(candidate.branch, 17);
+        assert_eq!(candidate.induction, 2);
+        assert_eq!(candidate.bound, 256);
+        assert_eq!(candidate.destination, 77_456);
+        assert_eq!(candidate.left, 93_840);
+        assert_eq!(candidate.right, 85_648);
+        assert_eq!(candidate.max_end, 94_864);
+
+        let mut unsupported_width = affine_pair_instructions(77_456, 93_840, 85_648);
+        unsupported_width[17] =
+            WideInstruction::new(Op::WasmJumpI32NotEqualImmediate, 2, 254, 0, 1);
+        let plan = affine_pair_plan(&unsupported_width);
+        assert!(affine_pair_loop(Some(0), 6, &plan, &unsupported_width, 0).is_none());
+
+        let overlapping = affine_pair_instructions(77_456, 93_840, 77_456);
+        let plan = affine_pair_plan(&overlapping);
+        assert!(affine_pair_loop(Some(0), 6, &plan, &overlapping, 0).is_none());
+
+        let wrapping = affine_pair_instructions(u32::MAX - 100, 93_840, 85_648);
+        let plan = affine_pair_plan(&wrapping);
+        assert!(affine_pair_loop(Some(0), 6, &plan, &wrapping, 0).is_none());
+    }
+
+    #[test]
+    fn affine_pair_loop_rejects_clobbered_induction_and_external_reentry() {
+        let mut clobbered = affine_pair_instructions(77_456, 93_840, 85_648);
+        clobbered[0] = WideInstruction::new(Op::WasmI32AddImmediate, 2, 2, 0, 1);
+        let plan = affine_pair_plan(&clobbered);
+        assert!(affine_pair_loop(Some(0), 6, &plan, &clobbered, 0).is_none());
+
+        let mut induction_in_body = affine_pair_instructions(77_456, 93_840, 85_648);
+        induction_in_body[4] = WideInstruction::new(Op::WasmI32Load, 2, 0, 4, 0);
+        let plan = affine_pair_plan(&induction_in_body);
+        assert!(affine_pair_loop(Some(0), 6, &plan, &induction_in_body, 0).is_none());
+
+        let mut scaled_in_body = affine_pair_instructions(77_456, 93_840, 85_648);
+        scaled_in_body[2] = WideInstruction::new(Op::WasmI32AddImmediate, 1, 1, 0, 77_456);
+        let plan = affine_pair_plan(&scaled_in_body);
+        assert!(affine_pair_loop(Some(0), 6, &plan, &scaled_in_body, 0).is_none());
+
+        let mut reentry = affine_pair_instructions(77_456, 93_840, 85_648);
+        reentry[18] = WideInstruction::new(Op::Jump, 0, 0, 0, 1);
+        let plan = affine_pair_plan(&reentry);
+        assert!(affine_pair_loop(Some(0), 6, &plan, &reentry, 0).is_none());
+
+        let mut ambiguous_write = affine_pair_instructions(77_456, 93_840, 85_648);
+        ambiguous_write[18] = WideInstruction::new(Op::WasmFillRegisters, 0, 4, 2, 0);
+        let plan = affine_pair_plan(&ambiguous_write);
+        assert!(affine_pair_loop(Some(0), 6, &plan, &ambiguous_write, 0).is_none());
+    }
+
+    #[test]
+    fn root_only_jit_defaults_to_none_and_accepts_explicit_opt_level() {
+        assert_eq!(parse_jit_root_opt_level(true, None), Ok("none"));
+        assert_eq!(parse_jit_root_opt_level(false, None), Ok("speed"));
+        assert_eq!(parse_jit_root_opt_level(true, Some("none")), Ok("none"));
+        assert_eq!(parse_jit_root_opt_level(true, Some("speed")), Ok("speed"));
+        assert_eq!(
+            parse_jit_root_opt_level(true, Some("speed_and_size")),
+            Ok("speed_and_size")
+        );
+        assert_eq!(parse_jit_root_opt_level(true, Some("invalid")), Err(()));
     }
 
     #[test]

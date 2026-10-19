@@ -123,7 +123,7 @@ fn method_cache_program(mut program: ResidualProgram) -> ResidualProgram {
         .map(|site| (site.atom, site.cache, Vec::new(), site.receiver_path))
         .collect::<Vec<_>>();
     crate::compile::liveness::mark_register_roots(
-        &mut program.functions,
+        program.functions.iter_mut().map(|function| &mut **function),
         methods.as_slice(),
         &program.field_sites,
         &program.superinstructions,

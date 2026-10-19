@@ -88,9 +88,10 @@ pub trait Host {
         false
     }
 
-    /// A full collection finished: a host may return memory the process no longer needs
-    /// resident (its read-only pages), which nothing observable depends on.
-    fn after_full_collection(&mut self) {}
+    /// A collection has finished, or a full one is starting: a host may return memory the
+    /// process no longer needs resident (its read-only pages), which nothing observable
+    /// depends on. At these boundaries the code about to run differs from the code that ran.
+    fn at_collection_boundary(&mut self) {}
 
     fn write_line(&mut self, text: &str);
     fn clock_millis(&mut self) -> f64;

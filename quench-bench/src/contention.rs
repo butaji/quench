@@ -458,8 +458,8 @@ fn percentile(mut values: Vec<f64>, percentile_value: usize) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::{
-        assess_sample, percentile, MetricReference, References, MIN_CYCLE_RATE_REFERENCE_RATIO,
-        MIN_IPC_REFERENCE_RATIO, MIN_RATE_REFERENCE_SAMPLES,
+        MIN_CYCLE_RATE_REFERENCE_RATIO, MIN_IPC_REFERENCE_RATIO, MIN_RATE_REFERENCE_SAMPLES,
+        MetricReference, References, assess_sample, percentile,
     };
     use crate::{FixedWorkSampleKind, HostSnapshot, LoadAverage, Sample};
     use std::collections::BTreeMap;
