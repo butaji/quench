@@ -417,10 +417,25 @@ impl<H: Host> Vm<H> {
 
     /// `activate_user_frame` for a function whose static layout describes its whole
     /// activation (`Function::plain_activation`): every local starts undefined because every
-    /// parameter lives in a register, `this` is the coerced receiver, and no implicit binding,
-    /// rest array or `arguments` object exists.
+    /// parameter lives in a register, `this` is the coerced receiver or an arrow's lexical
+    /// one, and no implicit binding, rest array or `arguments` object exists.
     #[inline(always)]
     #[allow(clippy::too_many_arguments)]
+    /// The `this` a plain activation of `function` binds: an arrow's from its environment
+    /// `parent` (the receiver where none is bound), uncoerced as every arrow frame's is, else
+    /// the coerced receiver.
+    pub(super) fn lexical_activation_this(
+        &mut self,
+        function: &crate::bytecode::Function,
+        parent: Value,
+        this: Value,
+    ) -> Result<Value, JsError> {
+        if function.is_arrow {
+            return Ok(self.captured_lexical_this(parent).unwrap_or(this));
+        }
+        self.call_this_value(this, function.strict)
+    }
+
     fn activate_plain_frame(
         &mut self,
         p: &ResidualProgram,
@@ -433,7 +448,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<usize, JsError> {
         self.profile
             .function(self.active_program.raw(), id as usize);
-        let this = self.call_this_value(this, function.strict)?;
+        let this = self.lexical_activation_this(function, parent, this)?;
         let mut frame = self.pooled_frame();
         let local_count = if function.call_plan(p).addresses_locals {
             usize::from(function.locals)
@@ -895,7 +910,7 @@ impl<H: Host> Vm<H> {
                 },
             );
         }
-        if let Some(iterator) = self.well_known_symbols.get("iterator").copied() {
+        if let Some(iterator) = self.well_known_symbols.get(WellKnownSymbol::Iterator) {
             let iterator_method = self.native_value(Native::ArrayValues);
             self.set_symbol_property(arguments, iterator, iterator_method)?;
             self.set_property_attributes(
@@ -1025,10 +1040,28 @@ impl<H: Host> Vm<H> {
             .heap
             .clone_environment_slots(source, fresh, reset)
             .ok_or_else(|| JsError("invalid environment clone slots".into()))?;
-        let owner = self
-            .heap
-            .environment_binding_owner(source)
-            .ok_or_else(|| JsError("invalid environment clone owner".into()))?;
+        // A copy shares the activation's dynamic bindings with it: the ones a direct eval
+        // declares, and the implicit `this` and `new.target` its closures read, which `super()`
+        // initializes later. A function whose names all resolve statically declares none by
+        // eval, and one whose implicit bindings no closure or name reads keeps none
+        // (`Function::activation_bindings_observable`), so its copies need no link and keep the
+        // activation's unboxed scope.
+        let (program, function) = (self.frames[frame].program, self.frames[frame].function);
+        let declares_no_dynamic_bindings = self.programs.residual(program).is_some_and(|p| {
+            p.function_get(function as usize).is_some_and(|function| {
+                function.names_resolve_statically(&p.functions, &p.atoms)
+                    && !function.activation_bindings_observable(&p.atoms, &p.functions)
+            })
+        });
+        let owner = if declares_no_dynamic_bindings {
+            None
+        } else {
+            Some(
+                self.heap
+                    .environment_binding_owner(source)
+                    .ok_or_else(|| JsError("invalid environment clone owner".into()))?,
+            )
+        };
         let Some(Cell::Environment {
             parent,
             function,
@@ -1046,7 +1079,10 @@ impl<H: Host> Vm<H> {
                 program: scope.program(),
                 root_eval_scope: scope.root_eval_scope(),
                 binding_site_pc: scope.binding_site_pc(),
-                dynamic_bindings: crate::heap::EnvironmentBindings::Shared(owner),
+                dynamic_bindings: owner.map_or_else(
+                    || crate::heap::EnvironmentBindings::Owned(Vec::new()),
+                    crate::heap::EnvironmentBindings::Shared,
+                ),
                 with_objects: scope.with_objects().into(),
             }),
         };
@@ -1838,7 +1874,9 @@ impl<H: Host> Vm<H> {
     ) -> Result<usize, JsError> {
         if error.is_execution_terminated() { return Err(error); }
         let wasm = program.kind == crate::bytecode::ProgramKind::Wasm;
-        if wasm && error.wasm_exception().is_none() {
+        // Wasm catches Wasm exceptions and JavaScript ones (`catch_all`, or
+        // `WebAssembly.JSTag`), never a trap or a link failure.
+        if wasm && error.wasm_exception().is_none() && !error.is_javascript_exception() {
             return Err(error);
         }
         let handler = program.function(function).handler_at(throwing_pc);

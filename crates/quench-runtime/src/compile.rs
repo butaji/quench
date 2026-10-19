@@ -3098,7 +3098,6 @@ impl<'a> Compiler<'a> {
             && simple_parameters
             && !options.async_function
             && !options.generator
-            && !options.class_constructor
             && !options.derived_constructor
             && !options.class_initializer
             && !options.implicit_super

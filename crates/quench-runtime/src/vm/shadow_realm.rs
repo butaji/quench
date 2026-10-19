@@ -71,7 +71,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn install_shadow_realm_tag(&mut self, prototype: Value) -> Result<(), JsError> {
-        let Some(tag) = self.well_known_symbols.get("toStringTag").copied() else {
+        let Some(tag) = self.well_known_symbols.get(WellKnownSymbol::ToStringTag) else {
             return Ok(());
         };
         let value = self.heap.alloc(Cell::String("ShadowRealm".into()));
