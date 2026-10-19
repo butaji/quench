@@ -93,7 +93,10 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
-        self.call_primitive_native(p, native, receiver, args).ok()
+        let result = self.call_primitive_native(p, native, receiver, args).ok();
+        // A string method reads its receiver as text, which it may make on demand.
+        self.heap.charge_materialized_text();
+        result
     }
 
     pub(super) fn call_primitive_native(
