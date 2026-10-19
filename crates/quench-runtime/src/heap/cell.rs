@@ -606,7 +606,7 @@ pub(crate) enum Native {
     PromiseAny,
     PromiseThenableJob,
     PromiseAggregateJob,
-    PromiseAsyncResumeFulfilled, PromiseAsyncResumeRejected, AsyncFromSyncValue, AsyncFromSyncValueRejected, AsyncGeneratorDelegateFulfilled, AsyncGeneratorDelegateRejected,
+    AsyncFromSyncValue, AsyncFromSyncValueRejected, AsyncGeneratorDelegateFulfilled, AsyncGeneratorDelegateRejected,
     WithEnter, WithExit,
     WasmHost,
     WebAssemblyValidate, WebAssemblyCompile, WebAssemblyInstantiate,
@@ -706,13 +706,15 @@ pub(crate) struct ArrayFromAsyncState {
     pub(crate) awaiting: ArrayFromAsyncAwait,
 }
 
-/// One `await`'s suspended activation. Its fulfilled and rejected reactions both name this
-/// cell as their environment, so the continuation is traced while either can still run;
-/// the first to run takes it. The continuation is boxed apart so taking it frees its
-/// storage at once: the spent state waits for a sweep.
+/// One `await`'s suspended activation. The cell is both handlers of the await's promise
+/// reaction, so the continuation is traced while the reaction can still run, and the run
+/// takes it. The continuation is boxed apart so taking it frees its storage at once: the
+/// spent state waits for a sweep.
 #[derive(Clone, Debug)]
 pub(crate) struct AwaitState {
     pub(crate) continuation: Option<Box<crate::vm::activation::Continuation>>,
+    /// The realm global that awaited, which the continuation resumes in.
+    pub(crate) realm: Value,
     /// The async function's promise, or the async generator request's promise.
     pub(crate) promise: Value,
     pub(crate) generator: Option<Value>,
@@ -1100,8 +1102,6 @@ impl Native {
                 | Self::PromiseAny
                 | Self::PromiseThenableJob
                 | Self::PromiseAggregateJob
-                | Self::PromiseAsyncResumeFulfilled
-                | Self::PromiseAsyncResumeRejected
                 | Self::ArrayFromAsyncFulfilled
                 | Self::ArrayFromAsyncRejected
                 | Self::DynamicImport
