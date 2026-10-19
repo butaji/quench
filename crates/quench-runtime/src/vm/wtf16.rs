@@ -888,7 +888,13 @@ impl JsString {
 
 impl PartialEq for JsString {
     fn eq(&self, other: &Self) -> bool {
-        self.units() == other.units()
+        if let (Repr::Flat(FlatUnits::Short(left)), Repr::Flat(FlatUnits::Short(right))) =
+            (&self.repr, &other.repr)
+        {
+            // Inline text pads its unused bytes with zero, so whole records compare.
+            return left.length == right.length && left.bytes == right.bytes;
+        }
+        self.len() == other.len() && self.units() == other.units()
     }
 }
 

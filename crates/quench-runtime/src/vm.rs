@@ -2352,8 +2352,26 @@ impl<H: Host> Vm<H> {
     }
     fn materialize_program_constants(&mut self, id: ProgramId, program: &ResidualProgram) {
         let mut constants = Vec::with_capacity(program.constants.len());
+        // Equal string constants share one cell, as engines intern literals: a string is an
+        // immutable primitive, so which cell holds it is unobservable, and `===` between
+        // literals from different sites then decides by identity before comparing text.
+        let mut strings: std::collections::HashMap<StringConstantKey<'_>, Value> =
+            std::collections::HashMap::new();
         for constant in &program.constants {
-            let value = self.materialize_constant(constant);
+            let key = match constant {
+                Constant::String(text) => Some(StringConstantKey::Text(text)),
+                Constant::StringUnits(units) => Some(StringConstantKey::Units(units)),
+                _ => None,
+            };
+            let value = match key.and_then(|key| strings.get(&key).copied().map(Ok).or(Some(Err(key)))) {
+                Some(Ok(shared)) => shared,
+                Some(Err(key)) => {
+                    let value = self.materialize_constant(constant);
+                    strings.insert(key, value);
+                    value
+                }
+                None => self.materialize_constant(constant),
+            };
             constants.push(value);
         }
         self.programs.set_constants(id, constants);
@@ -2667,4 +2685,12 @@ impl<H: Host> Vm<H> {
             )),
         }
     }
+}
+
+/// A program string constant's text as written, the key under which equal constants share a
+/// cell (`Vm::materialize_program_constants`).
+#[derive(PartialEq, Eq, Hash)]
+enum StringConstantKey<'a> {
+    Text(&'a str),
+    Units(&'a [u16]),
 }
