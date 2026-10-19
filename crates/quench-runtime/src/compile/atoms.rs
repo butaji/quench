@@ -92,6 +92,11 @@ impl<'a> CompilerAtoms<'a> {
         atom
     }
 
+    /// Every atom this compilation interned.
+    pub(super) fn interned(&self) -> impl Iterator<Item = Atom> + '_ {
+        self.index.values().copied()
+    }
+
     pub(super) fn table(&self) -> AtomTable {
         AtomTable::extended(self.prefix.table(), &self.added)
     }

@@ -141,20 +141,20 @@ impl<H: Host> Vm<H> {
                     if native == Native::IntlSegmenterSegmentsIterator {
                         let prototype =
                             vm.realm.intrinsics.intl_segment_iterator_prototypes[&vm.realm.globals];
-                        return Ok(vm.heap.alloc(Cell::Iterator {
-                            object: Box::new(Self::empty_object(prototype)),
+                        return Ok(vm.heap.alloc_iterator(IteratorRecord {
+                            object: Self::empty_object(prototype),
                             source: data,
                             kind: IteratorKind::IntlSegments,
                             index: 0,
                             done: false,
-                            ext: Box::new(crate::heap::IteratorExt {
+                            ext: crate::heap::IteratorExt {
                                 position_high: 0,
                                 next_method: None,
                                 helper: None,
                                 helper_running: false,
                                 helper_started: false,
                                 generator: None,
-                            }),
+                            },
                         }));
                     }
                     let index =
@@ -267,8 +267,8 @@ impl<H: Host> Vm<H> {
         iterator: Value,
     ) -> Result<Value, JsError> {
         self.with_call_roots([iterator], |vm| {
-            let (data, index, done) = match vm.heap.get(iterator) {
-                Some(Cell::Iterator {
+            let (data, index, done) = match vm.heap.iterator(iterator) {
+                Some(IteratorRecord {
                     source,
                     index,
                     done,
@@ -283,13 +283,13 @@ impl<H: Host> Vm<H> {
             }
             match vm.segment_data(p, data, index)? {
                 Some((value, end)) => {
-                    if let Some(Cell::Iterator { index, ext, .. }) = vm.heap.get_mut(iterator) {
+                    if let Some(IteratorRecord { index, ext, .. }) = vm.heap.iterator_mut(iterator) {
                         ext.store_position(index, end);
                     }
                     vm.iterator_result(value, false)
                 }
                 None => {
-                    if let Some(Cell::Iterator { done, .. }) = vm.heap.get_mut(iterator) {
+                    if let Some(IteratorRecord { done, .. }) = vm.heap.iterator_mut(iterator) {
                         *done = true;
                     }
                     vm.iterator_result(Value::UNDEFINED, true)

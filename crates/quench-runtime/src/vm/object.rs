@@ -693,6 +693,7 @@ impl<H: Host> Vm<H> {
         self.accessor_field_caches.clear();
         self.instanceof_constructor_layout = None;
         self.closure_shapes = [None; 2];
+        self.iterator_result_shape = None;
         self.regexp_object_shapes = None;
         self.regexp_last_index_layout = None;
         self.regexp_builtin_layout = None;
@@ -1468,22 +1469,21 @@ impl<H: Host> Vm<H> {
         }
         let legacy_cell = match heap_reference {
             Some(HeapReference::LegacySlot(index)) => self.heap.get_legacy(index),
-            Some(HeapReference::FunctionRecord(_)) => {
-                let lookup = match self.heap.function(object) {
-                    Some(function) if self.specialized && p.specialized => self
-                        .receiver_field_cache_read(
-                            self.shape_property_lookup_function(function, atom),
-                            atom,
-                            site,
-                        ),
-                    _ => FieldCacheRead::Generic,
+            // Function and iterator records have no cell; their shape answers like the
+            // slot forms' (`shape_property_lookup`).
+            Some(HeapReference::FunctionRecord(_) | HeapReference::IteratorRecord(_)) => {
+                let lookup = if self.specialized && p.specialized {
+                    self.receiver_field_cache_read(self.shape_property_lookup(object, atom), atom, site)
+                } else {
+                    FieldCacheRead::Generic
                 };
                 return self.finish_field_cache_read(p, object, atom, lookup);
             }
             Some(
                 HeapReference::ObjectRecord(_)
                 | HeapReference::ArrayRecord(_)
-                | HeapReference::PromiseRecord(_),
+                | HeapReference::PromiseRecord(_)
+                | HeapReference::AwaitRecord(_),
             )
             | None => None,
         };
@@ -1768,6 +1768,11 @@ impl<H: Host> Vm<H> {
     /// Records the accessor a field read at `site` meets on `object`'s immediate prototype,
     /// when shapes answer both lookups and `object` holds no own `atom`.
     fn record_accessor_field_cache(&mut self, object: Value, atom: Atom, site: usize) {
+        // The shared overflow site serves reads of every atom; an entry there would answer
+        // one name's read with another's getter.
+        if !self.field_cache_records(site) {
+            return;
+        }
         let Some(receiver) = self.shape_property_lookup(object, atom) else {
             return;
         };

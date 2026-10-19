@@ -61,8 +61,7 @@ impl<H: Host> Vm<H> {
                 ..
             }) => self.programs.get(*program_id).is_some_and(|program| {
                 program
-                    .functions
-                    .get(*id as usize)
+                    .function_get(*id as usize)
                     .is_some_and(|function| function.has_restricted_legacy_caller_access())
             }),
             Some(FunctionRecord {
@@ -108,7 +107,7 @@ impl<H: Host> Vm<H> {
                     };
                     let visible = *realm == self.realm.globals
                         && self.programs.get(*program_id).is_some_and(|program| {
-                            program.functions.get(*id as usize).is_some_and(|metadata| {
+                            program.function_get(*id as usize).is_some_and(|metadata| {
                                 !metadata.strict && !metadata.is_async && !metadata.is_generator
                             })
                         });
@@ -129,7 +128,7 @@ impl<H: Host> Vm<H> {
         let program = self.programs.get(frame.program);
         let metadata = program
             .as_deref()
-            .and_then(|program| program.functions.get(frame.function as usize));
+            .and_then(|program| program.function_get(frame.function as usize));
         let expose_callee = metadata.is_some_and(|metadata| metadata.simple_parameters);
         let reflected = (0..frame.reflected_parameters).map(|parameter| {
             let metadata = metadata.expect("reflected parameters belong to a live function");
@@ -169,9 +168,9 @@ impl<H: Host> Vm<H> {
             return Err(JsError("value is not callable".into()));
         }
         let env = self.object();
-        let target_atom = self.intern_atom("\0quench:bound-target");
-        let this_atom = self.intern_atom("\0quench:bound-this");
-        let args_atom = self.intern_atom("\0quench:bound-args");
+        let target_atom = self.runtime_atoms.bound_target;
+        let this_atom = self.runtime_atoms.bound_this;
+        let args_atom = self.runtime_atoms.bound_args;
         self.set_property(env, target_atom, target)?;
         self.set_property(
             env,
@@ -289,26 +288,25 @@ impl<H: Host> Vm<H> {
         let env = self
             .active_native_env()
             .ok_or_else(|| JsError("invalid bound function".into()))?;
-        let target_atom = self.intern_atom("\0quench:bound-target");
-        let this_atom = self.intern_atom("\0quench:bound-this");
-        let args_atom = self.intern_atom("\0quench:bound-args");
-        let target = self
-            .own_property(env, target_atom)
+        let (target, receiver, bound_args) = self
+            .bound_function_parts(env)
             .ok_or_else(|| JsError("invalid bound function".into()))?;
-        let receiver = self
-            .own_property(env, this_atom)
-            .unwrap_or(Value::UNDEFINED);
-        let bound_args = self
-            .own_property(env, args_atom)
-            .and_then(|value| {
-                self.heap
-                    .array_elements(value)
-                    .map(|elements| elements.as_ref().clone())
-            })
-            .unwrap_or_default();
+        let bound_args = bound_args.to_vec();
         let mut combined = bound_args;
         combined.extend_from_slice(args);
         self.call_value(p, target, receiver, &combined)
+    }
+
+    /// A bound function's target, bound `this` and bound arguments, read from the
+    /// environment object `Function.prototype.bind` made (`env`); `None` for any other.
+    pub(super) fn bound_function_parts(&self, env: Value) -> Option<(Value, Value, &[Value])> {
+        let target = self.own_property(env, self.runtime_atoms.bound_target)?;
+        let receiver = self.own_property(env, self.runtime_atoms.bound_this).unwrap_or(Value::UNDEFINED);
+        let arguments = self
+            .own_property(env, self.runtime_atoms.bound_args)
+            .and_then(|list| self.heap.array_elements(list))
+            .map_or(&[][..], |elements| elements.as_slice());
+        Some((target, receiver, arguments))
     }
 }
 

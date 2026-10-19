@@ -41,7 +41,7 @@ pub(super) fn report(profile: &Profile, program_id: u32, program: &ResidualProgr
     let mut regions = Vec::new();
     let mut general = [0u64; 2];
     let mut numeric_dispatch_binaries = 0u64;
-    for (id, function) in program.functions.iter().enumerate() {
+    for (id, function) in program.functions.iter().enumerate().filter_map(|(id, slot)| slot.record().map(|function| (id, function))) {
         let counts = profile
             .site_counts
             .get(program_id as usize)
@@ -97,7 +97,7 @@ pub(super) fn report_functions(profile: &Profile, program_id: u32, program: &Res
         .get(program_id as usize)
         .map(Vec::as_slice)
         .unwrap_or(&[]);
-    for (id, (function, count)) in program.functions.iter().zip(counts).enumerate() {
+    for (id, (function, count)) in program.functions.iter().map(crate::bytecode::FunctionSlot::record).zip(counts).enumerate().filter_map(|(id, (function, count))| function.map(|function| (id, (function, count)))) {
         if id != 0 {
             eprint!(",");
         }
