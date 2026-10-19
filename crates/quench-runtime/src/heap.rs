@@ -1404,8 +1404,9 @@ impl Heap {
         if bytes == 0 {
             return;
         }
+        // Allocation weight only: the payload ledger (`payload_bytes`) follows the strings
+        // themselves, whose sweep releases what they own.
         let weight = bytes / payload_unit();
-        self.payload_bytes = self.payload_bytes.saturating_add(bytes);
         self.allocations = self.allocations.saturating_add(weight);
         self.allocations_since_full = self.allocations_since_full.saturating_add(weight);
     }
