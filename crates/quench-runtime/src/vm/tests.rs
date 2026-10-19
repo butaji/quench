@@ -10469,6 +10469,91 @@ fn js_jit_compiles_guarded_string_hash_loop_and_falls_back_after_intrinsic_chang
     feature = "profile-memory",
     feature = "profile-gc-time"
 )))]
+fn js_jit_merges_boolean_branch_states_for_numeric_equality_chains() {
+    let source =
+        r#"
+          function isStatementKindButNotDeclarationKind(kind) {
+            return kind === 253 || kind === 252 || kind === 260 || kind === 247 ||
+              kind === 245 || kind === 243 || kind === 250 || kind === 251 ||
+              kind === 249 || kind === 246 || kind === 257 || kind === 254 ||
+              kind === 256 || kind === 258 || kind === 259 || kind === 244 ||
+              kind === 248 || kind === 255 || kind === 354;
+          }
+          function isFunctionLikeDeclarationKind(kind) {
+            let switchValue = kind;
+            switch (switchValue) {
+              case 263: case 175: case 177: case 178:
+              case 179: case 219: case 220: return true;
+              default: return false;
+            }
+          }
+          function logicalNotNumberConstant() { return !0; }
+          const matches = [253, 252, 260, 247, 245, 243, 250, 251, 249, 246,
+            257, 254, 256, 258, 259, 244, 248, 255, 354];
+          const functionLikeMatches = [263, 175, 177, 178, 179, 219, 220];
+          for (let kind = 0; kind < 360; kind++) {
+            const expected = matches.includes(kind);
+            const functionLikeExpected = functionLikeMatches.includes(kind);
+            if (isStatementKindButNotDeclarationKind(kind) !== expected) {
+              throw Error('equality chain ' + kind);
+            }
+            if (isFunctionLikeDeclarationKind(kind) !== functionLikeExpected) {
+              throw Error('switch chain ' + kind);
+            }
+          }
+          for (let i = 0; i < 40; i++) {
+            if (logicalNotNumberConstant() !== true) throw Error('logical not constant');
+          }
+        "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        &source,
+        "js-jit-boolean-joins.js",
+    ))
+    .unwrap();
+    assert!(
+        super::js_compiled::compile(&program, 1).is_some(),
+        "equality chain should compile\n{}",
+        program.disassemble()
+    );
+    assert!(
+        super::js_compiled::compile(&program, 2).is_some(),
+        "switch chain should compile\n{}",
+        program.disassemble()
+    );
+    assert!(
+        super::js_compiled::compile(&program, 3).is_some(),
+        "constant logical not should compile; candidate={} function={:?}\n{}",
+        super::js_compiled::function_candidate(&program.functions[3], &program.atoms),
+        program.functions[3],
+        program.disassemble()
+    );
+    let mut vm = Vm::new(SilentHost);
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+    assert!(matches!(
+        vm.programs
+            .js_tier(super::program_store::ProgramId::MAIN, 1),
+        Some(super::program_store::JsTierState::Compiled(_))
+    ));
+    assert!(matches!(
+        vm.programs
+            .js_tier(super::program_store::ProgramId::MAIN, 2),
+        Some(super::program_store::JsTierState::Compiled(_))
+    ));
+    assert!(matches!(
+        vm.programs
+            .js_tier(super::program_store::ProgramId::MAIN, 3),
+        Some(super::program_store::JsTierState::Compiled(_))
+    ));
+}
+
+#[test]
+#[cfg(not(any(
+    feature = "profile-aggregate",
+    feature = "profile-trace",
+    feature = "profile-memory",
+    feature = "profile-gc-time"
+)))]
 fn js_jit_compiles_forward_numeric_branches_to_rooted_string_returns() {
     let source = r#"
       const rating = price => price < 100 ? '€' : price < 1000 ? '€€' : '€€€';

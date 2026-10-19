@@ -6113,6 +6113,9 @@ impl<H: Host> Vm<H> {
                 }
             }
         }
+        if tier.is_none() && !function.wide.is_empty() && !numeric {
+            return None;
+        }
         if self.programs.js_jit_diagnostics_enabled() {
             self.programs
                 .record_js_jit_entry(program_id, function_id, numeric);
