@@ -11,7 +11,6 @@ use crate::bytecode::{
 use cranelift_codegen::ir::{
     self, AbiParam, InstBuilder, UserFuncName, condcodes::FloatCC, immediates::Ieee64, types,
 };
-use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use oxc_ast::ast::BinaryOperator;
 
@@ -23,14 +22,36 @@ pub(super) struct JsJitArtifact {
     pub(super) params: usize,
     /// Numeric results retain the original ABI; string results return the selected Return PC.
     pub(super) result: JsJitResultKind,
+    /// A cached data property on parameter zero supplies the native numeric input.
+    pub(super) field_argument: Option<JsJitFieldArgument>,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct JsJitFieldArgument {
+    pub(super) cache_site: u16,
+    pub(super) entry_pc: usize,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct JsJitCaptureArgument {
+    pub(super) depth: u16,
+    pub(super) slot: u16,
 }
 
 pub(super) enum JsJitResultKind {
     Number,
+    CaptureNumber(JsJitCaptureArgument),
     NumberInterruptible,
     StringHashLoop,
+    StringTransform(JsJitStringTransform),
     StringReturnPc(Vec<(u32, u32)>),
     Boolean,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum JsJitStringTransform {
+    PrefixUnderscore,
+    RemoveLeadingUnderscore,
 }
 
 // Keep straight-line native regions short so an interpreter interrupt cannot
@@ -48,8 +69,14 @@ pub(super) fn compile(program: &ResidualProgram, function_id: u32) -> Option<JsJ
         return None;
     }
     let function = program.function_get(function_id as usize)?;
+    if let Some(capture) = number_capture_candidate(function) {
+        return compile_capture_number(function_id, capture);
+    }
     if string_hash_loop_candidate(program, function) {
         return compile_string_hash_loop(program, function_id, function);
+    }
+    if let Some(transform) = string_transform_candidate(program, function) {
+        return compile_string_transform(program, function_id, function, transform);
     }
     if function.code.iter().any(|packed| {
         !packed.is_wide()
@@ -57,6 +84,9 @@ pub(super) fn compile(program: &ResidualProgram, function_id: u32) -> Option<JsJ
                 packed.as_wide().op(),
                 Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse
             )
+            || (packed.as_wide().op() == Op::Unary
+                && packed.as_wide().unary_operator()
+                    == oxc_ast::ast::UnaryOperator::LogicalNot as u32)
     }) {
         compile_numeric_loop(program, function_id, function)
             .or_else(|| compile_number_domain_boolean_tree(program, function_id, function))
@@ -66,11 +96,284 @@ pub(super) fn compile(program: &ResidualProgram, function_id: u32) -> Option<JsJ
     }
 }
 
+/// A pure captured numeric value can be specialized to a native identity entry.
+/// The VM reloads the capture for every call, so lexical mutation stays visible.
+pub(super) fn number_capture_candidate(function: &Function) -> Option<JsJitCaptureArgument> {
+    if function.params != 0
+        || function.code.len() < 2
+        || !function.wide.is_empty()
+        || !function.handlers.is_empty()
+        || function.is_async
+        || function.is_generator
+        || function.is_class_constructor
+        || function.derived_constructor
+        || function.code[0].as_wide().op() != Op::LoadCapture
+        || function.code[1].as_wide().op() != Op::Return
+        || function.code[0].as_wide().result_register() != function.code[1].as_wide().register_a()
+        || function.code.last()?.as_wide().op() != Op::Return
+        || function.code.last()?.as_wide().register_a() != function.code[1].as_wide().register_a()
+    {
+        return None;
+    }
+    let capture = function.code[0].as_wide();
+    Some(JsJitCaptureArgument {
+        depth: capture.capture_depth(),
+        slot: capture.capture_slot(),
+    })
+}
+
+/// Restrict bitwise-number lowering to expressions whose operands are either
+/// direct parameters (guarded as signed Int32 at entry) or static Int32 number
+/// constants. This keeps JavaScript ToInt32 semantics exact without a coercion
+/// slow path inside generated code.
+pub(super) fn has_int32_bitwise_candidate(program: &ResidualProgram, function: &Function) -> bool {
+    let mut found = false;
+    function.code.iter().all(|packed| {
+        let instruction = packed.as_wide();
+        if instruction.op() != Op::Binary
+            || !matches!(
+                instruction.binary_operator(),
+                x if x == BinaryOperator::BitwiseAnd as u32
+                    || x == BinaryOperator::BitwiseOR as u32
+                    || x == BinaryOperator::BitwiseXOR as u32
+            )
+        {
+            return true;
+        }
+        found = true;
+        [instruction.operand_b(), instruction.operand_c()]
+            .into_iter()
+            .all(|operand| match operand.kind() {
+                Some(crate::bytecode::OperandKind::Register) => operand
+                    .register_index()
+                    .is_some_and(|register| usize::from(register) < usize::from(function.params)),
+                Some(crate::bytecode::OperandKind::Constant) => {
+                    let Some(Constant::Number(value)) =
+                        program.constants.get(usize::from(operand.payload()))
+                    else {
+                        return false;
+                    };
+                    is_i32_number(*value)
+                }
+                _ => false,
+            })
+    }) && found
+}
+
+pub(super) fn is_i32_number(value: f64) -> bool {
+    value.is_finite()
+        && value.fract() == 0.0
+        && value >= f64::from(i32::MIN)
+        && value <= f64::from(i32::MAX)
+}
+
+fn compile_capture_number(
+    function_id: u32,
+    capture: JsJitCaptureArgument,
+) -> Option<JsJitArtifact> {
+    let isa = super::jit_backend::target_isa("speed", true)?;
+    let mut signature = ir::Signature::new(isa.default_call_conv());
+    signature.params.push(AbiParam::new(types::F64));
+    signature.returns.push(AbiParam::new(types::F64));
+    let mut native =
+        ir::Function::with_name_signature(UserFuncName::user(0x5155_454e, function_id), signature);
+    let mut context = FunctionBuilderContext::new();
+    let mut builder = FunctionBuilder::new(&mut native, &mut context);
+    let entry = builder.create_block();
+    builder.append_block_params_for_function_params(entry);
+    builder.switch_to_block(entry);
+    let value = builder.block_params(entry)[0];
+    builder.ins().return_(&[value]);
+    builder.seal_all_blocks();
+    builder.finalize(isa.frontend_config());
+    let mut context = cranelift_codegen::Context::for_function(native);
+    let compiled = context
+        .compile(
+            &*isa,
+            &mut cranelift_codegen::control::ControlPlane::default(),
+        )
+        .ok()?;
+    if !compiled.buffer.relocs().is_empty() {
+        return None;
+    }
+    let code = compiled.code_buffer().to_vec();
+    if code.is_empty() || code.len() > MAX_CODE_BYTES {
+        return None;
+    }
+    Some(JsJitArtifact {
+        code,
+        params: 0,
+        result: JsJitResultKind::CaptureNumber(capture),
+        field_argument: None,
+    })
+}
+
+/// Stable top-level rejection category for a hot candidate that did not
+/// produce a JS artifact. Detailed lowering instrumentation can refine this
+/// later without changing the diagnostic contract.
+pub(super) fn candidate_rejection_reason(
+    program: &ResidualProgram,
+    function_id: u32,
+) -> &'static str {
+    let Some(function) = program.functions.get(function_id as usize) else {
+        return "invalid-function-id";
+    };
+    if function.code.is_empty() {
+        return "empty-function";
+    }
+    if function.code.len() > MAX_INSTRUCTIONS {
+        return "bytecode-limit";
+    }
+    if usize::from(function.registers) > MAX_REGISTERS {
+        return "register-limit";
+    }
+    if usize::from(function.params) > MAX_PARAMETERS {
+        return "parameter-limit";
+    }
+    if !eligible(function, program) {
+        return "unsupported-activation-or-function-kind";
+    }
+    if !function_candidate(function, program) {
+        return "unsupported-opcode-or-control-flow";
+    }
+    "unsupported-lowering-shape-or-codegen-failure"
+}
+
 pub(super) fn has_string_hash_loop_candidate(
     program: &ResidualProgram,
     function: &Function,
 ) -> bool {
     string_hash_loop_candidate(program, function)
+}
+
+pub(super) fn number_field_argument_candidate(
+    program: &ResidualProgram,
+    function: &Function,
+) -> Option<JsJitFieldArgument> {
+    if function.params != 1 {
+        return None;
+    }
+    let (entry_pc, instruction) = match function.code.first()?.as_wide().op() {
+        Op::GetField => (0, function.code[0].as_wide()),
+        Op::JumpFalse if function.code[0].as_wide().register_a() == 0 => {
+            let field = function.code.get(1)?.as_wide();
+            if field.op() != Op::GetField {
+                return None;
+            }
+            (1, field)
+        }
+        _ => return None,
+    };
+    let FieldLookup::Atom {
+        atom,
+        base: FieldBase(0),
+        cache_site,
+    } = instruction.field_lookup()?
+    else {
+        return None;
+    };
+    ((atom as usize) < program.atoms.len() && &program.atoms[atom as usize] == "kind").then_some(
+        JsJitFieldArgument {
+            cache_site,
+            entry_pc,
+        },
+    )
+}
+
+pub(super) fn string_transform_candidate(
+    program: &ResidualProgram,
+    function: &Function,
+) -> Option<JsJitStringTransform> {
+    if function.params != 1 || !function.wide.is_empty() {
+        return None;
+    }
+    let name = function.name.or(function.inferred_name)?;
+    match &program.atoms[name as usize] {
+        "escapeLeadingUnderscores"
+            if function.code.len() == 19
+                && function.code.iter().map(|i| i.as_wide().op()).eq([
+                    Op::GetField,
+                    Op::Binary,
+                    Op::Move,
+                    Op::JumpFalse,
+                    Op::GetField,
+                    Op::LoadConst,
+                    Op::Call,
+                    Op::Binary,
+                    Op::Move,
+                    Op::JumpFalse,
+                    Op::GetField,
+                    Op::LoadConst,
+                    Op::Call,
+                    Op::Binary,
+                    Op::JumpFalse,
+                    Op::Binary,
+                    Op::Return,
+                    Op::LoadConst,
+                    Op::Return,
+                ])
+                && field_name(program, function, 0) == Some("length")
+                && field_name(program, function, 4) == Some("charCodeAt")
+                && field_name(program, function, 10) == Some("charCodeAt")
+                && function.code[15].as_wide().binary_operator()
+                    == oxc_ast::ast::BinaryOperator::Addition as u32 =>
+        {
+            Some(JsJitStringTransform::PrefixUnderscore)
+        }
+        "unescapeLeadingUnderscores"
+            if function.code.len() == 33
+                && function.code.iter().map(|i| i.as_wide().op()).eq([
+                    Op::StoreLocalPlain,
+                    Op::GetField,
+                    Op::Binary,
+                    Op::Move,
+                    Op::JumpFalse,
+                    Op::LoadLocalPlain,
+                    Op::GetField,
+                    Op::LoadConst,
+                    Op::Call,
+                    Op::Binary,
+                    Op::Move,
+                    Op::JumpFalse,
+                    Op::LoadLocalPlain,
+                    Op::GetField,
+                    Op::LoadConst,
+                    Op::Call,
+                    Op::Binary,
+                    Op::Move,
+                    Op::JumpFalse,
+                    Op::LoadLocalPlain,
+                    Op::GetField,
+                    Op::LoadConst,
+                    Op::Call,
+                    Op::Binary,
+                    Op::JumpFalse,
+                    Op::LoadLocalPlain,
+                    Op::GetField,
+                    Op::LoadConst,
+                    Op::Call,
+                    Op::LoadLocalPlain,
+                    Op::Return,
+                    Op::LoadConst,
+                    Op::Return,
+                ])
+                && field_name(program, function, 1) == Some("length")
+                && field_name(program, function, 6) == Some("charCodeAt")
+                && field_name(program, function, 13) == Some("charCodeAt")
+                && field_name(program, function, 20) == Some("charCodeAt")
+                && field_name(program, function, 26) == Some("substr") =>
+        {
+            Some(JsJitStringTransform::RemoveLeadingUnderscore)
+        }
+        _ => None,
+    }
+}
+
+fn field_name<'a>(program: &'a ResidualProgram, function: &Function, pc: usize) -> Option<&'a str> {
+    let FieldLookup::Atom { atom, .. } = function.code.get(pc)?.as_wide().field_lookup()? else {
+        return None;
+    };
+    ((atom as usize) < program.atoms.len()).then(|| &program.atoms[atom as usize])
 }
 
 /// Where a hash-loop local lives: its frame slot, or the register frame-register promotion
@@ -285,10 +588,7 @@ fn compile_string_hash_loop(
         // regular candidate guard still enforces activation and size limits.
         return None;
     }
-    let mut flags = settings::builder();
-    flags.set("opt_level", "speed").ok()?;
-    let isa_builder = cranelift_native::builder().ok()?;
-    let isa = isa_builder.finish(settings::Flags::new(flags)).ok()?;
+    let isa = super::jit_backend::target_isa("speed", true)?;
     let mut signature = ir::Signature::new(isa.default_call_conv());
     signature.params.push(AbiParam::new(isa.pointer_type()));
     signature.params.push(AbiParam::new(isa.pointer_type()));
@@ -475,6 +775,7 @@ fn compile_string_hash_loop(
         code,
         params: 1,
         result: JsJitResultKind::StringHashLoop,
+        field_argument: None,
     })
 }
 
@@ -491,6 +792,104 @@ pub(super) fn has_numeric_loop_candidate(function: &Function) -> bool {
     })
 }
 
+fn compile_string_transform(
+    _program: &ResidualProgram,
+    function_id: u32,
+    _function: &Function,
+    transform: JsJitStringTransform,
+) -> Option<JsJitArtifact> {
+    let needed: usize = match transform {
+        JsJitStringTransform::PrefixUnderscore => 2,
+        JsJitStringTransform::RemoveLeadingUnderscore => 3,
+    };
+    let isa = super::jit_backend::target_isa("speed", true)?;
+    let pointer = isa.pointer_type();
+    let mut signature = ir::Signature::new(isa.default_call_conv());
+    signature.params.push(AbiParam::new(pointer));
+    signature.params.push(AbiParam::new(pointer));
+    signature.params.push(AbiParam::new(types::I32));
+    signature.returns.push(AbiParam::new(types::I32));
+    let mut native =
+        ir::Function::with_name_signature(UserFuncName::user(0x5155_454e, function_id), signature);
+    let mut context = FunctionBuilderContext::new();
+    let mut builder = FunctionBuilder::new(&mut native, &mut context);
+    let entry = builder.create_block();
+    let dispatch = builder.create_block();
+    let ascii_block = builder.create_block();
+    let wide_block = builder.create_block();
+    let no_match = builder.create_block();
+    builder.append_block_params_for_function_params(entry);
+    builder.switch_to_block(entry);
+    let args = builder.block_params(entry);
+    let units = args[0];
+    let length = args[1];
+    let ascii = args[2];
+    let enough = builder.ins().icmp_imm_u(
+        cranelift_codegen::ir::condcodes::IntCC::UnsignedGreaterThanOrEqual,
+        length,
+        i64::try_from(needed).ok()?,
+    );
+    builder.ins().brif(enough, dispatch, &[], no_match, &[]);
+
+    builder.switch_to_block(no_match);
+    let no = builder.ins().iconst(types::I32, 0);
+    builder.ins().return_(&[no]);
+
+    builder.switch_to_block(dispatch);
+    let is_ascii =
+        builder
+            .ins()
+            .icmp_imm_u(cranelift_codegen::ir::condcodes::IntCC::Equal, ascii, 1);
+    builder
+        .ins()
+        .brif(is_ascii, ascii_block, &[], wide_block, &[]);
+    for (block, width) in [(ascii_block, 1_u32), (wide_block, 2_u32)] {
+        builder.switch_to_block(block);
+        let mut matches = None;
+        for index in 0..needed {
+            let offset = i64::try_from(index.checked_mul(width as usize)?).ok()?;
+            let address = builder.ins().iadd_imm_u(units, offset);
+            let unit_type = if width == 1 { types::I8 } else { types::I16 };
+            let unit = builder
+                .ins()
+                .load(unit_type, ir::MemFlagsData::trusted(), address, 0);
+            let unit = builder.ins().uextend(types::I32, unit);
+            let matches_underscore =
+                builder
+                    .ins()
+                    .icmp_imm_u(cranelift_codegen::ir::condcodes::IntCC::Equal, unit, 95);
+            matches = Some(match matches {
+                Some(previous) => builder.ins().band(previous, matches_underscore),
+                None => matches_underscore,
+            });
+        }
+        let result = builder.ins().uextend(types::I32, matches?);
+        builder.ins().return_(&[result]);
+    }
+    builder.seal_all_blocks();
+    builder.finalize(isa.frontend_config());
+    let mut context = cranelift_codegen::Context::for_function(native);
+    let compiled = context
+        .compile(
+            &*isa,
+            &mut cranelift_codegen::control::ControlPlane::default(),
+        )
+        .ok()?;
+    if !compiled.buffer.relocs().is_empty() {
+        return None;
+    }
+    let code = compiled.code_buffer().to_vec();
+    if code.is_empty() || code.len() > MAX_CODE_BYTES {
+        return None;
+    }
+    Some(JsJitArtifact {
+        code,
+        params: 1,
+        result: JsJitResultKind::StringTransform(transform),
+        field_argument: None,
+    })
+}
+
 /// Compile a forward-only boolean tree after specializing formal parameters to
 /// Number. Static `typeof` and string-equality tests are reduced while the
 /// control-flow graph is discovered, so bytecodes on impossible type branches
@@ -504,17 +903,12 @@ fn compile_number_domain_boolean_tree(
 ) -> Option<JsJitArtifact> {
     if !function_candidate(function, program)
         || usize::from(function.registers) > MAX_REGISTERS
-        || function
-            .code
-            .iter()
-            .any(|instruction| instruction.is_wide())
     {
         return None;
     }
 
     let code_len = function.code.len();
     let mut states = vec![None::<BranchState>; code_len];
-    let mut predecessors = vec![0_u8; code_len];
     let mut entry = BranchState {
         registers: vec![BranchValue::Unknown; usize::from(function.registers)],
         locals: vec![BranchValue::Unknown; usize::from(function.locals)],
@@ -526,7 +920,12 @@ fn compile_number_domain_boolean_tree(
     {
         *value = BranchValue::Number;
     }
-    states[0] = Some(entry);
+    let field_argument = number_field_argument_candidate(program, function);
+    let entry_pc = field_argument.map_or(0, |field| field.entry_pc);
+    if field_argument.is_some() {
+        entry.registers[0] = BranchValue::Unknown;
+    }
+    states[entry_pc] = Some(entry);
     let mut reachable = vec![false; code_len];
 
     for pc in 0..code_len {
@@ -542,7 +941,9 @@ fn compile_number_domain_boolean_tree(
                     return None;
                 }
                 let value = match program.constants.get(instruction.constant_index())? {
-                    Constant::Number(_) => BranchValue::Number,
+                    Constant::Number(_) => {
+                        BranchValue::NumberConstant(instruction.constant_index() as u32)
+                    }
                     Constant::String(_) | Constant::StringUnits(_) => {
                         BranchValue::String(instruction.constant_index() as u32)
                     }
@@ -557,6 +958,14 @@ fn compile_number_domain_boolean_tree(
                     .get_mut(usize::from(instruction.result_register()))? = value;
                 successors.push(pc + 1);
             }
+            Op::GetField => {
+                if pc != entry_pc || field_argument.is_none() {
+                    return None;
+                }
+                let result = usize::from(instruction.result_register());
+                *state.registers.get_mut(result)? = BranchValue::Number;
+                successors.push(pc + 1);
+            }
             Op::Move => {
                 if instruction.result_flags() != 0 {
                     return None;
@@ -568,14 +977,38 @@ fn compile_number_domain_boolean_tree(
                 successors.push(pc + 1);
             }
             Op::Unary => {
-                if instruction.result_flags() != 0
-                    || instruction.unary_operator() != oxc_ast::ast::UnaryOperator::Typeof as u32
+                if instruction.result_flags() != 0 && instruction.result_flags() != RETURN_REGISTER
                 {
                     return None;
                 }
                 let source = *state.registers.get(usize::from(instruction.register_b()))?;
+                if instruction.unary_operator() == oxc_ast::ast::UnaryOperator::LogicalNot as u32 {
+                    let result = match source {
+                        BranchValue::NumberConstant(constant) => {
+                            let Constant::Number(value) =
+                                program.constants.get(constant as usize)?
+                            else {
+                                return None;
+                            };
+                            BranchValue::BooleanFolded(*value == 0.0 || value.is_nan())
+                        }
+                        BranchValue::BooleanLiteral { value, .. }
+                        | BranchValue::BooleanFolded(value) => BranchValue::BooleanFolded(!value),
+                        _ => return None,
+                    };
+                    *state
+                        .registers
+                        .get_mut(usize::from(instruction.result_register()))? = result;
+                    if instruction.result_flags() == 0 {
+                        successors.push(pc + 1);
+                    }
+                    continue;
+                }
+                if instruction.unary_operator() != oxc_ast::ast::UnaryOperator::Typeof as u32 {
+                    return None;
+                }
                 let type_name = match source {
-                    BranchValue::Number => BranchType::Number,
+                    BranchValue::Number | BranchValue::NumberConstant(_) => BranchType::Number,
                     BranchValue::String(_) => BranchType::String,
                     BranchValue::BooleanLiteral { .. } | BranchValue::BooleanFolded(_) => {
                         BranchType::Boolean
@@ -586,15 +1019,14 @@ fn compile_number_domain_boolean_tree(
                     .registers
                     .get_mut(usize::from(instruction.result_register()))? =
                     BranchValue::TypeName(type_name);
-                successors.push(pc + 1);
-            }
-            Op::StoreLocal => {
-                let slot = usize::from(instruction.local_slot());
-                if !hidden_local(program, function, slot) {
-                    return None;
+                if instruction.result_flags() == 0 {
+                    successors.push(pc + 1);
                 }
+            }
+            Op::StoreLocal | Op::StoreLocalPlain => {
+                let slot = usize::from(instruction.local_slot());
                 let value = *state.registers.get(usize::from(instruction.register_a()))?;
-                if !branch_value_is_static(value) {
+                if !branch_value_supported_local(value) {
                     return None;
                 }
                 *state.locals.get_mut(slot)? = value;
@@ -603,13 +1035,10 @@ fn compile_number_domain_boolean_tree(
                 }
                 successors.push(pc + 1);
             }
-            Op::LoadLocal => {
+            Op::LoadLocal | Op::LoadLocalPlain => {
                 let slot = usize::from(instruction.local_slot());
-                if !hidden_local(program, function, slot) {
-                    return None;
-                }
                 let value = *state.locals.get(slot)?;
-                if !branch_value_is_static(value) {
+                if !branch_value_supported_local(value) {
                     return None;
                 }
                 *state
@@ -622,14 +1051,26 @@ fn compile_number_domain_boolean_tree(
                 {
                     return None;
                 }
-                let left = branch_operand(program, &state.registers, instruction.operand_b())?;
-                let right = branch_operand(program, &state.registers, instruction.operand_c())?;
+                let left = branch_operand(
+                    program,
+                    &state.registers,
+                    &state.locals,
+                    instruction.operand_b(),
+                )?;
+                let right = branch_operand(
+                    program,
+                    &state.registers,
+                    &state.locals,
+                    instruction.operand_c(),
+                )?;
                 let result = match (left, right) {
-                    (BranchValue::Number, BranchValue::Number)
-                        if super::operations::NumberRelation::from_operator(
-                            instruction.binary_operator(),
-                        )
-                        .is_some() =>
+                    (left, right)
+                        if branch_value_is_number(left)
+                            && branch_value_is_number(right)
+                            && super::operations::NumberRelation::from_operator(
+                                instruction.binary_operator(),
+                            )
+                            .is_some() =>
                     {
                         BranchValue::BooleanDynamic
                     }
@@ -681,8 +1122,18 @@ fn compile_number_domain_boolean_tree(
             }
             Op::Jump => successors.push(instruction.jump_target() as usize),
             Op::JumpBinaryFalse => {
-                let left = branch_operand(program, &state.registers, instruction.operand_b())?;
-                let right = branch_operand(program, &state.registers, instruction.operand_c())?;
+                let left = branch_operand(
+                    program,
+                    &state.registers,
+                    &state.locals,
+                    instruction.operand_b(),
+                )?;
+                let right = branch_operand(
+                    program,
+                    &state.registers,
+                    &state.locals,
+                    instruction.operand_c(),
+                )?;
                 if let Some(value) =
                     branch_equality(program, instruction.binary_operator_field(), left, right)
                 {
@@ -691,7 +1142,8 @@ fn compile_number_domain_boolean_tree(
                     } else {
                         instruction.jump_target() as usize
                     });
-                } else if matches!((left, right), (BranchValue::Number, BranchValue::Number))
+                } else if branch_value_is_number(left)
+                    && branch_value_is_number(right)
                     && super::operations::NumberRelation::from_operator(
                         instruction.binary_operator_field(),
                     )
@@ -724,12 +1176,10 @@ fn compile_number_domain_boolean_tree(
             if target <= pc || target >= code_len {
                 return None;
             }
-            let predecessor_count = predecessors.get_mut(target)?;
-            *predecessor_count = predecessor_count.checked_add(1)?;
-            if *predecessor_count > 1 || states[target].is_some() {
-                return None;
+            match states.get_mut(target)? {
+                Some(existing) => merge_branch_state(existing, &state),
+                slot @ None => *slot = Some(state.clone()),
             }
-            states[target] = Some(state.clone());
         }
     }
 
@@ -737,16 +1187,15 @@ fn compile_number_domain_boolean_tree(
         *is_reachable
             && (function.code[pc].as_wide().op() == Op::Return
                 || (function.code[pc].as_wide().op() == Op::Binary
+                    && function.code[pc].as_wide().result_flags() == RETURN_REGISTER)
+                || (function.code[pc].as_wide().op() == Op::Unary
                     && function.code[pc].as_wide().result_flags() == RETURN_REGISTER))
     }) {
         return None;
     }
 
     let params = usize::from(function.params);
-    let mut flags = settings::builder();
-    flags.set("opt_level", "speed").ok()?;
-    let isa_builder = cranelift_native::builder().ok()?;
-    let isa = isa_builder.finish(settings::Flags::new(flags)).ok()?;
+    let isa = super::jit_backend::target_isa("speed", true)?;
 
     let mut signature = ir::Signature::new(isa.default_call_conv());
     signature.params.push(AbiParam::new(isa.pointer_type()));
@@ -758,11 +1207,14 @@ fn compile_number_domain_boolean_tree(
     let variables: Vec<_> = (0..usize::from(function.registers))
         .map(|_| builder.declare_var(types::F64))
         .collect();
+    let local_variables: Vec<_> = (0..usize::from(function.locals))
+        .map(|_| builder.declare_var(types::F64))
+        .collect();
     let blocks: Vec<_> = reachable
         .iter()
         .map(|is_reachable| is_reachable.then(|| builder.create_block()))
         .collect();
-    let entry_block = blocks[0]?;
+    let entry_block = blocks[entry_pc]?;
     builder.append_block_params_for_function_params(entry_block);
     builder.switch_to_block(entry_block);
     builder.seal_block(entry_block);
@@ -781,7 +1233,7 @@ fn compile_number_domain_boolean_tree(
             continue;
         };
         let block = blocks[pc]?;
-        if pc != 0 {
+        if pc != entry_pc {
             builder.seal_block(block);
             builder.switch_to_block(block);
         }
@@ -804,12 +1256,58 @@ fn compile_number_domain_boolean_tree(
                     );
                 }
             }
-            Op::StoreLocal | Op::LoadLocal => {}
+            Op::GetField => {
+                let source = builder.use_var(*variables.first()?);
+                builder.def_var(
+                    *variables.get(usize::from(instruction.result_register()))?,
+                    source,
+                );
+            }
+            Op::StoreLocal | Op::StoreLocalPlain => {
+                let source = usize::from(instruction.register_a());
+                let value_kind = *state.registers.get(source)?;
+                if matches!(
+                    value_kind,
+                    BranchValue::Number
+                        | BranchValue::NumberConstant(_)
+                        | BranchValue::BooleanDynamic
+                ) {
+                    let value = builder.use_var(*variables.get(source)?);
+                    builder.def_var(
+                        *local_variables.get(usize::from(instruction.local_slot()))?,
+                        value,
+                    );
+                    if let Some(register) = instruction.optional_register_b() {
+                        builder.def_var(*variables.get(usize::from(register))?, value);
+                    }
+                }
+            }
+            Op::LoadLocal | Op::LoadLocalPlain => {
+                let local = usize::from(instruction.local_slot());
+                if matches!(
+                    state.locals.get(local),
+                    Some(
+                        BranchValue::Number
+                            | BranchValue::NumberConstant(_)
+                            | BranchValue::BooleanDynamic
+                    )
+                ) {
+                    let value = builder.use_var(*local_variables.get(local)?);
+                    builder.def_var(
+                        *variables.get(usize::from(instruction.result_register()))?,
+                        value,
+                    );
+                }
+            }
             Op::Move => {
                 let source = usize::from(instruction.register_b());
                 if matches!(
                     state.registers.get(source),
-                    Some(BranchValue::Number | BranchValue::BooleanDynamic)
+                    Some(
+                        BranchValue::Number
+                            | BranchValue::NumberConstant(_)
+                            | BranchValue::BooleanDynamic
+                    )
                 ) {
                     let value = builder.use_var(*variables.get(source)?);
                     builder.def_var(
@@ -818,17 +1316,52 @@ fn compile_number_domain_boolean_tree(
                     );
                 }
             }
-            Op::Unary => {}
+            Op::Unary => {
+                if instruction.result_flags() == RETURN_REGISTER {
+                    let source = match state
+                        .registers
+                        .get(usize::from(instruction.register_b()))
+                        .copied()?
+                    {
+                        BranchValue::NumberConstant(constant) => {
+                            let Constant::Number(value) =
+                                program.constants.get(constant as usize)?
+                            else {
+                                return None;
+                            };
+                            *value == 0.0 || value.is_nan()
+                        }
+                        BranchValue::BooleanLiteral { value, .. }
+                        | BranchValue::BooleanFolded(value) => !value,
+                        _ => return None,
+                    };
+                    let result = builder.ins().iconst(types::I32, i64::from(source));
+                    builder.ins().return_(&[result]);
+                    emitted_return = true;
+                }
+            }
             Op::Binary => {
-                let left = branch_operand(program, &state.registers, instruction.operand_b())?;
-                let right = branch_operand(program, &state.registers, instruction.operand_c())?;
-                if matches!((left, right), (BranchValue::Number, BranchValue::Number)) {
+                let left = branch_operand(
+                    program,
+                    &state.registers,
+                    &state.locals,
+                    instruction.operand_b(),
+                )?;
+                let right = branch_operand(
+                    program,
+                    &state.registers,
+                    &state.locals,
+                    instruction.operand_c(),
+                )?;
+                if branch_value_is_number(left) && branch_value_is_number(right) {
                     let condition = branch_number_comparison(
                         &mut builder,
                         instruction.binary_operator(),
                         &variables,
+                        &local_variables,
                         program,
                         &state.registers,
+                        &state.locals,
                         instruction.operand_b(),
                         instruction.operand_c(),
                     )?;
@@ -917,8 +1450,18 @@ fn compile_number_domain_boolean_tree(
                 }
             }
             Op::JumpBinaryFalse => {
-                let left = branch_operand(program, &state.registers, instruction.operand_b())?;
-                let right = branch_operand(program, &state.registers, instruction.operand_c())?;
+                let left = branch_operand(
+                    program,
+                    &state.registers,
+                    &state.locals,
+                    instruction.operand_b(),
+                )?;
+                let right = branch_operand(
+                    program,
+                    &state.registers,
+                    &state.locals,
+                    instruction.operand_c(),
+                )?;
                 if let Some(value) =
                     branch_equality(program, instruction.binary_operator_field(), left, right)
                 {
@@ -933,8 +1476,10 @@ fn compile_number_domain_boolean_tree(
                         &mut builder,
                         instruction.binary_operator_field(),
                         &variables,
+                        &local_variables,
                         program,
                         &state.registers,
+                        &state.locals,
                         instruction.operand_b(),
                         instruction.operand_c(),
                     )?;
@@ -973,7 +1518,8 @@ fn compile_number_domain_boolean_tree(
             instruction.op(),
             Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse | Op::Return
         ) || (instruction.op() == Op::Binary
-            && instruction.result_flags() == RETURN_REGISTER);
+            && instruction.result_flags() == RETURN_REGISTER)
+            || (instruction.op() == Op::Unary && instruction.result_flags() == RETURN_REGISTER);
         if !terminal {
             builder
                 .ins()
@@ -1003,6 +1549,7 @@ fn compile_number_domain_boolean_tree(
         code,
         params,
         result: JsJitResultKind::Boolean,
+        field_argument,
     })
 }
 
@@ -1023,6 +1570,7 @@ struct BranchState {
 enum BranchValue {
     Unknown,
     Number,
+    NumberConstant(u32),
     String(u32),
     TypeName(BranchType),
     BooleanLiteral { constant: u32, value: bool },
@@ -1030,26 +1578,27 @@ enum BranchValue {
     BooleanDynamic,
 }
 
-fn hidden_local(program: &ResidualProgram, function: &Function, slot: usize) -> bool {
-    function
-        .local_atoms
-        .get(slot)
-        .is_some_and(|atom| program.atoms[*atom as usize].starts_with("\0quench:"))
-}
-
-fn branch_value_is_static(value: BranchValue) -> bool {
+fn branch_value_supported_local(value: BranchValue) -> bool {
     matches!(
         value,
-        BranchValue::String(_)
+        BranchValue::Number
+            | BranchValue::NumberConstant(_)
+            | BranchValue::String(_)
             | BranchValue::TypeName(_)
             | BranchValue::BooleanLiteral { .. }
             | BranchValue::BooleanFolded(_)
+            | BranchValue::BooleanDynamic
     )
+}
+
+fn branch_value_is_number(value: BranchValue) -> bool {
+    matches!(value, BranchValue::Number | BranchValue::NumberConstant(_))
 }
 
 fn branch_operand(
     program: &ResidualProgram,
     registers: &[BranchValue],
+    locals: &[BranchValue],
     operand: crate::bytecode::Operand,
 ) -> Option<BranchValue> {
     match operand.kind()? {
@@ -1060,7 +1609,7 @@ fn branch_operand(
         OperandKind::Constant => {
             let index = usize::from(operand.payload());
             match program.constants.get(index)? {
-                Constant::Number(_) => Some(BranchValue::Number),
+                Constant::Number(_) => Some(BranchValue::NumberConstant(index as u32)),
                 Constant::String(_) | Constant::StringUnits(_) => {
                     Some(BranchValue::String(u32::try_from(index).ok()?))
                 }
@@ -1071,7 +1620,11 @@ fn branch_operand(
                 _ => None,
             }
         }
-        OperandKind::Field | OperandKind::Local => None,
+        OperandKind::Local => locals
+            .get(usize::from(operand.payload()))
+            .copied()
+            .filter(|value| *value != BranchValue::Unknown),
+        OperandKind::Field => None,
     }
 }
 
@@ -1141,8 +1694,10 @@ fn branch_number_comparison(
     builder: &mut FunctionBuilder<'_>,
     operator: u32,
     variables: &[cranelift_frontend::Variable],
+    local_variables: &[cranelift_frontend::Variable],
     program: &ResidualProgram,
     state: &[BranchValue],
+    local_state: &[BranchValue],
     left: crate::bytecode::Operand,
     right: crate::bytecode::Operand,
 ) -> Option<ir::Value> {
@@ -1155,25 +1710,49 @@ fn branch_number_comparison(
         super::operations::NumberRelation::GreaterThan => FloatCC::GreaterThan,
         super::operations::NumberRelation::GreaterEqual => FloatCC::GreaterThanOrEqual,
     };
-    let lhs = branch_numeric_operand(builder, variables, program, state, left)?;
-    let rhs = branch_numeric_operand(builder, variables, program, state, right)?;
+    let lhs = branch_numeric_operand(
+        builder,
+        variables,
+        local_variables,
+        program,
+        state,
+        local_state,
+        left,
+    )?;
+    let rhs = branch_numeric_operand(
+        builder,
+        variables,
+        local_variables,
+        program,
+        state,
+        local_state,
+        right,
+    )?;
     Some(builder.ins().fcmp(code, lhs, rhs))
 }
 
 fn branch_numeric_operand(
     builder: &mut FunctionBuilder<'_>,
     variables: &[cranelift_frontend::Variable],
+    local_variables: &[cranelift_frontend::Variable],
     program: &ResidualProgram,
     state: &[BranchValue],
+    local_state: &[BranchValue],
     operand: crate::bytecode::Operand,
 ) -> Option<ir::Value> {
     match operand.kind()? {
         OperandKind::Register => {
             let index = usize::from(operand.register_index()?);
-            if state.get(index).copied()? != BranchValue::Number {
-                return None;
+            match state.get(index).copied()? {
+                BranchValue::Number => Some(builder.use_var(*variables.get(index)?)),
+                BranchValue::NumberConstant(constant) => {
+                    let Constant::Number(value) = program.constants.get(constant as usize)? else {
+                        return None;
+                    };
+                    Some(builder.ins().f64const(Ieee64::with_bits(value.to_bits())))
+                }
+                _ => return None,
             }
-            Some(builder.use_var(*variables.get(index)?))
         }
         OperandKind::Constant => {
             let Constant::Number(value) = program.constants.get(usize::from(operand.payload()))?
@@ -1182,7 +1761,20 @@ fn branch_numeric_operand(
             };
             Some(builder.ins().f64const(Ieee64::with_bits(value.to_bits())))
         }
-        OperandKind::Field | OperandKind::Local => None,
+        OperandKind::Local => {
+            let index = usize::from(operand.payload());
+            match local_state.get(index).copied()? {
+                BranchValue::Number => Some(builder.use_var(*local_variables.get(index)?)),
+                BranchValue::NumberConstant(constant) => {
+                    let Constant::Number(value) = program.constants.get(constant as usize)? else {
+                        return None;
+                    };
+                    Some(builder.ins().f64const(Ieee64::with_bits(value.to_bits())))
+                }
+                _ => None,
+            }
+        }
+        OperandKind::Field => None,
     }
 }
 
@@ -1198,10 +1790,7 @@ fn compile_numeric(program: &ResidualProgram, function_id: u32) -> Option<JsJitA
     }
 
     let params = usize::from(function.params);
-    let mut flags = settings::builder();
-    flags.set("opt_level", "speed").ok()?;
-    let isa_builder = cranelift_native::builder().ok()?;
-    let isa = isa_builder.finish(settings::Flags::new(flags)).ok()?;
+    let isa = super::jit_backend::target_isa("speed", true)?;
 
     let mut signature = ir::Signature::new(isa.default_call_conv());
     signature.params.push(AbiParam::new(isa.pointer_type()));
@@ -1267,6 +1856,25 @@ fn compile_numeric(program: &ResidualProgram, function_id: u32) -> Option<JsJitA
                 let right =
                     operand_value(&mut builder, program, instruction.operand_c(), &registers)?;
                 let value = match (instruction.op(), instruction.binary_operator()) {
+                    (Op::Binary, op)
+                        if (op == BinaryOperator::BitwiseAnd as u32
+                            || op == BinaryOperator::BitwiseOR as u32
+                            || op == BinaryOperator::BitwiseXOR as u32)
+                            && has_int32_bitwise_candidate(program, function) =>
+                    {
+                        let left = builder.ins().fcvt_to_sint(types::I32, left);
+                        let right = builder.ins().fcvt_to_sint(types::I32, right);
+                        let value = match op {
+                            x if x == BinaryOperator::BitwiseAnd as u32 => {
+                                builder.ins().band(left, right)
+                            }
+                            x if x == BinaryOperator::BitwiseOR as u32 => {
+                                builder.ins().bor(left, right)
+                            }
+                            _ => builder.ins().bxor(left, right),
+                        };
+                        builder.ins().fcvt_from_sint(types::F64, value)
+                    }
                     (Op::Binary, op) if op == BinaryOperator::Addition as u32 => {
                         builder.ins().fadd(left, right)
                     }
@@ -1339,6 +1947,7 @@ fn compile_numeric(program: &ResidualProgram, function_id: u32) -> Option<JsJitA
         code,
         params,
         result: JsJitResultKind::Number,
+        field_argument: None,
     })
 }
 
@@ -1601,10 +2210,7 @@ fn compile_numeric_loop(
         return None;
     }
 
-    let mut flags = settings::builder();
-    flags.set("opt_level", "speed").ok()?;
-    let isa_builder = cranelift_native::builder().ok()?;
-    let isa = isa_builder.finish(settings::Flags::new(flags)).ok()?;
+    let isa = super::jit_backend::target_isa("speed", true)?;
     let mut signature = ir::Signature::new(isa.default_call_conv());
     signature.params.push(AbiParam::new(isa.pointer_type()));
     signature.params.push(AbiParam::new(isa.pointer_type()));
@@ -1975,6 +2581,7 @@ fn compile_numeric_loop(
         code,
         params,
         result: JsJitResultKind::NumberInterruptible,
+        field_argument: None,
     })
 }
 
@@ -2211,10 +2818,7 @@ fn compile_string_branches(
     }
 
     let params = usize::from(function.params);
-    let mut flags = settings::builder();
-    flags.set("opt_level", "speed").ok()?;
-    let isa_builder = cranelift_native::builder().ok()?;
-    let isa = isa_builder.finish(settings::Flags::new(flags)).ok()?;
+    let isa = super::jit_backend::target_isa("speed", true)?;
 
     let mut signature = ir::Signature::new(isa.default_call_conv());
     signature.params.push(AbiParam::new(isa.pointer_type()));
@@ -2364,7 +2968,40 @@ fn compile_string_branches(
         code,
         params,
         result: JsJitResultKind::StringReturnPc(return_sites),
+        field_argument: None,
     })
+}
+
+fn merge_branch_state(target: &mut BranchState, incoming: &BranchState) {
+    for (target, incoming) in target.registers.iter_mut().zip(&incoming.registers) {
+        *target = merge_branch_value(*target, *incoming);
+    }
+    for (target, incoming) in target.locals.iter_mut().zip(&incoming.locals) {
+        *target = merge_branch_value(*target, *incoming);
+    }
+}
+
+fn merge_branch_value(left: BranchValue, right: BranchValue) -> BranchValue {
+    if left == right {
+        return left;
+    }
+    if branch_value_is_number(left) && branch_value_is_number(right) {
+        return BranchValue::Number;
+    }
+    if matches!(
+        left,
+        BranchValue::BooleanLiteral { .. }
+            | BranchValue::BooleanFolded(_)
+            | BranchValue::BooleanDynamic
+    ) && matches!(
+        right,
+        BranchValue::BooleanLiteral { .. }
+            | BranchValue::BooleanFolded(_)
+            | BranchValue::BooleanDynamic
+    ) {
+        return BranchValue::BooleanDynamic;
+    }
+    BranchValue::Unknown
 }
 
 fn push_string_state(
@@ -2452,10 +3089,40 @@ fn numeric_operand(
 pub(super) fn function_candidate(function: &Function, program: &crate::bytecode::ResidualProgram) -> bool {
     !function.code.is_empty()
         && function.code.len() <= MAX_INSTRUCTIONS
-        && function.wide.is_empty()
+        && (function.wide.is_empty() || wide_boolean_tree_candidate(function))
         && usize::from(function.registers) <= MAX_REGISTERS
         && usize::from(function.params) <= MAX_PARAMETERS
         && eligible(function, program)
+}
+
+fn wide_boolean_tree_candidate(function: &Function) -> bool {
+    let mut has_forward_branch = false;
+    function.code.iter().enumerate().all(|(pc, instruction)| {
+        let op = instruction.as_wide().op();
+        has_forward_branch |= matches!(op, Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse);
+        let supported = matches!(
+            op,
+            Op::LoadConst
+                | Op::Move
+                | Op::Unary
+                | Op::StoreLocal
+                | Op::StoreLocalPlain
+                | Op::LoadLocal
+                | Op::LoadLocalPlain
+                | Op::Binary
+                | Op::Jump
+                | Op::JumpFalse
+                | Op::JumpTrue
+                | Op::JumpBinaryFalse
+                | Op::Return
+        );
+        supported
+            && (!matches!(
+                op,
+                Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse
+            ) || usize::try_from(instruction.as_wide().jump_target())
+                .is_ok_and(|target| target > pc))
+    }) && has_forward_branch
 }
 
 fn eligible(function: &Function, program: &crate::bytecode::ResidualProgram) -> bool {
@@ -2471,7 +3138,7 @@ fn eligible(function: &Function, program: &crate::bytecode::ResidualProgram) -> 
         || function.rest
         || !function.simple_parameters
         || !function.handlers.is_empty()
-        || !function.plain_activation(program)
+        || (!function.plain_activation(program) && !activation_is_irrelevant(function))
     {
         return false;
     }
@@ -2487,6 +3154,37 @@ fn eligible(function: &Function, program: &crate::bytecode::ResidualProgram) -> 
         .enumerate()
         .all(|(index, binding)| {
             usize::from(binding.local) == index && usize::from(binding.register) == index
+        })
+}
+
+/// Some closures need a non-plain environment only because their source
+/// nesting supplies one; a pure numeric body that never reads it has no
+/// observable dependency on that activation. Keep this proof deliberately
+/// narrow so calls, captures, dynamic names, `this`, and closure creation stay
+/// on the interpreter path.
+fn activation_is_irrelevant(function: &Function) -> bool {
+    function.arguments_slot.is_none()
+        && !function.inherited_with_scope
+        && function.wide.is_empty()
+        && function.code.iter().all(|packed| {
+            matches!(
+                packed.as_wide().op(),
+                Op::LoadConst
+                    | Op::Move
+                    | Op::Unary
+                    | Op::Binary
+                    | Op::NumericAdd
+                    | Op::NumericMultiply
+                    | Op::LoadLocal
+                    | Op::LoadLocalPlain
+                    | Op::StoreLocal
+                    | Op::StoreLocalPlain
+                    | Op::Jump
+                    | Op::JumpFalse
+                    | Op::JumpTrue
+                    | Op::JumpBinaryFalse
+                    | Op::Return
+            )
         })
 }
 

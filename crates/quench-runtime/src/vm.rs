@@ -1,5 +1,6 @@
 mod compiled;
 mod js_compiled;
+mod jit_backend;
 mod shape_transitions;
 mod startup_intrinsics;
 mod wasm;
@@ -232,6 +233,9 @@ pub(super) struct Frame {
     // Empty while active; owns the transferred scope stack while detached.
     with_objects: Vec<Value>,
     with_base: usize,
+    /// Opt-in interpreter time for a synchronous JIT-diagnostic activation.
+    /// Excludes compile work, native execution, suspended and exceptional exits.
+    js_jit_interpreter_started: Option<std::time::Instant>,
     /// The frame pushed its own `this` binding with a live value. Only `super()` rebinds
     /// `this`, and only in derived constructors, whose binding starts deleted; so for these
     /// frames `this` is authoritative and the binding lookup can be skipped.
@@ -291,6 +295,7 @@ impl Frame {
             active_iterators: vec![],
             with_objects: Vec::new(),
             with_base,
+            js_jit_interpreter_started: None,
             fixed_this: false,
         }
     }

@@ -1704,6 +1704,43 @@ mod tests {
     }
 
     #[test]
+    fn javascript_and_wasm_jit_share_one_vm_and_backend() {
+        let script = crate::Engine::compile(crate::ExecutionRequest::script(
+            "function plusOne(value) { return value + 1; } for (let i = 0; i < 40; i++) plusOne(i);",
+            "shared-js-wasm-jit.js",
+        ))
+        .unwrap();
+        let wasm = crate::Engine::lower_wasm_module(
+            "shared-js-wasm-jit-wasm",
+            0,
+            [crate::WasmFunctionBody {
+                ty: crate::WasmCallableType::Embedded(crate::WasmSignature {
+                    params: vec![],
+                    results: vec![crate::WasmType::I32],
+                }),
+                locals: vec![],
+                operators: [Operator::I32Const { value: 42 }, Operator::End]
+                    .into_iter()
+                    .map(Ok),
+            }],
+        )
+        .unwrap();
+
+        let mut vm = Vm::new(crate::SystemHost);
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        vm.execute(&script).unwrap();
+        assert!(matches!(
+            vm.programs
+                .js_tier(super::super::program_store::ProgramId::MAIN, 1),
+            Some(super::super::program_store::JsTierState::Compiled(_))
+        ));
+        let js_mapped_bytes = vm.programs.jit_mapped_bytes();
+        assert!(js_mapped_bytes > 0);
+        assert_eq!(vm.execute_wasm_i32(&wasm, &[]).unwrap(), Some(42));
+        assert!(vm.programs.jit_mapped_bytes() > js_mapped_bytes);
+    }
+
+    #[test]
     fn compiled_wasm_first_call_compiles_and_enters_its_root() {
         let function = crate::Engine::lower_wasm_module(
             "compiled-wasm-first-root",
