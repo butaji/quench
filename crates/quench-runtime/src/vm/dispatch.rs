@@ -86,6 +86,7 @@ impl<H: Host> Vm<H> {
                 target.1,
                 &self.frames[f].registers[usize::from(window.base)
                     ..usize::from(window.base) + usize::from(window.count)],
+                self.execution_interrupt.atomic_flag(),
             )
         {
             self.write(f, i.result_register(), value);

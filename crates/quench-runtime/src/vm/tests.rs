@@ -10333,6 +10333,123 @@ fn js_jit_compiles_hot_numeric_functions_and_guards_polymorphic_inputs() {
     feature = "profile-memory",
     feature = "profile-gc-time"
 )))]
+fn js_jit_compiles_pure_numeric_loops_with_backedge_polls() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function sumTo(limit) {
+            let sum = 0;
+            let index = 0;
+            while (index < limit) {
+              sum = sum + index;
+              index = index + 1;
+            }
+            return sum;
+          }
+          function capacity(x) {
+            if (x >= 1073741824) return 1073741824;
+            if (x === 0) return 16;
+            x = x - 1;
+            x |= x >> 1;
+            x |= x >> 2;
+            x |= x >> 4;
+            x |= x >> 8;
+            x |= x >> 16;
+            return x + 1;
+          }
+          if (sumTo(39) !== 741) throw Error('numeric loop result');
+          for (let index = 0; index < 40; index++) {
+            const capacityExpected = index === 0 ? 16 : index <= 2 ? index : index <= 4 ? 4 : index <= 8 ? 8 : index <= 16 ? 16 : index <= 32 ? 32 : 64;
+            if (capacity(index) !== capacityExpected) throw Error('bitwise loop result ' + index + ' ' + capacity(index) + ' ' + capacityExpected);
+          }
+          if (capacity(NaN) !== 1 || capacity(Infinity) !== 1073741824 || capacity(-Infinity) !== 1) {
+            throw Error('bitwise non-finite conversion');
+          }
+          if (capacity(-4294967297) !== 0 || capacity(-1) !== 0 || capacity(-Number.MAX_VALUE) !== 1) {
+            throw Error('bitwise modulo conversion');
+          }
+        "#,
+        "js-jit-numeric-loop.js",
+    ))
+    .unwrap();
+    assert!(
+        super::js_compiled::compile(&program, 1).is_some(),
+        "direct compile failed\n{}",
+        program.disassemble()
+    );
+    assert!(
+        super::js_compiled::function_candidate(&program.functions[2], &program.atoms),
+        "capacity function candidate rejected"
+    );
+    assert!(
+        super::js_compiled::compile(&program, 2).is_some(),
+        "direct bitwise compile failed\n{}",
+        program.disassemble()
+    );
+    let mut vm = Vm::new(SilentHost);
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+    assert!(
+        matches!(
+            vm.programs
+                .js_tier(super::program_store::ProgramId::MAIN, 1),
+            Some(super::program_store::JsTierState::Compiled(_))
+        ),
+        "{}",
+        program.disassemble()
+    );
+    assert!(matches!(
+        vm.programs
+            .js_tier(super::program_store::ProgramId::MAIN, 2),
+        Some(super::program_store::JsTierState::Compiled(_))
+    ));
+}
+
+#[test]
+#[cfg(not(any(
+    feature = "profile-aggregate",
+    feature = "profile-trace",
+    feature = "profile-memory",
+    feature = "profile-gc-time"
+)))]
+fn js_jit_compiles_guarded_string_hash_loop_and_falls_back_after_intrinsic_change() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function quickHash(str) {
+            let hash = 5381;
+            let index = str.length;
+            while (index > 0) {
+              hash = hash * 33 ^ (str.charCodeAt(index) | 0);
+              index -= 919;
+            }
+            return hash | 0;
+          }
+          if (quickHash('') !== 5381) throw Error('empty string');
+          if (quickHash('abc') !== 177573) throw Error('short string');
+          if (quickHash('😀') !== 177573) throw Error('surrogate pair');
+          if (quickHash('a'.repeat(2000)) !== 193375941) throw Error('long string');
+          String.prototype.charCodeAt = function() { return 99; };
+          if (quickHash('abc') !== 177606) throw Error('intrinsic mutation fallback');
+        "#,
+        "js-jit-string-hash.js",
+    ))
+    .unwrap();
+    let mut vm = Vm::new(SilentHost);
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+    assert!(matches!(
+        vm.programs
+            .js_tier(super::program_store::ProgramId::MAIN, 1),
+        Some(super::program_store::JsTierState::Compiled(_))
+    ));
+}
+
+#[test]
+#[cfg(not(any(
+    feature = "profile-aggregate",
+    feature = "profile-trace",
+    feature = "profile-memory",
+    feature = "profile-gc-time"
+)))]
 fn js_jit_compiles_forward_numeric_branches_to_rooted_string_returns() {
     let source = r#"
       const rating = price => price < 100 ? '€' : price < 1000 ? '€€' : '€€€';
@@ -10396,7 +10513,7 @@ fn js_jit_tier_tracking_has_a_hard_bound() {
     let mut programs = super::program_store::ProgramStore::default();
     let id = programs.insert(program).unwrap();
     for function in 0..512 {
-        assert!(!programs.note_js_function_entry(id, function, false));
+        assert!(!programs.note_js_function_entry(id, function, false, false));
     }
     assert_eq!(programs.js_jit_tracked_function_count(), 256);
 }
@@ -10408,7 +10525,7 @@ fn js_jit_promotion_requires_a_confident_numeric_profile() {
     let mut programs = super::program_store::ProgramStore::default();
     let id = programs.insert(program).unwrap();
     for observation in 0..16 {
-        assert!(!programs.note_js_function_entry(id, 1, observation < 15));
+        assert!(!programs.note_js_function_entry(id, 1, observation < 15, false));
     }
     assert!(matches!(
         programs.js_tier(id, 1),
@@ -10454,9 +10571,9 @@ fn js_jit_profile_gate_uses_prespecified_exact_binomial_looks() {
     let mut programs = super::program_store::ProgramStore::default();
     let id = programs.insert(program).unwrap();
     for observation in 0..31 {
-        assert!(!programs.note_js_function_entry(id, 1, observation != 0));
+        assert!(!programs.note_js_function_entry(id, 1, observation != 0, false));
     }
-    assert!(programs.note_js_function_entry(id, 1, true));
+    assert!(programs.note_js_function_entry(id, 1, true, false));
     assert!(matches!(
         programs.js_tier(id, 1),
         Some(super::program_store::JsTierState::Hot {
@@ -10476,14 +10593,14 @@ fn js_jit_keeps_promotion_pending_until_a_numeric_entry() {
     let mut programs = super::program_store::ProgramStore::default();
     let id = programs.insert(program).unwrap();
     for _ in 0..31 {
-        assert!(!programs.note_js_function_entry(id, 1, true));
+        assert!(!programs.note_js_function_entry(id, 1, true, false));
     }
-    assert!(!programs.note_js_function_entry(id, 1, false));
+    assert!(!programs.note_js_function_entry(id, 1, false, false));
     assert!(matches!(
         programs.js_tier(id, 1),
         Some(super::program_store::JsTierState::PromotionPending)
     ));
-    assert!(programs.note_js_function_entry(id, 1, true));
+    assert!(programs.note_js_function_entry(id, 1, true, false));
 }
 
 #[cfg(any(
