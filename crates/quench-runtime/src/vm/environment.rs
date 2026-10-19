@@ -1689,6 +1689,7 @@ impl<H: Host> Vm<H> {
         self.programs.root_slot_is_binding(
             program.map_or(self.active_program, super::ProgramId::from_raw),
             slot,
+            !self.eval_script_context,
         )
     }
 

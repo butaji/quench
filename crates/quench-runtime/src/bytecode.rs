@@ -2714,12 +2714,16 @@ impl ResidualProgram {
                 && self.functions.first().is_some_and(|root| root.strict))
     }
 
-    /// The root function's slots project no global var or global lexical binding, so each
-    /// slot of its environment is the binding itself.
-    pub(crate) fn root_slots_are_bindings(&self) -> bool {
+    /// Whether root `slot` is the binding itself: it projects no global var, and no global
+    /// lexical binding unless `lexical_slots_are_bindings` (outside a dynamic script's
+    /// evaluation, a Script's global lexical binding lives in its root slot).
+    pub(crate) fn root_slot_is_binding(&self, slot: u16, lexical_slots_are_bindings: bool) -> bool {
         self.functions.first().is_some_and(|root| {
-            (self.root_variables_are_local() || root.global_var_atoms().is_empty())
-                && (self.kind != ProgramKind::Script || root.global_lexical_atoms().is_empty())
+            let declaration = root.slot_declaration(usize::from(slot));
+            (!declaration.global_var || self.root_variables_are_local())
+                && (!declaration.global_lexical
+                    || lexical_slots_are_bindings
+                    || self.kind != ProgramKind::Script)
         })
     }
 
