@@ -83,3 +83,13 @@ through the slot's `OnceCell`. V8-v7 max RSS is unchanged within ±0.2 MiB.
   - host static bodies and the CommonJS main entry.
 - **Replay context.** A replay depends on the program's interned atoms and recorded
   cursors. The program keeps its replay data for as long as any record can be read.
+
+## After merging v2-merged (527466653)
+
+Trunk's b55033746 had built no replay outside `verify-replay`, since nothing recompiled
+from it then. Merged with compile on first call, that left every record compiled:
+`require('typescript')` peaked at 115.3 MiB again. With the replay restored it peaks at
+96.5 MiB. `v8-anon-after-merge.txt` compares V8-v7 peak `RssAnon` on dynamic release
+builds, trunk against the merge (three runs each, sampled every 2 ms). The merge is lower
+on all eight, RegExp included (5,720 → 5,704 KiB): the records it releases outweigh the
+replay data.
