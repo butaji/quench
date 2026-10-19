@@ -24,8 +24,8 @@ impl<H: Host> Vm<H> {
             .and_then(|attributes| attributes.getter.filter(|_| attributes.accessor))
             .is_some_and(|getter| {
                 matches!(
-                    self.heap.get(getter),
-                    Some(Cell::Function {
+                    self.heap.function(getter),
+                    Some(FunctionRecord {
                         kind: FunctionKind::Native(native),
                         ..
                     }) if native.is_intrinsic_species_getter()
@@ -566,7 +566,7 @@ impl<H: Host> Vm<H> {
             && self
                 .atom_class(atom)
                 .contains(AtomClass::RESTRICTED_FUNCTION_PROPERTY)
-            && matches!(self.heap.get(object), Some(Cell::Function { .. }))
+            && self.heap.is_function_value(object)
             && self.own_property(object, atom).is_none()
             && !self.function_caller_is_restricted(object)
         {
@@ -771,8 +771,8 @@ impl<H: Host> Vm<H> {
                     | Some(Cell::WeakSet { object: x, .. }) => object = x.proto(),
                     Some(Cell::WeakRef { object: x, .. }) => object = x.proto(),
                     Some(Cell::FinalizationRegistry { object: x, .. }) => object = x.proto(),
-                    Some(Cell::Iterator { object: x, .. }) => object = x.proto(),
-                    Some(Cell::Function { object: x, .. }) => object = x.proto(),
+                    Some(Cell::Iterator(x)) => object = x.object.proto(),
+                    Some(Cell::Function(x)) => object = x.object.proto(),
                     _ => match self.heap.object(object) {
                         Some(x) => object = x.proto(),
                         None => return Ok(Value::UNDEFINED),
@@ -880,8 +880,7 @@ impl<H: Host> Vm<H> {
         // bindings resolve the same initialized home whenever the closure's environment chain
         // is the same.
         let static_bindings = p
-            .functions
-            .get(key.function as usize)
+            .function_get(key.function as usize)
             .is_some_and(|function| function.binding_sites.is_empty());
         if static_bindings && let Some(home) = self.private_homes.get(&key) {
             return Some(*home);
@@ -902,7 +901,7 @@ impl<H: Host> Vm<H> {
         let mut function = Some(self.frames[frame_index].function);
         let mut home_atoms = Vec::new();
         while let Some(id) = function
-            && let Some(metadata) = p.functions.get(id as usize)
+            && let Some(metadata) = p.function_get(id as usize)
         {
             if let Some(atom) = metadata.super_home_atom
                 && !home_atoms.contains(&atom)
@@ -936,8 +935,7 @@ impl<H: Host> Vm<H> {
                 });
                 let owner = owner.as_deref().unwrap_or(p);
                 let visible_homes = owner
-                    .functions
-                    .get(*function as usize)
+                    .function_get(*function as usize)
                     .into_iter()
                     .flat_map(|metadata| metadata.local_atoms.iter().copied())
                     .filter(|atom| self.atom_name(*atom).starts_with("\0quench:home:"))

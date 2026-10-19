@@ -913,6 +913,23 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.completion(result)
     }
 
+    /// `evaluate_specialized_script_with_origin_rooted` for an application's entry, whose
+    /// functions keep their compiled records instead of compiling again on first call.
+    pub fn evaluate_entry_script_with_origin_rooted(
+        &mut self,
+        source: &str,
+        name: &str,
+        line_offset: u32,
+        column_offset: u32,
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.evaluate_embedding_entry_script_with_origin(
+            source,
+            name,
+            Some((line_offset, column_offset)),
+        );
+        self.completion(result)
+    }
+
     /// Compile host-wrapped source with an explicit original-source origin.
     /// The offsets remove wrapper lines and its first-line UTF-16 columns from
     /// compiler-owned locations and diagnostic excerpts, not executable code.
@@ -1636,6 +1653,19 @@ impl<'a, H: Host> NativeContext<'a, H> {
             .map_err(|error| self.error(error))
     }
 
+    /// Whether `holder`'s own property `name` is still a lazy data property, observing nothing:
+    /// its group has not materialized and script has not replaced it, so it holds the value
+    /// its initializer will define.
+    pub fn is_pending_lazy_data_property_rooted(
+        &mut self,
+        holder: RootId,
+        name: &str,
+    ) -> Result<bool, RootedError> {
+        self.vm
+            .is_pending_lazy_data_property_rooted(holder, name)
+            .map_err(|error| self.error(error))
+    }
+
     /// Defines `names` on `holder` as one group of writable, configurable lazy data
     /// properties: the first time script observes any of them, `initializer` runs once, with
     /// the startup intrinsics in place, and defines them all.
@@ -1648,6 +1678,20 @@ impl<'a, H: Host> NativeContext<'a, H> {
     ) -> Result<(), RootedError> {
         self.vm
             .define_lazy_data_properties_rooted(holder, names, enumerable, initializer)
+            .map_err(|error| self.error(error))
+    }
+
+    /// Defines `members` (a name and whether it is enumerable) on `holder` as one group of
+    /// lazy data properties, like `define_lazy_data_properties_rooted` with each member's own
+    /// enumerability.
+    pub fn define_lazy_data_members_rooted(
+        &mut self,
+        holder: RootId,
+        members: &[(&str, bool)],
+        initializer: RootId,
+    ) -> Result<(), RootedError> {
+        self.vm
+            .define_lazy_group_rooted(holder, members, false, initializer)
             .map_err(|error| self.error(error))
     }
 

@@ -2076,12 +2076,83 @@ fn make_readdir_async(
     context.call_rooted(factory, undefined, &[readdir_sync])
 }
 
+/// `fs`'s own keys after `readFileSync`, in order, with whether each is enumerable: one lazy
+/// group (`module`) that `build_module` fills when a script first observes any of them.
+const MODULE_MEMBERS: [(&str, bool); 96] = [
+    ("watch", true), ("readFile", true), ("statSync", true), ("statfsSync", true),
+    ("statfs", true), ("exists", true), ("existsSync", true), ("access", true),
+    ("accessSync", true), ("chmod", true), ("chmodSync", true), ("fchmod", true),
+    ("fchmodSync", true), ("lstatSync", true), ("lstat", true), ("readdirSync", true),
+    ("readdir", true), ("Dir", true), ("opendir", true), ("opendirSync", true),
+    ("readlinkSync", true), ("readlink", true), ("realpathSync", true), ("realpath", true),
+    ("constants", true), ("Stats", true), ("utimesSync", true), ("watchFile", true),
+    ("unwatchFile", true), ("rm", true), ("mkdirSync", true), ("rmdirSync", true),
+    ("mkdtempSync", true), ("mkdtempDisposableSync", true), ("copyFileSync", true),
+    ("symlinkSync", true), ("linkSync", true), ("renameSync", true), ("unlinkSync", true),
+    ("chownSync", true), ("lchownSync", true), ("fchownSync", true), ("truncateSync", true),
+    ("ftruncateSync", true), ("rmSync", true), ("openSync", true), ("closeSync", true),
+    ("fstatSync", true), ("readSync", true), ("writeSync", true), ("fsyncSync", true),
+    ("fdatasyncSync", true), ("writeFileSync", true), ("appendFileSync", true),
+    ("fsync", true), ("fdatasync", true), ("writev", true), ("writevSync", true),
+    ("readv", true), ("readvSync", true), ("truncate", true), ("ftruncate", true),
+    ("stat", true), ("mkdir", true), ("rmdir", true), ("mkdtemp", true), ("copyFile", true),
+    ("cpSync", true), ("cp", true), ("symlink", true), ("link", true), ("rename", true),
+    ("unlink", true), ("chown", true), ("lchown", true), ("fchown", true), ("open", true),
+    ("close", true), ("read", true), ("fstat", true), ("writeFile", true),
+    ("appendFile", true), ("createReadStream", true), ("ReadStream", true), ("promises", true),
+    ("createWriteStream", true), ("WriteStream", true), ("lutimesSync", false),
+    ("futimesSync", false), ("utimes", false), ("lutimes", false), ("futimes", false),
+    ("write", false), ("Dirent", true), ("glob", true), ("globSync", true),
+];
+
+/// The `fs` module. `readFileSync` is defined directly; every other member is a lazy data
+/// property of one group, built when a script first observes any of them: reading a file
+/// needs none of the 50-odd guest factories and wrappers the rest of the module compiles.
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let module = context.object_rooted()?;
-    super::fs_watch_shared_vm::install(context, module)?;
-    let opendir_promise;
     let read_file = context.host_function(crate::host::shared_vm::operation("fsReadFileSync"))?;
     set(context, module, "readFileSync", read_file)?;
+    let initialize = context.host_function_with_data(
+        crate::host::shared_vm::operation("fsModuleInitialize"), module,
+    )?;
+    context.define_lazy_data_members_rooted(module, &MODULE_MEMBERS, initialize)?;
+    let global = context.global_root()?;
+    let key = context.string_rooted("__nodeFs");
+    if !context.define_data_property_rooted(global, key, module, false, false, true)? {
+        return Err(RootedError::host("cannot install canonical Node Fs alias"));
+    }
+    Ok(module)
+}
+
+/// Builds the members of `fs` (the lazy group `module` defines) when a script first observes
+/// one, and checks they are exactly `MODULE_MEMBERS`, ahead of any key a script added.
+pub(crate) fn initialize_module(
+    context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let module = context.host_function_data()?;
+    build_module(context, module)?;
+    install_library_policy(context, module)?;
+    // A script may add keys to `fs` before it first reads a lazy member; string keys it adds
+    // follow the group in key order and symbol keys are listed apart, so the module's own
+    // members are the leading string keys.
+    let keys = context.own_keys_rooted(module)?;
+    let mut names = Vec::with_capacity(keys.len());
+    for key in keys {
+        if !context.is_symbol_rooted(key)? {
+            names.push(context.to_string(key)?);
+        }
+    }
+    let expected = std::iter::once("readFileSync").chain(MODULE_MEMBERS.iter().map(|(name, _)| *name));
+    if !names.iter().map(String::as_str).take(expected.clone().count()).eq(expected) {
+        return Err(RootedError::host(format!("fs members differ from MODULE_MEMBERS: {names:?}")));
+    }
+    Ok(context.undefined())
+}
+
+fn build_module(context: &mut NativeContext<'_, NodeHost>, module: RootId) -> Result<(), RootedError> {
+    super::fs_watch_shared_vm::install(context, module)?;
+    let opendir_promise;
+    let read_file = get(context, module, "readFileSync")?;
     let read_file_factory = context
         .evaluate_script_rooted(ASYNC_READ_FILE_FACTORY, "node:fs/shared-async-read-file.js")?;
     let validate =
@@ -2553,13 +2624,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     }
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_vfs_fs_fallbacks");
-    let global = context.global_root()?;
-    let key = context.string_rooted("__nodeFs");
-    if !context.define_data_property_rooted(global, key, module, false, false, true)? {
-        return Err(RootedError::host("cannot install canonical Node Fs alias"));
-    }
-
-    Ok(module)
+    Ok(())
 }
 
 pub(crate) fn promises_module(
@@ -2768,6 +2833,9 @@ fn read_file_calls_are_builtin(context: &mut NativeContext<'_, NodeHost>) -> Res
     let module = crate::host::shared_vm::commonjs::fs_module(context)?;
     let shared = context.host_mut().shared_state();
     for name in READ_FILE_CALLS {
+        if context.is_pending_lazy_data_property_rooted(module, name)? {
+            continue;
+        }
         let Some(original) = shared.borrow().builtin_cache.get(&read_file_call_key(name)).copied() else {
             return Ok(false);
         };
@@ -3119,7 +3187,7 @@ const LIBRARY_POLICY_MEMBERS: [&str; 4] = ["Dirent", "glob", "globSync", "readdi
 /// them: loading `lib/fs.js` builds Buffer, util and their dependencies, which reading a file
 /// does not need. Node's promises module is likewise loaded only when requested; in particular
 /// its readline dependencies must not eagerly capture the OS binding while merely requiring fs.
-pub(crate) fn install_library_policy(
+fn install_library_policy(
     context: &mut NativeContext<'_, NodeHost>, module: RootId,
 ) -> Result<(), RootedError> {
     let initialize = context.host_function_with_data(

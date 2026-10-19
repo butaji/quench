@@ -221,6 +221,10 @@ pub(crate) struct EvalContext {
 #[derive(Clone, Copy)]
 enum ParsedProgramShape {
     Any,
+    /// A script whose functions keep their records: a host script whose program keeps only
+    /// part of its compiled text (a static body), from which they cannot compile again, or an
+    /// application's entry, whose own functions mostly run.
+    KeptRecords,
     DynamicFunction { parameter_list_end: usize },
     Eval(EvalContext, Option<Span>),
 }
@@ -552,6 +556,25 @@ impl Engine {
         name: &str,
         atom_prefix: &dyn AtomPrefix,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        Self::specialize_script_shaped(source, name, atom_prefix, ParsedProgramShape::Any)
+    }
+
+    /// `specialize_script_with_atom_prefix` for a program whose functions keep their records:
+    /// a host script whose program will keep only a static body of `source`, or an entry.
+    pub(crate) fn specialize_kept_script_with_atom_prefix(
+        source: &str,
+        name: &str,
+        atom_prefix: &dyn AtomPrefix,
+    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        Self::specialize_script_shaped(source, name, atom_prefix, ParsedProgramShape::KeptRecords)
+    }
+
+    fn specialize_script_shaped(
+        source: &str,
+        name: &str,
+        atom_prefix: &dyn AtomPrefix,
+        shape: ParsedProgramShape,
+    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         Self::specialize_with_mode_and_private_names(
             source,
             name,
@@ -563,7 +586,7 @@ impl Engine {
             false,
             &[],
             &[],
-            ParsedProgramShape::Any,
+            shape,
         )
     }
     pub fn specialize_unspecialized(
@@ -828,7 +851,7 @@ impl Engine {
         let wrapped_eval = matches!(expected_shape, ParsedProgramShape::Eval(context, _)
             if context.home_atom.is_some()) || ordinary_private_context;
         let dynamic_function_shape = match expected_shape {
-            ParsedProgramShape::Any => true,
+            ParsedProgramShape::Any | ParsedProgramShape::KeptRecords => true,
             ParsedProgramShape::Eval(_, expected_span) => {
                 !wrapped_eval || eval_method_body(&mut parsed.program, ordinary_private_context)
                     .is_some_and(|body| Some(body.span) == expected_span)
@@ -950,12 +973,9 @@ impl Engine {
         let mut compiler = Compiler::new(name, &normalized, mode, atom_prefix, private_name_ids);
         compiler.source_type = source_type;
         // Eval code and dynamic functions are compiled from a wrapper, or a tree changed after
-        // parsing, that their source text alone does not give back. Only `verify-replay`
-        // recompiles yet, so production keeps no replay until a call compiles from it (V8-v7
-        // RegExp anonymous peak 5416 -> 5340 KiB, Crypto 1980 -> 1840, static x86_64,
-        // 2026-10-19).
-        compiler.replayable_source =
-            cfg!(feature = "verify-replay") && matches!(expected_shape, ParsedProgramShape::Any);
+        // parsing, that their source text alone does not give back. A released function
+        // compiles again from its replay on first call (`ResidualProgram::function`).
+        compiler.replayable_source = matches!(expected_shape, ParsedProgramShape::Any);
         compiler.private_name_labels = private_name_labels;
         compiler.private_name_overrides = private_aliases;
         compiler.capture_script_completion = capture_script_completion;
@@ -1436,7 +1456,7 @@ struct Compiler<'a> {
     private_name_labels: FxHashMap<(u32, u32), String>,
     private_name_overrides: FxHashMap<u32, String>,
     constants: SiteTable<'a, Constant>,
-    constant_index: std::borrow::Cow<'a, FxHashMap<ConstantKey, u32>>,
+    constant_index: replay::ConstantIndex<'a>,
     functions: replay::FunctionTable<'a>,
     errors: Vec<Diagnostic>,
     cache_sites: u16,
@@ -1462,11 +1482,24 @@ struct Compiler<'a> {
     >,
     /// The tables' cursors once each function, its nested ones included, is compiled.
     function_exits: Vec<replay::TableCursors>,
+    /// What the program-wide layout analyses read of each compiled function.
+    function_facts: Vec<capture_layout::FunctionFacts>,
+    /// Functions being compiled whose bodies may give nested functions binding sites
+    /// (`early::body_may_bind_dynamically`). While any is open, a function finished inside
+    /// it may still resolve names dynamically, so none is released early.
+    dynamic_binding_scopes: u32,
+    /// The replays of functions finished and released during the load.
+    early_replays: FxHashMap<u32, replay::FunctionReplay>,
+    /// The source starts of function expressions called where they are made, which run at
+    /// once and so keep their records (`note_invoked_callee`).
+    invoked_functions: FxHashSet<u32>,
     /// How each replayable function was compiled, with the cursors it started from.
     replay_calls: FxHashMap<u32, (replay::TableCursors, replay::ReplayCall)>,
     /// In a replay, the function it recompiles and where the load left each function.
     replay_target: Option<(u32, &'a [replay::TableCursors])>,
     source_type: oxc_span::SourceType,
+    /// In a replay, the finished program whose function it compiles.
+    replay_program: Option<&'a ResidualProgram>,
     /// Whether the program's functions compile again from their text alone.
     replayable_source: bool,
 }
@@ -1496,7 +1529,7 @@ struct DeferredNameBindings {
     /// home through these bindings.
     names_private_members: bool,
     direct: Vec<crate::bytecode::EvalBinding>,
-    scopes: Vec<std::rc::Rc<capture_scope::CaptureScope>>,
+    scopes: capture_scope::ScopeChain,
     function_scope: Vec<Atom>,
 }
 
@@ -1635,8 +1668,9 @@ impl<'a> Compiler<'a> {
     /// (`capture_layout::dynamic_name_scopes`), of every function private member access
     /// resolves through, and of the root; the rest keep their direct bindings, as no lookup
     /// reaches their captured names.
-    fn resolve_name_bindings(&mut self, functions: &mut [BcFunction], reachable: &[bool]) {
+    fn resolve_name_bindings(&mut self, functions: &mut [Option<BcFunction>], reachable: &[bool]) {
         for (id, function) in functions.iter_mut().enumerate() {
+            let Some(function) = function else { continue };
             let Some(deferred) = self.deferred_name_bindings.remove(&(id as u32)) else {
                 continue;
             };
@@ -1646,7 +1680,7 @@ impl<'a> Compiler<'a> {
             {
                 continue;
             }
-            let captured = self.captured_names(&deferred.scopes);
+            let captured = self.captured_names(deferred.scopes.levels());
             let mut hidden: Vec<Atom> = deferred
                 .function_scope
                 .into_iter()
@@ -1767,15 +1801,34 @@ impl<'a> Compiler<'a> {
         atom_prefix: &'a dyn AtomPrefix,
         private_name_ids: FxHashMap<(u32, u32), u32>,
     ) -> Self {
+        Self::with_layout(
+            source,
+            text,
+            mode,
+            atom_prefix,
+            private_name_ids,
+            std::borrow::Cow::Owned(crate::bytecode::source_line_starts(text).collect()),
+            std::borrow::Cow::Owned(source_utf16_excess(text)),
+        )
+    }
+
+    /// `new`, with `text`'s line starts and UTF-16 excess table already derived.
+    fn with_layout(
+        source: &'a str,
+        text: &'a str,
+        mode: SpecializationMode,
+        atom_prefix: &'a dyn AtomPrefix,
+        private_name_ids: FxHashMap<(u32, u32), u32>,
+        source_line_starts: std::borrow::Cow<'a, [usize]>,
+        source_utf16_excess: std::borrow::Cow<'a, [(usize, usize)]>,
+    ) -> Self {
         let atoms = CompilerAtoms::new(atom_prefix);
         Self {
             source,
             text,
-            source_line_starts: std::borrow::Cow::Owned(
-                crate::bytecode::source_line_starts(text).collect(),
-            ),
+            source_line_starts,
             source_comments: Vec::new(),
-            source_utf16_excess: std::borrow::Cow::Owned(source_utf16_excess(text)),
+            source_utf16_excess,
             mode,
             root_strict: false,
             module_goal: false,
@@ -1789,7 +1842,7 @@ impl<'a> Compiler<'a> {
             private_name_labels: FxHashMap::default(),
             private_name_overrides: FxHashMap::default(),
             constants: SiteTable::default(),
-            constant_index: std::borrow::Cow::Owned(FxHashMap::default()),
+            constant_index: replay::ConstantIndex::default(),
             functions: replay::FunctionTable::default(),
             errors: vec![],
             cache_sites: 0,
@@ -1803,9 +1856,14 @@ impl<'a> Compiler<'a> {
             deferred_name_bindings: FxHashMap::default(),
             captured_name_scopes: FxHashMap::default(),
             function_exits: Vec::new(),
+            function_facts: Vec::new(),
+            dynamic_binding_scopes: 0,
+            early_replays: FxHashMap::default(),
+            invoked_functions: FxHashSet::default(),
             replay_calls: FxHashMap::default(),
             replay_target: None,
             source_type: oxc_span::SourceType::default(),
+            replay_program: None,
             replayable_source: false,
         }
     }
@@ -1855,11 +1913,41 @@ impl<'a> Compiler<'a> {
         if self.replay_target.is_some() {
             return;
         }
+        let facts = self
+            .functions
+            .get(id)
+            .map(|function| capture_layout::FunctionFacts::of(function, &self.atoms))
+            .expect("a function's record exists once it is compiled");
         let id = id as usize;
         if self.function_exits.len() <= id {
             self.function_exits.resize(id + 1, replay::TableCursors::default());
+            self.function_facts.resize(id + 1, capture_layout::FunctionFacts::default());
         }
         self.function_exits[id] = self.cursors();
+        self.function_facts[id] = facts;
+    }
+
+    /// Notes a function expression called where it is made: `(function () {})()`, an arrow
+    /// likewise, or either through `.call` or `.apply`. A replay of it would only compile it
+    /// again a moment after its load did.
+    fn note_invoked_callee(&mut self, callee: &Expression<'_>) {
+        let callee = match callee.without_parentheses() {
+            Expression::StaticMemberExpression(member)
+                if matches!(member.property.name.as_str(), "call" | "apply") =>
+            {
+                member.object.without_parentheses()
+            }
+            callee => callee,
+        };
+        match callee {
+            Expression::FunctionExpression(function) => {
+                self.invoked_functions.insert(function.span.start);
+            }
+            Expression::ArrowFunctionExpression(arrow) => {
+                self.invoked_functions.insert(arrow.span.start);
+            }
+            _ => {}
+        }
     }
 
     /// Keeps how function `id` was compiled from `entry`, unless it resolved private names:
@@ -1871,11 +1959,90 @@ impl<'a> Compiler<'a> {
         private_names: (u64, usize),
         call: replay::ReplayCall,
     ) {
+        let invoked = self
+            .functions
+            .get(id)
+            .and_then(|function| function.source_span)
+            .is_some_and(|span| self.invoked_functions.remove(&span.start));
         if self.replay_target.is_none()
+            && self.replayable_source
+            && !invoked
             && private_names == (self.private_name_references, self.private_name_ids.len())
         {
             self.replay_calls.insert(id, (entry, call));
+            self.finish_early(id);
         }
+    }
+
+    /// Finishes replayable function `id` as soon as it is compiled and releases its record,
+    /// so a program's records never all exist beside its tree. Only a function that, with
+    /// every function nested in it, resolves names statically, inside no function that may
+    /// give it binding sites: its layout then depends on nothing compiled after it.
+    fn finish_early(&mut self, id: u32) {
+        if !self.replayable_source || self.dynamic_binding_scopes != 0 {
+            return;
+        }
+        let exit = self.function_exits[id as usize].functions as usize;
+        let subtree = id as usize..exit;
+        if self.function_facts[subtree]
+            .iter()
+            .any(|facts| facts.dynamic_access || facts.contains_with || facts.binding_sites)
+        {
+            return;
+        }
+        let Some(mut function) = self.functions.take(id) else {
+            return;
+        };
+        let (entry, call) = self
+            .replay_calls
+            .remove(&id)
+            .expect("an early-finished function has a replay call");
+        let captured = capture_layout::captured_by(
+            id as usize,
+            &self.function_facts,
+            id as usize + 1..exit,
+        );
+        let layout = capture_layout::LayoutInputs {
+            captured: capture_layout::complete_captured(
+                captured,
+                capture_layout::mapped_arguments(&function),
+            ),
+            dynamic_descendant: false,
+        };
+        let arguments_slot = function.arguments_slot;
+        capture_layout::apply_function(&mut function, id as usize, &layout, &self.atoms);
+        let rewrite_cursors = (
+            self.field_sites.len() as u32,
+            self.superinstructions.len() as u32,
+        );
+        self.rewrite_function(&mut function);
+        let undefined_constant = self.constant(Constant::Undefined);
+        self.lower_function(&mut function, undefined_constant);
+        liveness::mark_register_roots(
+            std::iter::once(&mut function),
+            self.method_arguments(),
+            self.field_sites.as_slice(),
+            self.superinstructions.as_slice(),
+        );
+        function.code.shrink_to_fit();
+        function.wide.shrink_to_fit();
+        function.source_positions.shrink_to_fit();
+        self.early_replays.insert(
+            id,
+            replay::FunctionReplay {
+                entry,
+                call,
+                layout,
+                arguments_slot,
+                rewrite_cursors,
+            },
+        );
+        // Name bindings are resolved only for functions a dynamic lookup reaches.
+        self.deferred_name_bindings.remove(&id);
+        self.functions.release(id, function);
+        // Its rewrites and the `undefined` constant may have added sites: a replay of the
+        // function making it skips past them too.
+        self.function_exits[id as usize] = self.cursors();
     }
 
     /// A function declaration or expression, compiled from its syntax and `context`, which
@@ -1883,8 +2050,11 @@ impl<'a> Compiler<'a> {
     fn compile_plain_function(
         &mut self,
         function: &oxc_ast::ast::Function<'_>,
-        context: replay::PlainFunctionContext,
+        mut context: replay::PlainFunctionContext,
     ) -> u32 {
+        if self.replayable_source {
+            context.scopes = context.scopes.recording();
+        }
         let entry = self.cursors();
         let private_names = (self.private_name_references, self.private_name_ids.len());
         let params = FunctionCompiler::params_from_formals(&function.params, self);
@@ -1925,7 +2095,85 @@ impl<'a> Compiler<'a> {
                 ..FunctionOptions::default()
             },
         );
+        context.scopes = context.scopes.into_memo();
         self.record_replay_call(id, entry, private_names, replay::ReplayCall::Plain(context));
+        id
+    }
+
+    /// A method of an object literal, compiled from its syntax and `context`.
+    fn compile_replayable_object_method(
+        &mut self,
+        function: &oxc_ast::ast::Function<'_>,
+        mut context: replay::ObjectMethodContext,
+    ) -> u32 {
+        if self.replayable_source {
+            context.scopes = context.scopes.recording();
+        }
+        let entry = self.cursors();
+        let private_names = (self.private_name_references, self.private_name_ids.len());
+        let params = FunctionCompiler::params_from_formals(&function.params, self);
+        let body = function
+            .body
+            .as_ref()
+            .map_or(&[][..], |body| body.statements.as_slice());
+        let strict = context.inherited_strict
+            || function.body.as_ref().is_some_and(|body| {
+                body.directives
+                    .iter()
+                    .any(|directive| directive.directive == "use strict")
+            });
+        let id = self.compile_function(
+            None,
+            &params,
+            FunctionBody::Statements(body),
+            &context.scopes,
+            Some(context.parent),
+            FunctionOptions {
+                defaults: Some(&function.params),
+                source_span: self.source_span(context.property_span),
+                async_function: function.r#async,
+                generator: function.generator,
+                with_depth: context.with_depth,
+                non_constructible: true,
+                super_home: true,
+                super_home_atom: Some(context.home_atom),
+                strict,
+                ..FunctionOptions::default()
+            },
+        );
+        context.scopes = context.scopes.into_memo();
+        self.record_replay_call(id, entry, private_names, replay::ReplayCall::ObjectMethod(context));
+        id
+    }
+
+    /// A class's method, getter or setter, compiled from its syntax and `context`.
+    fn compile_replayable_class_method(
+        &mut self,
+        method: &oxc_ast::ast::MethodDefinition<'_>,
+        mut context: replay::ClassMethodContext,
+    ) -> u32 {
+        if self.replayable_source {
+            context.scopes = context.scopes.recording();
+        }
+        let entry = self.cursors();
+        let private_names = (self.private_name_references, self.private_name_ids.len());
+        let id = self.compile_class_method(
+            method,
+            Some(context.element_span),
+            &context.scopes,
+            context.parent,
+            None,
+            None,
+            false,
+            context.home_atom,
+            context.with_depth,
+        );
+        context.scopes = context.scopes.into_memo();
+        // A decorator's expression is part of the class element's text and belongs to the
+        // code around the class, so the method alone does not parse from it.
+        if method.decorators.is_empty() {
+            self.record_replay_call(id, entry, private_names, replay::ReplayCall::ClassMethod(context));
+        }
         id
     }
 
@@ -1933,11 +2181,15 @@ impl<'a> Compiler<'a> {
     fn compile_replayable_arrow(
         &mut self,
         arrow: &oxc_ast::ast::ArrowFunctionExpression<'_>,
-        context: replay::ArrowContext,
+        mut context: replay::ArrowContext,
     ) -> u32 {
+        if self.replayable_source {
+            context.scopes = context.scopes.recording();
+        }
         let entry = self.cursors();
         let private_names = (self.private_name_references, self.private_name_ids.len());
         let id = self.compile_arrow_function(arrow, &context);
+        context.scopes = context.scopes.into_memo();
         self.record_replay_call(id, entry, private_names, replay::ReplayCall::Arrow(context));
         id
     }
@@ -2045,7 +2297,7 @@ impl<'a> Compiler<'a> {
             None,
             &[],
             FunctionBody::Statements(&program.body),
-            &[],
+            &capture_scope::ScopeChain::new(Vec::new()),
             None,
             FunctionOptions {
                 defaults: None,
@@ -2266,40 +2518,62 @@ impl<'a> Compiler<'a> {
             imports: module_imports,
             link_plan: module_link_plan,
         } = module;
-        let mut functions = std::mem::take(&mut self.functions).into_records();
-        // Functions the compiler synthesizes (class constructors and initializers) may have
-        // grown the reservation.
-        functions.shrink_to_fit();
-        let dynamic = capture_layout::dynamic_name_resolution(&functions, &self.atoms);
-        let reachable = capture_layout::dynamic_name_scopes(&functions, &dynamic);
+        // A function finished during the load has only its header left; the passes below
+        // finish the others.
+        let mut released = FxHashMap::default();
+        let mut functions: Vec<Option<BcFunction>> = std::mem::take(&mut self.functions)
+            .into_entries()
+            .into_iter()
+            .enumerate()
+            .map(|(id, entry)| match entry {
+                replay::FunctionEntry::Compiled(function) => Some(function),
+                replay::FunctionEntry::Released(function) => {
+                    released.insert(id, function);
+                    None
+                }
+                replay::FunctionEntry::Reserved => unreachable!("function {id} was never compiled"),
+            })
+            .collect();
+        let facts = std::mem::take(&mut self.function_facts);
+        let dynamic = capture_layout::dynamic_name_resolution(&facts);
+        let reachable = capture_layout::dynamic_name_scopes(&facts, &dynamic);
         self.resolve_name_bindings(&mut functions, &reachable);
-        let layout_inputs = capture_layout::inputs(&functions, &dynamic);
+        let layout_inputs = capture_layout::inputs(&facts, &dynamic, |id| {
+            functions[id].as_ref().and_then(capture_layout::mapped_arguments)
+        });
         // A replayable function resolves every name statically and no dynamic lookup reaches
         // its bindings, so nothing outside its own compilation and layout decides its code.
-        let mut replays: FxHashMap<u32, replay::FunctionReplay> = if self.replayable_source {
-            std::mem::take(&mut self.replay_calls)
-                .into_iter()
-                .filter(|(id, _)| !dynamic[*id as usize] && !reachable[*id as usize])
-                .map(|(id, (entry, call))| {
-                    let function = &functions[id as usize];
-                    let replay = replay::FunctionReplay {
+        let mut replays: FxHashMap<u32, replay::FunctionReplay> = std::mem::take(&mut self.early_replays);
+        if self.replayable_source {
+            for (id, (entry, call)) in std::mem::take(&mut self.replay_calls) {
+                if dynamic[id as usize] || reachable[id as usize] {
+                    continue;
+                }
+                let Some(function) = functions[id as usize].as_ref() else {
+                    continue;
+                };
+                replays.insert(
+                    id,
+                    replay::FunctionReplay {
                         entry,
                         call,
                         layout: layout_inputs[id as usize].clone(),
                         arguments_slot: function.arguments_slot,
                         rewrite_cursors: (0, 0),
-                    };
-                    (id, replay)
-                })
-                .collect()
-        } else {
-            FxHashMap::default()
-        };
-        for (id, function) in functions.iter_mut().enumerate() {
-            capture_layout::apply_function(function, id, &layout_inputs[id], &self.atoms);
+                    },
+                );
+            }
         }
         for (id, function) in functions.iter_mut().enumerate() {
-            if let Some(replay) = replays.get_mut(&(id as u32)) {
+            if let Some(function) = function {
+                capture_layout::apply_function(function, id, &layout_inputs[id], &self.atoms);
+            }
+        }
+        for (id, function) in functions.iter_mut().enumerate() {
+            let Some(function) = function else { continue };
+            if let Some(replay) = replays.get_mut(&(id as u32))
+                && !released.contains_key(&id)
+            {
                 replay.rewrite_cursors = (
                     self.field_sites.len() as u32,
                     self.superinstructions.len() as u32,
@@ -2308,29 +2582,31 @@ impl<'a> Compiler<'a> {
             self.rewrite_function(function);
         }
         #[cfg(feature = "profile-memory")]
-        if std::env::var_os("QUENCH_MEMORY").is_some() {
-            capture_profile::report(&functions);
+        if std::env::var_os("QUENCH_MEMORY").is_some() && released.is_empty() {
+            let records: Vec<BcFunction> = functions.iter().flatten().cloned().collect();
+            capture_profile::report(&records);
         }
         let undefined_constant = self.constant(Constant::Undefined);
-        for function in &mut functions {
+        for function in functions.iter_mut().flatten() {
             self.lower_function(function, undefined_constant);
         }
         liveness::mark_register_roots(
-            &mut functions,
+            functions.iter_mut().flatten(),
             self.method_sites.as_slice(),
             self.field_sites.as_slice(),
             self.superinstructions.as_slice(),
         );
         #[cfg(feature = "profile-memory")]
-        if std::env::var_os("QUENCH_MEMORY").is_some() {
+        if std::env::var_os("QUENCH_MEMORY").is_some() && released.is_empty() {
+            let records: Vec<BcFunction> = functions.iter().flatten().cloned().collect();
             register_profile::report(
-                &functions,
+                &records,
                 self.method_sites.as_slice(),
                 self.field_sites.as_slice(),
                 self.superinstructions.as_slice(),
             );
         }
-        for function in &mut functions {
+        for function in functions.iter_mut().flatten() {
             function.code.shrink_to_fit();
             function.wide.shrink_to_fit();
             function.source_positions.shrink_to_fit();
@@ -2338,9 +2614,10 @@ impl<'a> Compiler<'a> {
         let (mut method_sites, mut method_arguments) =
             Self::flatten_method_sites(self.method_sites.into_vec());
         let atoms = self.atoms.table();
+        let replay_atoms = (!replays.is_empty())
+            .then(|| replay::ProgramAtomIndex::new(self.atoms.interned(), &atoms));
         let mut constants = self.constants.into_vec();
         constants.shrink_to_fit();
-        functions.shrink_to_fit();
         method_sites.shrink_to_fit();
         method_arguments.shrink_to_fit();
         let mut field_sites = self.field_sites.into_vec();
@@ -2368,7 +2645,18 @@ impl<'a> Compiler<'a> {
             }),
             atoms,
             constants,
-            functions: functions.into_iter().map(FunctionSlot::compiled).collect(),
+            // Collected into a table of its own size: an in-place collect would keep the
+            // records' larger allocation.
+            functions: {
+                let mut slots = Vec::with_capacity(functions.len());
+                slots.extend(functions.into_iter().enumerate().map(|(id, function)| {
+                    match function {
+                        Some(function) => FunctionSlot::compiled(function),
+                        None => FunctionSlot::released(released[&id].header),
+                    }
+                }));
+                slots
+            },
             cache_sites: self.cache_sites,
             method_sites,
             method_arguments,
@@ -2377,14 +2665,20 @@ impl<'a> Compiler<'a> {
             regexp_literal_sites: self.regexp_literal_sites.into_vec(),
             literal_templates: self.literal_templates.into_vec(),
             superinstructions: self.superinstructions.into_vec(),
-            replay: (!replays.is_empty()).then(|| {
+            replay: replay_atoms.map(|atoms| {
                 std::rc::Rc::new(replay::ProgramReplay {
                     source_type: self.source_type,
                     root_strict: self.root_strict,
                     module_goal: self.module_goal,
                     specialized: self.mode == SpecializationMode::Enabled,
+                    atoms,
                     exits: std::mem::take(&mut self.function_exits).into_boxed_slice(),
                     functions: replays,
+                    #[cfg(feature = "verify-replay")]
+                    released: released
+                        .iter()
+                        .map(|(id, function)| (*id as u32, function.record.clone()))
+                        .collect(),
                     views: replay::ReplayViews::default(),
                 })
             }),
@@ -2495,7 +2789,7 @@ impl<'a> Compiler<'a> {
 
     fn constant(&mut self, value: Constant) -> u32 {
         let key = ConstantKey::from(&value);
-        if let Some(index) = self.constant_index.get(&key).copied() {
+        if let Some(index) = self.constant_index.get(&key) {
             // A replay finds every constant; one at its cursor was added here at load.
             if index as usize == self.constants.len() {
                 self.constants.push(value);
@@ -2504,7 +2798,7 @@ impl<'a> Compiler<'a> {
         }
         let index = self.constants.len() as u32;
         self.constants.push(value);
-        self.constant_index.to_mut().insert(key, index);
+        self.constant_index.insert(key, index);
         index
     }
 
@@ -2524,8 +2818,8 @@ impl<'a> Compiler<'a> {
             let index = self.constants.len() as u32;
             let key = ConstantKey::from(&value);
             // A replay's index already holds every constant, so it is only read.
-            if !self.constant_index.contains_key(&key) {
-                self.constant_index.to_mut().insert(key, index);
+            if self.constant_index.get(&key).is_none() {
+                self.constant_index.insert(key, index);
             }
             self.constants.push(value);
         }
@@ -2690,7 +2984,7 @@ impl<'a> Compiler<'a> {
         name: Option<&str>,
         params: &[String],
         body: FunctionBody<'_>,
-        scopes: &[Rc<capture_scope::CaptureScope>],
+        scopes: &capture_scope::ScopeChain,
         parent: Option<u32>,
         options: FunctionOptions<'_>,
     ) -> u32 {
@@ -2813,12 +3107,15 @@ impl<'a> Compiler<'a> {
             &lexical_atoms,
             self_binding_slot,
         );
+        let binds_dynamically =
+            dynamic_eval || early::body_may_bind_dynamically(body, expression_body);
+        self.dynamic_binding_scopes += u32::from(binds_dynamically);
         let mut function = FunctionCompiler::new(
             self,
             locals,
             function_scope,
             annex_b_collisions,
-            scopes.to_vec(),
+            scopes.clone(),
             id,
             (options.super_static, options.super_home),
             options.async_function,
@@ -2997,6 +3294,7 @@ impl<'a> Compiler<'a> {
             initial_register: Default::default(),
         };
         self.functions.set(id, result);
+        self.dynamic_binding_scopes -= u32::from(binds_dynamically);
         self.record_function_exit(id);
         id
     }
@@ -3014,11 +3312,22 @@ impl<'a> Compiler<'a> {
             }
             return nameable;
         }
-        self.functions.loaded_header(id).is_some_and(|header| {
-            header.name.is_none()
+        let Some(header) = self.functions.header_without_record(id) else {
+            return false;
+        };
+        if self.replay_target.is_some() {
+            // A replay skipped the definition, which the load named exactly when it could.
+            return header.name.is_none()
                 && !header.is_class_constructor
-                && header.inferred_name == Some(name)
-        })
+                && header.inferred_name == Some(name);
+        }
+        // The load finished and released the definition before naming it.
+        let nameable =
+            header.name.is_none() && header.inferred_name.is_none() && !header.is_class_constructor;
+        if nameable {
+            self.functions.name_released(id, name);
+        }
+        nameable
     }
 
     /// Whether code nested in function `owner` can reach its `arguments` binding in local
@@ -3027,8 +3336,9 @@ impl<'a> Compiler<'a> {
     /// through arrows alone captures the slot, or resolves names at run time (direct eval, a
     /// `with` statement or an enclosing one), which may denote it.
     fn arrows_reach_arguments(&self, owner: u32, slot: u16) -> bool {
-        let is_with_enter = |atom: usize| self.atoms.get(atom) == Some(crate::bytecode::WITH_ENTER_BINDING);
-        self.functions.records().any(|function| {
+        let facts = &self.function_facts;
+        // A function not yet compiled has default facts, which name no arrow.
+        facts.iter().any(|function| {
             // The function levels between `function` and `owner`, along arrows alone.
             let mut distance = 0;
             let mut current = function;
@@ -3039,20 +3349,19 @@ impl<'a> Compiler<'a> {
                 distance += 1;
                 match current.parent {
                     Some(parent) if parent == owner => break,
-                    Some(parent) => match self.functions.get(parent) {
+                    Some(parent) => match facts.get(parent as usize) {
                         Some(parent) => current = parent,
                         None => return false,
                     },
                     None => return false,
                 }
             }
-            function.has_dynamic_scope_access()
-                || function.contains_with_statement(is_with_enter)
-                || function.instructions().any(|instruction| {
-                    matches!(instruction.op(), Op::LoadCapture | Op::StoreCapture)
-                        && usize::from(instruction.capture_depth()) + 1 == distance
-                        && instruction.capture_slot() == slot
-                })
+            function.dynamic_access
+                || function.contains_with
+                || function
+                    .captures
+                    .iter()
+                    .any(|&(at, captured)| at as usize == distance && captured == slot)
         })
     }
 
@@ -3064,12 +3373,25 @@ impl<'a> Compiler<'a> {
             .count()
     }
 
+    /// The argument registers of each method site: at load the compiler's own sites; in a
+    /// replay, which adds none, the finished program's.
+    fn method_arguments(&self) -> &dyn liveness::MethodArguments {
+        match self.replay_program {
+            Some(program) => program,
+            None => &self.method_sites,
+        }
+    }
+
     /// The specializing rewrites of one function, the only finishing pass that adds sites.
     fn rewrite_function(&mut self, function: &mut BcFunction) {
         if self.mode == SpecializationMode::Enabled {
+            let methods: &dyn liveness::MethodArguments = match self.replay_program {
+                Some(program) => program,
+                None => &self.method_sites,
+            };
             rewrite::apply(
                 function,
-                self.method_sites.as_slice(),
+                methods,
                 &mut self.field_sites,
                 &mut self.superinstructions,
             );
@@ -3079,7 +3401,7 @@ impl<'a> Compiler<'a> {
     /// The finishing passes of one function after every function's rewrites: shared returns,
     /// dispatch class, numeric and plain-local specialization and frame registers.
     fn lower_function(&self, function: &mut BcFunction, undefined_constant: u32) {
-        let method_sites = self.method_sites.as_slice();
+        let method_sites = self.method_arguments();
         let field_sites = self.field_sites.as_slice();
         let superinstructions = self.superinstructions.as_slice();
         rewrite::return_through_shared_returns(function);

@@ -27,17 +27,17 @@ impl<H: Host> Vm<H> {
         if let Some(source) = self.own_property(function, source_atom) {
             return Some(source);
         }
-        if let Some(Cell::Function { kind: FunctionKind::Native(native), .. }) = self.heap.get(function)
+        if let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = self.heap.function(function)
             && *native != Native::FunctionBoundCall
             && let Some(name) = self.original_function_name(function)
         {
             let source = native_function_source(self.atom_name(name));
             return Some(self.heap.alloc(Cell::String(source.as_str().into())));
         }
-        let Some(Cell::Function {
+        let Some(FunctionRecord {
             kind: FunctionKind::User(program, id) | FunctionKind::NumericUser(program, id),
             ..
-        }) = self.heap.get(function)
+        }) = self.heap.function(function)
         else {
             return None;
         };
@@ -55,17 +55,16 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn function_caller_is_restricted(&self, function: Value) -> bool {
-        match self.heap.get(function) {
-            Some(Cell::Function {
+        match self.heap.function(function) {
+            Some(FunctionRecord {
                 kind: FunctionKind::User(program_id, id) | FunctionKind::NumericUser(program_id, id),
                 ..
             }) => self.programs.get(*program_id).is_some_and(|program| {
                 program
-                    .functions
-                    .get(*id as usize)
+                    .function_get(*id as usize)
                     .is_some_and(|function| function.has_restricted_legacy_caller_access())
             }),
-            Some(Cell::Function {
+            Some(FunctionRecord {
                 kind: FunctionKind::Native(_),
                 ..
             }) => true,
@@ -96,19 +95,19 @@ impl<H: Host> Vm<H> {
                 CallContext::DirectEval(_) => continue,
                 CallContext::Internal | CallContext::IndirectEval(_) => return Value::NULL,
                 CallContext::Function(caller) | CallContext::Constructor(caller) => {
-                    let Some(Cell::Function {
+                    let Some(FunctionRecord {
                         kind:
                             FunctionKind::User(program_id, id)
                             | FunctionKind::NumericUser(program_id, id),
-                        object,
+                        realm,
                         ..
-                    }) = self.heap.get(caller)
+                    }) = self.heap.function(caller)
                     else {
                         return Value::NULL;
                     };
-                    let visible = object.realm == self.realm.globals
+                    let visible = *realm == self.realm.globals
                         && self.programs.get(*program_id).is_some_and(|program| {
-                            program.functions.get(*id as usize).is_some_and(|metadata| {
+                            program.function_get(*id as usize).is_some_and(|metadata| {
                                 !metadata.strict && !metadata.is_async && !metadata.is_generator
                             })
                         });
@@ -129,7 +128,7 @@ impl<H: Host> Vm<H> {
         let program = self.programs.get(frame.program);
         let metadata = program
             .as_deref()
-            .and_then(|program| program.functions.get(frame.function as usize));
+            .and_then(|program| program.function_get(frame.function as usize));
         let expose_callee = metadata.is_some_and(|metadata| metadata.simple_parameters);
         let reflected = (0..frame.reflected_parameters).map(|parameter| {
             let metadata = metadata.expect("reflected parameters belong to a live function");

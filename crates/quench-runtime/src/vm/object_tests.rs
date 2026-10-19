@@ -83,6 +83,7 @@ fn field_cache_entries<H: Host>(
 // Exercise the supported residual CallMethod opcode directly. Optional-call
 // lowering now resolves the callee before arguments through GetField + Call.
 fn method_cache_program(mut program: ResidualProgram) -> ResidualProgram {
+    program.compile_released();
     let atom = program
         .atoms
         .iter()
@@ -183,6 +184,7 @@ fn cached_field_reads_follow_in_place_writes() {
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut vm = Vm::new(RecordingHost(output.clone()));
         let program = compile(source, "field-cache-write.js").unwrap();
+        program.compile_released();
         vm.execute(&program).unwrap();
         assert_eq!(output.borrow().as_slice(), ["1", "1", "2"], "{mode}");
 
@@ -205,6 +207,7 @@ fn spread_sources_stay_rooted_through_the_loop_that_reuses_them() {
     // feeds included: a collection inside that call must not free it.
     let source = "function parse(texts, next) { let token; while (token = next(...texts)) {} return token; }";
     let program = Engine::specialize(source, "spread-roots.js").unwrap();
+    program.compile_released();
     let function = program
         .functions
         .iter()
@@ -260,6 +263,7 @@ fn static_three_field_object_literals_share_the_shape_site() {
         ("unspecialized", Engine::specialize_unspecialized),
     ] {
         let program = compile(source, "static-object-literal.js").unwrap();
+        program.compile_released();
         let (function_id, function) = program
             .functions
             .iter()
@@ -346,6 +350,7 @@ fn inherited_field_cache_reads_live_object_prototype_data() {
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::new(RecordingHost(output.clone()));
     let program = Engine::specialize(source, "inherited-field-cache-live.js").unwrap();
+    program.compile_released();
     vm.execute(&program).unwrap();
     assert_eq!(output.borrow().as_slice(), ["1", "1", "2"]);
     let value = vm.intern_atom("cacheValue");
@@ -377,6 +382,7 @@ fn direct_object_field_cache_probes_nonordinary_prototype_holder() {
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut vm = Vm::new(RecordingHost(output.clone()));
         let program = compile(source, "direct-object-holder-cache.js").unwrap();
+        program.compile_released();
         #[cfg(feature = "profile-aggregate")]
         let depth_one_hits_before = vm.profile.field_cache_depths[1];
         vm.execute(&program).unwrap();
@@ -427,6 +433,7 @@ fn direct_object_field_cache_probes_megamorphic_prototype_holders() {
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::new(RecordingHost(output.clone()));
     let program = Engine::specialize(source, "direct-object-megamorphic-holder-cache.js").unwrap();
+    program.compile_released();
     #[cfg(feature = "profile-aggregate")]
     let tier_two_hits_before = vm.profile.field_cache_tiers[2];
     vm.execute(&program).unwrap();
@@ -522,6 +529,7 @@ fn inherited_builtin_fields_cache_array_and_object_prototypes() {
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut vm = Vm::new(RecordingHost(output.clone()));
         let program = compile(source, "inherited-builtin-fields.js").unwrap();
+        program.compile_released();
         vm.execute(&program).unwrap();
         assert_eq!(
             output.borrow().as_slice(),
@@ -559,6 +567,7 @@ fn optional_method_call_field_cache_observes_callable_replacement() {
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut vm = Vm::new(RecordingHost(output.clone()));
         let program = compile(source, "optional-method-cache-write.js").unwrap();
+        program.compile_released();
         vm.execute(&program).unwrap();
         assert_eq!(output.borrow().as_slice(), ["1", "2"], "{mode}");
 
@@ -593,6 +602,7 @@ fn optional_method_cache_observes_callable_replacement_without_shape_change() {
         let program = method_cache_program(
             compile(source, "optional-method-cache-callable-replacement.js").unwrap(),
         );
+        program.compile_released();
         assert!(
             !program.method_sites.is_empty(),
             "test must exercise CallMethod"
@@ -639,6 +649,7 @@ fn optional_method_cache_invalidates_when_inherited_callable_changes() {
         let program = method_cache_program(
             compile(source, "optional-method-cache-inherited-replacement.js").unwrap(),
         );
+        program.compile_released();
         assert!(
             !program.method_sites.is_empty(),
             "test must exercise CallMethod"
@@ -677,6 +688,7 @@ fn optional_method_cache_executes_megamorphic_receiver_shapes() {
         let program =
             method_cache_program(compile(source, "optional-method-cache-megamorphic.js").unwrap());
         assert_eq!(program.method_sites.len(), 1, "test needs one method site");
+        program.compile_released();
         vm.execute(&program).unwrap();
         assert_eq!(
             output.borrow().as_slice(),
@@ -732,6 +744,7 @@ fn field_cache_fallback_preserves_accessor_reentry() {
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut vm = Vm::new(RecordingHost(output.clone()));
         let program = compile(source, "field-cache-accessor-reentry.js").unwrap();
+        program.compile_released();
         vm.execute(&program).unwrap();
         assert_eq!(output.borrow().as_slice(), ["1", "2", "2"], "{mode}");
 
@@ -770,6 +783,7 @@ fn field_cache_fallback_preserves_proxy_get_trap_reentry() {
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut vm = Vm::new(RecordingHost(output.clone()));
         let program = compile(source, "field-cache-proxy-get.js").unwrap();
+        program.compile_released();
         vm.execute(&program).unwrap();
         assert_eq!(output.borrow().as_slice(), ["1", "2", "2"], "{mode}");
 
@@ -808,6 +822,7 @@ fn inherited_field_cache_preserves_proxy_prototype_traps() {
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut vm = Vm::new(RecordingHost(output.clone()));
         let program = compile(source, "inherited-proxy-field-cache.js").unwrap();
+        program.compile_released();
         vm.execute(&program).unwrap();
         assert_eq!(output.borrow().as_slice(), ["1", "2", "2"], "{mode}");
         if vm.specialized {
@@ -846,6 +861,7 @@ fn method_cache_fallback_preserves_proxy_get_trap_and_receiver() {
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut vm = Vm::new(RecordingHost(output.clone()));
         let program = method_cache_program(compile(source, "method-cache-proxy-get.js").unwrap());
+        program.compile_released();
         assert!(
             !program.method_sites.is_empty(),
             "test must exercise CallMethod"
@@ -901,6 +917,7 @@ fn optional_method_lookup_reenters_accessor_once_and_preserves_receiver() {
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut vm = Vm::new(RecordingHost(output.clone()));
         let program = method_cache_program(compile(source, "optional-method-accessor.js").unwrap());
+        program.compile_released();
         assert!(
             !program.method_sites.is_empty(),
             "test must exercise CallMethod"
@@ -951,6 +968,7 @@ fn static_index_field_cache_admits_only_shape_backed_storage() {
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut vm = Vm::new(RecordingHost(output.clone()));
         let program = compile(source, "static-index-cache.js").unwrap();
+        program.compile_released();
         vm.execute(&program).unwrap();
         assert_eq!(
             output.borrow().as_slice(),
@@ -1137,7 +1155,7 @@ fn only_arrow_closures_keep_their_creator_s_implicit_bindings() {
     let environment_bindings = |vm: &mut Vm<RecordingHost>, name: &str| {
         let atom = vm.intern_atom(name);
         let closure = vm.own_property(vm.realm.globals, atom).unwrap();
-        let Some(Cell::Function { env, .. }) = vm.heap.get(closure) else {
+        let Some(crate::heap::FunctionRecord { env, .. }) = vm.heap.function(closure) else {
             panic!("{name} is a closure");
         };
         let Some(Cell::Environment { scope, .. }) = vm.heap.get(*env) else {

@@ -894,8 +894,8 @@ impl<H: Host> Vm<H> {
 
     fn is_native_function(&self, value: Value, expected: Native) -> bool {
         matches!(
-            self.heap.get(value),
-            Some(Cell::Function {
+            self.heap.function(value),
+            Some(FunctionRecord {
                 kind: FunctionKind::Native(native),
                 ..
             }) if *native == expected
@@ -1579,13 +1579,13 @@ impl<H: Host> Vm<H> {
                         true,
                     )?;
                     let flags = flags.host_string();
-                    Ok(vm.heap.alloc(Cell::Iterator {
-                        object: Box::new(Self::empty_object(vm.regexp_string_iterator_proto)),
+                    Ok(vm.heap.alloc_iterator(IteratorRecord {
+                        object: Self::empty_object(vm.regexp_string_iterator_proto),
                         source: matcher,
                         kind: IteratorKind::RegExpStringMatchAll,
                         index: 0,
                         done: false,
-                        ext: Box::new(crate::heap::IteratorExt {
+                        ext: crate::heap::IteratorExt {
                             position_high: 0,
                             next_method: None,
                             helper: Some(Box::new(IteratorHelper::RegExpStringMatchAll {
@@ -1596,7 +1596,7 @@ impl<H: Host> Vm<H> {
                             helper_running: false,
                             helper_started: false,
                             generator: None,
-                        }),
+                        },
                     }))
                 })
             },
@@ -2365,6 +2365,31 @@ impl<H: Host> Vm<H> {
             self.store_regexp_last_index(p, this, Value::number(last_index as f64))?;
         }
         Ok(matched)
+    }
+
+    /// `RegExp.prototype.exec` called on a RegExp whose own `lastIndex` is a writable number,
+    /// with a string to match: every step then reads or writes slots, so the call runs no guest
+    /// code and cannot throw, and a lane makes it in place, above frameless activations too.
+    /// `None` leaves any other call, unobserved, to the general path.
+    pub(super) fn pure_regexp_exec(
+        &mut self,
+        p: &ResidualProgram,
+        callee: Value,
+        receiver: Value,
+        args: &[Value],
+    ) -> Option<Value> {
+        if !self.is_native_function(callee, Native::RegExpExec)
+            || !matches!(self.heap.get(receiver), Some(Cell::RegExp { .. }))
+            || !args.first().is_some_and(|subject| self.is_string(*subject))
+            || self.method_caches_may_name(self.runtime_atoms.last_index)
+        {
+            return None;
+        }
+        let slot = self.regexp_last_index_slot(receiver)?;
+        self.object_data(receiver)
+            .and_then(|object| self.heap.property_get(object, slot))?
+            .as_number()?;
+        self.regexp_builtin_exec(p, receiver, args).ok()
     }
 
     pub(super) fn regexp_builtin_exec(
