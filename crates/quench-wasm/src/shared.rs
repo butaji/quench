@@ -73,6 +73,7 @@ impl Module {
         let mut start = None;
         let mut tags = Vec::new();
         let mut exports = Vec::new();
+        let mut custom_sections = Vec::new();
         for payload in Parser::new(0).parse_all(self.bytes()) {
             match payload.map_err(parse_error)? {
                 Payload::Version {
@@ -80,8 +81,13 @@ impl Module {
                     ..
                 }
                 | Payload::CodeSectionStart { .. }
-                | Payload::CustomSection(_)
                 | Payload::End(_) => {}
+                Payload::CustomSection(reader) => {
+                    custom_sections.push(quench_runtime::WasmCustomSection {
+                        name: reader.name().into(),
+                        bytes: reader.data().into(),
+                    });
+                }
                 Payload::TypeSection(reader) => {
                     types = WasmTypes::from_groups(
                         reader
@@ -288,7 +294,7 @@ impl Module {
             Some(index) => module.with_start(index),
             None => Ok(module),
         })
-        .map(|module| module.with_exports(exports))
+        .map(|module| module.with_exports(exports).with_custom_sections(custom_sections))
         .map(|module| (module, selected))
         .map_err(|error| Error::Unsupported(error.to_string()))
     }

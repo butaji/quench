@@ -1838,7 +1838,9 @@ impl<H: Host> Vm<H> {
     ) -> Result<usize, JsError> {
         if error.is_execution_terminated() { return Err(error); }
         let wasm = program.kind == crate::bytecode::ProgramKind::Wasm;
-        if wasm && error.wasm_exception().is_none() {
+        // Wasm catches Wasm exceptions and JavaScript ones (`catch_all`, or
+        // `WebAssembly.JSTag`), never a trap or a link failure.
+        if wasm && error.wasm_exception().is_none() && !error.is_javascript_exception() {
             return Err(error);
         }
         let handler = program.functions[function].handler_at(throwing_pc);

@@ -610,7 +610,7 @@ pub(crate) enum Native {
     WithEnter, WithExit,
     WasmHost,
     WebAssemblyValidate, WebAssemblyCompile, WebAssemblyInstantiate,
-    WasmModule, WasmModuleExports, WasmModuleImports,
+    WasmModule, WasmModuleExports, WasmModuleImports, WasmModuleCustomSections,
     WasmInstance, WasmInstanceExportsGetter,
     WasmMemory, WasmMemoryGrow, WasmMemoryBufferGetter,
     WasmTable, WasmTableLengthGetter, WasmTableGrow, WasmTableGet, WasmTableSet,
@@ -2751,7 +2751,7 @@ pub(crate) enum Cell {
     /// The native callable's immutable host operation and structural signature.
     WasmHostFunction {
         target: WasmHostTarget,
-        signature: Rc<crate::WasmSignature>,
+        signature: Rc<crate::wasm::WasmHostSignature>,
     },
     /// Immutable references available until an element segment drops.
     WasmElements(Vec<Value>),

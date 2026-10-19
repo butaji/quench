@@ -38,12 +38,11 @@ impl<H: Host> Vm<H> {
         if !matches!(self.heap.get(expected), Some(Cell::WasmTag { .. })) {
             return Err(JsError::validation("invalid Wasm catch tag".into()));
         }
-        let Some(Cell::WasmException { tag, .. }) = self.heap.get(exception) else {
-            return Err(JsError::validation(
-                "invalid Wasm exception reference".into(),
-            ));
-        };
-        Ok(*tag == expected)
+        match self.heap.get(exception) {
+            Some(Cell::WasmException { tag, .. }) => Ok(*tag == expected),
+            // A JavaScript exception is caught by `WebAssembly.JSTag` alone.
+            _ => Ok(expected == self.wasm_js.js_tag),
+        }
     }
 
     pub(super) fn wasm_exception_payload(
@@ -52,9 +51,10 @@ impl<H: Host> Vm<H> {
         index: u32,
     ) -> Result<Value, JsError> {
         let Some(Cell::WasmException { payload, .. }) = self.heap.get(exception) else {
-            return Err(JsError::validation(
-                "invalid Wasm exception reference".into(),
-            ));
+            // `WebAssembly.JSTag`'s one `externref` parameter is the thrown value itself.
+            return (index == 0)
+                .then_some(exception)
+                .ok_or_else(|| JsError::validation("Wasm exception payload index out of bounds".into()));
         };
         payload
             .get(index as usize)
@@ -63,12 +63,18 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn wasm_throw_ref(&self, exception: Value) -> JsError {
-        if exception.is_null() {
-            JsError::wasm_trap_error(crate::WasmTrap::NullExceptionReference)
-        } else if matches!(self.heap.get(exception), Some(Cell::WasmException { .. })) {
-            JsError::thrown_wasm_exception(exception)
-        } else {
-            JsError::validation("invalid Wasm exception reference".into())
+        match self.heap.get(exception) {
+            _ if exception.is_null() => {
+                JsError::wasm_trap_error(crate::WasmTrap::NullExceptionReference)
+            }
+            // An exception of `WebAssembly.JSTag` reaches JavaScript as its payload.
+            Some(Cell::WasmException { tag, payload }) if *tag == self.wasm_js.js_tag => {
+                let value = payload.first().copied().unwrap_or(Value::UNDEFINED);
+                JsError::thrown(value, "uncaught exception".into())
+            }
+            Some(Cell::WasmException { .. }) => JsError::thrown_wasm_exception(exception),
+            // A JavaScript exception a Wasm handler caught by reference is rethrown as itself.
+            _ => JsError::thrown(exception, "uncaught exception".into()),
         }
     }
 }
