@@ -505,7 +505,9 @@ pub(super) fn function_candidate(function: &Function, program: &crate::bytecode:
 }
 
 fn eligible(function: &Function, program: &crate::bytecode::ResidualProgram) -> bool {
+    // An arrow's `this` is its environment's, which this tier does not bind.
     if function.parent.is_none()
+        || function.is_arrow
         || function.is_async
         || function.is_generator
         || function.is_class_constructor

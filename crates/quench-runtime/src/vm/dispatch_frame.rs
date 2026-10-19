@@ -417,10 +417,25 @@ impl<H: Host> Vm<H> {
 
     /// `activate_user_frame` for a function whose static layout describes its whole
     /// activation (`Function::plain_activation`): every local starts undefined because every
-    /// parameter lives in a register, `this` is the coerced receiver, and no implicit binding,
-    /// rest array or `arguments` object exists.
+    /// parameter lives in a register, `this` is the coerced receiver or an arrow's lexical
+    /// one, and no implicit binding, rest array or `arguments` object exists.
     #[inline(always)]
     #[allow(clippy::too_many_arguments)]
+    /// The `this` a plain activation of `function` binds: an arrow's from its environment
+    /// `parent` (the receiver where none is bound), uncoerced as every arrow frame's is, else
+    /// the coerced receiver.
+    pub(super) fn lexical_activation_this(
+        &mut self,
+        function: &crate::bytecode::Function,
+        parent: Value,
+        this: Value,
+    ) -> Result<Value, JsError> {
+        if function.is_arrow {
+            return Ok(self.captured_lexical_this(parent).unwrap_or(this));
+        }
+        self.call_this_value(this, function.strict)
+    }
+
     fn activate_plain_frame(
         &mut self,
         p: &ResidualProgram,
@@ -433,7 +448,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<usize, JsError> {
         self.profile
             .function(self.active_program.raw(), id as usize);
-        let this = self.call_this_value(this, function.strict)?;
+        let this = self.lexical_activation_this(function, parent, this)?;
         let mut frame = self.pooled_frame();
         let local_count = if function.call_plan(p).addresses_locals {
             usize::from(function.locals)
