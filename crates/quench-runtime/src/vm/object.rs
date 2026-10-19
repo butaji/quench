@@ -2656,13 +2656,81 @@ impl<H: Host> Vm<H> {
             }
             self.prove_field_add_chain(set as usize, shape, atom, proto, depth, epoch);
         }
+        self.apply_cached_field_add(object, atom, shape, target_shape, slot, value);
+        true
+    }
+
+    /// Adds `atom` to `object` of `shape` at `slot` by a cached transition to `target_shape`.
+    #[inline(always)]
+    fn apply_cached_field_add(
+        &mut self,
+        object: Value,
+        atom: Atom,
+        shape: u32,
+        target_shape: u32,
+        slot: u16,
+        value: Value,
+    ) {
         debug_assert_eq!(slot as usize, self.shapes[shape as usize].storage_len());
         self.heap.record_property_add_at(object, usize::from(slot), value, target_shape);
         if self.method_caches_may_name(atom) {
             self.invalidate_method_caches_for_prototype_add(object, atom);
         }
         self.profile.field_cache_hit(0, 0);
-        true
+    }
+
+    /// CreateDataPropertyOrThrow of the non-index key `atom` (a class field or literal
+    /// property) through the site's add cache. A define never consults the prototype chain,
+    /// so an entry needs only the source shape: the object's shape proves the key absent, and
+    /// `class_field_define_target` proves no exotic own property or integrity level intervenes.
+    pub(super) fn define_field_cached(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        atom: Atom,
+        value: Value,
+        site: u16,
+    ) -> Result<(), JsError> {
+        let key = PropertyKey::string(atom);
+        let cacheable = self.specialized && p.specialized && self.field_cache_atom_eligible(atom);
+        let Some(shape) = self.class_field_define_target(object).filter(|_| cacheable) else {
+            return self.define_class_field(p, object, key, value);
+        };
+        let site = self.field_cache_index(site);
+        // SAFETY: compiler-produced sites index exactly-sized cache vectors; every non-sentinel
+        // index was installed together with its set.
+        let set = unsafe { *self.field_add_indices.get_unchecked(site) };
+        if set != NO_FIELD_ADD_SET
+            && let Some(cache) =
+                unsafe { self.field_add_sets.get_unchecked(set as usize) }.find(shape, atom)
+        {
+            let (target_shape, slot) = (cache.target_shape, cache.slot);
+            debug_assert!(self.class_field_is_plain_add(object, key));
+            self.apply_cached_field_add(object, atom, shape, target_shape, slot, value);
+            return Ok(());
+        }
+        let plain = self.class_field_is_plain_add(object, key);
+        self.define_class_field(p, object, key, value)?;
+        let target_shape = self.object_data(object).map_or(shape, Object::shape);
+        if plain
+            && !self.shape_is_dictionary(shape)
+            && !self.shape_is_dictionary(target_shape)
+            && let Some(slot) = self.shape_slot(target_shape, atom)
+            && slot == self.shapes[shape as usize].storage_len()
+            && let Ok(slot) = u16::try_from(slot)
+        {
+            self.record_field_add_cache(
+                site,
+                FieldAddCache {
+                    atom,
+                    source_shape: shape,
+                    target_shape,
+                    slot,
+                    ..FieldAddCache::EMPTY
+                },
+            );
+        }
+        Ok(())
     }
 
     /// The prototype shapes a cached add of `atom` to `object` must find again, as the depth and
