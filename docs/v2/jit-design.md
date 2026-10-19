@@ -450,6 +450,18 @@ are not performance evidence. The aggregate does not attribute individual
 import symbols. Selective tier-up is only an admission mechanism; it does not
 by itself close the peer-score gap.
 
+The follow-up adds per-import attribution to `QUENCH_WASM_JIT_STATS`, gated by
+the existing diagnostics switch. A clean-source, one-round selective GCC
+diagnostic attributes 307,270 of 309,039 imported callbacks to
+`env._emscripten_memcpy_js` and 1,769 to `env.emscripten_date_now`; the symbol
+counts sum to the aggregate on every compiled artifact. The counter records
+the Wasm function index and original import declaration index, since other
+import kinds may interleave in the module section. This is boundary-coverage
+evidence only. The early-import screen lost Score, and the leaf screen
+recorded zero native-leaf hits, so this attribution does not support another
+memcpy-specific specialization. The raw report, binary hashes, and command
+are in `evidence/jit-jetstream3-wasm-2026-10-19/import-callout-attribution/`.
+
 ## Safepoints on compiled control-flow cycles
 
 Commit `e955cff99` retains the native function-entry poll and checks a
