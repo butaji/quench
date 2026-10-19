@@ -332,7 +332,7 @@ impl<H: Host> Vm<H> {
         prototype: Value,
         realm: Value,
     ) -> Result<(), JsError> {
-        if let Some(symbol) = self.well_known_symbols.get("match").copied() {
+        if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::Match) {
             let method = self.native_with_realm(Native::RegExpSymbolMatch, realm, realm);
             self.set_builtin_function_name(method, "[Symbol.match]")?;
             self.set_symbol_property(prototype, symbol, method)?;
@@ -349,7 +349,7 @@ impl<H: Host> Vm<H> {
                 },
             );
         }
-        if let Some(symbol) = self.well_known_symbols.get("replace").copied() {
+        if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::Replace) {
             let method = self.native_with_realm(Native::RegExpSymbolReplace, realm, realm);
             self.set_builtin_function_name(method, "[Symbol.replace]")?;
             self.set_symbol_property(prototype, symbol, method)?;
@@ -366,7 +366,7 @@ impl<H: Host> Vm<H> {
                 },
             );
         }
-        if let Some(symbol) = self.well_known_symbols.get("search").copied() {
+        if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::Search) {
             let method = self.native_with_realm(Native::RegExpSymbolSearch, realm, realm);
             self.set_builtin_function_name(method, "[Symbol.search]")?;
             self.set_symbol_property(prototype, symbol, method)?;
@@ -383,7 +383,7 @@ impl<H: Host> Vm<H> {
                 },
             );
         }
-        if let Some(symbol) = self.well_known_symbols.get("split").copied() {
+        if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::Split) {
             let method = self.native_with_realm(Native::RegExpSymbolSplit, realm, realm);
             self.set_builtin_function_name(method, "[Symbol.split]")?;
             self.set_symbol_property(prototype, symbol, method)?;
@@ -400,7 +400,7 @@ impl<H: Host> Vm<H> {
                 },
             );
         }
-        if let Some(symbol) = self.well_known_symbols.get("matchAll").copied() {
+        if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::MatchAll) {
             let method = self.native_with_realm(Native::RegExpSymbolMatchAll, realm, realm);
             self.set_builtin_function_name(method, "[Symbol.matchAll]")?;
             self.set_symbol_property(prototype, symbol, method)?;
@@ -417,7 +417,7 @@ impl<H: Host> Vm<H> {
                 },
             );
         }
-        if let Some(symbol) = self.well_known_symbols.get("species").copied() {
+        if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::Species) {
             let getter = self.native_with_realm(Native::RegExpSpecies, realm, realm);
             self.set_builtin_function_name(getter, "get [Symbol.species]")?;
             self.set_symbol_property(constructor, symbol, Value::UNDEFINED)?;
@@ -1628,8 +1628,7 @@ impl<H: Host> Vm<H> {
         }
         let symbol = self
             .well_known_symbols
-            .get("match")
-            .copied()
+            .get(WellKnownSymbol::Match)
             .ok_or_else(|| self.type_error(p, "RegExp match symbol is unavailable".into()))?;
         let matcher = self.get_index(p, value, symbol)?;
         if !matcher.is_undefined() {

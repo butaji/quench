@@ -895,7 +895,7 @@ impl<H: Host> Vm<H> {
                 },
             );
         }
-        if let Some(iterator) = self.well_known_symbols.get("iterator").copied() {
+        if let Some(iterator) = self.well_known_symbols.get(WellKnownSymbol::Iterator) {
             let iterator_method = self.native_value(Native::ArrayValues);
             self.set_symbol_property(arguments, iterator, iterator_method)?;
             self.set_property_attributes(
@@ -1025,10 +1025,24 @@ impl<H: Host> Vm<H> {
             .heap
             .clone_environment_slots(source, fresh, reset)
             .ok_or_else(|| JsError("invalid environment clone slots".into()))?;
-        let owner = self
-            .heap
-            .environment_binding_owner(source)
-            .ok_or_else(|| JsError("invalid environment clone owner".into()))?;
+        // A copy shares the activation's eval-declared bindings with it. A function whose
+        // names all resolve statically has no direct eval to declare any, so its copies need
+        // no link to them and keep the activation's unboxed scope.
+        let (program, function) = (self.frames[frame].program, self.frames[frame].function);
+        let declares_no_dynamic_bindings = self.programs.residual(program).is_some_and(|p| {
+            p.functions
+                .get(function as usize)
+                .is_some_and(|function| function.names_resolve_statically(&p.functions, &p.atoms))
+        });
+        let owner = if declares_no_dynamic_bindings {
+            None
+        } else {
+            Some(
+                self.heap
+                    .environment_binding_owner(source)
+                    .ok_or_else(|| JsError("invalid environment clone owner".into()))?,
+            )
+        };
         let Some(Cell::Environment {
             parent,
             function,
@@ -1046,7 +1060,10 @@ impl<H: Host> Vm<H> {
                 program: scope.program(),
                 root_eval_scope: scope.root_eval_scope(),
                 binding_site_pc: scope.binding_site_pc(),
-                dynamic_bindings: crate::heap::EnvironmentBindings::Shared(owner),
+                dynamic_bindings: owner.map_or_else(
+                    || crate::heap::EnvironmentBindings::Owned(Vec::new()),
+                    crate::heap::EnvironmentBindings::Shared,
+                ),
                 with_objects: scope.with_objects().into(),
             }),
         };
@@ -1838,7 +1855,9 @@ impl<H: Host> Vm<H> {
     ) -> Result<usize, JsError> {
         if error.is_execution_terminated() { return Err(error); }
         let wasm = program.kind == crate::bytecode::ProgramKind::Wasm;
-        if wasm && error.wasm_exception().is_none() {
+        // Wasm catches Wasm exceptions and JavaScript ones (`catch_all`, or
+        // `WebAssembly.JSTag`), never a trap or a link failure.
+        if wasm && error.wasm_exception().is_none() && !error.is_javascript_exception() {
             return Err(error);
         }
         let handler = program.function(function).handler_at(throwing_pc);
