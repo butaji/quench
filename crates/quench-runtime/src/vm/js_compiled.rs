@@ -24,7 +24,13 @@ pub(super) struct JsJitArtifact {
     /// Numeric results retain the original ABI; string results return the selected Return PC.
     pub(super) result: JsJitResultKind,
     /// A cached data property on parameter zero supplies the native numeric input.
-    pub(super) field_argument: Option<(u32, u16)>,
+    pub(super) field_argument: Option<JsJitFieldArgument>,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct JsJitFieldArgument {
+    pub(super) cache_site: u16,
+    pub(super) entry_pc: usize,
 }
 
 pub(super) enum JsJitResultKind {
@@ -81,14 +87,21 @@ pub(super) fn has_string_hash_loop_candidate(
 pub(super) fn number_field_argument_candidate(
     program: &ResidualProgram,
     function: &Function,
-) -> Option<(u32, u16)> {
+) -> Option<JsJitFieldArgument> {
     if function.params != 1 {
         return None;
     }
-    let instruction = function.code.first()?.as_wide();
-    if instruction.op() != Op::GetField {
-        return None;
-    }
+    let (entry_pc, instruction) = match function.code.first()?.as_wide().op() {
+        Op::GetField => (0, function.code[0].as_wide()),
+        Op::JumpFalse if function.code[0].as_wide().register_a() == 0 => {
+            let field = function.code.get(1)?.as_wide();
+            if field.op() != Op::GetField {
+                return None;
+            }
+            (1, field)
+        }
+        _ => return None,
+    };
     let FieldLookup::Atom {
         atom,
         base: FieldBase(0),
@@ -97,8 +110,12 @@ pub(super) fn number_field_argument_candidate(
     else {
         return None;
     };
-    ((atom as usize) < program.atoms.len() && &program.atoms[atom as usize] == "kind")
-        .then_some((atom, cache_site))
+    ((atom as usize) < program.atoms.len() && &program.atoms[atom as usize] == "kind").then_some(
+        JsJitFieldArgument {
+            cache_site,
+            entry_pc,
+        },
+    )
 }
 
 fn string_hash_loop_candidate(program: &ResidualProgram, function: &Function) -> bool {
@@ -497,10 +514,11 @@ fn compile_number_domain_boolean_tree(
         *value = BranchValue::Number;
     }
     let field_argument = number_field_argument_candidate(program, function);
+    let entry_pc = field_argument.map_or(0, |field| field.entry_pc);
     if field_argument.is_some() {
         entry.registers[0] = BranchValue::Unknown;
     }
-    states[0] = Some(entry);
+    states[entry_pc] = Some(entry);
     let mut reachable = vec![false; code_len];
 
     for pc in 0..code_len {
@@ -534,7 +552,7 @@ fn compile_number_domain_boolean_tree(
                 successors.push(pc + 1);
             }
             Op::GetField => {
-                if pc != 0 || field_argument.is_none() {
+                if pc != entry_pc || field_argument.is_none() {
                     return None;
                 }
                 let result = usize::from(instruction.result_register());
@@ -626,8 +644,18 @@ fn compile_number_domain_boolean_tree(
                 {
                     return None;
                 }
-                let left = branch_operand(program, &state.registers, instruction.operand_b())?;
-                let right = branch_operand(program, &state.registers, instruction.operand_c())?;
+                let left = branch_operand(
+                    program,
+                    &state.registers,
+                    &state.locals,
+                    instruction.operand_b(),
+                )?;
+                let right = branch_operand(
+                    program,
+                    &state.registers,
+                    &state.locals,
+                    instruction.operand_c(),
+                )?;
                 let result = match (left, right) {
                     (left, right)
                         if branch_value_is_number(left)
@@ -687,8 +715,18 @@ fn compile_number_domain_boolean_tree(
             }
             Op::Jump => successors.push(instruction.jump_target() as usize),
             Op::JumpBinaryFalse => {
-                let left = branch_operand(program, &state.registers, instruction.operand_b())?;
-                let right = branch_operand(program, &state.registers, instruction.operand_c())?;
+                let left = branch_operand(
+                    program,
+                    &state.registers,
+                    &state.locals,
+                    instruction.operand_b(),
+                )?;
+                let right = branch_operand(
+                    program,
+                    &state.registers,
+                    &state.locals,
+                    instruction.operand_c(),
+                )?;
                 if let Some(value) =
                     branch_equality(program, instruction.binary_operator_field(), left, right)
                 {
@@ -772,7 +810,7 @@ fn compile_number_domain_boolean_tree(
         .iter()
         .map(|is_reachable| is_reachable.then(|| builder.create_block()))
         .collect();
-    let entry_block = blocks[0]?;
+    let entry_block = blocks[entry_pc]?;
     builder.append_block_params_for_function_params(entry_block);
     builder.switch_to_block(entry_block);
     builder.seal_block(entry_block);
@@ -791,7 +829,7 @@ fn compile_number_domain_boolean_tree(
             continue;
         };
         let block = blocks[pc]?;
-        if pc != 0 {
+        if pc != entry_pc {
             builder.seal_block(block);
             builder.switch_to_block(block);
         }
@@ -899,15 +937,27 @@ fn compile_number_domain_boolean_tree(
                 }
             }
             Op::Binary => {
-                let left = branch_operand(program, &state.registers, instruction.operand_b())?;
-                let right = branch_operand(program, &state.registers, instruction.operand_c())?;
+                let left = branch_operand(
+                    program,
+                    &state.registers,
+                    &state.locals,
+                    instruction.operand_b(),
+                )?;
+                let right = branch_operand(
+                    program,
+                    &state.registers,
+                    &state.locals,
+                    instruction.operand_c(),
+                )?;
                 if branch_value_is_number(left) && branch_value_is_number(right) {
                     let condition = branch_number_comparison(
                         &mut builder,
                         instruction.binary_operator(),
                         &variables,
+                        &local_variables,
                         program,
                         &state.registers,
+                        &state.locals,
                         instruction.operand_b(),
                         instruction.operand_c(),
                     )?;
@@ -996,8 +1046,18 @@ fn compile_number_domain_boolean_tree(
                 }
             }
             Op::JumpBinaryFalse => {
-                let left = branch_operand(program, &state.registers, instruction.operand_b())?;
-                let right = branch_operand(program, &state.registers, instruction.operand_c())?;
+                let left = branch_operand(
+                    program,
+                    &state.registers,
+                    &state.locals,
+                    instruction.operand_b(),
+                )?;
+                let right = branch_operand(
+                    program,
+                    &state.registers,
+                    &state.locals,
+                    instruction.operand_c(),
+                )?;
                 if let Some(value) =
                     branch_equality(program, instruction.binary_operator_field(), left, right)
                 {
@@ -1012,8 +1072,10 @@ fn compile_number_domain_boolean_tree(
                         &mut builder,
                         instruction.binary_operator_field(),
                         &variables,
+                        &local_variables,
                         program,
                         &state.registers,
+                        &state.locals,
                         instruction.operand_b(),
                         instruction.operand_c(),
                     )?;
@@ -1132,6 +1194,7 @@ fn branch_value_is_number(value: BranchValue) -> bool {
 fn branch_operand(
     program: &ResidualProgram,
     registers: &[BranchValue],
+    locals: &[BranchValue],
     operand: crate::bytecode::Operand,
 ) -> Option<BranchValue> {
     match operand.kind()? {
@@ -1153,7 +1216,11 @@ fn branch_operand(
                 _ => None,
             }
         }
-        OperandKind::Field | OperandKind::Local => None,
+        OperandKind::Local => locals
+            .get(usize::from(operand.payload()))
+            .copied()
+            .filter(|value| *value != BranchValue::Unknown),
+        OperandKind::Field => None,
     }
 }
 
@@ -1223,8 +1290,10 @@ fn branch_number_comparison(
     builder: &mut FunctionBuilder<'_>,
     operator: u32,
     variables: &[cranelift_frontend::Variable],
+    local_variables: &[cranelift_frontend::Variable],
     program: &ResidualProgram,
     state: &[BranchValue],
+    local_state: &[BranchValue],
     left: crate::bytecode::Operand,
     right: crate::bytecode::Operand,
 ) -> Option<ir::Value> {
@@ -1237,16 +1306,34 @@ fn branch_number_comparison(
         super::operations::NumberRelation::GreaterThan => FloatCC::GreaterThan,
         super::operations::NumberRelation::GreaterEqual => FloatCC::GreaterThanOrEqual,
     };
-    let lhs = branch_numeric_operand(builder, variables, program, state, left)?;
-    let rhs = branch_numeric_operand(builder, variables, program, state, right)?;
+    let lhs = branch_numeric_operand(
+        builder,
+        variables,
+        local_variables,
+        program,
+        state,
+        local_state,
+        left,
+    )?;
+    let rhs = branch_numeric_operand(
+        builder,
+        variables,
+        local_variables,
+        program,
+        state,
+        local_state,
+        right,
+    )?;
     Some(builder.ins().fcmp(code, lhs, rhs))
 }
 
 fn branch_numeric_operand(
     builder: &mut FunctionBuilder<'_>,
     variables: &[cranelift_frontend::Variable],
+    local_variables: &[cranelift_frontend::Variable],
     program: &ResidualProgram,
     state: &[BranchValue],
+    local_state: &[BranchValue],
     operand: crate::bytecode::Operand,
 ) -> Option<ir::Value> {
     match operand.kind()? {
@@ -1270,7 +1357,20 @@ fn branch_numeric_operand(
             };
             Some(builder.ins().f64const(Ieee64::with_bits(value.to_bits())))
         }
-        OperandKind::Field | OperandKind::Local => None,
+        OperandKind::Local => {
+            let index = usize::from(operand.payload());
+            match local_state.get(index).copied()? {
+                BranchValue::Number => Some(builder.use_var(*local_variables.get(index)?)),
+                BranchValue::NumberConstant(constant) => {
+                    let Constant::Number(value) = program.constants.get(constant as usize)? else {
+                        return None;
+                    };
+                    Some(builder.ins().f64const(Ieee64::with_bits(value.to_bits())))
+                }
+                _ => None,
+            }
+        }
+        OperandKind::Field => None,
     }
 }
 

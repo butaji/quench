@@ -10561,11 +10561,21 @@ fn js_jit_compiles_cached_numeric_kind_field_switches() {
           default: return false;
         }
       }
+      function isBindingPattern(node) {
+        if (node) {
+          const kind = node.kind;
+          return kind === 208 || kind === 207;
+        }
+        return false;
+      }
       const kinds = [175, 178, 179, 180];
       for (let i = 0; i < 40; i++) {
         const kind = kinds[i % kinds.length];
         if (isMethodOrAccessor({kind}) !== (kind !== 180)) throw Error('kind switch');
+        const bindingKind = i % 2 === 0 ? 208 : 207;
+        if (isBindingPattern({kind: bindingKind}) !== true) throw Error('binding kind');
       }
+      if (isBindingPattern(null) !== false) throw Error('falsey fallback');
     "#;
     let program = Engine::compile(crate::ExecutionRequest::script(
         &source,
@@ -10578,6 +10588,11 @@ fn js_jit_compiles_cached_numeric_kind_field_switches() {
     assert!(matches!(
         vm.programs
             .js_tier(super::program_store::ProgramId::MAIN, 1),
+        Some(super::program_store::JsTierState::Compiled(_))
+    ));
+    assert!(matches!(
+        vm.programs
+            .js_tier(super::program_store::ProgramId::MAIN, 2),
         Some(super::program_store::JsTierState::Compiled(_))
     ));
 }
