@@ -1,4 +1,4 @@
-use super::{ArrayObject, Object};
+use super::{ArrayObject, AwaitState, FunctionRecord, IteratorRecord, Object, PromiseCell};
 use crate::value::Value;
 use std::alloc::Layout;
 use std::alloc::{alloc, dealloc};
@@ -11,6 +11,67 @@ pub(super) type RecordId = u32;
 
 pub(super) type ObjectRecordSpace = RecordSpace<Object>;
 pub(super) type ArrayRecordSpace = RecordSpace<ArrayObject>;
+pub(super) type FunctionRecordSpace = RecordSpace<FunctionRecord>;
+pub(super) type PromiseRecordSpace = RecordSpace<PromiseCell>;
+pub(super) type AwaitRecordSpace = RecordSpace<AwaitState>;
+pub(super) type IteratorRecordSpace = RecordSpace<IteratorRecord>;
+
+/// What the collector does to every record family alike, whatever its record type: the
+/// per-collection passes iterate `Heap::record_families` instead of naming each space.
+pub(super) trait RecordFamily {
+    /// Every record becomes young: a full collection's starting state.
+    fn clear_marks(&mut self);
+    /// The records the barrier logged since the last collection; each is unmarked.
+    fn take_remembered(&mut self) -> Vec<RecordId>;
+    fn live_count(&self) -> usize;
+    /// Visits every live record's id.
+    fn for_each_live_id(&self, visit: &mut dyn FnMut(RecordId));
+    #[cfg(feature = "profile-aggregate")]
+    fn high_water(&self) -> usize;
+    #[cfg(feature = "profile-aggregate")]
+    fn remembered_count(&self) -> usize;
+    #[cfg(debug_assertions)]
+    fn snapshot_marks(&self) -> Vec<u64>;
+    #[cfg(debug_assertions)]
+    fn restore_marks(&mut self, marks: &[u64]);
+    #[cfg(debug_assertions)]
+    fn for_each_marked(&self, visit: &mut dyn FnMut(RecordId));
+}
+
+impl<T> RecordFamily for RecordSpace<T> {
+    fn clear_marks(&mut self) {
+        RecordSpace::clear_marks(self);
+    }
+    fn take_remembered(&mut self) -> Vec<RecordId> {
+        RecordSpace::take_remembered(self)
+    }
+    fn live_count(&self) -> usize {
+        RecordSpace::live_count(self)
+    }
+    fn for_each_live_id(&self, visit: &mut dyn FnMut(RecordId)) {
+        self.for_each_live(|id, _| visit(id));
+    }
+    #[cfg(feature = "profile-aggregate")]
+    fn high_water(&self) -> usize {
+        RecordSpace::high_water(self)
+    }
+    #[cfg(feature = "profile-aggregate")]
+    fn remembered_count(&self) -> usize {
+        RecordSpace::remembered_count(self)
+    }
+    #[cfg(debug_assertions)]
+    fn snapshot_marks(&self) -> Vec<u64> {
+        RecordSpace::snapshot_marks(self)
+    }
+    #[cfg(debug_assertions)]
+    fn restore_marks(&mut self, marks: &[u64]) {
+        RecordSpace::restore_marks(self, marks);
+    }
+    #[cfg(debug_assertions)]
+    fn for_each_marked(&self, visit: &mut dyn FnMut(RecordId)) {
+        RecordSpace::for_each_marked(self, |id| visit(id));
+    }
+}
 
 const RECORDS_PER_BLOCK: usize = 1_024;
 const OCCUPANCY_WORD_BITS: usize = u64::BITS as usize;
@@ -265,6 +326,20 @@ impl<T> RecordSpace<T> {
         );
         // SAFETY: guaranteed by the caller's live-slot and exclusive-access invariants.
         unsafe { (*self.base.as_ptr().add(id as usize)).assume_init_mut() }
+    }
+
+    /// Whether storing `stored` into record `id` logs it (`remember`): a reference into a
+    /// record the last collection left marked and no store has logged since. Any other
+    /// store passes the barrier without effect.
+    #[inline(always)]
+    pub(super) fn store_logs(&self, id: RecordId, stored: Value) -> bool {
+        if stored.heap_index().is_none() {
+            return false;
+        }
+        let (block_index, record_index) = Self::split_id(id);
+        // SAFETY: a live id belongs to an initialized block.
+        let block = unsafe { self.blocks.get_unchecked(block_index) };
+        block.marked[record_index / OCCUPANCY_WORD_BITS] & (1_u64 << (record_index % OCCUPANCY_WORD_BITS)) != 0
     }
 
     #[inline(always)]

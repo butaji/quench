@@ -348,43 +348,49 @@ impl<H: Host> Vm<H> {
         self.set_shape_property(object, PropertyKey::symbol(key), value)
     }
 
-/// `[[Set]]` of a symbol key on its own receiver along a chain of extensible, non-Proxy
-    /// objects, where every step is a shape fact: the nearest data property decides, and an
-    /// absent key is added. `None` leaves an accessor, a Proxy, a non-extensible object or a
-    /// primitive to the general path, which runs no guest code before reaching one.
-    fn set_plain_symbol_property(&mut self, object: Value, key: Value, value: Value) -> Option<bool> {
+    /// `[[Set]]` of a symbol key on its own receiver along a chain of non-Proxy objects, where
+    /// every step is a shape fact: an own data property is written, and an absent key is added
+    /// once the chain is proved to hold it as neither an accessor nor read-only
+    /// (`symbol_write_proofs`). `None` leaves an accessor, a Proxy, a non-extensible receiver
+    /// or a primitive to the general path, which runs no guest code before reaching one.
+    pub(super) fn set_plain_symbol_property(&mut self, object: Value, key: Value, value: Value) -> Option<bool> {
         let symbol = PropertyKey::symbol(key);
-        let mut current = object;
-        loop {
-            if self.proxy_parts(current).is_some() {
-                return None;
-            }
-            let data = self.object_data(current)?;
-            if !data.is_extensible() {
-                return None;
-            }
-            let (shape, proto) = (data.shape(), data.proto());
-            if let Some(slot) = self.property_shape_slot(shape, symbol) {
-                let attributes = self.slot_attributes(data, slot)?;
-                if attributes.accessor {
-                    return None;
-                }
-                if !attributes.writable {
-                    return Some(false);
-                }
-                if current == object {
-                    self.heap.property_set(object, slot, value);
-                    return Some(true);
-                }
-                break;
-            }
-            if proto.is_null() {
-                break;
-            }
-            current = proto;
+        if self.proxy_parts(object).is_some() {
+            return None;
         }
-        self.set_symbol_property(object, key, value).ok()?;
+        let data = self.object_data(object)?;
+        if !data.is_extensible() {
+            return None;
+        }
+        let (shape, proto) = (data.shape(), data.proto());
+        if let Some(slot) = self.property_shape_slot(shape, symbol) {
+            let attributes = self.slot_attributes(data, slot)?;
+            if attributes.accessor {
+                return None;
+            }
+            if attributes.writable {
+                self.heap.property_set(object, slot, value);
+            }
+            return Some(attributes.writable);
+        }
+        let epoch = crate::heap::prototype_layout_epoch();
+        if !self.symbol_write_proofs.holds(proto, key, epoch) {
+            let guard = self.add_prototype_guard(object, symbol)?;
+            self.mark_prototype_links(proto, guard.prototype_depth);
+            // Marking a link that was no prototype yet leaves the epoch where it was.
+            if crate::heap::prototype_layout_epoch() == epoch {
+                self.symbol_write_proofs.record(proto, key, epoch);
+            }
+        }
+        self.create_shape_data_property(object, symbol, value, DEFAULT_DATA_ATTRIBUTES).ok()?;
         Some(true)
+    }
+
+    /// `object[key] = value` for a symbol `key` that `set_plain_symbol_property` completes as
+    /// a successful write; `false` leaves any other store, unobserved, to the general path.
+    pub(super) fn try_plain_symbol_set(&mut self, object: Value, key: Value, value: Value) -> bool {
+        matches!(self.heap.get(key), Some(Cell::Symbol(symbol)) if symbol.kind != crate::heap::SymbolKind::HostPrivate)
+            && self.set_plain_symbol_property(object, key, value) == Some(true)
     }
 
     pub(super) fn set_symbol_property_with_receiver(

@@ -721,6 +721,22 @@ pub(crate) struct AwaitState {
     /// The await of an async generator's `yield`, which settles the request with the value.
     pub(crate) yielded: bool,
 }
+impl AwaitState {
+    /// The program its suspended continuation resumes in, which stays alive with it.
+    pub(crate) fn program_references(&self, mut visit: impl FnMut(ProgramId)) {
+        if let Some(continuation) = &self.continuation {
+            visit(continuation.program);
+        }
+    }
+
+    /// Its edges: the realm and promise it resumes, the generator, the suspended frame.
+    pub(crate) fn roots(&self) -> impl Iterator<Item = Value> + '_ {
+        [self.realm, self.promise]
+            .into_iter()
+            .chain(self.generator)
+            .chain(self.continuation.iter().flat_map(|continuation| continuation.roots()))
+    }
+}
 impl TypedArrayKind {
     pub(crate) const fn is_bigint(self) -> bool {
         matches!(self, Self::BigInt64 | Self::BigUint64)
@@ -1244,7 +1260,10 @@ const PROTO_UNDEFINED: u32 = PROTO_INDEX_BITS - 1;
 pub(crate) const MAX_HEAP_CELLS: usize = 1 << 27;
 const PROTO_OBJECT_RECORD_BASE: u32 = MAX_HEAP_CELLS as u32;
 const PROTO_ARRAY_RECORD_BASE: u32 = PROTO_OBJECT_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
-const PROTO_RECORD_END: u32 = PROTO_ARRAY_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
+const PROTO_FUNCTION_RECORD_BASE: u32 = PROTO_ARRAY_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
+const PROTO_PROMISE_RECORD_BASE: u32 = PROTO_FUNCTION_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
+const PROTO_ITERATOR_RECORD_BASE: u32 = PROTO_PROMISE_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
+const PROTO_RECORD_END: u32 = PROTO_ITERATOR_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
 const _: () = assert!(PROTO_RECORD_END <= PROTO_UNDEFINED);
 const OBJECT_ARRAY: u32 = 1 << 28;
 const OBJECT_INLINE_STORAGE: u32 = 1 << 29;
@@ -1595,6 +1614,10 @@ impl Object {
             }
             Some(HeapReference::ObjectRecord(id)) => PROTO_OBJECT_RECORD_BASE + id,
             Some(HeapReference::ArrayRecord(id)) => PROTO_ARRAY_RECORD_BASE + id,
+            Some(HeapReference::FunctionRecord(id)) => PROTO_FUNCTION_RECORD_BASE + id,
+            Some(HeapReference::PromiseRecord(id)) => PROTO_PROMISE_RECORD_BASE + id,
+            Some(HeapReference::IteratorRecord(id)) => PROTO_ITERATOR_RECORD_BASE + id,
+            Some(HeapReference::AwaitRecord(_)) => unreachable!("an await state is never a prototype"),
             None if proto.is_null() => PROTO_NULL,
             None => {
                 debug_assert!(proto.is_undefined(), "a prototype is an object or null");
@@ -1611,9 +1634,18 @@ impl Object {
             index if index < PROTO_ARRAY_RECORD_BASE => {
                 Value::direct_object(index - PROTO_OBJECT_RECORD_BASE)
             }
+            index if index < PROTO_FUNCTION_RECORD_BASE => {
+                Value::direct_array(index - PROTO_ARRAY_RECORD_BASE)
+            }
+            index if index < PROTO_PROMISE_RECORD_BASE => {
+                Value::direct_function(index - PROTO_FUNCTION_RECORD_BASE)
+            }
+            index if index < PROTO_ITERATOR_RECORD_BASE => {
+                Value::direct_promise(index - PROTO_PROMISE_RECORD_BASE)
+            }
             index => {
                 debug_assert!(index < PROTO_RECORD_END);
-                Value::direct_array(index - PROTO_ARRAY_RECORD_BASE)
+                Value::direct_iterator(index - PROTO_ITERATOR_RECORD_BASE)
             }
         }
     }
@@ -2324,18 +2356,14 @@ impl EnvironmentSlots {
 
     /// The listed sparse entry for `slot`, as its storage position.
     fn sparse_position(&self, slot: usize) -> Option<usize> {
+        let slot = u32::try_from(slot).ok()?;
         let entries = self.0.len().saturating_sub(SPARSE_ENTRIES_START) / SPARSE_ENTRY_WORDS;
-        let index = |entry: usize| {
-            self.0[SPARSE_ENTRIES_START + entry * SPARSE_ENTRY_WORDS]
-                .0
-                .as_environment_index()
-                .expect("sparse entries start with their index") as usize
-        };
+        let position = |entry: usize| SPARSE_ENTRIES_START + entry * SPARSE_ENTRY_WORDS;
         let (mut low, mut high) = (0, entries);
         while low < high {
             let middle = (low + high) / 2;
-            match index(middle).cmp(&slot) {
-                std::cmp::Ordering::Equal => return Some(SPARSE_ENTRIES_START + middle * SPARSE_ENTRY_WORDS + 1),
+            match self.0[position(middle)].0.cmp_environment_index(slot) {
+                std::cmp::Ordering::Equal => return Some(position(middle) + 1),
                 std::cmp::Ordering::Less => low = middle + 1,
                 std::cmp::Ordering::Greater => high = middle,
             }
@@ -2415,22 +2443,27 @@ impl EnvironmentSlots {
     }
 
     /// Slots of `len`, each `slot(index)`, stored sparsely around `default_owner` when one is
-    /// given and `len` reaches `SPARSE_CLONE_MIN_SLOTS`. `None` when a slot is missing.
+    /// given, `len` reaches `SPARSE_CLONE_MIN_SLOTS` and the sparse words are fewer than the
+    /// dense ones; a copy that owns most of its slots stays dense, whose reads need no search.
+    /// `None` when a slot is missing.
     pub(crate) fn try_from_slots(
         len: usize,
         default_owner: Option<Value>,
-        mut slot: impl FnMut(usize) -> Option<EnvironmentSlot>,
+        slot: impl FnMut(usize) -> Option<EnvironmentSlot>,
     ) -> Option<Self> {
         let Some(owner) = default_owner.filter(|_| len >= SPARSE_CLONE_MIN_SLOTS) else {
             return super::thin_slice::ThinBoxSlice::try_from_fn(len, slot).map(Self);
         };
         let shared = Value::shared_environment_slot(owner);
-        let mut words = vec![
-            EnvironmentSlot(Value::environment_index(u32::try_from(len).ok()?)),
-            EnvironmentSlot(shared),
-        ];
-        for index in 0..len {
-            let value = slot(index)?;
+        let dense = (0..len).map(slot).collect::<Option<Vec<_>>>()?;
+        let listed = dense.iter().filter(|value| value.0 != shared).count();
+        if SPARSE_ENTRIES_START + listed * SPARSE_ENTRY_WORDS >= len {
+            return Some(Self(super::thin_slice::ThinBoxSlice::from_exact_iter(dense.into_iter())));
+        }
+        let mut words = Vec::with_capacity(SPARSE_ENTRIES_START + listed * SPARSE_ENTRY_WORDS);
+        words.push(EnvironmentSlot(Value::environment_index(u32::try_from(len).ok()?)));
+        words.push(EnvironmentSlot(shared));
+        for (index, value) in dense.into_iter().enumerate() {
             if value.0 != shared {
                 words.push(EnvironmentSlot(Value::environment_index(u32::try_from(index).ok()?)));
                 words.push(value);
@@ -2504,24 +2537,54 @@ impl IteratorExt {
     }
 }
 
-/// A function's ordinary object and creation realm. The realm rides in the box, which
-/// calls already reach through property and prototype reads, so the cell keeps four words.
+/// An iterator object: built-in iterators, iterator helpers and generators. The heap keeps
+/// it in the iterator record family (`Heap::iterator`); a heap whose record range is
+/// unavailable boxes it in a `Cell::Iterator` slot.
 #[derive(Clone, Debug)]
-pub(crate) struct FunctionObject {
+pub(crate) struct IteratorRecord {
     pub(crate) object: Object,
-    pub(crate) realm: Value,
+    pub(crate) source: Value,
+    pub(crate) kind: IteratorKind,
+    /// Low half of the position within `source`; `IteratorExt::position` joins it with
+    /// the upper half.
+    pub(crate) index: u32,
+    pub(crate) done: bool,
+    pub(crate) ext: IteratorExt,
 }
 
-impl std::ops::Deref for FunctionObject {
-    type Target = Object;
-    fn deref(&self) -> &Object {
-        &self.object
+impl IteratorRecord {
+    /// A suspended generator's program, which stays alive with it.
+    pub(crate) fn program_references(&self, mut visit: impl FnMut(ProgramId)) {
+        if let Some(continuation) = self
+            .ext
+            .generator
+            .as_ref()
+            .and_then(|generator| generator.continuation.as_ref())
+        {
+            visit(continuation.program);
+        }
     }
 }
 
-impl std::ops::DerefMut for FunctionObject {
-    fn deref_mut(&mut self) -> &mut Object {
-        &mut self.object
+/// A function: its ordinary object, creation realm, code and closure environment. The
+/// heap keeps it in the function record family (`Heap::function`), where a dead closure
+/// costs its occupancy bit; a heap whose record range is unavailable boxes it in a
+/// `Cell::Function` slot.
+#[derive(Clone, Debug)]
+pub(crate) struct FunctionRecord {
+    pub(crate) object: Object,
+    pub(crate) realm: Value,
+    pub(crate) env: Value,
+    pub(crate) kind: FunctionKind,
+}
+
+impl FunctionRecord {
+    /// The program whose code this function runs, which keeps that program alive.
+    pub(crate) fn program(&self) -> Option<ProgramId> {
+        match self.kind {
+            FunctionKind::User(program, _) | FunctionKind::NumericUser(program, _) => Some(program),
+            FunctionKind::Native(_) => None,
+        }
     }
 }
 
@@ -2702,16 +2765,8 @@ pub(crate) enum Cell {
         callback: Value,
         entries: Box<FinalizationEntries>,
     },
-    Iterator {
-        object: Box<Object>,
-        source: Value,
-        kind: IteratorKind,
-        /// Low half of the position within `source`; `IteratorExt::position` joins it with
-        /// the upper half.
-        index: u32,
-        done: bool,
-        ext: Box<IteratorExt>,
-    },
+    /// An iterator where no iterator record is available (`IteratorRecord`).
+    Iterator(Box<IteratorRecord>),
     ArrayFromAsyncState(Box<ArrayFromAsyncState>),
     AwaitState(Box<AwaitState>),
     Proxy {
@@ -2720,11 +2775,8 @@ pub(crate) enum Cell {
         target: Value,
         handler: Value,
     },
-    Function {
-        object: Box<FunctionObject>,
-        kind: FunctionKind,
-        env: Value,
-    },
+    /// A function where no function record is available (`FunctionRecord`).
+    Function(Box<FunctionRecord>),
     BindingReference {
         environment: Value,
         slot: u16,
@@ -2861,11 +2913,11 @@ impl Cell {
             Self::WeakSet { .. } => "weak_set",
             Self::WeakRef { .. } => "weak_ref",
             Self::FinalizationRegistry { .. } => "finalization_registry",
-            Self::Iterator { .. } => "iterator",
+            Self::Iterator(_) => "iterator",
             Self::ArrayFromAsyncState(_) => "array_from_async_state",
             Self::AwaitState(_) => "await_state",
             Self::Proxy { .. } => "proxy",
-            Self::Function { .. } => "function",
+            Self::Function(_) => "function",
             Self::BindingReference { .. } => "binding_reference",
             Self::Environment { .. } => "environment",
             Self::WasmBits64(_) => "wasm_bits64",
@@ -2903,29 +2955,14 @@ impl Cell {
     /// a user function's code, an environment's scope, a suspended generator.
     pub(crate) fn program_references(&self, mut visit: impl FnMut(ProgramId)) {
         match self {
-            Self::Function {
-                kind: FunctionKind::User(program, _) | FunctionKind::NumericUser(program, _),
-                ..
-            } => visit(*program),
+            Self::Function(function) => function.program().into_iter().for_each(&mut visit),
             Self::Environment { scope, .. } => {
                 if let Some(program) = scope.program() {
                     visit(ProgramId::from_raw(program));
                 }
             }
-            Self::Iterator { ext, .. } => {
-                if let Some(continuation) = ext
-                    .generator
-                    .as_ref()
-                    .and_then(|generator| generator.continuation.as_ref())
-                {
-                    visit(continuation.program);
-                }
-            }
-            Self::AwaitState(state) => {
-                if let Some(continuation) = &state.continuation {
-                    visit(continuation.program);
-                }
-            }
+            Self::Iterator(iterator) => iterator.program_references(&mut visit),
+            Self::AwaitState(state) => state.program_references(&mut visit),
             _ => {}
         }
     }
