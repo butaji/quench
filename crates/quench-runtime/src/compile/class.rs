@@ -174,7 +174,7 @@ impl FunctionCompiler<'_, '_> {
             self.push_private_bindings(private_bindings);
         }
         for field in &fields {
-            if class_field_value(*field).is_some() {
+            if class_field_initializer(*field).is_some() {
                 self.hidden_local(&class_field_initializer_name(
                     class_field_span(*field).start,
                 ));
@@ -185,7 +185,7 @@ impl FunctionCompiler<'_, '_> {
             .collect();
         let scopes = self.capture_scopes();
         for field in &fields {
-            let Some(expression) = class_field_value(*field) else {
+            let Some(expression) = class_field_initializer(*field) else {
                 continue;
             };
             let id = self.owner.compile_function(
@@ -289,10 +289,11 @@ impl FunctionCompiler<'_, '_> {
                     ..FunctionOptions::default()
                 },
             );
-            self.owner.functions[constructor_id as usize]
-                .as_mut()
-                .expect("compiled class constructor")
-                .instance_initializer = Some(initializer);
+            // A replay of the function enclosing the class finds the constructor as the load
+            // left it.
+            if let Some(constructor) = self.owner.functions.get_mut(constructor_id) {
+                constructor.instance_initializer = Some(initializer);
+            }
         }
         let class_value = self.reg();
         self.emit(Op::MakeClosure, class_value, 0, 0, constructor_id);
@@ -595,7 +596,9 @@ impl FunctionCompiler<'_, '_> {
                     } else {
                         None
                     };
-                    let value = if initializer.is_some() {
+                    let value = if let Some(constant) = class_field_constant(field) {
+                        self.literal(constant)
+                    } else if initializer.is_some() {
                         let atom = self.owner.atom(&class_field_initializer_name(span.start));
                         let callee = self.load_atom(atom);
                         let value = self.reg();
@@ -769,7 +772,9 @@ impl FunctionCompiler<'_, '_> {
                 }
                 _ => backing,
             };
-            let value = if initializer.is_some() {
+            let value = if let Some(constant) = class_field_constant(*field) {
+                self.literal(constant)
+            } else if initializer.is_some() {
                 let atom = self.owner.atom(&class_field_initializer_name(span.start));
                 let callee = self.load_atom(atom);
                 let value = self.reg();
@@ -795,7 +800,8 @@ impl FunctionCompiler<'_, '_> {
                 self.emit(Op::SetField, value, this, cache, field_atom);
             } else {
                 let field_atom = name.unwrap();
-                self.emit(Op::DefineField, value, this, 0, field_atom);
+                let cache = self.owner.cache_site();
+                self.emit(Op::DefineField, value, this, cache, field_atom);
             }
         }
     }
@@ -880,6 +886,18 @@ fn class_field_value<'a>(field: ClassField<'a>) -> Option<&'a Expression<'a>> {
     }
 }
 
+/// The value of a field whose initializer is a constant. Evaluating one observes nothing an
+/// initializer function would provide (its receiver, home object or new.target) and names
+/// no function, so the definition stores the constant itself.
+fn class_field_constant(field: ClassField<'_>) -> Option<Constant> {
+    class_field_value(field).and_then(|value| super::binding_time::expression(value).static_value())
+}
+
+/// The initializer expression a field evaluates in a function of its own: any but a constant.
+fn class_field_initializer<'a>(field: ClassField<'a>) -> Option<&'a Expression<'a>> {
+    class_field_value(field).filter(|_| class_field_constant(field).is_none())
+}
+
 impl Compiler<'_> {
     fn compile_auto_accessor_methods(
         &mut self,
@@ -944,14 +962,11 @@ impl Compiler<'_> {
         );
         // Generated parser names are scaffolding; the actual property key owns
         // the accessor's name, including computed and private keys.
-        self.functions[getter as usize]
-            .as_mut()
-            .expect("compiled auto-accessor getter")
-            .name = None;
-        self.functions[setter as usize]
-            .as_mut()
-            .expect("compiled auto-accessor setter")
-            .name = None;
+        for accessor in [getter, setter] {
+            if let Some(accessor) = self.functions.get_mut(accessor) {
+                accessor.name = None;
+            }
+        }
         Some((getter, setter))
     }
 

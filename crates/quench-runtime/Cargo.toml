@@ -22,6 +22,9 @@ profile-gc-time = []
 # Reads the collection pacing knobs from the environment (measurement builds only).
 gc-tuning = []
 reference = []
+# Recompiles each replayable function after its program loads and logs any difference
+# (`QUENCH_REPLAY_LOG`); verification builds only.
+verify-replay = []
 
 [dependencies]
 quench-stack = { path = "../quench-stack" }
