@@ -99,6 +99,30 @@ session (Node's median 18,481 against 19,541): compare within a campaign only.
 * No-JIT max RSS: below Wasm3 in 11 of 11 rounds; JIT max RSS rose from 5.23 MB (inlined
   bodies compile larger), against Winch's 11.67 MB.
 
+## Final campaign (`coremark-final-11.csv`, 11 rounds, all comparators)
+
+Static `quench-node` of `42f79250d` (inlining and unrolling for small modules), bolted from
+Callgrind run profiles of that same binary (`bin/quench-node` in `binaries.sha256`; the
+inlining-only campaign above reused older profiles, and a stale profile cost no-JIT max RSS
+about 200 KB in a run of this build). Every binary evicted before each run.
+
+| Mode | Runtime | Median Score | Range | Median max RSS |
+| -- | -- | --: | -- | --: |
+| No JIT | **quench-node** | **2,784.5** | 2,697–2,856 | **3.67 MB** |
+| No JIT | Wasmi v2 | 2,568.1 | 2,516–2,698 | 5.10 MB |
+| No JIT | Stitch | 1,950.0 | 1,913–2,029 | 4.31 MB |
+| No JIT | Wasm3 | 1,797.5 | 1,683–1,851 | 3.86 MB |
+| No JIT | WAMR | 1,688.5 | 1,595–1,734 | 4.07 MB |
+| JIT | **quench-node --jit** | **20,030.7** | 18,908–20,606 | **6.91 MB** |
+| JIT | Node v26.12.0 | 18,959.7 | 18,457–19,478 | 52.38 MB |
+| JIT | Wasmtime | 17,622.2 | 16,857–18,224 | 13.52 MB |
+| JIT | Winch | 8,935.1 | 8,542–9,384 | 11.52 MB |
+
+* **No-JIT Score: won** (1.084x Wasmi v2, ahead in 11 of 11 rounds).
+* **No-JIT max RSS: won** (below Wasm3 in 11 of 11 rounds).
+* **JIT Score: won** (1.057x Node, ahead in 10 of 11 rounds).
+* **JIT max RSS: won** (below Winch in 11 of 11 rounds).
+
 ## Checks
 
-Wasm testsuite: no JIT 67,124/67,124; JIT 66,952/66,952. Runtime lib 744/744.
+Wasm testsuite: no JIT 67,124/67,124; JIT 66,952/66,952 (with and without unrolling). Runtime lib 745/745.
