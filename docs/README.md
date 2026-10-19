@@ -205,6 +205,24 @@ QUENCH_REPLAY_LOG=target/replay.log TEST262_TEST_TIMEOUT_MS=30000 \
 Each program writes a `replay-summary` line; `replay-differs` and `replay-failed` lines name
 a function whose replay does not equal its record or does not compile.
 
+## Library compile cache
+
+`quench-node` keeps the compiled programs of Node's own library modules (the embedded
+`lib/` text) across runs, so a process decodes them instead of compiling them again. The
+runtime encodes a compiled program in a compact form that names each atom by its text and
+leaves out the source; a later run decodes it under its own VM's atom ids and the same static
+text (`Context::evaluate_specialized_static_body_cached_rooted`). Atom-sorted binding lists
+are sorted again after decoding. A program naming an atom that has no lossless text (a lone
+surrogate) is not cached.
+
+Entries live in `$QUENCH_COMPILE_CACHE`, else `$XDG_CACHE_HOME/quench/compile`, else
+`~/.cache/quench/compile`; an empty `QUENCH_COMPILE_CACHE` turns the cache off. An entry is
+keyed by the executable that wrote it (path, size, modification time and runtime ABI), the
+module's name and the exact text compiled, and is written to a temporary file renamed into
+place. An entry that is missing, unreadable or does not decode costs only the compilation it
+would have saved. Package modules (`node_modules`) still compile on every run, so their
+functions keep compiling again on first call.
+
 ## Shared runtime host roots
 
 The development `quench_runtime::Runtime` exposes `global_root`, `string_rooted`,
