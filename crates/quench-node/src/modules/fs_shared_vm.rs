@@ -2781,13 +2781,24 @@ fn read_file_calls_are_builtin(context: &mut NativeContext<'_, NodeHost>) -> Res
 
 /// Node's `readFileSync` of a regular file of known size without options: the bytes go into
 /// `Buffer.allocUnsafe(size)` (its pooled allocation), cut to the bytes read when the file
-/// shrank since its size was taken.
+/// shrank since its size was taken. Before `buffer.js` has loaded, the host allocates as it
+/// would, without loading it (`allocate_before_library`).
 fn read_into_unsafe_buffer(context: &mut NativeContext<'_, NodeHost>, bytes: Vec<u8>, size: u64) -> Result<RootId, RootedError> {
-    let buffer_module = crate::host::shared_vm::commonjs::buffer_module(context)?;
-    let constructor = get(context, buffer_module, "Buffer")?;
-    let allocate = get(context, constructor, "allocUnsafe")?;
-    let length = context.number(size as f64);
-    let buffer = context.call_rooted(allocate, constructor, &[length])?;
+    let early = usize::try_from(size)
+        .ok()
+        .map(|size| crate::modules::buffer_shared_vm::allocate_before_library(context, size))
+        .transpose()?
+        .flatten();
+    let buffer = match early {
+        Some(buffer) => buffer,
+        None => {
+            let buffer_module = crate::host::shared_vm::commonjs::buffer_module(context)?;
+            let constructor = get(context, buffer_module, "Buffer")?;
+            let allocate = get(context, constructor, "allocUnsafe")?;
+            let length = context.number(size as f64);
+            context.call_rooted(allocate, constructor, &[length])?
+        }
+    };
     let Some(storage) = context.buffer_storage_rooted(buffer)? else {
         return Err(RootedError::host("Buffer.allocUnsafe returned no buffer"));
     };

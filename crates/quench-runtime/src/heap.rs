@@ -17,6 +17,8 @@ pub use memory_stats::HeapMemoryComposition;
 #[cfg(feature = "profile-memory")]
 mod memory_profile;
 mod pacing;
+mod promise_record;
+pub(crate) use promise_record::{PromiseCell, PromiseReaction, PromiseRecord, PromiseRejectionState, PromiseState};
 mod records;
 mod root;
 mod slots;
@@ -169,6 +171,9 @@ impl<'slots> ParallelSweepSlab<'slots> {
 
             let cell = slot.cell.take().expect("occupied dead sweep slot");
             result.external_bytes = result.external_bytes.saturating_add(cell.external_bytes());
+            if let Cell::Promise(promise) = &cell {
+                result.abandoned_job_contexts.extend(promise.record.reaction_job_contexts());
+            }
             if let Some(object) = cell.object() {
                 result.released_properties.push(object.properties());
             }
@@ -198,6 +203,7 @@ struct ParallelSweepResult {
     rc_cells: Vec<StoppedCellDrop>,
     external_bytes: usize,
     live_payload_bytes: usize,
+    abandoned_job_contexts: Vec<crate::HostExecutionContext>,
     swept_slots: usize,
 }
 
@@ -329,6 +335,8 @@ pub(crate) struct Heap {
     /// The next collection traces the whole heap.
     full_due: bool,
     pacing_state: pacing::PacingState,
+    /// Job contexts held by reactions of promises the sweep freed, for the host to release.
+    abandoned_job_contexts: Vec<crate::HostExecutionContext>,
     /// Live weight after the previous collection.
     live_weight_after_previous: usize,
     /// Backing-store bytes allocated since the last collection, against its budget.
@@ -601,6 +609,7 @@ pub(crate) enum CellKind {
     Error,
     RegExp,
     ArrayFromAsync,
+    AwaitState,
     TemporalDuration,
     TemporalPlainDate,
     TemporalPlainDateTime,
@@ -640,6 +649,7 @@ impl CellKind {
         "error",
         "regexp",
         "array_from_async",
+        "await_state",
         "temporal_duration",
         "temporal_plain_date",
         "temporal_plain_date_time",
@@ -1113,6 +1123,10 @@ impl Heap {
     pub fn should_collect(&self) -> bool {
         self.allocations >= self.threshold
     }
+    /// The job contexts of promises freed since the last call, which their reactions held.
+    pub(crate) fn take_abandoned_job_contexts(&mut self) -> Vec<crate::HostExecutionContext> {
+        std::mem::take(&mut self.abandoned_job_contexts)
+    }
     pub(crate) fn should_full_collect(&self) -> bool {
         self.full_due
             || pacing().allocation_cap_reached(
@@ -1555,8 +1569,10 @@ impl Heap {
                     rc_cells,
                     external_bytes,
                     live_payload_bytes,
+                    abandoned_job_contexts,
                     swept_slots,
                 } = result;
+                self.abandoned_job_contexts.extend(abandoned_job_contexts);
                 let freed_cells = free_slots.len();
                 if freed_cells > 0 {
                     let slab_free = &mut self.free_by_slab[slab as usize];
@@ -1603,6 +1619,7 @@ impl Heap {
         {
             let external_bytes = &mut self.external_bytes;
             let payload_bytes = &mut self.payload_bytes;
+            let abandoned_job_contexts = &mut self.abandoned_job_contexts;
             let free_by_slab = &mut self.free_by_slab;
             let free_slabs = &mut self.free_slabs;
             let free_slot_count = &mut self.free_slots;
@@ -1612,6 +1629,9 @@ impl Heap {
             let mut reclaim = |properties: &mut ValueArena, index: usize, cell: Cell| {
                 *external_bytes = external_bytes.saturating_sub(cell.external_bytes());
                 *payload_bytes = payload_bytes.saturating_sub(cell.payload_bytes());
+                if let Cell::Promise(promise) = &cell {
+                    abandoned_job_contexts.extend(promise.record.reaction_job_contexts());
+                }
                 #[cfg(feature = "profile-memory")]
                 {
                     let object_slots = cell
@@ -2609,6 +2629,13 @@ impl Heap {
                     work.extend(record.roots());
                 }
             }
+            Cell::AwaitState(state) => {
+                work.extend([state.realm, state.promise]);
+                work.extend(state.generator);
+                if let Some(continuation) = &state.continuation {
+                    work.extend(continuation.roots());
+                }
+            }
             Cell::ArrayFromAsyncState(state) => {
                 work.extend([state.output, state.result, state.this_arg]);
                 work.extend(state.iterator);
@@ -2667,6 +2694,10 @@ impl Heap {
                 work.extend(payload.iter().copied());
             }
             Cell::PromiseResolvingState { promise, .. } => work.push(*promise),
+            Cell::Promise(promise) => {
+                object(&promise.object);
+                work.extend(promise.record.roots());
+            }
             Cell::Date { object: value, .. }
             | Cell::TemporalDuration { object: value, .. }
             | Cell::TemporalPlainDate { object: value, .. }
@@ -2748,7 +2779,8 @@ impl Heap {
             | Cell::DataView { .. }
             | Cell::ShadowRealm { .. }
             | Cell::Proxy { .. }
-            | Cell::PromiseResolvingState { .. } => CellKind::Object,
+            | Cell::PromiseResolvingState { .. }
+            | Cell::Promise(_) => CellKind::Object,
             Cell::Array { .. } => CellKind::Array,
             Cell::Map { .. } => CellKind::Map,
             Cell::Set { .. } => CellKind::Set,
@@ -2776,6 +2808,7 @@ impl Heap {
             Cell::Error(_) => CellKind::Error,
             Cell::RegExp { .. } => CellKind::RegExp,
             Cell::ArrayFromAsyncState(_) => CellKind::ArrayFromAsync,
+            Cell::AwaitState(_) => CellKind::AwaitState,
             Cell::TemporalDuration { .. } => CellKind::TemporalDuration,
             Cell::TemporalPlainDate { .. } => CellKind::TemporalPlainDate,
             Cell::TemporalPlainDateTime { .. } => CellKind::TemporalPlainDateTime,
@@ -2796,6 +2829,7 @@ impl Heap {
                 | Cell::ShadowRealm { .. }
                 | Cell::Iterator { .. }
                 | Cell::ArrayFromAsyncState(_)
+                | Cell::AwaitState(_)
                 | Cell::Proxy { .. }
                 | Cell::Date { .. }
                 | Cell::PromiseResolvingState { .. }
@@ -2811,6 +2845,10 @@ impl Heap {
                 | Cell::WasmV128(_)
                 | Cell::WasmExtern(_)
                 | Cell::WasmTag { .. } => 0,
+                Cell::Promise(promise) => {
+                    size_of::<PromiseCell>()
+                        + promise.record.reactions.capacity() * size_of::<PromiseReaction>()
+                }
                 Cell::WasmException { payload, .. } => payload.capacity() * size_of::<Value>(),
                 Cell::WasmHostFunction { target, signature } => {
                     size_of::<crate::WasmSignature>()

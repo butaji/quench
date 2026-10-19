@@ -87,7 +87,7 @@ impl Heap {
         let Cell::Environment { slots, .. } = self.get(environment)? else {
             return None;
         };
-        match slots.0.get(slot)?.state() {
+        match slots.state(slot)? {
             EnvironmentSlotState::Owned(_) => Some(environment),
             EnvironmentSlotState::Shared(owner) => Some(owner),
         }
@@ -97,7 +97,7 @@ impl Heap {
         let Cell::Environment { slots, .. } = self.get(environment)? else {
             return None;
         };
-        match slots.0.get(slot)?.state() {
+        match slots.state(slot)? {
             EnvironmentSlotState::Owned(value) => Some(value),
             // A shared slot names its owner, which holds the slot itself.
             EnvironmentSlotState::Shared(owner) => {
@@ -118,9 +118,11 @@ impl Heap {
         let Cell::Environment { slots, .. } = self.get_mut(owner)? else {
             return None;
         };
-        slots.0.get_mut(slot)?.owned_mut()
+        slots.owned_mut(slot)
     }
 
+    /// A per-iteration copy of `environment`: the `fresh` slots own the current values,
+    /// the `reset` ones own `undefined`, and the rest share the slot's owner.
     pub(crate) fn clone_environment_slots(
         &self,
         environment: Value,
@@ -130,14 +132,15 @@ impl Heap {
         let Cell::Environment { slots, .. } = self.get(environment)? else {
             return None;
         };
-        let source = &slots.0;
-        super::thin_slice::ThinBoxSlice::try_from_fn(source.len(), |index| {
-            let slot = index as u16;
+        // Most slots share one owner: the source, or the owner a sparse source shares.
+        let default_owner = slots.default_owner().unwrap_or(environment);
+        EnvironmentSlots::try_from_slots(slots.len(), Some(default_owner), |index| {
+            let slot = u16::try_from(index).ok()?;
             if reset.binary_search(&slot).is_ok() {
                 return Some(EnvironmentSlot::owned(Value::UNDEFINED));
             }
             let fresh = fresh.binary_search(&slot).is_ok();
-            Some(match source[index].state() {
+            Some(match slots.state(index)? {
                 EnvironmentSlotState::Owned(value) if fresh => EnvironmentSlot::owned(value),
                 EnvironmentSlotState::Owned(_) => EnvironmentSlot::shared(environment),
                 // A shared slot names its owner, which holds the slot itself.
@@ -147,10 +150,9 @@ impl Heap {
                     };
                     EnvironmentSlot::owned(slots.owned(index)?)
                 }
-                EnvironmentSlotState::Shared(_) => source[index],
+                EnvironmentSlotState::Shared(owner) => EnvironmentSlot::shared(owner),
             })
         })
-        .map(EnvironmentSlots)
     }
 
     #[inline(always)]
@@ -341,13 +343,14 @@ impl Heap {
         }
     }
 
-    /// An ordinary object (`Cell::Object`), whether it lives in the object record space or a
-    /// legacy slot.
+    /// An ordinary object (`Cell::Object`, or a promise, whose internal slots change no
+    /// object operation), whether it lives in the object record space or a legacy slot.
     pub(crate) fn ordinary_object(&self, value: Value) -> Option<&Object> {
         match self.object_record(value) {
             Some(object) => Some(object),
             None => match self.get(value)? {
                 Cell::Object(object) => Some(object),
+                Cell::Promise(promise) => Some(&promise.object),
                 _ => None,
             },
         }

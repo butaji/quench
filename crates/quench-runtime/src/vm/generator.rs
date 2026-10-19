@@ -488,10 +488,7 @@ impl<H: Host> Vm<H> {
         target: Value,
     ) -> Result<(), JsError> {
         let record = self
-            .realm
-            .promise
-            .records
-            .get(&source)
+            .promise_record(source)
             .cloned()
             .ok_or_else(|| JsError("async generator request result is not a Promise".into()))?;
         self.observe_promise_rejection(source);
@@ -499,13 +496,10 @@ impl<H: Host> Vm<H> {
             on_fulfilled: Value::UNDEFINED,
             on_rejected: Value::UNDEFINED,
             next: target,
-            execution_context: self.host.capture_job_context(self.realm.promise.records.get(&target).and_then(|record| record.host_context)),
+            execution_context: self.host.capture_job_context(self.promise_record(target).and_then(|record| record.host_context)),
         };
         if record.state == PromiseState::Pending {
-            self.realm
-                .promise
-                .records
-                .get_mut(&source)
+            self.promise_record_mut(source)
                 .expect("source Promise record exists")
                 .reactions
                 .push(reaction);
@@ -999,10 +993,7 @@ impl<H: Host> Vm<H> {
         let value = if self.truthy(adapter) {
             let resolved = self.promise_for_value(p, value)?;
             let state = self
-                .realm
-                .promise
-                .records
-                .get(&resolved)
+                .promise_record(resolved)
                 .cloned()
                 .ok_or_else(|| JsError("async-from-sync value lost its Promise".into()))?;
             match state.state {
@@ -1113,8 +1104,7 @@ impl<H: Host> Vm<H> {
                 Ok((rejected, promise))
             })
         })?;
-        let id = self.suspend_continuation(continuation);
-        self.enqueue_async_resume(p, id, promise, Some(generator), rejected, false)?;
+        self.enqueue_async_resume(p, continuation, promise, Some(generator), rejected, false)?;
         Ok(promise)
     }
 
@@ -1588,8 +1578,7 @@ impl<H: Host> Vm<H> {
                         Some(destination),
                         promise,
                     );
-                    let id = vm.suspend_continuation(continuation);
-                    vm.enqueue_async_resume(p, id, promise, Some(generator), value, false)?;
+                    vm.enqueue_async_resume(p, continuation, promise, Some(generator), value, false)?;
                 }
                 Ok(_) => {
                     vm.pool_frame(frame);
@@ -1630,8 +1619,7 @@ impl<H: Host> Vm<H> {
             self.promise_resolve_value(p, promise, result)?;
             return Ok(());
         }
-        let id = self.suspend_continuation(continuation);
-        self.enqueue_async_resume(p, id, promise, Some(generator), value, true)
+        self.enqueue_async_resume(p, continuation, promise, Some(generator), value, true)
     }
 
     pub(super) fn finish_async_generator(

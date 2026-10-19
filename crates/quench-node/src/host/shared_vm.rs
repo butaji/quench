@@ -107,6 +107,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "processKillNative" (2) => crate::modules::process_shared_vm::kill_native,
         method "processKill" (2) => crate::modules::process_shared_vm::kill,
         method "bufferConstructor" (0) => crate::modules::buffer_shared_vm::constructor,
+        method "bufferPrototypeInitialize" (0) => crate::modules::buffer_shared_vm::initialize_prototype,
         method "encodingToAscii" (0) => crate::modules::encoding_binding_shared_vm::to_ascii,
         method "encodingToUnicode" (0) => crate::modules::encoding_binding_shared_vm::to_unicode,
         method "urlBindingDomainToAscii" (0) => crate::modules::url_binding_shared_vm::domain_to_ascii,
@@ -446,7 +447,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "netServerOptions" (1) => crate::modules::net_options_shared_vm::server_options,
         method "netNormalizeEndpoint" (4) => crate::modules::net_endpoint_shared_vm::normalize,
         method "netConnect" (4) => crate::modules::net_shared_vm::connect_operation,
-        method "emitterInitialize" (2) => crate::modules::event_constructor_shared_vm::initialize,
+        method "emitterValidateCaptureRejections" (1) => crate::modules::event_constructor_shared_vm::validate_capture_rejections,
         method "emitterRemoveAllListeners" (3) => crate::modules::event_emitter_shared_vm::remove_all_listeners,
         method "emitterRemoveListener" (3) => crate::modules::event_emitter_shared_vm::remove_listener,
         method "emitterEmit" (3) => crate::modules::event_emitter_shared_vm::emit,
@@ -1071,10 +1072,14 @@ impl quench_runtime::Host for NodeHost {
         bytes: &[u8],
         mode: quench_runtime::ExecutionMode,
     ) -> Result<quench_runtime::WasmModule, String> {
-        quench_wasm::Engine::new()
+        let module = quench_wasm::Engine::new()
             .compile(bytes)
             .and_then(|module| module.lower_shared_module_for(mode))
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string());
+        // Decoding, validation and lowering run once per module; their code leaves the
+        // resident set before the module runs.
+        crate::host::resident_pages::release_read_only_pages();
+        module
     }
 
     fn resolve_dynamic_import(
@@ -1123,11 +1128,10 @@ impl quench_runtime::Host for NodeHost {
             for (index, name) in exports.iter().enumerate() {
                 source.push_str(&format!("export let {name} = __quenchExports[{index}];\n"));
             }
-            return Ok(Some(quench_runtime::ModuleSource {
-                name: format!("node:quench-builtin/{builtin_name}"),
-                bytes: source.as_bytes().to_vec(),
+            return Ok(Some(quench_runtime::ModuleSource::text(
+                format!("node:quench-builtin/{builtin_name}"),
                 source,
-            }));
+            )));
         }
 
         // Node resolves filesystem specifiers as URLs before accessing a file.
@@ -1251,7 +1255,7 @@ impl quench_runtime::Host for NodeHost {
         } else {
             let kind = Self::source_kind(&path)?;
             if kind == quench_runtime::SourceKind::Module {
-                String::from_utf8(bytes.clone())
+                String::from_utf8(bytes)
                     .map_err(|error| format!("module {} is not UTF-8: {error}", path.display()))?
             } else {
                 let filename = serde_json::to_string(&path.to_string_lossy())
@@ -1284,13 +1288,10 @@ impl quench_runtime::Host for NodeHost {
                 source
             }
         };
-        // Keep original bytes for import.meta/source APIs while compiling the
-        // generated CJS/JSON interop wrapper when one is required.
-        Ok(Some(quench_runtime::ModuleSource {
-            name,
-            bytes,
-            source,
-        }))
+        // Node exposes no module's bytes: it rejects `type: "bytes"` and has source-phase
+        // objects only for WebAssembly. So a CommonJS or JSON interop wrapper keeps only the
+        // text it compiles, never the file it wraps.
+        Ok(Some(quench_runtime::ModuleSource::text(name, source)))
     }
 
     fn validate_module_type(
@@ -1453,7 +1454,10 @@ fn install_event_emitter(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         .borrow()
         .event_targets_api
         .ok_or_else(|| RootedError::host("event listener configuration missing"))?;
-    let initialize = context.host_function_with_data(operation("emitterInitialize"), event_data)?;
+    let shape_key = crate::modules::event_constructor_shared_vm::get(context, event_data, "shapeKey")?;
+    let capture_key =
+        crate::modules::event_constructor_shared_vm::get(context, event_data, "captureKey")?;
+    let validate = context.host_function(operation("emitterValidateCaptureRejections"))?;
     let dispatch =
         context.host_function_with_data(operation("emitterEmitListeners"), event_data)?;
     let emitter_factory = context.evaluate_script_rooted(
@@ -1462,7 +1466,11 @@ fn install_event_emitter(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     )?;
     let undefined = context.undefined();
     let inspector = context.host_function(operation("emitterErrorInspector"))?;
-    let event_emitter = context.call_rooted(emitter_factory, undefined, &[initialize, dispatch, inspector])?;
+    let event_emitter = context.call_rooted(
+        emitter_factory,
+        undefined,
+        &[shape_key, capture_key, validate, dispatch, inspector],
+    )?;
     context.release_root(event_emitter);
     crate::modules::event_constructor_shared_vm::install(context)?;
     crate::modules::event_emitter_shared_vm::initialize(context)?;

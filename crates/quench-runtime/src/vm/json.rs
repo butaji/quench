@@ -1122,7 +1122,9 @@ impl<H: Host> Vm<H> {
                 Ok(self.json_raw_text(value).map(JsonValue::Raw))
             }
             _ if self.is_array(p, value)? => self.json_serialize_array(p, value, state).map(Some),
-            Some(Cell::Object(_)) => self.json_serialize_object(p, value, state).map(Some),
+            Some(Cell::Object(_) | Cell::Promise(_)) => {
+                self.json_serialize_object(p, value, state).map(Some)
+            }
             Some(Cell::Proxy { .. })
             | Some(Cell::Date { .. })
             | Some(Cell::Error(_))
@@ -1153,6 +1155,7 @@ impl<H: Host> Vm<H> {
             Some(Cell::Environment { .. })
             | Some(Cell::Iterator { .. })
             | Some(Cell::ArrayFromAsyncState(_))
+            | Some(Cell::AwaitState(_))
             | Some(Cell::PromiseResolvingState { .. })
             | Some(Cell::WasmElements(_))
             | Some(Cell::WasmBits64(_))
