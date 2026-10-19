@@ -3422,6 +3422,111 @@ enum ThreadEnd {
     Dispatch,
 }
 
+/// Instructions all copies of an unrolled loop body may hold together, and the most copies.
+/// A body of up to a fourth of the budget runs as four copies: one interrupt check, one back
+/// edge and one set of loop-carried moves per four iterations (V8's optimizing tier unrolls
+/// small innermost Wasm loops for the same reasons); a body of more than half of it is not
+/// unrolled.
+const UNROLL_BUDGET: usize = 48;
+const MAX_UNROLL_FACTOR: usize = 4;
+
+/// Bytecodes up to which a compiled Wasm program unrolls its innermost loops. Every function
+/// compiles eagerly, and each copy is compiled whether its loop runs or not: in programs of
+/// 17K to 70K bytecodes the copies cost more compile time than they saved (TSF's first
+/// iteration +6%, gcc-loops +2.5%, HashSet +1.2% per iteration from spills), so only smaller
+/// programs pay for them.
+const UNROLL_PROGRAM_BYTECODES: usize = 16_384;
+
+/// Whether `program` is small enough to unroll its innermost loops (`UNROLL_PROGRAM_BYTECODES`).
+fn program_unrolls(program: &ResidualProgram) -> bool {
+    program.functions.iter().map(|function| function.code.len()).sum::<usize>()
+        <= UNROLL_PROGRAM_BYTECODES
+}
+
+/// An innermost loop unrolled at its latch: the back edge enters the next of `factor - 1`
+/// copies of the body, and the last copy's back edge returns to `header` with the loop's
+/// interrupt check (`Emitter::backedge`).
+#[derive(Clone, Copy)]
+struct UnrolledLoop {
+    header: usize,
+    factor: usize,
+}
+
+/// Whether `op` may sit in an unrolled body: no call, and no operation that calls out to the
+/// VM or ends the body other than by a branch out of the loop.
+fn unrollable_op(op: Op) -> bool {
+    !matches!(
+        op,
+        Op::WasmMemoryGrow
+            | Op::WasmMemoryFill
+            | Op::WasmMemoryCopy
+            | Op::WasmMemoryInit
+            | Op::WasmTableGet
+            | Op::WasmTableSet
+            | Op::WasmTableGrow
+            | Op::WasmTableFill
+            | Op::WasmTableCopy
+            | Op::WasmTableInit
+            | Op::WasmTableSize
+            | Op::WasmIndirectTarget
+    )
+}
+
+/// The innermost loops to unroll, by latch: a back edge from `latch` to `header` whose body
+/// `header..=latch` runs straight through but for branches that leave the loop, has no other
+/// entry, and fits the budget at least twice.
+fn unrollable_loops(instructions: &[WideInstruction], plan: &Plan) -> Vec<Option<UnrolledLoop>> {
+    let mut entered = vec![false; instructions.len() + 1];
+    for (pc, instruction) in instructions.iter().enumerate() {
+        if !plan.reachable(pc) {
+            continue;
+        }
+        match instruction.op().control_flow_layout() {
+            ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump => {
+                entered[instruction.jump_target() as usize] = true;
+            }
+            ControlFlowLayout::BranchTable => {
+                for entry in crate::bytecode::branch_table_entries(pc, *instruction) {
+                    entered[instructions[entry].jump_target() as usize] = true;
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut loops = vec![None; instructions.len()];
+    for (latch, instruction) in instructions.iter().enumerate() {
+        let layout = instruction.op().control_flow_layout();
+        if !plan.reachable(latch)
+            || !matches!(layout, ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump)
+        {
+            continue;
+        }
+        let header = instruction.jump_target() as usize;
+        if header > latch {
+            continue;
+        }
+        let length = latch - header + 1;
+        let factor = (UNROLL_BUDGET / length).min(MAX_UNROLL_FACTOR);
+        if factor < 2 {
+            continue;
+        }
+        let straight = (header..latch).all(|pc| {
+            let body = instructions[pc];
+            plan.reachable(pc)
+                && unrollable_op(body.op())
+                && match body.op().control_flow_layout() {
+                    ControlFlowLayout::Fallthrough => true,
+                    ControlFlowLayout::ConditionalJump => body.jump_target() as usize > latch,
+                    _ => false,
+                }
+        });
+        if straight && !entered[header + 1..=latch].iter().any(|&entered| entered) {
+            loops[latch] = Some(UnrolledLoop { header, factor });
+        }
+    }
+    loops
+}
+
 /// A copy of the instructions from a jump target to a branch table, for a
 /// jump that leaves the table's selector holding a known constant: along
 /// the copy the selector cannot change, so branches on it are decided and
@@ -3702,6 +3807,15 @@ struct Emitter<'a, 'b, H: Host> {
     poll: Option<i64>,
     /// Each i32 read from a register's view, by the zero-extended value it was read from.
     zero_extended: std::collections::HashMap<ir::Value, ir::Value>,
+    /// The innermost loops to unroll, by latch (`unrollable_loops`).
+    unrolled: Vec<Option<UnrolledLoop>>,
+    /// While a latch of an unrolled loop is emitted: its header and the copy its back edge
+    /// enters instead, or `None` for the last copy, whose back edge returns to the header and
+    /// checks for an interrupt.
+    backedge: Option<(usize, Option<ir::Block>)>,
+    /// Copies of an unrolled body to emit right after its latch: the block, the loop, and the
+    /// copy its back edge enters.
+    pending_copies: Vec<(ir::Block, UnrolledLoop, usize, Option<ir::Block>)>,
 }
 
 impl<H: Host> Emitter<'_, '_, H> {
@@ -3774,7 +3888,9 @@ impl<H: Host> Emitter<'_, '_, H> {
         let (integer, float) = match kind {
             // The i32 view holds the constant zero-extended (`view_ir`).
             Kind::I32 => (
-                self.builder.ins().iconst(types::I64, i64::from(bits as u32)),
+                self.builder
+                    .ins()
+                    .iconst(types::I64, i64::from(bits as u32)),
                 self.builder.ins().f32const(Ieee32::with_bits(bits as u32)),
             ),
             Kind::I64 => (
@@ -4900,7 +5016,7 @@ impl<H: Host> Emitter<'_, '_, H> {
     /// only the exit passes (merge arguments) are computed after the loop,
     /// not on every iteration.
     fn branch(&mut self, pc: usize, condition: ir::Value, target: usize, fallthrough: usize) {
-        if target <= pc || fallthrough <= pc {
+        if self.polls(pc, target) || self.polls(pc, fallthrough) {
             self.interrupt_safepoint();
         }
         let taken = self.edge(target);
@@ -4915,6 +5031,12 @@ impl<H: Host> Emitter<'_, '_, H> {
         self.builder.ins().jump(next, &[]);
     }
 
+    /// Whether an edge from `pc` to `target` checks for an interrupt: a back edge does, except
+    /// one into a copy of an unrolled body, whose last copy's back edge checks for all.
+    fn polls(&self, pc: usize, target: usize) -> bool {
+        target <= pc && !matches!(self.backedge, Some((header, Some(_))) if header == target)
+    }
+
     /// The block a jump from here to `target` enters: a threaded copy when
     /// a known selector decides a branch table ahead, else the target's.
     fn edge(&mut self, target: usize) -> ir::Block {
@@ -4922,6 +5044,11 @@ impl<H: Host> Emitter<'_, '_, H> {
             && redirected == target
         {
             return block;
+        }
+        if let Some((header, Some(copy))) = self.backedge
+            && header == target
+        {
+            return copy;
         }
         if self.threading {
             for (selector, value) in self.known.clone() {
@@ -4949,6 +5076,56 @@ impl<H: Host> Emitter<'_, '_, H> {
     }
 
     /// Emit the threaded copy `thread` into `block`.
+    /// Emit the latch at `pc`; at an unrolled loop's latch the back edge enters the first copy
+    /// of the body, queued with the rest (`pending_copies`).
+    fn latch(&mut self, function: &Function, pc: usize, instruction: WideInstruction) -> bool {
+        let Some(unrolled) = self.unrolled[pc] else {
+            return self.instruction(function, pc, instruction);
+        };
+        let copies = (1..unrolled.factor)
+            .map(|_| self.builder.create_block())
+            .collect::<Vec<_>>();
+        for (index, &copy) in copies.iter().enumerate() {
+            let next = copies.get(index + 1).copied();
+            self.pending_copies.push((copy, unrolled, pc, next));
+        }
+        self.backedge = Some((unrolled.header, copies.first().copied()));
+        let open = self.instruction(function, pc, instruction);
+        self.backedge = None;
+        open
+    }
+
+    /// Emit a copy of the body of the unrolled loop with latch `latch` into `block`: branches
+    /// out of the loop leave through the original blocks, and the back edge enters `next`, or
+    /// the header from the last copy.
+    fn emit_unrolled_copy(
+        &mut self,
+        function: &Function,
+        block: ir::Block,
+        unrolled: UnrolledLoop,
+        latch: usize,
+        next: Option<ir::Block>,
+    ) {
+        self.builder.switch_to_block(block);
+        self.known.clear();
+        for pc in unrolled.header..latch {
+            let instruction = self.instructions[pc];
+            if instruction.op().control_flow_layout() == ControlFlowLayout::ConditionalJump {
+                let continuation = self.builder.create_block();
+                self.redirect = Some((pc + 1, continuation));
+                self.instruction(function, pc, instruction);
+                self.redirect = None;
+                self.builder.switch_to_block(continuation);
+                self.known.clear();
+            } else {
+                self.instruction(function, pc, instruction);
+            }
+        }
+        self.backedge = Some((unrolled.header, next));
+        self.instruction(function, latch, self.instructions[latch]);
+        self.backedge = None;
+    }
+
     fn emit_thread(&mut self, function: &Function, block: ir::Block, thread: &Thread) {
         self.builder.switch_to_block(block);
         self.interrupt_safepoint();
@@ -5219,7 +5396,7 @@ impl<H: Host> Emitter<'_, '_, H> {
             }
             Op::Jump => {
                 let target = instruction.jump_target() as usize;
-                self.jump(target, target <= pc);
+                self.jump(target, self.polls(pc, target));
                 return false;
             }
             Op::WasmBranchTable => {
@@ -5494,6 +5671,13 @@ impl<'a, H: Host> Analysis<'a, H> {
                 .and_then(|_| self.vm.execution_interrupt.poll_page())
                 .map(|(start, _)| start as i64),
             zero_extended: std::collections::HashMap::new(),
+            unrolled: if program_unrolls(self.code) {
+                unrollable_loops(&instructions, plan)
+            } else {
+                vec![None; instructions.len()]
+            },
+            backedge: None,
+            pending_copies: Vec::new(),
         };
         // Registers start at i32 zero, as an activation's register file does.
         for register in 0..function.registers {
@@ -5567,7 +5751,12 @@ impl<'a, H: Host> Analysis<'a, H> {
                     emitter.affine_pair_gate();
                 }
             }
-            open = emitter.instruction(function, pc, instruction);
+            open = emitter.latch(function, pc, instruction);
+            // Copies of an unrolled body follow its latch in the layout, so a loop that runs a few
+            // iterations stays in one stretch of code.
+            for (block, unrolled, latch, next) in std::mem::take(&mut emitter.pending_copies) {
+                emitter.emit_unrolled_copy(function, block, unrolled, latch, next);
+            }
             // A later jump may target the next instruction; give it a block
             // now so falling into it stays explicit.
             if open && emitter.blocks.get(pc + 1).is_some_and(Option::is_some) {
