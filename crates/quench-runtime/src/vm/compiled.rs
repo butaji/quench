@@ -2215,11 +2215,13 @@ pub(super) struct CompiledJsFunction {
 enum CompiledJsEntry {
     Number(unsafe extern "C" fn(*const f64) -> f64),
     StringReturnPc(unsafe extern "C" fn(*const f64) -> u32),
+    Boolean(unsafe extern "C" fn(*const f64) -> u32),
 }
 
 pub(super) enum CompiledJsResult {
     Number(f64),
     StringReturnPc(u32),
+    Boolean(bool),
 }
 
 impl CompiledJsFunction {
@@ -2244,6 +2246,15 @@ impl CompiledJsFunction {
                     )
                 };
                 (CompiledJsEntry::StringReturnPc(entry), return_constants)
+            }
+            super::js_compiled::JsJitResultKind::Boolean => {
+                // SAFETY: the boolean compiler emits `fn(*const f64) -> u32`.
+                let entry = unsafe {
+                    std::mem::transmute::<*mut u8, unsafe extern "C" fn(*const f64) -> u32>(
+                        code.pointer,
+                    )
+                };
+                (CompiledJsEntry::Boolean(entry), Vec::new())
             }
         };
         Some(Self {
@@ -2274,6 +2285,9 @@ impl CompiledJsFunction {
                 }
                 CompiledJsEntry::StringReturnPc(entry) => {
                     CompiledJsResult::StringReturnPc(entry(arguments.as_ptr()))
+                }
+                CompiledJsEntry::Boolean(entry) => {
+                    CompiledJsResult::Boolean(entry(arguments.as_ptr()) != 0)
                 }
             }
         }
@@ -6088,6 +6102,18 @@ impl<H: Host> Vm<H> {
                 let constant = compiled.string_constant_for_return(return_pc as u32)?;
                 let value = self.programs.constant(program_id, constant as usize)?;
                 Some((return_pc, instruction.register_a(), value))
+            }
+            CompiledJsResult::Boolean(value) => {
+                let last_pc = function.code.len().checked_sub(1)?;
+                let terminal = function.code.get(last_pc)?.as_wide();
+                if terminal.op() != Op::Return {
+                    return None;
+                }
+                Some((
+                    last_pc,
+                    terminal.register_a(),
+                    if value { Value::TRUE } else { Value::FALSE },
+                ))
             }
         }
     }
