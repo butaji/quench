@@ -894,8 +894,8 @@ impl<H: Host> Vm<H> {
 
     fn is_native_function(&self, value: Value, expected: Native) -> bool {
         matches!(
-            self.heap.get(value),
-            Some(Cell::Function {
+            self.heap.function(value),
+            Some(FunctionRecord {
                 kind: FunctionKind::Native(native),
                 ..
             }) if *native == expected

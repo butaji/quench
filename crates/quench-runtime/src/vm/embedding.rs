@@ -238,8 +238,8 @@ impl<H: Host> Vm<H> {
             B::ArgumentsObject => self
                 .object_data(value)
                 .is_some_and(Object::is_arguments_object),
-            B::AsyncFunction | B::GeneratorFunction => match cell {
-                Some(Cell::Function {
+            B::AsyncFunction | B::GeneratorFunction => match self.heap.function(value) {
+                Some(FunctionRecord {
                     kind:
                         FunctionKind::User(program, function)
                         | FunctionKind::NumericUser(program, function),
@@ -667,6 +667,7 @@ impl<H: Host> Vm<H> {
             Some(Cell::Map { .. }) => "#<Map>".into(),
             Some(Cell::Set { .. }) => "#<Set>".into(),
             Some(cell) => format!("[object {}]", Self::diagnostic_class_name(cell)),
+            None if self.heap.is_function_value(value) => "[object Function]".into(),
             None => "[object Unknown]".into(),
         }
     }
@@ -733,7 +734,7 @@ impl<H: Host> Vm<H> {
             Cell::Set { .. } => "Set",
             Cell::Date { .. } => "Date",
             Cell::RegExp { .. } => "RegExp",
-            Cell::Function { .. } => "Function",
+            Cell::Function(_) => "Function",
             Cell::Error(_) => "Error",
             _ => "Object",
         }
@@ -1435,6 +1436,16 @@ impl<H: Host> Vm<H> {
         let program = self.embedding_program()?;
         let key = PropertyKey::string(self.intern_atom(name));
         self.materialize_lazy_data_property(&program, holder, key)
+    }
+
+    pub(crate) fn is_pending_lazy_data_property_rooted(
+        &mut self,
+        holder: RootId,
+        name: &str,
+    ) -> Result<bool, JsError> {
+        let holder = self.embedding_value(holder)?;
+        let key = PropertyKey::string(self.intern_atom(name));
+        Ok(self.is_pending_lazy_data_property(holder, key))
     }
 
     pub(crate) fn define_lazy_data_properties_rooted(

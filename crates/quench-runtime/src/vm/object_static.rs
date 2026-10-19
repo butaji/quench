@@ -183,6 +183,8 @@ impl<H: Host> Vm<H> {
             } else {
                 "Array"
             }
+        } else if self.heap.is_function_value(value) {
+            "Function"
         } else {
             match self.heap.get(value) {
                 Some(Cell::Proxy { .. }) if proxy_array => "Array",
@@ -191,7 +193,6 @@ impl<H: Host> Vm<H> {
                 Some(Cell::BigInt(_) | Cell::Symbol(_)) => "Object",
                 Some(Cell::Date { .. }) => "Date",
                 Some(Cell::RegExp { .. }) => "RegExp",
-                Some(Cell::Function { .. }) => "Function",
                 Some(Cell::ArrayBuffer { .. }) => "ArrayBuffer",
                 Some(Cell::DataView { .. }) => "DataView",
                 Some(Cell::TypedArray { kind, .. }) => match kind {

@@ -1419,7 +1419,24 @@ impl<H: Host> Vm<H> {
         }
         let legacy_cell = match heap_reference {
             Some(HeapReference::LegacySlot(index)) => self.heap.get_legacy(index),
-            Some(HeapReference::ObjectRecord(_) | HeapReference::ArrayRecord(_)) | None => None,
+            Some(HeapReference::FunctionRecord(_)) => {
+                let lookup = match self.heap.function(object) {
+                    Some(function) if self.specialized && p.specialized => self
+                        .receiver_field_cache_read(
+                            self.shape_property_lookup_function(function, atom),
+                            atom,
+                            site,
+                        ),
+                    _ => FieldCacheRead::Generic,
+                };
+                return self.finish_field_cache_read(p, object, atom, lookup);
+            }
+            Some(
+                HeapReference::ObjectRecord(_)
+                | HeapReference::ArrayRecord(_)
+                | HeapReference::PromiseRecord(_),
+            )
+            | None => None,
         };
         let lookup = match legacy_cell {
             Some(Cell::String(_)) if self.specialized && p.specialized => {
@@ -1438,6 +1455,17 @@ impl<H: Host> Vm<H> {
             }
             Some(_) | None => FieldCacheRead::Generic,
         };
+        self.finish_field_cache_read(p, object, atom, lookup)
+    }
+
+    /// Completes a field read from the field cache's answer for its receiver.
+    fn finish_field_cache_read(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        atom: Atom,
+        lookup: FieldCacheRead,
+    ) -> Result<Value, JsError> {
         match lookup {
             FieldCacheRead::Proxy if self.is_private_name(atom) => {
                 self.get_private_proxy_field(p, object, atom)
@@ -1502,7 +1530,19 @@ impl<H: Host> Vm<H> {
     /// proxy: a hit, a miss at the resolved site, or no cacheable receiver.
     #[inline(always)]
     fn object_field_cache_read(&self, cell: &Cell, atom: Atom, site: u16) -> FieldCacheRead {
-        let Some(receiver) = self.shape_property_lookup_cell(cell, atom) else {
+        self.receiver_field_cache_read(self.shape_property_lookup_cell(cell, atom), atom, site)
+    }
+
+    /// The field cache's answer for a receiver whose shape answers the read (`None`: it
+    /// does not).
+    #[inline(always)]
+    fn receiver_field_cache_read(
+        &self,
+        receiver: Option<&Object>,
+        atom: Atom,
+        site: u16,
+    ) -> FieldCacheRead {
+        let Some(receiver) = receiver else {
             return FieldCacheRead::Generic;
         };
         let site = self.field_cache_index(site);

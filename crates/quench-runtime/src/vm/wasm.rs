@@ -1603,8 +1603,8 @@ impl<H: Host> Vm<H> {
                 if value.is_null() {
                     return nullable;
                 }
-                match self.heap.get(value) {
-                    Some(Cell::Function {
+                match self.heap.function(value) {
+                    Some(FunctionRecord {
                         kind: FunctionKind::User(program, function),
                         ..
                     }) => self.programs.wasm_signatures(*program).is_some_and(|pool| {
@@ -1612,7 +1612,7 @@ impl<H: Host> Vm<H> {
                             pool.matches_declaration(actual, declarations, index, exact)
                         })
                     }),
-                    Some(Cell::Function {
+                    Some(FunctionRecord {
                         kind: FunctionKind::Native(Native::WasmHost),
                         ..
                     }) => self
@@ -3342,6 +3342,7 @@ mod tests {
 
     #[test]
     fn compiled_wasm_fallback_caller_keeps_native_callee_entries() {
+        crate::wasm::COMPILED_CALLS_KEPT_FOR_TEST.with(|kept| kept.set(true));
         let caller_signature = crate::WasmSignature {
             params: vec![],
             results: vec![crate::WasmType::I32],
@@ -3467,6 +3468,7 @@ mod tests {
 
     #[test]
     fn compiled_wasm_known_fallback_offsets_defined_index_by_import_count() {
+        crate::wasm::COMPILED_CALLS_KEPT_FOR_TEST.with(|kept| kept.set(true));
         let signature = crate::WasmSignature {
             params: vec![],
             results: vec![crate::WasmType::I32],

@@ -218,7 +218,7 @@ impl<H: Host> Vm<H> {
     /// `ordinary_instanceof_walk`.
     #[inline(always)]
     pub(super) fn steady_instanceof(&self, value: Value, constructor: Value) -> Option<bool> {
-        let Some(Cell::Function { kind, object, .. }) = self.heap.get(constructor) else {
+        let Some(FunctionRecord { kind, object, .. }) = self.heap.function(constructor) else {
             return None;
         };
         if matches!(kind, FunctionKind::Native(Native::FunctionBoundCall)) {
@@ -254,7 +254,7 @@ impl<H: Host> Vm<H> {
     /// `ordinary_instanceof` in full: whatever its steady case leaves.
     #[inline(never)]
     fn ordinary_instanceof_walk(&mut self, value: Value, constructor: Value) -> Option<bool> {
-        let Some(Cell::Function { kind, object, .. }) = self.heap.get(constructor) else {
+        let Some(FunctionRecord { kind, object, .. }) = self.heap.function(constructor) else {
             return None;
         };
         if matches!(kind, FunctionKind::Native(Native::FunctionBoundCall)) {
@@ -373,8 +373,8 @@ impl<H: Host> Vm<H> {
         let native = !attributes.accessor
             && self.symbol_property(holder, symbol).is_some_and(|method| {
                 matches!(
-                    self.heap.get(method),
-                    Some(Cell::Function {
+                    self.heap.function(method),
+                    Some(FunctionRecord {
                         kind: FunctionKind::Native(Native::FunctionPrototypeHasInstance),
                         ..
                     })
@@ -397,8 +397,8 @@ impl<H: Host> Vm<H> {
             if !vm.is_function(constructor) {
                 return Ok(false);
             }
-            let bound_env = match vm.heap.get(constructor) {
-                Some(Cell::Function {
+            let bound_env = match vm.heap.function(constructor) {
+                Some(FunctionRecord {
                     kind: FunctionKind::Native(Native::FunctionBoundCall),
                     env,
                     ..

@@ -43,7 +43,7 @@ impl<H: Host> Vm<H> {
                     if let DiagnosticProperty::Data(constructor) =
                         self.diagnostic_own_property(current, PropertyKey::string(key))
                     {
-                        if matches!(self.heap.get(constructor), Some(Cell::Function { kind, .. }) if !matches!(kind, FunctionKind::Native(Native::FunctionBoundCall)))
+                        if matches!(self.heap.function(constructor), Some(FunctionRecord { kind, .. }) if !matches!(kind, FunctionKind::Native(Native::FunctionBoundCall)))
                         {
                             if let Some(name) = self
                                 .original_debug_name(constructor)
@@ -97,6 +97,9 @@ impl<H: Host> Vm<H> {
                 "Object"
             };
         }
+        if self.heap.is_function_value(value) {
+            return "Function";
+        }
         match self.heap.get(value) {
             Some(Cell::ArrayBuffer { shared: true, .. }) => "SharedArrayBuffer",
             Some(Cell::ArrayBuffer { .. }) => "ArrayBuffer",
@@ -117,7 +120,6 @@ impl<H: Host> Vm<H> {
             Some(Cell::WeakSet { .. }) => "WeakSet",
             Some(Cell::Date { .. }) => "Date",
             Some(Cell::RegExp { .. }) => "RegExp",
-            Some(Cell::Function { .. }) => "Function",
             Some(Cell::Iterator { kind, .. }) => match kind {
                 kind if kind.is_array_iterator() => "Array Iterator",
                 IteratorKind::MapKeys | IteratorKind::MapValues | IteratorKind::MapEntries => {

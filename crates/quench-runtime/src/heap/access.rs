@@ -1,5 +1,5 @@
 use super::{
-    ArrayObject, Cell, EnvironmentBindings, EnvironmentSlot, EnvironmentSlotState, EnvironmentSlots, Heap, Object,
+    ArrayObject, Cell, EnvironmentBindings, FunctionRecord, PromiseCell, EnvironmentSlot, EnvironmentSlotState, EnvironmentSlots, Heap, Object,
 };
 use crate::bytecode::Atom;
 use crate::value::{HeapReference, Value};
@@ -197,7 +197,69 @@ impl Heap {
             // SAFETY: a direct-array Value names an initialized array record.
             return Some(unsafe { self.array_records.get_live(record_id) });
         }
+        if let Some(record_id) = value.direct_function_index() {
+            // SAFETY: a direct-function Value names an initialized function record.
+            return Some(&unsafe { self.function_records.get_live(record_id) }.object);
+        }
+        if let Some(record_id) = value.direct_promise_index() {
+            // SAFETY: a direct-promise Value names an initialized promise record.
+            return Some(&unsafe { self.promise_records.get_live(record_id) }.object);
+        }
         self.get(value)?.object()
+    }
+
+    /// A promise, in its record or in a slot (`PromiseCell`).
+    #[inline(always)]
+    pub(crate) fn promise(&self, value: Value) -> Option<&PromiseCell> {
+        if let Some(record_id) = value.direct_promise_index() {
+            // SAFETY: a direct-promise Value names an initialized promise record.
+            return Some(unsafe { self.promise_records.get_live(record_id) });
+        }
+        match self.get(value)? {
+            Cell::Promise(promise) => Some(promise),
+            _ => None,
+        }
+    }
+
+    /// `promise`, mutably, past the write barrier.
+    pub(crate) fn promise_mut(&mut self, value: Value) -> Option<&mut PromiseCell> {
+        if let Some(record_id) = value.direct_promise_index() {
+            // SAFETY: direct-promise Values name live records; `&mut self` is exclusive.
+            return Some(unsafe { self.promise_records.get_live_mut(record_id) });
+        }
+        match self.get_mut(value)? {
+            Cell::Promise(promise) => Some(promise),
+            _ => None,
+        }
+    }
+
+    /// A function, in its record or in a slot (`FunctionRecord`).
+    #[inline(always)]
+    pub(crate) fn function(&self, value: Value) -> Option<&FunctionRecord> {
+        if let Some(record_id) = value.direct_function_index() {
+            // SAFETY: a direct-function Value names an initialized function record.
+            return Some(unsafe { self.function_records.get_live(record_id) });
+        }
+        match self.get(value)? {
+            Cell::Function(function) => Some(function),
+            _ => None,
+        }
+    }
+
+    /// `function`, mutably, past the write barrier.
+    pub(crate) fn function_mut(&mut self, value: Value) -> Option<&mut FunctionRecord> {
+        if let Some(record_id) = value.direct_function_index() {
+            // SAFETY: direct-function Values name live records; `&mut self` is exclusive.
+            return Some(unsafe { self.function_records.get_live_mut(record_id) });
+        }
+        match self.get_mut(value)? {
+            Cell::Function(function) => Some(function),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn is_function_value(&self, value: Value) -> bool {
+        self.function(value).is_some()
     }
 
     #[inline(always)]
@@ -209,6 +271,14 @@ impl Heap {
         if let Some(record_id) = value.direct_array_index() {
             // SAFETY: direct-array Values name live records; `&mut self` is exclusive.
             return Some(unsafe { self.array_records.get_live_mut(record_id) });
+        }
+        if let Some(record_id) = value.direct_function_index() {
+            // SAFETY: direct-function Values name live records; `&mut self` is exclusive.
+            return Some(&mut unsafe { self.function_records.get_live_mut(record_id) }.object);
+        }
+        if let Some(record_id) = value.direct_promise_index() {
+            // SAFETY: direct-promise Values name live records; `&mut self` is exclusive.
+            return Some(&mut unsafe { self.promise_records.get_live_mut(record_id) }.object);
         }
         self.get_mut(value)?.object_mut()
     }
@@ -224,6 +294,18 @@ impl Heap {
         if let Some(record_id) = value.direct_array_index() {
             // SAFETY: direct-array Values name live records; `&mut self` is exclusive.
             return Some(unsafe { self.array_records.get_live_mut_storing(record_id, stored) });
+        }
+        if let Some(record_id) = value.direct_function_index() {
+            // SAFETY: direct-function Values name live records; `&mut self` is exclusive.
+            return Some(
+                &mut unsafe { self.function_records.get_live_mut_storing(record_id, stored) }.object,
+            );
+        }
+        if let Some(record_id) = value.direct_promise_index() {
+            // SAFETY: direct-promise Values name live records; `&mut self` is exclusive.
+            return Some(
+                &mut unsafe { self.promise_records.get_live_mut_storing(record_id, stored) }.object,
+            );
         }
         self.get_mut(value)?.object_mut()
     }
@@ -262,6 +344,8 @@ impl Heap {
         let Self {
             object_records,
             array_records,
+            function_records,
+            promise_records,
             slots,
             properties,
             ..
@@ -275,6 +359,14 @@ impl Heap {
             HeapReference::ArrayRecord(record_id) => unsafe {
                 array_records.get_live_mut(record_id)
             },
+            // SAFETY: direct-function Values name live records; `&mut self` is exclusive.
+            HeapReference::FunctionRecord(record_id) => {
+                &mut unsafe { function_records.get_live_mut(record_id) }.object
+            }
+            // SAFETY: direct-promise Values name live records; `&mut self` is exclusive.
+            HeapReference::PromiseRecord(record_id) => {
+                &mut unsafe { promise_records.get_live_mut(record_id) }.object
+            }
             HeapReference::LegacySlot(index) => {
                 slots.get_mut(index as usize)?.cell.as_mut()?.object_mut()?
             }
@@ -348,10 +440,12 @@ impl Heap {
     pub(crate) fn ordinary_object(&self, value: Value) -> Option<&Object> {
         match self.object_record(value) {
             Some(object) => Some(object),
-            None => match self.get(value)? {
-                Cell::Object(object) => Some(object),
-                Cell::Promise(promise) => Some(&promise.object),
-                _ => None,
+            None => match self.promise(value) {
+                Some(promise) => Some(&promise.object),
+                None => match self.get(value)? {
+                    Cell::Object(object) => Some(object),
+                    _ => None,
+                },
             },
         }
     }
@@ -361,6 +455,10 @@ impl Heap {
         Some(self.object_record_by_id(record_id))
     }
 
+    /// The object of an object, array or promise record, whose field reads the field cache
+    /// answers by shape alone (a promise's internal slots change no object operation). A
+    /// function's restricted properties (`AtomClass`) need its kind, so a function record,
+    /// like a slot, takes the cell-aware path.
     pub(crate) fn record_object(&self, reference: HeapReference) -> Option<&Object> {
         match reference {
             HeapReference::ObjectRecord(record_id) => Some(self.object_record_by_id(record_id)),
@@ -368,7 +466,11 @@ impl Heap {
                 // SAFETY: the tagged Value identifies an initialized live array record.
                 Some(unsafe { self.array_records.get_live(record_id) })
             }
-            HeapReference::LegacySlot(_) => None,
+            HeapReference::PromiseRecord(record_id) => {
+                // SAFETY: the tagged Value identifies an initialized live promise record.
+                Some(&unsafe { self.promise_records.get_live(record_id) }.object)
+            }
+            HeapReference::FunctionRecord(_) | HeapReference::LegacySlot(_) => None,
         }
     }
 
@@ -385,20 +487,20 @@ impl Heap {
     }
 
     pub(crate) fn is_live(&self, value: Value) -> bool {
-        if let Some(record_id) = value.direct_object_index() {
-            return self.object_records.is_live(record_id);
+        match value.heap_reference() {
+            Some(HeapReference::LegacySlot(_)) => self.get(value).is_some(),
+            Some(HeapReference::ObjectRecord(id)) => self.object_records.is_live(id),
+            Some(HeapReference::ArrayRecord(id)) => self.array_records.is_live(id),
+            Some(HeapReference::FunctionRecord(id)) => self.function_records.is_live(id),
+            Some(HeapReference::PromiseRecord(id)) => self.promise_records.is_live(id),
+            None => false,
         }
-        if let Some(record_id) = value.direct_array_index() {
-            return self.array_records.is_live(record_id);
-        }
-        self.get(value).is_some()
     }
 
     pub(super) fn for_each_live_value(&self, mut visit: impl FnMut(Value)) {
-        self.object_records
-            .for_each_live(|record_id, _| visit(Value::direct_object(record_id)));
-        self.array_records
-            .for_each_live(|record_id, _| visit(Value::direct_array(record_id)));
+        for (family, handle) in self.record_families() {
+            family.for_each_live_id(&mut |record_id| visit(handle(record_id)));
+        }
         for (index, slot) in self.slots.iter().enumerate() {
             if slot.is_live() {
                 visit(Value::heap(index as u32));
