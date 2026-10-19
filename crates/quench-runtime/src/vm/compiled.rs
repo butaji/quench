@@ -6118,6 +6118,54 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// Call an already-promoted JavaScript tier before the generic path pushes
+    /// a callee frame. The native subset is pure and has a guarded Number ABI;
+    /// misses stay on the ordinary frame path.
+    pub(super) fn js_jit_compiled_call(
+        programs: &mut ProgramStore,
+        program_id: ProgramId,
+        program: &ResidualProgram,
+        function_id: u32,
+        arguments: &[Value],
+    ) -> Option<Value> {
+        if cfg!(any(
+            feature = "profile-aggregate",
+            feature = "profile-trace",
+            feature = "profile-memory",
+            feature = "profile-gc-time"
+        )) || program.kind == crate::bytecode::ProgramKind::Wasm
+        {
+            return None;
+        }
+        let function = program.functions.get(function_id as usize)?;
+        let compiled = match programs.js_tier(program_id, function_id)? {
+            super::program_store::JsTierState::Compiled(compiled) => compiled,
+            _ => return None,
+        };
+        let params = usize::from(function.params);
+        if compiled.params() != params || arguments.len() < params {
+            return None;
+        }
+        let mut numeric_arguments: smallvec::SmallVec<[f64; 8]> = smallvec::SmallVec::new();
+        for argument in arguments.iter().take(params) {
+            numeric_arguments.push(argument.as_number()?);
+        }
+        if programs.js_jit_diagnostics_enabled() {
+            programs.record_js_jit_entry(program_id, function_id, true);
+            programs.record_js_jit_native_entry(program_id, function_id);
+        }
+        match compiled.call(&numeric_arguments) {
+            CompiledJsResult::Number(value) => Some(Value::number(value)),
+            CompiledJsResult::Boolean(value) => {
+                Some(if value { Value::TRUE } else { Value::FALSE })
+            }
+            CompiledJsResult::StringReturnPc(return_pc) => {
+                let constant = compiled.string_constant_for_return(return_pc)?;
+                programs.constant(program_id, constant as usize)
+            }
+        }
+    }
+
     /// Compile every function of `program` that has a compiled denotation,
     /// with `env` as the instance whose bindings fix global types and memory.
     fn compile_program(&self, program: ProgramId, env: Value) -> Option<CompiledProgram> {
