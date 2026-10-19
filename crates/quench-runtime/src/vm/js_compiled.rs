@@ -32,8 +32,15 @@ pub(super) struct JsJitFieldArgument {
     pub(super) entry_pc: usize,
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct JsJitCaptureArgument {
+    pub(super) depth: u16,
+    pub(super) slot: u16,
+}
+
 pub(super) enum JsJitResultKind {
     Number,
+    CaptureNumber(JsJitCaptureArgument),
     NumberInterruptible,
     StringHashLoop,
     StringTransform(JsJitStringTransform),
@@ -62,6 +69,9 @@ pub(super) fn compile(program: &ResidualProgram, function_id: u32) -> Option<JsJ
         return None;
     }
     let function = program.functions.get(function_id as usize)?;
+    if let Some(capture) = number_capture_candidate(function) {
+        return compile_capture_number(function_id, capture);
+    }
     if string_hash_loop_candidate(program, function) {
         return compile_string_hash_loop(program, function_id, function);
     }
@@ -84,6 +94,73 @@ pub(super) fn compile(program: &ResidualProgram, function_id: u32) -> Option<JsJ
     } else {
         compile_numeric(program, function_id)
     }
+}
+
+/// A pure captured numeric value can be specialized to a native identity entry.
+/// The VM reloads the capture for every call, so lexical mutation stays visible.
+pub(super) fn number_capture_candidate(function: &Function) -> Option<JsJitCaptureArgument> {
+    if function.params != 0
+        || function.code.len() < 2
+        || !function.wide.is_empty()
+        || !function.handlers.is_empty()
+        || function.is_async
+        || function.is_generator
+        || function.is_class_constructor
+        || function.derived_constructor
+        || function.code[0].as_wide().op() != Op::LoadCapture
+        || function.code[1].as_wide().op() != Op::Return
+        || function.code[0].as_wide().result_register() != function.code[1].as_wide().register_a()
+        || function.code.last()?.as_wide().op() != Op::Return
+        || function.code.last()?.as_wide().register_a() != function.code[1].as_wide().register_a()
+    {
+        return None;
+    }
+    let capture = function.code[0].as_wide();
+    Some(JsJitCaptureArgument {
+        depth: capture.capture_depth(),
+        slot: capture.capture_slot(),
+    })
+}
+
+fn compile_capture_number(
+    function_id: u32,
+    capture: JsJitCaptureArgument,
+) -> Option<JsJitArtifact> {
+    let isa = super::jit_backend::target_isa("speed", true)?;
+    let mut signature = ir::Signature::new(isa.default_call_conv());
+    signature.params.push(AbiParam::new(types::F64));
+    signature.returns.push(AbiParam::new(types::F64));
+    let mut native =
+        ir::Function::with_name_signature(UserFuncName::user(0x5155_454e, function_id), signature);
+    let mut context = FunctionBuilderContext::new();
+    let mut builder = FunctionBuilder::new(&mut native, &mut context);
+    let entry = builder.create_block();
+    builder.append_block_params_for_function_params(entry);
+    builder.switch_to_block(entry);
+    let value = builder.block_params(entry)[0];
+    builder.ins().return_(&[value]);
+    builder.seal_all_blocks();
+    builder.finalize(isa.frontend_config());
+    let mut context = cranelift_codegen::Context::for_function(native);
+    let compiled = context
+        .compile(
+            &*isa,
+            &mut cranelift_codegen::control::ControlPlane::default(),
+        )
+        .ok()?;
+    if !compiled.buffer.relocs().is_empty() {
+        return None;
+    }
+    let code = compiled.code_buffer().to_vec();
+    if code.is_empty() || code.len() > MAX_CODE_BYTES {
+        return None;
+    }
+    Some(JsJitArtifact {
+        code,
+        params: 0,
+        result: JsJitResultKind::CaptureNumber(capture),
+        field_argument: None,
+    })
 }
 
 /// Stable top-level rejection category for a hot candidate that did not
