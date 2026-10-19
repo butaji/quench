@@ -238,8 +238,8 @@ impl<H: Host> Vm<H> {
             B::ArgumentsObject => self
                 .object_data(value)
                 .is_some_and(Object::is_arguments_object),
-            B::AsyncFunction | B::GeneratorFunction => match cell {
-                Some(Cell::Function {
+            B::AsyncFunction | B::GeneratorFunction => match self.heap.function(value) {
+                Some(FunctionRecord {
                     kind:
                         FunctionKind::User(program, function)
                         | FunctionKind::NumericUser(program, function),
@@ -261,15 +261,15 @@ impl<H: Host> Vm<H> {
                 _ => false,
             },
             B::GeneratorObject => matches!(
-                cell,
-                Some(Cell::Iterator {
+                self.heap.iterator(value),
+                Some(IteratorRecord {
                     kind: IteratorKind::Generator | IteratorKind::AsyncGenerator,
                     ..
                 })
             ),
             B::MapIterator => matches!(
-                cell,
-                Some(Cell::Iterator {
+                self.heap.iterator(value),
+                Some(IteratorRecord {
                     kind: IteratorKind::MapKeys
                         | IteratorKind::MapValues
                         | IteratorKind::MapEntries,
@@ -277,8 +277,8 @@ impl<H: Host> Vm<H> {
                 })
             ),
             B::SetIterator => matches!(
-                cell,
-                Some(Cell::Iterator {
+                self.heap.iterator(value),
+                Some(IteratorRecord {
                     kind: IteratorKind::SetValues | IteratorKind::SetEntries,
                     ..
                 })
@@ -404,16 +404,16 @@ impl<H: Host> Vm<H> {
     pub(crate) fn embedding_collection_preview(&self, root: RootId) -> Result<Option<crate::CollectionPreview<Value>>, JsError> {
         use crate::CollectionPreview;
         let value = self.embedding_value(root)?;
-        let preview = match self.heap.get(value) {
-            Some(Cell::Map { entries, .. }) => CollectionPreview {
+        let preview = match (self.heap.iterator(value), self.heap.get(value)) {
+            (_, Some(Cell::Map { entries, .. })) => CollectionPreview {
                 entries: entries.iter().flat_map(|(key, value)| [key, value]).collect(), is_key_value: true,
             },
-            Some(Cell::Set { entries, .. }) => CollectionPreview { entries: entries.to_vec(), is_key_value: false },
-            Some(Cell::WeakMap { entries, .. }) => CollectionPreview {
+            (_, Some(Cell::Set { entries, .. })) => CollectionPreview { entries: entries.to_vec(), is_key_value: false },
+            (_, Some(Cell::WeakMap { entries, .. })) => CollectionPreview {
                 entries: entries.iter().flat_map(|&(key, value)| [key, value]).collect(), is_key_value: true,
             },
-            Some(Cell::WeakSet { entries, .. }) => CollectionPreview { entries: entries.to_vec(), is_key_value: false },
-            Some(Cell::Iterator { source, kind, index, done, ext, .. }) => {
+            (_, Some(Cell::WeakSet { entries, .. })) => CollectionPreview { entries: entries.to_vec(), is_key_value: false },
+            (Some(IteratorRecord { source, kind, index, done, ext, .. }), _) => {
                 let is_key_value = match kind {
                     IteratorKind::MapKeys | IteratorKind::MapValues | IteratorKind::SetValues => false,
                     IteratorKind::MapEntries | IteratorKind::SetEntries => true,
@@ -446,7 +446,7 @@ impl<H: Host> Vm<H> {
                 }
                 CollectionPreview { entries: output, is_key_value }
             }
-            _ => return Ok(None),
+            (_, _) => return Ok(None),
         };
         Ok(Some(preview))
     }
@@ -667,6 +667,7 @@ impl<H: Host> Vm<H> {
             Some(Cell::Map { .. }) => "#<Map>".into(),
             Some(Cell::Set { .. }) => "#<Set>".into(),
             Some(cell) => format!("[object {}]", Self::diagnostic_class_name(cell)),
+            None if self.heap.is_function_value(value) => "[object Function]".into(),
             None => "[object Unknown]".into(),
         }
     }
@@ -733,7 +734,7 @@ impl<H: Host> Vm<H> {
             Cell::Set { .. } => "Set",
             Cell::Date { .. } => "Date",
             Cell::RegExp { .. } => "RegExp",
-            Cell::Function { .. } => "Function",
+            Cell::Function(_) => "Function",
             Cell::Error(_) => "Error",
             _ => "Object",
         }
@@ -1435,6 +1436,16 @@ impl<H: Host> Vm<H> {
         let program = self.embedding_program()?;
         let key = PropertyKey::string(self.intern_atom(name));
         self.materialize_lazy_data_property(&program, holder, key)
+    }
+
+    pub(crate) fn is_pending_lazy_data_property_rooted(
+        &mut self,
+        holder: RootId,
+        name: &str,
+    ) -> Result<bool, JsError> {
+        let holder = self.embedding_value(holder)?;
+        let key = PropertyKey::string(self.intern_atom(name));
+        Ok(self.is_pending_lazy_data_property(holder, key))
     }
 
     pub(crate) fn define_lazy_data_properties_rooted(

@@ -27,15 +27,18 @@ impl<H: Host> Vm<H> {
             Proxied(Value),
             Current,
         }
-        let origin = match self.heap.get(function) {
-            Some(Cell::Function {
-                kind: FunctionKind::Native(Native::FunctionBoundCall),
-                env,
-                ..
-            }) => Origin::Bound(*env),
-            Some(Cell::Function { object, .. }) => Origin::Own(object.realm),
-            Some(Cell::Proxy { handler, .. }) if handler.is_null() => Origin::Revoked,
-            Some(Cell::Proxy { target, .. }) => Origin::Proxied(*target),
+        let origin = match (self.heap.function(function), self.heap.get(function)) {
+            (
+                Some(FunctionRecord {
+                    kind: FunctionKind::Native(Native::FunctionBoundCall),
+                    env,
+                    ..
+                }),
+                _,
+            ) => Origin::Bound(*env),
+            (Some(FunctionRecord { realm, .. }), _) => Origin::Own(*realm),
+            (None, Some(Cell::Proxy { handler, .. })) if handler.is_null() => Origin::Revoked,
+            (None, Some(Cell::Proxy { target, .. })) => Origin::Proxied(*target),
             _ => Origin::Current,
         };
         match origin {
@@ -132,7 +135,7 @@ impl<H: Host> Vm<H> {
     /// function definition starts with, which SetFunctionName replaces; `None` for anything
     /// else, which keeps its name.
     fn inferred_function_name_slot(&self, function: Value) -> Option<usize> {
-        if !matches!(self.heap.get(function), Some(Cell::Function { .. })) {
+        if !self.heap.is_function_value(function) {
             return None;
         }
         let name_atom = self.runtime_atoms.name;
@@ -144,16 +147,17 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn is_constructable(&self, p: &ResidualProgram, value: Value) -> bool {
-        let Some(cell) = self.heap.get(value) else {
-            return false;
+        let Some(FunctionRecord { kind, env, .. }) = self.heap.function(value) else {
+            return matches!(
+                self.heap.get(value),
+                Some(Cell::Proxy {
+                    kind: ProxyKind::Constructor,
+                    ..
+                })
+            );
         };
-        match cell {
-            Cell::Proxy { kind, .. } => *kind == ProxyKind::Constructor,
-            Cell::Function { kind, .. } => match kind {
-                FunctionKind::Native(Native::HostFunction) => {
-                    let Cell::Function { env, .. } = cell else { unreachable!() };
-                    self.host_function_constructible(*env)
-                }
+        match kind {
+                FunctionKind::Native(Native::HostFunction) => self.host_function_constructible(*env),
                 FunctionKind::User(program_id, id) | FunctionKind::NumericUser(program_id, id) => {
                     self.programs.get(*program_id).is_some_and(|program| {
                         program.functions.get(*id as usize).is_some_and(|function| {
@@ -163,9 +167,6 @@ impl<H: Host> Vm<H> {
                     })
                 }
                 FunctionKind::Native(Native::FunctionBoundCall) => {
-                    let Cell::Function { env, .. } = cell else {
-                        return false;
-                    };
                     self.lookup_atom("\0quench:bound-target")
                         .and_then(|atom| self.own_property(*env, atom))
                         .is_some_and(|target| self.is_constructable(p, target))
@@ -252,8 +253,6 @@ impl<H: Host> Vm<H> {
                         | Native::WasmLinkError
                         | Native::WasmRuntimeError
                 ),
-            },
-            _ => false,
         }
     }
 
@@ -326,11 +325,9 @@ impl<H: Host> Vm<H> {
             (false, false) => Native::Function,
         };
         let function_object_prototype = self.realm.intrinsics.builtin_prototypes[&(realm, intrinsic)];
-        let function = self.heap.alloc(Cell::Function {
-            object: Box::new(crate::heap::FunctionObject {
-                object: Self::empty_object(function_object_prototype),
-                realm: realm,
-            }),
+        let function = self.heap.alloc_function(FunctionRecord {
+            object: Self::empty_object(function_object_prototype),
+            realm,
             kind: match function_plan.dispatch {
                 DispatchClass::General => FunctionKind::User(self.active_program, id),
                 DispatchClass::Numeric => FunctionKind::NumericUser(self.active_program, id),
@@ -503,15 +500,14 @@ impl<H: Host> Vm<H> {
                 if !vm.is_constructable(p, new_target) {
                     return Err(vm.type_error(p, "newTarget is not a constructor".into()));
                 }
-                let (kind, derived_constructor) = match vm.heap.get(callee) {
-                    Some(Cell::Function { kind, .. }) => {
+                let (kind, derived_constructor) = match vm.heap.function(callee) {
+                    Some(FunctionRecord { kind, .. }) => {
                         let derived = match kind {
                             FunctionKind::User(program_id, id)
                             | FunctionKind::NumericUser(program_id, id) => {
                                 vm.programs.get(*program_id).is_some_and(|program| {
                                     program
-                                        .functions
-                                        .get(*id as usize)
+                                        .function_get(*id as usize)
                                         .is_some_and(|function| function.derived_constructor)
                                 })
                             }
@@ -529,7 +525,7 @@ impl<H: Host> Vm<H> {
                             vm.type_error(p, "function belongs to an unavailable program".into())
                         );
                     };
-                    let Some(function) = program.functions.get(id as usize) else {
+                    let Some(function) = program.function_get(id as usize) else {
                         return Err(vm.type_error(p, "function index is outside its program".into()));
                     };
                     if !function.constructible {
@@ -549,8 +545,8 @@ impl<H: Host> Vm<H> {
                     }
                 }
                 if let FunctionKind::Native(Native::FunctionBoundCall) = kind {
-                    let env = match vm.heap.get(callee) {
-                        Some(Cell::Function { env, .. }) => *env,
+                    let env = match vm.heap.function(callee) {
+                        Some(FunctionRecord { env, .. }) => *env,
                         _ => return Err(vm.type_error(p, "invalid bound function".into())),
                     };
                     let target_atom = vm.intern_atom("\0quench:bound-target");
@@ -678,28 +674,28 @@ impl<H: Host> Vm<H> {
             || self.construct_target.is_some()
             || self.direct_eval
             || self.parameter_eval
-            || p.functions.get(caller.function as usize)?.dispatch != DispatchClass::General
+            || p.function_get(caller.function as usize)?.dispatch != DispatchClass::General
         {
             return None;
         }
-        let Some(Cell::Function {
+        let Some(FunctionRecord {
             kind: FunctionKind::User(program_id, id),
             env,
-            object,
+            realm,
             ..
-        }) = self.heap.get(callee)
+        }) = self.heap.function(callee)
         else {
             return None;
         };
         let (program_id, id, env) = (*program_id, *id, *env);
-        if object.realm != self.realm.globals
+        if *realm != self.realm.globals
             || program_id != caller.program
             || program_id != self.active_program
             || id == super::ROOT_FUNCTION_ID
         {
             return None;
         }
-        if !Self::inline_constructible(p.functions.get(id as usize)?) {
+        if !Self::inline_constructible(p.function_get(id as usize)?) {
             return None;
         }
         Some((id, env, self.inline_construct_receiver(callee)?))
@@ -744,10 +740,7 @@ impl<H: Host> Vm<H> {
         prototype_atom: Atom,
     ) -> Option<Value> {
         debug_assert_eq!(self.known_prototype_atom(), Some(prototype_atom));
-        let Some(cell @ Cell::Function { .. }) = self.heap.get(constructor) else {
-            return None;
-        };
-        let object = cell.object()?;
+        let object = &self.heap.function(constructor)?.object;
         let shape = object.shape();
         let key = PropertyKey::string(prototype_atom);
         let data_slot = || {
@@ -776,10 +769,7 @@ impl<H: Host> Vm<H> {
     /// `constructor`'s own shape and the slot of its own data `prototype` there, for a shape
     /// that fixes both (not a dictionary) once `own_function_prototype_data` has found it.
     pub(super) fn function_prototype_layout(&self, constructor: Value) -> Option<(u32, usize)> {
-        let Some(cell @ Cell::Function { .. }) = self.heap.get(constructor) else {
-            return None;
-        };
-        let shape = cell.object()?.shape();
+        let shape = self.heap.function(constructor)?.object.shape();
         if self.shape_is_dictionary(shape) {
             return None;
         }
@@ -797,7 +787,7 @@ impl<H: Host> Vm<H> {
         constructor: Value,
         (shape, slot): (u32, usize),
     ) -> Option<Value> {
-        let Some(Cell::Function { object, .. }) = self.heap.get(constructor) else {
+        let Some(FunctionRecord { object, .. }) = self.heap.function(constructor) else {
             return None;
         };
         if object.shape() != shape {

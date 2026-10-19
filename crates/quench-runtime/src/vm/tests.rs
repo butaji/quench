@@ -203,9 +203,9 @@ fn promoted_locals_preserve_order_and_survive_collection() {
     );
 
     // Every binding here stays in a register, including those written inside expressions.
-    assert_eq!(program.functions[1].local_registers.len(), 3);
-    assert_eq!(program.functions[2].local_registers.len(), 1);
-    assert_eq!(program.functions[3].local_registers.len(), 1);
+    assert_eq!(program.function(1).local_registers.len(), 3);
+    assert_eq!(program.function(2).local_registers.len(), 1);
+    assert_eq!(program.function(3).local_registers.len(), 1);
 }
 
 #[test]
@@ -423,6 +423,7 @@ fn repeated_normal_closures_reuse_function_descriptor_shapes() {
         "closure-shape-transition.js",
     )
     .unwrap();
+    program.compile_released();
     let closure_id = program
         .functions
         .iter()
@@ -459,6 +460,7 @@ fn closures_share_on_demand_function_source_and_program_roots_it() {
         "closure-source-cache.js",
     )
     .unwrap();
+    program.compile_released();
     let inner = program
         .functions
         .iter()
@@ -800,6 +802,7 @@ fn loop_clones_reset_bindings_of_scopes_out_of_reach() {
         "loop-clone-reset.js",
     )
     .unwrap();
+    program.compile_released();
     let plans: Vec<_> = program
         .functions
         .iter()
@@ -1206,7 +1209,7 @@ fn promise_record_edges_follow_promise_and_resolver_lifetime() {
     vm.collect_now(&program);
     assert!(vm.heap.weak_value(promise_weak).is_none());
     assert!(vm.heap.weak_value(result_weak).is_none());
-    assert!(!vm.is_promise(promise));
+    assert!(!vm.heap.is_live(promise));
 }
 
 #[test]
@@ -2939,7 +2942,7 @@ fn module_namespace_operations_share_uninitialized_export_errors() {
             let namespace = vm.object();
             let atom = vm.intern_atom("answer");
             vm.set_property(namespace, atom, Value::UNDEFINED).unwrap();
-            let slot = program.functions[0]
+            let slot = program.function(0)
                 .local_atoms
                 .iter()
                 .position(|candidate| *candidate == atom)
@@ -2947,7 +2950,7 @@ fn module_namespace_operations_share_uninitialized_export_errors() {
             let environment = vm.heap.alloc(crate::heap::Cell::Environment {
                 parent: Value::NULL,
                 function: super::ROOT_FUNCTION_ID,
-                slots: vec![Value::DELETED; program.functions[0].local_atoms.len()]
+                slots: vec![Value::DELETED; program.function(0).local_atoms.len()]
                     .into_boxed_slice()
                     .into(),
                 scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
@@ -4351,11 +4354,9 @@ fn closure_identity_cache_rejects_reused_function_slots() {
     assert!(!vm.function_values.contains_key(&key));
     let mut reused = false;
     for _ in 0..allocation_bound {
-        let replacement = vm.heap.alloc(crate::heap::Cell::Function {
-            object: Box::new(crate::heap::FunctionObject {
-                object: Vm::<SilentHost>::empty_object(Value::NULL),
-                realm: Value::NULL,
-            }),
+        let replacement = vm.heap.alloc_function(crate::heap::FunctionRecord {
+            object: Vm::<SilentHost>::empty_object(Value::NULL),
+            realm: Value::NULL,
             kind: crate::heap::FunctionKind::User(key.0, key.1),
             env: Value::NULL,
         });
@@ -4517,7 +4518,7 @@ fn dynamic_import_waiters_are_rooted_while_queued_and_during_batch_evaluation() 
         vm.collect_now(&program);
         for (promise, weak) in promises {
             assert!(vm.heap.weak_value(weak).is_none());
-            assert!(!vm.is_promise(promise));
+            assert!(!vm.heap.is_live(promise));
         }
     }
 }
@@ -4566,11 +4567,8 @@ fn async_continuation_lifetime_follows_reachable_callbacks_and_jobs() {
 
 fn pending_await_continuations(vm: &mut Vm<SilentHost>) -> usize {
     let mut pending = 0;
-    vm.heap.for_each_cell(|cell| {
-        if let crate::heap::Cell::AwaitState(state) = cell {
-            pending += usize::from(state.continuation.is_some());
-        }
-    });
+    vm.heap
+        .for_each_await_state(|state| pending += usize::from(state.continuation.is_some()));
     pending
 }
 
@@ -4635,8 +4633,8 @@ fn await_state_traces_its_continuation_until_a_reaction_takes_it() {
     assert!(vm.heap.is_live(held));
     assert!(vm.heap.is_live(original));
     assert!(vm.heap.is_live(scope));
-    let take = |vm: &mut Vm<SilentHost>| match vm.heap.get_mut(state) {
-        Some(crate::heap::Cell::AwaitState(state)) => state.continuation.take(),
+    let take = |vm: &mut Vm<SilentHost>| match vm.heap.await_state_mut(state) {
+        Some(state) => state.continuation.take(),
         _ => panic!("await state"),
     };
     assert_eq!(take(&mut vm).unwrap().original_arguments, [original]);
@@ -4716,6 +4714,7 @@ fn wasm_retirement_invalidates_register_reuse_after_shrinking() {
     // initialize the retired buffer, rather than set its length past capacity.
     let mut program =
         Engine::specialize("function identity(x) { return x; }", "retired-frame.js").unwrap();
+    program.compile_released();
     let function = &mut program.functions[1];
     function.registers = u16::MAX;
     function.register_roots = crate::bytecode::RegisterRoots::new(true);
@@ -6310,7 +6309,7 @@ fn proxy_revocation_consumes_captured_ownership_and_preserves_kind() {
                     );
                     if owner != "proxy" {
                         assert!(
-                            matches!(vm.heap.get(revoke),Some(super::Cell::Function {env,..}) if env.is_null())
+                            matches!(vm.heap.function(revoke),Some(crate::heap::FunctionRecord {env,..}) if env.is_null())
                         );
                         assert_eq!(
                             vm.call_value(&program, revoke, Value::UNDEFINED, &[])
@@ -6958,13 +6957,13 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
             );
             let roots = vm.heap.root_count_for_test();
             let owner = if generator {
-                let value = vm.heap.alloc(super::Cell::Iterator {
-                    object: Box::new(Vm::<SilentHost>::empty_object(Value::NULL)),
+                let value = vm.heap.alloc_iterator(crate::heap::IteratorRecord {
+                    object: Vm::<SilentHost>::empty_object(Value::NULL),
                     source: Value::NULL,
                     kind: super::IteratorKind::AsyncGenerator,
                     index: 0,
                     done: false,
-                    ext: Box::new(crate::heap::IteratorExt {
+                    ext: crate::heap::IteratorExt {
                         position_high: 0,
                         next_method: None,
                         helper: None,
@@ -6982,7 +6981,7 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                             }]
                             .into(),
                         })),
-                    }),
+                    },
                 });
                 vm.heap.root(value)
             } else {
@@ -7007,16 +7006,19 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                 );
             }
             let value = vm.heap.root_value(owner).unwrap();
-            let resumed = match vm.heap.get_mut(value) {
-                Some(super::Cell::Iterator { ext, .. }) => ext
+            let resumed = if let Some(state) = vm.heap.await_state_mut(value) {
+                *state.continuation.take().unwrap()
+            } else {
+                match vm.heap.iterator_mut(value) {
+                Some(crate::heap::IteratorRecord { ext, .. }) => ext
                     .generator
                     .as_mut()
                     .expect("generator owner")
                     .continuation
                     .take()
                     .unwrap(),
-                Some(super::Cell::AwaitState(state)) => *state.continuation.take().unwrap(),
                 _ => panic!("suspended owner"),
+                }
             };
             assert_eq!(resumed.completion, completion(completion_value));
             assert_eq!(resumed.promise, promise);
@@ -7120,8 +7122,8 @@ fn array_iterator_advance_roots_owner_and_applies_index_transition() {
                         assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
                     }
                 }
-                match vm.heap.get(iterator) {
-                    Some(super::Cell::Iterator {
+                match vm.heap.iterator(iterator) {
+                    Some(crate::heap::IteratorRecord {
                         index,
                         done,
                         source: owner,
@@ -7204,7 +7206,7 @@ fn array_iterator_retains_captured_source_after_reentrant_completion() {
         assert_eq!(vm.heap.root_count_for_test(), roots);
         assert_eq!(vm.active_call_roots.len(), calls);
         assert!(
-            matches!(vm.heap.get(iterator),Some(super::Cell::Iterator {source,index:1,done:true,..}) if source.is_undefined())
+            matches!(vm.heap.iterator(iterator),Some(crate::heap::IteratorRecord {source,index:1,done:true,..}) if source.is_undefined())
         );
         vm.collect_now(&program);
         assert!(vm.heap.weak_value(handles[0]).is_none());
@@ -7306,22 +7308,22 @@ fn iterator_close_retains_forwarded_wrappers_and_restores_scopes() {
                 let iterator = match wrapper {
                     "raw" => source,
                     "protocol" => vm.iterator_from(&program, &[source]).unwrap(),
-                    _ => vm.heap.alloc(super::Cell::Iterator {
-                        object: Box::new(Vm::<Test262Host>::empty_object(
+                    _ => vm.heap.alloc_iterator(crate::heap::IteratorRecord {
+                        object: Vm::<Test262Host>::empty_object(
                             vm.async_from_sync_iterator_proto,
-                        )),
+                        ),
                         source,
                         kind: super::IteratorKind::AsyncFromSync,
                         index: 0,
                         done: false,
-                        ext: Box::new(crate::heap::IteratorExt {
+                        ext: crate::heap::IteratorExt {
                             position_high: 0,
                             next_method: None,
                             helper: None,
                             helper_running: false,
                             helper_started: false,
                             generator: None,
-                        }),
+                        },
                     }),
                 };
                 let handles = [source, iterator].map(|v| vm.heap.weak_handle(v).unwrap());
@@ -7443,8 +7445,8 @@ fn regexp_match_all_creation_roots_fresh_species_matcher_and_inputs() {
             }
             match result {
                 Ok(iterator) => {
-                    let matcher = match vm.heap.get(iterator) {
-                        Some(super::Cell::Iterator { source, .. }) => *source,
+                    let matcher = match vm.heap.iterator(iterator) {
+                        Some(crate::heap::IteratorRecord { source, .. }) => *source,
                         _ => panic!("regexp iterator"),
                     };
                     assert!(vm.is_object_like(matcher));
@@ -7514,15 +7516,15 @@ fn regexp_iterator_advance_roots_fresh_exec_result_and_restores_scopes() {
                 let matcher = vm
                     .call_value(&program, factory, Value::UNDEFINED, &[])
                     .unwrap();
-                let iterator = vm.heap.alloc(super::Cell::Iterator {
-                    object: Box::new(Vm::<Test262Host>::empty_object(
+                let iterator = vm.heap.alloc_iterator(crate::heap::IteratorRecord {
+                    object: Vm::<Test262Host>::empty_object(
                         vm.regexp_string_iterator_proto,
-                    )),
+                    ),
                     source: matcher,
                     kind: super::IteratorKind::RegExpStringMatchAll,
                     index: 0,
                     done: false,
-                    ext: Box::new(crate::heap::IteratorExt {
+                    ext: crate::heap::IteratorExt {
                         position_high: 0,
                         next_method: None,
                         helper: Some(Box::new(
@@ -7539,7 +7541,7 @@ fn regexp_iterator_advance_roots_fresh_exec_result_and_restores_scopes() {
                         helper_running: false,
                         helper_started: false,
                         generator: None,
-                    }),
+                    },
                 });
                 let handles = [matcher, iterator].map(|v| vm.heap.weak_handle(v).unwrap());
                 let roots = vm.heap.root_count_for_test();
@@ -7587,7 +7589,7 @@ fn regexp_iterator_advance_roots_fresh_exec_result_and_restores_scopes() {
                     assert_eq!(vm.heap.weak_value(*handle), Some(value));
                 }
                 assert!(
-                    matches!(vm.heap.get(iterator),Some(super::Cell::Iterator {done,..}) if *done==(phase=="done"))
+                    matches!(vm.heap.iterator(iterator),Some(crate::heap::IteratorRecord {done,..}) if *done==(phase=="done"))
                 );
                 vm.collect_now(&program);
                 for handle in handles.into_iter().chain(result_handle) {
@@ -10717,6 +10719,7 @@ fn lexical_slots_read_only_after_initialization_become_plain_and_keep_their_dead
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::new(RecordingHost(output.clone()));
     let program = Engine::specialize(source, "lexical-initialization.js").unwrap();
+    program.compile_released();
     let proven = program
         .functions
         .iter()
@@ -10754,6 +10757,7 @@ fn anonymous_function_definitions_are_named_by_their_plan() {
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::new(RecordingHost(output.clone()));
     let program = Engine::specialize(source, "named-definitions.js").unwrap();
+    program.compile_released();
     // Closures made straight into the named value are created with the name
     // (`inferred_name`); classes, computed keys and static field values are named at run time.
     for name in ["arrow", "expression", "fallback", "method"] {
@@ -10769,6 +10773,63 @@ fn anonymous_function_definitions_are_named_by_their_plan() {
         output.borrow().as_slice(),
         ["arrow,expression,fallback,method,computed,field,klass"]
     );
+}
+
+#[test]
+fn lane_regexp_exec_keeps_last_index_and_coercion_order() {
+    // Exec calls made from frameless activations: a global pattern advances `lastIndex`,
+    // an object `lastIndex` is still converted exactly once per call, and a frozen global
+    // pattern still throws when exec writes `lastIndex`.
+    let source = r#"
+      function step(re, text) { return re.exec(text); }
+      function match(layer, text) { return step(layer.re, text); }
+      const global = { re: /a/g };
+      const seen = [];
+      for (let i = 0; i < 3; i++) {
+        const found = match(global, 'aab');
+        seen.push(found ? found.index : 'null', global.re.lastIndex);
+      }
+      let conversions = 0;
+      const plain = { re: /b/ };
+      plain.re.lastIndex = { valueOf() { conversions++; return 0; } };
+      for (let i = 0; i < 2; i++) seen.push(match(plain, 'ab').index);
+      seen.push(conversions);
+      const frozen = { re: Object.freeze(/a/g) };
+      try { match(frozen, 'a'); seen.push('no throw'); } catch (error) { seen.push(error.constructor.name); }
+      print(seen.join(','));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "lane-regexp-exec.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["0,1,1,2,null,0,1,1,2,TypeError"]);
+}
+
+#[test]
+fn catch_bindings_live_in_registers_and_keep_their_thrown_values() {
+    // A catch binding read only by its block moves into a register: the wrapper calls no
+    // frame of its own, and each catch still sees the value its own throw made.
+    let source = r#"
+      function wrap(layer, path) { try { return layer.match(path); } catch (err) { return err; } }
+      const ok = { match(path) { return 'ok:' + path; } };
+      const bad = { match(path) { throw new Error('bad:' + path); } };
+      const seen = [];
+      for (let i = 0; i < 3; i++) {
+        seen.push(wrap(ok, i));
+        seen.push(wrap(bad, i).message);
+      }
+      print(seen.join(','));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    let program = Engine::specialize(source, "catch-register.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["ok:0,bad:0,ok:1,bad:1,ok:2,bad:2"]);
+    let wrap = program.function(1);
+    assert!(wrap.handlers.iter().all(|handler| matches!(
+        handler.slot,
+        Some(crate::bytecode::ThrownValueSlot::Register(_))
+    )));
+    assert!(wrap.call_plan(&program).registers_only);
 }
 
 #[test]

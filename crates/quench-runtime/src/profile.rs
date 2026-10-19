@@ -166,7 +166,7 @@ fn object_literal_site_executions(
     program: &crate::bytecode::ResidualProgram,
 ) -> Vec<ObjectLiteralSiteExecution> {
     let mut sites = Vec::new();
-    for (function_id, function) in program.functions.iter().enumerate() {
+    for (function_id, function) in program.functions.iter().enumerate().filter_map(|(id, slot)| slot.record().map(|function| (id, function))) {
         for (pc, encoded) in function.code.iter().copied().enumerate() {
             let Some((dispatch_op, site_op, site)) =
                 object_literal_site(encoded, function, program)
@@ -653,6 +653,14 @@ impl Profile {
         let binary_dependencies = dependencies::binary_pairs(&self.pair_sites, program_id, program);
         regional::report(self, program_id, program);
         eprintln!(
+            "{{\"kind\":\"quench-allocation-variants\",\"counts\":{{{}}}}}",
+            heap.allocated_variants()
+                .iter()
+                .map(|(name, count)| format!("\"{name}\":{count}"))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        eprintln!(
             "{{\"kind\":\"quench-gc-breakdown\",\"collections\":{},\"mark_nanos\":{},\"sweep_nanos\":{},\"mark_clear_nanos\":{},\"allocations_between_collections\":{{\"total\":{},\"min\":{},\"max\":{}}},\"survivors\":{{\"total\":{},\"min\":{},\"max\":{}}},\"sweep_slots\":{}}}",
             heap_stats.1,
             gc.mark_nanos,
@@ -765,7 +773,7 @@ impl Profile {
             if position != 0 {
                 eprint!(",");
             }
-            let code = &program.functions[*function as usize].code;
+            let code = &program.function(*function as usize).code;
             eprint!(
                 "{{\"function\":{},\"pc\":{},\"first\":\"{}\",\"second\":\"{}\",\"count\":{}}}",
                 function,

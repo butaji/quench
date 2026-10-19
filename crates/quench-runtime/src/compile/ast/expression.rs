@@ -295,11 +295,7 @@ impl FunctionCompiler<'_, '_> {
             Some(dst)
         } else if self.with_depth == 0
             && (!self.dynamic_eval || compiler_binding)
-            && let Some((depth, slot)) = self
-                .scopes
-                .iter()
-                .enumerate()
-                .find_map(|(depth, scope)| scope.get(&atom).copied().map(|slot| (depth, slot)))
+            && let Some((depth, slot)) = self.scopes.find(atom)
         {
             let dst = self.reg();
             self.emit(
@@ -397,11 +393,7 @@ impl FunctionCompiler<'_, '_> {
             }
         } else if (self.with_depth == 0 || initializing)
             && (!self.dynamic_eval || compiler_binding)
-            && let Some((depth, slot)) = self
-                .scopes
-                .iter()
-                .enumerate()
-                .find_map(|(depth, scope)| scope.get(&atom).copied().map(|slot| (depth, slot)))
+            && let Some((depth, slot)) = self.scopes.find(atom)
         {
             self.emit(
                 Op::StoreCapture,
@@ -457,20 +449,20 @@ impl FunctionCompiler<'_, '_> {
                 .find(&format!("{}{name}", kind.capture_prefix()));
             (kind, marker)
         });
-        self.scopes.iter().find_map(|scope| {
-            markers
-                .iter()
-                .find_map(|(kind, marker)| {
-                    marker
-                        .filter(|marker| scope.contains_key(marker))
-                        .map(|_| *kind)
-                })
-                .or_else(|| {
-                    scope
-                        .contains_key(&atom)
-                        .then_some(LexicalBindingKind::Mutable)
-                })
-        })
+        // The nearest scope binding the name or one of its markers decides; there a marker
+        // gives its kind before the plain binding does.
+        let nearest = |atom: Atom| self.scopes.find(atom).map(|(depth, _)| depth);
+        let candidates = markers
+            .iter()
+            .filter_map(|(kind, marker)| Some((nearest((*marker)?)?, *kind)))
+            .chain(nearest(atom).map(|depth| (depth, LexicalBindingKind::Mutable)));
+        let mut decided: Option<(usize, LexicalBindingKind)> = None;
+        for (depth, kind) in candidates {
+            if decided.is_none_or(|(nearest, _)| depth < nearest) {
+                decided = Some((depth, kind));
+            }
+        }
+        decided.map(|(_, kind)| kind)
     }
 
     fn throw_immutable_binding(&mut self, atom: Atom) {

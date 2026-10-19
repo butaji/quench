@@ -11,17 +11,125 @@ pub(crate) struct LayoutInputs {
     pub(crate) dynamic_descendant: bool,
 }
 
-/// `dynamic` is `dynamic_name_resolution` of `functions`.
-pub(super) fn inputs(functions: &[Function], dynamic: &[bool]) -> Vec<LayoutInputs> {
-    let dynamic_ancestors = dynamic_scope_ancestors(functions, dynamic);
-    captured_slots(functions)
+/// What the program-wide layout analyses read of one function, fixed once it is compiled:
+/// a function nested in it may be finished and its record dropped before the program is.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct FunctionFacts {
+    pub(crate) parent: Option<u32>,
+    pub(crate) is_arrow: bool,
+    pub(crate) locals: u16,
+    /// `Function::has_dynamic_scope_access`.
+    pub(crate) dynamic_access: bool,
+    /// `Function::contains_with_statement`.
+    pub(crate) contains_with: bool,
+    /// Whether the function has binding sites, which its nested functions resolve through.
+    pub(crate) binding_sites: bool,
+    /// The (distance, slot) of each capture: the slot of the function `distance` levels out.
+    pub(crate) captures: Box<[(u32, u16)]>,
+}
+
+impl FunctionFacts {
+    pub(super) fn of(function: &Function, atoms: &CompilerAtoms<'_>) -> Self {
+        let is_with_enter = |atom: usize| {
+            atoms
+                .get(atom)
+                .is_some_and(|name| name == WITH_ENTER_BINDING)
+        };
+        let mut captures: Vec<(u32, u16)> = function
+            .code
+            .iter()
+            .filter(|instruction| matches!(instruction.op(), Op::LoadCapture | Op::StoreCapture))
+            .map(|instruction| (instruction.capture_depth(), instruction.capture_slot()))
+            .chain(
+                function
+                    .wide
+                    .iter()
+                    .filter(|instruction| matches!(instruction.op(), Op::LoadCapture | Op::StoreCapture))
+                    .map(|instruction| (instruction.capture_depth(), instruction.capture_slot())),
+            )
+            .map(|(depth, slot)| (u32::from(depth) + 1, slot))
+            .collect();
+        captures.sort_unstable();
+        captures.dedup();
+        Self {
+            parent: function.parent,
+            is_arrow: function.is_arrow,
+            locals: function.locals,
+            dynamic_access: function.has_dynamic_scope_access(),
+            contains_with: function.contains_with_statement(is_with_enter),
+            binding_sites: !function.binding_sites.is_empty(),
+            captures: captures.into(),
+        }
+    }
+}
+
+/// The slots of function `owner` that the functions in `descendants` capture, before the
+/// owner's own additions (`apply_function`).
+pub(super) fn captured_by(owner: usize, facts: &[FunctionFacts], descendants: std::ops::Range<usize>) -> Vec<u16> {
+    let mut captured = Vec::new();
+    for id in descendants {
+        for &(distance, slot) in facts[id].captures.iter() {
+            if ancestor(facts, id, distance as usize) == Some(owner)
+                && slot < facts[owner].locals
+            {
+                captured.push(slot);
+            }
+        }
+    }
+    captured
+}
+
+/// The layout inputs of every function, from their facts. `dynamic` is
+/// `dynamic_name_resolution` of `facts`; `arguments` gives a function's mapped `arguments`
+/// slot and parameter count when its record still exists.
+pub(super) fn inputs(
+    facts: &[FunctionFacts],
+    dynamic: &[bool],
+    arguments: impl Fn(usize) -> Option<(u16, u16)>,
+) -> Vec<LayoutInputs> {
+    let dynamic_ancestors = dynamic_scope_ancestors(facts, dynamic);
+    let mut captured = facts.iter().map(|_| Vec::new()).collect::<Vec<_>>();
+    for (id, function) in facts.iter().enumerate() {
+        for &(distance, slot) in function.captures.iter() {
+            if let Some(owner) = ancestor(facts, id, distance as usize)
+                && slot < facts[owner].locals
+            {
+                captured[owner].push(slot);
+            }
+        }
+    }
+    captured
         .into_iter()
+        .enumerate()
         .zip(dynamic_ancestors)
-        .map(|(captured, dynamic_descendant)| LayoutInputs {
-            captured,
+        .map(|((id, captured), dynamic_descendant)| LayoutInputs {
+            captured: complete_captured(captured, arguments(id)),
             dynamic_descendant,
         })
         .collect()
+}
+
+/// A function's captured slots, completed: a mapped `arguments` object aliases the
+/// parameters, so capturing one captures it too.
+pub(super) fn complete_captured(mut captured: Vec<u16>, arguments: Option<(u16, u16)>) -> Vec<u16> {
+    if let Some((arguments_slot, params)) = arguments
+        && captured.iter().any(|slot| *slot < params)
+    {
+        captured.push(arguments_slot);
+    }
+    captured.sort_unstable();
+    captured.dedup();
+    captured
+}
+
+/// The mapped `arguments` slot and parameter count of `function`, which `complete_captured`
+/// reads.
+pub(super) fn mapped_arguments(function: &Function) -> Option<(u16, u16)> {
+    function
+        .arguments_are_mapped()
+        .then_some(function.arguments_slot)
+        .flatten()
+        .map(|slot| (slot, function.params))
 }
 
 /// Lays out the activation of function `id` from its own code and its `inputs`.
@@ -81,57 +189,11 @@ pub(super) fn apply_function(
     }
 }
 
-fn captured_slots(functions: &[Function]) -> Vec<Vec<u16>> {
-    let mut captured = functions.iter().map(|_| Vec::new()).collect::<Vec<_>>();
-
-    for (id, function) in functions.iter().enumerate() {
-        for instruction in &function.code {
-            if !matches!(instruction.op(), Op::LoadCapture | Op::StoreCapture) {
-                continue;
-            }
-            let depth = usize::from(instruction.capture_depth()) + 1;
-            let slot = instruction.capture_slot();
-            if let Some(owner) = ancestor(functions, id, depth)
-                && usize::from(slot) < usize::from(functions[owner].locals)
-            {
-                captured[owner].push(slot);
-            }
-        }
-        for instruction in &function.wide {
-            if !matches!(instruction.op(), Op::LoadCapture | Op::StoreCapture) {
-                continue;
-            }
-            let depth = usize::from(instruction.capture_depth()) + 1;
-            let slot = instruction.capture_slot();
-            if let Some(owner) = ancestor(functions, id, depth)
-                && usize::from(slot) < usize::from(functions[owner].locals)
-            {
-                captured[owner].push(slot);
-            }
-        }
-    }
-
-    for (id, function) in functions.iter().enumerate() {
-        if function.arguments_are_mapped()
-            && let Some(arguments_slot) = function.arguments_slot
-            && captured[id].iter().any(|slot| *slot < function.params)
-        {
-            captured[id].push(arguments_slot);
-        }
-    }
-
-    for slots in &mut captured {
-        slots.sort_unstable();
-        slots.dedup();
-    }
-    captured
-}
-
 /// Functions whose name bindings a dynamic name lookup may consult: those enclosing dynamic
 /// name resolution (`dynamic_scope_ancestors`), whose environments such a lookup walks, and
 /// those it encloses, whose by-name loads no longer resolve statically.
 /// `dynamic` is `dynamic_name_resolution` of `functions`.
-pub(super) fn dynamic_name_scopes(functions: &[Function], dynamic: &[bool]) -> Vec<bool> {
+pub(super) fn dynamic_name_scopes(functions: &[FunctionFacts], dynamic: &[bool]) -> Vec<bool> {
     let mut reachable = dynamic_scope_ancestors(functions, dynamic);
     for id in 0..functions.len() {
         let mut current = Some(id);
@@ -148,20 +210,13 @@ pub(super) fn dynamic_name_scopes(functions: &[Function], dynamic: &[bool]) -> V
 
 /// Functions resolving names dynamically themselves: direct eval, by-name resolution, a
 /// `with` statement, or an enclosing function's binding sites.
-pub(super) fn dynamic_name_resolution(functions: &[Function], atoms: &CompilerAtoms<'_>) -> Vec<bool> {
+pub(super) fn dynamic_name_resolution(functions: &[FunctionFacts]) -> Vec<bool> {
     let inherited_dynamic_scope = inherited_dynamic_scope(functions);
-    let is_with_enter = |atom: usize| {
-        atoms
-            .get(atom)
-            .is_some_and(|name| name == WITH_ENTER_BINDING)
-    };
     functions
         .iter()
         .enumerate()
         .map(|(id, function)| {
-            function.has_dynamic_scope_access()
-                || inherited_dynamic_scope[id]
-                || function.contains_with_statement(is_with_enter)
+            function.dynamic_access || inherited_dynamic_scope[id] || function.contains_with
         })
         .collect()
 }
@@ -169,7 +224,7 @@ pub(super) fn dynamic_name_resolution(functions: &[Function], atoms: &CompilerAt
 /// Functions enclosing dynamic name resolution, including a `with` body's by-name
 /// loads, which may denote any ancestor's binding and so need every ancestor's
 /// locals in its environment.
-fn dynamic_scope_ancestors(functions: &[Function], dynamic: &[bool]) -> Vec<bool> {
+fn dynamic_scope_ancestors(functions: &[FunctionFacts], dynamic: &[bool]) -> Vec<bool> {
     let mut unsafe_layout = vec![false; functions.len()];
     for id in 0..functions.len() {
         if !dynamic[id] {
@@ -184,13 +239,13 @@ fn dynamic_scope_ancestors(functions: &[Function], dynamic: &[bool]) -> Vec<bool
     unsafe_layout
 }
 
-fn inherited_dynamic_scope(functions: &[Function]) -> Vec<bool> {
+fn inherited_dynamic_scope(functions: &[FunctionFacts]) -> Vec<bool> {
     let mut inherited = vec![false; functions.len()];
     for (id, function) in functions.iter().enumerate() {
         let Some(parent) = function.parent.map(|parent| parent as usize) else {
             continue;
         };
-        inherited[id] = inherited[parent] || !functions[parent].binding_sites.is_empty();
+        inherited[id] = inherited[parent] || functions[parent].binding_sites;
     }
     inherited
 }
@@ -290,7 +345,7 @@ fn rewrite_all_locals_to_environment(function: &mut Function) {
     }
 }
 
-fn ancestor(functions: &[Function], mut function: usize, distance: usize) -> Option<usize> {
+fn ancestor(functions: &[FunctionFacts], mut function: usize, distance: usize) -> Option<usize> {
     for _ in 0..distance {
         function = functions.get(function)?.parent? as usize;
     }

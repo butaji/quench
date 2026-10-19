@@ -497,6 +497,8 @@ impl ResidualProgram {
         if self.functions.is_empty() && self.kind != super::ProgramKind::Wasm {
             return Err("program has no entry function".into());
         }
+        // Validation reads every record, and the cross-function checks read their parents'.
+        self.compile_released();
         let selective_capture_scope_unsafe =
             selective_capture_scope_unsafe(&self.functions, &self.atoms);
         // Captured name scopes are shared by sibling functions: each is checked once per
@@ -827,7 +829,10 @@ function.plain_local_slots(&self.superinstructions)
                 {
                     return Err(format!("function {index} has an invalid handler"));
                 }
-                if handler.slot.is_some_and(|slot| slot >= function.locals) {
+                if handler.slot.is_some_and(|slot| match slot {
+                    super::ThrownValueSlot::Local(slot) => slot >= function.locals,
+                    super::ThrownValueSlot::Register(register) => register >= function.registers,
+                }) {
                     return Err(format!("function {index} handler slot is out of bounds"));
                 }
                 if handler
