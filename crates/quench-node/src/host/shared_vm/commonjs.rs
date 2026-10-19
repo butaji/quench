@@ -2654,12 +2654,7 @@ fn load_with_resolution(
                 } else {
                     None
                 };
-                let text: std::borrow::Cow<'_, str> = if is_primordials {
-                    format!("primordials ??= {{}};\n{text}\nmodule.exports = primordials;\n")
-                        .into()
-                } else {
-                    text.into()
-                };
+
                 let exports = get(context, module, "exports")?;
                 let public_require = get(context, module, "require")?;
                 let require = if in_node_internal {
@@ -2716,16 +2711,28 @@ const getLinkedBinding = () => ({});
                     // compiler's pages, not the bootstrap's, need be resident across it.
                     crate::host::resident_pages::release_read_only_pages();
                 }
-                let wrapper = match embedded.filter(|_| !is_primordials) {
+                // Node's primordials file fills the object its wrapper passes and exports it.
+                let (prefix, suffix) = if is_primordials {
+                    (
+                        format!("{prefix}primordials ??= {{}};\n"),
+                        format!("\nmodule.exports = primordials;\n{WRAPPER_SUFFIX}"),
+                    )
+                } else {
+                    (prefix, WRAPPER_SUFFIX.to_owned())
+                };
+                let wrapper = match embedded {
                     // The program retains the embedded text itself, not a wrapped copy.
                     Some(body) => context
-                        .evaluate_specialized_static_body_rooted(&prefix, body, WRAPPER_SUFFIX, &key)?,
+                        .evaluate_specialized_static_body_rooted(&prefix, body, &suffix, &key)?,
+                    // A library module's text the host projected from its embedded text keeps
+                    // its records, as an embedded one does, and goes through the same cache.
+                    None if in_node_internal => context
+                        .evaluate_specialized_library_body_rooted(&prefix, text.to_owned(), &suffix, &key)?,
                     None => {
                         // Sized exactly: a formatted string grows by doubling, copying the module text each time.
-                        let wrapper_source = [prefix.as_str(), &text, WRAPPER_SUFFIX].concat();
+                        let wrapper_source = [prefix.as_str(), &text, &suffix].concat();
                         // The wrapper holds the text now, so the file is released before
                         // compiling it.
-                        drop(text);
                         drop(file_text);
                         let wrapper = evaluate_wrapper(
                             context,
