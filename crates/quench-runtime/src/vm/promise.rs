@@ -1334,7 +1334,7 @@ impl<H: Host> Vm<H> {
             record: PromiseRecord {
                 state: PromiseState::Pending,
                 result: Value::UNDEFINED,
-                reactions: vec![],
+                reactions: Default::default(),
                 rejection: PromiseRejectionState::Unobserved,
                 rejection_id: None,
                 host_context,
