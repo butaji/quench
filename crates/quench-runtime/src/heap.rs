@@ -2730,12 +2730,13 @@ impl Heap {
         // SAFETY: the caller proves that the property slot exists.
         unsafe { self.properties.set_unchecked(vector, slot, value) };
     }
-    /// `property_set_unchecked` for the direct object `record_id` names, decoded once, where
-    /// its values are inline or a flat arena run. `false` leaves a dictionary's store, which
-    /// makes a call, to the caller, and without `LOGS` also a store the write barrier logs.
+    /// `property_set_unchecked` for the direct object `record_id` names, decoded once: its
+    /// values are inline or a flat arena run. Without `LOGS`, `false` leaves a store the
+    /// write barrier logs to the caller.
     ///
     /// # Safety
-    /// `record_id` names a live object record holding a property at `slot`.
+    /// `record_id` names a live object record outside dictionary storage (its exact shape
+    /// matched a recorded one) holding a property at `slot`.
     #[inline(always)]
     pub(crate) unsafe fn record_property_set_flat<const LOGS: bool>(
         &mut self,
@@ -2762,10 +2763,8 @@ impl Heap {
             return true;
         }
         let vector = data.properties();
-        if vector.is_dictionary() {
-            return false;
-        }
-        // SAFETY: the caller proves that the property slot exists; the vector is flat.
+        debug_assert!(!vector.is_dictionary(), "the caller matched an exact shape");
+        // SAFETY: the caller proves that the property slot exists outside dictionary storage.
         unsafe { self.properties.set_flat_unchecked(vector, slot, value) };
         true
     }
