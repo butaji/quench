@@ -38,3 +38,18 @@ is the bytecode-size ceiling. `Eu` has 53 instructions, four parameters, zero
 numeric entries, and is rejected by the activation-kind filter. Their source
 lines are 1105 and 1103 in the minified bundle. Inclusive times overlap across
 callers and callees and are only used to rank compiler work.
+
+## Opcode profile
+
+[`web-ssr-jit-opcodes-clean.json`](web-ssr-jit-opcodes-clean.json) is a
+single diagnostic run from clean source commit `2697779eed4377f44dbf9d198548984d169840a9`,
+with the opcode histogram enabled. It is profiling evidence only: diagnostics
+change execution cost, and its score is not a qualification result. The profile
+confirms the primary renderer costs are generic tagged-value work: `Ru` contains
+831 instructions, including 47 calls, 49 conditional branches, 287 local
+loads/stores, 18 indexed reads, array/object construction, and 9 throws. The
+53-instruction `Eu` wrapper has 21 local loads and 5 stores, 3 capture loads,
+and one call. Only one JS function entered native code in this sample
+(`quickHash`, 61 entries); the dominant render functions stayed in the
+interpreter. A general tagged-value JIT tier is required before these results
+can move materially.
