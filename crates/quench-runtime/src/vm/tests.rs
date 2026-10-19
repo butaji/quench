@@ -15,7 +15,6 @@ impl Host for SilentHost {
         0.0
     }
 }
-
 #[test]
 fn collection_construction_survives_gc_in_iterator_and_entry_callbacks() {
     let source = r#"
@@ -1639,6 +1638,7 @@ fn unrepresentable_register_maps_keep_the_conservative_frame_roots() {
         active_iterators: vec![],
         with_objects: Vec::new(),
         with_base: 0,
+        js_jit_interpreter_started: None,
         fixed_this: false,
     }));
 
@@ -4671,6 +4671,7 @@ fn pooled_frame_registers_are_reset_when_their_length_is_reused() {
         active_iterators: vec![],
         with_objects: vec![Value::heap(16)],
         with_base: 0,
+        js_jit_interpreter_started: None,
         fixed_this: false,
     };
 
@@ -6941,6 +6942,7 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                 }],
                 with_objects: Vec::new(),
                 with_base: 0,
+                js_jit_interpreter_started: None,
                 fixed_this: false,
             };
             let continuation = Continuation::from_frame(
@@ -10337,6 +10339,98 @@ fn js_jit_compiles_hot_numeric_functions_and_guards_polymorphic_inputs() {
     feature = "profile-memory",
     feature = "profile-gc-time"
 )))]
+fn js_jit_compiles_number_capture_returns_and_observes_mutation() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function makeReader() {
+            let value = 7;
+            function read() { return value; }
+            function write(next) { value = next; }
+            return { read, write };
+          }
+          const state = makeReader();
+          for (let index = 0; index < 40; index++) {
+            if (state.read() !== 7) throw Error('capture number');
+          }
+          state.write(11);
+          if (state.read() !== 11) throw Error('capture update');
+          state.write('text');
+          if (state.read() !== 'text') throw Error('non-number capture fallback');
+        "#,
+        "js-jit-capture-return.js",
+    ))
+    .unwrap();
+    let reader = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .name
+                .or(function.inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "read")
+        })
+        .unwrap() as u32;
+    let mut vm = Vm::new(SilentHost);
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+    assert!(matches!(
+        vm.programs
+            .js_tier(super::program_store::ProgramId::MAIN, reader),
+        Some(super::program_store::JsTierState::Compiled(_))
+    ));
+}
+
+#[test]
+#[cfg(not(any(
+    feature = "profile-aggregate",
+    feature = "profile-trace",
+    feature = "profile-memory",
+    feature = "profile-gc-time"
+)))]
+fn js_jit_compiles_int32_bitwise_helpers_and_guards_the_domain() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function mask(value) { return value & 7; }
+          for (let index = -20; index < 20; index++) {
+            if (mask(index) !== (index & 7)) throw Error('int32 bitwise');
+          }
+          if (mask(2.5) !== 2) throw Error('fraction fallback');
+          if (mask(4294967296) !== 0) throw Error('range fallback');
+          if (mask('13') !== 5) throw Error('coercion fallback');
+          let bigintThrew = false;
+          try { mask(13n); } catch (error) { bigintThrew = error instanceof TypeError; }
+          if (!bigintThrew) throw Error('bigint fallback');
+        "#,
+        "js-jit-int32-bitwise.js",
+    ))
+    .unwrap();
+    let mut vm = Vm::new(SilentHost);
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+    let mask = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .name
+                .or(function.inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "mask")
+        })
+        .unwrap() as u32;
+    assert!(matches!(
+        vm.programs
+            .js_tier(super::program_store::ProgramId::MAIN, mask),
+        Some(super::program_store::JsTierState::Compiled(_))
+    ));
+}
+
+#[test]
+#[cfg(not(any(
+    feature = "profile-aggregate",
+    feature = "profile-trace",
+    feature = "profile-memory",
+    feature = "profile-gc-time"
+)))]
 fn js_jit_compiles_pure_numeric_loops_with_backedge_polls() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
@@ -10443,6 +10537,192 @@ fn js_jit_compiles_guarded_string_hash_loop_and_falls_back_after_intrinsic_chang
     assert!(matches!(
         vm.programs
             .js_tier(super::program_store::ProgramId::MAIN, 1),
+        Some(super::program_store::JsTierState::Compiled(_))
+    ));
+}
+
+#[test]
+#[cfg(not(any(
+    feature = "profile-aggregate",
+    feature = "profile-trace",
+    feature = "profile-memory",
+    feature = "profile-gc-time"
+)))]
+fn js_jit_compiles_leading_underscore_string_helpers_and_guards_intrinsic_changes() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function escapeLeadingUnderscores(value) {
+            return value.length >= 2 && value.charCodeAt(0) === 95 && value.charCodeAt(1) === 95
+              ? '_' + value : value;
+          }
+          function unescapeLeadingUnderscores(value) {
+            const alias = value;
+            return alias.length >= 3 && alias.charCodeAt(0) === 95
+              && alias.charCodeAt(1) === 95 && alias.charCodeAt(2) === 95
+              ? alias.substr(1) : alias;
+          }
+          for (let i = 0; i < 40; i++) {
+            if (escapeLeadingUnderscores('__x') !== '___x') throw Error('escape match');
+            if (escapeLeadingUnderscores('_x') !== '_x') throw Error('escape short prefix');
+            if (escapeLeadingUnderscores('x') !== 'x') throw Error('escape miss');
+            if (unescapeLeadingUnderscores('___x') !== '__x') throw Error('unescape match');
+            if (unescapeLeadingUnderscores('__x') !== '__x') throw Error('unescape short prefix');
+            if (unescapeLeadingUnderscores('x') !== 'x') throw Error('unescape miss');
+          }
+          String.prototype.charCodeAt = function() { return 95; };
+          if (escapeLeadingUnderscores('ax') !== '_ax') throw Error('escape intrinsic fallback');
+          if (unescapeLeadingUnderscores('abc') !== 'bc') throw Error('unescape intrinsic fallback');
+        "#,
+        "js-jit-leading-underscore.js",
+    ))
+    .unwrap();
+    let mut vm = Vm::new(SilentHost);
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+    assert!(matches!(
+        vm.programs
+            .js_tier(super::program_store::ProgramId::MAIN, 1),
+        Some(super::program_store::JsTierState::Compiled(_))
+    ));
+    assert!(matches!(
+        vm.programs
+            .js_tier(super::program_store::ProgramId::MAIN, 2),
+        Some(super::program_store::JsTierState::Compiled(_))
+    ));
+}
+
+#[test]
+#[cfg(not(any(
+    feature = "profile-aggregate",
+    feature = "profile-trace",
+    feature = "profile-memory",
+    feature = "profile-gc-time"
+)))]
+fn js_jit_merges_boolean_branch_states_for_numeric_equality_chains() {
+    let source =
+        r#"
+          function isStatementKindButNotDeclarationKind(kind) {
+            return kind === 253 || kind === 252 || kind === 260 || kind === 247 ||
+              kind === 245 || kind === 243 || kind === 250 || kind === 251 ||
+              kind === 249 || kind === 246 || kind === 257 || kind === 254 ||
+              kind === 256 || kind === 258 || kind === 259 || kind === 244 ||
+              kind === 248 || kind === 255 || kind === 354;
+          }
+          function isFunctionLikeDeclarationKind(kind) {
+            let switchValue = kind;
+            switch (switchValue) {
+              case 263: case 175: case 177: case 178:
+              case 179: case 219: case 220: return true;
+              default: return false;
+            }
+          }
+          function logicalNotNumberConstant() { return !0; }
+          const matches = [253, 252, 260, 247, 245, 243, 250, 251, 249, 246,
+            257, 254, 256, 258, 259, 244, 248, 255, 354];
+          const functionLikeMatches = [263, 175, 177, 178, 179, 219, 220];
+          for (let kind = 0; kind < 360; kind++) {
+            const expected = matches.includes(kind);
+            const functionLikeExpected = functionLikeMatches.includes(kind);
+            if (isStatementKindButNotDeclarationKind(kind) !== expected) {
+              throw Error('equality chain ' + kind);
+            }
+            if (isFunctionLikeDeclarationKind(kind) !== functionLikeExpected) {
+              throw Error('switch chain ' + kind);
+            }
+          }
+          for (let i = 0; i < 40; i++) {
+            if (logicalNotNumberConstant() !== true) throw Error('logical not constant');
+          }
+        "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        &source,
+        "js-jit-boolean-joins.js",
+    ))
+    .unwrap();
+    assert!(
+        super::js_compiled::compile(&program, 1).is_some(),
+        "equality chain should compile\n{}",
+        program.disassemble()
+    );
+    assert!(
+        super::js_compiled::compile(&program, 2).is_some(),
+        "switch chain should compile\n{}",
+        program.disassemble()
+    );
+    assert!(
+        super::js_compiled::compile(&program, 3).is_some(),
+        "constant logical not should compile; candidate={} function={:?}\n{}",
+        super::js_compiled::function_candidate(program.function(3), &program),
+        program.functions[3],
+        program.disassemble()
+    );
+    let mut vm = Vm::new(SilentHost);
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+    assert!(matches!(
+        vm.programs
+            .js_tier(super::program_store::ProgramId::MAIN, 1),
+        Some(super::program_store::JsTierState::Compiled(_))
+    ));
+    assert!(matches!(
+        vm.programs
+            .js_tier(super::program_store::ProgramId::MAIN, 2),
+        Some(super::program_store::JsTierState::Compiled(_))
+    ));
+    assert!(matches!(
+        vm.programs
+            .js_tier(super::program_store::ProgramId::MAIN, 3),
+        Some(super::program_store::JsTierState::Compiled(_))
+    ));
+}
+
+#[test]
+#[cfg(not(any(
+    feature = "profile-aggregate",
+    feature = "profile-trace",
+    feature = "profile-memory",
+    feature = "profile-gc-time"
+)))]
+fn js_jit_compiles_cached_numeric_kind_field_switches() {
+    let source = r#"
+      function isMethodOrAccessor(node) {
+        switch (node.kind) {
+          case 175: case 178: case 179: return true;
+          default: return false;
+        }
+      }
+      function isBindingPattern(node) {
+        if (node) {
+          const kind = node.kind;
+          return kind === 208 || kind === 207;
+        }
+        return false;
+      }
+      const kinds = [175, 178, 179, 180];
+      for (let i = 0; i < 40; i++) {
+        const kind = kinds[i % kinds.length];
+        if (isMethodOrAccessor({kind}) !== (kind !== 180)) throw Error('kind switch');
+        const bindingKind = i % 2 === 0 ? 208 : 207;
+        if (isBindingPattern({kind: bindingKind}) !== true) throw Error('binding kind');
+      }
+      if (isBindingPattern(null) !== false) throw Error('falsey fallback');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        &source,
+        "js-jit-kind-field.js",
+    ))
+    .unwrap();
+    let mut vm = Vm::new(SilentHost);
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+    assert!(matches!(
+        vm.programs
+            .js_tier(super::program_store::ProgramId::MAIN, 1),
+        Some(super::program_store::JsTierState::Compiled(_))
+    ));
+    assert!(matches!(
+        vm.programs
+            .js_tier(super::program_store::ProgramId::MAIN, 2),
         Some(super::program_store::JsTierState::Compiled(_))
     ));
 }
@@ -10798,8 +11078,6 @@ class Derived extends Base {
         std::fs::remove_file(path).unwrap();
     }
 }
-
-
 #[test]
 fn spread_of_a_branch_built_array_survives_collection() {
     // The consequent's array reaches AppendArray only through the conditional's result
