@@ -984,8 +984,8 @@ impl<H: Host> Vm<H> {
                 let (state_register, next_method_register) = i.register_pair();
                 let next_method = self.read(f, next_method_register);
                 let next_method = if next_method.is_undefined() {
-                    let receiver = match self.heap.get(iterator) {
-                        Some(Cell::Iterator {
+                    let receiver = match self.heap.iterator(iterator) {
+                        Some(IteratorRecord {
                             source,
                             kind: IteratorKind::AsyncFromSync,
                             ..

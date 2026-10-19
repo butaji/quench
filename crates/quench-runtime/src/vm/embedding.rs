@@ -261,15 +261,15 @@ impl<H: Host> Vm<H> {
                 _ => false,
             },
             B::GeneratorObject => matches!(
-                cell,
-                Some(Cell::Iterator {
+                self.heap.iterator(value),
+                Some(IteratorRecord {
                     kind: IteratorKind::Generator | IteratorKind::AsyncGenerator,
                     ..
                 })
             ),
             B::MapIterator => matches!(
-                cell,
-                Some(Cell::Iterator {
+                self.heap.iterator(value),
+                Some(IteratorRecord {
                     kind: IteratorKind::MapKeys
                         | IteratorKind::MapValues
                         | IteratorKind::MapEntries,
@@ -277,8 +277,8 @@ impl<H: Host> Vm<H> {
                 })
             ),
             B::SetIterator => matches!(
-                cell,
-                Some(Cell::Iterator {
+                self.heap.iterator(value),
+                Some(IteratorRecord {
                     kind: IteratorKind::SetValues | IteratorKind::SetEntries,
                     ..
                 })
@@ -404,16 +404,16 @@ impl<H: Host> Vm<H> {
     pub(crate) fn embedding_collection_preview(&self, root: RootId) -> Result<Option<crate::CollectionPreview<Value>>, JsError> {
         use crate::CollectionPreview;
         let value = self.embedding_value(root)?;
-        let preview = match self.heap.get(value) {
-            Some(Cell::Map { entries, .. }) => CollectionPreview {
+        let preview = match (self.heap.iterator(value), self.heap.get(value)) {
+            (_, Some(Cell::Map { entries, .. })) => CollectionPreview {
                 entries: entries.iter().flat_map(|(key, value)| [key, value]).collect(), is_key_value: true,
             },
-            Some(Cell::Set { entries, .. }) => CollectionPreview { entries: entries.to_vec(), is_key_value: false },
-            Some(Cell::WeakMap { entries, .. }) => CollectionPreview {
+            (_, Some(Cell::Set { entries, .. })) => CollectionPreview { entries: entries.to_vec(), is_key_value: false },
+            (_, Some(Cell::WeakMap { entries, .. })) => CollectionPreview {
                 entries: entries.iter().flat_map(|&(key, value)| [key, value]).collect(), is_key_value: true,
             },
-            Some(Cell::WeakSet { entries, .. }) => CollectionPreview { entries: entries.to_vec(), is_key_value: false },
-            Some(Cell::Iterator { source, kind, index, done, ext, .. }) => {
+            (_, Some(Cell::WeakSet { entries, .. })) => CollectionPreview { entries: entries.to_vec(), is_key_value: false },
+            (Some(IteratorRecord { source, kind, index, done, ext, .. }), _) => {
                 let is_key_value = match kind {
                     IteratorKind::MapKeys | IteratorKind::MapValues | IteratorKind::SetValues => false,
                     IteratorKind::MapEntries | IteratorKind::SetEntries => true,
@@ -446,7 +446,7 @@ impl<H: Host> Vm<H> {
                 }
                 CollectionPreview { entries: output, is_key_value }
             }
-            _ => return Ok(None),
+            (_, _) => return Ok(None),
         };
         Ok(Some(preview))
     }

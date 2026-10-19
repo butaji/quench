@@ -47,6 +47,8 @@ const DIRECT_FUNCTION_HANDLE_BITS: u64 = DIRECT_OBJECT_HANDLE_BIT | DIRECT_ARRAY
 const DIRECT_PROMISE_HANDLE_BIT: u64 = 1 << 45;
 /// The await-state record family's code.
 const DIRECT_AWAIT_HANDLE_BITS: u64 = DIRECT_PROMISE_HANDLE_BIT | DIRECT_ARRAY_HANDLE_BIT;
+/// The iterator record family's code.
+const DIRECT_ITERATOR_HANDLE_BITS: u64 = DIRECT_PROMISE_HANDLE_BIT | DIRECT_OBJECT_HANDLE_BIT;
 /// The payload bits that code a heap value's reference family.
 const HEAP_FAMILY_BITS: u64 = DIRECT_FUNCTION_HANDLE_BITS | DIRECT_PROMISE_HANDLE_BIT;
 /// The bits that name a heap value's reference family (`Value::heap_reference`).
@@ -60,6 +62,7 @@ pub(crate) enum HeapReference {
     FunctionRecord(u32),
     PromiseRecord(u32),
     AwaitRecord(u32),
+    IteratorRecord(u32),
 }
 
 /// `value` truncated toward zero when it fits `i32`; any other result is some `i32` whose
@@ -263,6 +266,11 @@ impl Value {
     }
 
     #[inline(always)]
+    pub(crate) fn direct_iterator(index: u32) -> Self {
+        Self(TAG_HEAP | DIRECT_ITERATOR_HANDLE_BITS | u64::from(index))
+    }
+
+    #[inline(always)]
     pub(crate) fn direct_await(index: u32) -> Self {
         Self(TAG_HEAP | DIRECT_AWAIT_HANDLE_BITS | u64::from(index))
     }
@@ -312,6 +320,7 @@ impl Value {
                 DIRECT_FUNCTION_HANDLE_BITS => HeapReference::FunctionRecord(index),
                 DIRECT_PROMISE_HANDLE_BIT => HeapReference::PromiseRecord(index),
                 DIRECT_AWAIT_HANDLE_BITS => HeapReference::AwaitRecord(index),
+                DIRECT_ITERATOR_HANDLE_BITS => HeapReference::IteratorRecord(index),
                 _ => return None,
             },
         )
@@ -325,7 +334,8 @@ impl Value {
             | HeapReference::ArrayRecord(_)
             | HeapReference::FunctionRecord(_)
             | HeapReference::PromiseRecord(_)
-            | HeapReference::AwaitRecord(_) => None,
+            | HeapReference::AwaitRecord(_)
+            | HeapReference::IteratorRecord(_) => None,
         }
     }
 
@@ -338,6 +348,11 @@ impl Value {
     #[inline(always)]
     pub(crate) fn direct_array_index(self) -> Option<u32> {
         (self.0 & HEAP_FAMILY_MASK == TAG_HEAP | DIRECT_ARRAY_HANDLE_BIT).then_some(self.0 as u32)
+    }
+
+    #[inline(always)]
+    pub(crate) fn direct_iterator_index(self) -> Option<u32> {
+        (self.0 & HEAP_FAMILY_MASK == TAG_HEAP | DIRECT_ITERATOR_HANDLE_BITS).then_some(self.0 as u32)
     }
 
     #[inline(always)]
@@ -515,6 +530,11 @@ mod tests {
             direct_promise.heap_reference(),
             Some(super::HeapReference::PromiseRecord(42))
         );
+        let direct_iterator = Value::direct_iterator(42);
+        assert_eq!(direct_iterator.direct_iterator_index(), Some(42));
+        assert_eq!(direct_iterator.direct_object_index(), None);
+        assert_eq!(direct_iterator.direct_promise_index(), None);
+        assert!(!direct_iterator.is_record());
         let direct_await = Value::direct_await(42);
         assert_eq!(direct_await.direct_await_index(), Some(42));
         assert_eq!(direct_await.direct_promise_index(), None);
