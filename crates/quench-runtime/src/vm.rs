@@ -2315,6 +2315,8 @@ impl<H: Host> Vm<H> {
             constants.push(value);
         }
         self.programs.set_constants(id, constants);
+        // Lane views carry constants, so call targets naming the old views are stale.
+        self.lane_stack.clear_script_targets();
         if id == self.active_program {
             self.set_active_program(id);
         }
