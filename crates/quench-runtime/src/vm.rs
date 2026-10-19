@@ -465,14 +465,18 @@ enum PendingJob {
 }
 
 impl PendingJob {
-    fn roots(&self) -> Vec<Value> {
+    /// Pushes the values the job holds onto `roots`, which keep them alive while it runs.
+    fn push_roots(&self, roots: &mut Vec<Value>) {
         match self {
             Self::Call {
                 callback,
                 this,
                 args,
-            } => [*callback, *this].into_iter().chain(args.iter().copied()).collect(),
-            Self::Reaction(job) => vec![job.realm, job.handler, job.next, job.value],
+            } => {
+                roots.extend([*callback, *this]);
+                roots.extend_from_slice(args);
+            }
+            Self::Reaction(job) => roots.extend([job.realm, job.handler, job.next, job.value]),
         }
     }
 }
@@ -576,6 +580,9 @@ struct ParkedRealm {
 }
 /// The natives whose prototypes VM fields follow from the active realm
 /// (`Vm::realm_prototype_field`).
+/// One `typeof` name per `crate::ValueType`, indexed by its discriminant; `Function` is the
+/// last type.
+const TYPEOF_NAMES: usize = crate::ValueType::Function as usize + 1;
 const REALM_FOLLOWING_PROTOTYPES: [Native; 4] =
     [Native::Object, Native::Function, Native::Array, Native::String];
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1562,6 +1569,9 @@ pub(crate) struct Vm<H> {
     // One lazily derived class byte per atom; length tracks `atom_sequence`.
     atom_classes: Vec<std::cell::Cell<u8>>,
     dynamic_strings: Option<Box<FxHashMap<u64, Value>>>,
+    /// The `typeof` result string of each value type, made on first use; `undefined` until
+    /// then. Rooted, so `typeof` neither hashes nor allocates once warm.
+    typeof_names: [Value; TYPEOF_NAMES],
     symbol_registry: FxHashMap<String, Value>,
     well_known_symbols: WellKnownSymbols,
     string_concats: Option<Box<[StringConcatCache]>>,
@@ -1653,6 +1663,38 @@ struct IteratorRealmPrototypes {
     async_generator: Value,
 }
 impl<H: Host> Vm<H> {
+    /// Diagnostic: general-loop dispatches by the register width of their function, since
+    /// register liveness (and with it promotion and move coalescing) covers only functions
+    /// whose registers fit a root mask.
+    #[cfg(feature = "profile-aggregate")]
+    fn report_dispatch_by_register_width(&self) {
+        let mut rows = Vec::new();
+        for (program, functions) in self.profile.site_counts.iter().enumerate() {
+            let Some(residual) = self.programs.residual(ProgramId::from_raw(program as u32)) else {
+                continue;
+            };
+            for (function, sites) in functions.iter().enumerate() {
+                let total: u64 = sites.iter().sum();
+                if total == 0 {
+                    continue;
+                }
+                let Some(code) = residual.functions.get(function) else { continue };
+                rows.push((total, code.registers, code.local_atoms.len(), program, function));
+            }
+        }
+        let all: u64 = rows.iter().map(|row| row.0).sum();
+        let wide: u64 = rows
+            .iter()
+            .filter(|row| row.1 > crate::compile::liveness::ROOT_MAP_REGISTERS)
+            .map(|row| row.0)
+            .sum();
+        rows.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+        eprintln!("register-width: dispatches {all}, in functions over the root mask {wide}");
+        for (total, registers, locals, program, function) in rows.iter().take(15) {
+            eprintln!("  {total:>12} registers={registers} locals={locals} program={program} function={function}");
+        }
+    }
+
     pub(crate) fn execution_interrupt_handle(&self)->crate::ExecutionInterrupt { self.execution_interrupt.clone() }
     pub(super) fn check_execution_interrupt(&self)->Result<(),JsError> {
         if self.execution_interrupt.is_termination_requested() { Err(JsError::execution_terminated()) } else { Ok(()) }
@@ -2043,6 +2085,9 @@ impl<H: Host> Vm<H> {
             .profile
             .report_dispatch_census_if_enabled(ProgramId::MAIN.raw())
         {
+            if std::env::var_os("QUENCH_OPCODE_CENSUS").is_some_and(|census| census == "all") {
+                self.report_dispatch_by_register_width();
+            }
             self.profile
                 .report_object_literal_sites(ProgramId::MAIN.raw(), program);
             #[cfg(feature = "profile-memory")]
@@ -2367,6 +2412,7 @@ impl<H: Host> Vm<H> {
         self.atom_classes
             .resize_with(self.atom_text.len(), Default::default);
         self.dynamic_strings = None;
+        self.typeof_names = [Value::UNDEFINED; TYPEOF_NAMES];
         self.symbol_registry.clear();
         self.well_known_symbols.clear();
         self.string_concats = None;

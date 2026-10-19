@@ -1,7 +1,5 @@
 use super::*;
 
-const STRICT_EQUAL_OPERATOR: u32 = 2;
-
 impl FunctionCompiler<'_, '_> {
     pub(crate) fn statements(&mut self, body: &[Statement<'_>]) {
         for statement in body {
@@ -569,17 +567,19 @@ impl FunctionCompiler<'_, '_> {
         let mut case_edges = Vec::with_capacity(item.cases.len());
         for case in &item.cases {
             case_edges.push(case.test.as_ref().map(|test| {
-                let test = self.expression(test);
+                let test = match binding_time::expression(test).static_value() {
+                    Some(constant) => self.constant_operand(constant),
+                    None => Operand::register(self.expression(test)),
+                };
                 let discriminant = self.load_atom(discriminant_binding);
-                let matched = self.emit_binary(
-                    STRICT_EQUAL_OPERATOR,
-                    Operand::register(discriminant),
-                    Operand::register(test),
-                );
-                let next = self.emit(Op::JumpFalse, matched, 0, 0, 0);
-                let selected = self.emit(Op::Jump, 0, 0, 0, 0);
-                self.patch(next);
-                selected
+                // `!(d !== t)` is exactly `d === t`: one fused test selects the clause.
+                self.emit(
+                    Op::JumpBinaryFalse,
+                    BinaryOperator::StrictInequality as u16,
+                    Operand::register(discriminant).0,
+                    test.0,
+                    0,
+                )
             }));
         }
         let no_match = self.emit(Op::Jump, 0, 0, 0, 0);

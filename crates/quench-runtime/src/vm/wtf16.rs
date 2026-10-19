@@ -932,7 +932,8 @@ impl JsString {
 
 impl PartialEq for JsString {
     fn eq(&self, other: &Self) -> bool {
-        self.units() == other.units()
+        // Strings of different lengths differ without flattening a rope or reading units.
+        self.len() == other.len() && self.units() == other.units()
     }
 }
 

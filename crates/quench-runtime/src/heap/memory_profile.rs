@@ -701,7 +701,7 @@ fn cell_bytes(cell: &Cell) -> usize {
             Cell::Error(value) => value.capacity(),
             Cell::Promise(promise) => {
                 size_of::<super::PromiseCell>()
-                    + promise.record.reactions.capacity() * size_of::<super::PromiseReaction>()
+                    + promise.record.reaction_heap_bytes()
             }
             Cell::Symbol(value) => value.as_ref().map_or(0, |description| description.len()),
             Cell::Date { .. } => 0,

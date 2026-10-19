@@ -114,6 +114,7 @@ impl<H: Host> Vm<H> {
             regexp_matchers: Default::default(),
             atom_classes: vec![],
             dynamic_strings: None,
+            typeof_names: [Value::UNDEFINED; super::TYPEOF_NAMES],
             symbol_registry: FxHashMap::default(),
             well_known_symbols: WellKnownSymbols::default(),
             string_concats: None,
