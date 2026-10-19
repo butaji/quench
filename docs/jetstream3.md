@@ -69,8 +69,12 @@ For diagnostic runs, add `--jit-diagnostics`. This enables opt-in per-function
 JavaScript and Wasm tier counters in Quench's captured stderr; it adds overhead
 and is excluded from score qualification. JavaScript records the source and
 function names, candidate entries, numeric entries, promotion, compile attempts
-and time, mapped code bytes, and native entries. Wasm diagnostics retain their
-existing callout and mapped-code counters.
+and time, instruction count, mapped code bytes, and native entries. Wasm
+diagnostics retain their existing callout and mapped-code counters. JavaScript rows also report
+interpreter completions and inclusive interpreter nanoseconds. The time excludes
+compilation and native execution, includes called functions, and covers only
+synchronous returns; exceptions and suspensions are omitted. Use it to rank
+diagnostic candidates, not as a standalone score or exclusive CPU profile.
 
 A fixture is a JetStream test name. `--all` selects the lane's full test list;
 `--fixtures NAME,NAME,...` selects a pinned subset for paired measurement and
