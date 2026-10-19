@@ -182,7 +182,48 @@ impl RecordBlock {
 impl<T> RecordSpace<T> {
     /// Allocates a dense identity in this record space. The family's Value
     /// tag carries this ID directly, independent of legacy Cell slot allocation.
+    #[inline(always)]
     pub(super) fn try_insert(&mut self, value: T) -> Result<RecordId, T> {
+        // The common allocation, inline: an id from the loaded free word, else the next fresh
+        // id in a block that exists. Reservation, new blocks and loading the next free word
+        // take `try_insert_slow`.
+        let id = if self.free_word != 0 {
+            let bit = OCCUPANCY_WORD_BITS - 1 - self.free_word.leading_zeros() as usize;
+            self.free_word &= !(1_u64 << bit);
+            self.free_word_base + bit as RecordId
+        } else if self.free_cursor == 0
+            && self.reserved
+            && (self.next_id as usize) < RECORD_SPACE_CAPACITY
+            && Self::split_id(self.next_id).0 < self.blocks.len()
+        {
+            let id = self.next_id;
+            let (block_index, record_index) = Self::split_id(id);
+            if self.blocks[block_index].is_occupied(record_index) {
+                return Err(value);
+            }
+            self.next_id += 1;
+            id
+        } else {
+            return self.try_insert_slow(value);
+        };
+        let (block_index, record_index) = Self::split_id(id);
+        let claimed = self.blocks[block_index].claim(record_index);
+        debug_assert!(claimed, "a free or fresh id is unoccupied");
+        // SAFETY: the occupancy bit claims this previously uninitialized id, in the reserved
+        // range (a free word and a block exist only after reservation).
+        unsafe {
+            self.base
+                .as_ptr()
+                .add(id as usize)
+                .write(MaybeUninit::new(value));
+        };
+        self.live += 1;
+        Ok(id)
+    }
+
+    /// `try_insert` when it reserves the range, adds a block or loads a free word.
+    #[inline(never)]
+    fn try_insert_slow(&mut self, value: T) -> Result<RecordId, T> {
         if !self.ensure_reserved() {
             return Err(value);
         }
