@@ -88,6 +88,7 @@ impl Heap {
             object_records,
             array_records,
             function_records,
+            promise_records,
             marks,
             slots,
             young_weak,
@@ -98,6 +99,7 @@ impl Heap {
             object_records,
             array_records,
             function_records,
+            promise_records,
             marks,
         };
         let mut finalization_jobs = Vec::new();

@@ -22,6 +22,7 @@ pub struct HeapMemoryComposition {
     pub array_record_reusable_ids: usize,
     pub array_record_allocation_scan_cursor: usize,
     pub function_record_reserved_bytes: usize,
+    pub promise_record_reserved_bytes: usize,
     pub legacy_cell_record_reserved_bytes: usize,
     pub free_slot_metadata_bytes: usize,
     pub slot_size_bytes: usize,
@@ -92,8 +93,10 @@ impl Heap {
             let cell = self.get(identity);
             let direct_object = identity.direct_object_index().is_some();
             let direct_function = identity.direct_function_index().is_some();
-            direct_records += usize::from(direct_object || direct_array || direct_function);
-            let kind = if direct_object {
+            let direct_promise = identity.direct_promise_index().is_some();
+            direct_records +=
+                usize::from(direct_object || direct_array || direct_function || direct_promise);
+            let kind = if direct_object || direct_promise {
                 CellKind::Object as usize
             } else if direct_array {
                 CellKind::Array as usize
@@ -109,6 +112,8 @@ impl Heap {
                 "array"
             } else if direct_function {
                 "function"
+            } else if direct_promise {
+                "promise"
             } else {
                 cell.expect("live legacy value has a Cell")
                     .profile_variant_name()
@@ -160,6 +165,9 @@ impl Heap {
             } else if direct_function {
                 self.function(identity)
                     .map_or(0, |function| function.object.allocated_extra_bytes())
+            } else if direct_promise {
+                self.promise(identity)
+                    .map_or(0, |promise| promise.object.allocated_extra_bytes())
             } else {
                 cell.map_or(0, Self::cell_payload_bytes)
             };
@@ -244,6 +252,7 @@ impl Heap {
             array_record_reusable_ids: self.array_records.reusable_ids(),
             array_record_allocation_scan_cursor: self.array_records.allocation_scan_cursor(),
             function_record_reserved_bytes: self.function_records.allocated_bytes(),
+            promise_record_reserved_bytes: self.promise_records.allocated_bytes(),
             legacy_cell_record_reserved_bytes: 0,
             free_slot_metadata_bytes: self.free_by_slab.capacity() * size_of::<FreeSlotBitmap>()
                 + self.free_slabs.capacity() * size_of::<u32>(),
@@ -308,6 +317,7 @@ impl HeapMemoryComposition {
             + self.object_record_reserved_bytes
             + self.array_record_reserved_bytes
             + self.function_record_reserved_bytes
+            + self.promise_record_reserved_bytes
             + self.legacy_cell_record_reserved_bytes
             + self.free_slot_metadata_bytes
             + self.boxed_object_header_bytes

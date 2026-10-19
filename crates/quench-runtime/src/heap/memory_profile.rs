@@ -1,4 +1,4 @@
-use super::{ArrayObject, Cell, CellKind, FreeSlotBitmap, FunctionRecord, Heap, Object};
+use super::{ArrayObject, Cell, CellKind, FreeSlotBitmap, FunctionRecord, Heap, Object, PromiseCell};
 use crate::value::Value;
 use rustc_hash::FxHashMap;
 use std::collections::BTreeMap;
@@ -202,6 +202,30 @@ impl MemoryProfile {
             "function",
             Some(object_slots),
         );
+    }
+
+    pub(super) fn allocated_promise(
+        &mut self,
+        identity: Value,
+        promise: &PromiseCell,
+        object_slots: usize,
+    ) {
+        self.allocated_record(
+            identity,
+            CellKind::Object as usize,
+            promise.object.allocated_extra_bytes(),
+            "promise",
+            Some(object_slots),
+        );
+    }
+
+    pub(super) fn freed_promise(&mut self, identity: Value, object_slots: usize) {
+        let Some(index) = self.identity_slots.remove(&identity) else {
+            return;
+        };
+        let kind = CellKind::Object as usize;
+        debug_assert_eq!(self.kinds[index] as usize, kind);
+        self.freed_record(index, kind, Some(object_slots));
     }
 
     pub(super) fn freed_function(&mut self, identity: Value, object_slots: usize) {
@@ -452,10 +476,12 @@ impl Heap {
         counts[CellKind::Object as usize] = self.object_records.live_count();
         counts[CellKind::Array as usize] = self.array_records.live_count();
         counts[CellKind::Function as usize] = self.function_records.live_count();
+        counts[CellKind::Object as usize] += self.promise_records.live_count();
         self.for_each_live_value(|identity| {
             if identity.direct_object_index().is_some()
                 || identity.direct_array_index().is_some()
                 || identity.direct_function_index().is_some()
+                || identity.direct_promise_index().is_some()
             {
                 return;
             }
@@ -481,6 +507,10 @@ impl Heap {
                     + array.elements().capacity() * size_of::<Value>();
             } else if let Some(function) = self.function(identity) {
                 bytes[CellKind::Function as usize] += function.object.allocated_extra_bytes();
+            } else if identity.direct_promise_index().is_some()
+                && let Some(promise) = self.promise(identity)
+            {
+                bytes[CellKind::Object as usize] += promise.object.allocated_extra_bytes();
             } else if let Some(cell) = self.get(identity) {
                 bytes[Self::cell_kind(cell) as usize] += Self::cell_payload_bytes(cell);
             }
@@ -493,6 +523,7 @@ impl Heap {
             + self.object_records.allocated_bytes()
             + self.array_records.allocated_bytes()
             + self.function_records.allocated_bytes()
+            + self.promise_records.allocated_bytes()
             + self.live_value_payload_bytes()
             + self
                 .sparse_arrays
@@ -507,7 +538,8 @@ impl Heap {
             self.slots.len()
                 + self.object_records.high_water()
                 + self.array_records.high_water()
-                + self.function_records.high_water(),
+                + self.function_records.high_water()
+                + self.promise_records.high_water(),
             self.slots.capacity() * size_of::<super::Slot>(),
             self.free_by_slab.capacity() * size_of::<FreeSlotBitmap>()
                 + self.free_slabs.capacity() * size_of::<u32>(),
@@ -543,6 +575,10 @@ impl Heap {
                             + array.elements().capacity() * size_of::<Value>()
                     } else if let Some(function) = self.function(identity) {
                         function.object.allocated_extra_bytes()
+                    } else if identity.direct_promise_index().is_some()
+                        && let Some(promise) = self.promise(identity)
+                    {
+                        promise.object.allocated_extra_bytes()
                     } else {
                         self.get(identity).map_or(0, cell_bytes)
                     }
