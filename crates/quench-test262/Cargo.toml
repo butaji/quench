@@ -8,6 +8,7 @@ license = "MIT"
 [features]
 profile-aggregate = ["quench-runtime/profile-aggregate"]
 profile-memory = ["quench-runtime/profile-memory"]
+verify-replay = ["quench-runtime/verify-replay"]
 
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }

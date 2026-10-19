@@ -21,6 +21,11 @@ impl Heap {
         };
         let mut running = Vec::with_capacity(registered.len());
         for iterator in registered {
+            // The registry does not keep its iterators alive: a collected one's identity
+            // may name a free record now.
+            if !self.is_live(iterator) {
+                continue;
+            }
             if let Some(IteratorRecord {
                 source,
                 kind,

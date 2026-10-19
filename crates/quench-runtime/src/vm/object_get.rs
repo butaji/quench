@@ -880,8 +880,7 @@ impl<H: Host> Vm<H> {
         // bindings resolve the same initialized home whenever the closure's environment chain
         // is the same.
         let static_bindings = p
-            .functions
-            .get(key.function as usize)
+            .function_get(key.function as usize)
             .is_some_and(|function| function.binding_sites.is_empty());
         if static_bindings && let Some(home) = self.private_homes.get(&key) {
             return Some(*home);
@@ -902,7 +901,7 @@ impl<H: Host> Vm<H> {
         let mut function = Some(self.frames[frame_index].function);
         let mut home_atoms = Vec::new();
         while let Some(id) = function
-            && let Some(metadata) = p.functions.get(id as usize)
+            && let Some(metadata) = p.function_get(id as usize)
         {
             if let Some(atom) = metadata.super_home_atom
                 && !home_atoms.contains(&atom)
@@ -936,8 +935,7 @@ impl<H: Host> Vm<H> {
                 });
                 let owner = owner.as_deref().unwrap_or(p);
                 let visible_homes = owner
-                    .functions
-                    .get(*function as usize)
+                    .function_get(*function as usize)
                     .into_iter()
                     .flat_map(|metadata| metadata.local_atoms.iter().copied())
                     .filter(|atom| self.atom_name(*atom).starts_with("\0quench:home:"))

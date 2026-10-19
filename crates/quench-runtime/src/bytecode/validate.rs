@@ -497,6 +497,8 @@ impl ResidualProgram {
         if self.functions.is_empty() && self.kind != super::ProgramKind::Wasm {
             return Err("program has no entry function".into());
         }
+        // Validation reads every record, and the cross-function checks read their parents'.
+        self.compile_released();
         let selective_capture_scope_unsafe =
             selective_capture_scope_unsafe(&self.functions, &self.atoms);
         // Captured name scopes are shared by sibling functions: each is checked once per

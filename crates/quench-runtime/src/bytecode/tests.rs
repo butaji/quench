@@ -13,8 +13,8 @@ fn promoted_parameter_registers_survive_residual_round_trip() {
     let decoded = ResidualProgram::read_binary(&path).unwrap();
     std::fs::remove_file(path).unwrap();
     assert_eq!(
-        decoded.functions[1].local_registers,
-        program.functions[1].local_registers
+        decoded.function(1).local_registers,
+        program.function(1).local_registers
     );
     decoded.validate().unwrap();
 }
@@ -347,7 +347,7 @@ fn instance_initializer_plan_survives_round_trip_and_rejects_invalid_owners() {
         .iter()
         .position(|f| f.instance_initializer.is_some())
         .unwrap();
-    let initializer = program.functions[owner].instance_initializer.unwrap();
+    let initializer = program.function(owner).instance_initializer.unwrap();
     let path = std::env::temp_dir().join(format!(
         "quench-instance-initializer-{}",
         std::process::id()
@@ -356,7 +356,7 @@ fn instance_initializer_plan_survives_round_trip_and_rejects_invalid_owners() {
     let bytes = std::fs::read(&path).unwrap();
     let decoded = ResidualProgram::read_binary(&path).unwrap();
     assert_eq!(
-        decoded.functions[owner].instance_initializer,
+        decoded.function(owner).instance_initializer,
         Some(initializer)
     );
     decoded.write_binary(&path).unwrap();

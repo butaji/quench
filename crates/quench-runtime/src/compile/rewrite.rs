@@ -117,7 +117,7 @@ fusion_recipes! {
 
 pub(super) fn apply(
     function: &mut BcFunction,
-    methods: &[MethodSiteSpec],
+    methods: &(impl liveness::MethodArguments + ?Sized),
     field_sites: &mut SiteTable<'_, FieldSite>,
     superinstructions: &mut SiteTable<'_, Superinstruction>,
 ) {
@@ -160,7 +160,7 @@ impl CodeLiveness {
     fn of(
         current: &mut Option<Self>,
         function: &BcFunction,
-        methods: &[MethodSiteSpec],
+        methods: &(impl liveness::MethodArguments + ?Sized),
         field_sites: &[FieldSite],
         superinstructions: &[Superinstruction],
     ) -> Option<Self> {
@@ -246,7 +246,7 @@ fn invert_branches_over_jumps(function: &mut BcFunction) {
 /// candidate's liveness facts are unaffected by the others.
 fn coalesce_distant_producer_moves(
     function: &mut BcFunction,
-    methods: &[MethodSiteSpec],
+    methods: &(impl liveness::MethodArguments + ?Sized),
     field_sites: &[FieldSite],
     superinstructions: &[Superinstruction],
     current: &mut Option<CodeLiveness>,
@@ -350,7 +350,7 @@ fn coalesce_distant_producer_moves(
 /// rewrite trades `d` for `s` and changes nothing else it reads or writes.
 fn forward_move_sources(
     function: &mut BcFunction,
-    methods: &[MethodSiteSpec],
+    methods: &(impl liveness::MethodArguments + ?Sized),
     field_sites: &[FieldSite],
     superinstructions: &[Superinstruction],
     current: &mut Option<CodeLiveness>,
@@ -672,7 +672,7 @@ fn region_boundaries(
 
 fn rewrite_once(
     function: &mut BcFunction,
-    methods: &[MethodSiteSpec],
+    methods: &(impl liveness::MethodArguments + ?Sized),
     field_sites: &mut SiteTable<'_, FieldSite>,
     superinstructions: &[Superinstruction],
     current: &mut Option<CodeLiveness>,
@@ -947,7 +947,7 @@ mod tests {
             Instr::new(Op::Move, 5, 3, 0, 0),
             Instr::new(Op::Return, 5, 0, 0, 0),
         ];
-        assert!(!coalesce_distant_producer_moves(function, &[], &[], &[], &mut None));
+        assert!(!coalesce_distant_producer_moves(function, &[] as &[MethodSiteSpec], &[], &[], &mut None));
         assert_eq!(function.code[0].result_register(), 3);
         assert_eq!(function.code[2].op(), Op::Move);
     }
@@ -1065,7 +1065,7 @@ mod tests {
                 register,
             })
             .collect();
-        while coalesce_distant_producer_moves(function, &[], &[], &[], &mut None) {}
+        while coalesce_distant_producer_moves(function, &[] as &[MethodSiteSpec], &[], &[], &mut None) {}
         function
             .code
             .iter()
@@ -1171,7 +1171,7 @@ mod tests {
         let function = &mut program.functions[0];
         function.code = code;
         function.registers = registers;
-        rewrite_once(function, &[], &mut SiteTable::default(), &[], &mut None);
+        rewrite_once(function, &[] as &[MethodSiteSpec], &mut SiteTable::default(), &[], &mut None);
         std::mem::take(&mut function.code)
     }
 
