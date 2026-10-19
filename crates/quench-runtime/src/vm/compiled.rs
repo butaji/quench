@@ -435,16 +435,20 @@ pub(super) fn with_jit_direct_compare_branches_for_test<R>(
 }
 
 fn jit_root_opt_level(root: Option<usize>, root_only: bool) -> Result<&'static str, ()> {
-    if root_only {
-        return Ok("none");
-    }
     if root.is_none() {
         return Ok("speed");
     }
-    let Some(level) = std::env::var_os(JIT_ROOT_OPT_LEVEL_ENV) else {
-        return Ok("speed");
+    match std::env::var_os(JIT_ROOT_OPT_LEVEL_ENV) {
+        Some(level) => parse_jit_root_opt_level(root_only, Some(level.to_str().ok_or(())?)),
+        None => parse_jit_root_opt_level(root_only, None),
+    }
+}
+
+fn parse_jit_root_opt_level(root_only: bool, level: Option<&str>) -> Result<&'static str, ()> {
+    let Some(level) = level else {
+        return Ok(if root_only { "none" } else { "speed" });
     };
-    match level.to_str().ok_or(())? {
+    match level {
         "none" => Ok("none"),
         "speed" => Ok("speed"),
         "speed_and_size" => Ok("speed_and_size"),
@@ -7670,8 +7674,16 @@ mod tests {
     }
 
     #[test]
-    fn root_only_jit_forces_cranelift_opt_level_none() {
-        assert_eq!(jit_root_opt_level(Some(0), true), Ok("none"));
+    fn root_only_jit_defaults_to_none_and_accepts_explicit_opt_level() {
+        assert_eq!(parse_jit_root_opt_level(true, None), Ok("none"));
+        assert_eq!(parse_jit_root_opt_level(false, None), Ok("speed"));
+        assert_eq!(parse_jit_root_opt_level(true, Some("none")), Ok("none"));
+        assert_eq!(parse_jit_root_opt_level(true, Some("speed")), Ok("speed"));
+        assert_eq!(
+            parse_jit_root_opt_level(true, Some("speed_and_size")),
+            Ok("speed_and_size")
+        );
+        assert_eq!(parse_jit_root_opt_level(true, Some("invalid")), Err(()));
     }
 
     #[test]
