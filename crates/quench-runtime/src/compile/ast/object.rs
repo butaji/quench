@@ -226,7 +226,8 @@ impl FunctionCompiler<'_, '_> {
             if Self::anonymous_function_definition(&property.value) {
                 self.emit_function_name(item, atom);
             }
-            self.emit(Op::DefineField, item, dst, 0, atom);
+            let cache = self.owner.cache_site();
+            self.emit(Op::DefineField, item, dst, cache, atom);
         }
         self.next_reg = temporaries;
         dst
