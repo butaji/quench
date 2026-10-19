@@ -10769,6 +10769,34 @@ fn anonymous_function_definitions_are_named_by_their_plan() {
 }
 
 #[test]
+fn catch_bindings_live_in_registers_and_keep_their_thrown_values() {
+    // A catch binding read only by its block moves into a register: the wrapper calls no
+    // frame of its own, and each catch still sees the value its own throw made.
+    let source = r#"
+      function wrap(layer, path) { try { return layer.match(path); } catch (err) { return err; } }
+      const ok = { match(path) { return 'ok:' + path; } };
+      const bad = { match(path) { throw new Error('bad:' + path); } };
+      const seen = [];
+      for (let i = 0; i < 3; i++) {
+        seen.push(wrap(ok, i));
+        seen.push(wrap(bad, i).message);
+      }
+      print(seen.join(','));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    let program = Engine::specialize(source, "catch-register.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["ok:0,bad:0,ok:1,bad:1,ok:2,bad:2"]);
+    let wrap = &program.functions[1];
+    assert!(wrap.handlers.iter().all(|handler| matches!(
+        handler.slot,
+        Some(crate::bytecode::ThrownValueSlot::Register(_))
+    )));
+    assert!(wrap.call_plan(&program).registers_only);
+}
+
+#[test]
 fn promoted_var_locals_read_undefined_before_their_first_store() {
     // A frame's registers start stale from its pool, so a `var` promoted to a register that
     // a read reaches before any store must still read undefined on every call.
