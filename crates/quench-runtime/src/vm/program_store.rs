@@ -10,6 +10,7 @@ use std::io::Write as _;
 struct JsJitCounters {
     source_name: Option<Box<str>>,
     function_name: Option<Box<str>>,
+    parameter_count: u16,
     entries: u64,
     numeric_entries: u64,
     promotions: u64,
@@ -1187,7 +1188,13 @@ impl ProgramStore {
         (*entries >= JS_JIT_REJECTION_DIAGNOSTIC_ENTRIES).then_some((*entries, *reason))
     }
 
-    pub(super) fn record_js_jit_entry(&mut self, id: ProgramId, function: u32, numeric: bool) {
+    pub(super) fn record_js_jit_entry(
+        &mut self,
+        id: ProgramId,
+        function: u32,
+        numeric: bool,
+        parameter_count: u16,
+    ) {
         let key = (id.raw(), function);
         let Some(diagnostics) = self.js_jit_diagnostics.as_ref() else {
             return;
@@ -1199,6 +1206,7 @@ impl ProgramStore {
                 .and_then(|diagnostics| diagnostics.get_mut(&key))
             {
                 counters.entries = counters.entries.saturating_add(1);
+                counters.parameter_count = parameter_count;
                 counters.numeric_entries = counters
                     .numeric_entries
                     .saturating_add(u64::from(numeric));
@@ -1229,6 +1237,7 @@ impl ProgramStore {
             let counters = diagnostics.entry(key).or_default();
             counters.source_name = Some(source_name.into_boxed_str());
             counters.function_name = Some(function_name.into_boxed_str());
+            counters.parameter_count = parameter_count;
             counters.entries = counters.entries.saturating_add(1);
             counters.numeric_entries = counters
                 .numeric_entries
@@ -1528,7 +1537,8 @@ impl Drop for ProgramStore {
             }
             let _ = writeln!(
                 stderr,
-                ",\"status\":\"{status}\",\"entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"compile_ns\":{},\"native_entries\":{},\"fallback_entries\":{},\"code_bytes\":{}}}",
+                ",\"status\":\"{status}\",\"parameter_count\":{},\"entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"compile_ns\":{},\"native_entries\":{},\"fallback_entries\":{},\"code_bytes\":{}}}",
+                counters.parameter_count,
                 counters.entries,
                 counters.numeric_entries,
                 counters.promotions,

@@ -6275,7 +6275,7 @@ impl<H: Host> Vm<H> {
         });
         if let Some((entries, reason)) = rejected_entry {
             self.programs
-                .record_js_jit_entry(program_id, function_id, numeric);
+                .record_js_jit_entry(program_id, function_id, numeric, function.params);
             self.programs
                 .record_js_jit_rejection(program_id, function_id, reason, entries);
             return None;
@@ -6291,8 +6291,12 @@ impl<H: Host> Vm<H> {
             if let Some(entries) = report_entries
                 && self.programs.js_jit_diagnostics_enabled()
             {
-                self.programs
-                    .record_js_jit_entry(program_id, function_id, numeric);
+                self.programs.record_js_jit_entry(
+                    program_id,
+                    function_id,
+                    numeric,
+                    function.params,
+                );
                 self.programs
                     .record_js_jit_rejection(program_id, function_id, reason, entries);
             }
@@ -6303,7 +6307,7 @@ impl<H: Host> Vm<H> {
         }
         if self.programs.js_jit_diagnostics_enabled() {
             self.programs
-                .record_js_jit_entry(program_id, function_id, numeric);
+                .record_js_jit_entry(program_id, function_id, numeric, function.params);
         }
 
         let compiled = match tier {
@@ -6535,7 +6539,7 @@ impl<H: Host> Vm<H> {
             numeric_arguments.push(argument.as_number()?);
         }
         if programs.js_jit_diagnostics_enabled() {
-            programs.record_js_jit_entry(program_id, function_id, true);
+            programs.record_js_jit_entry(program_id, function_id, true, function.params);
             programs.record_js_jit_native_entry(program_id, function_id);
         }
         match compiled.call(&numeric_arguments, interrupt)? {
