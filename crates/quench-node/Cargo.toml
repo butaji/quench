@@ -15,6 +15,7 @@ path = "src/bin/quench-node.rs"
 # (v2-cloud-c) links it by default.
 default = []
 profile-memory = ["quench-runtime/profile-memory"]
+verify-replay = ["quench-runtime/verify-replay"]
 # Quench's size-classed small-object allocator as the global allocator (TOD-137).
 quench-alloc = ["dep:quench-alloc"]
 
