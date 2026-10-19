@@ -10351,6 +10351,54 @@ fn js_jit_compiles_hot_numeric_functions_and_guards_polymorphic_inputs() {
     feature = "profile-memory",
     feature = "profile-gc-time"
 )))]
+fn js_jit_compiles_number_capture_returns_and_observes_mutation() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function makeReader() {
+            let value = 7;
+            function read() { return value; }
+            function write(next) { value = next; }
+            return { read, write };
+          }
+          const state = makeReader();
+          for (let index = 0; index < 40; index++) {
+            if (state.read() !== 7) throw Error('capture number');
+          }
+          state.write(11);
+          if (state.read() !== 11) throw Error('capture update');
+          state.write('text');
+          if (state.read() !== 'text') throw Error('non-number capture fallback');
+        "#,
+        "js-jit-capture-return.js",
+    ))
+    .unwrap();
+    let reader = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .name
+                .or(function.inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "read")
+        })
+        .unwrap() as u32;
+    let mut vm = Vm::new(SilentHost);
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+    assert!(matches!(
+        vm.programs
+            .js_tier(super::program_store::ProgramId::MAIN, reader),
+        Some(super::program_store::JsTierState::Compiled(_))
+    ));
+}
+
+#[test]
+#[cfg(not(any(
+    feature = "profile-aggregate",
+    feature = "profile-trace",
+    feature = "profile-memory",
+    feature = "profile-gc-time"
+)))]
 fn js_jit_compiles_pure_numeric_loops_with_backedge_polls() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"

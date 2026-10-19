@@ -2207,6 +2207,7 @@ pub(super) struct CompiledJsFunction {
     mapped_bytes: usize,
     return_constants: Vec<(u32, u32)>,
     field_argument: Option<super::js_compiled::JsJitFieldArgument>,
+    capture_argument: Option<super::js_compiled::JsJitCaptureArgument>,
     #[cfg(test)]
     native_entries: std::cell::Cell<u64>,
 }
@@ -2214,6 +2215,7 @@ pub(super) struct CompiledJsFunction {
 #[derive(Clone, Copy)]
 enum CompiledJsEntry {
     Number(unsafe extern "C" fn(*const f64) -> f64),
+    CaptureNumber(unsafe extern "C" fn(f64) -> f64),
     NumberInterruptible(
         unsafe extern "C" fn(*const f64, *const std::sync::atomic::AtomicBool, *mut u32) -> f64,
     ),
@@ -2246,7 +2248,7 @@ impl CompiledJsFunction {
         let code = CodeMemory::new(&artifact.code)?;
         let mapped_bytes = code.length;
         let field_argument = artifact.field_argument;
-        let (entry, return_constants) = match artifact.result {
+        let (entry, return_constants, capture_argument) = match artifact.result {
             super::js_compiled::JsJitResultKind::Number => {
                 // SAFETY: the numeric JS compiler emits `fn(*const f64) -> f64`.
                 let entry = unsafe {
@@ -2254,7 +2256,18 @@ impl CompiledJsFunction {
                         code.pointer,
                     )
                 };
-                (CompiledJsEntry::Number(entry), Vec::new())
+                (CompiledJsEntry::Number(entry), Vec::new(), None)
+            }
+            super::js_compiled::JsJitResultKind::CaptureNumber(capture) => {
+                // SAFETY: the capture identity compiler emits `fn(f64) -> f64`.
+                let entry = unsafe {
+                    std::mem::transmute::<*mut u8, unsafe extern "C" fn(f64) -> f64>(code.pointer)
+                };
+                (
+                    CompiledJsEntry::CaptureNumber(entry),
+                    Vec::new(),
+                    Some(capture),
+                )
             }
             super::js_compiled::JsJitResultKind::NumberInterruptible => {
                 // SAFETY: the loop compiler emits the matching guarded ABI and
@@ -2269,7 +2282,11 @@ impl CompiledJsFunction {
                         ) -> f64,
                     >(code.pointer)
                 };
-                (CompiledJsEntry::NumberInterruptible(entry), Vec::new())
+                (
+                    CompiledJsEntry::NumberInterruptible(entry),
+                    Vec::new(),
+                    None,
+                )
             }
             super::js_compiled::JsJitResultKind::StringHashLoop => {
                 // SAFETY: the string hash loop compiler emits the matching
@@ -2286,7 +2303,7 @@ impl CompiledJsFunction {
                         ) -> f64,
                     >(code.pointer)
                 };
-                (CompiledJsEntry::StringHashLoop(entry), Vec::new())
+                (CompiledJsEntry::StringHashLoop(entry), Vec::new(), None)
             }
             super::js_compiled::JsJitResultKind::StringTransform(transform) => {
                 // SAFETY: the string transform compiler emits the matching code-unit ABI.
@@ -2298,6 +2315,7 @@ impl CompiledJsFunction {
                 (
                     CompiledJsEntry::StringTransform { entry, transform },
                     Vec::new(),
+                    None,
                 )
             }
             super::js_compiled::JsJitResultKind::StringReturnPc(return_constants) => {
@@ -2307,7 +2325,11 @@ impl CompiledJsFunction {
                         code.pointer,
                     )
                 };
-                (CompiledJsEntry::StringReturnPc(entry), return_constants)
+                (
+                    CompiledJsEntry::StringReturnPc(entry),
+                    return_constants,
+                    None,
+                )
             }
             super::js_compiled::JsJitResultKind::Boolean => {
                 // SAFETY: the boolean compiler emits `fn(*const f64) -> u32`.
@@ -2316,7 +2338,7 @@ impl CompiledJsFunction {
                         code.pointer,
                     )
                 };
-                (CompiledJsEntry::Boolean(entry), Vec::new())
+                (CompiledJsEntry::Boolean(entry), Vec::new(), None)
             }
         };
         Some(Self {
@@ -2326,6 +2348,7 @@ impl CompiledJsFunction {
             mapped_bytes,
             return_constants,
             field_argument,
+            capture_argument,
             #[cfg(test)]
             native_entries: std::cell::Cell::new(0),
         })
@@ -2337,6 +2360,10 @@ impl CompiledJsFunction {
 
     pub(super) fn field_argument(&self) -> Option<super::js_compiled::JsJitFieldArgument> {
         self.field_argument
+    }
+
+    fn capture_argument(&self) -> Option<super::js_compiled::JsJitCaptureArgument> {
+        self.capture_argument
     }
 
     pub(super) fn call(
@@ -2354,6 +2381,7 @@ impl CompiledJsFunction {
                 CompiledJsEntry::Number(entry) => {
                     Some(CompiledJsResult::Number(entry(arguments.as_ptr())))
                 }
+                CompiledJsEntry::CaptureNumber(_) => None,
                 CompiledJsEntry::NumberInterruptible(entry) => {
                     let mut completed = 0_u32;
                     let result = entry(arguments.as_ptr(), interrupt, &mut completed);
@@ -2369,6 +2397,21 @@ impl CompiledJsFunction {
                 }
             }
         }
+    }
+
+    fn call_capture_number(&self, value: f64) -> Option<CompiledJsResult> {
+        #[cfg(test)]
+        self.native_entries
+            .set(self.native_entries.get().saturating_add(1));
+        let CompiledJsEntry::CaptureNumber(entry) = self.entry else {
+            return None;
+        };
+        // SAFETY: the capture identity compiler emits `fn(f64) -> f64`.
+        Some(CompiledJsResult::Number(unsafe { entry(value) }))
+    }
+
+    fn is_capture_number(&self) -> bool {
+        matches!(self.entry, CompiledJsEntry::CaptureNumber(_))
     }
 
     fn call_string_hash_loop(
@@ -6122,8 +6165,10 @@ impl<H: Host> Vm<H> {
         let function = program.functions.get(function_id as usize)?;
         let tier = self.programs.js_tier(program_id, function_id);
         let rejected_entry = if self.programs.js_jit_diagnostics_enabled()
-            && matches!(tier.as_ref(), Some(super::program_store::JsTierState::Rejected { .. }))
-        {
+            && matches!(
+                tier.as_ref(),
+                Some(super::program_store::JsTierState::Rejected { .. })
+            ) {
             self.programs
                 .note_js_rejected_entry(program_id, function_id)
         } else {
@@ -6143,8 +6188,16 @@ impl<H: Host> Vm<H> {
             Some(super::program_store::JsTierState::Compiled(compiled)) => Some(compiled.as_ref()),
             _ => None,
         };
-        let numeric_loop_candidate = compiled_tier.is_none()
-            && super::js_compiled::has_numeric_loop_candidate(function);
+        let numeric_loop_candidate =
+            compiled_tier.is_none() && super::js_compiled::has_numeric_loop_candidate(function);
+        let capture_argument = match compiled_tier {
+            Some(compiled) => compiled.capture_argument(),
+            None => super::js_compiled::number_capture_candidate(function),
+        };
+        let capture_number = capture_argument.and_then(|capture| {
+            self.cached_direct_capture(frame, capture.depth, capture.slot)
+                .and_then(Value::as_number)
+        });
 
         let params = usize::from(function.params);
         let registers = self.frames[frame].registers.get(..params)?;
@@ -6220,7 +6273,10 @@ impl<H: Host> Vm<H> {
                 .record_js_jit_rejection(program_id, function_id, reason, entries);
             return None;
         }
-        if tier.is_none() && !super::js_compiled::function_candidate(function, &program.atoms) {
+        if tier.is_none()
+            && capture_argument.is_none()
+            && !super::js_compiled::function_candidate(function, &program.atoms)
+        {
             let reason = super::js_compiled::candidate_rejection_reason(program, function_id);
             let report_entries = self
                 .programs
@@ -6248,6 +6304,7 @@ impl<H: Host> Vm<H> {
                 if (!numeric && !compiled.is_string_hash_loop() && !compiled.is_string_transform())
                     || (compiled.is_string_hash_loop() && string_hash_units.is_none())
                     || (compiled.is_string_transform() && string_transform_units.is_none())
+                    || (compiled.is_capture_number() && capture_number.is_none())
                 {
                     return None;
                 }
@@ -6255,7 +6312,7 @@ impl<H: Host> Vm<H> {
             }
             Some(
                 super::program_store::JsTierState::Unsupported
-                    | super::program_store::JsTierState::Rejected { .. },
+                | super::program_store::JsTierState::Rejected { .. },
             ) => return None,
             Some(super::program_store::JsTierState::Hot { .. })
             | Some(super::program_store::JsTierState::PromotionPending)
@@ -6265,6 +6322,7 @@ impl<H: Host> Vm<H> {
                     function_id,
                     numeric,
                     (numeric && (numeric_loop_candidate || field_argument.is_some()))
+                        || capture_number.is_some()
                         || string_hash_units.is_some()
                         || string_transform_units.is_some(),
                 ) || (!numeric
@@ -6332,7 +6390,9 @@ impl<H: Host> Vm<H> {
             self.programs
                 .record_js_jit_native_entry(program_id, function_id);
         }
-        let result = if compiled.is_string_hash_loop() {
+        let result = if compiled.is_capture_number() {
+            compiled.call_capture_number(capture_number?)?
+        } else if compiled.is_string_hash_loop() {
             compiled
                 .call_string_hash_loop(string_hash_units?, self.execution_interrupt.atomic_flag())?
         } else if compiled.is_string_transform() {
