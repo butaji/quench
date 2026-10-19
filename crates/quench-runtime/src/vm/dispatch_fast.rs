@@ -190,14 +190,40 @@ impl Registers {
 /// memory, so the bytes stay alive, unborrowed and unresized at a stable
 /// address. A memory the lane cannot borrow resolves to the empty view, on
 /// which every access leaves the lane.
+/// A carried value a record may leave unset: the accumulator after a record that produces
+/// none, which only the record a producer falls through to reads, and a JavaScript view's
+/// memory reach, which no JavaScript record reads. An unset slot costs its dispatch no
+/// instruction; a reader gets one only where the view proves it was set.
+#[derive(Clone, Copy)]
+#[repr(transparent)]
+struct Slot<T: Copy>(std::mem::MaybeUninit<T>);
+
+impl<T: Copy> Slot<T> {
+    #[inline(always)]
+    const fn of(value: T) -> Self {
+        Self(std::mem::MaybeUninit::new(value))
+    }
+
+    #[inline(always)]
+    const fn unset() -> Self {
+        Self(std::mem::MaybeUninit::uninit())
+    }
+
+    /// SAFETY: the slot was set (`Slot::of`) on the way here.
+    #[inline(always)]
+    unsafe fn get(self) -> T {
+        unsafe { self.0.assume_init() }
+    }
+}
+
 #[derive(Clone, Copy)]
 struct MemoryView {
     bytes: *mut u8,
     /// The memory's length less the widest direct access: an access
     /// starting at or below it is in bounds whatever its width, so the hot
     /// path compares the address alone. Negative when the memory is
-    /// narrower than that access.
-    reach: isize,
+    /// narrower than that access. Unset in a JavaScript view (`MemoryView::script`).
+    reach: Slot<isize>,
 }
 
 /// The widest access a lane record makes directly.
@@ -208,26 +234,27 @@ impl MemoryView {
 
     /// A JavaScript run's view. JavaScript binds no memory (`frame_memory_view`), so the
     /// register a Wasm view's bytes take carries the run's context instead, which
-    /// `script_handler!` handlers read without the thread-local load; the reach of `NONE`
-    /// admits no access through it.
+    /// `script_handler!` handlers read without the thread-local load. Its reach is unset: no
+    /// JavaScript record accesses memory.
     #[inline(always)]
     fn script<H: Host>(cx: *mut LaneContext<H>) -> Self {
         Self {
             bytes: cx.cast(),
-            reach: Self::NONE.reach,
+            reach: Slot::unset(),
         }
     }
 
     const fn new(bytes: *mut u8, len: usize) -> Self {
         Self {
             bytes,
-            reach: len as isize - WIDEST_DIRECT_ACCESS as isize,
+            reach: Slot::of(len as isize - WIDEST_DIRECT_ACCESS as isize),
         }
     }
 
     #[inline(always)]
     fn len(self) -> usize {
-        (self.reach + WIDEST_DIRECT_ACCESS as isize) as usize
+        // SAFETY: only a Wasm view's memory is measured, whose reach is set.
+        (unsafe { self.reach.get() } + WIDEST_DIRECT_ACCESS as isize) as usize
     }
 
     /// Direct load `load` at `address`, when the access lies within the
@@ -238,7 +265,7 @@ impl MemoryView {
     #[inline(always)]
     unsafe fn read(self, load: MemoryLoad, address: u64) -> Option<crate::WasmValue> {
         // Addresses are at most 33 bits, so the signed comparison is exact.
-        if (address as i64) > self.reach as i64 || load.width() > WIDEST_DIRECT_ACCESS {
+        if (address as i64) > unsafe { self.reach.get() } as i64 || load.width() > WIDEST_DIRECT_ACCESS {
             // Off the hot path: the access falls through to its dispatch.
             std::hint::cold_path();
             return None;
@@ -253,7 +280,7 @@ impl MemoryView {
     #[inline(always)]
     unsafe fn write(self, store: MemoryStore, address: u64, value: crate::WasmValue) -> Option<()> {
         // Addresses are at most 33 bits, so the signed comparison is exact.
-        if (address as i64) > self.reach as i64 || store.width() > WIDEST_DIRECT_ACCESS {
+        if (address as i64) > unsafe { self.reach.get() } as i64 || store.width() > WIDEST_DIRECT_ACCESS {
             std::hint::cold_path();
             return None;
         }
@@ -269,8 +296,9 @@ struct Carried {
     memory: MemoryView,
     integers: crate::value::IntegerEncoding,
     /// The value an accumulator producer just wrote to its result register.
-    /// A record reads it only where the view proved it equals that register.
-    acc: Value,
+    /// A record reads it only where the view proved it equals that register; unset after
+    /// any other record.
+    acc: Slot<Value>,
 }
 
 impl Carried {
@@ -283,7 +311,7 @@ impl Carried {
         Self {
             memory: MemoryView::script(cx),
             integers: crate::value::IntegerEncoding::TAG,
-            acc: Value::UNDEFINED,
+            acc: Slot::unset(),
         }
     }
 }
@@ -831,7 +859,7 @@ struct LaneContext<H: Host> {
 /// [`EXIT_TAG`] when the general path must execute it. The carried state is
 /// passed as scalars so every argument stays in a register; the context,
 /// which hot handlers do not touch, is reached through [`LANE_CONTEXT`].
-type Handler = fn(Registers, Ip, *mut u8, isize, crate::value::IntegerEncoding, Value) -> Ip;
+type Handler = fn(Registers, Ip, *mut u8, Slot<isize>, crate::value::IntegerEncoding, Slot<Value>) -> Ip;
 
 thread_local! {
     /// The context of this thread's running lane. A lane run never calls
@@ -982,9 +1010,9 @@ macro_rules! lane_handler {
             $r: Registers,
             $ip: Ip,
             $bytes: *mut u8,
-            reach: isize,
+            reach: Slot<isize>,
             integers: crate::value::IntegerEncoding,
-            acc: Value,
+            acc: Slot<Value>,
         ) -> Ip {
             let $cx: *mut LaneContext<H> = $context;
             let $view = Carried {
@@ -1040,7 +1068,9 @@ impl InstructionField {
 #[inline(always)]
 fn read<const ACC: u8, const FIELD: u8>(r: Registers, register: u16, view: Carried) -> Value {
     if ACC == FIELD {
-        view.acc
+        // SAFETY: the view selects an accumulator-reading record only after the producer
+        // that set it.
+        unsafe { view.acc.get() }
     } else {
         r.get(register)
     }
@@ -1061,7 +1091,7 @@ macro_rules! produce {
             $r,
             following($ip),
             Carried {
-                acc: value,
+                acc: Slot::of(value),
                 ..$view
             }
         )
@@ -3022,7 +3052,7 @@ lane_handler! {
     /// the accumulator, for a target that reads it there.
     fn lane_jump_i32_zero<WHEN_ZERO: bool, BACKWARD: bool, ACC: u8, CARRY: bool>(cx, r, ip, i, view) {
         if (read_i32::<ACC, ACC_A>(r, i.a, view) == 0) == WHEN_ZERO {
-            let view = if CARRY { Carried { acc: r.get(i.c), ..view } } else { view };
+            let view = if CARRY { Carried { acc: Slot::of(r.get(i.c)), ..view } } else { view };
             return lane_jump(cx, r, ip, BACKWARD, view, None);
         }
         next!(cx, r, following(ip), view)
@@ -3130,7 +3160,8 @@ lane_handler! {
     fn lane_select<ACC: u8>(cx, r, ip, i, view) {
         let (condition, _) = ImmediateLayout::register_pair(i.imm());
         let condition = if ACC == ACC_PAIR {
-            view.acc.wasm_bits32() as i32
+            // SAFETY: as for `read`.
+            unsafe { view.acc.get() }.wasm_bits32() as i32
         } else {
             r.i32(condition)
         };
@@ -3964,7 +3995,7 @@ lane_handler! {
         };
         // A safepoint exit resumes at the jump, which runs the target
         // again, so the result is written only when the jump is taken.
-        lane_jump(cx, r, ip, BACKWARD, Carried { acc: value, ..view }, Some((i.a, value)))
+        lane_jump(cx, r, ip, BACKWARD, Carried { acc: Slot::of(value), ..view }, Some((i.a, value)))
     }
 }
 
@@ -3982,7 +4013,7 @@ lane_handler! {
         let value = r.get(second.b);
         if JUMP {
             r.set(second.a, value);
-            let view = Carried { acc: value, ..view };
+            let view = Carried { acc: Slot::of(value), ..view };
             return lane_jump(cx, r, following(next), BACKWARD, view, None);
         }
         produce!(cx, r, next, second.a, value, view)
@@ -4000,7 +4031,7 @@ lane_handler! {
             r.get(i.b)
         };
         r.set(i.a, value);
-        lane_jump(cx, r, following(ip), BACKWARD, Carried { acc: value, ..view }, None)
+        lane_jump(cx, r, following(ip), BACKWARD, Carried { acc: Slot::of(value), ..view }, None)
     }
 }
 
@@ -4439,7 +4470,7 @@ fn lane_frame_state<H: Host>(
     let view = Carried {
         memory: view,
         integers: crate::value::IntegerEncoding::TAG,
-        acc: Value::UNDEFINED,
+        acc: Slot::of(Value::UNDEFINED),
     };
     (r, ip, view)
 }
@@ -6132,7 +6163,7 @@ lane_handler! {
             let view = Carried {
                 memory: MemoryView::NONE,
                 integers: crate::value::IntegerEncoding::TAG,
-                acc: Value::UNDEFINED,
+                acc: Slot::of(Value::UNDEFINED),
             };
             next!(cx, callee_registers, base, view)
         }
@@ -6293,7 +6324,7 @@ fn lane_complete_activation<H: Host>(
             let view = Carried {
                 memory: caller_memory,
                 integers: crate::value::IntegerEncoding::TAG,
-                acc: Value::UNDEFINED,
+                acc: Slot::of(Value::UNDEFINED),
             };
             return Some((activation.caller_registers, following(activation.call), view));
         }
@@ -6303,7 +6334,7 @@ fn lane_complete_activation<H: Host>(
             let view = Carried {
                 memory: caller_memory,
                 integers: crate::value::IntegerEncoding::TAG,
-                acc: Value::UNDEFINED,
+                acc: Slot::of(Value::UNDEFINED),
             };
             return Some((
                 activation.caller_registers,
@@ -8158,7 +8189,7 @@ impl<H: Host> Vm<H> {
                 view.bytes,
                 view.reach,
                 crate::value::IntegerEncoding::TAG,
-                Value::UNDEFINED,
+                Slot::of(Value::UNDEFINED),
             );
             ip = next.map_addr(|address| address & !EXIT_TAG);
             if next.addr() & EXIT_TAG != 0 {
