@@ -1040,17 +1040,6 @@ lane_handler! {
 }
 
 lane_handler! {
-    fn lane_load_this<>(cx, r, ip, i, view) {
-        // An uninitialized `this` throws on the general path.
-        let Some(value) = (unsafe { lane_this(cx) }) else {
-            return exit(ip);
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), view)
-    }
-}
-
-lane_handler! {
     /// Numbers convert to themselves; other values take the general path.
     fn lane_to_numeric<>(cx, r, ip, i, view) {
         let value = r.get(i.b);
@@ -1206,6 +1195,33 @@ macro_rules! sibling {
 }
 
 lane_handler! {
+    /// `this` where the lane holds it; the frame's `this` takes `lane_load_frame_this`,
+    /// so this handler makes no call and saves no registers.
+    fn lane_load_this<>(cx, r, ip, i, view) {
+        let this = unsafe { (*cx).this };
+        if this.is_deleted() {
+            sibling!(lane_load_frame_this::<H>, r, ip, view)
+        }
+        r.set(i.a, this);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    /// `LoadThis` of the frame's `this` (`lane_this`).
+    #[inline(never)]
+    fn lane_load_frame_this<>(cx, r, ip, i, view) {
+        // An uninitialized `this` throws on the general path.
+        let Some(value) = (unsafe { lane_this(cx) }) else {
+            return exit(ip);
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+
+lane_handler! {
     /// `Binary` of operator `OP` on two registers, its operator and operand kinds resolved
     /// when the view was derived (`specialize_register_operands`): the fields hold the
     /// operand registers themselves. Integers take the fast path here, which saves no
@@ -1224,17 +1240,12 @@ lane_handler! {
     /// `Binary` of a comparison (`LAST_COMPARISON_OPERATOR`) on a register and a register
     /// (`CONSTANT` false: the operator stays in the immediate) or a constant (`CONSTANT`
     /// true: the operator moves to `c`), decoded when the view was derived
-    /// (`specialize_register_operands`): the boolean that Number comparison or identity
-    /// equality decides from the operand words. Any other pair takes
-    /// `lane_relation_value_other`.
+    /// (`specialize_register_operands`): the boolean of Number comparison of two integers
+    /// (`integer_relation`). Any other pair takes `lane_relation_value_other`.
     fn lane_relation_value<CONSTANT: bool>(cx, r, ip, i, view) {
         let (operator, left, right) = lane_relation_operands::<CONSTANT>(r, i);
-        let holds = match super::operations::number_relation(operator, left, right) {
-            Some(holds) => holds,
-            None => match Vm::<H>::word_identity_equality(operator, left, right) {
-                Some(holds) => holds,
-                None => sibling!(lane_relation_value_other::<H, CONSTANT>, r, ip, view),
-            },
+        let Some(holds) = super::operations::integer_relation(operator, left, right) else {
+            sibling!(lane_relation_value_other::<H, CONSTANT>, r, ip, view)
         };
         r.set(i.a, if holds { Value::TRUE } else { Value::FALSE });
         next!(cx, r, following(ip), view)
@@ -1242,13 +1253,13 @@ lane_handler! {
 }
 
 lane_handler! {
-    /// `lane_relation_value` of operands the operand words do not decide: the relations
-    /// the lane decides without guest code (`lane_relation_other`); any other takes the
-    /// general path.
+    /// `lane_relation_value` of operands other than two integers: the relations the lane
+    /// decides without guest code (`lane_relation`); any other takes the general path. Out
+    /// of line, so the integer case keeps few values live.
     #[inline(never)]
     fn lane_relation_value_other<CONSTANT: bool>(cx, r, ip, i, view) {
         let (operator, left, right) = lane_relation_operands::<CONSTANT>(r, i);
-        let Some(holds) = lane_relation_other::<H>(operator, left, right) else {
+        let Some(holds) = lane_relation::<H>(operator, left, right) else {
             return exit(ip);
         };
         r.set(i.a, if holds { Value::TRUE } else { Value::FALSE });
@@ -1764,7 +1775,7 @@ lane_handler! {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let Some(value) = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) })
-            .and_then(|object| (unsafe { vm(cx) }).polymorphic_field_hit(code, object, i.c))
+            .and_then(|object| (unsafe { vm(cx) }).inline_polymorphic_field_hit(code, object, i.c))
         else {
             sibling!(lane_get_field::<H>, r, ip, Carried::SCRIPT)
         };
@@ -2498,10 +2509,27 @@ lane_handler! {
 
 lane_handler! {
     /// `lane_jump_binary_false` with register operands, decoded when the view was derived
-    /// (`specialize_register_operands`).
+    /// (`specialize_register_operands`): Number comparison of two integers
+    /// (`integer_relation`); any other pair takes `lane_jump_binary_false_registers_other`.
     fn lane_jump_binary_false_registers<BACKWARD: bool>(cx, r, ip, i, view) {
         let (left, right) = (r.get(i.b), r.get(i.c));
-        let Some(holds) = lane_relation::<H>(u32::from(i.a), left, right) else {
+        let Some(holds) = super::operations::integer_relation(u32::from(i.a), left, right) else {
+            sibling!(lane_jump_binary_false_registers_other::<H, BACKWARD>, r, ip, view)
+        };
+        if !holds {
+            return lane_jump(cx, r, ip, BACKWARD, view, None);
+        }
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    /// `lane_jump_binary_false_registers` of operands other than two integers: the relations
+    /// the lane decides without guest code (`lane_relation`); any other takes the general
+    /// path. Out of line, so the integer case keeps few values live.
+    #[inline(never)]
+    fn lane_jump_binary_false_registers_other<BACKWARD: bool>(cx, r, ip, i, view) {
+        let Some(holds) = lane_relation::<H>(u32::from(i.a), r.get(i.b), r.get(i.c)) else {
             return exit(ip);
         };
         if !holds {
@@ -5892,7 +5920,7 @@ fn returning_field_hit<H: Host, const KIND: u8>(
 ) -> Option<Value> {
     match KIND {
         RETURNING_FIELD_OWN => vm.primary_own_field_hit(code, object, cache),
-        RETURNING_FIELD_POLYMORPHIC => vm.polymorphic_field_hit(code, object, cache),
+        RETURNING_FIELD_POLYMORPHIC => vm.inline_polymorphic_field_hit(code, object, cache),
         RETURNING_FIELD_HOLDER => vm.primary_holder_field_hit(code, object, cache),
         _ => vm.inherited_field_hit(code, object, cache),
     }
