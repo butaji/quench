@@ -10399,6 +10399,50 @@ fn js_jit_compiles_number_capture_returns_and_observes_mutation() {
     feature = "profile-memory",
     feature = "profile-gc-time"
 )))]
+fn js_jit_compiles_int32_bitwise_helpers_and_guards_the_domain() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function mask(value) { return value & 7; }
+          for (let index = -20; index < 20; index++) {
+            if (mask(index) !== (index & 7)) throw Error('int32 bitwise');
+          }
+          if (mask(2.5) !== 2) throw Error('fraction fallback');
+          if (mask(4294967296) !== 0) throw Error('range fallback');
+          if (mask('13') !== 5) throw Error('coercion fallback');
+          let bigintThrew = false;
+          try { mask(13n); } catch (error) { bigintThrew = error instanceof TypeError; }
+          if (!bigintThrew) throw Error('bigint fallback');
+        "#,
+        "js-jit-int32-bitwise.js",
+    ))
+    .unwrap();
+    let mut vm = Vm::new(SilentHost);
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+    let mask = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .name
+                .or(function.inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "mask")
+        })
+        .unwrap() as u32;
+    assert!(matches!(
+        vm.programs
+            .js_tier(super::program_store::ProgramId::MAIN, mask),
+        Some(super::program_store::JsTierState::Compiled(_))
+    ));
+}
+
+#[test]
+#[cfg(not(any(
+    feature = "profile-aggregate",
+    feature = "profile-trace",
+    feature = "profile-memory",
+    feature = "profile-gc-time"
+)))]
 fn js_jit_compiles_pure_numeric_loops_with_backedge_polls() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
