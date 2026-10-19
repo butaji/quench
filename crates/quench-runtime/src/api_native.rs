@@ -229,6 +229,37 @@ pub enum BuiltinBrand {
     BoxedPrimitive,
 }
 
+/// A property descriptor's fields, as [[GetOwnProperty]] reports them or [[DefineOwnProperty]]
+/// reads them, without a descriptor object. An absent field is `None`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DescriptorFields<T = RootId> {
+    pub value: Option<T>,
+    pub writable: Option<bool>,
+    pub get: Option<T>,
+    pub set: Option<T>,
+    pub enumerable: Option<bool>,
+    pub configurable: Option<bool>,
+}
+
+impl<T> Default for DescriptorFields<T> {
+    fn default() -> Self {
+        Self { value: None, writable: None, get: None, set: None, enumerable: None, configurable: None }
+    }
+}
+
+impl<T> DescriptorFields<T> {
+    fn try_map_values<U, E>(self, mut map: impl FnMut(T) -> Result<U, E>) -> Result<DescriptorFields<U>, E> {
+        Ok(DescriptorFields {
+            value: self.value.map(&mut map).transpose()?,
+            writable: self.writable,
+            get: self.get.map(&mut map).transpose()?,
+            set: self.set.map(&mut map).transpose()?,
+            enumerable: self.enumerable,
+            configurable: self.configurable,
+        })
+    }
+}
+
 /// A real Promise's current settlement, without running reactions or guest hooks.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PromiseSnapshot<T = RootId> {
@@ -669,6 +700,34 @@ impl<'a, H: Host> NativeContext<'a, H> {
     ) -> Result<RootId, RootedError> {
         let result = self.vm.embedding_own_descriptor(root, key);
         self.completion(result)
+    }
+
+    /// [[GetOwnProperty]]: the own property `key` of `object` as descriptor fields, with
+    /// no descriptor object; `None` when there is none.
+    pub fn own_property_fields_rooted(
+        &mut self,
+        object: RootId,
+        key: RootId,
+    ) -> Result<Option<DescriptorFields>, RootedError> {
+        let result = self.vm.embedding_own_property_fields(object, key);
+        let fields = result.map_err(|error| self.error(error))?;
+        fields
+            .map(|fields| fields.try_map_values(|value| Ok(self.scoped_value(value))))
+            .transpose()
+    }
+
+    /// `Reflect.defineProperty` with a descriptor given as its fields: whether the
+    /// definition succeeded.
+    pub fn define_property_fields_rooted(
+        &mut self,
+        object: RootId,
+        key: RootId,
+        fields: DescriptorFields,
+    ) -> Result<bool, RootedError> {
+        let result = fields
+            .try_map_values(|root| self.vm.embedding_value(root))
+            .and_then(|fields| self.vm.embedding_define_property_fields(object, key, fields));
+        result.map_err(|error| self.error(error))
     }
 
     /// Own non-array-index keys without expanding a view's virtual element keys.
