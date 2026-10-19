@@ -11001,7 +11001,7 @@ fn catch_bindings_live_in_registers_and_keep_their_thrown_values() {
     let program = Engine::specialize(source, "catch-register.js").unwrap();
     vm.execute(&program).unwrap();
     assert_eq!(output.borrow().as_slice(), ["ok:0,bad:0,ok:1,bad:1,ok:2,bad:2"]);
-    let wrap = &program.functions[1];
+    let wrap = program.function(1);
     assert!(wrap.handlers.iter().all(|handler| matches!(
         handler.slot,
         Some(crate::bytecode::ThrownValueSlot::Register(_))
