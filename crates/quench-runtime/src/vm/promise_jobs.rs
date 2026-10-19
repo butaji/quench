@@ -476,7 +476,8 @@ impl<H: Host> Vm<H> {
             .flatten();
         let outcome = self.with_call_roots([reaction.handler, reaction.next, value], |vm| {
             vm.promise_job_boundary(reaction.execution_context, true)?;
-            if !vm.is_function(reaction.handler) {
+            let await_reaction = matches!(vm.heap.get(reaction.handler), Some(Cell::AwaitState(_)));
+            if !await_reaction && !vm.is_function(reaction.handler) {
                 vm.settle_reaction(
                     p,
                     reaction.next,
@@ -489,18 +490,22 @@ impl<H: Host> Vm<H> {
                 )?;
                 return Ok(Value::UNDEFINED);
             }
-            let (state, result) =
-                match vm.call_value(p, reaction.handler, Value::UNDEFINED, &[value]) {
-                    Ok(result) => (PromiseState::Fulfilled, result),
-                    // Host execution termination is not a guest throw. Return
-                    // through the outer realm/context cleanup, without
-                    // rejecting the result capability with undefined.
-                    Err(error) if error.is_execution_terminated() => return Err(error),
-                    Err(error) => (
-                        PromiseState::Rejected,
-                        error.thrown_value().unwrap_or(Value::UNDEFINED),
-                    ),
-                };
+            let called = if await_reaction {
+                vm.resume_await(p, reaction.handler, reaction.rejected, value)
+            } else {
+                vm.call_value(p, reaction.handler, Value::UNDEFINED, &[value])
+            };
+            let (state, result) = match called {
+                Ok(result) => (PromiseState::Fulfilled, result),
+                // Host execution termination is not a guest throw. Return
+                // through the outer realm/context cleanup, without
+                // rejecting the result capability with undefined.
+                Err(error) if error.is_execution_terminated() => return Err(error),
+                Err(error) => (
+                    PromiseState::Rejected,
+                    error.thrown_value().unwrap_or(Value::UNDEFINED),
+                ),
+            };
             vm.settle_reaction(p, reaction.next, state, result)?;
             Ok(Value::UNDEFINED)
         });
@@ -623,7 +628,7 @@ impl<H: Host> Vm<H> {
             |vm| {
                 vm.promise_job_boundary(thenable.execution_context, true)?;
                 if vm.is_intrinsic_promise_then(thenable.then)
-                    && vm.realm.promise.records.contains_key(&thenable.thenable)
+                    && vm.is_promise(thenable.thenable)
                     && !vm
                         .realm
                         .promise

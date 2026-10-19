@@ -195,6 +195,8 @@ impl<H: Host> Vm<H> {
                     memcpy_capture,
                     &signature,
                     args,
+                    Value::UNDEFINED,
+                    std::ptr::null_mut(),
                 );
             }
         };
@@ -311,11 +313,19 @@ impl<H: Host> Vm<H> {
         signature: &WasmSignature,
         receiver: Value,
         args: &[Value],
+        raw_i32_args: Option<[i32; 3]>,
+        current_memory: Value,
+        memcpy_fast_path_hits: *mut u64,
+        memcpy_raw_i32_hits: *mut u64,
     ) -> Result<Value, JsError> {
         let call_roots = self.active_call_roots.len();
-        self.active_call_roots
-            .extend([wrapper, receiver].into_iter().chain(args.iter().copied()));
-        self.profile.call_target(0, args.len());
+        self.active_call_roots.extend(
+            [wrapper, receiver, current_memory]
+                .into_iter()
+                .chain(args.iter().copied()),
+        );
+        self.profile
+            .call_target(0, args.len() + raw_i32_args.map_or(0, |_| 3));
 
         let realm = match self.heap.get(wrapper) {
             Some(Cell::Function { object, .. })
@@ -345,8 +355,48 @@ impl<H: Host> Vm<H> {
             let _stack = self.enter_stack()?;
             self.check_execution_interrupt()?;
             let receiver = self.string_method_receiver(p, Native::WasmHost, receiver)?;
-            self.with_call_roots([receiver], |vm| {
-                vm.call_wasm_js_import(target, memcpy_capture, signature, args)
+            self.with_call_roots([receiver, current_memory], |vm| {
+                if let Some(indices) = raw_i32_args {
+                    if let Some((view_environment, view_slot)) = memcpy_capture
+                        && vm.try_emscripten_memcpy_same_memory_raw_capture(
+                            view_environment,
+                            view_slot,
+                            current_memory,
+                            indices,
+                            memcpy_raw_i32_hits,
+                        )
+                    {
+                        return Ok(Value::UNDEFINED);
+                    }
+
+                    // The early raw guard missed. Recreate the same encoded
+                    // Wasm arguments the old call_import path supplied so the
+                    // existing late-bound W-08 check and normal JS call remain
+                    // in the same opaque boundary.
+                    let encoded_args: smallvec::SmallVec<[Value; 8]> = indices
+                        .into_iter()
+                        .map(|value| vm.encode_wasm_value(crate::WasmValue::I32(value)))
+                        .collect();
+                    vm.with_call_roots(encoded_args.iter().copied(), |vm| {
+                        vm.call_wasm_js_import(
+                            target,
+                            memcpy_capture,
+                            signature,
+                            &encoded_args,
+                            current_memory,
+                            memcpy_fast_path_hits,
+                        )
+                    })
+                } else {
+                    vm.call_wasm_js_import(
+                        target,
+                        memcpy_capture,
+                        signature,
+                        args,
+                        current_memory,
+                        memcpy_fast_path_hits,
+                    )
+                }
             })
         }));
 
@@ -364,7 +414,10 @@ impl<H: Host> Vm<H> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Engine, RootId, WasmFunctionBody, WasmHostFunctionId, WasmFunctionImport, WasmImportName, WasmType};
+    use crate::{
+        Engine, RootId, WasmFunctionBody, WasmFunctionImport, WasmHostFunctionId, WasmImportName,
+        WasmType,
+    };
     use wasmparser::Operator;
 
     fn compiled_js_import_module(name: &str, signature: WasmSignature) -> crate::WasmModule {
@@ -403,6 +456,103 @@ mod tests {
             }],
         )
         .unwrap()
+    }
+
+    fn compiled_emscripten_memcpy_memory_module(
+        name: &str,
+        import_results: Vec<WasmType>,
+    ) -> crate::WasmModule {
+        let signature = WasmSignature {
+            params: vec![WasmType::I32, WasmType::I32, WasmType::I32],
+            results: import_results.clone(),
+        };
+        let memarg = wasmparser::MemArg {
+            align: 2,
+            max_align: 2,
+            offset: 0,
+            memory: 0,
+        };
+        Engine::lower_wasm_module_with_imports(
+            name,
+            [WasmFunctionBody {
+                ty: crate::WasmCallableType::Embedded(signature.clone()),
+                locals: vec![],
+                operators: [
+                    Operator::LocalGet { local_index: 0 },
+                    Operator::LocalGet { local_index: 1 },
+                    Operator::LocalGet { local_index: 2 },
+                    Operator::Call { function_index: 0 },
+                    Operator::I32Const { value: 0 },
+                    Operator::I32Load { memarg },
+                    Operator::Drop,
+                    Operator::End,
+                ]
+                .into_iter()
+                .map(Ok),
+            }],
+            &crate::WasmTypes::default(),
+            &[],
+            &[crate::WasmMemory {
+                ty: wasmparser::MemoryType {
+                    initial: 1,
+                    maximum: Some(2),
+                    memory64: false,
+                    shared: false,
+                    page_size_log2: None,
+                },
+                import: Some(WasmImportName {
+                    index: 1,
+                    module: "env".into(),
+                    name: "memory".into(),
+                }),
+            }],
+            &[],
+            &[],
+            &[],
+            &[WasmFunctionImport {
+                exact: false,
+                ty: crate::WasmCallableType::Embedded(signature),
+                name: WasmImportName {
+                    index: 0,
+                    module: "env".into(),
+                    name: "_emscripten_memcpy_js".into(),
+                },
+            }],
+        )
+        .unwrap()
+    }
+
+    fn memcpy_reference_index(index: i64, length: usize) -> usize {
+        if index < 0 {
+            length.saturating_sub(usize::try_from(index.unsigned_abs()).unwrap_or(usize::MAX))
+        } else {
+            usize::try_from(index).unwrap_or(usize::MAX).min(length)
+        }
+    }
+
+    fn memcpy_reference(mut bytes: Vec<u8>, dest: i32, src: i32, num: i32) -> Vec<u8> {
+        let length = bytes.len();
+        let target = memcpy_reference_index(i64::from(dest), length);
+        let start = memcpy_reference_index(i64::from(src), length);
+        let end = memcpy_reference_index(i64::from(src) + i64::from(num), length);
+        let count = end.saturating_sub(start).min(length - target);
+        bytes.copy_within(start..start + count, target);
+        bytes
+    }
+
+    fn reset_test_memory<H: Host>(vm: &mut Vm<H>, memory: Value) -> Vec<u8> {
+        let Some(Cell::WasmMemory { bytes, .. }) = vm.heap.get(memory) else {
+            panic!("test memory binding should be a Wasm memory")
+        };
+        let mut bytes = bytes.lock();
+        for (index, byte) in bytes.iter_mut().enumerate() {
+            *byte = index as u8;
+        }
+        bytes.to_vec()
+    }
+
+    fn read_test_memory<H: Host>(vm: &Vm<H>, memory: Value) -> Vec<u8> {
+        vm.wasm_memory_bytes(memory).unwrap().to_vec()
     }
 
     #[test]
@@ -459,6 +609,9 @@ mod tests {
             )
             .unwrap();
         let exports = vm.evaluate_embedding_compiled_script(&script).unwrap();
+        // The helper and its replacement view are reached only through `exports` until the
+        // test stores them; collections in between must keep them.
+        let _exports_root = vm.root(exports);
         let helper_atom = vm.intern_atom("helper");
         let helper = vm.own_property(exports, helper_atom).unwrap();
         let replacement_atom = vm.intern_atom("replacement");
@@ -495,9 +648,9 @@ mod tests {
             .expect("the exact helper and its lexical view should be recognized");
         let target = crate::heap::WasmHostTarget::JsEmscriptenMemcpy(Box::new(
             crate::heap::WasmHostMemcpyTarget {
-            function: helper,
-            view_environment,
-            view_slot,
+                function: helper,
+                view_environment,
+                view_slot,
             },
         ));
         let imported = vm
@@ -515,7 +668,11 @@ mod tests {
             .unwrap();
         assert_eq!(
             (7..20)
-                .map(|index| vm.typed_array_get(original, index).unwrap().as_number().unwrap() as u8)
+                .map(|index| vm
+                    .typed_array_get(original, index)
+                    .unwrap()
+                    .as_number()
+                    .unwrap() as u8)
                 .collect::<Vec<_>>(),
             (11..24).collect::<Vec<_>>()
         );
@@ -526,7 +683,11 @@ mod tests {
         vm.invoke_wasm(&instance, 1, &[]).unwrap();
         assert_eq!(
             (7..20)
-                .map(|index| vm.typed_array_get(replacement, index).unwrap().as_number().unwrap() as u8)
+                .map(|index| vm
+                    .typed_array_get(replacement, index)
+                    .unwrap()
+                    .as_number()
+                    .unwrap() as u8)
                 .collect::<Vec<_>>(),
             (111..124).map(|value| value as u8).collect::<Vec<_>>()
         );
@@ -544,7 +705,10 @@ mod tests {
         vm.set_builtin_value_named(replacement, "copyWithin", custom_method)
             .unwrap();
         vm.invoke_wasm(&instance, 1, &[]).unwrap();
-        assert_eq!(vm.typed_array_get(replacement, 0).unwrap().as_number(), Some(99.0));
+        assert_eq!(
+            vm.typed_array_get(replacement, 0).unwrap().as_number(),
+            Some(99.0)
+        );
 
         let shadowed = vm
             .compile_embedding_host_script(
@@ -558,9 +722,7 @@ mod tests {
         let lexical_view_atom = vm.intern_atom("HEAPU8");
         let lexical_view = vm.own_property(shadowed, lexical_view_atom).unwrap();
         let alternate_atom = vm.intern_atom("alternate");
-        let alternate_view = vm
-            .own_property(shadowed, alternate_atom)
-            .unwrap();
+        let alternate_view = vm.own_property(shadowed, alternate_atom).unwrap();
         assert_eq!(
             vm.emscripten_memcpy_view_capture(shadowed_helper, &signature),
             None,
@@ -580,19 +742,422 @@ mod tests {
         vm.invoke_wasm(&shadowed_instance, 1, &[]).unwrap();
         assert_eq!(
             (7..20)
-                .map(|index| vm.typed_array_get(alternate_view, index).unwrap().as_number().unwrap() as u8)
+                .map(|index| vm
+                    .typed_array_get(alternate_view, index)
+                    .unwrap()
+                    .as_number()
+                    .unwrap() as u8)
                 .collect::<Vec<_>>(),
             (111..124).map(|value| value as u8).collect::<Vec<_>>()
         );
         assert_eq!(
             (7..20)
-                .map(|index| vm.typed_array_get(lexical_view, index).unwrap().as_number().unwrap() as u8)
+                .map(|index| vm
+                    .typed_array_get(lexical_view, index)
+                    .unwrap()
+                    .as_number()
+                    .unwrap() as u8)
                 .collect::<Vec<_>>(),
             (7..20).collect::<Vec<_>>(),
             "the with object shadows the outer lexical HEAPU8"
         );
         assert!(vm.realm.promise.active_native.is_empty());
         assert!(vm.active_call_roots.is_empty());
+    }
+
+    #[test]
+    fn compiled_emscripten_memcpy_same_memory_direct_copy_matches_copy_within() {
+        let module = compiled_emscripten_memcpy_memory_module(
+            "compiled-emscripten-memcpy-same-memory",
+            vec![],
+        );
+        let interrupt = crate::ExecutionInterrupt::default();
+        let mut vm = Vm::new_with_execution_interrupt(crate::SystemHost, interrupt.clone());
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        let owner = Engine::specialize("void 0", "compiled-emscripten-memcpy-same-memory-owner.js")
+            .unwrap();
+        vm.execute(&owner).unwrap();
+        let memory = vm
+            .alloc_wasm_memory(wasmparser::MemoryType {
+                initial: 1,
+                maximum: Some(2),
+                memory64: false,
+                shared: false,
+                page_size_log2: None,
+            })
+            .unwrap();
+        vm.set_builtin_value_named(vm.realm.globals, "memory", memory)
+            .unwrap();
+        let helper_script = vm
+            .compile_embedding_host_script(
+                "(() => { let HEAPU8 = new Uint8Array(memory.buffer); return (dest, src, num) => HEAPU8.copyWithin(dest, src, src + num); })()",
+                "compiled-emscripten-memcpy-same-memory-helper.js",
+                (0, 0),
+            )
+            .unwrap();
+        let helper = vm
+            .evaluate_embedding_compiled_script(&helper_script)
+            .unwrap();
+        let signature = WasmSignature {
+            params: vec![WasmType::I32, WasmType::I32, WasmType::I32],
+            results: vec![],
+        };
+        let (view_environment, view_slot) = vm
+            .emscripten_memcpy_view_capture(helper, &signature)
+            .expect("the canonical Emscripten helper should capture HEAPU8");
+        let target = crate::heap::WasmHostTarget::JsEmscriptenMemcpy(Box::new(
+            crate::heap::WasmHostMemcpyTarget {
+                function: helper,
+                view_environment,
+                view_slot,
+            },
+        ));
+        let imported = vm
+            .create_wasm_host_function("_emscripten_memcpy_js", target, signature.clone())
+            .unwrap();
+        let imported_root = vm.root(imported);
+        let memory_root = vm.root(memory);
+        let instance = vm
+            .instantiate_wasm_module_with_imports(&module, &[imported_root, memory_root])
+            .unwrap();
+        let program = vm
+            .programs
+            .find_shared(&module.program)
+            .expect("registered Wasm program");
+        let environment = vm
+            .root_value(instance.environment)
+            .expect("live Wasm instance environment");
+        assert!(vm.install_compiled_diagnostics_for_test(program, environment));
+
+        let cases = [
+            (7, 2, 10),
+            (2, 7, 10),
+            (-5, -12, 5),
+            (3, 10, -4),
+            (65_530, 65_530, 100),
+            (i32::MIN, i32::MAX, i32::MAX),
+            (i32::MAX, i32::MIN, i32::MIN),
+        ];
+        // With the raw path explicitly disabled, exercise the late W-08 path
+        // as the control arm even if the process environment opts into raw i32.
+        super::wasm_js::with_emscripten_memcpy_raw_i32_for_test(false, || {
+            super::wasm_js::with_emscripten_memcpy_direct_copy_for_test(true, || {
+                for &(dest, src, num) in &cases {
+                    let before = reset_test_memory(&mut vm, memory);
+                    let expected = memcpy_reference(before, dest, src, num);
+                    vm.invoke_wasm(
+                        &instance,
+                        1,
+                        &[
+                            WasmValue::I32(dest),
+                            WasmValue::I32(src),
+                            WasmValue::I32(num),
+                        ],
+                    )
+                    .unwrap();
+                    assert_eq!(
+                        read_test_memory(&vm, memory),
+                        expected,
+                        "{dest}, {src}, {num}"
+                    );
+                }
+            });
+        });
+        let compiled = vm
+            .programs
+            .compiled(program)
+            .flatten()
+            .expect("diagnostic Wasm program");
+        assert_eq!(
+            compiled.emscripten_memcpy_fast_path_hits(),
+            cases.len() as u64
+        );
+        assert_eq!(
+            compiled.emscripten_memcpy_raw_i32_hits(),
+            0,
+            "raw i32 switch-off must retain the late W-08 path"
+        );
+
+        super::wasm_js::with_emscripten_memcpy_raw_i32_for_test(false, || {
+            super::wasm_js::with_emscripten_memcpy_direct_copy_for_test(false, || {
+                for &(dest, src, num) in &cases {
+                    let before = reset_test_memory(&mut vm, memory);
+                    let expected = memcpy_reference(before, dest, src, num);
+                    vm.invoke_wasm(
+                        &instance,
+                        1,
+                        &[
+                            WasmValue::I32(dest),
+                            WasmValue::I32(src),
+                            WasmValue::I32(num),
+                        ],
+                    )
+                    .unwrap();
+                    assert_eq!(
+                        read_test_memory(&vm, memory),
+                        expected,
+                        "{dest}, {src}, {num}"
+                    );
+                }
+            });
+        });
+        assert_eq!(
+            compiled.emscripten_memcpy_fast_path_hits(),
+            cases.len() as u64
+        );
+
+        // The early raw path must produce the same bytes for both overlap
+        // directions and the signed/clamped edge cases, without entering the
+        // late W-08 path.
+        super::wasm_js::with_emscripten_memcpy_early_import_for_test(false, || {
+            super::wasm_js::with_emscripten_memcpy_raw_i32_for_test(true, || {
+                super::wasm_js::with_emscripten_memcpy_direct_copy_for_test(true, || {
+                    for &(dest, src, num) in &cases {
+                        let before = reset_test_memory(&mut vm, memory);
+                        let expected = memcpy_reference(before, dest, src, num);
+                        vm.invoke_wasm(
+                            &instance,
+                            1,
+                            &[
+                                WasmValue::I32(dest),
+                                WasmValue::I32(src),
+                                WasmValue::I32(num),
+                            ],
+                        )
+                        .unwrap();
+                        assert_eq!(
+                            read_test_memory(&vm, memory),
+                            expected,
+                            "raw {dest}, {src}, {num}"
+                        );
+                    }
+                });
+            });
+        });
+        assert_eq!(
+            compiled.emscripten_memcpy_raw_i32_hits(),
+            cases.len() as u64
+        );
+        assert_eq!(
+            compiled.emscripten_memcpy_early_import_hits(),
+            0,
+            "the raw-i32 fallback must not count as early admission"
+        );
+        assert_eq!(
+            compiled.emscripten_memcpy_fast_path_hits(),
+            cases.len() as u64,
+            "raw hits must bypass the late-bound W-08 counter"
+        );
+
+        // Exercise the earlier compiled-import admission on the same signed,
+        // clamped and overlapping cases as the existing raw-i32 path.
+        super::wasm_js::with_emscripten_memcpy_early_import_for_test(true, || {
+            super::wasm_js::with_emscripten_memcpy_raw_i32_for_test(true, || {
+                super::wasm_js::with_emscripten_memcpy_direct_copy_for_test(true, || {
+                    for &(dest, src, num) in &cases {
+                        let before = reset_test_memory(&mut vm, memory);
+                        let expected = memcpy_reference(before, dest, src, num);
+                        vm.invoke_wasm(
+                            &instance,
+                            1,
+                            &[
+                                WasmValue::I32(dest),
+                                WasmValue::I32(src),
+                                WasmValue::I32(num),
+                            ],
+                        )
+                        .unwrap();
+                        assert_eq!(read_test_memory(&vm, memory), expected);
+                    }
+                });
+            });
+        });
+        assert_eq!(
+            compiled.emscripten_memcpy_raw_i32_hits(),
+            cases.len() as u64 * 2
+        );
+        assert_eq!(
+            compiled.emscripten_memcpy_early_import_hits(),
+            cases.len() as u64,
+            "the diagnostic must distinguish successful early admission"
+        );
+        assert_eq!(
+            compiled.emscripten_memcpy_fast_path_hits(),
+            cases.len() as u64,
+            "early raw hits must bypass the late-bound W-08 counter"
+        );
+
+        super::wasm_js::with_emscripten_memcpy_early_import_for_test(true, || {
+            super::wasm_js::with_emscripten_memcpy_raw_i32_for_test(true, || {
+                super::wasm_js::with_emscripten_memcpy_direct_copy_for_test(true, || {
+                    let original_view = vm
+                        .heap
+                        .environment_slot(view_environment, view_slot)
+                        .expect("captured HEAPU8 slot");
+                    let alternate_script = vm
+                        .compile_embedding_host_script(
+                            "new Uint8Array(Array.from({length: 64}, (_, i) => i))",
+                            "compiled-emscripten-memcpy-alternate-view.js",
+                            (0, 0),
+                        )
+                        .unwrap();
+                    let alternate_view = vm
+                        .evaluate_embedding_compiled_script(&alternate_script)
+                        .unwrap();
+                    *vm.heap
+                        .environment_slot_mut(view_environment, view_slot)
+                        .expect("captured HEAPU8 slot") = alternate_view;
+                    vm.invoke_wasm(
+                        &instance,
+                        1,
+                        &[WasmValue::I32(7), WasmValue::I32(2), WasmValue::I32(10)],
+                    )
+                    .unwrap();
+                    assert_eq!(
+                        (7..17)
+                            .map(|index| vm
+                                .typed_array_get(alternate_view, index)
+                                .unwrap()
+                                .as_number()
+                                .unwrap() as u8)
+                            .collect::<Vec<_>>(),
+                        (2..12).collect::<Vec<_>>(),
+                        "an alternate ArrayBuffer must retain ordinary typed-array behavior"
+                    );
+                    assert_eq!(
+                        compiled.emscripten_memcpy_fast_path_hits(),
+                        cases.len() as u64,
+                        "an alternate buffer must not enter the same-memory fast path"
+                    );
+                    assert_eq!(
+                        compiled.emscripten_memcpy_raw_i32_hits(),
+                        cases.len() as u64 * 2,
+                        "an alternate buffer must miss the raw path"
+                    );
+
+                    *vm.heap
+                        .environment_slot_mut(view_environment, view_slot)
+                        .expect("captured HEAPU8 slot") = original_view;
+                    assert_eq!(vm.wasm_memory_grow(memory, 1).unwrap(), Some(1));
+                    let stale_call = vm.invoke_wasm(
+                        &instance,
+                        1,
+                        &[WasmValue::I32(7), WasmValue::I32(2), WasmValue::I32(10)],
+                    );
+                    // Existing JS behavior decides whether a stale/detached view throws.
+                    // In either case, it must never be treated as the current memory view.
+                    let _ = stale_call;
+                    assert_eq!(
+                        compiled.emscripten_memcpy_fast_path_hits(),
+                        cases.len() as u64,
+                        "a stale view after memory growth must fall back"
+                    );
+                    assert_eq!(
+                        compiled.emscripten_memcpy_raw_i32_hits(),
+                        cases.len() as u64 * 2,
+                        "a stale view after memory growth must miss the raw path"
+                    );
+
+                    let fresh_view_script = vm
+                        .compile_embedding_host_script(
+                            "new Uint8Array(memory.buffer)",
+                            "compiled-emscripten-memcpy-fresh-view.js",
+                            (0, 0),
+                        )
+                        .unwrap();
+                    let fresh_view = vm
+                        .evaluate_embedding_compiled_script(&fresh_view_script)
+                        .unwrap();
+                    *vm.heap
+                        .environment_slot_mut(view_environment, view_slot)
+                        .expect("captured HEAPU8 slot") = fresh_view;
+                    let before = reset_test_memory(&mut vm, memory);
+                    let expected = memcpy_reference(before, 7, 2, 10);
+                    vm.invoke_wasm(
+                        &instance,
+                        1,
+                        &[WasmValue::I32(7), WasmValue::I32(2), WasmValue::I32(10)],
+                    )
+                    .unwrap();
+                    assert_eq!(read_test_memory(&vm, memory), expected);
+                    assert_eq!(
+                        compiled.emscripten_memcpy_fast_path_hits(),
+                        cases.len() as u64,
+                        "the raw path should bypass the late-bound W-08 path after reload"
+                    );
+                    assert_eq!(
+                        compiled.emscripten_memcpy_raw_i32_hits(),
+                        cases.len() as u64 * 2 + 1,
+                        "reloading a current full-memory view should re-enable the raw path"
+                    );
+
+                    let custom_method_script = vm
+                        .compile_embedding_host_script(
+                            "(function replacementCopyWithin() { this[0] = 99; return this; })",
+                            "compiled-emscripten-memcpy-current-memory-custom-method.js",
+                            (0, 0),
+                        )
+                        .unwrap();
+                    let custom_method = vm
+                        .evaluate_embedding_compiled_script(&custom_method_script)
+                        .unwrap();
+                    vm.set_builtin_value_named(fresh_view, "copyWithin", custom_method)
+                        .unwrap();
+                    vm.invoke_wasm(
+                        &instance,
+                        1,
+                        &[WasmValue::I32(7), WasmValue::I32(2), WasmValue::I32(10)],
+                    )
+                    .unwrap();
+                    assert_eq!(vm.wasm_memory_bytes(memory).unwrap()[0], 99);
+                    assert_eq!(
+                        compiled.emscripten_memcpy_fast_path_hits(),
+                        cases.len() as u64,
+                        "a replaced method must be re-read and use the JS fallback"
+                    );
+                    assert_eq!(
+                        compiled.emscripten_memcpy_raw_i32_hits(),
+                        cases.len() as u64 * 2 + 1,
+                        "a replaced method must miss the raw path"
+                    );
+                    assert!(vm.realm.promise.active_native.is_empty());
+                    assert!(vm.active_call_roots.is_empty());
+                    assert!(vm.frames.is_empty());
+                    assert_eq!(vm.active_program, crate::vm::ProgramId::MAIN);
+
+                    // Exercise the same compiled-import boundary with cancellation
+                    // already requested. It must unwind the stack, roots, activation
+                    // and realm state before reaching the raw guard.
+                    interrupt.request_termination();
+                    let error = vm
+                        .call_compiled_js_wasm_import(
+                            program,
+                            &module.program,
+                            imported,
+                            helper,
+                            Some((view_environment, view_slot)),
+                            &signature,
+                            Value::UNDEFINED,
+                            &[],
+                            Some([7, 2, 10]),
+                            memory,
+                            std::ptr::null_mut(),
+                            std::ptr::null_mut(),
+                        )
+                        .unwrap_err();
+                    assert!(error.is_execution_terminated());
+                    assert!(vm.realm.promise.active_native.is_empty());
+                    assert!(vm.active_call_roots.is_empty());
+                    assert!(vm.frames.is_empty());
+                    assert_eq!(vm.active_program, crate::vm::ProgramId::MAIN);
+                    assert_eq!(
+                        compiled.emscripten_memcpy_raw_i32_hits(),
+                        cases.len() as u64 * 2 + 1,
+                        "an interrupted call must not copy or leak the raw hit count"
+                    );
+                });
+            });
+        });
     }
 
     #[derive(Default)]
@@ -903,10 +1468,8 @@ mod tests {
             params: vec![WasmType::I32, WasmType::I32, WasmType::I32],
             results: vec![WasmType::I32],
         };
-        let module = compiled_js_import_module(
-            "compiled-js-import-opaque-caller",
-            signature.clone(),
-        );
+        let module =
+            compiled_js_import_module("compiled-js-import-opaque-caller", signature.clone());
         let mut vm = Vm::new(crate::SystemHost);
         vm.set_execution_mode(crate::ExecutionMode::Compiled);
         let owner = Engine::specialize("void 0", "compiled-js-import-caller-owner.js").unwrap();
@@ -946,10 +1509,8 @@ mod tests {
             params: vec![WasmType::I32, WasmType::I32, WasmType::I32],
             results: vec![WasmType::I32],
         };
-        let module = compiled_js_import_module(
-            "compiled-js-import-strict-receiver",
-            signature.clone(),
-        );
+        let module =
+            compiled_js_import_module("compiled-js-import-strict-receiver", signature.clone());
         let mut vm = Vm::new(crate::SystemHost);
         vm.set_execution_mode(crate::ExecutionMode::Compiled);
         let owner = Engine::specialize("void 0", "compiled-js-import-strict-owner.js").unwrap();

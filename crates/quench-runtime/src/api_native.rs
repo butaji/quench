@@ -1557,6 +1557,40 @@ impl<'a, H: Host> NativeContext<'a, H> {
         result.map_err(|error| self.error(error))
     }
 
+    /// `define_data_property_rooted` with a string key the host spells, without allocating
+    /// the key where the object is plain.
+    pub fn define_named_data_property_rooted(
+        &mut self,
+        object: RootId,
+        name: &str,
+        value: RootId,
+        writable: bool,
+        enumerable: bool,
+        configurable: bool,
+    ) -> Result<bool, RootedError> {
+        let result = self.vm.define_named_data_property_rooted(
+            object,
+            name,
+            value,
+            writable,
+            enumerable,
+            configurable,
+        );
+        result.map_err(|error| self.error(error))
+    }
+
+    /// `set_property_rooted` with the receiver `object` and a string key the host spells,
+    /// without allocating the key.
+    pub fn set_named_property_rooted(
+        &mut self,
+        object: RootId,
+        name: &str,
+        value: RootId,
+    ) -> Result<bool, RootedError> {
+        let result = self.vm.set_named_property_rooted(object, name, value);
+        result.map_err(|error| self.error(error))
+    }
+
     pub fn define_data_property_rooted(
         &mut self,
         object: RootId,
@@ -1629,6 +1663,23 @@ impl<'a, H: Host> NativeContext<'a, H> {
     ) -> Result<(), RootedError> {
         self.vm
             .define_lazy_group_rooted(holder, members, true, initializer)
+            .map_err(|error| self.error(error))
+    }
+
+    /// Defines `members` (a string or symbol key, whether it is enumerable while pending, and
+    /// whether `initializer` defines it itself) on `holder` as one group of lazy properties.
+    /// A member the initializer defines is removed before it runs, so it gets the attributes
+    /// and position the initializer gives it; the others become writable data properties in
+    /// place, as `define_lazy_data_properties_rooted` leaves them. While any member is
+    /// redefined, script's writes and deletes of the members materialize the group first.
+    pub fn define_lazy_members_rooted(
+        &mut self,
+        holder: RootId,
+        members: &[(RootId, bool, bool)],
+        initializer: RootId,
+    ) -> Result<(), RootedError> {
+        self.vm
+            .define_lazy_members_rooted(holder, members, initializer)
             .map_err(|error| self.error(error))
     }
 

@@ -1,6 +1,16 @@
-use super::activation::{Completion, Continuation, ContinuationId};
-use super::promise::{AsyncResumeJob, PromiseReaction, PromiseState};
+use super::activation::{Completion, Continuation};
+use super::promise::{PromiseReaction, PromiseState};
 use super::*;
+use crate::heap::AwaitState;
+
+/// What an await reaction resumes with, read from its `AwaitState`.
+#[derive(Clone, Copy, Debug)]
+struct AwaitResume {
+    promise: Value,
+    generator: Option<Value>,
+    rejected: bool,
+    yielded: bool,
+}
 
 impl<H: Host> Vm<H> {
     pub(super) fn call_user_maybe_async(
@@ -51,8 +61,7 @@ impl<H: Host> Vm<H> {
                         Some(destination),
                         promise,
                     );
-                    let id = vm.suspend_continuation(continuation);
-                    vm.enqueue_async_resume(p, id, promise, None, value, false)?;
+                    vm.enqueue_async_resume(p, continuation, promise, None, value, false)?;
                 }
                 super::FrameOutcome::Await { frame: None, .. } => {
                     return Err(JsError("async frame lost at suspension".into()));
@@ -70,21 +79,44 @@ impl<H: Host> Vm<H> {
         })
     }
 
+    /// Suspends `continuation` on `source`: one `AwaitState` cell holds it and is both
+    /// handlers of the await's reaction, so it lives exactly as long as that reaction.
     pub(super) fn enqueue_async_resume(
         &mut self,
         p: &ResidualProgram,
-        continuation: ContinuationId,
+        continuation: Continuation,
         promise: Value,
         generator: Option<Value>,
         source: Value,
         yielded: bool,
     ) -> Result<(), JsError> {
+        let state = self.heap.alloc(Cell::AwaitState(Box::new(AwaitState {
+            continuation: Some(Box::new(continuation)),
+            realm: self.realm.globals,
+            promise,
+            generator,
+            yielded,
+        })));
+        // Host lifecycle observers can run before a reaction holds the state.
+        self.with_call_roots([state, source], |vm| {
+            vm.attach_await_reactions(p, state, promise, generator, source)
+        })
+    }
+
+    fn attach_await_reactions(
+        &mut self,
+        p: &ResidualProgram,
+        state: Value,
+        promise: Value,
+        generator: Option<Value>,
+        source: Value,
+    ) -> Result<(), JsError> {
         let source = if self.host.observes_promise_lifecycle()
-            && !self.realm.promise.records.contains_key(&source)
+            && !self.is_promise(source)
             && !self.is_object_like(source)
         {
             self.with_call_roots([Some(source), Some(promise), generator].into_iter().flatten(), |vm| {
-                let parent = vm.realm.promise.records.get(&promise).and_then(|record| record.host_context);
+                let parent = vm.promise_record(promise).and_then(|record| record.host_context);
                 let awaited = vm.promise_object_with_parent(parent)?;
                 vm.with_call_roots([awaited], |vm| vm.promise_resolve_value(p, awaited, source))?;
                 Ok(awaited)
@@ -92,36 +124,12 @@ impl<H: Host> Vm<H> {
         } else {
             source
         };
-        let fulfilled = self.native_with_env(Native::PromiseAsyncResumeJob, Value::NULL);
-        let rejected = self.native_with_env(Native::PromiseAsyncResumeJob, Value::NULL);
-        self.realm.promise.async_resume_jobs.insert(
-            fulfilled,
-            AsyncResumeJob {
-                continuation,
-                promise,
-                generator,
-                rejected: false,
-                yielded,
-                sibling: rejected,
-            },
-        );
-        self.realm.promise.async_resume_jobs.insert(
-            rejected,
-            AsyncResumeJob {
-                continuation,
-                promise,
-                generator,
-                rejected: true,
-                yielded,
-                sibling: fulfilled,
-            },
-        );
         // Materialize the await reaction's Promise resource for host lifecycle
         // observation, even though the continuation consumes no result value.
         let next = if self.host.observes_promise_lifecycle() {
-            self.with_call_roots([fulfilled, rejected, source, promise], |vm| {
+            self.with_call_roots([source], |vm| {
                 vm.promise_object_with_parent(
-                    vm.realm.promise.records.get(&source).and_then(|record| record.host_context),
+                    vm.promise_record(source).and_then(|record| record.host_context),
                 )
             })?
         } else {
@@ -131,76 +139,74 @@ impl<H: Host> Vm<H> {
         // after creating the reaction's observable resource.
         // `source` is a Promise, or a primitive standing for the fulfilled one an `await`
         // never materializes.
-        let (state, result) = match self.realm.promise.records.get(&source) {
+        let (source_state, result) = match self.promise_record(source) {
             Some(record) => (record.state, record.result),
             None if !self.is_object_like(source) => (PromiseState::Fulfilled, source),
             None => return Err(JsError("await source is not a Promise".into())),
         };
         self.observe_promise_rejection(source);
         let reaction = PromiseReaction {
-            on_fulfilled: fulfilled,
-            on_rejected: rejected,
+            on_fulfilled: state,
+            on_rejected: state,
             next,
-            execution_context: self.host.capture_job_context(self.realm.promise.records.get(&next).and_then(|record| record.host_context)),
+            execution_context: self.host.capture_job_context(self.promise_record(next).and_then(|record| record.host_context)),
         };
-        if state == PromiseState::Pending {
-            self.realm
-                .promise
-                .records
-                .get_mut(&source)
+        if source_state == PromiseState::Pending {
+            self.promise_record_mut(source)
                 .expect("await source Promise record exists")
                 .reactions
                 .push(reaction);
         } else {
-            self.enqueue_promise_reaction(p, reaction, state, result);
+            self.enqueue_promise_reaction(p, reaction, source_state, result);
         }
         Ok(())
     }
 
-    pub(super) fn promise_async_resume_job(
+    /// Runs an await's reaction: `state` is the `AwaitState` both its handlers name. The
+    /// first run takes the continuation, which resumes in the realm that awaited.
+    pub(super) fn resume_await(
         &mut self,
         p: &ResidualProgram,
+        state: Value,
+        rejected: bool,
         value: Value,
     ) -> Result<Value, JsError> {
-        let job = self
-            .active_native_callable()
-            .ok_or_else(|| JsError("Promise async resume without callback".into()))?;
-        let resume = self
-            .realm
-            .promise
-            .async_resume_jobs
-            .remove(&job)
-            .ok_or_else(|| JsError("stale Promise async resume job".into()))?;
-        // The sibling's entry is this await's only if it points back here: a collected
-        // sibling's slot can hold another await's reaction.
-        let jobs = &mut self.realm.promise.async_resume_jobs;
-        if jobs
-            .get(&resume.sibling)
-            .is_some_and(|sibling| sibling.sibling == job)
-        {
-            jobs.remove(&resume.sibling);
-        }
-        self.with_call_roots(
+        let Some(Cell::AwaitState(state)) = self.heap.get_mut(state) else {
+            return Err(JsError("await reaction without its state".into()));
+        };
+        let continuation = state.continuation.take().map(|continuation| *continuation);
+        let realm = state.realm;
+        let resume = AwaitResume {
+            promise: state.promise,
+            generator: state.generator,
+            rejected,
+            yielded: state.yielded,
+        };
+        let previous_global = self.switch_realm_global(realm);
+        let result = self.with_call_roots(
             [Some(resume.promise), resume.generator, Some(value)]
                 .into_iter()
                 .flatten(),
             |vm| {
-                vm.resume_async_continuation(p, resume, value)?;
+                vm.resume_async_continuation(p, resume, continuation, value)?;
                 if let Some(generator) = resume.generator {
                     vm.resume_async_generator_queue(p, generator)?;
                 }
                 Ok(Value::UNDEFINED)
             },
-        )
+        );
+        self.switch_realm_global(previous_global);
+        result
     }
 
     fn resume_async_continuation(
         &mut self,
         p: &ResidualProgram,
-        resume: AsyncResumeJob,
+        resume: AwaitResume,
+        continuation: Option<Continuation>,
         value: Value,
     ) -> Result<(), JsError> {
-        let Some(continuation) = self.resume_continuation(resume.continuation) else {
+        let Some(continuation) = continuation else {
             if let Some(generator) = resume.generator {
                 self.fail_async_generator(
                     p,
@@ -225,8 +231,8 @@ impl<H: Host> Vm<H> {
     fn resume_async_continuation_in_program(
         &mut self,
         p: &ResidualProgram,
-        resume: AsyncResumeJob,
-        continuation: super::activation::Continuation,
+        resume: AwaitResume,
+        continuation: Continuation,
         value: Value,
     ) -> Result<(), JsError> {
         if resume.yielded && !resume.rejected {
@@ -301,8 +307,14 @@ impl<H: Host> Vm<H> {
                     Some(destination),
                     resume.promise,
                 );
-                let id = self.suspend_continuation(continuation);
-                self.enqueue_async_resume(p, id, resume.promise, resume.generator, value, false)?;
+                self.enqueue_async_resume(
+                    p,
+                    continuation,
+                    resume.promise,
+                    resume.generator,
+                    value,
+                    false,
+                )?;
             }
             super::FrameOutcome::Await {
                 frame: Some(frame), ..
