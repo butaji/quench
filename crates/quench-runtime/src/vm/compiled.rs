@@ -555,6 +555,9 @@ struct CallContext {
     emscripten_memcpy_leaf: usize,
     /// Diagnostic-only count of direct leaf calls.
     emscripten_memcpy_leaf_hits: *mut u64,
+    /// Per-import attribution, present only during opt-in diagnostic runs.
+    import_callout_counts: *const std::cell::Cell<u64>,
+    import_callout_count: usize,
 }
 
 impl CallContext {
@@ -595,6 +598,8 @@ impl CallContext {
             emscripten_memcpy_cache: self.emscripten_memcpy_cache,
             emscripten_memcpy_leaf: self.emscripten_memcpy_leaf,
             emscripten_memcpy_leaf_hits: self.emscripten_memcpy_leaf_hits,
+            import_callout_counts: self.import_callout_counts,
+            import_callout_count: self.import_callout_count,
         }
     }
 }
@@ -755,6 +760,69 @@ fn note_compiled_callout(counter: *mut u64) {
             *counter = (*counter).saturating_add(1);
         }
     }
+}
+
+unsafe fn note_import_callout_target(
+    counters: *const std::cell::Cell<u64>,
+    counter_count: usize,
+    function: u64,
+) {
+    let Ok(index) = usize::try_from(function) else {
+        return;
+    };
+    if counters.is_null() || index >= counter_count {
+        return;
+    }
+    // SAFETY: diagnostic contexts point at `counter_count` initialized Cells
+    // owned by their CompiledProgram, which remains live across the callout.
+    let counter = unsafe { &*counters.add(index) };
+    counter.set(counter.get().saturating_add(1));
+}
+
+fn json_string(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len() + 2);
+    escaped.push('"');
+    for character in value.chars() {
+        match character {
+            '"' => escaped.push_str("\\\""),
+            '\\' => escaped.push_str("\\\\"),
+            '\u{08}' => escaped.push_str("\\b"),
+            '\u{0C}' => escaped.push_str("\\f"),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            character if character <= '\u{1F}' => {
+                use std::fmt::Write;
+                write!(escaped, "\\u{:04x}", character as u32)
+                    .expect("writing to a String cannot fail");
+            }
+            character => escaped.push(character),
+        }
+    }
+    escaped.push('"');
+    escaped
+}
+
+fn format_import_callout_targets(
+    names: &[(u32, u32, String, String)],
+    counters: &[std::cell::Cell<u64>],
+) -> String {
+    debug_assert_eq!(names.len(), counters.len());
+    names
+        .iter()
+        .zip(counters)
+        .filter_map(|((function, import_index, module, name), count)| {
+            let count = count.get();
+            (count > 0).then(|| {
+                format!(
+                    "{{\"function\":{function},\"import_index\":{import_index},\"module\":{},\"name\":{},\"count\":{count}}}",
+                    json_string(module),
+                    json_string(name)
+                )
+            })
+        })
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 #[inline]
@@ -1308,6 +1376,17 @@ unsafe extern "C" fn import_callout<H: Host>(
     } else {
         context.import_callouts
     });
+    if !defined && !context.import_callout_counts.is_null() {
+        // SAFETY: this pointer is non-null only when the owning compiled
+        // program enabled diagnostic counters for the full native call.
+        unsafe {
+            note_import_callout_target(
+                context.import_callout_counts,
+                context.import_callout_count,
+                function,
+            );
+        }
+    }
     // The VM's own code runs outside compiled code: no guard fault is ours.
     let active = ACTIVE_CONTEXT.with(|current| current.replace(std::ptr::null_mut()));
     let program = context.program;
@@ -1640,6 +1719,8 @@ struct WasmJitDiagnostics {
     emscripten_memcpy_raw_i32_hits: std::cell::Cell<u64>,
     emscripten_memcpy_early_import_hits: std::cell::Cell<u64>,
     emscripten_memcpy_leaf_hits: std::cell::Cell<u64>,
+    import_callout_names: Vec<(u32, u32, String, String)>,
+    import_callout_counts: Vec<std::cell::Cell<u64>>,
     reference_call_sites: Vec<ReferenceCallSiteDiagnostics>,
 }
 
@@ -1699,13 +1780,27 @@ impl Drop for CompiledProgram {
             }
         }
         let reference_targets = reference_targets.join(",");
+        let import_callout_targets = format_import_callout_targets(
+            &stats.import_callout_names,
+            &stats.import_callout_counts,
+        );
+        let attributed_import_callouts = stats
+            .import_callout_counts
+            .iter()
+            .map(std::cell::Cell::get)
+            .fold(0u64, u64::saturating_add);
+        debug_assert_eq!(
+            attributed_import_callouts,
+            stats.compiled_import_callouts.get(),
+            "per-import attribution must account for every compiled import callout"
+        );
         let same_artifact_direct_hits = stats
             .reference_call_sites
             .iter()
             .map(|site| site.counts.get().same_artifact_direct)
             .fold(0u64, u64::saturating_add);
         eprintln!(
-            "QUENCH_WASM_JIT_STATS {{\"program\":{},\"compile_attempts\":1,\"compiled_functions\":{},\"total_functions\":{},\"code_bytes\":{},\"mapped_bytes\":{},\"compile_ns\":{},\"native_entry_requests\":[{}],\"interpreter_fallback_entries\":[{}],\"compiled_to_vm_callouts\":{},\"compiled_import_callouts\":{},\"compiled_known_callouts\":{},\"compiled_reference_callouts\":{},\"emscripten_memcpy_direct_copy_switch\":\"{}\",\"emscripten_memcpy_direct_copy_enabled\":{},\"emscripten_memcpy_fast_path_hits\":{},\"emscripten_memcpy_raw_i32_switch\":\"{}\",\"emscripten_memcpy_raw_i32_enabled\":{},\"emscripten_memcpy_raw_i32_hits\":{},\"emscripten_memcpy_early_import_switch\":\"{}\",\"emscripten_memcpy_early_import_enabled\":{},\"emscripten_memcpy_early_import_hits\":{},\"emscripten_memcpy_leaf_switch\":\"{}\",\"emscripten_memcpy_leaf_hits\":{},\"reference_call_sites\":[{}],\"same_artifact_direct_reference_hits\":{},\"reference_call_targets\":[{}]}}",
+            "QUENCH_WASM_JIT_STATS {{\"program\":{},\"compile_attempts\":1,\"compiled_functions\":{},\"total_functions\":{},\"code_bytes\":{},\"mapped_bytes\":{},\"compile_ns\":{},\"native_entry_requests\":[{}],\"interpreter_fallback_entries\":[{}],\"compiled_to_vm_callouts\":{},\"compiled_import_callouts\":{},\"compiled_known_callouts\":{},\"compiled_reference_callouts\":{},\"import_callout_targets\":[{}],\"emscripten_memcpy_direct_copy_switch\":\"{}\",\"emscripten_memcpy_direct_copy_enabled\":{},\"emscripten_memcpy_fast_path_hits\":{},\"emscripten_memcpy_raw_i32_switch\":\"{}\",\"emscripten_memcpy_raw_i32_enabled\":{},\"emscripten_memcpy_raw_i32_hits\":{},\"emscripten_memcpy_early_import_switch\":\"{}\",\"emscripten_memcpy_early_import_enabled\":{},\"emscripten_memcpy_early_import_hits\":{},\"emscripten_memcpy_leaf_switch\":\"{}\",\"emscripten_memcpy_leaf_hits\":{},\"reference_call_sites\":[{}],\"same_artifact_direct_reference_hits\":{},\"reference_call_targets\":[{}]}}",
             stats.program,
             stats.compiled_functions,
             stats.total_functions,
@@ -1718,6 +1813,7 @@ impl Drop for CompiledProgram {
             stats.compiled_import_callouts.get(),
             stats.compiled_known_callouts.get(),
             stats.compiled_reference_callouts.get(),
+            import_callout_targets,
             super::wasm_js::emscripten_memcpy_direct_copy_switch(),
             super::wasm_js::emscripten_memcpy_direct_copy_enabled(),
             stats.emscripten_memcpy_fast_path_hits.get(),
@@ -6347,24 +6443,51 @@ impl<H: Host> Vm<H> {
             .iter()
             .filter(|function| function.is_some())
             .count();
-        let diagnostics = diagnostics_enabled.then(|| WasmJitDiagnostics {
-            program: program.raw(),
-            total_functions: count,
-            compiled_functions,
-            code_bytes: bytes.len(),
-            mapped_bytes,
-            compile_ns: compile_started.map_or(0, |started| started.elapsed().as_nanos()),
-            native_entry_requests: (0..count).map(|_| std::cell::Cell::new(0)).collect(),
-            interpreter_fallback_entries: (0..count).map(|_| std::cell::Cell::new(0)).collect(),
-            compiled_to_vm_callouts: std::cell::Cell::new(0),
-            compiled_import_callouts: std::cell::Cell::new(0),
-            compiled_known_callouts: std::cell::Cell::new(0),
-            compiled_reference_callouts: std::cell::Cell::new(0),
-            emscripten_memcpy_fast_path_hits: std::cell::Cell::new(0),
-            emscripten_memcpy_raw_i32_hits: std::cell::Cell::new(0),
-            emscripten_memcpy_early_import_hits: std::cell::Cell::new(0),
-            emscripten_memcpy_leaf_hits: std::cell::Cell::new(0),
-            reference_call_sites,
+        let diagnostics = diagnostics_enabled.then(|| {
+            let import_callout_names = self
+                .programs
+                .wasm_signatures(program)
+                .map(|signatures| {
+                    signatures
+                        .imports()
+                        .iter()
+                        .enumerate()
+                        .map(|(function, import)| {
+                            (
+                                u32::try_from(function).expect("Wasm function indices fit in u32"),
+                                import.name.index,
+                                import.name.module.clone(),
+                                import.name.name.clone(),
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let import_callout_counts = import_callout_names
+                .iter()
+                .map(|_| std::cell::Cell::new(0))
+                .collect();
+            WasmJitDiagnostics {
+                program: program.raw(),
+                total_functions: count,
+                compiled_functions,
+                code_bytes: bytes.len(),
+                mapped_bytes,
+                compile_ns: compile_started.map_or(0, |started| started.elapsed().as_nanos()),
+                native_entry_requests: (0..count).map(|_| std::cell::Cell::new(0)).collect(),
+                interpreter_fallback_entries: (0..count).map(|_| std::cell::Cell::new(0)).collect(),
+                compiled_to_vm_callouts: std::cell::Cell::new(0),
+                compiled_import_callouts: std::cell::Cell::new(0),
+                compiled_known_callouts: std::cell::Cell::new(0),
+                compiled_reference_callouts: std::cell::Cell::new(0),
+                emscripten_memcpy_fast_path_hits: std::cell::Cell::new(0),
+                emscripten_memcpy_raw_i32_hits: std::cell::Cell::new(0),
+                emscripten_memcpy_early_import_hits: std::cell::Cell::new(0),
+                emscripten_memcpy_leaf_hits: std::cell::Cell::new(0),
+                import_callout_names,
+                import_callout_counts,
+                reference_call_sites,
+            }
         });
         Some(CompiledProgram {
             _code: memory,
@@ -6780,6 +6903,16 @@ impl<H: Host> Vm<H> {
                     0
                 },
                 emscripten_memcpy_leaf_hits: emscripten_memcpy_leaf_hits_ptr,
+                import_callout_counts: compiled
+                    .diagnostics
+                    .as_ref()
+                    .map_or(std::ptr::null(), |stats| {
+                        stats.import_callout_counts.as_ptr()
+                    }),
+                import_callout_count: compiled
+                    .diagnostics
+                    .as_ref()
+                    .map_or(0, |stats| stats.import_callout_counts.len()),
             };
             let mut out = 0u64;
             compiled.note_native_entry(id as usize);
@@ -7288,7 +7421,32 @@ mod tests {
             emscripten_memcpy_cache: cache,
             emscripten_memcpy_leaf: 0,
             emscripten_memcpy_leaf_hits: hits,
+            import_callout_counts: std::ptr::null(),
+            import_callout_count: 0,
         }
+    }
+
+    #[test]
+    fn per_import_callout_counts_use_function_indices_and_escape_json_names() {
+        let names = vec![
+            (0, 2, "env".to_owned(), "copy\"fast".to_owned()),
+            (1, 5, "host\\api".to_owned(), "line\nfeed".to_owned()),
+        ];
+        let counters = [std::cell::Cell::new(0), std::cell::Cell::new(0)];
+        // SAFETY: the pointer covers both initialized counters for their
+        // entire use below.
+        unsafe {
+            note_import_callout_target(counters.as_ptr(), counters.len(), 1);
+            note_import_callout_target(counters.as_ptr(), counters.len(), 1);
+            note_import_callout_target(counters.as_ptr(), counters.len(), 99);
+        }
+        assert_eq!(counters[0].get(), 0);
+        assert_eq!(counters[1].get(), 2);
+        assert_eq!(
+            format_import_callout_targets(&names, &counters),
+            "{\"function\":1,\"import_index\":5,\"module\":\"host\\\\api\",\"name\":\"line\\nfeed\",\"count\":2}"
+        );
+        assert_eq!(json_string("\u{1}\t"), "\"\\u0001\\t\"");
     }
 
     #[test]
