@@ -1624,7 +1624,8 @@ pub(crate) fn node_library_module(context: &mut Context<'_>, owner: &str, relati
 
 /// Runs a load of host code: a library module or a builtin the host builds. A load on first
 /// use compiles after the entry's compilation released the pages compiling touches; they are
-/// released again once the outermost load ends, if any load inside it compiled.
+/// released again once the outermost load ends, if any load inside it compiled, at most once
+/// per `LOAD_RELEASE_INTERVAL` (`release_read_only_pages_after_load`).
 fn host_load<T>(load: impl FnOnce() -> T) -> T {
     HOST_LOADS.with(|loads| loads.depth.set(loads.depth.get() + 1));
     let result = load();
@@ -1633,7 +1634,7 @@ fn host_load<T>(load: impl FnOnce() -> T) -> T {
         loads.depth.get() == 0 && loads.compiled.replace(false)
     });
     if compiled {
-        crate::host::resident_pages::release_read_only_pages();
+        crate::host::resident_pages::release_read_only_pages_after_load();
     }
     result
 }
@@ -2720,7 +2721,7 @@ const getLinkedBinding = () => ({});
                     crate::host::resident_pages::release_free_heap_pages();
                     crate::host::resident_pages::quench_entry_compiled();
                 } else if in_node_internal {
-                    crate::host::resident_pages::release_read_only_pages();
+                    crate::host::resident_pages::release_read_only_pages_after_load();
                 }
                 let mut arguments = vec![exports, require, module, name, directory];
                 if in_node_internal {
