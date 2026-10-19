@@ -221,9 +221,10 @@ pub(crate) struct EvalContext {
 #[derive(Clone, Copy)]
 enum ParsedProgramShape {
     Any,
-    /// A host script whose program keeps only part of its compiled text (a static body),
-    /// so its functions cannot compile again from it.
-    HostBody,
+    /// A script whose functions keep their records: a host script whose program keeps only
+    /// part of its compiled text (a static body), from which they cannot compile again, or an
+    /// application's entry, whose own functions mostly run.
+    KeptRecords,
     DynamicFunction { parameter_list_end: usize },
     Eval(EvalContext, Option<Span>),
 }
@@ -558,14 +559,14 @@ impl Engine {
         Self::specialize_script_shaped(source, name, atom_prefix, ParsedProgramShape::Any)
     }
 
-    /// `specialize_script_with_atom_prefix` for a host script whose program will keep only a
-    /// static body of `source`.
-    pub(crate) fn specialize_host_body_with_atom_prefix(
+    /// `specialize_script_with_atom_prefix` for a program whose functions keep their records:
+    /// a host script whose program will keep only a static body of `source`, or an entry.
+    pub(crate) fn specialize_kept_script_with_atom_prefix(
         source: &str,
         name: &str,
         atom_prefix: &dyn AtomPrefix,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        Self::specialize_script_shaped(source, name, atom_prefix, ParsedProgramShape::HostBody)
+        Self::specialize_script_shaped(source, name, atom_prefix, ParsedProgramShape::KeptRecords)
     }
 
     fn specialize_script_shaped(
@@ -850,7 +851,7 @@ impl Engine {
         let wrapped_eval = matches!(expected_shape, ParsedProgramShape::Eval(context, _)
             if context.home_atom.is_some()) || ordinary_private_context;
         let dynamic_function_shape = match expected_shape {
-            ParsedProgramShape::Any | ParsedProgramShape::HostBody => true,
+            ParsedProgramShape::Any | ParsedProgramShape::KeptRecords => true,
             ParsedProgramShape::Eval(_, expected_span) => {
                 !wrapped_eval || eval_method_body(&mut parsed.program, ordinary_private_context)
                     .is_some_and(|body| Some(body.span) == expected_span)
@@ -1945,6 +1946,7 @@ impl<'a> Compiler<'a> {
             .and_then(|function| function.source_span)
             .is_some_and(|span| self.invoked_functions.remove(&span.start));
         if self.replay_target.is_none()
+            && self.replayable_source
             && !invoked
             && private_names == (self.private_name_references, self.private_name_ids.len())
         {
@@ -2031,7 +2033,9 @@ impl<'a> Compiler<'a> {
         function: &oxc_ast::ast::Function<'_>,
         mut context: replay::PlainFunctionContext,
     ) -> u32 {
-        context.scopes = context.scopes.recording();
+        if self.replayable_source {
+            context.scopes = context.scopes.recording();
+        }
         let entry = self.cursors();
         let private_names = (self.private_name_references, self.private_name_ids.len());
         let params = FunctionCompiler::params_from_formals(&function.params, self);
@@ -2083,7 +2087,9 @@ impl<'a> Compiler<'a> {
         function: &oxc_ast::ast::Function<'_>,
         mut context: replay::ObjectMethodContext,
     ) -> u32 {
-        context.scopes = context.scopes.recording();
+        if self.replayable_source {
+            context.scopes = context.scopes.recording();
+        }
         let entry = self.cursors();
         let private_names = (self.private_name_references, self.private_name_ids.len());
         let params = FunctionCompiler::params_from_formals(&function.params, self);
@@ -2127,7 +2133,9 @@ impl<'a> Compiler<'a> {
         method: &oxc_ast::ast::MethodDefinition<'_>,
         mut context: replay::ClassMethodContext,
     ) -> u32 {
-        context.scopes = context.scopes.recording();
+        if self.replayable_source {
+            context.scopes = context.scopes.recording();
+        }
         let entry = self.cursors();
         let private_names = (self.private_name_references, self.private_name_ids.len());
         let id = self.compile_class_method(
@@ -2156,7 +2164,9 @@ impl<'a> Compiler<'a> {
         arrow: &oxc_ast::ast::ArrowFunctionExpression<'_>,
         mut context: replay::ArrowContext,
     ) -> u32 {
-        context.scopes = context.scopes.recording();
+        if self.replayable_source {
+            context.scopes = context.scopes.recording();
+        }
         let entry = self.cursors();
         let private_names = (self.private_name_references, self.private_name_ids.len());
         let id = self.compile_arrow_function(arrow, &context);
