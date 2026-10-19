@@ -226,6 +226,13 @@ impl<H: Host> Vm<H> {
         receiver: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        let result = self.run_host_function(receiver, args);
+        // Host operations read strings as text, which they may make on demand.
+        self.heap.charge_materialized_text();
+        result
+    }
+
+    fn run_host_function(&mut self, receiver: Value, args: &[Value]) -> Result<Value, JsError> {
         let index = self
             .active_native_env()
             .and_then(|environment| {

@@ -129,6 +129,7 @@ impl<H: Host> Vm<H> {
             prototype_atom: super::builtins::NO_CACHED_ATOM,
             instanceof_constructor_layout: None,
             closure_shapes: [None; 2],
+            iterator_result_shape: None,
             regexp_object_shapes: None,
             regexp_last_index_layout: None,
             regexp_builtin_layout: None,
