@@ -620,6 +620,9 @@ impl<H: Host> Vm<H> {
             })
             .collect::<Vec<_>>();
         let mut shape = original;
+        // Field caches read descriptors held outside shapes; one invalidation after the
+        // loop covers every key it records, since nothing reads the caches meanwhile.
+        let mut recorded_descriptors = false;
         for (key, slot, current) in resolved {
             let attributes = update(current);
             match slot {
@@ -638,10 +641,13 @@ impl<H: Host> Vm<H> {
                 }
                 None => {
                     self.insert_descriptor(object, key, attributes);
-                    self.invalidate_field_caches();
+                    recorded_descriptors = true;
                     self.invalidate_method_caches_for_key(key);
                 }
             }
+        }
+        if recorded_descriptors {
+            self.invalidate_field_caches();
         }
         if shape != original {
             self.object_data_mut(object)
