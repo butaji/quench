@@ -1433,7 +1433,8 @@ impl<H: Host> Vm<H> {
             Some(
                 HeapReference::ObjectRecord(_)
                 | HeapReference::ArrayRecord(_)
-                | HeapReference::PromiseRecord(_),
+                | HeapReference::PromiseRecord(_)
+                | HeapReference::AwaitRecord(_),
             )
             | None => None,
         };

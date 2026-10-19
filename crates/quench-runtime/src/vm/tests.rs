@@ -4564,11 +4564,8 @@ fn async_continuation_lifetime_follows_reachable_callbacks_and_jobs() {
 
 fn pending_await_continuations(vm: &mut Vm<SilentHost>) -> usize {
     let mut pending = 0;
-    vm.heap.for_each_cell(|cell| {
-        if let crate::heap::Cell::AwaitState(state) = cell {
-            pending += usize::from(state.continuation.is_some());
-        }
-    });
+    vm.heap
+        .for_each_await_state(|state| pending += usize::from(state.continuation.is_some()));
     pending
 }
 
@@ -4633,8 +4630,8 @@ fn await_state_traces_its_continuation_until_a_reaction_takes_it() {
     assert!(vm.heap.is_live(held));
     assert!(vm.heap.is_live(original));
     assert!(vm.heap.is_live(scope));
-    let take = |vm: &mut Vm<SilentHost>| match vm.heap.get_mut(state) {
-        Some(crate::heap::Cell::AwaitState(state)) => state.continuation.take(),
+    let take = |vm: &mut Vm<SilentHost>| match vm.heap.await_state_mut(state) {
+        Some(state) => state.continuation.take(),
         _ => panic!("await state"),
     };
     assert_eq!(take(&mut vm).unwrap().original_arguments, [original]);
@@ -7005,7 +7002,10 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                 );
             }
             let value = vm.heap.root_value(owner).unwrap();
-            let resumed = match vm.heap.get_mut(value) {
+            let resumed = if let Some(state) = vm.heap.await_state_mut(value) {
+                *state.continuation.take().unwrap()
+            } else {
+                match vm.heap.get_mut(value) {
                 Some(super::Cell::Iterator { ext, .. }) => ext
                     .generator
                     .as_mut()
@@ -7013,8 +7013,8 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                     .continuation
                     .take()
                     .unwrap(),
-                Some(super::Cell::AwaitState(state)) => *state.continuation.take().unwrap(),
                 _ => panic!("suspended owner"),
+                }
             };
             assert_eq!(resumed.completion, completion(completion_value));
             assert_eq!(resumed.promise, promise);
