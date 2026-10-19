@@ -946,7 +946,10 @@ impl Engine {
             source: None,
             atoms: AtomTable::default(),
             constants,
-            functions,
+            functions: functions
+                .into_iter()
+                .map(crate::bytecode::FunctionSlot::compiled)
+                .collect(),
             cache_sites: 0,
             method_sites: vec![],
             method_arguments: vec![],
@@ -955,6 +958,7 @@ impl Engine {
             regexp_literal_sites: vec![],
             literal_templates: Vec::new(),
             superinstructions: vec![],
+            replay: None,
         };
         program
             .validate()

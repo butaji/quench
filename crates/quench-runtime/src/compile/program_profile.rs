@@ -1,7 +1,8 @@
 //! `QUENCH_MEMORY` attribution of a compiled program's owned bytes, one JSON line per
 //! program: the function records and each per-function and program-wide table at capacity.
 use crate::bytecode::{
-    Atom, BindingSite, Constant, EnvironmentClone, FieldSite, Function, Handler, Instr,
+    Atom, BindingSite, Constant, EnvironmentClone, FieldSite, Function, FunctionSlot, Handler,
+    Instr,
     LocalRegister, MethodSite, ObjectSite, RegExpLiteralSite, Register, ResidualProgram,
     Superinstruction, WideInstruction,
 };
@@ -51,8 +52,9 @@ fn layout_bytes(function: &Function) -> usize {
 }
 
 pub(super) fn report(program: &ResidualProgram) {
-    let functions = &program.functions;
-    let sum = |field: fn(&Function) -> usize| functions.iter().map(field).sum::<usize>();
+    let slots = &program.functions;
+    let records = || slots.iter().filter_map(FunctionSlot::record);
+    let sum = |field: fn(&Function) -> usize| records().map(field).sum::<usize>();
     eprintln!(
         "{{\"kind\":\"quench-program-memory\",\"name\":{:?},\"source_bytes\":{},\"functions\":{},\
          \"function_record_size\":{},\"function_records\":{},\"code\":{},\"wide\":{},\
@@ -60,9 +62,9 @@ pub(super) fn report(program: &ResidualProgram) {
          \"sites\":{},\"register_roots\":{}}}",
         program.source_name,
         program.source.as_ref().map_or(0, |source| source.text.len()),
-        functions.len(),
+        slots.len(),
         size_of::<Function>(),
-        functions.capacity() * size_of::<Function>(),
+        slots.capacity() * size_of::<FunctionSlot>() + records().count() * size_of::<Function>(),
         sum(|function| bytes::<Instr>(&function.code)),
         sum(|function| bytes::<WideInstruction>(&function.wide)),
         sum(|function| function.source_positions.capacity_bytes()),

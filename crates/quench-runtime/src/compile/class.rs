@@ -289,10 +289,11 @@ impl FunctionCompiler<'_, '_> {
                     ..FunctionOptions::default()
                 },
             );
-            self.owner.functions[constructor_id as usize]
-                .as_mut()
-                .expect("compiled class constructor")
-                .instance_initializer = Some(initializer);
+            // A replay of the function enclosing the class finds the constructor as the load
+            // left it.
+            if let Some(constructor) = self.owner.functions.get_mut(constructor_id) {
+                constructor.instance_initializer = Some(initializer);
+            }
         }
         let class_value = self.reg();
         self.emit(Op::MakeClosure, class_value, 0, 0, constructor_id);
@@ -944,14 +945,11 @@ impl Compiler<'_> {
         );
         // Generated parser names are scaffolding; the actual property key owns
         // the accessor's name, including computed and private keys.
-        self.functions[getter as usize]
-            .as_mut()
-            .expect("compiled auto-accessor getter")
-            .name = None;
-        self.functions[setter as usize]
-            .as_mut()
-            .expect("compiled auto-accessor setter")
-            .name = None;
+        for accessor in [getter, setter] {
+            if let Some(accessor) = self.functions.get_mut(accessor) {
+                accessor.name = None;
+            }
+        }
         Some((getter, setter))
     }
 
