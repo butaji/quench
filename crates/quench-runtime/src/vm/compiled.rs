@@ -2420,6 +2420,13 @@ impl CompiledJsFunction {
         matches!(self.entry, CompiledJsEntry::StringTransform { .. })
     }
 
+    fn string_transform_kind(&self) -> Option<super::js_compiled::JsJitStringTransform> {
+        match self.entry {
+            CompiledJsEntry::StringTransform { transform, .. } => Some(transform),
+            _ => None,
+        }
+    }
+
     pub(super) fn string_constant_for_return(&self, return_pc: u32) -> Option<u32> {
         self.return_constants
             .iter()
@@ -6132,12 +6139,20 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
-        let numeric_loop_candidate = super::js_compiled::has_numeric_loop_candidate(function);
+        let compiled_tier = match tier.as_ref() {
+            Some(super::program_store::JsTierState::Compiled(compiled)) => Some(compiled.as_ref()),
+            _ => None,
+        };
+        let numeric_loop_candidate = compiled_tier.is_none()
+            && super::js_compiled::has_numeric_loop_candidate(function);
 
         let params = usize::from(function.params);
         let registers = self.frames[frame].registers.get(..params)?;
         let first_argument = registers.first().copied();
-        let field_argument = super::js_compiled::number_field_argument_candidate(program, function);
+        let field_argument = match compiled_tier {
+            Some(compiled) => compiled.field_argument(),
+            None => super::js_compiled::number_field_argument_candidate(program, function),
+        };
         let mut arguments: smallvec::SmallVec<[f64; 8]> = smallvec::SmallVec::new();
         let mut numeric = true;
         for value in registers {
@@ -6161,14 +6176,15 @@ impl<H: Host> Vm<H> {
                 numeric = true;
             }
         }
-        let string_hash_candidate =
-            super::js_compiled::has_string_hash_loop_candidate(program, function)
-                && params == 1
-                && self.js_jit_string_hash_guard()
-                && matches!(
-                    first_argument.and_then(|value| self.heap.get(value)),
-                    Some(Cell::String(_))
-                );
+        let string_hash_candidate = match compiled_tier {
+            Some(compiled) => compiled.is_string_hash_loop(),
+            None => super::js_compiled::has_string_hash_loop_candidate(program, function),
+        } && params == 1
+            && self.js_jit_string_hash_guard()
+            && matches!(
+                first_argument.and_then(|value| self.heap.get(value)),
+                Some(Cell::String(_))
+            );
         let string_hash_units = if string_hash_candidate {
             let Some(Cell::String(string)) = first_argument.and_then(|value| self.heap.get(value))
             else {
@@ -6178,7 +6194,11 @@ impl<H: Host> Vm<H> {
         } else {
             None
         };
-        let string_transform = super::js_compiled::string_transform_candidate(program, function)
+        let string_transform_kind = match compiled_tier {
+            Some(compiled) => compiled.string_transform_kind(),
+            None => super::js_compiled::string_transform_candidate(program, function),
+        };
+        let string_transform = string_transform_kind
             .filter(|kind| self.js_jit_string_transform_guard(*kind))
             .filter(|_| {
                 matches!(
