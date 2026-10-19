@@ -1935,7 +1935,7 @@ impl<H: Host> Vm<H> {
         value: Value,
         options: Value,
     ) -> Result<ZonedDateTimeRecord, JsError> {
-        if self.heap.object_record(value).is_some() {
+        if self.heap.object_record(value).is_some() || self.heap.is_function_value(value) {
             return self.temporal_zoned_date_time_property_bag(p, value, options);
         }
         match self.heap.get(value).cloned() {
@@ -1958,9 +1958,7 @@ impl<H: Host> Vm<H> {
                 resolve_zoned_date_time_string(parsed, &options.offset, &options.disambiguation)
                     .ok_or_else(|| self.range_error(p, "Invalid ZonedDateTime".into()))
             }
-            Some(Cell::Function { .. } | Cell::Proxy { .. }) => {
-                self.temporal_zoned_date_time_property_bag(p, value, options)
-            }
+            Some(Cell::Proxy { .. }) => self.temporal_zoned_date_time_property_bag(p, value, options),
             _ => Err(self.type_error(p, "Invalid ZonedDateTime value".into())),
         }
     }

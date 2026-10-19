@@ -476,7 +476,7 @@ impl<H: Host> Vm<H> {
             .flatten();
         let outcome = self.with_call_roots([reaction.handler, reaction.next, value], |vm| {
             vm.promise_job_boundary(reaction.execution_context, true)?;
-            let await_reaction = matches!(vm.heap.get(reaction.handler), Some(Cell::AwaitState(_)));
+            let await_reaction = vm.heap.await_state(reaction.handler).is_some();
             if !await_reaction && !vm.is_function(reaction.handler) {
                 vm.settle_reaction(
                     p,
@@ -559,12 +559,12 @@ impl<H: Host> Vm<H> {
     /// Whether `then` is this realm's own %Promise.prototype.then%.
     fn is_intrinsic_promise_then(&self, then: Value) -> bool {
         matches!(
-            self.heap.get(then),
-            Some(Cell::Function {
+            self.heap.function(then),
+            Some(FunctionRecord {
                 kind: FunctionKind::Native(Native::PromiseThen),
-                object,
+                realm,
                 ..
-            }) if object.realm == self.realm.globals
+            }) if *realm == self.realm.globals
         )
     }
 

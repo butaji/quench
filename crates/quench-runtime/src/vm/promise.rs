@@ -1131,11 +1131,11 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         // A realm's own natives run in that realm; a native shared by every realm runs in
         // its caller's, which is the realm whose objects it builds.
-        let realm = match self.heap.get(callee) {
-            Some(Cell::Function { object, .. })
-                if object.realm == self.realm.globals || !self.shared_natives.contains(&callee) =>
+        let realm = match self.heap.function(callee) {
+            Some(FunctionRecord { realm, .. })
+                if *realm == self.realm.globals || !self.shared_natives.contains(&callee) =>
             {
-                object.realm
+                *realm
             }
             _ => self.realm.globals,
         };
@@ -1171,11 +1171,9 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn native_with_realm(&mut self, kind: Native, env: Value, realm: Value) -> Value {
-        let function = self.heap.alloc(Cell::Function {
-            object: Box::new(crate::heap::FunctionObject {
-                object: Self::empty_object(self.realm_function_prototype(realm)),
-                realm: realm,
-            }),
+        let function = self.heap.alloc_function(FunctionRecord {
+            object: Self::empty_object(self.realm_function_prototype(realm)),
+            realm,
             kind: FunctionKind::Native(kind),
             env,
         });
@@ -1329,7 +1327,7 @@ impl<H: Host> Vm<H> {
         } else {
             None
         };
-        let promise = self.heap.alloc(Cell::Promise(Box::new(crate::heap::PromiseCell {
+        let promise = self.heap.alloc_promise(crate::heap::PromiseCell {
             object: Self::empty_object(prototype),
             record: PromiseRecord {
                 state: PromiseState::Pending,
@@ -1339,7 +1337,7 @@ impl<H: Host> Vm<H> {
                 rejection_id: None,
                 host_context,
             },
-        })));
+        });
         if let Some(identity) = host_context {
             let mut context = crate::NativeContext::new(self);
             let resource = context.scoped_value(promise);
@@ -4990,8 +4988,8 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn active_native_env(&self) -> Option<Value> {
         let callee = self.active_native_callable()?;
-        match self.heap.get(callee) {
-            Some(Cell::Function { env, .. }) if !env.is_null() => Some(*env),
+        match self.heap.function(callee) {
+            Some(FunctionRecord { env, .. }) if !env.is_null() => Some(*env),
             _ => None,
         }
     }

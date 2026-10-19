@@ -20,7 +20,7 @@ impl<H: Host> Vm<H> {
         environment: Value,
     ) -> impl DoubleEndedIterator<Item = Value> + '_ {
         self.cached_functions(program, id).filter(move |function| {
-            matches!(self.heap.get(*function), Some(Cell::Function { env, .. }) if *env == environment)
+            matches!(self.heap.function(*function), Some(FunctionRecord { env, .. }) if *env == environment)
         })
     }
 
