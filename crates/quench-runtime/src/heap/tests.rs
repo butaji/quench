@@ -669,13 +669,18 @@ fn out_of_line_private_brand_keeps_its_home_alive() {
 #[test]
 fn object_property_storage_migration_preserves_writes_and_gc_roots() {
     let mut heap = Heap::new();
-    heap.register_property_shape(1, 1);
-    heap.register_property_shape(2, 2);
-    heap.register_property_shape(3, 3);
+    // Shape `n` holds `n` properties; the add past the inline values migrates them.
+    let migrated = INLINE_PROPERTY_COUNT + 1;
+    for shape in 1..=migrated {
+        heap.register_property_shape(shape as u32, shape);
+    }
     let first = heap.alloc(Cell::String("first".into()));
     let replaced = heap.alloc(Cell::String("replaced".into()));
     let replacement = heap.alloc(Cell::String("replacement".into()));
-    let third = heap.alloc(Cell::String("third".into()));
+    let fillers = (2..INLINE_PROPERTY_COUNT)
+        .map(|_| heap.alloc(Cell::String("filler".into())))
+        .collect::<Vec<_>>();
+    let last = heap.alloc(Cell::String("last".into()));
     let object = heap.alloc(Cell::Object(plain_object()));
     assert!(heap.object(object).unwrap().inline_properties().is_some());
     heap.object_record_mut(object)
@@ -683,34 +688,41 @@ fn object_property_storage_migration_preserves_writes_and_gc_roots() {
         .set_extensible(false);
     heap.property_add(object, first, 1);
     heap.property_add(object, replaced, 2);
+    for (index, filler) in fillers.iter().enumerate() {
+        heap.property_add(object, *filler, (3 + index) as u32);
+    }
     assert!(heap.object(object).unwrap().inline_properties().is_some());
     heap.property_set(object, 1, replacement);
-    heap.property_add(object, third, 3);
+    heap.property_add(object, last, migrated as u32);
 
     heap.collect([object]);
     let data = heap.object(object).unwrap();
-    assert_eq!(data.shape(), 3);
+    assert_eq!(data.shape(), migrated as u32);
     assert!(data.inline_properties().is_none());
     assert!(!data.is_extensible());
     assert_eq!(heap.property_get(data, 0), Some(first));
     assert_eq!(heap.property_get(data, 1), Some(replacement));
-    assert_eq!(heap.property_get(data, 2), Some(third));
+    for (index, filler) in fillers.iter().enumerate() {
+        assert_eq!(heap.property_get(data, 2 + index), Some(*filler));
+    }
+    assert_eq!(heap.property_get(data, migrated - 1), Some(last));
     assert!(heap.is_live(first));
     assert!(!heap.is_live(replaced));
     assert!(heap.is_live(replacement));
-    assert!(heap.is_live(third));
+    assert!(heap.is_live(last));
 
     heap.collect([]);
     assert!(!heap.is_live(object));
     assert!(!heap.is_live(first));
     assert!(!heap.is_live(replacement));
-    assert!(!heap.is_live(third));
+    assert!(!heap.is_live(last));
 }
 
 #[test]
 fn inline_property_values_are_gc_roots_until_deleted_or_the_owner_dies() {
     let mut heap = Heap::new();
-    heap.register_property_shape(1, INLINE_PROPERTY_COUNT);
+    // A shape of two properties, the pair below, whatever the inline count.
+    heap.register_property_shape(1, 2);
     let kept = heap.alloc(Cell::String("kept".into()));
     let deleted = heap.alloc(Cell::String("deleted".into()));
     let object = heap.alloc_object_pair(Value::NULL, 1, kept, deleted);
@@ -739,11 +751,7 @@ fn out_of_line_object_metadata_is_included_in_live_memory_totals() {
     data.set_arguments_map(vec![0; 32]);
     data.set_module_namespace();
     data.set_module_bindings(vec![(0, crate::vm::program_store::ProgramId::MAIN, 0)]);
-    data.set_deferred_module(Some(crate::ModuleSource {
-        name: "module.js".into(),
-        source: "export const value = 1;".into(),
-        bytes: vec![1, 2, 3],
-    }));
+    data.set_deferred_module(Some(crate::ModuleSource::text("module.js", "export const value = 1;")));
     data.add_private_name(PrivateBrand {
         home: object,
         name: 0,

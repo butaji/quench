@@ -41,8 +41,37 @@ pub struct HostGlobal {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ModuleSource {
     pub name: String,
+    /// The text the VM compiles.
     pub source: String,
-    pub bytes: Vec<u8>,
+    /// The module's bytes when they are not `source`'s UTF-8: a file that is not
+    /// UTF-8, or a host interop wrapper that keeps the bytes it wraps. Absent, the
+    /// bytes are `source` itself, so a module's text is never held twice.
+    pub original_bytes: Option<Vec<u8>>,
+}
+
+impl ModuleSource {
+    /// A module whose bytes are its source text.
+    pub fn text(name: impl Into<String>, source: impl Into<String>) -> Self {
+        Self { name: name.into(), source: source.into(), original_bytes: None }
+    }
+
+    /// A module read as bytes: its source is their UTF-8 decoding, with replacement
+    /// characters where they are not UTF-8, and the bytes are kept only then.
+    pub fn from_bytes(name: impl Into<String>, bytes: Vec<u8>) -> Self {
+        match String::from_utf8(bytes) {
+            Ok(source) => Self::text(name, source),
+            Err(error) => {
+                let bytes = error.into_bytes();
+                let source = String::from_utf8_lossy(&bytes).into_owned();
+                Self { name: name.into(), source, original_bytes: Some(bytes) }
+            }
+        }
+    }
+
+    /// The module's bytes, as an import with `type: "bytes"` reads them.
+    pub fn bytes(&self) -> &[u8] {
+        self.original_bytes.as_deref().unwrap_or(self.source.as_bytes())
+    }
 }
 
 /// An opaque host execution context captured by a Promise reaction or

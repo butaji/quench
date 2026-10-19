@@ -2065,11 +2065,7 @@ checkSources().then(()=>print('done'),e=>{print('unexpected');print(e);});
                 Ok(MODULES
                     .iter()
                     .find(|(name, _)| *name == file)
-                    .map(|(_, source)| crate::host::ModuleSource {
-                        name: format!("task20-module-source-fixtures/{file}"),
-                        source: (*source).into(),
-                        bytes: source.as_bytes().to_vec(),
-                    }))
+                    .map(|(_, source)| crate::host::ModuleSource::text(format!("task20-module-source-fixtures/{file}"), *source)))
             }
         }
         for compile in [
@@ -4872,9 +4868,7 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
             fn clock_millis(&mut self) -> f64 { 0.0 }
             fn resolve_dynamic_import(&mut self, _: &str, specifier: &str) -> Result<Option<crate::ModuleSource>, crate::ModuleLoadError> {
                 let name = specifier.rsplit('/').next().unwrap();
-                Ok(MODULES.iter().find(|(candidate, _)| *candidate == name).map(|(_, source)| crate::ModuleSource {
-                    name: format!("cyclic-module-graph/{name}"), source: (*source).into(), bytes: source.as_bytes().to_vec(),
-                }))
+                Ok(MODULES.iter().find(|(candidate, _)| *candidate == name).map(|(_, source)| crate::ModuleSource::text(format!("cyclic-module-graph/{name}"), *source)))
             }
         }
         for compile in [Engine::specialize_module as fn(&str, &str) -> _, Engine::specialize_module_unspecialized] {
@@ -4919,12 +4913,10 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
             fn has_module_source(&self, module: &crate::ModuleSource) -> bool { module.name == "<source>" }
             fn resolve_dynamic_import(&mut self, _: &str, specifier: &str) -> Result<Option<crate::ModuleSource>, crate::ModuleLoadError> {
                 if specifier == "<source>" {
-                    return Ok(Some(crate::ModuleSource { name: specifier.into(), source: String::new(), bytes: Vec::new() }));
+                    return Ok(Some(crate::ModuleSource::text(specifier, "")));
                 }
                 let name = specifier.rsplit('/').next().unwrap();
-                Ok(MODULES.iter().find(|(candidate, _)| *candidate == name).map(|(_, source)| crate::ModuleSource {
-                    name: format!("deferred-module-graph/{name}"), source: (*source).into(), bytes: source.as_bytes().to_vec(),
-                }))
+                Ok(MODULES.iter().find(|(candidate, _)| *candidate == name).map(|(_, source)| crate::ModuleSource::text(format!("deferred-module-graph/{name}"), *source)))
             }
         }
         for compile in [Engine::specialize_module as fn(&str, &str) -> _, Engine::specialize_module_unspecialized] {
@@ -4982,11 +4974,7 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
                 specifier: &str,
             ) -> Result<Option<crate::host::ModuleSource>, crate::ModuleLoadError> {
                 assert_eq!(specifier, "./integrity-dependency.mjs");
-                Ok(Some(crate::host::ModuleSource {
-                    name: "integrity-dependency.mjs".into(),
-                    source: DEPENDENCY.into(),
-                    bytes: vec![],
-                }))
+                Ok(Some(crate::host::ModuleSource::text("integrity-dependency.mjs", DEPENDENCY)))
             }
         }
         for compile in [
@@ -5078,11 +5066,7 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
                 specifier: &str,
             ) -> Result<Option<crate::host::ModuleSource>, crate::ModuleLoadError> {
                 assert_eq!(specifier, "./ordered-namespace.mjs");
-                Ok(Some(crate::host::ModuleSource {
-                    name: "ordered-namespace.mjs".into(),
-                    source: DEPENDENCY.into(),
-                    bytes: vec![],
-                }))
+                Ok(Some(crate::host::ModuleSource::text("ordered-namespace.mjs", DEPENDENCY)))
             }
         }
         for compile in [

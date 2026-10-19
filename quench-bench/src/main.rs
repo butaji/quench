@@ -28,10 +28,15 @@ const FIXTURES: &[&str] = &[
     "splay.js",
 ];
 const MIN_QUALIFYING_ROUNDS: usize = 11;
+const MIN_DIAGNOSTIC_SCREEN_ROUNDS: usize = 3;
 const DEFAULT_TIMEOUT_MS: u64 = 300_000;
 const MEASUREMENT_ENV: &[&str] = &["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TZ"];
+const QUENCH_WASM_EMSCRIPTEN_MEMCPY_DIRECT: &str = "QUENCH_WASM_EMSCRIPTEN_MEMCPY_DIRECT";
+const QUENCH_WASM_EMSCRIPTEN_MEMCPY_RAW_I32: &str = "QUENCH_WASM_EMSCRIPTEN_MEMCPY_RAW_I32";
+const QUENCH_WASM_EMSCRIPTEN_MEMCPY_EARLY_IMPORT: &str = "QUENCH_WASM_EMSCRIPTEN_MEMCPY_EARLY_IMPORT";
+const QUENCH_WASM_JIT_DIRECT_COMPARE_BRANCHES: &str = "QUENCH_WASM_JIT_DIRECT_COMPARE_BRANCHES";
 const FIXED_WORK_REPORT_SCHEMA: u32 = 5;
-const SUITE_REPORT_SCHEMA: u32 = 9;
+const SUITE_REPORT_SCHEMA: u32 = 13;
 const FIXED_WORK_MEASUREMENT_MODE: &str = "fixed_work_diagnostic";
 const FIXED_WORK_MARKER_PREFIX: &str = "__quenchFixedWork:";
 const FIXED_WORK_SUITE_COUNT: usize = 1;
@@ -390,9 +395,27 @@ struct SuiteRecord {
     /// Experimental bounded root compilation; never qualification mode.
     #[serde(default)]
     jit_wasm_root: Option<u32>,
+    /// Experimental interpreter-to-native single-root mode; never qualification mode.
+    #[serde(default)]
+    jit_wasm_root_only: bool,
+    /// Starts from one selected Wasm root and then promotes hot fallback callees.
+    #[serde(default)]
+    jit_wasm_root_first: bool,
     /// Starts Wasm functions in the interpreter and promotes hot roots only.
     #[serde(default)]
     jit_wasm_selective: bool,
+    /// Paired GCC-Wasm diagnostic for the direct Emscripten memcpy path.
+    #[serde(default)]
+    jit_wasm_memcpy_ab: bool,
+    /// Paired GCC-Wasm diagnostic for raw-i32 Emscripten memcpy arguments.
+    #[serde(default)]
+    jit_wasm_memcpy_raw_ab: bool,
+    /// Paired GCC-Wasm diagnostic for attempting raw-i32 memcpy before the generic import boundary.
+    #[serde(default)]
+    jit_wasm_memcpy_early_ab: bool,
+    /// Paired QuickSort-Wasm diagnostic for direct Wasm compare-branch lowering.
+    #[serde(default)]
+    jit_wasm_compare_branch_ab: bool,
     created_unix_ns: u128,
     rounds_requested: usize,
     timeout_ms: u64,
@@ -541,7 +564,13 @@ struct Options {
     jit_mode: JitMode,
     jit_diagnostics: bool,
     jit_wasm_root: Option<u32>,
+    jit_wasm_root_only: bool,
+    jit_wasm_root_first: bool,
     jit_wasm_selective: bool,
+    jit_wasm_memcpy_ab: bool,
+    jit_wasm_memcpy_raw_ab: bool,
+    jit_wasm_memcpy_early_ab: bool,
+    jit_wasm_compare_branch_ab: bool,
     fixture: Option<String>,
     fixtures: Option<Vec<String>>,
     all: bool,
@@ -614,7 +643,13 @@ fn main() {
         jit_mode: options.jit_mode,
         jit_diagnostics: options.jit_diagnostics,
         jit_wasm_root: options.jit_wasm_root,
+        jit_wasm_root_only: options.jit_wasm_root_only,
+        jit_wasm_root_first: options.jit_wasm_root_first,
         jit_wasm_selective: options.jit_wasm_selective,
+        jit_wasm_memcpy_ab: options.jit_wasm_memcpy_ab,
+        jit_wasm_memcpy_raw_ab: options.jit_wasm_memcpy_raw_ab,
+        jit_wasm_memcpy_early_ab: options.jit_wasm_memcpy_early_ab,
+        jit_wasm_compare_branch_ab: options.jit_wasm_compare_branch_ab,
         created_unix_ns: now_ns(),
         rounds_requested: options.rounds,
         timeout_ms: options.timeout_ms,
@@ -696,7 +731,13 @@ fn main() {
         && options.rounds >= MIN_QUALIFYING_ROUNDS
         && !options.jit_diagnostics
         && options.jit_wasm_root.is_none()
+        && !options.jit_wasm_root_only
+        && !options.jit_wasm_root_first
         && !options.jit_wasm_selective
+        && !options.jit_wasm_memcpy_ab
+        && !options.jit_wasm_memcpy_raw_ab
+        && !options.jit_wasm_memcpy_early_ab
+        && !options.jit_wasm_compare_branch_ab
         && report
             .fixtures
             .values()
@@ -782,22 +823,7 @@ fn write_new_report(path: &Path, bytes: &[u8]) {
 }
 
 fn validate_resume(saved: &SuiteRecord, expected: &SuiteRecord, files: &[PathBuf]) {
-    let metadata_matches = saved.schema == expected.schema
-        && saved.suite == expected.suite
-        && saved.jit_mode == expected.jit_mode
-        && saved.jit_diagnostics == expected.jit_diagnostics
-        && saved.jit_wasm_root == expected.jit_wasm_root
-        && saved.jit_wasm_selective == expected.jit_wasm_selective
-        && saved.rounds_requested == expected.rounds_requested
-        && saved.timeout_ms == expected.timeout_ms
-        && saved.source_revision == expected.source_revision
-        && saved.source_dirty == expected.source_dirty
-        && same_json(&saved.corpus, &expected.corpus)
-        && same_json(&saved.host, &expected.host)
-        && same_json(&saved.engines, &expected.engines)
-        && same_json(&saved.suite_inputs, &expected.suite_inputs)
-        && saved.selected_fixtures == expected.selected_fixtures;
-    if !metadata_matches {
+    if !resume_metadata_matches(saved, expected) {
         fail(
             "checkpoint provenance does not match this source, host, corpus, engines, rounds, or timeout",
         );
@@ -852,12 +878,173 @@ fn validate_resume(saved: &SuiteRecord, expected: &SuiteRecord, files: &[PathBuf
     }
 }
 
+fn resume_metadata_matches(saved: &SuiteRecord, expected: &SuiteRecord) -> bool {
+    saved.schema == expected.schema
+        && saved.suite == expected.suite
+        && saved.jit_mode == expected.jit_mode
+        && saved.jit_diagnostics == expected.jit_diagnostics
+        && saved.jit_wasm_root == expected.jit_wasm_root
+        && saved.jit_wasm_root_only == expected.jit_wasm_root_only
+        && saved.jit_wasm_root_first == expected.jit_wasm_root_first
+        && saved.jit_wasm_selective == expected.jit_wasm_selective
+        && saved.jit_wasm_memcpy_ab == expected.jit_wasm_memcpy_ab
+        && saved.jit_wasm_memcpy_raw_ab == expected.jit_wasm_memcpy_raw_ab
+        && saved.jit_wasm_memcpy_early_ab == expected.jit_wasm_memcpy_early_ab
+        && saved.jit_wasm_compare_branch_ab == expected.jit_wasm_compare_branch_ab
+        && saved.rounds_requested == expected.rounds_requested
+        && saved.timeout_ms == expected.timeout_ms
+        && saved.source_revision == expected.source_revision
+        && saved.source_dirty == expected.source_dirty
+        && same_json(&saved.corpus, &expected.corpus)
+        && same_json(&saved.host, &expected.host)
+        && same_json(&saved.engines, &expected.engines)
+        && same_json(&saved.suite_inputs, &expected.suite_inputs)
+        && saved.selected_fixtures == expected.selected_fixtures
+}
+
 fn same_json<T: Serialize>(left: &T, right: &T) -> bool {
     serde_json::to_value(left).ok() == serde_json::to_value(right).ok()
 }
 
+fn jit_wasm_root_only_error(
+    suite: Suite,
+    jit_mode: JitMode,
+    root: Option<u32>,
+    root_only: bool,
+) -> Option<&'static str> {
+    (root_only && (suite != Suite::JetStream3 || jit_mode != JitMode::Jit || root.is_none()))
+        .then_some("--jit-wasm-root-only requires --suite jetstream3 --jit --jit-wasm-root ID")
+}
+
+fn jit_wasm_root_first_error(
+    suite: Suite,
+    jit_mode: JitMode,
+    root: Option<u32>,
+    root_first: bool,
+    root_only: bool,
+) -> Option<&'static str> {
+    (root_first
+        && (suite != Suite::JetStream3
+            || jit_mode != JitMode::Jit
+            || root.is_none()
+            || root_only))
+        .then_some("--jit-wasm-root-first requires --suite jetstream3 --jit --jit-wasm-root ID and cannot combine with --jit-wasm-root-only")
+}
+
+fn jit_wasm_selective_error(
+    suite: Suite,
+    jit_mode: JitMode,
+    root: Option<u32>,
+    root_only: bool,
+    selective: bool,
+) -> Option<&'static str> {
+    (selective
+        && (suite != Suite::JetStream3
+            || jit_mode != JitMode::Jit
+            || root.is_some()
+            || root_only))
+        .then_some("--jit-wasm-selective requires --suite jetstream3 --jit and cannot combine with --jit-wasm-root, --jit-wasm-root-only, or --jit-wasm-root-first")
+}
+
+fn jit_wasm_memcpy_ab_error(options: &Options) -> Option<&'static str> {
+    let mode_count = [
+        options.jit_wasm_memcpy_ab,
+        options.jit_wasm_memcpy_raw_ab,
+        options.jit_wasm_memcpy_early_ab,
+    ]
+    .into_iter()
+    .filter(|selected| *selected)
+    .count();
+    if mode_count == 0 {
+        return None;
+    }
+    if mode_count > 1 {
+        return Some("Wasm memcpy A/B diagnostic modes are mutually exclusive");
+    }
+    let raw_i32 = options.jit_wasm_memcpy_raw_ab;
+    let early_import = options.jit_wasm_memcpy_early_ab;
+    let minimum_rounds = if early_import {
+        MIN_DIAGNOSTIC_SCREEN_ROUNDS
+    } else {
+        MIN_QUALIFYING_ROUNDS
+    };
+    if options.suite != Suite::JetStream3
+        || options.jit_mode != JitMode::Jit
+        || options.rounds < minimum_rounds
+        || options.jit_diagnostics
+        || options.jit_wasm_root.is_some()
+        || options.jit_wasm_root_only
+        || options.jit_wasm_root_first
+        || options.jit_wasm_selective
+        || options.fixed_work
+        || options.quench_peer.is_some()
+    {
+        return Some(if raw_i32 {
+            "--jit-wasm-memcpy-raw-ab requires --suite jetstream3 --jit, at least 11 rounds, and no other JIT diagnostic modes"
+        } else if early_import {
+            "--jit-wasm-memcpy-early-ab requires --suite jetstream3 --jit, at least 3 rounds, and no other JIT diagnostic modes"
+        } else {
+            "--jit-wasm-memcpy-ab requires --suite jetstream3 --jit, at least 11 rounds, and no other JIT diagnostic modes"
+        });
+    }
+    if options.preflight_only {
+        return (options.fixture.is_some() || options.fixtures.is_some() || options.all)
+            .then_some("--preflight-only cannot select fixtures");
+    }
+    let one_pinned_fixture = options.fixture.as_deref() == Some("gcc-loops-wasm")
+        || options.fixtures.as_ref().is_some_and(|fixtures| {
+            fixtures.len() == 1 && fixtures[0] == "gcc-loops-wasm"
+        });
+    (!one_pinned_fixture || options.all).then_some(if raw_i32 {
+        "--jit-wasm-memcpy-raw-ab is pinned to the single JetStream fixture gcc-loops-wasm"
+    } else if early_import {
+        "--jit-wasm-memcpy-early-ab is pinned to the single JetStream fixture gcc-loops-wasm"
+    } else {
+        "--jit-wasm-memcpy-ab is pinned to the single JetStream fixture gcc-loops-wasm"
+    })
+}
+
+fn jit_wasm_compare_branch_ab_error(options: &Options) -> Option<&'static str> {
+    if !options.jit_wasm_compare_branch_ab {
+        return None;
+    }
+    if options.jit_wasm_memcpy_ab
+        || options.jit_wasm_memcpy_raw_ab
+        || options.jit_wasm_memcpy_early_ab
+    {
+        return Some("--jit-wasm-compare-branch-ab cannot be combined with a memcpy A/B mode");
+    }
+    if options.suite != Suite::JetStream3
+        || options.jit_mode != JitMode::Jit
+        || options.rounds < MIN_DIAGNOSTIC_SCREEN_ROUNDS
+        || options.jit_diagnostics
+        || options.jit_wasm_root.is_some()
+        || options.jit_wasm_root_only
+        || options.jit_wasm_root_first
+        || options.jit_wasm_selective
+        || options.fixed_work
+        || options.quench_peer.is_some()
+    {
+        return Some("--jit-wasm-compare-branch-ab requires --suite jetstream3 --jit, at least 3 rounds, and no other JIT diagnostic modes");
+    }
+    if options.preflight_only {
+        return (options.fixture.is_some() || options.fixtures.is_some() || options.all)
+            .then_some("--preflight-only cannot select fixtures");
+    }
+    let one_pinned_fixture = options.fixture.as_deref() == Some("quicksort-wasm")
+        || options.fixtures.as_ref().is_some_and(|fixtures| {
+            fixtures.len() == 1 && fixtures[0] == "quicksort-wasm"
+        });
+    (!one_pinned_fixture || options.all)
+        .then_some("--jit-wasm-compare-branch-ab is pinned to the single JetStream fixture quicksort-wasm")
+}
+
 fn parse_options() -> Options {
-    let mut args = env::args().skip(1);
+    parse_options_from(env::args().skip(1))
+}
+
+fn parse_options_from(args: impl IntoIterator<Item = String>) -> Options {
+    let mut args = args.into_iter();
     let first = args
         .next()
         .unwrap_or_else(|| usage("missing fixture or --all"));
@@ -866,7 +1053,13 @@ fn parse_options() -> Options {
         jit_mode: JitMode::NoJit,
         jit_diagnostics: false,
         jit_wasm_root: None,
+        jit_wasm_root_only: false,
+        jit_wasm_root_first: false,
         jit_wasm_selective: false,
+        jit_wasm_memcpy_ab: false,
+        jit_wasm_memcpy_raw_ab: false,
+        jit_wasm_memcpy_early_ab: false,
+        jit_wasm_compare_branch_ab: false,
         fixture: None,
         fixtures: None,
         all: first == "--all",
@@ -911,6 +1104,12 @@ fn parse_options() -> Options {
             "--jit" => options.jit_mode = JitMode::Jit,
             "--jit-diagnostics" => options.jit_diagnostics = true,
             "--jit-wasm-selective" => options.jit_wasm_selective = true,
+            "--jit-wasm-memcpy-ab" => options.jit_wasm_memcpy_ab = true,
+            "--jit-wasm-memcpy-raw-ab" => options.jit_wasm_memcpy_raw_ab = true,
+            "--jit-wasm-memcpy-early-ab" => options.jit_wasm_memcpy_early_ab = true,
+            "--jit-wasm-compare-branch-ab" => options.jit_wasm_compare_branch_ab = true,
+            "--jit-wasm-root-only" => options.jit_wasm_root_only = true,
+            "--jit-wasm-root-first" => options.jit_wasm_root_first = true,
             "--jit-wasm-root" => {
                 options.jit_wasm_root = Some(
                     u32::try_from(required_number(&mut args, "--jit-wasm-root"))
@@ -980,12 +1179,37 @@ fn parse_options() -> Options {
     {
         usage("--jit-wasm-root requires --suite jetstream3 --jit");
     }
-    if options.jit_wasm_selective
-        && (options.jit_mode != JitMode::Jit
-            || options.suite != Suite::JetStream3
-            || options.jit_wasm_root.is_some())
-    {
-        usage("--jit-wasm-selective requires --suite jetstream3 --jit and cannot combine with --jit-wasm-root");
+    if let Some(error) = jit_wasm_root_only_error(
+        options.suite,
+        options.jit_mode,
+        options.jit_wasm_root,
+        options.jit_wasm_root_only,
+    ) {
+        usage(error);
+    }
+    if let Some(error) = jit_wasm_root_first_error(
+        options.suite,
+        options.jit_mode,
+        options.jit_wasm_root,
+        options.jit_wasm_root_first,
+        options.jit_wasm_root_only,
+    ) {
+        usage(error);
+    }
+    if let Some(error) = jit_wasm_selective_error(
+        options.suite,
+        options.jit_mode,
+        options.jit_wasm_root,
+        options.jit_wasm_root_only,
+        options.jit_wasm_selective,
+    ) {
+        usage(error);
+    }
+    if let Some(error) = jit_wasm_memcpy_ab_error(&options) {
+        usage(error);
+    }
+    if let Some(error) = jit_wasm_compare_branch_ab_error(&options) {
+        usage(error);
     }
     if options.quench_peer.is_some() && !options.fixed_work {
         usage("--quench-peer requires --fixed-work");
@@ -1060,22 +1284,139 @@ fn fixture_selection_is_valid(suite: Suite, files: &[PathBuf]) -> bool {
 }
 
 fn prepare_engines(options: &Options) -> Vec<EngineSpec> {
-    options
-        .suite
-        .engine_names()
-        .iter()
-        .map(|name| match *name {
-            "quench" => quench_engine(options),
-            "quickjs" => quickjs_engine(options),
-            "bun" => bun_engine(options),
-            "node" => node_engine(options),
-            _ => unreachable!("suites name only known engines"),
-        })
+    let engines = if options.jit_wasm_compare_branch_ab {
+        let [branch_off, branch_on] = quench_compare_branch_ab_pair(options);
+        vec![branch_off, branch_on, bun_engine(options), node_engine(options)]
+    } else if options.jit_wasm_memcpy_early_ab {
+        let [early_off, early_on] = quench_memcpy_early_ab_pair(options);
+        vec![early_off, early_on, bun_engine(options), node_engine(options)]
+    } else if options.jit_wasm_memcpy_ab || options.jit_wasm_memcpy_raw_ab {
+        let [direct_off, direct_on] = quench_memcpy_ab_pair(options, options.jit_wasm_memcpy_raw_ab);
+        vec![direct_off, direct_on, bun_engine(options), node_engine(options)]
+    } else {
+        options
+            .suite
+            .engine_names()
+            .iter()
+            .map(|name| match *name {
+                "quench" => quench_engine(options),
+                "quickjs" => quickjs_engine(options),
+                "bun" => bun_engine(options),
+                "node" => node_engine(options),
+                _ => unreachable!("suites name only known engines"),
+            })
+            .collect()
+    };
+    engines
+        .into_iter()
         .map(|mut engine| {
             engine.webassembly = probe_webassembly(&engine);
             engine
         })
         .collect()
+}
+
+fn quench_compare_branch_ab_pair(options: &Options) -> [EngineSpec; 2] {
+    let mut branch_off = quench_engine(options);
+    let mut branch_on = quench_engine(options);
+    branch_off.name = "quench_direct_compare_branches_off";
+    branch_on.name = "quench_direct_compare_branches_on";
+    branch_off
+        .env
+        .insert(QUENCH_WASM_JIT_DIRECT_COMPARE_BRANCHES.into(), "0".into());
+    branch_on
+        .env
+        .insert(QUENCH_WASM_JIT_DIRECT_COMPARE_BRANCHES.into(), "1".into());
+    branch_off.jit_proof = format!(
+        "{}; diagnostic direct compare-branch A/B arm with {QUENCH_WASM_JIT_DIRECT_COMPARE_BRANCHES}=0",
+        branch_off.jit_proof
+    );
+    branch_on.jit_proof = format!(
+        "{}; diagnostic direct compare-branch A/B arm with {QUENCH_WASM_JIT_DIRECT_COMPARE_BRANCHES}=1",
+        branch_on.jit_proof
+    );
+    [branch_off, branch_on]
+}
+
+fn quench_memcpy_ab_pair(options: &Options, raw_i32: bool) -> [EngineSpec; 2] {
+    let mut direct_off = quench_engine(options);
+    let mut direct_on = quench_engine(options);
+    if raw_i32 {
+        direct_off.name = "quench_memcpy_raw_i32_off";
+        direct_on.name = "quench_memcpy_raw_i32_on";
+        for engine in [&mut direct_off, &mut direct_on] {
+            engine.env.insert(
+                QUENCH_WASM_EMSCRIPTEN_MEMCPY_DIRECT.into(),
+                "1".into(),
+            );
+        }
+        direct_off
+            .env
+            .insert(QUENCH_WASM_EMSCRIPTEN_MEMCPY_RAW_I32.into(), "0".into());
+        direct_on
+            .env
+            .insert(QUENCH_WASM_EMSCRIPTEN_MEMCPY_RAW_I32.into(), "1".into());
+        direct_off.jit_proof = format!(
+            "{}; diagnostic raw-i32 A/B arm with {QUENCH_WASM_EMSCRIPTEN_MEMCPY_DIRECT}=1 and {QUENCH_WASM_EMSCRIPTEN_MEMCPY_RAW_I32}=0",
+            direct_off.jit_proof
+        );
+        direct_on.jit_proof = format!(
+            "{}; diagnostic raw-i32 A/B arm with {QUENCH_WASM_EMSCRIPTEN_MEMCPY_DIRECT}=1 and {QUENCH_WASM_EMSCRIPTEN_MEMCPY_RAW_I32}=1",
+            direct_on.jit_proof
+        );
+    } else {
+        direct_off.name = "quench_memcpy_direct_off";
+        direct_on.name = "quench_memcpy_direct_on";
+        direct_off
+            .env
+            .insert(QUENCH_WASM_EMSCRIPTEN_MEMCPY_DIRECT.into(), "0".into());
+        direct_on
+            .env
+            .insert(QUENCH_WASM_EMSCRIPTEN_MEMCPY_DIRECT.into(), "1".into());
+        direct_off.jit_proof = format!(
+            "{}; diagnostic A/B arm with {QUENCH_WASM_EMSCRIPTEN_MEMCPY_DIRECT}=0",
+            direct_off.jit_proof
+        );
+        direct_on.jit_proof = format!(
+            "{}; diagnostic A/B arm with {QUENCH_WASM_EMSCRIPTEN_MEMCPY_DIRECT}=1",
+            direct_on.jit_proof
+        );
+    }
+    [direct_off, direct_on]
+}
+
+fn quench_memcpy_early_ab_pair(options: &Options) -> [EngineSpec; 2] {
+    let mut early_off = quench_engine(options);
+    let mut early_on = quench_engine(options);
+    early_off.name = "quench_memcpy_early_import_off";
+    early_on.name = "quench_memcpy_early_import_on";
+    for engine in [&mut early_off, &mut early_on] {
+        engine.env.insert(
+            QUENCH_WASM_EMSCRIPTEN_MEMCPY_DIRECT.into(),
+            "1".into(),
+        );
+        engine.env.insert(
+            QUENCH_WASM_EMSCRIPTEN_MEMCPY_RAW_I32.into(),
+            "1".into(),
+        );
+    }
+    early_off.env.insert(
+        QUENCH_WASM_EMSCRIPTEN_MEMCPY_EARLY_IMPORT.into(),
+        "0".into(),
+    );
+    early_on.env.insert(
+        QUENCH_WASM_EMSCRIPTEN_MEMCPY_EARLY_IMPORT.into(),
+        "1".into(),
+    );
+    early_off.jit_proof = format!(
+        "{}; diagnostic early-import A/B arm with {QUENCH_WASM_EMSCRIPTEN_MEMCPY_DIRECT}=1, {QUENCH_WASM_EMSCRIPTEN_MEMCPY_RAW_I32}=1, and {QUENCH_WASM_EMSCRIPTEN_MEMCPY_EARLY_IMPORT}=0",
+        early_off.jit_proof
+    );
+    early_on.jit_proof = format!(
+        "{}; diagnostic early-import A/B arm with {QUENCH_WASM_EMSCRIPTEN_MEMCPY_DIRECT}=1, {QUENCH_WASM_EMSCRIPTEN_MEMCPY_RAW_I32}=1, and {QUENCH_WASM_EMSCRIPTEN_MEMCPY_EARLY_IMPORT}=1",
+        early_on.jit_proof
+    );
+    [early_off, early_on]
 }
 
 /// Runs `typeof WebAssembly` with the engine's measurement arguments and environment.
@@ -1186,9 +1527,16 @@ fn quench_engine(options: &Options) -> EngineSpec {
     let mut environment = BTreeMap::new();
     if options.jit_diagnostics {
         environment.insert("QUENCH_WASM_JIT_STATS".into(), "1".into());
+        environment.insert("QUENCH_JS_JIT_STATS".into(), "1".into());
     }
     if options.jit_wasm_selective {
         environment.insert("QUENCH_WASM_JIT_SELECTIVE".into(), "1".into());
+    }
+    if options.jit_wasm_root_only {
+        environment.insert("QUENCH_WASM_JIT_ROOT_ONLY".into(), "1".into());
+    }
+    if options.jit_wasm_root_first {
+        environment.insert("QUENCH_WASM_JIT_ROOT_FIRST".into(), "1".into());
     }
     if let Some(root) = options.jit_wasm_root {
         environment.insert("QUENCH_WASM_JIT_ROOT".into(), root.to_string());
@@ -1204,13 +1552,25 @@ fn quench_engine(options: &Options) -> EngineSpec {
         quench.jit_proof_command.push("--jit".into());
         quench.jit_mode = "enabled-by-cli-flag";
         quench.jit_proof = if options.jit_diagnostics {
-            "the measured Quench process is launched with --jit and QUENCH_WASM_JIT_STATS=1; diagnostic-only, not for qualification".into()
+            "the measured Quench process is launched with --jit and opt-in JavaScript/WebAssembly JIT counters; diagnostic-only, not for qualification".into()
         } else {
             "the measured Quench process is launched with --jit".into()
         };
         if let Some(root) = options.jit_wasm_root {
             quench.jit_proof = format!(
                 "{}; bounded experimental root compilation selected residual function {root} via QUENCH_WASM_JIT_ROOT; not qualification mode",
+                quench.jit_proof
+            );
+        }
+        if options.jit_wasm_root_only {
+            quench.jit_proof = format!(
+                "{}; strict experimental single-root compilation enabled with QUENCH_WASM_JIT_ROOT_ONLY=1; hot callees remain interpreted; not qualification mode",
+                quench.jit_proof
+            );
+        }
+        if options.jit_wasm_root_first {
+            quench.jit_proof = format!(
+                "{}; experimental root-first tiering enabled with QUENCH_WASM_JIT_ROOT_FIRST=1; starts with the selected root and promotes hot fallback callees; not qualification mode",
                 quench.jit_proof
             );
         }
@@ -2628,7 +2988,7 @@ pub(crate) fn now_ns() -> u128 {
 
 fn usage(message: &str) -> ! {
     eprintln!(
-        "{message}\nusage: quench-bench <fixture.js>|--all|--fixtures NAME,NAME,... [--suite v8-v7|jetstream3] [--jit] [--jit-diagnostics] [--jit-wasm-root ID] [--jit-wasm-selective] [--fixed-work] [--quench PATH] [--quench-peer PATH] [--qjs PATH] [--bun PATH] [--node PATH] [--runs N] [--timeout-ms N] [--checkpoint PATH|--resume PATH] [--out PATH]\n       quench-bench --preflight-only [--suite v8-v7|jetstream3] [--jit] [--jit-diagnostics] [--jit-wasm-root ID] [--jit-wasm-selective] [engine options]\n       quench-bench --analyze REPORT [--out JSON]"
+        "{message}\nusage: quench-bench <fixture.js>|--all|--fixtures NAME,NAME,... [--suite v8-v7|jetstream3] [--jit] [--jit-diagnostics] [--jit-wasm-root ID] [--jit-wasm-root-only] [--jit-wasm-root-first] [--jit-wasm-selective] [--jit-wasm-memcpy-ab] [--jit-wasm-memcpy-raw-ab] [--jit-wasm-memcpy-early-ab] [--jit-wasm-compare-branch-ab] [--fixed-work] [--quench PATH] [--quench-peer PATH] [--qjs PATH] [--bun PATH] [--node PATH] [--runs N] [--timeout-ms N] [--checkpoint PATH|--resume PATH] [--out PATH]\n       quench-bench --preflight-only [--suite v8-v7|jetstream3] [--jit] [--jit-diagnostics] [--jit-wasm-root ID] [--jit-wasm-root-only] [--jit-wasm-root-first] [--jit-wasm-selective] [--jit-wasm-memcpy-ab] [--jit-wasm-memcpy-raw-ab] [--jit-wasm-memcpy-early-ab] [--jit-wasm-compare-branch-ab] [engine options]\n       quench-bench --analyze REPORT [--out JSON]"
     );
     std::process::exit(2)
 }
@@ -2640,7 +3000,7 @@ fn fail(message: &str) -> ! {
 
 #[cfg(test)]
 mod fixture_selection_tests {
-    use super::{Suite, fixture_selection_is_valid};
+    use super::{fixture_selection_is_valid, Suite};
 
     #[test]
     fn jetstream_subset_accepts_only_unique_pinned_lane_fixtures() {
@@ -2673,10 +3033,471 @@ mod fixture_selection_tests {
 }
 
 #[cfg(test)]
+mod jit_wasm_root_only_tests {
+    use super::{
+        jit_wasm_root_first_error, jit_wasm_root_only_error, jit_wasm_selective_error,
+        parse_options_from, quench_engine, JitMode, Options, Suite,
+    };
+
+    #[test]
+    fn root_only_cli_switch_parses_with_its_required_root_configuration() {
+        let options = parse_options_from(
+            [
+                "--fixtures",
+                "HashSet-wasm",
+                "--suite",
+                "jetstream3",
+                "--jit",
+                "--jit-wasm-root",
+                "19",
+                "--jit-wasm-root-only",
+            ]
+            .map(str::to_string),
+        );
+
+        assert_eq!(options.suite, Suite::JetStream3);
+        assert_eq!(options.jit_mode, JitMode::Jit);
+        assert_eq!(options.jit_wasm_root, Some(19));
+        assert!(options.jit_wasm_root_only);
+    }
+
+    #[test]
+    fn root_first_cli_switch_parses_with_distinct_tiered_mode() {
+        let options = parse_options_from(
+            [
+                "--fixtures",
+                "gcc-loops-wasm",
+                "--suite",
+                "jetstream3",
+                "--jit",
+                "--jit-wasm-root",
+                "19",
+                "--jit-wasm-root-first",
+            ]
+            .map(str::to_string),
+        );
+
+        assert_eq!(options.suite, Suite::JetStream3);
+        assert_eq!(options.jit_mode, JitMode::Jit);
+        assert_eq!(options.jit_wasm_root, Some(19));
+        assert!(options.jit_wasm_root_first);
+        assert!(!options.jit_wasm_root_only);
+    }
+
+    #[test]
+    fn root_only_requires_the_jetstream_jit_root_configuration() {
+        assert!(
+            jit_wasm_root_only_error(Suite::JetStream3, JitMode::Jit, Some(19), true).is_none()
+        );
+        assert!(jit_wasm_root_only_error(Suite::JetStream3, JitMode::Jit, None, true).is_some());
+        assert!(jit_wasm_root_only_error(Suite::V8V7, JitMode::Jit, Some(19), true).is_some());
+        assert!(
+            jit_wasm_root_only_error(Suite::JetStream3, JitMode::NoJit, Some(19), true).is_some()
+        );
+        assert!(
+            jit_wasm_root_only_error(Suite::JetStream3, JitMode::Jit, Some(19), false).is_none()
+        );
+    }
+
+    #[test]
+    fn root_first_requires_a_root_and_is_mutually_exclusive_with_strict_root_only() {
+        assert!(
+            jit_wasm_root_first_error(Suite::JetStream3, JitMode::Jit, Some(19), true, false)
+                .is_none()
+        );
+        assert!(
+            jit_wasm_root_first_error(Suite::JetStream3, JitMode::Jit, None, true, false).is_some()
+        );
+        assert!(
+            jit_wasm_root_first_error(Suite::V8V7, JitMode::Jit, Some(19), true, false).is_some()
+        );
+        assert!(jit_wasm_root_first_error(
+            Suite::JetStream3,
+            JitMode::NoJit,
+            Some(19),
+            true,
+            false
+        )
+        .is_some());
+        assert!(
+            jit_wasm_root_first_error(Suite::JetStream3, JitMode::Jit, Some(19), true, true)
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn selective_and_root_only_modes_cannot_be_combined() {
+        assert!(
+            jit_wasm_selective_error(Suite::JetStream3, JitMode::Jit, Some(19), true, true)
+                .is_some()
+        );
+        assert!(
+            jit_wasm_selective_error(Suite::JetStream3, JitMode::Jit, None, false, true).is_none()
+        );
+    }
+
+    #[test]
+    fn root_only_is_injected_and_recorded_as_experimental_provenance() {
+        let executable = std::env::current_exe().expect("test executable path");
+        let options = Options {
+            suite: Suite::JetStream3,
+            jit_mode: JitMode::Jit,
+            jit_diagnostics: false,
+            jit_wasm_root: Some(19),
+            jit_wasm_root_only: true,
+            jit_wasm_root_first: false,
+            jit_wasm_selective: false,
+            jit_wasm_memcpy_ab: false,
+            jit_wasm_memcpy_raw_ab: false,
+            jit_wasm_memcpy_early_ab: false,
+            jit_wasm_compare_branch_ab: false,
+            fixture: None,
+            fixtures: Some(vec!["HashSet-wasm".into()]),
+            all: false,
+            preflight_only: false,
+            node: executable.clone(),
+            bun: executable.clone(),
+            qjs: executable.clone(),
+            quench: executable,
+            quench_peer: None,
+            rounds: 1,
+            fixed_work: false,
+            timeout_ms: 1000,
+            output: None,
+            checkpoint: None,
+            resume: None,
+        };
+        let engine = quench_engine(&options);
+
+        assert_eq!(
+            engine
+                .env
+                .get("QUENCH_WASM_JIT_ROOT_ONLY")
+                .map(String::as_str),
+            Some("1")
+        );
+        assert!(engine.jit_proof.contains("single-root compilation"));
+        assert!(engine.jit_proof.contains("not qualification mode"));
+    }
+
+    #[test]
+    fn root_first_is_injected_and_reported_as_tiered_experimental_mode() {
+        let executable = std::env::current_exe().expect("test executable path");
+        let options = Options {
+            suite: Suite::JetStream3,
+            jit_mode: JitMode::Jit,
+            jit_diagnostics: false,
+            jit_wasm_root: Some(19),
+            jit_wasm_root_only: false,
+            jit_wasm_root_first: true,
+            jit_wasm_selective: false,
+            jit_wasm_memcpy_ab: false,
+            jit_wasm_memcpy_raw_ab: false,
+            jit_wasm_memcpy_early_ab: false,
+            jit_wasm_compare_branch_ab: false,
+            fixture: None,
+            fixtures: Some(vec!["gcc-loops-wasm".into()]),
+            all: false,
+            preflight_only: false,
+            node: executable.clone(),
+            bun: executable.clone(),
+            qjs: executable.clone(),
+            quench: executable,
+            quench_peer: None,
+            rounds: 1,
+            fixed_work: false,
+            timeout_ms: 1000,
+            output: None,
+            checkpoint: None,
+            resume: None,
+        };
+        let engine = quench_engine(&options);
+
+        assert_eq!(
+            engine
+                .env
+                .get("QUENCH_WASM_JIT_ROOT_FIRST")
+                .map(String::as_str),
+            Some("1")
+        );
+        assert!(engine.jit_proof.contains("root-first tiering"));
+        assert!(engine.jit_proof.contains("promotes hot fallback callees"));
+        assert!(engine.jit_proof.contains("not qualification mode"));
+    }
+}
+
+#[cfg(test)]
+mod jit_wasm_memcpy_ab_tests {
+    use super::{
+        jit_wasm_memcpy_ab_error, parse_options_from, quench_memcpy_ab_pair,
+        quench_memcpy_early_ab_pair, JitMode, Suite,
+        QUENCH_WASM_EMSCRIPTEN_MEMCPY_DIRECT, QUENCH_WASM_EMSCRIPTEN_MEMCPY_RAW_I32,
+        QUENCH_WASM_EMSCRIPTEN_MEMCPY_EARLY_IMPORT,
+    };
+
+    fn gcc_wasm_ab_options() -> super::Options {
+        parse_options_from(
+            [
+                "gcc-loops-wasm",
+                "--suite",
+                "jetstream3",
+                "--jit",
+                "--jit-wasm-memcpy-ab",
+            ]
+            .map(str::to_string),
+        )
+    }
+
+    fn gcc_wasm_early_ab_options() -> super::Options {
+        parse_options_from(
+            [
+                "gcc-loops-wasm",
+                "--suite",
+                "jetstream3",
+                "--jit",
+                "--jit-wasm-memcpy-early-ab",
+                "--runs",
+                "3",
+            ]
+            .map(str::to_string),
+        )
+    }
+
+    #[test]
+    fn diagnostic_mode_requires_default_jit_and_is_pinned_to_gcc_wasm() {
+        let options = gcc_wasm_ab_options();
+        assert_eq!(options.suite, Suite::JetStream3);
+        assert_eq!(options.jit_mode, JitMode::Jit);
+        assert!(options.jit_wasm_memcpy_ab);
+        assert_eq!(options.fixture.as_deref(), Some("gcc-loops-wasm"));
+        assert!(jit_wasm_memcpy_ab_error(&options).is_none());
+
+        let mut other_fixture = options;
+        other_fixture.fixture = Some("quicksort-wasm".into());
+        assert!(jit_wasm_memcpy_ab_error(&other_fixture).is_some());
+    }
+
+    #[test]
+    fn quench_arms_share_binary_and_jit_args_but_set_explicit_opposite_switches() {
+        let mut options = gcc_wasm_ab_options();
+        options.quench = std::env::current_exe().expect("test executable path");
+        let [direct_off, direct_on] = quench_memcpy_ab_pair(&options, false);
+
+        assert_eq!(direct_off.argv, vec!["--jit".to_string()]);
+        assert_eq!(direct_on.argv, direct_off.argv);
+        assert_eq!(direct_off.executable, direct_on.executable);
+        assert_eq!(direct_off.executable_sha256, direct_on.executable_sha256);
+        assert_eq!(
+            direct_off
+                .env
+                .get(QUENCH_WASM_EMSCRIPTEN_MEMCPY_DIRECT)
+                .map(String::as_str),
+            Some("0")
+        );
+        assert_eq!(
+            direct_on
+                .env
+                .get(QUENCH_WASM_EMSCRIPTEN_MEMCPY_DIRECT)
+                .map(String::as_str),
+            Some("1")
+        );
+        assert!(direct_off.jit_proof.contains("diagnostic A/B arm"));
+        assert!(direct_on.jit_proof.contains("diagnostic A/B arm"));
+    }
+
+    #[test]
+    fn raw_i32_mode_keeps_direct_copy_enabled_and_varies_only_raw_i32_switch() {
+        let mut options = parse_options_from(
+            [
+                "gcc-loops-wasm",
+                "--suite",
+                "jetstream3",
+                "--jit",
+                "--jit-wasm-memcpy-raw-ab",
+            ]
+            .map(str::to_string),
+        );
+        options.quench = std::env::current_exe().expect("test executable path");
+        assert!(options.jit_wasm_memcpy_raw_ab);
+        assert!(jit_wasm_memcpy_ab_error(&options).is_none());
+        let [raw_off, raw_on] = quench_memcpy_ab_pair(&options, true);
+
+        assert_eq!(raw_off.name, "quench_memcpy_raw_i32_off");
+        assert_eq!(raw_on.name, "quench_memcpy_raw_i32_on");
+        assert_eq!(raw_off.argv, vec!["--jit".to_string()]);
+        assert_eq!(raw_on.argv, raw_off.argv);
+        assert_eq!(raw_off.executable, raw_on.executable);
+        assert_eq!(raw_off.executable_sha256, raw_on.executable_sha256);
+        for engine in [&raw_off, &raw_on] {
+            assert_eq!(
+                engine
+                    .env
+                    .get(QUENCH_WASM_EMSCRIPTEN_MEMCPY_DIRECT)
+                    .map(String::as_str),
+                Some("1")
+            );
+        }
+        assert_eq!(
+            raw_off
+                .env
+                .get(QUENCH_WASM_EMSCRIPTEN_MEMCPY_RAW_I32)
+                .map(String::as_str),
+            Some("0")
+        );
+        assert_eq!(
+            raw_on
+                .env
+                .get(QUENCH_WASM_EMSCRIPTEN_MEMCPY_RAW_I32)
+                .map(String::as_str),
+            Some("1")
+        );
+        let mut conflicting = options;
+        conflicting.jit_wasm_memcpy_ab = true;
+        assert!(jit_wasm_memcpy_ab_error(&conflicting).is_some());
+    }
+
+    #[test]
+    fn early_import_mode_pins_gcc_and_varies_only_the_early_import_switch() {
+        let mut options = gcc_wasm_early_ab_options();
+        assert!(options.jit_wasm_memcpy_early_ab);
+        assert_eq!(options.rounds, 3);
+        assert!(jit_wasm_memcpy_ab_error(&options).is_none());
+
+        let mut too_few_rounds = gcc_wasm_early_ab_options();
+        too_few_rounds.rounds = 2;
+        assert!(jit_wasm_memcpy_ab_error(&too_few_rounds).is_some());
+        let mut no_jit = gcc_wasm_early_ab_options();
+        no_jit.jit_mode = JitMode::NoJit;
+        assert!(jit_wasm_memcpy_ab_error(&no_jit).is_some());
+        let mut wrong_fixture = gcc_wasm_early_ab_options();
+        wrong_fixture.fixture = Some("quicksort-wasm".into());
+        assert!(jit_wasm_memcpy_ab_error(&wrong_fixture).is_some());
+        let mut conflicting = gcc_wasm_early_ab_options();
+        conflicting.jit_wasm_memcpy_raw_ab = true;
+        assert!(jit_wasm_memcpy_ab_error(&conflicting).is_some());
+
+        options.quench = std::env::current_exe().expect("test executable path");
+        let [early_off, early_on] = quench_memcpy_early_ab_pair(&options);
+        assert_eq!(early_off.name, "quench_memcpy_early_import_off");
+        assert_eq!(early_on.name, "quench_memcpy_early_import_on");
+        assert_eq!(early_off.argv, vec!["--jit".to_string()]);
+        assert_eq!(early_on.argv, early_off.argv);
+        assert_eq!(early_off.executable, early_on.executable);
+        assert_eq!(early_off.executable_sha256, early_on.executable_sha256);
+        assert_eq!(early_off.env.len(), early_on.env.len());
+        for engine in [&early_off, &early_on] {
+            assert_eq!(
+                engine
+                    .env
+                    .get(QUENCH_WASM_EMSCRIPTEN_MEMCPY_DIRECT)
+                    .map(String::as_str),
+                Some("1")
+            );
+            assert_eq!(
+                engine
+                    .env
+                    .get(QUENCH_WASM_EMSCRIPTEN_MEMCPY_RAW_I32)
+                    .map(String::as_str),
+                Some("1")
+            );
+        }
+        assert_eq!(
+            early_off
+                .env
+                .get(QUENCH_WASM_EMSCRIPTEN_MEMCPY_EARLY_IMPORT)
+                .map(String::as_str),
+            Some("0")
+        );
+        assert_eq!(
+            early_on
+                .env
+                .get(QUENCH_WASM_EMSCRIPTEN_MEMCPY_EARLY_IMPORT)
+                .map(String::as_str),
+            Some("1")
+        );
+        let mut off_environment = early_off.env.clone();
+        let mut on_environment = early_on.env.clone();
+        off_environment.remove(QUENCH_WASM_EMSCRIPTEN_MEMCPY_EARLY_IMPORT);
+        on_environment.remove(QUENCH_WASM_EMSCRIPTEN_MEMCPY_EARLY_IMPORT);
+        assert_eq!(off_environment, on_environment);
+    }
+}
+
+#[cfg(test)]
+mod jit_wasm_compare_branch_ab_tests {
+    use super::{
+        jit_wasm_compare_branch_ab_error, parse_options_from, quench_compare_branch_ab_pair,
+        JitMode, Suite, QUENCH_WASM_JIT_DIRECT_COMPARE_BRANCHES,
+    };
+
+    fn quicksort_ab_options() -> super::Options {
+        parse_options_from(
+            [
+                "quicksort-wasm",
+                "--suite",
+                "jetstream3",
+                "--jit",
+                "--jit-wasm-compare-branch-ab",
+                "--runs",
+                "3",
+            ]
+            .map(str::to_string),
+        )
+    }
+
+    #[test]
+    fn diagnostic_mode_is_pinned_to_quicksort_and_allows_three_rounds() {
+        let options = quicksort_ab_options();
+        assert_eq!(options.suite, Suite::JetStream3);
+        assert_eq!(options.jit_mode, JitMode::Jit);
+        assert!(options.jit_wasm_compare_branch_ab);
+        assert_eq!(options.rounds, 3);
+        assert_eq!(options.fixture.as_deref(), Some("quicksort-wasm"));
+        assert!(jit_wasm_compare_branch_ab_error(&options).is_none());
+
+        let mut wrong_fixture = options;
+        wrong_fixture.fixture = Some("gcc-loops-wasm".into());
+        assert!(jit_wasm_compare_branch_ab_error(&wrong_fixture).is_some());
+
+        let mut too_few_rounds = quicksort_ab_options();
+        too_few_rounds.rounds = 2;
+        assert!(jit_wasm_compare_branch_ab_error(&too_few_rounds).is_some());
+    }
+
+    #[test]
+    fn quench_arms_share_binary_and_jit_args_and_explicitly_toggle_branch_switch() {
+        let mut options = quicksort_ab_options();
+        options.quench = std::env::current_exe().expect("test executable path");
+        let [branch_off, branch_on] = quench_compare_branch_ab_pair(&options);
+
+        assert_eq!(branch_off.name, "quench_direct_compare_branches_off");
+        assert_eq!(branch_on.name, "quench_direct_compare_branches_on");
+        assert_eq!(branch_off.argv, vec!["--jit".to_string()]);
+        assert_eq!(branch_on.argv, branch_off.argv);
+        assert_eq!(branch_off.executable, branch_on.executable);
+        assert_eq!(branch_off.executable_sha256, branch_on.executable_sha256);
+        assert_eq!(
+            branch_off
+                .env
+                .get(QUENCH_WASM_JIT_DIRECT_COMPARE_BRANCHES)
+                .map(String::as_str),
+            Some("0")
+        );
+        assert_eq!(
+            branch_on
+                .env
+                .get(QUENCH_WASM_JIT_DIRECT_COMPARE_BRANCHES)
+                .map(String::as_str),
+            Some("1")
+        );
+    }
+}
+
+#[cfg(test)]
 mod fixed_work_tests {
     use super::{
-        FIXED_WORK_PLANS, FIXTURES, FixedWorkPlan, HostSnapshot, LoadAverage, Sample, contention,
-        fixed_work_marker, fixed_work_runner, parse_cpu_consumers, parse_load_average,
+        contention, fixed_work_marker, fixed_work_runner, parse_cpu_consumers, parse_load_average,
+        FixedWorkPlan, HostSnapshot, LoadAverage, Sample, FIXED_WORK_PLANS, FIXTURES,
     };
     use std::collections::BTreeMap;
 
@@ -2888,8 +3709,9 @@ mod fixed_work_tests {
 #[cfg(all(test, unix, not(target_os = "macos")))]
 mod tests {
     use super::{
-        CorpusRecord, FixtureRecord, HostRecord, SuiteRecord, artifact, fixture_artifact, now_ns,
-        peak_rss_bytes, read_checkpoint, validate_resume, wait_child, write_checkpoint,
+        artifact, fixture_artifact, now_ns, peak_rss_bytes, read_checkpoint,
+        resume_metadata_matches, validate_resume, wait_child, write_checkpoint, CorpusRecord,
+        FixtureRecord, HostRecord, SuiteRecord,
     };
     use std::process::Command;
     use std::{
@@ -2947,11 +3769,17 @@ mod tests {
         let report_path = directory.join("report.json");
         let expected = SuiteRecord {
             schema: super::SUITE_REPORT_SCHEMA,
-            suite: super::Suite::V8V7,
-            jit_mode: super::JitMode::NoJit,
+            suite: super::Suite::JetStream3,
+            jit_mode: super::JitMode::Jit,
             jit_diagnostics: false,
-            jit_wasm_root: None,
+            jit_wasm_root: Some(19),
+            jit_wasm_root_only: true,
+            jit_wasm_root_first: false,
             jit_wasm_selective: false,
+            jit_wasm_memcpy_ab: false,
+            jit_wasm_memcpy_raw_ab: false,
+            jit_wasm_memcpy_early_ab: false,
+            jit_wasm_compare_branch_ab: false,
             created_unix_ns: now_ns(),
             rounds_requested: 11,
             timeout_ms: 300_000,
@@ -2997,6 +3825,64 @@ mod tests {
         let loaded = read_checkpoint(&report_path);
         validate_resume(&loaded, &expected, &[PathBuf::from(&fixture_path)]);
         assert_eq!(loaded.fixtures.len(), 1);
+        assert!(loaded.jit_wasm_root_only);
+        let mut different_mode = expected.clone();
+        different_mode.jit_wasm_root_only = false;
+        assert!(!resume_metadata_matches(&loaded, &different_mode));
+
+        let root_first_path = directory.join("root-first-report.json");
+        let mut root_first = expected.clone();
+        root_first.jit_wasm_root_only = false;
+        root_first.jit_wasm_root_first = true;
+        write_checkpoint(&root_first_path, &root_first);
+        let root_first_loaded = read_checkpoint(&root_first_path);
+        assert!(root_first_loaded.jit_wasm_root_first);
+        assert!(!root_first_loaded.jit_wasm_root_only);
+        assert!(resume_metadata_matches(&root_first_loaded, &root_first));
+        assert!(!resume_metadata_matches(&loaded, &root_first));
+
+        let memcpy_ab_path = directory.join("memcpy-ab-report.json");
+        let mut memcpy_ab = expected.clone();
+        memcpy_ab.jit_wasm_root_only = false;
+        memcpy_ab.jit_wasm_memcpy_ab = true;
+        write_checkpoint(&memcpy_ab_path, &memcpy_ab);
+        let memcpy_ab_loaded = read_checkpoint(&memcpy_ab_path);
+        assert!(memcpy_ab_loaded.jit_wasm_memcpy_ab);
+        assert!(resume_metadata_matches(&memcpy_ab_loaded, &memcpy_ab));
+        assert!(!resume_metadata_matches(&loaded, &memcpy_ab));
+
+        let raw_ab_path = directory.join("memcpy-raw-ab-report.json");
+        let mut raw_ab = expected.clone();
+        raw_ab.jit_wasm_root_only = false;
+        raw_ab.jit_wasm_memcpy_raw_ab = true;
+        write_checkpoint(&raw_ab_path, &raw_ab);
+        let raw_ab_loaded = read_checkpoint(&raw_ab_path);
+        assert!(raw_ab_loaded.jit_wasm_memcpy_raw_ab);
+        assert!(resume_metadata_matches(&raw_ab_loaded, &raw_ab));
+        assert!(!resume_metadata_matches(&memcpy_ab_loaded, &raw_ab));
+
+        let early_ab_path = directory.join("memcpy-early-ab-report.json");
+        let mut early_ab = expected.clone();
+        early_ab.jit_wasm_root_only = false;
+        early_ab.jit_wasm_memcpy_early_ab = true;
+        write_checkpoint(&early_ab_path, &early_ab);
+        let early_ab_loaded = read_checkpoint(&early_ab_path);
+        assert!(early_ab_loaded.jit_wasm_memcpy_early_ab);
+        assert!(resume_metadata_matches(&early_ab_loaded, &early_ab));
+        assert!(!resume_metadata_matches(&raw_ab_loaded, &early_ab));
+
+        let compare_branch_ab_path = directory.join("compare-branch-ab-report.json");
+        let mut compare_branch_ab = expected.clone();
+        compare_branch_ab.jit_wasm_root_only = false;
+        compare_branch_ab.jit_wasm_compare_branch_ab = true;
+        write_checkpoint(&compare_branch_ab_path, &compare_branch_ab);
+        let compare_branch_ab_loaded = read_checkpoint(&compare_branch_ab_path);
+        assert!(compare_branch_ab_loaded.jit_wasm_compare_branch_ab);
+        assert!(resume_metadata_matches(
+            &compare_branch_ab_loaded,
+            &compare_branch_ab
+        ));
+        assert!(!resume_metadata_matches(&raw_ab_loaded, &compare_branch_ab));
         fs::remove_dir_all(directory).expect("remove checkpoint test directory");
     }
 
