@@ -76,6 +76,21 @@ impl<H: Host> Vm<H> {
         let target = self.in_loop_call_target(p, callee)?;
         self.profile.call_source(0);
         let window = i.call_window();
+        if !i.returns_from_frame()
+            && target.0 == self.active_program
+            && self.execution_mode == super::ExecutionMode::Compiled
+            && let Some(value) = Vm::<H>::js_jit_compiled_call(
+                &mut self.programs,
+                self.active_program,
+                p,
+                target.1,
+                &self.frames[f].registers[usize::from(window.base)
+                    ..usize::from(window.base) + usize::from(window.count)],
+            )
+        {
+            self.write(f, i.result_register(), value);
+            return Some(Ok(StepResult::Continue));
+        }
         let this = self.read(f, i.register_c());
         self.profile.call_target(1, usize::from(window.count));
         // Collection happens only at back edges, tail calls and explicit host safepoints, none

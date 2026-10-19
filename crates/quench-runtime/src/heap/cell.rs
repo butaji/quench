@@ -2334,18 +2334,14 @@ impl EnvironmentSlots {
 
     /// The listed sparse entry for `slot`, as its storage position.
     fn sparse_position(&self, slot: usize) -> Option<usize> {
+        let slot = u32::try_from(slot).ok()?;
         let entries = self.0.len().saturating_sub(SPARSE_ENTRIES_START) / SPARSE_ENTRY_WORDS;
-        let index = |entry: usize| {
-            self.0[SPARSE_ENTRIES_START + entry * SPARSE_ENTRY_WORDS]
-                .0
-                .as_environment_index()
-                .expect("sparse entries start with their index") as usize
-        };
+        let position = |entry: usize| SPARSE_ENTRIES_START + entry * SPARSE_ENTRY_WORDS;
         let (mut low, mut high) = (0, entries);
         while low < high {
             let middle = (low + high) / 2;
-            match index(middle).cmp(&slot) {
-                std::cmp::Ordering::Equal => return Some(SPARSE_ENTRIES_START + middle * SPARSE_ENTRY_WORDS + 1),
+            match self.0[position(middle)].0.cmp_environment_index(slot) {
+                std::cmp::Ordering::Equal => return Some(position(middle) + 1),
                 std::cmp::Ordering::Less => low = middle + 1,
                 std::cmp::Ordering::Greater => high = middle,
             }
@@ -2425,22 +2421,27 @@ impl EnvironmentSlots {
     }
 
     /// Slots of `len`, each `slot(index)`, stored sparsely around `default_owner` when one is
-    /// given and `len` reaches `SPARSE_CLONE_MIN_SLOTS`. `None` when a slot is missing.
+    /// given, `len` reaches `SPARSE_CLONE_MIN_SLOTS` and the sparse words are fewer than the
+    /// dense ones; a copy that owns most of its slots stays dense, whose reads need no search.
+    /// `None` when a slot is missing.
     pub(crate) fn try_from_slots(
         len: usize,
         default_owner: Option<Value>,
-        mut slot: impl FnMut(usize) -> Option<EnvironmentSlot>,
+        slot: impl FnMut(usize) -> Option<EnvironmentSlot>,
     ) -> Option<Self> {
         let Some(owner) = default_owner.filter(|_| len >= SPARSE_CLONE_MIN_SLOTS) else {
             return super::thin_slice::ThinBoxSlice::try_from_fn(len, slot).map(Self);
         };
         let shared = Value::shared_environment_slot(owner);
-        let mut words = vec![
-            EnvironmentSlot(Value::environment_index(u32::try_from(len).ok()?)),
-            EnvironmentSlot(shared),
-        ];
-        for index in 0..len {
-            let value = slot(index)?;
+        let dense = (0..len).map(slot).collect::<Option<Vec<_>>>()?;
+        let listed = dense.iter().filter(|value| value.0 != shared).count();
+        if SPARSE_ENTRIES_START + listed * SPARSE_ENTRY_WORDS >= len {
+            return Some(Self(super::thin_slice::ThinBoxSlice::from_exact_iter(dense.into_iter())));
+        }
+        let mut words = Vec::with_capacity(SPARSE_ENTRIES_START + listed * SPARSE_ENTRY_WORDS);
+        words.push(EnvironmentSlot(Value::environment_index(u32::try_from(len).ok()?)));
+        words.push(EnvironmentSlot(shared));
+        for (index, value) in dense.into_iter().enumerate() {
             if value.0 != shared {
                 words.push(EnvironmentSlot(Value::environment_index(u32::try_from(index).ok()?)));
                 words.push(value);
