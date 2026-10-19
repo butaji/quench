@@ -1461,6 +1461,9 @@ struct ObjectExtras {
     stack_data: Option<StackData>,
     /// An index-keyed property descriptor has been recorded for this object; never cleared.
     indexed_descriptors: bool,
+    /// Any property descriptor beside the shape has been recorded for this object
+    /// (`Vm::insert_descriptor`); never cleared.
+    side_descriptors: bool,
 }
 /// How structured serialization treats an object (HTML [[Serializable]] and
 /// [[Transferable]] host objects).
@@ -1935,6 +1938,15 @@ impl Object {
     }
     pub(crate) fn mark_indexed_descriptors(&mut self) {
         self.extras_mut().indexed_descriptors = true;
+    }
+    /// Whether the VM's descriptor table may hold an entry for this object: lookups of an
+    /// object without one need not probe the table.
+    #[inline(always)]
+    pub(crate) fn has_side_descriptors(&self) -> bool {
+        self.extras().is_some_and(|extras| extras.side_descriptors)
+    }
+    pub(crate) fn mark_side_descriptors(&mut self) {
+        self.extras_mut().side_descriptors = true;
     }
     pub(crate) fn is_raw_json(&self) -> bool {
         self.extras().is_some_and(|extras| extras.raw_json)
