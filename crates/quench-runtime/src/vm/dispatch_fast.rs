@@ -2309,8 +2309,8 @@ lane_handler! {
 lane_handler! {
     /// `lane_get_field_sink` where every step hits its site's primary own entry: the
     /// nested read (`Vm::primary_own_field_hit`), then the store to `this`
-    /// (`Vm::primary_own_field_store_hit`). Any other run takes `lane_get_field_sink`, which
-    /// repeats the side-effect-free reads.
+    /// (`Vm::primary_own_field_store_hit`) where the write barrier logs nothing. Any other
+    /// run takes `lane_get_field_sink`, which repeats the side-effect-free reads.
     fn lane_get_field_sink_own<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
@@ -2329,7 +2329,7 @@ lane_handler! {
             });
         let stored = match (value, site.sink, unsafe { lane_fixed_this(cx) }) {
             (Some(value), Some((atom, cache)), Some(this)) => {
-                vm.primary_own_field_store_hit::<true>(code, this, atom, value, cache)
+                vm.primary_own_field_store_hit::<false>(code, this, atom, value, cache)
             }
             _ => false,
         };
