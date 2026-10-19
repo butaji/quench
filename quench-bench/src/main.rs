@@ -39,8 +39,9 @@ const QUENCH_WASM_JIT_EMSCRIPTEN_MEMCPY_LEAF: &str = "QUENCH_WASM_JIT_EMSCRIPTEN
 const QUENCH_WASM_JIT_DIRECT_COMPARE_BRANCHES: &str = "QUENCH_WASM_JIT_DIRECT_COMPARE_BRANCHES";
 const QUENCH_WASM_JIT_AFFINE_PAIR: &str = "QUENCH_WASM_JIT_AFFINE_PAIR";
 const QUENCH_WASM_JIT_REFERENCE_BODY_CACHE: &str = "QUENCH_WASM_JIT_REFERENCE_BODY_CACHE";
+const QUENCH_WASM_JIT_SELECTIVE: &str = "QUENCH_WASM_JIT_SELECTIVE";
 const FIXED_WORK_REPORT_SCHEMA: u32 = 5;
-const SUITE_REPORT_SCHEMA: u32 = 15;
+const SUITE_REPORT_SCHEMA: u32 = 16;
 const FIXED_WORK_MEASUREMENT_MODE: &str = "fixed_work_diagnostic";
 const FIXED_WORK_MARKER_PREFIX: &str = "__quenchFixedWork:";
 const FIXED_WORK_SUITE_COUNT: usize = 1;
@@ -429,6 +430,9 @@ struct SuiteRecord {
     /// Paired GCC-Wasm diagnostic for a native Emscripten memcpy leaf call.
     #[serde(default)]
     jit_wasm_memcpy_leaf_ab: bool,
+    /// Paired GCC-Wasm diagnostic for selective CallKnown handoff.
+    #[serde(default)]
+    jit_wasm_selective_ab: bool,
     created_unix_ns: u128,
     rounds_requested: usize,
     timeout_ms: u64,
@@ -587,6 +591,7 @@ struct Options {
     jit_wasm_affine_pair_ab: bool,
     jit_wasm_reference_body_cache_ab: bool,
     jit_wasm_memcpy_leaf_ab: bool,
+    jit_wasm_selective_ab: bool,
     fixture: Option<String>,
     fixtures: Option<Vec<String>>,
     all: bool,
@@ -669,6 +674,7 @@ fn main() {
         jit_wasm_affine_pair_ab: options.jit_wasm_affine_pair_ab,
         jit_wasm_reference_body_cache_ab: options.jit_wasm_reference_body_cache_ab,
         jit_wasm_memcpy_leaf_ab: options.jit_wasm_memcpy_leaf_ab,
+        jit_wasm_selective_ab: options.jit_wasm_selective_ab,
         created_unix_ns: now_ns(),
         rounds_requested: options.rounds,
         timeout_ms: options.timeout_ms,
@@ -760,6 +766,7 @@ fn main() {
         && !options.jit_wasm_affine_pair_ab
         && !options.jit_wasm_reference_body_cache_ab
         && !options.jit_wasm_memcpy_leaf_ab
+        && !options.jit_wasm_selective_ab
         && report
             .fixtures
             .values()
@@ -916,6 +923,7 @@ fn resume_metadata_matches(saved: &SuiteRecord, expected: &SuiteRecord) -> bool 
         && saved.jit_wasm_affine_pair_ab == expected.jit_wasm_affine_pair_ab
         && saved.jit_wasm_reference_body_cache_ab == expected.jit_wasm_reference_body_cache_ab
         && saved.jit_wasm_memcpy_leaf_ab == expected.jit_wasm_memcpy_leaf_ab
+        && saved.jit_wasm_selective_ab == expected.jit_wasm_selective_ab
         && saved.rounds_requested == expected.rounds_requested
         && saved.timeout_ms == expected.timeout_ms
         && saved.source_revision == expected.source_revision
@@ -1194,6 +1202,49 @@ fn jit_wasm_memcpy_leaf_ab_error(options: &Options) -> Option<&'static str> {
     )
 }
 
+fn jit_wasm_selective_ab_error(options: &Options) -> Option<&'static str> {
+    if !options.jit_wasm_selective_ab {
+        return None;
+    }
+    if options.jit_wasm_memcpy_ab
+        || options.jit_wasm_memcpy_raw_ab
+        || options.jit_wasm_memcpy_early_ab
+        || options.jit_wasm_compare_branch_ab
+        || options.jit_wasm_affine_pair_ab
+        || options.jit_wasm_reference_body_cache_ab
+        || options.jit_wasm_memcpy_leaf_ab
+    {
+        return Some("--jit-wasm-selective-ab cannot be combined with another JIT A/B mode");
+    }
+    if options.suite != Suite::JetStream3
+        || options.jit_mode != JitMode::Jit
+        || options.rounds < MIN_DIAGNOSTIC_SCREEN_ROUNDS
+        || options.jit_diagnostics
+        || options.jit_wasm_root.is_some()
+        || options.jit_wasm_root_only
+        || options.jit_wasm_root_first
+        || options.jit_wasm_selective
+        || options.fixed_work
+        || options.quench_peer.is_some()
+    {
+        return Some(
+            "--jit-wasm-selective-ab requires --suite jetstream3 --jit, at least 3 rounds, and no other JIT diagnostic modes",
+        );
+    }
+    if options.preflight_only {
+        return (options.fixture.is_some() || options.fixtures.is_some() || options.all)
+            .then_some("--preflight-only cannot select fixtures");
+    }
+    let one_pinned_fixture = options.fixture.as_deref() == Some("gcc-loops-wasm")
+        || options
+            .fixtures
+            .as_ref()
+            .is_some_and(|fixtures| fixtures.len() == 1 && fixtures[0] == "gcc-loops-wasm");
+    (!one_pinned_fixture || options.all).then_some(
+        "--jit-wasm-selective-ab is pinned to the single JetStream fixture gcc-loops-wasm",
+    )
+}
+
 fn parse_options() -> Options {
     parse_options_from(env::args().skip(1))
 }
@@ -1218,6 +1269,7 @@ fn parse_options_from(args: impl IntoIterator<Item = String>) -> Options {
         jit_wasm_affine_pair_ab: false,
         jit_wasm_reference_body_cache_ab: false,
         jit_wasm_memcpy_leaf_ab: false,
+        jit_wasm_selective_ab: false,
         fixture: None,
         fixtures: None,
         all: first == "--all",
@@ -1269,6 +1321,7 @@ fn parse_options_from(args: impl IntoIterator<Item = String>) -> Options {
             "--jit-wasm-affine-pair-ab" => options.jit_wasm_affine_pair_ab = true,
             "--jit-wasm-reference-body-cache-ab" => options.jit_wasm_reference_body_cache_ab = true,
             "--jit-wasm-memcpy-leaf-ab" => options.jit_wasm_memcpy_leaf_ab = true,
+            "--jit-wasm-selective-ab" => options.jit_wasm_selective_ab = true,
             "--jit-wasm-root-only" => options.jit_wasm_root_only = true,
             "--jit-wasm-root-first" => options.jit_wasm_root_first = true,
             "--jit-wasm-root" => {
@@ -1381,6 +1434,9 @@ fn parse_options_from(args: impl IntoIterator<Item = String>) -> Options {
     if let Some(error) = jit_wasm_memcpy_leaf_ab_error(&options) {
         usage(error);
     }
+    if let Some(error) = jit_wasm_selective_ab_error(&options) {
+        usage(error);
+    }
     if options.quench_peer.is_some() && !options.fixed_work {
         usage("--quench-peer requires --fixed-work");
     }
@@ -1457,6 +1513,14 @@ fn prepare_engines(options: &Options) -> Vec<EngineSpec> {
     let engines = if options.jit_wasm_memcpy_leaf_ab {
         let [leaf_off, leaf_on] = quench_memcpy_leaf_ab_pair(options);
         vec![leaf_off, leaf_on, bun_engine(options), node_engine(options)]
+    } else if options.jit_wasm_selective_ab {
+        let [selective_off, selective_on] = quench_selective_ab_pair(options);
+        vec![
+            selective_off,
+            selective_on,
+            bun_engine(options),
+            node_engine(options),
+        ]
     } else if options.jit_wasm_reference_body_cache_ab {
         let [cache_off, cache_on] = quench_reference_body_cache_ab_pair(options);
         vec![
@@ -1519,6 +1583,28 @@ fn prepare_engines(options: &Options) -> Vec<EngineSpec> {
             engine
         })
         .collect()
+}
+
+fn quench_selective_ab_pair(options: &Options) -> [EngineSpec; 2] {
+    let mut selective_off = quench_engine(options);
+    let mut selective_on = quench_engine(options);
+    selective_off.name = "quench_selective_handoff_off";
+    selective_on.name = "quench_selective_handoff_on";
+    selective_off
+        .env
+        .insert(QUENCH_WASM_JIT_SELECTIVE.into(), "0".into());
+    selective_on
+        .env
+        .insert(QUENCH_WASM_JIT_SELECTIVE.into(), "1".into());
+    selective_off.jit_proof = format!(
+        "{}; diagnostic selective CallKnown handoff A/B arm with {QUENCH_WASM_JIT_SELECTIVE}=0; not for qualification",
+        selective_off.jit_proof
+    );
+    selective_on.jit_proof = format!(
+        "{}; diagnostic selective CallKnown handoff A/B arm with {QUENCH_WASM_JIT_SELECTIVE}=1; not for qualification",
+        selective_on.jit_proof
+    );
+    [selective_off, selective_on]
 }
 
 fn quench_affine_pair_ab_pair(options: &Options) -> [EngineSpec; 2] {
@@ -3268,7 +3354,7 @@ pub(crate) fn now_ns() -> u128 {
 
 fn usage(message: &str) -> ! {
     eprintln!(
-        "{message}\nusage: quench-bench <fixture.js>|--all|--fixtures NAME,NAME,... [--suite v8-v7|jetstream3] [--jit] [--jit-diagnostics] [--jit-wasm-root ID] [--jit-wasm-root-only] [--jit-wasm-root-first] [--jit-wasm-selective] [--jit-wasm-memcpy-ab] [--jit-wasm-memcpy-raw-ab] [--jit-wasm-memcpy-early-ab] [--jit-wasm-memcpy-leaf-ab] [--jit-wasm-compare-branch-ab] [--jit-wasm-affine-pair-ab] [--jit-wasm-reference-body-cache-ab] [--fixed-work] [--quench PATH] [--quench-peer PATH] [--qjs PATH] [--bun PATH] [--node PATH] [--runs N] [--timeout-ms N] [--checkpoint PATH|--resume PATH] [--out PATH]\n       quench-bench --preflight-only [--suite v8-v7|jetstream3] [--jit] [--jit-diagnostics] [--jit-wasm-root ID] [--jit-wasm-root-only] [--jit-wasm-root-first] [--jit-wasm-selective] [--jit-wasm-memcpy-ab] [--jit-wasm-memcpy-raw-ab] [--jit-wasm-memcpy-early-ab] [--jit-wasm-memcpy-leaf-ab] [--jit-wasm-compare-branch-ab] [--jit-wasm-affine-pair-ab] [--jit-wasm-reference-body-cache-ab] [engine options]\n       quench-bench --analyze REPORT [--out JSON]"
+        "{message}\nusage: quench-bench <fixture.js>|--all|--fixtures NAME,NAME,... [--suite v8-v7|jetstream3] [--jit] [--jit-diagnostics] [--jit-wasm-root ID] [--jit-wasm-root-only] [--jit-wasm-root-first] [--jit-wasm-selective] [--jit-wasm-memcpy-ab] [--jit-wasm-memcpy-raw-ab] [--jit-wasm-memcpy-early-ab] [--jit-wasm-memcpy-leaf-ab] [--jit-wasm-selective-ab] [--jit-wasm-compare-branch-ab] [--jit-wasm-affine-pair-ab] [--jit-wasm-reference-body-cache-ab] [--fixed-work] [--quench PATH] [--quench-peer PATH] [--qjs PATH] [--bun PATH] [--node PATH] [--runs N] [--timeout-ms N] [--checkpoint PATH|--resume PATH] [--out PATH]\n       quench-bench --preflight-only [--suite v8-v7|jetstream3] [--jit] [--jit-diagnostics] [--jit-wasm-root ID] [--jit-wasm-root-only] [--jit-wasm-root-first] [--jit-wasm-selective] [--jit-wasm-memcpy-ab] [--jit-wasm-memcpy-raw-ab] [--jit-wasm-memcpy-early-ab] [--jit-wasm-memcpy-leaf-ab] [--jit-wasm-selective-ab] [--jit-wasm-compare-branch-ab] [--jit-wasm-affine-pair-ab] [--jit-wasm-reference-body-cache-ab] [engine options]\n       quench-bench --analyze REPORT [--out JSON]"
     );
     std::process::exit(2)
 }
@@ -3430,6 +3516,7 @@ mod jit_wasm_root_only_tests {
             jit_wasm_affine_pair_ab: false,
             jit_wasm_reference_body_cache_ab: false,
             jit_wasm_memcpy_leaf_ab: false,
+            jit_wasm_selective_ab: false,
             fixture: None,
             fixtures: Some(vec!["HashSet-wasm".into()]),
             all: false,
@@ -3477,6 +3564,7 @@ mod jit_wasm_root_only_tests {
             jit_wasm_affine_pair_ab: false,
             jit_wasm_reference_body_cache_ab: false,
             jit_wasm_memcpy_leaf_ab: false,
+            jit_wasm_selective_ab: false,
             fixture: None,
             fixtures: Some(vec!["gcc-loops-wasm".into()]),
             all: false,
@@ -4000,6 +4088,90 @@ mod jit_wasm_memcpy_leaf_ab_tests {
 }
 
 #[cfg(test)]
+mod jit_wasm_selective_ab_tests {
+    use super::{
+        JitMode, QUENCH_WASM_JIT_SELECTIVE, Suite, jit_wasm_selective_ab_error, parse_options_from,
+        quench_selective_ab_pair,
+    };
+
+    fn gcc_selective_options() -> super::Options {
+        parse_options_from(
+            [
+                "gcc-loops-wasm",
+                "--suite",
+                "jetstream3",
+                "--jit",
+                "--jit-wasm-selective-ab",
+                "--runs",
+                "3",
+            ]
+            .map(str::to_string),
+        )
+    }
+
+    #[test]
+    fn diagnostic_mode_is_pinned_to_gcc_and_allows_three_rounds() {
+        let options = gcc_selective_options();
+        assert_eq!(options.suite, Suite::JetStream3);
+        assert_eq!(options.jit_mode, JitMode::Jit);
+        assert!(options.jit_wasm_selective_ab);
+        assert_eq!(options.rounds, 3);
+        assert_eq!(options.fixture.as_deref(), Some("gcc-loops-wasm"));
+        assert!(jit_wasm_selective_ab_error(&options).is_none());
+
+        let mut wrong_fixture = options;
+        wrong_fixture.fixture = Some("quicksort-wasm".into());
+        assert!(jit_wasm_selective_ab_error(&wrong_fixture).is_some());
+
+        let mut too_few_rounds = gcc_selective_options();
+        too_few_rounds.rounds = 2;
+        assert!(jit_wasm_selective_ab_error(&too_few_rounds).is_some());
+
+        let mut no_jit = gcc_selective_options();
+        no_jit.jit_mode = JitMode::NoJit;
+        assert!(jit_wasm_selective_ab_error(&no_jit).is_some());
+
+        let mut conflicting_mode = gcc_selective_options();
+        conflicting_mode.jit_wasm_memcpy_leaf_ab = true;
+        assert!(jit_wasm_selective_ab_error(&conflicting_mode).is_some());
+    }
+
+    #[test]
+    fn quench_arms_share_binary_and_differ_only_by_selective_handoff_switch() {
+        let mut options = gcc_selective_options();
+        options.quench = std::env::current_exe().expect("test executable path");
+        let [selective_off, selective_on] = quench_selective_ab_pair(&options);
+
+        assert_eq!(selective_off.name, "quench_selective_handoff_off");
+        assert_eq!(selective_on.name, "quench_selective_handoff_on");
+        assert_eq!(selective_off.argv, vec!["--jit".to_string()]);
+        assert_eq!(selective_on.argv, selective_off.argv);
+        assert_eq!(selective_off.executable, selective_on.executable);
+        assert_eq!(
+            selective_off.executable_sha256,
+            selective_on.executable_sha256
+        );
+        let mut off_environment = selective_off.env.clone();
+        let mut on_environment = selective_on.env.clone();
+        assert_eq!(
+            off_environment.remove(QUENCH_WASM_JIT_SELECTIVE).as_deref(),
+            Some("0")
+        );
+        assert_eq!(
+            on_environment.remove(QUENCH_WASM_JIT_SELECTIVE).as_deref(),
+            Some("1")
+        );
+        assert_eq!(off_environment, on_environment);
+        assert!(
+            selective_off
+                .jit_proof
+                .contains("selective CallKnown handoff A/B arm")
+        );
+        assert!(selective_on.jit_proof.contains("not for qualification"));
+    }
+}
+
+#[cfg(test)]
 mod fixed_work_tests {
     use super::{
         FIXED_WORK_PLANS, FIXTURES, FixedWorkPlan, HostSnapshot, LoadAverage, Sample, contention,
@@ -4289,6 +4461,7 @@ mod tests {
             jit_wasm_affine_pair_ab: false,
             jit_wasm_reference_body_cache_ab: false,
             jit_wasm_memcpy_leaf_ab: false,
+            jit_wasm_selective_ab: false,
             created_unix_ns: now_ns(),
             rounds_requested: 11,
             timeout_ms: 300_000,
