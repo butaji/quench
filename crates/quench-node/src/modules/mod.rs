@@ -102,6 +102,7 @@ pub(crate) mod process_memory_shared_vm;
 #[cfg(target_os = "linux")]
 pub(crate) mod process_metrics_shared_vm;
 pub(crate) mod process_shared_vm;
+pub(crate) mod process_warning_shared_vm;
 mod process_exception_route;
 pub(crate) mod process_fatal_exception_route;
 pub(crate) mod process_signals_state;
