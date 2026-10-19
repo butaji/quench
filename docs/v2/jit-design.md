@@ -292,14 +292,14 @@ promotion is enabled only if the selected root compiles successfully; a rejected
 root leaves the workload interpreted. Their runtime switches are
 `QUENCH_WASM_JIT_ROOT_ONLY=1` and `QUENCH_WASM_JIT_ROOT_FIRST=1`, respectively.
 
-On JetStream 3 QuickSort, root-only function 1 at `speed` scored 282.94 versus
-258.72 at its default `none` level over separate 11-round Linux windows. Median
-RSS was 41.50 versus 41.36 MiB. Against full eager JIT in a matching 11-round
-window, root-only `speed` scored 282.94 versus 233.91 and used 41.50 versus
-42.76 MiB. It remained below Bun's 376.21 score, while using less RSS than both
-Bun (47.43 MiB) and Node (88.37 MiB). This is a promising opt-in tiering/codegen
-tradeoff, not a peer score win or qualification result; the root-only mode is
-intentionally excluded from qualification. See
+On JetStream 3 QuickSort, root-only function 1 at `speed` scored 292.02 versus
+247.90 at its default `none` level over separate 11-round clean-source Linux
+windows; median RSS was 41.50 versus 41.36 MiB. Against full eager JIT in a
+matching 11-round window, root-only `speed` scored 292.02 versus 237.33 and used
+41.50 versus 42.83 MiB. It remained below Bun's 393.36 score, while using less
+RSS than both Bun (47.72 MiB) and Node (88.38 MiB). This is a promising opt-in
+tiering/codegen tradeoff, not a peer score win or qualification result; the
+root-only mode is intentionally excluded from qualification. See
 `evidence/jit-jetstream3-wasm-2026-10-19/root-only-opt-level/` for the reports
 and reproduction details.
 
