@@ -6516,7 +6516,7 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
-        let function = program.functions.get(function_id as usize)?;
+        let function = program.function_get(function_id as usize)?;
         let compiled = match programs.js_tier(program_id, function_id)? {
             super::program_store::JsTierState::Compiled(compiled) => compiled,
             _ => return None,
