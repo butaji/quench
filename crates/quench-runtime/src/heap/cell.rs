@@ -1265,6 +1265,30 @@ const PROTO_PROMISE_RECORD_BASE: u32 = PROTO_FUNCTION_RECORD_BASE + RECORD_SPACE
 const PROTO_ITERATOR_RECORD_BASE: u32 = PROTO_PROMISE_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
 const PROTO_RECORD_END: u32 = PROTO_ITERATOR_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
 const _: () = assert!(PROTO_RECORD_END <= PROTO_UNDEFINED);
+
+/// An object's encoded prototype reference (`PROTO_INDEX_BITS`). Equal links name the same
+/// prototype, so a chain walk compares links instead of decoding each to a `Value`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct ProtoLink(u32);
+
+impl ProtoLink {
+    pub(crate) const NULL: Self = Self(PROTO_NULL);
+
+    /// The link naming object record `id`.
+    #[inline(always)]
+    pub(crate) fn object_record(id: u32) -> Self {
+        Self(PROTO_OBJECT_RECORD_BASE + id)
+    }
+
+    /// The object record this link names, if it names one.
+    #[inline(always)]
+    pub(crate) fn object_record_id(self) -> Option<u32> {
+        (PROTO_OBJECT_RECORD_BASE..PROTO_ARRAY_RECORD_BASE)
+            .contains(&self.0)
+            .then(|| self.0 - PROTO_OBJECT_RECORD_BASE)
+    }
+}
+
 const OBJECT_ARRAY: u32 = 1 << 28;
 const OBJECT_INLINE_STORAGE: u32 = 1 << 29;
 const _: () = assert!(
@@ -1629,6 +1653,13 @@ impl Object {
         }
     }
 
+    /// The prototype reference as stored (`ProtoLink`), undecoded.
+    #[inline(always)]
+    pub(crate) fn proto_link(&self) -> ProtoLink {
+        ProtoLink(self.meta & PROTO_INDEX_BITS)
+    }
+
+    #[inline(always)]
     pub(crate) fn proto(&self) -> Value {
         match self.meta & PROTO_INDEX_BITS {
             PROTO_NULL => Value::NULL,
