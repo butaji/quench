@@ -1,6 +1,6 @@
 use super::{
     ArrayObject, AwaitState, Cell, EnvironmentBindings, FunctionRecord, IteratorRecord,
-    PromiseCell, EnvironmentSlot, EnvironmentSlotState, EnvironmentSlots, Heap, Object,
+    PromiseCell, EnvironmentSlotState, EnvironmentSlots, Heap, Object,
 };
 use crate::bytecode::Atom;
 use crate::value::{HeapReference, Value};
@@ -138,26 +138,11 @@ impl Heap {
         let Cell::Environment { slots, .. } = self.get(environment)? else {
             return None;
         };
-        // Most slots share one owner: the source, or the owner a sparse source shares.
-        let default_owner = slots.default_owner().unwrap_or(environment);
-        EnvironmentSlots::try_from_slots(slots.len(), Some(default_owner), |index| {
-            let slot = u16::try_from(index).ok()?;
-            if reset.binary_search(&slot).is_ok() {
-                return Some(EnvironmentSlot::owned(Value::UNDEFINED));
-            }
-            let fresh = fresh.binary_search(&slot).is_ok();
-            Some(match slots.state(index)? {
-                EnvironmentSlotState::Owned(value) if fresh => EnvironmentSlot::owned(value),
-                EnvironmentSlotState::Owned(_) => EnvironmentSlot::shared(environment),
-                // A shared slot names its owner, which holds the slot itself.
-                EnvironmentSlotState::Shared(owner) if fresh => {
-                    let Cell::Environment { slots, .. } = self.get(owner)? else {
-                        return None;
-                    };
-                    EnvironmentSlot::owned(slots.owned(index)?)
-                }
-                EnvironmentSlotState::Shared(owner) => EnvironmentSlot::shared(owner),
-            })
+        slots.iteration_copy(environment, fresh, reset, |owner, index| {
+            let Cell::Environment { slots, .. } = self.get(owner)? else {
+                return None;
+            };
+            slots.owned(index)
         })
     }
 
@@ -589,6 +574,8 @@ impl Heap {
         }
     }
 
+    /// The write barrier: an old (marked) cell written to joins the remembered set once.
+    #[inline(always)]
     pub(super) fn remember(&mut self, index: usize) {
         if !self.tracks_young_cells()
             || index >= self.slots.len()
@@ -596,11 +583,19 @@ impl Heap {
         {
             return;
         }
-        self.remembered_marks.resize(self.marks.len(), 0);
-        if self.remembered_marks[index / 64] & (1 << (index % 64)) != 0 {
+        let (word, bit) = (index / u64::BITS as usize, 1_u64 << (index % u64::BITS as usize));
+        // A cell already remembered needs nothing more: the common repeated write.
+        if self.remembered_marks.get(word).is_some_and(|marks| marks & bit != 0) {
             return;
         }
-        self.remembered_marks[index / 64] |= 1 << (index % 64);
+        self.remember_first(word, bit, index);
+    }
+
+    /// `remember` of a cell not yet in the remembered set.
+    #[inline(never)]
+    fn remember_first(&mut self, word: usize, bit: u64, index: usize) {
+        self.remembered_marks.resize(self.marks.len(), 0);
+        self.remembered_marks[word] |= bit;
         self.remembered.push(index as u32);
     }
 }

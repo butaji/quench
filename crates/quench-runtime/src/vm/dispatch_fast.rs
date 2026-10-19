@@ -391,6 +391,11 @@ pub(super) struct ScriptCallTarget {
     room: u16,
     params: u16,
     strict: bool,
+    /// An arrow's `this`, found in its environment when it was resolved: `None` for any
+    /// other function, `Some(None)` for an arrow whose environment binds none, which then
+    /// takes its caller's receiver. An arrow whose binding is still uninitialized (before
+    /// `super()`) is never resolved, and an initialized binding never changes.
+    lexical_this: Option<Option<Value>>,
     /// `new` may activate it too (`Vm::inline_constructible`).
     constructs: bool,
     /// `new` may run its body as the stores alone (`Function::only_initializes_this_fields`).
@@ -421,6 +426,10 @@ enum CallEntry {
     /// Its body is one returning `GetField` (`returning_kind` of its first instruction),
     /// whose hit a call answers without activating it (`lane_call_read`).
     Reads,
+    /// It needs a VM frame (`CallPlan::registers_only` fails, or its view has no
+    /// activation): a call takes `lane_frame_call`. Only the cache and the call's own
+    /// out-of-line form see such a target (`lane_script_target` leaves it out).
+    Frame,
     /// Its body reads a field of `this` or a parameter, then an element of that by a
     /// parameter, and returns it (`element_read_body`), which a call answers likewise.
     ReadsElement,
@@ -512,6 +521,7 @@ const EMPTY_SCRIPT_CALL_TARGET: ScriptCallTarget = ScriptCallTarget {
     room: 0,
     params: 0,
     strict: false,
+    lexical_this: None,
     constructs: false,
     initializes: false,
     entry: CallEntry::Activates,
@@ -519,20 +529,26 @@ const EMPTY_SCRIPT_CALL_TARGET: ScriptCallTarget = ScriptCallTarget {
     forwarded_method: NO_FORWARDED_METHOD,
 };
 
-/// Entries of the script call cache, indexed by the callee's heap index.
+/// Entries of the script call cache, in sets of `SCRIPT_TARGET_WAYS` that a hash of the
+/// callee's heap index picks (`script_target_set`).
 const SCRIPT_CALL_TARGETS: usize = 256;
+/// Entries per set: the one most recently resolved first, then the one before it, so two
+/// callees whose indices share a set both stay resolved.
+const SCRIPT_TARGET_WAYS: usize = 2;
+/// The Fibonacci hashing multiplier, 2^32 divided by the golden ratio: it spreads the dense
+/// indices a record family hands out, which index bits alone would map to sets by stride.
+const SCRIPT_TARGET_HASH: u32 = 0x9E37_79B9;
+const _: () = assert!(SCRIPT_CALL_TARGETS.is_power_of_two() && SCRIPT_TARGET_WAYS == 2);
 
-/// A callee that has no frameless target while `generation` and `program` hold: its calls
-/// take the general path without resolving it again.
-#[derive(Clone, Copy, PartialEq, Eq)]
-struct RejectedCallTarget {
-    callee: Value,
-    generation: u64,
-    program: ProgramId,
+/// The first entry of `callee`'s set in the script call cache, when it names a heap cell;
+/// the set's other entry follows it (`| 1`).
+#[inline(always)]
+fn script_target_set(callee: Value) -> Option<usize> {
+    let hashed = callee.heap_index()?.wrapping_mul(SCRIPT_TARGET_HASH);
+    // The top bits of the product, as many as index an entry; the lowest names the way.
+    let index = (hashed >> (u32::BITS - SCRIPT_CALL_TARGETS.trailing_zeros())) as usize;
+    Some(index & (SCRIPT_CALL_TARGETS - SCRIPT_TARGET_WAYS))
 }
-
-const NO_REJECTED_CALL_TARGET: RejectedCallTarget =
-    RejectedCallTarget { callee: Value::UNDEFINED, generation: NO_SCRIPT_GENERATION, program: ProgramId::MAIN };
 
 /// What a constructor's initializer body (`ScriptCallTarget::initializes`) made of a receiver
 /// whose adds all hit: the callee's receiver template under `prototype`, which the callee and
@@ -603,9 +619,6 @@ pub(super) struct LaneStack {
     activations: Vec<Activation>,
     /// Resolved targets of lane `Call` records (`Vm::script_call_target`).
     script_targets: Box<[ScriptCallTarget; SCRIPT_CALL_TARGETS]>,
-    /// Callees `Vm::resolve_script_call_target` found no frameless target for, by the same
-    /// index, with the generation and program that answer held under.
-    rejected_targets: Box<[RejectedCallTarget; SCRIPT_CALL_TARGETS]>,
     /// Constructors' plans (`lane_initialize_fields`, `lane_planned_receiver`).
     construct_plans: Box<[ConstructPlan; CONSTRUCT_PLANS]>,
     /// The forwarding constructors whose activations constructions skipped, one per
@@ -637,7 +650,6 @@ impl Default for LaneStack {
             values: Vec::new(),
             activations: Vec::new(),
             script_targets: Box::new([EMPTY_SCRIPT_CALL_TARGET; SCRIPT_CALL_TARGETS]),
-            rejected_targets: Box::new([NO_REJECTED_CALL_TARGET; SCRIPT_CALL_TARGETS]),
             construct_plans: Box::new([EMPTY_CONSTRUCT_PLAN; CONSTRUCT_PLANS]),
             forwarders: Vec::new(),
             forwarded_methods: Vec::new(),
@@ -649,10 +661,18 @@ impl Default for LaneStack {
 }
 
 impl LaneStack {
+    /// Record `target` first in its cache set `set`, the entry it displaces moving second.
+    /// Entry pointers (`Vm::script_call_entry`) are not held across a resolution.
+    fn remember_script_target(&mut self, set: usize, target: ScriptCallTarget) {
+        if self.script_targets[set].callee != target.callee {
+            self.script_targets[set | 1] = self.script_targets[set];
+        }
+        self.script_targets[set] = target;
+    }
+
     /// Forget resolved call targets, as the general loop's call target cache is reset.
     pub(super) fn clear_script_targets(&mut self) {
         *self.script_targets = [EMPTY_SCRIPT_CALL_TARGET; SCRIPT_CALL_TARGETS];
-        *self.rejected_targets = [NO_REJECTED_CALL_TARGET; SCRIPT_CALL_TARGETS];
     }
 
     /// The index of `method` in `forwarded_methods`, recording it when new, or
@@ -4490,23 +4510,30 @@ impl<H: Host> Vm<H> {
     /// replaces it, which no activation makes.
     #[inline(always)]
     fn script_call_entry(&self, callee: Value) -> Option<*const ScriptCallTarget> {
-        let index = callee.heap_index()? as usize & (SCRIPT_CALL_TARGETS - 1);
-        let cached = &self.lane_stack.script_targets[index];
-        (cached.callee == callee
-            && cached.generation == self.lane_stack.generation
-            && cached.program == self.active_program)
-            .then_some(cached as *const ScriptCallTarget)
+        let set = script_target_set(callee)?;
+        let generation = self.lane_stack.generation;
+        let program = self.active_program;
+        let holds = |cached: &ScriptCallTarget| {
+            cached.callee == callee && cached.generation == generation && cached.program == program
+        };
+        let first = &self.lane_stack.script_targets[set];
+        if holds(first) {
+            return Some(first as *const ScriptCallTarget);
+        }
+        let second = &self.lane_stack.script_targets[set | 1];
+        holds(second).then_some(second as *const ScriptCallTarget)
     }
 
-    /// Resolve and cache `callee` as a frameless lane call target, remembering a callee that
-    /// has none (`LaneStack::rejected_targets`).
+    /// Resolve and cache `callee` as a lane call target: frameless when its activation is its
+    /// registers (`CallPlan::registers_only`), else a `CallEntry::Frame` entry, so its calls
+    /// take a frame without resolving it again.
     #[inline(never)]
     fn resolve_script_call_target(
         &mut self,
         code: &ResidualProgram,
         callee: Value,
     ) -> Option<ScriptCallTarget> {
-        let index = callee.heap_index()? as usize & (SCRIPT_CALL_TARGETS - 1);
+        let set = script_target_set(callee)?;
         // A function the JavaScript tier may still claim keeps its frame, where the tier
         // counts and enters it; uncached, so the lane takes it once the tier declines it.
         if let Some((program, function, _)) = self.same_realm_user_target(callee)
@@ -4515,52 +4542,53 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
-        let rejected = RejectedCallTarget {
-            callee,
-            generation: self.lane_stack.generation,
-            program: self.active_program,
-        };
-        if self.lane_stack.rejected_targets[index] == rejected {
-            return None;
-        }
-        let target = self.frameless_call_target(code, callee, index);
-        if target.is_none() {
-            self.lane_stack.rejected_targets[index] = rejected;
-        }
-        target
-    }
-
-    /// `resolve_script_call_target`'s answer: a user function of the active program whose
-    /// activation is its registers, plus the values it was passed when it forwards them
-    /// (`CallPlan::registers_only`), cached at `index`.
-    fn frameless_call_target(
-        &mut self,
-        code: &ResidualProgram,
-        callee: Value,
-        index: usize,
-    ) -> Option<ScriptCallTarget> {
         let (program, function, env, numeric) = self.same_realm_script_target(callee)?;
         if function == super::ROOT_FUNCTION_ID || program != self.active_program {
             return None;
         }
         let body = code.function_get(function as usize)?;
+        let plan = body.call_plan(code);
+        // An arrow binds the `this` of its environment, found once here: one still
+        // uninitialized (before `super()`) leaves its calls to the general path, uncached.
+        let lexical_this = if body.is_arrow {
+            let this = self.captured_lexical_this(env);
+            if this.is_some_and(Value::is_deleted) {
+                return None;
+            }
+            Some(this)
+        } else {
+            None
+        };
         // A numeric body's own frame constructs nothing in place
         // (`LaneContext::script_constructs`), which its activation would inherit from the
         // caller, so only one that constructs nothing runs frameless; its other records are
         // the lane's, with or without a frame.
-        if numeric
-            && body
-                .code
-                .iter()
-                .any(|packed| decoded_instruction(body, *packed).op() == Op::Construct)
+        let view = if !plan.registers_only
+            || numeric
+                && body
+                    .code
+                    .iter()
+                    .any(|packed| decoded_instruction(body, *packed).op() == Op::Construct)
         {
-            return None;
-        }
-        let plan = body.call_plan(code);
-        if !plan.registers_only {
-            return None;
-        }
-        let view = self.lane_view_any(program, function)?;
+            None
+        } else {
+            self.lane_view_any(program, function)
+        };
+        let Some(view) = view else {
+            // The function needs a frame, which the target records so its calls take one
+            // without resolving it again.
+            let target = ScriptCallTarget {
+                callee,
+                generation: self.lane_stack.generation,
+                program,
+                function,
+                env,
+                entry: CallEntry::Frame,
+                ..EMPTY_SCRIPT_CALL_TARGET
+            };
+            self.lane_stack.remember_script_target(set, target);
+            return Some(target);
+        };
         // A frameless activation's function has no environment of its own.
         let capture = match self.environment_capture_slots(env, false, 0) {
             Some((slots, None)) => slots
@@ -4579,6 +4607,7 @@ impl<H: Host> Vm<H> {
             room: u16::try_from(fill_room::<SCRIPT_FILL_BLOCK>(usize::from(body.registers))).ok()?,
             params: body.params,
             strict: body.strict,
+            lexical_this,
             constructs: Self::inline_constructible(body),
             initializes: Self::inline_constructible(body)
                 && body.only_initializes_this_fields(&code.constants),
@@ -4604,7 +4633,7 @@ impl<H: Host> Vm<H> {
                 None => NO_FORWARDED_METHOD,
             },
         };
-        self.lane_stack.script_targets[index] = target;
+        self.lane_stack.remember_script_target(set, target);
         Some(target)
     }
 
@@ -4659,8 +4688,9 @@ lane_handler! {
     }
 }
 
-/// The `this` a plain call of `target` binds for `receiver`: `call_this_value` without its
-/// boxing of primitives, which allocates, so `None` for a sloppy callee's primitive.
+/// The `this` a plain call of `target` binds for `receiver`: an arrow's lexical one
+/// (`ScriptCallTarget::lexical_this`), else `call_this_value`'s without its boxing of
+/// primitives, which allocates, so `None` for a sloppy callee's primitive.
 #[inline(always)]
 fn lane_call_this<H: Host>(vm: &Vm<H>, target: &ScriptCallTarget, receiver: Value) -> Option<Value> {
     lane_direct_call_this(vm, target, receiver)
@@ -4676,7 +4706,10 @@ fn lane_direct_call_this<H: Host>(
     target: &ScriptCallTarget,
     receiver: Value,
 ) -> Option<Value> {
-    if target.strict || receiver.direct_object_index().is_some() {
+    if let Some(lexical) = target.lexical_this {
+        // An arrow's own `this`, or its caller's receiver when its environment binds none.
+        Some(lexical.unwrap_or(receiver))
+    } else if target.strict || receiver.direct_object_index().is_some() {
         Some(receiver)
     } else if receiver.is_null() || receiver.is_undefined() {
         Some(vm.realm.globals)
@@ -4709,6 +4742,9 @@ lane_handler! {
         };
         // SAFETY: as `Vm::script_call_entry`; a read resolves no target and collects nothing.
         let target = unsafe { &*target };
+        if target.entry == CallEntry::Frame {
+            sibling!(lane_frame_call::<H>, r, ip, Carried::SCRIPT)
+        }
         if target.forwards() {
             sibling!(lane_script_call_keeping::<H>, r, ip, Carried::SCRIPT)
         }
@@ -4911,11 +4947,7 @@ fn lane_function_call_activation<H: Host>(
     let argc = usize::from(ImmediateLayout::argument_count(i.imm()));
     let receiver = if argc == 0 { Value::UNDEFINED } else { r.get(window) };
     // `call_this_value` without its boxing of primitives, which allocates.
-    let this = if target.strict || vm.is_object_like(receiver) {
-        receiver
-    } else if receiver.is_null() || receiver.is_undefined() {
-        vm.realm.globals
-    } else {
+    let Some(this) = lane_call_this(vm, &target, receiver) else {
         return Err(exit(ip));
     };
     // SAFETY: the values after `thisArg` are registers of the running function, which the
@@ -5001,13 +5033,8 @@ lane_handler! {
                 let args = unsafe {
                     std::slice::from_raw_parts(r.0.add(usize::from(window)), usize::from(argc))
                 };
+                // RegExp exec and test run through `lane_call_native` (`Vm::steady_regexp_call`).
                 vm.pure_string_method_call(code, r.get(i.b), receiver, args)
-                    .or_else(|| {
-                        let matched = vm.pure_regexp_exec(code, r.get(i.b), receiver, args)?;
-                        // The match array and its strings are new cells.
-                        note_allocation(vm);
-                        Some(matched)
-                    })
                     .or_else(|| lane_call_native(cx, r, ip, i))
             }
         };
@@ -5069,6 +5096,27 @@ fn lane_call_native<H: Host>(
         && let Some(result) = super::number::math_unary(native, value)
     {
         return Some(Value::number(result));
+    }
+    // A RegExp exec or test that runs no guest code and raises nothing observes no frame
+    // either (`Vm::steady_regexp_call`).
+    if let Some(native) = native
+        && argc > 0
+        // SAFETY: the context's program outlives the lane run.
+        && let Some(result) = vm.steady_regexp_call(
+            unsafe { &*(*cx).code },
+            native,
+            r.get(i.c),
+            r.get(window),
+        )
+    {
+        note_allocation(vm);
+        return match result {
+            Ok(value) => Some(value),
+            Err(error) => {
+                vm.lane_raised = Some(error);
+                None
+            }
+        };
     }
     if !unsafe { (*cx).script_calls } {
         return None;
@@ -5200,11 +5248,7 @@ fn lane_call_keeping_activation<H: Host>(
         return Err(exit(ip));
     };
     let receiver = r.get(i.c);
-    let this = if target.strict || vm.is_object_like(receiver) {
-        receiver
-    } else if receiver.is_null() || receiver.is_undefined() {
-        vm.realm.globals
-    } else {
+    let Some(this) = lane_call_this(vm, &target, receiver) else {
         return Err(exit(ip));
     };
     let arguments = ActivationArguments::Window(ImmediateLayout::call_window_base(i.imm()));
@@ -5466,11 +5510,7 @@ fn lane_forward_activation<H: Host>(
         return Err(exit(ip));
     };
     let receiver = r.get(window);
-    let this = if target.strict || vm.is_object_like(receiver) {
-        receiver
-    } else if receiver.is_null() || receiver.is_undefined() {
-        vm.realm.globals
-    } else {
+    let Some(this) = lane_call_this(vm, &target, receiver) else {
         return Err(exit(ip));
     };
     lane_activate_keeping(cx, r, ip, target, kept, this, false, None)
@@ -5533,6 +5573,7 @@ fn lane_script_target<H: Host>(cx: *mut LaneContext<H>, callee: Value) -> Option
     }
     vm.script_call_target(callee)
         .or_else(|| vm.resolve_script_call_target(unsafe { &*(*cx).code }, callee))
+        .filter(|target| target.entry != CallEntry::Frame)
 }
 
 /// Activate `target`, which keeps no passed values (callers route those to

@@ -119,7 +119,7 @@ impl<H: Host> Vm<H> {
             )?;
         }
         self.set_builtin_named(p, prototype, "valueOf", Native::TemporalPlainTimeValueOf)?;
-        if let Some(symbol) = self.well_known_symbols.get("toStringTag").copied() {
+        if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::ToStringTag) {
             let value = self.heap.alloc(Cell::String("Temporal.PlainTime".into()));
             self.set_symbol_property(prototype, symbol, value)?;
             self.set_property_attributes(

@@ -115,7 +115,7 @@ impl<H: Host> Vm<H> {
             atom_classes: vec![],
             dynamic_strings: None,
             symbol_registry: FxHashMap::default(),
-            well_known_symbols: FxHashMap::default(),
+            well_known_symbols: WellKnownSymbols::default(),
             string_concats: None,
             call_targets: Box::new([EMPTY_CALL_TARGET; CALL_TARGET_CACHE_SIZE]),
             field_caches: vec![],

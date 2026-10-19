@@ -229,7 +229,7 @@ impl<H: Host> Vm<H> {
             self.set_builtin_function_name(method, name)?;
             self.set_builtin_value_named(constructor, name, method)?;
         }
-        if let Some(symbol) = self.well_known_symbols.get("toPrimitive").copied() {
+        if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::ToPrimitive) {
             let method = self.native_with_realm(Native::DateToPrimitive, global, global);
             self.set_builtin_function_name(method, "[Symbol.toPrimitive]")?;
             self.set_symbol_property(prototype, symbol, method)?;
