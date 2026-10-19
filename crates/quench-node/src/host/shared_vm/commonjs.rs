@@ -111,24 +111,8 @@ pub(crate) fn source_kind(path: &Path) -> Result<quench_runtime::SourceKind, Str
             break;
         }
         let package = directory.join("package.json");
-        let text = match std::fs::read_to_string(&package) {
-            Ok(text) => text,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(error) => return Err(format!("{}: {error}", package.display())),
-        };
-        let package_json: serde_json::Value =
-            serde_json::from_str(text.strip_prefix('\u{feff}').unwrap_or(&text))
-                .map_err(|_| format!("Invalid package config {}.", package.display()))?;
-        let explicit = match package_json.get("type") {
-            Some(serde_json::Value::String(kind)) if kind == "module" => Some(quench_runtime::SourceKind::Module),
-            Some(serde_json::Value::String(kind)) if kind == "commonjs" => Some(quench_runtime::SourceKind::Script),
-            Some(serde_json::Value::String(_)) | None => None,
-            Some(_) => {
-                return Err(format!(
-                    "Invalid package config {}. \"type\" key must be a string",
-                    package.display()
-                ))
-            }
+        let Some(explicit) = package_type(package)? else {
+            continue;
         };
         return match explicit {
             Some(kind) => Ok(kind),
@@ -141,6 +125,46 @@ pub(crate) fn source_kind(path: &Path) -> Result<quench_runtime::SourceKind, Str
 /// Node first accepts the CommonJS wrapper. Only syntax that cannot live in
 /// that wrapper triggers ESM detection, including top-level await and lexical
 /// declarations of wrapper parameters. OXC owns both grammar and early errors.
+/// What a package scope's `package.json` declares: none when the file does not exist,
+/// else its `"type"` (none for any other string or none given), or why it is invalid.
+type PackageType = Result<Option<Option<quench_runtime::SourceKind>>, String>;
+
+thread_local! {
+    /// Each `package.json` is read once per thread, as Node's package config reader caches
+    /// each file it reads; a package with many modules (date-fns: 316 imports under one
+    /// 199 KB `package.json`) otherwise parsed it again for every module.
+    static PACKAGE_TYPES: std::cell::RefCell<std::collections::HashMap<std::path::PathBuf, PackageType>> =
+        Default::default();
+}
+
+fn package_type(package: std::path::PathBuf) -> PackageType {
+    if let Some(known) = PACKAGE_TYPES.with(|types| types.borrow().get(&package).cloned()) {
+        return known;
+    }
+    let read = || -> PackageType {
+        let text = match std::fs::read_to_string(&package) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(format!("{}: {error}", package.display())),
+        };
+        let package_json: serde_json::Value =
+            serde_json::from_str(text.strip_prefix('\u{feff}').unwrap_or(&text))
+                .map_err(|_| format!("Invalid package config {}.", package.display()))?;
+        match package_json.get("type") {
+            Some(serde_json::Value::String(kind)) if kind == "module" => Ok(Some(Some(quench_runtime::SourceKind::Module))),
+            Some(serde_json::Value::String(kind)) if kind == "commonjs" => Ok(Some(Some(quench_runtime::SourceKind::Script))),
+            Some(serde_json::Value::String(_)) | None => Ok(Some(None)),
+            Some(_) => Err(format!(
+                "Invalid package config {}. \"type\" key must be a string",
+                package.display()
+            )),
+        }
+    };
+    let known = read();
+    PACKAGE_TYPES.with(|types| types.borrow_mut().insert(package, known.clone()));
+    known
+}
+
 fn detect_source_kind(path: &Path) -> Result<quench_runtime::SourceKind, String> {
     let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
     let text = String::from_utf8_lossy(&bytes);
