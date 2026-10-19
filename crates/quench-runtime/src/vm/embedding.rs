@@ -249,10 +249,11 @@ impl<H: Host> Vm<H> {
                     .get(*program)
                     .and_then(|program| {
                         program.functions.get(*function as usize).map(|function| {
+                            let header = function.header();
                             if brand == B::AsyncFunction {
-                                function.is_async
+                                header.is_async
                             } else {
-                                function.is_generator
+                                header.is_generator
                             }
                         })
                     })

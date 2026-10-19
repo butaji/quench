@@ -314,7 +314,7 @@ impl<H: Host> Vm<H> {
         let intrinsic = match *kind {
             FunctionKind::User(program, id) | FunctionKind::NumericUser(program, id) => {
                 let program = self.programs.get(program)?;
-                let function = program.functions.get(id as usize)?;
+                let function = program.functions.get(id as usize)?.header();
                 match (function.is_async, function.is_generator) {
                     (true, true) => Native::AsyncGeneratorFunction,
                     (false, true) => Native::GeneratorFunction,

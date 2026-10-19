@@ -4,19 +4,24 @@ impl Compiler<'_> {
     pub(super) fn compile_arrow_function(
         &mut self,
         value: &oxc_ast::ast::ArrowFunctionExpression<'_>,
-        scopes: &[Rc<super::capture_scope::CaptureScope>],
-        parent: Option<u32>,
-        super_static: bool,
-        super_home: bool,
-        super_home_atom: Option<Atom>,
-        inherited_strict: bool,
-        class_initializer: bool,
-        lexical_this_atom: Option<Atom>,
-        super_call_binds_this: bool,
-        with_depth: u16,
+        context: &super::replay::ArrowContext,
     ) -> u32 {
-        let id = self.functions.len() as u32;
-        self.functions.push(None);
+        let super::replay::ArrowContext {
+            ref scopes,
+            parent,
+            super_static,
+            super_home,
+            super_home_atom,
+            inherited_strict,
+            class_initializer,
+            lexical_this_atom,
+            super_call_binds_this,
+            with_depth,
+        } = *context;
+        if let Some(id) = self.skip_replayed_child() {
+            return id;
+        }
+        let id = self.functions.reserve();
         let source_span = self.source_span(value.span);
         let body_lexicals = if let oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) = &value.body
         {
@@ -195,7 +200,8 @@ impl Compiler<'_> {
             parameter_registers: None,
             initial_register: Default::default(),
         };
-        self.functions[id as usize] = Some(result);
+        self.functions.set(id, result);
+        self.record_function_exit(id);
         id
     }
 }

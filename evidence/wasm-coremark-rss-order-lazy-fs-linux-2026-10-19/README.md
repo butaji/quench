@@ -1,6 +1,7 @@
 # CoreMark max RSS: a link order that applies, lazy `fs`, split Wasm compile release (Linux x86_64, 2026-10-19)
 
-Intel Xeon @ 2.10 GHz, 4 vCPUs, 15 GiB, Linux 6.18.44, no cgroup limits, rustc 1.99.1.
+Intel Xeon @ 2.10 GHz, 4 vCPUs, 15 GiB, Linux 6.18.44, no cgroup limits; rustc 1.99.1 for the
+retrained-order rows, 1.99.0 for the committed build.
 Static production `quench-node` (docs/README.md "Qualification builds"), CoreMark through
 `evidence/wasm-coremark-quench-node-linux-2026-10-17/run-js.mjs` on `coremark-minimal-mvp.wasm`,
 each run under that campaign's `maxrss.c`. Every binary is evicted from the page cache before
@@ -17,13 +18,15 @@ an environment installed: the evidence tree records both 1.99.0 and 1.99.1 on x8
 The order was trained under one and linked under the other, so the layout was the default
 one and the RSS gains it was measured with were absent.
 
-`rust-toolchain.toml` now names `1.99.1` exactly. That `rustc -vV` is the one this host's
-`1.99` already resolved to, so crate hashes do not change (the retrained order below matches
-5,540 symbols in its build).
+`rust-toolchain.toml` now names `1.99.0` exactly: the release the RSS lane trains the order
+with (its b38 order, merged here, names `Cs1j3G5KV77xm`). Built with 1.99.0 on this host, the
+merged tree names the same hashes, and 5,411 of the order's 5,492 symbols are present.
 
 ## Retrained static order
 
-The documented procedure (`evidence/tod123-rss-linux-2026-10-14/README.md`, "Run-phase
+The measurements below up to the lazy-`fs` row were taken under rustc 1.99.1 with orders
+retrained here; the committed order is the RSS lane's b38 order (trained under 1.99.0), which
+the exact pin makes apply on both hosts. Both were trained with the documented procedure (`evidence/tod123-rss-linux-2026-10-14/README.md`, "Run-phase
 layout"): Cachegrind and Callgrind (`--dump-before=quench_entry_compiled`) profiles of the
 empty start, `quench-bench/deegen-curriculum`, `quench-bench/micros`, the 300-file Test262
 sample and the Wasm kernels; `symbol-order --dense 13dispatch_fast --foreign-first` with the
