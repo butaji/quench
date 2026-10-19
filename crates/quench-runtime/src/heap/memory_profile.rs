@@ -1,4 +1,7 @@
-use super::{ArrayObject, Cell, CellKind, FreeSlotBitmap, FunctionRecord, Heap, Object, PromiseCell};
+use super::{
+    ArrayObject, Cell, CellKind, FreeSlotBitmap, FunctionRecord, Heap, IteratorRecord, Object,
+    PromiseCell,
+};
 use crate::value::Value;
 use rustc_hash::FxHashMap;
 use std::collections::BTreeMap;
@@ -224,6 +227,30 @@ impl MemoryProfile {
             return;
         };
         let kind = CellKind::Object as usize;
+        debug_assert_eq!(self.kinds[index] as usize, kind);
+        self.freed_record(index, kind, Some(object_slots));
+    }
+
+    pub(super) fn allocated_iterator(
+        &mut self,
+        identity: Value,
+        iterator: &IteratorRecord,
+        object_slots: usize,
+    ) {
+        self.allocated_record(
+            identity,
+            CellKind::Iterator as usize,
+            iterator.object.allocated_extra_bytes(),
+            "iterator",
+            Some(object_slots),
+        );
+    }
+
+    pub(super) fn freed_iterator(&mut self, identity: Value, object_slots: usize) {
+        let Some(index) = self.identity_slots.remove(&identity) else {
+            return;
+        };
+        let kind = CellKind::Iterator as usize;
         debug_assert_eq!(self.kinds[index] as usize, kind);
         self.freed_record(index, kind, Some(object_slots));
     }
@@ -478,12 +505,14 @@ impl Heap {
         counts[CellKind::Function as usize] = self.function_records.live_count();
         counts[CellKind::Object as usize] += self.promise_records.live_count();
         counts[CellKind::AwaitState as usize] = self.await_records.live_count();
+        counts[CellKind::Iterator as usize] = self.iterator_records.live_count();
         self.for_each_live_value(|identity| {
             if identity.direct_object_index().is_some()
                 || identity.direct_array_index().is_some()
                 || identity.direct_function_index().is_some()
                 || identity.direct_promise_index().is_some()
                 || identity.direct_await_index().is_some()
+                || identity.direct_iterator_index().is_some()
             {
                 return;
             }
@@ -527,6 +556,7 @@ impl Heap {
             + self.function_records.allocated_bytes()
             + self.promise_records.allocated_bytes()
             + self.await_records.allocated_bytes()
+            + self.iterator_records.allocated_bytes()
             + self.live_value_payload_bytes()
             + self
                 .sparse_arrays
@@ -543,7 +573,8 @@ impl Heap {
                 + self.array_records.high_water()
                 + self.function_records.high_water()
                 + self.promise_records.high_water()
-                + self.await_records.high_water(),
+                + self.await_records.high_water()
+                + self.iterator_records.high_water(),
             self.slots.capacity() * size_of::<super::Slot>(),
             self.free_by_slab.capacity() * size_of::<FreeSlotBitmap>()
                 + self.free_slabs.capacity() * size_of::<u32>(),

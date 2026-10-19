@@ -100,6 +100,17 @@ impl<H: Host> Vm<H> {
         if self.heap.is_function_value(value) {
             return "Function";
         }
+        if let Some(iterator) = self.heap.iterator(value) {
+            return match iterator.kind {
+                kind if kind.is_array_iterator() => "Array Iterator",
+                IteratorKind::MapKeys | IteratorKind::MapValues | IteratorKind::MapEntries => {
+                    "Map Iterator"
+                }
+                IteratorKind::SetValues | IteratorKind::SetEntries => "Set Iterator",
+                IteratorKind::Generator | IteratorKind::AsyncGenerator => "Generator",
+                _ => "Object",
+            };
+        }
         match self.heap.get(value) {
             Some(Cell::ArrayBuffer { shared: true, .. }) => "SharedArrayBuffer",
             Some(Cell::ArrayBuffer { .. }) => "ArrayBuffer",
@@ -120,15 +131,6 @@ impl<H: Host> Vm<H> {
             Some(Cell::WeakSet { .. }) => "WeakSet",
             Some(Cell::Date { .. }) => "Date",
             Some(Cell::RegExp { .. }) => "RegExp",
-            Some(Cell::Iterator { kind, .. }) => match kind {
-                kind if kind.is_array_iterator() => "Array Iterator",
-                IteratorKind::MapKeys | IteratorKind::MapValues | IteratorKind::MapEntries => {
-                    "Map Iterator"
-                }
-                IteratorKind::SetValues | IteratorKind::SetEntries => "Set Iterator",
-                IteratorKind::Generator | IteratorKind::AsyncGenerator => "Generator",
-                _ => "Object",
-            },
             Some(Cell::Error(_)) => "Error",
             _ => "Object",
         }
