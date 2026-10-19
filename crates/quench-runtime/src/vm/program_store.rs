@@ -18,6 +18,7 @@ struct JsJitCounters {
     rejection_reason: Option<&'static str>,
     compile_ns: u64,
     native_entries: u64,
+    fallback_entries: u64,
     code_bytes: usize,
 }
 
@@ -29,6 +30,7 @@ pub(super) const JS_JIT_PROMOTION_LOOKS: [(u8, u8); 4] =
     [(32, 31), (64, 59), (128, 113), (255, 219)];
 const JS_JIT_MAX_FUNCTIONS: usize = 64;
 const JS_JIT_MAX_TRACKED_FUNCTIONS: usize = 256;
+const JS_JIT_MAX_DIAGNOSTIC_FUNCTIONS: usize = 4096;
 const JS_JIT_MAX_REJECTED_FUNCTIONS: usize = 4096;
 const JS_JIT_REJECTION_DIAGNOSTIC_ENTRIES: u64 = 32;
 const JS_JIT_MAX_MAPPED_BYTES: usize = 64 * 1024;
@@ -1200,7 +1202,7 @@ impl ProgramStore {
             }
             return;
         }
-        if diagnostics.len() >= JS_JIT_MAX_TRACKED_FUNCTIONS {
+        if diagnostics.len() >= JS_JIT_MAX_DIAGNOSTIC_FUNCTIONS {
             return;
         }
         let (source_name, function_name) = self
@@ -1291,6 +1293,16 @@ impl ProgramStore {
             .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
         {
             counters.native_entries = counters.native_entries.saturating_add(1);
+        }
+    }
+
+    pub(super) fn record_js_jit_fallback_entry(&mut self, id: ProgramId, function: u32) {
+        if let Some(counters) = self
+            .js_jit_diagnostics
+            .as_mut()
+            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
+        {
+            counters.fallback_entries = counters.fallback_entries.saturating_add(1);
         }
     }
 
@@ -1513,7 +1525,7 @@ impl Drop for ProgramStore {
             }
             let _ = writeln!(
                 stderr,
-                ",\"status\":\"{status}\",\"entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"compile_ns\":{},\"native_entries\":{},\"code_bytes\":{}}}",
+                ",\"status\":\"{status}\",\"entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"compile_ns\":{},\"native_entries\":{},\"fallback_entries\":{},\"code_bytes\":{}}}",
                 counters.entries,
                 counters.numeric_entries,
                 counters.promotions,
@@ -1521,6 +1533,7 @@ impl Drop for ProgramStore {
                 counters.compile_successes,
                 counters.compile_ns,
                 counters.native_entries,
+                counters.fallback_entries,
                 counters.code_bytes,
             );
         }
