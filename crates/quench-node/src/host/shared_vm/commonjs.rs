@@ -93,7 +93,8 @@ fn inline_directory(context: &mut Context<'_>) -> Result<PathBuf, RootedError> {
 /// Node's explicit extension/package parse-goal policy, before guest execution.
 pub(crate) fn source_kind(path: &Path) -> Result<quench_runtime::SourceKind, String> {
     match path.extension().and_then(|extension| extension.to_str()) {
-        Some("mjs") => return Ok(quench_runtime::SourceKind::Module),
+        // Node's `wasm` format is an ES module (`esm_wasm`).
+        Some("mjs" | "wasm") => return Ok(quench_runtime::SourceKind::Module),
         Some("cjs") => return Ok(quench_runtime::SourceKind::Script),
         Some("json" | "node") => return Ok(quench_runtime::SourceKind::Script),
         Some(extension) if extension != "js" => return detect_source_kind(path),
@@ -205,6 +206,9 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     let export_values = context.host_function(crate::host::shared_vm::operation("builtinExportValues"))?;
     let key = context.string_rooted(BUILTIN_EXPORT_VALUES);
     context.define_data_property_rooted(global, key, export_values, false, false, false)?;
+    let instantiate_wasm = context.host_function(crate::host::shared_vm::operation("esmWasmInstantiate"))?;
+    let key = context.string_rooted(super::esm_wasm::INSTANTIATE);
+    context.define_data_property_rooted(global, key, instantiate_wasm, false, false, false)?;
     let print_eval = context.host_function(crate::host::shared_vm::operation("nodePrintEvalScript"))?;
     let key = context.string_rooted("\0quench:evalScript");
     context.define_data_property_rooted(global, key, print_eval, false, false, false)?;
