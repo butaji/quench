@@ -54,6 +54,29 @@ pub fn release_read_only_pages() {
     }
 }
 
+/// Collections the host has seen, and the count at the last release before output.
+static COLLECTIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static COLLECTIONS_AT_OUTPUT_RELEASE: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(u64::MAX);
+
+/// Records a collection boundary, after which the next output releases the read-only pages.
+pub fn note_collection() {
+    COLLECTIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Releases the read-only pages before console output when a collection has run since the
+/// last such release: a run that prints its result once at the end touches the output code
+/// while its own code is resident, at the peak of its heap (V8-v7 RegExp max RSS, bolted
+/// static x86_64, 2026-10-19: 6316-6524 -> 6244-6300 KiB). Output in a loop that allocates
+/// little releases nothing more.
+pub fn release_before_output() {
+    use std::sync::atomic::Ordering::Relaxed;
+    let collections = COLLECTIONS.load(Relaxed);
+    if COLLECTIONS_AT_OUTPUT_RELEASE.swap(collections, Relaxed) != collections {
+        release_read_only_pages();
+    }
+}
+
 /// Returns the allocator's free pages to the system: a compilation frees its syntax tree
 /// and passes, whose pages would otherwise stay resident beside the program.
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
