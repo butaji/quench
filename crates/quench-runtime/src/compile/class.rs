@@ -924,17 +924,34 @@ impl FunctionCompiler<'_, '_> {
     fn function_initializer_inlines(&mut self, initializer: &Expression<'_>) -> bool {
         use oxc_ast_visit::Visit;
         let mut references = InitializerReferences::default();
-        match initializer {
+        let params = match initializer {
             Expression::ArrowFunctionExpression(arrow) => {
                 references.visit_arrow_function_expression(arrow);
+                &arrow.params
             }
             Expression::FunctionExpression(function) => {
                 references.visit_function(function, oxc_syntax::scope::ScopeFlags::Function);
+                &function.params
             }
             _ => return false,
-        }
+        };
+        // A name the function binds as a parameter resolves inside it, to that parameter or
+        // an inner shadow, never to the constructor's binding.
+        let own = params
+            .items
+            .iter()
+            .flat_map(|param| param.pattern.get_binding_identifiers())
+            .map(|binding| binding.name.as_str())
+            .chain(
+                params
+                    .rest
+                    .iter()
+                    .flat_map(|rest| rest.rest.argument.get_binding_identifiers())
+                    .map(|binding| binding.name.as_str()),
+            )
+            .collect::<Vec<_>>();
         !references.activation_bound
-            && references.names.iter().all(|name| {
+            && references.names.iter().filter(|name| !own.contains(name)).all(|name| {
                 let atom = self.owner.atom(name);
                 !self.binds_name(atom)
             })
