@@ -234,7 +234,7 @@ fallbacks are rejected because the current callout ABI returns at most one
 value. The direct-entry raw argument path also marshals directly from the
 caller register window into owned Wasm words before native entry.
 
-The root mode has limits of 32 selected functions, 80,000 bytecodes per
+The root mode has limits of 128 selected functions, 80,000 bytecodes per
 function, and 2 MiB emitted code. It is opt-in with
 `--jit-wasm-root <residual-function-id>` and never marks a report eligible for
 qualification. The one-round HashSet diagnostic confirms root 3 entered native
