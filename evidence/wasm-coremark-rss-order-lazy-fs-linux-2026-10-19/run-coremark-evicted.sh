@@ -15,6 +15,8 @@ declare -A CMD=(
 )
 evict() { python3 -c 'import os,sys
 fd=os.open(sys.argv[1],os.O_RDONLY); os.posix_fadvise(fd,0,0,os.POSIX_FADV_DONTNEED); os.close(fd)' "$1"; }
+# Pages still dirty from the write cannot be evicted until written back.
+sync
 names=($(printf "%s\n" "${!CMD[@]}" | sort | grep -E "${ONLY:-.}")); n=${#names[@]}
 echo "round,engine,score,maxrss_kb,wall_ms,status" > "$OUT"
 for ((r=0; r<ROUNDS; r++)); do
