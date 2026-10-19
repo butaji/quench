@@ -10377,7 +10377,7 @@ fn js_jit_compiles_pure_numeric_loops_with_backedge_polls() {
         program.disassemble()
     );
     assert!(
-        super::js_compiled::function_candidate(&program.functions[2], &program.atoms),
+        super::js_compiled::function_candidate(&program.functions[2], &program),
         "capacity function candidate rejected"
     );
     assert!(
