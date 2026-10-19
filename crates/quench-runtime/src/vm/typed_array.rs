@@ -163,7 +163,7 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
     ) -> Result<(), JsError> {
-        let iterator = self.well_known_symbols["iterator"];
+        let iterator = self.well_known_symbols[WellKnownSymbol::Iterator];
         let values_atom = self.intern_atom("values");
         let values = self.get_property(p, self.typed_array_proto, values_atom)?;
         self.set_symbol_property(self.typed_array_proto, iterator, values)?;

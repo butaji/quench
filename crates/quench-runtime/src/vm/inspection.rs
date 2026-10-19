@@ -22,7 +22,7 @@ impl<H: Host> Vm<H> {
                 return Some(name);
             }
         }
-        let tag = self.well_known_symbols.get("toStringTag").copied();
+        let tag = self.well_known_symbols.get(WellKnownSymbol::ToStringTag);
         let constructor = self.lookup_atom("constructor");
         let mut current = value;
         while let Some(data) = self.object_data(current) {

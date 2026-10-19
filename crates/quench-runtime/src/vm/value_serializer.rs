@@ -1862,8 +1862,7 @@ impl<H: Host> Vm<H> {
         }
         let tag = self
             .well_known_symbols
-            .get("toStringTag")
-            .copied()
+            .get(WellKnownSymbol::ToStringTag)
             .and_then(|symbol| self.diagnostic_data_property(value, PropertyKey::symbol(symbol)))
             .and_then(|tag| match self.heap.get(tag) {
                 Some(Cell::String(text)) => Some(text.to_string()),
