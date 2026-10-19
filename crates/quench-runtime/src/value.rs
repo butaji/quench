@@ -45,6 +45,8 @@ const DIRECT_FUNCTION_HANDLE_BITS: u64 = DIRECT_OBJECT_HANDLE_BIT | DIRECT_ARRAY
 /// The promise record family's code, below the other direct-handle bits. Legacy slot and
 /// record indices stay below it (`MAX_HEAP_CELLS`, `RECORD_SPACE_CAPACITY`).
 const DIRECT_PROMISE_HANDLE_BIT: u64 = 1 << 45;
+/// The await-state record family's code.
+const DIRECT_AWAIT_HANDLE_BITS: u64 = DIRECT_PROMISE_HANDLE_BIT | DIRECT_ARRAY_HANDLE_BIT;
 /// The payload bits that code a heap value's reference family.
 const HEAP_FAMILY_BITS: u64 = DIRECT_FUNCTION_HANDLE_BITS | DIRECT_PROMISE_HANDLE_BIT;
 /// The bits that name a heap value's reference family (`Value::heap_reference`).
@@ -57,6 +59,7 @@ pub(crate) enum HeapReference {
     ArrayRecord(u32),
     FunctionRecord(u32),
     PromiseRecord(u32),
+    AwaitRecord(u32),
 }
 
 /// `value` truncated toward zero when it fits `i32`; any other result is some `i32` whose
@@ -260,6 +263,11 @@ impl Value {
     }
 
     #[inline(always)]
+    pub(crate) fn direct_await(index: u32) -> Self {
+        Self(TAG_HEAP | DIRECT_AWAIT_HANDLE_BITS | u64::from(index))
+    }
+
+    #[inline(always)]
     pub(crate) fn direct_promise(index: u32) -> Self {
         Self(TAG_HEAP | DIRECT_PROMISE_HANDLE_BIT | u64::from(index))
     }
@@ -303,6 +311,7 @@ impl Value {
                 DIRECT_ARRAY_HANDLE_BIT => HeapReference::ArrayRecord(index),
                 DIRECT_FUNCTION_HANDLE_BITS => HeapReference::FunctionRecord(index),
                 DIRECT_PROMISE_HANDLE_BIT => HeapReference::PromiseRecord(index),
+                DIRECT_AWAIT_HANDLE_BITS => HeapReference::AwaitRecord(index),
                 _ => return None,
             },
         )
@@ -315,7 +324,8 @@ impl Value {
             HeapReference::ObjectRecord(_)
             | HeapReference::ArrayRecord(_)
             | HeapReference::FunctionRecord(_)
-            | HeapReference::PromiseRecord(_) => None,
+            | HeapReference::PromiseRecord(_)
+            | HeapReference::AwaitRecord(_) => None,
         }
     }
 
@@ -328,6 +338,11 @@ impl Value {
     #[inline(always)]
     pub(crate) fn direct_array_index(self) -> Option<u32> {
         (self.0 & HEAP_FAMILY_MASK == TAG_HEAP | DIRECT_ARRAY_HANDLE_BIT).then_some(self.0 as u32)
+    }
+
+    #[inline(always)]
+    pub(crate) fn direct_await_index(self) -> Option<u32> {
+        (self.0 & HEAP_FAMILY_MASK == TAG_HEAP | DIRECT_AWAIT_HANDLE_BITS).then_some(self.0 as u32)
     }
 
     #[inline(always)]
@@ -499,6 +514,14 @@ mod tests {
         assert_eq!(
             direct_promise.heap_reference(),
             Some(super::HeapReference::PromiseRecord(42))
+        );
+        let direct_await = Value::direct_await(42);
+        assert_eq!(direct_await.direct_await_index(), Some(42));
+        assert_eq!(direct_await.direct_promise_index(), None);
+        assert_eq!(direct_await.direct_array_index(), None);
+        assert_eq!(
+            direct_await.heap_reference(),
+            Some(super::HeapReference::AwaitRecord(42))
         );
         assert_eq!(
             Value::int_pair(Value::integer(-2), Value::integer(3)),
