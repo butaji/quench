@@ -2217,6 +2217,15 @@ enum CompiledJsEntry {
     NumberInterruptible(
         unsafe extern "C" fn(*const f64, *const std::sync::atomic::AtomicBool, *mut u32) -> f64,
     ),
+    StringHashLoop(
+        unsafe extern "C" fn(
+            *const u8,
+            *const usize,
+            u32,
+            *const std::sync::atomic::AtomicBool,
+            *mut u32,
+        ) -> f64,
+    ),
     StringReturnPc(unsafe extern "C" fn(*const f64) -> u32),
     Boolean(unsafe extern "C" fn(*const f64) -> u32),
 }
@@ -2255,6 +2264,23 @@ impl CompiledJsFunction {
                     >(code.pointer)
                 };
                 (CompiledJsEntry::NumberInterruptible(entry), Vec::new())
+            }
+            super::js_compiled::JsJitResultKind::StringHashLoop => {
+                // SAFETY: the string hash loop compiler emits the matching
+                // code-unit pointer, length, interrupt, and status ABI.
+                let entry = unsafe {
+                    std::mem::transmute::<
+                        *mut u8,
+                        unsafe extern "C" fn(
+                            *const u8,
+                            *const usize,
+                            u32,
+                            *const std::sync::atomic::AtomicBool,
+                            *mut u32,
+                        ) -> f64,
+                    >(code.pointer)
+                };
+                (CompiledJsEntry::StringHashLoop(entry), Vec::new())
             }
             super::js_compiled::JsJitResultKind::StringReturnPc(return_constants) => {
                 // SAFETY: the static-string compiler emits `fn(*const f64) -> u32`.
@@ -2310,6 +2336,7 @@ impl CompiledJsFunction {
                     let result = entry(arguments.as_ptr(), interrupt, &mut completed);
                     (completed != 0).then_some(CompiledJsResult::Number(result))
                 }
+                CompiledJsEntry::StringHashLoop(_) => None,
                 CompiledJsEntry::StringReturnPc(entry) => {
                     Some(CompiledJsResult::StringReturnPc(entry(arguments.as_ptr())))
                 }
@@ -2318,6 +2345,32 @@ impl CompiledJsFunction {
                 }
             }
         }
+    }
+
+    fn call_string_hash_loop(
+        &self,
+        units: crate::vm::wtf16::Units<'_>,
+        interrupt: &std::sync::atomic::AtomicBool,
+    ) -> Option<CompiledJsResult> {
+        #[cfg(test)]
+        self.native_entries
+            .set(self.native_entries.get().saturating_add(1));
+        let CompiledJsEntry::StringHashLoop(entry) = self.entry else {
+            return None;
+        };
+        let mut completed = 0_u32;
+        let (units_ptr, length, ascii) = match units {
+            crate::vm::wtf16::Units::Ascii(bytes) => (bytes.as_ptr(), bytes.len(), 1),
+            crate::vm::wtf16::Units::Wide(units) => (units.as_ptr().cast::<u8>(), units.len(), 0),
+        };
+        // SAFETY: `units` remains borrowed for the duration of the native call;
+        // the generated code selects the matching byte or UTF-16 load width.
+        let result = unsafe { entry(units_ptr, &length, ascii, interrupt, &mut completed) };
+        (completed != 0).then_some(CompiledJsResult::Number(result))
+    }
+
+    fn is_string_hash_loop(&self) -> bool {
+        matches!(self.entry, CompiledJsEntry::StringHashLoop(_))
     }
 
     pub(super) fn string_constant_for_return(&self, return_pc: u32) -> Option<u32> {
@@ -6036,6 +6089,19 @@ impl<H: Host> Vm<H> {
 
         let params = usize::from(function.params);
         let registers = self.frames[frame].registers.get(..params)?;
+        let string_hash_candidate =
+            super::js_compiled::has_string_hash_loop_candidate(program, function)
+                && params == 1
+                && self.js_jit_string_hash_guard()
+                && matches!(self.heap.get(registers[0]), Some(Cell::String(_)));
+        let string_hash_units = if string_hash_candidate {
+            let Some(Cell::String(string)) = self.heap.get(registers[0]) else {
+                unreachable!("guarded JIT string argument changed")
+            };
+            Some(string.units())
+        } else {
+            None
+        };
         let mut arguments: smallvec::SmallVec<[f64; 8]> = smallvec::SmallVec::new();
         let mut numeric = true;
         for value in registers {
@@ -6054,7 +6120,9 @@ impl<H: Host> Vm<H> {
 
         let compiled = match tier {
             Some(super::program_store::JsTierState::Compiled(compiled)) => {
-                if !numeric {
+                if (!numeric && !compiled.is_string_hash_loop())
+                    || (compiled.is_string_hash_loop() && string_hash_units.is_none())
+                {
                     return None;
                 }
                 compiled
@@ -6067,8 +6135,8 @@ impl<H: Host> Vm<H> {
                     program_id,
                     function_id,
                     numeric,
-                    numeric_loop_candidate,
-                ) || !numeric
+                    (numeric && numeric_loop_candidate) || string_hash_units.is_some(),
+                ) || (!numeric && string_hash_units.is_none())
                 {
                     return None;
                 }
@@ -6114,7 +6182,13 @@ impl<H: Host> Vm<H> {
             self.programs
                 .record_js_jit_native_entry(program_id, function_id);
         }
-        match compiled.call(&arguments, self.execution_interrupt.atomic_flag())? {
+        let result = if compiled.is_string_hash_loop() {
+            compiled
+                .call_string_hash_loop(string_hash_units?, self.execution_interrupt.atomic_flag())?
+        } else {
+            compiled.call(&arguments, self.execution_interrupt.atomic_flag())?
+        };
+        match result {
             CompiledJsResult::Number(value) => {
                 let last_pc = function.code.len().checked_sub(1)?;
                 let terminal = function.code.get(last_pc)?.as_wide();
@@ -6146,6 +6220,16 @@ impl<H: Host> Vm<H> {
                 ))
             }
         }
+    }
+
+    fn js_jit_string_hash_guard(&self) -> bool {
+        let Some(atom) = self.lookup_atom("charCodeAt") else {
+            return false;
+        };
+        let Some(method) = self.own_property(self.string_proto, atom) else {
+            return false;
+        };
+        self.is_current_realm_native(method, Native::StringCharCodeAt)
     }
 
     /// Call an already-promoted JavaScript tier before the generic path pushes
