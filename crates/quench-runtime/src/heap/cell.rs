@@ -721,6 +721,22 @@ pub(crate) struct AwaitState {
     /// The await of an async generator's `yield`, which settles the request with the value.
     pub(crate) yielded: bool,
 }
+impl AwaitState {
+    /// The program its suspended continuation resumes in, which stays alive with it.
+    pub(crate) fn program_references(&self, mut visit: impl FnMut(ProgramId)) {
+        if let Some(continuation) = &self.continuation {
+            visit(continuation.program);
+        }
+    }
+
+    /// Its edges: the realm and promise it resumes, the generator, the suspended frame.
+    pub(crate) fn roots(&self) -> impl Iterator<Item = Value> + '_ {
+        [self.realm, self.promise]
+            .into_iter()
+            .chain(self.generator)
+            .chain(self.continuation.iter().flat_map(|continuation| continuation.roots()))
+    }
+}
 impl TypedArrayKind {
     pub(crate) const fn is_bigint(self) -> bool {
         matches!(self, Self::BigInt64 | Self::BigUint64)
@@ -1599,6 +1615,7 @@ impl Object {
             Some(HeapReference::ArrayRecord(id)) => PROTO_ARRAY_RECORD_BASE + id,
             Some(HeapReference::FunctionRecord(id)) => PROTO_FUNCTION_RECORD_BASE + id,
             Some(HeapReference::PromiseRecord(id)) => PROTO_PROMISE_RECORD_BASE + id,
+            Some(HeapReference::AwaitRecord(_)) => unreachable!("an await state is never a prototype"),
             None if proto.is_null() => PROTO_NULL,
             None => {
                 debug_assert!(proto.is_undefined(), "a prototype is an object or null");
@@ -2926,11 +2943,7 @@ impl Cell {
                     visit(continuation.program);
                 }
             }
-            Self::AwaitState(state) => {
-                if let Some(continuation) = &state.continuation {
-                    visit(continuation.program);
-                }
-            }
+            Self::AwaitState(state) => state.program_references(&mut visit),
             _ => {}
         }
     }

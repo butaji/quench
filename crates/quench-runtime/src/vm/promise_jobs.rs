@@ -476,7 +476,7 @@ impl<H: Host> Vm<H> {
             .flatten();
         let outcome = self.with_call_roots([reaction.handler, reaction.next, value], |vm| {
             vm.promise_job_boundary(reaction.execution_context, true)?;
-            let await_reaction = matches!(vm.heap.get(reaction.handler), Some(Cell::AwaitState(_)));
+            let await_reaction = vm.heap.await_state(reaction.handler).is_some();
             if !await_reaction && !vm.is_function(reaction.handler) {
                 vm.settle_reaction(
                     p,

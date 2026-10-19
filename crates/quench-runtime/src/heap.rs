@@ -30,7 +30,8 @@ pub(crate) use buffer_bytes::{BufferBytes,BufferRead};
 pub(crate) use collection_entries::CollectionEntries;
 use external::array_payload_bytes;
 use records::{
-    ArrayRecordSpace, FunctionRecordSpace, ObjectRecordSpace, PromiseRecordSpace, RecordFamily,
+    ArrayRecordSpace, AwaitRecordSpace, FunctionRecordSpace, ObjectRecordSpace,
+    PromiseRecordSpace, RecordFamily,
     RecordId, RecordSweep,
 };
 pub use root::RootId;
@@ -310,7 +311,7 @@ fn rc_drop_lock_index(address: usize) -> usize {
     (address >> 4) & (RC_DROP_LOCK_STRIPES - 1)
 }
 /// The record families `Heap::record_families` lists.
-const RECORD_FAMILIES: usize = 4;
+const RECORD_FAMILIES: usize = 5;
 
 /// Every family's mark bits, borrowed apart from the slot a trace holds (`mark_bits!`).
 #[derive(Clone, Copy)]
@@ -319,6 +320,7 @@ pub(super) struct MarkBits<'a> {
     array_records: &'a ArrayRecordSpace,
     function_records: &'a FunctionRecordSpace,
     promise_records: &'a PromiseRecordSpace,
+    await_records: &'a AwaitRecordSpace,
     marks: &'a [AtomicU64],
 }
 
@@ -330,6 +332,7 @@ impl MarkBits<'_> {
             Some(HeapReference::ArrayRecord(id)) => self.array_records.is_marked(id),
             Some(HeapReference::FunctionRecord(id)) => self.function_records.is_marked(id),
             Some(HeapReference::PromiseRecord(id)) => self.promise_records.is_marked(id),
+            Some(HeapReference::AwaitRecord(id)) => self.await_records.is_marked(id),
             Some(HeapReference::LegacySlot(index)) => {
                 let index = index as usize;
                 self.marks.get(index / u64::BITS as usize).is_some_and(|word| {
@@ -349,6 +352,7 @@ macro_rules! mark_bits {
             array_records: &$heap.array_records,
             function_records: &$heap.function_records,
             promise_records: &$heap.promise_records,
+            await_records: &$heap.await_records,
             marks: &$heap.marks,
         }
     };
@@ -361,6 +365,7 @@ pub(crate) struct Heap {
     array_records: ArrayRecordSpace,
     function_records: FunctionRecordSpace,
     promise_records: PromiseRecordSpace,
+    await_records: AwaitRecordSpace,
     /// Allocations per cell variant (`Cell::profile_variant_name`), finer than `CellKind`.
     #[cfg(feature = "profile-aggregate")]
     allocated_variants: std::collections::BTreeMap<&'static str, u64>,
@@ -785,6 +790,7 @@ impl Heap {
             (&self.array_records, Value::direct_array),
             (&self.function_records, Value::direct_function),
             (&self.promise_records, Value::direct_promise),
+            (&self.await_records, Value::direct_await),
         ]
     }
 
@@ -797,6 +803,7 @@ impl Heap {
             (&mut self.array_records, Value::direct_array),
             (&mut self.function_records, Value::direct_function),
             (&mut self.promise_records, Value::direct_promise),
+            (&mut self.await_records, Value::direct_await),
         ]
     }
 
@@ -805,7 +812,20 @@ impl Heap {
     pub(crate) fn for_each_program_reference(&mut self, mut visit: impl FnMut(crate::vm::ProgramId)) {
         self.function_records
             .for_each_live(|_, function| function.program().into_iter().for_each(&mut visit));
+        self.await_records
+            .for_each_live(|_, state| state.program_references(&mut visit));
         self.for_each_cell(|cell| cell.program_references(&mut visit));
+    }
+
+    /// Every live await state, in its record or in a slot.
+    #[cfg(test)]
+    pub(crate) fn for_each_await_state(&mut self, mut visit: impl FnMut(&AwaitState)) {
+        self.await_records.for_each_live(|_, state| visit(state));
+        self.for_each_cell(|cell| {
+            if let Cell::AwaitState(state) = cell {
+                visit(state);
+            }
+        });
     }
 
     /// Visits every cell in the slot heap.
@@ -938,6 +958,10 @@ impl Heap {
                 }
                 Err(promise) => Cell::Promise(Box::new(promise)),
             },
+            Cell::AwaitState(state) => match self.await_records.try_insert(*state) {
+                Ok(record_id) => return Value::direct_await(record_id),
+                Err(state) => Cell::AwaitState(Box::new(state)),
+            },
             Cell::Function(function) => match self.function_records.try_insert(*function) {
                 Ok(record_id) => {
                     let value = Value::direct_function(record_id);
@@ -1002,6 +1026,23 @@ impl Heap {
 
     /// `alloc(Cell::Promise(..))` without boxing the promise first: a promise record while
     /// one is free.
+    /// `alloc(Cell::AwaitState(..))` without boxing the state first: an await record while
+    /// one is free. An await state is internal: no prototype, payload or external bytes.
+    pub(crate) fn alloc_await_state(&mut self, state: AwaitState) -> Value {
+        if cfg!(feature = "profile-aggregate") {
+            return self.alloc(Cell::AwaitState(Box::new(state)));
+        }
+        self.allocations += 1;
+        self.allocations_since_full = self.allocations_since_full.saturating_add(1);
+        self.total_allocations += 1;
+        match self.await_records.try_insert(state) {
+            Ok(record_id) => Value::direct_await(record_id),
+            Err(state) => {
+                self.alloc_in_slot(Cell::AwaitState(Box::new(state)), self.tracks_young_cells())
+            }
+        }
+    }
+
     /// Allocations per cell variant.
     #[cfg(feature = "profile-aggregate")]
     pub(crate) fn allocated_variants(&self) -> &std::collections::BTreeMap<&'static str, u64> {
@@ -1241,6 +1282,7 @@ impl Heap {
         self.array_records = ArrayRecordSpace::default();
         self.function_records = FunctionRecordSpace::default();
         self.promise_records = PromiseRecordSpace::default();
+        self.await_records = AwaitRecordSpace::default();
         self.marks.clear();
         self.free_by_slab.clear();
         self.free_slabs.clear();
@@ -1608,6 +1650,9 @@ impl Heap {
                         memory_profile.freed_promise(Value::direct_promise(_record_id), slots);
                     }
                 });
+            // An await state owns no arena storage; dropping a dead one frees its unresumed
+            // continuation.
+            let (await_live, await_freed) = self.await_records.sweep(|_| {});
             let mut dead_arrays = Vec::new();
             let (array_live, array_freed) = self.array_records.sweep(|record| match record {
                 RecordSweep::Keep(record_id, array) => {
@@ -1639,14 +1684,15 @@ impl Heap {
                     self.sparse_arrays = None;
                 }
             }
-            live += object_live + array_live + function_live + promise_live;
+            live += object_live + array_live + function_live + promise_live + await_live;
             #[cfg(feature = "profile-aggregate")]
             {
                 self.gc_profile.freed +=
-                    (object_freed + array_freed + function_freed + promise_freed) as u64;
+                    (object_freed + array_freed + function_freed + promise_freed + await_freed)
+                        as u64;
             }
             #[cfg(not(feature = "profile-aggregate"))]
-            let _ = (object_freed, array_freed, function_freed, promise_freed);
+            let _ = (object_freed, array_freed, function_freed, promise_freed, await_freed);
         }
         #[cfg(feature = "profile-aggregate")]
         {
@@ -2287,6 +2333,17 @@ impl Heap {
                 );
                 let mark_bits = mark_bits!(self);
                 ephemerons.newly_marked(value, None, |target| mark_bits.is_marked(target), work);
+            } else if let Some(record_id) = value.direct_await_index() {
+                if !self.await_records.mark(record_id) {
+                    continue;
+                }
+                #[cfg(feature = "profile-aggregate")]
+                {
+                    self.gc_profile.marked += 1;
+                    self.gc_profile.marked_kinds[CellKind::AwaitState as usize] += 1;
+                }
+                // SAFETY: a direct await Value names an initialized record.
+                work.extend(unsafe { self.await_records.get_live(record_id) }.roots());
             } else if let Some(record_id) = value.direct_promise_index() {
                 if !self.promise_records.mark(record_id) {
                     continue;
@@ -2420,6 +2477,7 @@ impl Heap {
                 self.function_records.remember(record_id)
             }
             Some(HeapReference::PromiseRecord(record_id)) => self.promise_records.remember(record_id),
+            Some(HeapReference::AwaitRecord(record_id)) => self.await_records.remember(record_id),
             Some(HeapReference::LegacySlot(index)) => self.remember(index as usize),
             None => {}
         }
@@ -2878,13 +2936,7 @@ impl Heap {
                     work.extend(record.roots());
                 }
             }
-            Cell::AwaitState(state) => {
-                work.extend([state.realm, state.promise]);
-                work.extend(state.generator);
-                if let Some(continuation) = &state.continuation {
-                    work.extend(continuation.roots());
-                }
-            }
+            Cell::AwaitState(state) => work.extend(state.roots()),
             Cell::ArrayFromAsyncState(state) => {
                 work.extend([state.output, state.result, state.this_arg]);
                 work.extend(state.iterator);
