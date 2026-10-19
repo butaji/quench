@@ -736,13 +736,28 @@ impl FunctionCompiler<'_, '_> {
         fields: &[ClassField<'_>],
         private_methods: &[Atom],
     ) {
+        if fields.is_empty() && private_methods.is_empty() {
+            return;
+        }
         let this = self.reg();
         self.emit(Op::LoadThis, this, 0, 0, 0);
-        let home_atom = self
-            .super_home_atom
-            .expect("class constructor carries its private home object");
-        let home_name = self.owner.atoms[home_atom as usize].to_string();
-        let home = self.load_name(&home_name);
+        let private_field = |field: &ClassField<'_>| {
+            matches!(
+                field,
+                ClassField::Property(field)
+                    if matches!(&field.key, PropertyKey::PrivateIdentifier(_))
+            )
+        };
+        // Only private elements read the private home object.
+        let home = if private_methods.is_empty() && !fields.iter().any(private_field) {
+            0
+        } else {
+            let home_atom = self
+                .super_home_atom
+                .expect("class constructor carries its private home object");
+            let home_name = self.owner.atoms[home_atom as usize].to_string();
+            self.load_name(&home_name)
+        };
         for atom in private_methods {
             self.emit(Op::MarkPrivateName, 0, this, home, *atom);
         }

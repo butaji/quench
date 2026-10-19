@@ -162,7 +162,6 @@ fn promoted_local_layout_is_valid(function: &super::Function, atoms: &super::Ato
     let eligible_function = function.parent.is_some()
         && !function.is_async
         && !function.is_generator
-        && !function.is_class_constructor
         && !function.derived_constructor
         && !function.class_initializer
         && function.simple_parameters
