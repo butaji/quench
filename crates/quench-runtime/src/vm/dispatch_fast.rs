@@ -2928,6 +2928,22 @@ lane_handler! {
     }
 }
 
+lane_handler! {
+    /// `lane_jump_binary_false` of two registers under `===` or `!==`
+    /// (`specialize_register_operands`): strict equality runs no guest code, so the lane
+    /// decides every pair (`Vm::strict_equal`) without the general relation chain.
+    fn lane_jump_strict_equal_false<BACKWARD: bool>(cx, r, ip, i, view) {
+        let Some((true, negated)) = super::operations::equality_operator(u32::from(i.a)) else {
+            return exit(ip);
+        };
+        let equal = unsafe { vm(cx) }.strict_equal(r.get(i.b), r.get(i.c));
+        if equal == negated {
+            return lane_jump(cx, r, ip, BACKWARD, view, None);
+        }
+        next!(cx, r, following(ip), view)
+    }
+}
+
 /// The boolean a `lane_jump_boolean_false` record compares against, in its `c` field.
 const STRICT_BOOLEAN_FALSE: u16 = 0;
 const STRICT_BOOLEAN_TRUE: u16 = 1;
@@ -8027,8 +8043,17 @@ fn specialize_register_operands<H: Host>(
         if right_kind != Register {
             continue;
         }
+        let strict = record.handler != get_index
+            && super::operations::equality_operator(u32::from(instruction.a()))
+                .is_some_and(|(strict, _)| strict);
         let handler: Handler = if record.handler == get_index {
             lane_get_index_registers::<H>
+        } else if strict {
+            if backward {
+                lane_jump_strict_equal_false::<H, true>
+            } else {
+                lane_jump_strict_equal_false::<H, false>
+            }
         } else if backward {
             lane_jump_binary_false_registers::<H, true>
         } else {
