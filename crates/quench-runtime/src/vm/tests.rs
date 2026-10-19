@@ -10769,6 +10769,31 @@ fn anonymous_function_definitions_are_named_by_their_plan() {
 }
 
 #[test]
+fn lane_closures_share_and_update_their_promoted_environment() {
+    // Closures a lane makes promote their frame's environment once: siblings share it,
+    // later writes are seen, and per-iteration bindings stay distinct.
+    let source = r#"
+      const out = [];
+      function counter() { let n = 0; const inc = () => ++n; const get = () => n; return [inc, get]; }
+      function outer(a) { let b = a * 2; function mid(c) { const f = () => a + b + c; b++; return f; } return mid; }
+      for (let i = 0; i < 3; i++) {
+        const [inc, get] = counter(); inc(); inc(); out.push(get());
+        const m = outer(i); const f1 = m(1); const f2 = m(10); out.push(f1(), f2(), f1.name, typeof f2);
+        const fs = []; for (let j = 0; j < 3; j++) fs.push(() => j); out.push(fs.map(f => f()).join(''));
+        const o = {}; out.push(Object.keys(o).length, Object.getPrototypeOf(o) === Object.prototype);
+      }
+      print(out.join(','));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "lane-closures.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["2,3,12,f,function,012,0,true,2,6,15,f,function,012,0,true,2,9,18,f,function,012,0,true"]
+    );
+}
+
+#[test]
 fn bound_calls_and_base_class_constructions_pushed_in_place_keep_their_semantics() {
     // Bound calls and base class constructions run as in-loop frames: bound `this` and
     // argument order, nested binds, sloppy `this` coercion, `new.target`, fields, and a
