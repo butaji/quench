@@ -4493,8 +4493,10 @@ lane_handler! {
         };
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
         let target = unsafe { &*target };
-        // One test: the out-of-line form sorts out the other entries.
+        // One test: the out-of-line form sorts out the other entries, and the site calls it
+        // directly from now on.
         if target.entry != CallEntry::Activates {
+            requicken(ip, lane_script_call_full::<H>);
             sibling!(lane_script_call_full::<H>, r, ip, Carried::SCRIPT)
         }
         // A receiver whose binding needs the heap takes the out-of-line form, so this
@@ -4543,12 +4545,20 @@ lane_handler! {
     /// `CallEntry::ReadsElement`), whose hit (`lane_call_read`) completes the
     /// call with its value as the callee's return would; a call that returns its callee's
     /// completion completes its caller in turn (`lane_return_value!`). Anything else
-    /// activates the callee.
+    /// activates the callee. A site that called such a target calls this form directly, so it
+    /// makes `lane_script_call`'s own entry tests.
     #[inline(never)]
     fn lane_script_call_full<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let Some(target) = vm.script_call_entry(r.get(i.b)) else {
+        if !unsafe { (*cx).script_calls } {
             return exit(ip);
+        }
+        let vm = unsafe { vm(cx) };
+        let callee = r.get(i.b);
+        if lane_constructing(vm, callee) {
+            sibling!(lane_native_call::<H>, r, ip, Carried::SCRIPT)
+        }
+        let Some(target) = vm.script_call_entry(callee) else {
+            sibling!(lane_script_call_resolve::<H>, r, ip, Carried::SCRIPT)
         };
         // SAFETY: as `Vm::script_call_entry`; a read resolves no target and collects nothing.
         let target = unsafe { &*target };
@@ -6063,14 +6073,18 @@ unsafe fn lane_call_read<H: Host>(
     let base = lane_read_base(crate::bytecode::FieldBase(field.b), &argument, this)?;
     let receiver = lane_record_field_hit(vm, code, field, base)?;
     let callee = lane_record_field_hit(vm, code, method, receiver)?;
-    let inner = vm.script_call_target(callee).filter(|inner| inner.entry.reads())?;
-    let inner_this = lane_direct_call_this(vm, &inner, receiver)?;
+    // SAFETY: as `Vm::script_call_entry`; a read resolves no target and collects nothing.
+    let inner = unsafe { &*vm.script_call_entry(callee)? };
+    if !inner.entry.reads() {
+        return None;
+    }
+    let inner_this = lane_direct_call_this(vm, inner, receiver)?;
     // The call passes the parameters in order, so its argument `k` is parameter `k`.
     let passed = target.params;
     unsafe {
         lane_call_leaf_read(
             cx,
-            &inner,
+            inner,
             |parameter| if parameter < passed { argument(parameter) } else { None },
             inner_this,
         )
