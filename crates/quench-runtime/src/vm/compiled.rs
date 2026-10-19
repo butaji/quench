@@ -2207,7 +2207,7 @@ pub(super) struct CompiledJsFunction {
     params: usize,
     mapped_bytes: usize,
     return_constants: Vec<(u32, u32)>,
-    field_argument: Option<(u32, u16)>,
+    field_argument: Option<super::js_compiled::JsJitFieldArgument>,
     #[cfg(test)]
     native_entries: std::cell::Cell<u64>,
 }
@@ -2319,7 +2319,7 @@ impl CompiledJsFunction {
         self.params
     }
 
-    pub(super) fn field_argument(&self) -> Option<(u32, u16)> {
+    pub(super) fn field_argument(&self) -> Option<super::js_compiled::JsJitFieldArgument> {
         self.field_argument
     }
 
@@ -6109,12 +6109,12 @@ impl<H: Host> Vm<H> {
                 }
             }
         }
-        if let Some((_, cache_site)) = field_argument {
+        if let Some(field_argument) = field_argument {
             let receiver = first_argument?;
             arguments.clear();
             numeric = false;
             if let super::object::FieldCacheProbe::Hit(value) =
-                self.cached_field_hit(program, receiver, cache_site)
+                self.cached_field_hit(program, receiver, field_argument.cache_site)
                 && let Some(number) = value.as_number()
             {
                 arguments.push(number);
@@ -6163,8 +6163,7 @@ impl<H: Host> Vm<H> {
                     program_id,
                     function_id,
                     numeric,
-                    (numeric
-                        && (numeric_loop_candidate || field_argument.is_some()))
+                    (numeric && (numeric_loop_candidate || field_argument.is_some()))
                         || string_hash_units.is_some(),
                 ) || (!numeric && string_hash_units.is_none())
                 {
