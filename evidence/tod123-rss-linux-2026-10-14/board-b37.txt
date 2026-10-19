@@ -1,0 +1,35 @@
+# max RSS KiB, evicted runs, static x86_64 4 vCPU, 2026-10-19. qn-r2b = bolted retrained v2-cloud-c2 (young every 1/64 live set, read-only pages released after every collection); qjs = QuickJS 2026-06-04
+regexp qn-r2b  6420 6420 6420 6416 6412
+regexp qjs  6788 6692 6736 6736 6636
+crypto qn-r2b  3276 3276 3276 3292 3276
+crypto qjs  3480 3560 3412 3576 3484
+deltablue qn-r2b  3012 2980 3016 2972 2972
+deltablue qjs  3668 3584 3660 3824 3904
+earley-boyer qn-r2b  8852 8852 8828 8852 8784
+earley-boyer qjs  16696 16644 16800 16680 16620
+navier-stokes qn-r2b  4108 4108 4108 4108 4108
+navier-stokes qjs  4864 5004 4976 5012 4944
+raytrace qn-r2b  2888 2888 2888 2888 2888
+raytrace qjs  3376 3344 3512 3376 3216
+richards qn-r2b  2588 2588 2588 2588 2588
+richards qjs  3324 3304 3300 3308 3292
+splay qn-r2b  38916 38916 38916 38916 38996
+splay qjs  147040 146972 146944 147044 147000
+# quench-node --jit, same binary
+crypto qn-jit  3272 3272 3272
+deltablue qn-jit  2960 3008 3156
+earley-boyer qn-jit  8860 8884 8848
+navier-stokes qn-jit  4096 4096 4096
+raytrace qn-jit  2932 2884 2884
+regexp qn-jit  6540 6520 6536
+richards qn-jit  2760 2736 2736
+splay qn-jit  38912 38976 38912
+# Node v26.10.0 (--jitless / JIT) and Bun (BUN_JSC_useJIT=0 / JIT), one run each
+crypto node-jitless 43944 node 62360 bun-nojit 23756 bun 47872
+deltablue node-jitless 46756 node 95196 bun-nojit 23828 bun 45628
+earley-boyer node-jitless 110172 node 127276 bun-nojit 28256 bun 74352
+navier-stokes node-jitless 49180 node 60444 bun-nojit 24088 bun 38876
+raytrace node-jitless 51520 node 77224 bun-nojit 24692 bun 53928
+regexp node-jitless 54884 node 69660 bun-nojit 32012 bun 54020
+richards node-jitless 44692 node 56208 bun-nojit 23360 bun 40636
+splay node-jitless 372616 node 459548 bun-nojit 63732 bun 189252
