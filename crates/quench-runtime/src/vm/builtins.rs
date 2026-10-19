@@ -602,6 +602,7 @@ const NATIVES: &[Native] = &[
     Native::AsyncGeneratorDelegateRejected,
     Native::WebAssemblyValidate, Native::WebAssemblyCompile, Native::WebAssemblyInstantiate,
     Native::WasmModule, Native::WasmModuleExports, Native::WasmModuleImports,
+    Native::WasmModuleCustomSections,
     Native::WasmInstance, Native::WasmInstanceExportsGetter,
     Native::WasmMemory, Native::WasmMemoryGrow, Native::WasmMemoryBufferGetter,
     Native::WasmTable, Native::WasmTableLengthGetter, Native::WasmTableGrow, Native::WasmTableGet,
@@ -697,28 +698,12 @@ impl<H: Host> Vm<H> {
         self.set_builtin_function_name(symbol, "Symbol")?;
         self.set_builtin_named(program, symbol, "for", Native::SymbolFor)?;
         self.set_builtin_named(program, symbol, "keyFor", Native::SymbolKeyFor)?;
-        for name in [
-            "asyncDispose",
-            "asyncIterator",
-            "dispose",
-            "hasInstance",
-            "isConcatSpreadable",
-            "iterator",
-            "match",
-            "matchAll",
-            "metadata",
-            "replace",
-            "search",
-            "species",
-            "split",
-            "toPrimitive",
-            "toStringTag",
-            "unscopables",
-        ] {
+        for well_known in WellKnownSymbol::ALL {
+            let name = well_known.name();
             let value = self
                 .heap
                 .alloc(Cell::Symbol(crate::heap::SymbolData::public(Some(format!("Symbol.{name}").into()))));
-            self.well_known_symbols.insert(name.into(), value);
+            self.well_known_symbols.insert(well_known, value);
             self.set_named_constant(program, symbol, name, value)?;
         }
         self.install_typed_array_iterator_symbol(program)?;
@@ -727,7 +712,7 @@ impl<H: Host> Vm<H> {
         self.realm.intrinsics.builtin_prototypes.insert((self.realm.globals, Native::Symbol), symbol_prototype);
         let symbol_to_primitive = self.native_value(Native::SymbolToPrimitive);
         self.set_builtin_function_name(symbol_to_primitive, "[Symbol.toPrimitive]")?;
-        let to_primitive = self.well_known_symbols["toPrimitive"];
+        let to_primitive = self.well_known_symbols[WellKnownSymbol::ToPrimitive];
         self.set_symbol_property(symbol_prototype, to_primitive, symbol_to_primitive)?;
         self.set_property_attributes(
             symbol_prototype,
@@ -741,7 +726,7 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
-        let to_string_tag = self.well_known_symbols["toStringTag"];
+        let to_string_tag = self.well_known_symbols[WellKnownSymbol::ToStringTag];
         let symbol_tag = self.heap.alloc(Cell::String(JsString::from_str("Symbol")));
         self.set_symbol_property(symbol_prototype, to_string_tag, symbol_tag)?;
         self.set_property_attributes(
@@ -770,7 +755,7 @@ impl<H: Host> Vm<H> {
             self.regexp_proto,
             self.realm.globals,
         )?;
-        let has_instance_symbol = self.well_known_symbols["hasInstance"];
+        let has_instance_symbol = self.well_known_symbols[WellKnownSymbol::HasInstance];
         let has_instance = self.native_value(Native::FunctionPrototypeHasInstance);
         self.set_builtin_function_name(has_instance, "[Symbol.hasInstance]")?;
         self.set_symbol_property(self.function_proto, has_instance_symbol, has_instance)?;
@@ -802,7 +787,7 @@ impl<H: Host> Vm<H> {
         let date_prototype = self.get_property(program, date, prototype_atom)?;
         let date_to_primitive = self.native_value(Native::DateToPrimitive);
         self.set_builtin_function_name(date_to_primitive, "[Symbol.toPrimitive]")?;
-        if let Some(symbol) = self.well_known_symbols.get("toPrimitive").copied() {
+        if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::ToPrimitive) {
             self.set_symbol_property(date_prototype, symbol, date_to_primitive)?;
             self.set_property_attributes(
                 date_prototype,
@@ -1006,8 +991,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         let symbol = self
             .well_known_symbols
-            .get("toStringTag")
-            .copied()
+            .get(WellKnownSymbol::ToStringTag)
             .ok_or_else(|| JsError("Symbol.toStringTag is not initialized".into()))?;
         let value = self.heap.alloc(Cell::String(tag.into()));
         self.set_symbol_property(object, symbol, value)?;

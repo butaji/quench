@@ -9,7 +9,7 @@ impl<H: Host> Vm<H> {
         if method.is_some_and(|method| matches!(self.heap.function(method), Some(FunctionRecord { kind: FunctionKind::Native(Native::ObjectPrototypeToString), .. }))) {
             return "#<Object>".to_owned();
         }
-        let tag = self.well_known_symbols.get("toStringTag").copied()
+        let tag = self.well_known_symbols.get(WellKnownSymbol::ToStringTag)
             .and_then(|symbol| self.diagnostic_data_property(object, PropertyKey::symbol(symbol)))
             .and_then(|value| match self.heap.get(value) { Some(Cell::String(text)) => Some(text.host_string().to_owned()), _ => None });
         format!("[object {}]", tag.as_deref().unwrap_or("Object"))

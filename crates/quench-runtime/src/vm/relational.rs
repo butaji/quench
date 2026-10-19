@@ -177,7 +177,7 @@ impl<H: Host> Vm<H> {
             if !vm.is_object_like(constructor) {
                 return Err(vm.type_error(p, "right-hand side of 'instanceof' is not an object".into()));
             }
-            if let Some(has_instance) = vm.well_known_symbols.get("hasInstance").copied() {
+            if let Some(has_instance) = vm.well_known_symbols.get(WellKnownSymbol::HasInstance) {
                 let method = vm.get_index(p, constructor, has_instance)?;
                 if !method.is_undefined() && !method.is_null() {
                     if !vm.is_function(method) {
@@ -320,7 +320,7 @@ impl<H: Host> Vm<H> {
 
     /// The slot of `constructor`'s own data `prototype` when it has no own `@@hasInstance`.
     fn instanceof_constructor_slot(&mut self, constructor: Value) -> Option<usize> {
-        let has_instance = PropertyKey::symbol(*self.well_known_symbols.get("hasInstance")?);
+        let has_instance = PropertyKey::symbol(self.well_known_symbols.get(WellKnownSymbol::HasInstance)?);
         if self.property_attributes(constructor, has_instance).is_some() {
             return None;
         }
@@ -338,7 +338,7 @@ impl<H: Host> Vm<H> {
     /// with an own `@@hasInstance` holds it, and no proxy precedes it. A subclass constructor
     /// inherits it through its parent constructors.
     fn inherits_native_has_instance(&mut self, holder: Value) -> bool {
-        let Some(&symbol) = self.well_known_symbols.get("hasInstance") else {
+        let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::HasInstance) else {
             return false;
         };
         let mut current = holder;
@@ -366,7 +366,7 @@ impl<H: Host> Vm<H> {
     }
 
     fn verify_has_instance_holder(&mut self, holder: Value) -> bool {
-        let Some(&symbol) = self.well_known_symbols.get("hasInstance") else {
+        let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::HasInstance) else {
             return false;
         };
         let Some(attributes) = self.property_attributes(holder, PropertyKey::symbol(symbol))

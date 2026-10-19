@@ -1283,7 +1283,7 @@ impl<H: Host> Vm<H> {
         ] {
             self.set_realm_builtin_named(program, promise, name, native, method_realm)?;
         }
-        if let Some(species) = self.well_known_symbols.get("species").copied() {
+        if let Some(species) = self.well_known_symbols.get(WellKnownSymbol::Species) {
             let getter = self.realm_native_value(
                 Native::PromiseSpeciesGetter,
                 global,
@@ -4937,7 +4937,7 @@ impl<H: Host> Vm<H> {
                 self.set_property(namespace, atom, value)?;
             }
         }
-        if let Some(symbol) = self.well_known_symbols.get("toStringTag").copied() {
+        if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::ToStringTag) {
             let module = self
                 .heap
                 .alloc(Cell::String(namespace_tag.to_string().into()));

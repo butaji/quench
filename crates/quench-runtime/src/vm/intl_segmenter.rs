@@ -56,7 +56,7 @@ impl<H: Host> Vm<H> {
         let iterator =
             self.native_with_realm(Native::IntlSegmenterSegmentsIterator, global, global);
         self.set_builtin_function_name(iterator, "[Symbol.iterator]")?;
-        let symbol_iterator = self.well_known_symbols["iterator"];
+        let symbol_iterator = self.well_known_symbols[WellKnownSymbol::Iterator];
         self.set_symbol_property(segments_prototype, symbol_iterator, iterator)?;
         let containing =
             self.native_with_realm(Native::IntlSegmenterSegmentsContaining, global, global);
