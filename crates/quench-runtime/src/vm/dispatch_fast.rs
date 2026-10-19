@@ -5012,6 +5012,27 @@ fn lane_call_native<H: Host>(
     {
         return Some(Value::number(result));
     }
+    // A RegExp exec or test that runs no guest code and raises nothing observes no frame
+    // either (`Vm::steady_regexp_call`).
+    if let Some(native) = native
+        && argc > 0
+        // SAFETY: the context's program outlives the lane run.
+        && let Some(result) = vm.steady_regexp_call(
+            unsafe { &*(*cx).code },
+            native,
+            r.get(i.c),
+            r.get(window),
+        )
+    {
+        note_allocation(vm);
+        return match result {
+            Ok(value) => Some(value),
+            Err(error) => {
+                vm.lane_raised = Some(error);
+                None
+            }
+        };
+    }
     if !unsafe { (*cx).script_calls } {
         return None;
     }

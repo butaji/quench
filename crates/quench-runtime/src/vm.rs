@@ -605,7 +605,16 @@ struct InheritedFieldCache {
     proved_epoch: u64,
     proved_prototype: Value,
     proved_holder: Value,
+    /// The site's next older entry, or `NO_INHERITED_FIELD`: a site keeps up to
+    /// `INHERITED_FIELD_CACHE_WAYS` receiver shapes, newest first.
+    next: u32,
 }
+/// Receiver shapes one site's inherited entries remember: a method inherited from beyond the
+/// immediate prototype read on instances of several subclasses (DeltaBlue's constraints)
+/// reaches one site with a shape per class. A further shape reuses the oldest entry.
+const INHERITED_FIELD_CACHE_WAYS: usize = 4;
+// Reusing the oldest entry unlinks it from an older-than-head predecessor.
+const _: () = assert!(INHERITED_FIELD_CACHE_WAYS > 1);
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum InheritedFieldAnswer {
     /// The last recorded prototype holds the data property at this slot.
