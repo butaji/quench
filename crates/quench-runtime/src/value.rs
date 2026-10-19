@@ -42,8 +42,13 @@ const ENVIRONMENT_INDEX_BIT: u64 = DIRECT_ARRAY_HANDLE_BIT;
 const DIRECT_ARRAY_HANDLE_BIT: u64 = 1 << 46;
 /// Both direct-handle bits: the function record family's code.
 const DIRECT_FUNCTION_HANDLE_BITS: u64 = DIRECT_OBJECT_HANDLE_BIT | DIRECT_ARRAY_HANDLE_BIT;
+/// The promise record family's code, below the other direct-handle bits. Legacy slot and
+/// record indices stay below it (`MAX_HEAP_CELLS`, `RECORD_SPACE_CAPACITY`).
+const DIRECT_PROMISE_HANDLE_BIT: u64 = 1 << 45;
+/// The payload bits that code a heap value's reference family.
+const HEAP_FAMILY_BITS: u64 = DIRECT_FUNCTION_HANDLE_BITS | DIRECT_PROMISE_HANDLE_BIT;
 /// The bits that name a heap value's reference family (`Value::heap_reference`).
-const HEAP_FAMILY_MASK: u64 = TAG_MASK | DIRECT_FUNCTION_HANDLE_BITS;
+const HEAP_FAMILY_MASK: u64 = TAG_MASK | HEAP_FAMILY_BITS;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum HeapReference {
@@ -51,6 +56,7 @@ pub(crate) enum HeapReference {
     ObjectRecord(u32),
     ArrayRecord(u32),
     FunctionRecord(u32),
+    PromiseRecord(u32),
 }
 
 /// `value` truncated toward zero when it fits `i32`; any other result is some `i32` whose
@@ -253,6 +259,11 @@ impl Value {
         Self(TAG_HEAP | DIRECT_FUNCTION_HANDLE_BITS | u64::from(index))
     }
 
+    #[inline(always)]
+    pub(crate) fn direct_promise(index: u32) -> Self {
+        Self(TAG_HEAP | DIRECT_PROMISE_HANDLE_BIT | u64::from(index))
+    }
+
     /// The Number this value holds. Doubles are tested first: arithmetic that reaches this
     /// conversion has already handled the integer pair.
     #[inline(always)]
@@ -286,11 +297,13 @@ impl Value {
         }
         let index = self.0 as u32;
         Some(
-            match self.0 & DIRECT_FUNCTION_HANDLE_BITS {
+            match self.0 & HEAP_FAMILY_BITS {
                 0 => HeapReference::LegacySlot(index),
                 DIRECT_OBJECT_HANDLE_BIT => HeapReference::ObjectRecord(index),
                 DIRECT_ARRAY_HANDLE_BIT => HeapReference::ArrayRecord(index),
-                _ => HeapReference::FunctionRecord(index),
+                DIRECT_FUNCTION_HANDLE_BITS => HeapReference::FunctionRecord(index),
+                DIRECT_PROMISE_HANDLE_BIT => HeapReference::PromiseRecord(index),
+                _ => return None,
             },
         )
     }
@@ -301,7 +314,8 @@ impl Value {
             HeapReference::LegacySlot(index) => Some(index),
             HeapReference::ObjectRecord(_)
             | HeapReference::ArrayRecord(_)
-            | HeapReference::FunctionRecord(_) => None,
+            | HeapReference::FunctionRecord(_)
+            | HeapReference::PromiseRecord(_) => None,
         }
     }
 
@@ -314,6 +328,11 @@ impl Value {
     #[inline(always)]
     pub(crate) fn direct_array_index(self) -> Option<u32> {
         (self.0 & HEAP_FAMILY_MASK == TAG_HEAP | DIRECT_ARRAY_HANDLE_BIT).then_some(self.0 as u32)
+    }
+
+    #[inline(always)]
+    pub(crate) fn direct_promise_index(self) -> Option<u32> {
+        (self.0 & HEAP_FAMILY_MASK == TAG_HEAP | DIRECT_PROMISE_HANDLE_BIT).then_some(self.0 as u32)
     }
 
     #[inline(always)]
@@ -335,7 +354,7 @@ impl Value {
     pub(crate) fn is_record(self) -> bool {
         self.is_heap()
             && matches!(
-                self.0 & DIRECT_FUNCTION_HANDLE_BITS,
+                self.0 & HEAP_FAMILY_BITS,
                 DIRECT_OBJECT_HANDLE_BIT | DIRECT_ARRAY_HANDLE_BIT
             )
     }
@@ -473,6 +492,14 @@ mod tests {
         // A function may be the IsHTMLDDA object, so truthiness never answers for one.
         assert!(!direct_function.is_record());
         assert!(direct_object.is_record() && direct_array.is_record());
+        let direct_promise = Value::direct_promise(42);
+        assert_eq!(direct_promise.direct_promise_index(), Some(42));
+        assert_eq!(direct_promise.direct_object_index(), None);
+        assert_eq!(direct_promise.direct_function_index(), None);
+        assert_eq!(
+            direct_promise.heap_reference(),
+            Some(super::HeapReference::PromiseRecord(42))
+        );
         assert_eq!(
             Value::int_pair(Value::integer(-2), Value::integer(3)),
             Some((-2, 3))

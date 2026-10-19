@@ -29,7 +29,10 @@ pub(crate) use cell::*;
 pub(crate) use buffer_bytes::{BufferBytes,BufferRead};
 pub(crate) use collection_entries::CollectionEntries;
 use external::array_payload_bytes;
-use records::{ArrayRecordSpace, FunctionRecordSpace, ObjectRecordSpace, RecordSweep};
+use records::{
+    ArrayRecordSpace, FunctionRecordSpace, ObjectRecordSpace, PromiseRecordSpace, RecordFamily,
+    RecordId, RecordSweep,
+};
 pub use root::RootId;
 pub(crate) use root::{RootTable, WeakHandle};
 use slots::{FreeSlotBitmap, SLOTS_PER_SLAB, SlotArena};
@@ -306,12 +309,16 @@ fn cell_has_shared_rc_payload(cell: &Cell) -> bool {
 fn rc_drop_lock_index(address: usize) -> usize {
     (address >> 4) & (RC_DROP_LOCK_STRIPES - 1)
 }
+/// The record families `Heap::record_families` lists.
+const RECORD_FAMILIES: usize = 4;
+
 /// Every family's mark bits, borrowed apart from the slot a trace holds (`mark_bits!`).
 #[derive(Clone, Copy)]
 pub(super) struct MarkBits<'a> {
     object_records: &'a ObjectRecordSpace,
     array_records: &'a ArrayRecordSpace,
     function_records: &'a FunctionRecordSpace,
+    promise_records: &'a PromiseRecordSpace,
     marks: &'a [AtomicU64],
 }
 
@@ -322,6 +329,7 @@ impl MarkBits<'_> {
             Some(HeapReference::ObjectRecord(id)) => self.object_records.is_marked(id),
             Some(HeapReference::ArrayRecord(id)) => self.array_records.is_marked(id),
             Some(HeapReference::FunctionRecord(id)) => self.function_records.is_marked(id),
+            Some(HeapReference::PromiseRecord(id)) => self.promise_records.is_marked(id),
             Some(HeapReference::LegacySlot(index)) => {
                 let index = index as usize;
                 self.marks.get(index / u64::BITS as usize).is_some_and(|word| {
@@ -340,6 +348,7 @@ macro_rules! mark_bits {
             object_records: &$heap.object_records,
             array_records: &$heap.array_records,
             function_records: &$heap.function_records,
+            promise_records: &$heap.promise_records,
             marks: &$heap.marks,
         }
     };
@@ -351,6 +360,7 @@ pub(crate) struct Heap {
     object_records: ObjectRecordSpace,
     array_records: ArrayRecordSpace,
     function_records: FunctionRecordSpace,
+    promise_records: PromiseRecordSpace,
     marks: Vec<AtomicU64>,
     remembered_marks: Vec<u64>,
     remembered: Vec<u32>,
@@ -760,9 +770,31 @@ impl Heap {
     /// Direct object or array records exist. They are traced and swept only on the serial
     /// full-collection path until they carry a generation and parallel sweep support.
     fn has_direct_records(&self) -> bool {
-        self.object_records.live_count() > 0
-            || self.array_records.live_count() > 0
-            || self.function_records.live_count() > 0
+        self.record_families()
+            .iter()
+            .any(|(family, _)| family.live_count() > 0)
+    }
+
+    /// Every record family, with the `Value` constructor naming its records.
+    fn record_families(&self) -> [(&dyn RecordFamily, fn(RecordId) -> Value); RECORD_FAMILIES] {
+        [
+            (&self.object_records, Value::direct_object),
+            (&self.array_records, Value::direct_array),
+            (&self.function_records, Value::direct_function),
+            (&self.promise_records, Value::direct_promise),
+        ]
+    }
+
+    /// `record_families`, mutably.
+    fn record_families_mut(
+        &mut self,
+    ) -> [(&mut dyn RecordFamily, fn(RecordId) -> Value); RECORD_FAMILIES] {
+        [
+            (&mut self.object_records, Value::direct_object),
+            (&mut self.array_records, Value::direct_array),
+            (&mut self.function_records, Value::direct_function),
+            (&mut self.promise_records, Value::direct_promise),
+        ]
     }
 
     /// Each program a live cell or function can still run or resolve names in
@@ -796,9 +828,11 @@ impl Heap {
 
     pub(crate) fn live_slots(&self) -> usize {
         self.slots.len() - self.free_slots
-            + self.object_records.live_count()
-            + self.array_records.live_count()
-            + self.function_records.live_count()
+            + self
+                .record_families()
+                .iter()
+                .map(|(family, _)| family.live_count())
+                .sum::<usize>()
     }
 
     #[cfg(feature = "profile-memory")]
@@ -888,6 +922,15 @@ impl Heap {
                 }
                 Err(object) => Cell::Array { object },
             },
+            Cell::Promise(promise) => match self.promise_records.try_insert(*promise) {
+                Ok(record_id) => {
+                    let value = Value::direct_promise(record_id);
+                    #[cfg(feature = "profile-memory")]
+                    self.profile_allocation(value);
+                    return value;
+                }
+                Err(promise) => Cell::Promise(Box::new(promise)),
+            },
             Cell::Function(function) => match self.function_records.try_insert(*function) {
                 Ok(record_id) => {
                     let value = Value::direct_function(record_id);
@@ -947,6 +990,30 @@ impl Heap {
                 Cell::Function(Box::new(function)),
                 self.tracks_young_cells(),
             ),
+        }
+    }
+
+    /// `alloc(Cell::Promise(..))` without boxing the promise first: a promise record while
+    /// one is free.
+    pub(crate) fn alloc_promise(&mut self, promise: PromiseCell) -> Value {
+        if cfg!(feature = "profile-aggregate") {
+            return self.alloc(Cell::Promise(Box::new(promise)));
+        }
+        self.mark_prototype(promise.object.proto());
+        // A promise's weight is one allocation, and it holds no payload or external bytes.
+        self.allocations += 1;
+        self.allocations_since_full = self.allocations_since_full.saturating_add(1);
+        self.total_allocations += 1;
+        match self.promise_records.try_insert(promise) {
+            Ok(record_id) => {
+                let value = Value::direct_promise(record_id);
+                #[cfg(feature = "profile-memory")]
+                self.profile_allocation(value);
+                value
+            }
+            Err(promise) => {
+                self.alloc_in_slot(Cell::Promise(Box::new(promise)), self.tracks_young_cells())
+            }
         }
     }
 
@@ -1074,6 +1141,10 @@ impl Heap {
             let old_shape = function.object.shape() as usize;
             function.object.set_shape(mapping[old_shape]);
         });
+        self.promise_records.for_each_live_mut(|_, promise| {
+            let old_shape = promise.object.shape() as usize;
+            promise.object.set_shape(mapping[old_shape]);
+        });
         for slot in self.slots.iter_mut() {
             let Some(object) = slot.cell.as_mut().and_then(Cell::object_mut) else {
                 continue;
@@ -1111,6 +1182,7 @@ impl Heap {
             object_records,
             array_records,
             function_records,
+            promise_records,
             slots,
             properties,
             ..
@@ -1125,6 +1197,9 @@ impl Heap {
             } else if let Some(record_id) = owner.direct_function_index() {
                 // SAFETY: function owners were collected from live function records.
                 Some(&mut unsafe { function_records.get_live_mut_unbarriered(record_id) }.object)
+            } else if let Some(record_id) = owner.direct_promise_index() {
+                // SAFETY: promise owners were collected from live promise records.
+                Some(&mut unsafe { promise_records.get_live_mut_unbarriered(record_id) }.object)
             } else {
                 owner
                     .legacy_heap_index()
@@ -1152,6 +1227,7 @@ impl Heap {
         self.object_records = ObjectRecordSpace::default();
         self.array_records = ArrayRecordSpace::default();
         self.function_records = FunctionRecordSpace::default();
+        self.promise_records = PromiseRecordSpace::default();
         self.marks.clear();
         self.free_by_slab.clear();
         self.free_slabs.clear();
@@ -1232,19 +1308,13 @@ impl Heap {
         true
     }
     pub(crate) fn is_old(&self, value: Value) -> bool {
-        if let Some(record_id) = value.direct_object_index() {
-            return self.object_records.is_marked(record_id);
+        match value.heap_reference() {
+            Some(HeapReference::LegacySlot(index)) => {
+                self.get(value).is_some() && Self::marked(&self.marks, index as usize)
+            }
+            Some(_) => mark_bits!(self).is_marked(value),
+            None => false,
         }
-        if let Some(record_id) = value.direct_array_index() {
-            return self.array_records.is_marked(record_id);
-        }
-        if let Some(record_id) = value.direct_function_index() {
-            return self.function_records.is_marked(record_id);
-        }
-        value
-            .legacy_heap_index()
-            .map(|index| index as usize)
-            .is_some_and(|index| self.get(value).is_some() && Self::marked(&self.marks, index))
     }
     /// Make a collection due at the next safepoint.
     #[cfg(test)]
@@ -1313,9 +1383,9 @@ impl Heap {
             Self::clear_marks(&self.marks);
             self.remembered.clear();
             self.remembered_marks.fill(0);
-            self.object_records.clear_marks();
-            self.array_records.clear_marks();
-            self.function_records.clear_marks();
+            for (family, _) in self.record_families_mut() {
+                family.clear_marks();
+            }
         }
         #[cfg(feature = "profile-aggregate")]
         if full {
@@ -1331,40 +1401,23 @@ impl Heap {
         #[cfg(debug_assertions)]
         let verify_old_records = (!full).then(|| {
             let mut old = Vec::new();
-            self.object_records
-                .for_each_marked(|id| old.push(Value::direct_object(id)));
-            self.array_records
-                .for_each_marked(|id| old.push(Value::direct_array(id)));
-            self.function_records
-                .for_each_marked(|id| old.push(Value::direct_function(id)));
+            for (family, handle) in self.record_families() {
+                family.for_each_marked(&mut |id| old.push(handle(id)));
+            }
             old
         });
         if !full {
             #[cfg(feature = "profile-aggregate")]
             {
-                self.gc_profile.remembered_owner_scans += (self.object_records.remembered_count()
-                    + self.array_records.remembered_count()
-                    + self.function_records.remembered_count())
-                    as u64;
+                self.gc_profile.remembered_owner_scans += self
+                    .record_families()
+                    .iter()
+                    .map(|(family, _)| family.remembered_count())
+                    .sum::<usize>() as u64;
             }
-            work.extend(
-                self.object_records
-                    .take_remembered()
-                    .into_iter()
-                    .map(Value::direct_object),
-            );
-            work.extend(
-                self.array_records
-                    .take_remembered()
-                    .into_iter()
-                    .map(Value::direct_array),
-            );
-            work.extend(
-                self.function_records
-                    .take_remembered()
-                    .into_iter()
-                    .map(Value::direct_function),
-            );
+            for (family, handle) in self.record_families_mut() {
+                work.extend(family.take_remembered().into_iter().map(handle));
+            }
         }
         #[cfg(debug_assertions)]
         let verify_remembered_records: Vec<Value> = if full {
@@ -1478,9 +1531,10 @@ impl Heap {
             #[cfg(feature = "profile-aggregate")]
             {
                 self.gc_profile.sweep_slots +=
-                    (self.object_records.high_water()
-                        + self.array_records.high_water()
-                        + self.function_records.high_water()) as u64;
+                    self.record_families()
+                        .iter()
+                        .map(|(family, _)| family.high_water())
+                        .sum::<usize>() as u64;
             }
             #[cfg(feature = "profile-memory")]
             let memory_profile = &mut self.memory_profile;
@@ -1521,6 +1575,26 @@ impl Heap {
                         memory_profile.freed_function(Value::direct_function(_record_id), slots);
                     }
                 });
+            let abandoned_job_contexts = &mut self.abandoned_job_contexts;
+            let (promise_live, promise_freed) =
+                self.promise_records.sweep(|record| match record {
+                    RecordSweep::Keep(record_id, promise) => {
+                        if full && promise.object.properties().has_compact_range() {
+                            direct_property_owners.push((
+                                promise.object.properties().start_offset(),
+                                Value::direct_promise(record_id),
+                            ));
+                        }
+                    }
+                    RecordSweep::Dead(_record_id, promise) => {
+                        abandoned_job_contexts.extend(promise.record.reaction_job_contexts());
+                        #[cfg(feature = "profile-memory")]
+                        let slots = properties.len(promise.object.properties());
+                        properties.release(promise.object.properties());
+                        #[cfg(feature = "profile-memory")]
+                        memory_profile.freed_promise(Value::direct_promise(_record_id), slots);
+                    }
+                });
             let mut dead_arrays = Vec::new();
             let (array_live, array_freed) = self.array_records.sweep(|record| match record {
                 RecordSweep::Keep(record_id, array) => {
@@ -1552,13 +1626,14 @@ impl Heap {
                     self.sparse_arrays = None;
                 }
             }
-            live += object_live + array_live + function_live;
+            live += object_live + array_live + function_live + promise_live;
             #[cfg(feature = "profile-aggregate")]
             {
-                self.gc_profile.freed += (object_freed + array_freed + function_freed) as u64;
+                self.gc_profile.freed +=
+                    (object_freed + array_freed + function_freed + promise_freed) as u64;
             }
             #[cfg(not(feature = "profile-aggregate"))]
-            let _ = (object_freed, array_freed, function_freed);
+            let _ = (object_freed, array_freed, function_freed, promise_freed);
         }
         #[cfg(feature = "profile-aggregate")]
         {
@@ -1982,21 +2057,34 @@ impl Heap {
     }
 
     #[cfg(debug_assertions)]
+    fn snapshot_record_marks(&self) -> Vec<Vec<u64>> {
+        self.record_families()
+            .iter()
+            .map(|(family, _)| family.snapshot_marks())
+            .collect()
+    }
+
+    #[cfg(debug_assertions)]
+    fn restore_record_marks(&mut self, marks: &[Vec<u64>]) {
+        for ((family, _), marks) in self.record_families_mut().into_iter().zip(marks) {
+            family.restore_marks(marks);
+        }
+    }
+
+    #[cfg(debug_assertions)]
     fn debug_verify_full(
         &mut self,
         roots: &[Value],
         object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
     ) {
         let parallel_marks = Self::snapshot_marks(&self.marks);
-        let parallel_object_marks = self.object_records.snapshot_marks();
-        let parallel_array_marks = self.array_records.snapshot_marks();
-        let parallel_function_marks = self.function_records.snapshot_marks();
+        let parallel_record_marks = self.snapshot_record_marks();
         #[cfg(feature = "profile-aggregate")]
         let profile = self.gc_profile;
         Self::clear_marks(&self.marks);
-        self.object_records.clear_marks();
-        self.array_records.clear_marks();
-        self.function_records.clear_marks();
+        for (family, _) in self.record_families_mut() {
+            family.clear_marks();
+        }
         let mut work = roots.to_vec();
         let mut ephemerons = weak::EphemeronWork::default();
         self.mark_work(
@@ -2006,28 +2094,14 @@ impl Heap {
             GcTraceKind::VerifyFull,
         );
         let sequential_marks = Self::snapshot_marks(&self.marks);
-        let sequential_object_marks = self.object_records.snapshot_marks();
-        let sequential_array_marks = self.array_records.snapshot_marks();
-        let sequential_function_marks = self.function_records.snapshot_marks();
+        let sequential_record_marks = self.snapshot_record_marks();
         assert_eq!(
-            (
-                sequential_marks.as_slice(),
-                sequential_object_marks.as_slice(),
-                sequential_array_marks.as_slice(),
-                sequential_function_marks.as_slice(),
-            ),
-            (
-                parallel_marks.as_slice(),
-                parallel_object_marks.as_slice(),
-                parallel_array_marks.as_slice(),
-                parallel_function_marks.as_slice(),
-            ),
+            (sequential_marks.as_slice(), &sequential_record_marks),
+            (parallel_marks.as_slice(), &parallel_record_marks),
             "full mark differs from the single-threaded verifier"
         );
         Self::restore_marks(&self.marks, &parallel_marks);
-        self.object_records.restore_marks(&parallel_object_marks);
-        self.array_records.restore_marks(&parallel_array_marks);
-        self.function_records.restore_marks(&parallel_function_marks);
+        self.restore_record_marks(&parallel_record_marks);
         self.collection_state = CollectionState::FullMarking;
         #[cfg(feature = "profile-aggregate")]
         {
@@ -2043,16 +2117,14 @@ impl Heap {
         object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
     ) {
         let minor_marks = Self::snapshot_marks(&self.marks);
-        let minor_object_marks = self.object_records.snapshot_marks();
-        let minor_array_marks = self.array_records.snapshot_marks();
-        let minor_function_marks = self.function_records.snapshot_marks();
+        let minor_record_marks = self.snapshot_record_marks();
         let young = self.young.clone();
         #[cfg(feature = "profile-aggregate")]
         let profile = self.gc_profile;
         Self::clear_marks(&self.marks);
-        self.object_records.clear_marks();
-        self.array_records.clear_marks();
-        self.function_records.clear_marks();
+        for (family, _) in self.record_families_mut() {
+            family.clear_marks();
+        }
         let pinned_records: rustc_hash::FxHashSet<Value> = old_records.iter().copied().collect();
         let mut young_slots = vec![false; self.slots.len()];
         for index in young.iter().copied() {
@@ -2072,36 +2144,25 @@ impl Heap {
             &mut ephemerons,
             GcTraceKind::VerifyFull,
         );
-        let verified_object_marks = self.object_records.snapshot_marks();
-        let verified_array_marks = self.array_records.snapshot_marks();
-        let verified_function_marks = self.function_records.snapshot_marks();
-        let young_record_mismatch = |identity: Value, id: u32, minor: &[u64], verified: &[u64]| {
-            let word = id as usize / u64::BITS as usize;
-            let mask = 1_u64 << (id as usize % u64::BITS as usize);
-            !pinned_records.contains(&identity)
-                && (minor[word] & mask != 0) != (verified[word] & mask != 0)
+        let verified_record_marks = self.snapshot_record_marks();
+        let marked = |marks: &[u64], id: RecordId| {
+            marks[id as usize / u64::BITS as usize] & (1_u64 << (id as usize % u64::BITS as usize)) != 0
         };
-        self.object_records.for_each_live(|id, _| {
-            assert!(
-                !young_record_mismatch(Value::direct_object(id), id, &minor_object_marks, &verified_object_marks),
-                "minor collection's young object records differ from a full mark with old records pinned: {id}"
-            );
-        });
-        self.array_records.for_each_live(|id, _| {
-            assert!(
-                !young_record_mismatch(Value::direct_array(id), id, &minor_array_marks, &verified_array_marks),
-                "minor collection's young array records differ from a full mark with old records pinned: {id}"
-            );
-        });
-        self.function_records.for_each_live(|id, _| {
-            assert!(
-                !young_record_mismatch(Value::direct_function(id), id, &minor_function_marks, &verified_function_marks),
-                "minor collection's young function records differ from a full mark with old records pinned: {id}"
-            );
-        });
-        self.object_records.restore_marks(&minor_object_marks);
-        self.array_records.restore_marks(&minor_array_marks);
-        self.function_records.restore_marks(&minor_function_marks);
+        for (((family, handle), minor), verified) in self
+            .record_families()
+            .into_iter()
+            .zip(&minor_record_marks)
+            .zip(&verified_record_marks)
+        {
+            family.for_each_live_id(&mut |id| {
+                let identity = handle(id);
+                assert!(
+                    pinned_records.contains(&identity) || marked(minor, id) == marked(verified, id),
+                    "minor collection's young records differ from a full mark with old records pinned: {identity:?}"
+                );
+            });
+        }
+        self.restore_record_marks(&minor_record_marks);
         for index in young {
             let index = index as usize;
             if self.get(Value::heap(index as u32)).is_some() {
@@ -2213,6 +2274,29 @@ impl Heap {
                 );
                 let mark_bits = mark_bits!(self);
                 ephemerons.newly_marked(value, None, |target| mark_bits.is_marked(target), work);
+            } else if let Some(record_id) = value.direct_promise_index() {
+                if !self.promise_records.mark(record_id) {
+                    continue;
+                }
+                #[cfg(feature = "profile-aggregate")]
+                {
+                    self.gc_profile.marked += 1;
+                    self.gc_profile.marked_kinds[CellKind::Object as usize] += 1;
+                }
+                // SAFETY: a direct promise Value names an initialized record.
+                let promise = unsafe { self.promise_records.get_live(record_id) };
+                Self::object_children(
+                    value,
+                    &promise.object,
+                    &self.properties,
+                    work,
+                    object_roots,
+                    trace_kind,
+                    &mut last_proto,
+                );
+                work.extend(promise.record.roots());
+                let mark_bits = mark_bits!(self);
+                ephemerons.newly_marked(value, None, |target| mark_bits.is_marked(target), work);
             } else {
                 let Some(index) = value.legacy_heap_index().map(|value| value as usize) else {
                     continue;
@@ -2322,6 +2406,7 @@ impl Heap {
             Some(HeapReference::FunctionRecord(record_id)) => {
                 self.function_records.remember(record_id)
             }
+            Some(HeapReference::PromiseRecord(record_id)) => self.promise_records.remember(record_id),
             Some(HeapReference::LegacySlot(index)) => self.remember(index as usize),
             None => {}
         }
@@ -2545,6 +2630,7 @@ impl Heap {
             object_records,
             array_records,
             function_records,
+            promise_records,
             slots,
             properties,
             memory_profile,
@@ -2567,6 +2653,13 @@ impl Heap {
             let function = unsafe { function_records.get_live(record_id) };
             let slots = properties.len(function.object.properties());
             memory_profile.allocated_function(identity, function, slots);
+            return;
+        }
+        if let Some(record_id) = identity.direct_promise_index() {
+            // SAFETY: profile runs immediately after inserting this promise.
+            let promise = unsafe { promise_records.get_live(record_id) };
+            let slots = properties.len(promise.object.properties());
+            memory_profile.allocated_promise(identity, promise, slots);
             return;
         }
         let index = identity

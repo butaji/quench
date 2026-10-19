@@ -1430,7 +1430,12 @@ impl<H: Host> Vm<H> {
                 };
                 return self.finish_field_cache_read(p, object, atom, lookup);
             }
-            Some(HeapReference::ObjectRecord(_) | HeapReference::ArrayRecord(_)) | None => None,
+            Some(
+                HeapReference::ObjectRecord(_)
+                | HeapReference::ArrayRecord(_)
+                | HeapReference::PromiseRecord(_),
+            )
+            | None => None,
         };
         let lookup = match legacy_cell {
             Some(Cell::String(_)) if self.specialized && p.specialized => {
