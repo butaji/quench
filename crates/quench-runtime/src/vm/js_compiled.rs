@@ -226,7 +226,7 @@ fn compile_string_hash_loop(
     function_id: u32,
     function: &Function,
 ) -> Option<JsJitArtifact> {
-    if !function_candidate(function, &program.atoms) {
+    if !function_candidate(function, program) {
         // The string-hash matcher has already checked the bytecode shape; the
         // regular candidate guard still enforces activation and size limits.
         return None;
@@ -1304,7 +1304,7 @@ fn compile_numeric_loop(
     function_id: u32,
     function: &Function,
 ) -> Option<JsJitArtifact> {
-    if !function_candidate(function, &program.atoms)
+    if !function_candidate(function, program)
         || function
             .code
             .iter()
