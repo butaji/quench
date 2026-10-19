@@ -689,3 +689,40 @@ supports it. An earlier screen compared different import paths and is retained
 as a confounded result, not evidence for the leaf. Corrected reports, the
 hit-count diagnostic, and reproduction commands are in
 `evidence/jit-jetstream3-wasm-2026-10-18/memcpy-native-leaf/`.
+
+## JavaScript `hash-map` guarded `equals` specialization
+
+The `equals(a, b)` helper is called 54 million times in JetStream 3's
+`hash-map` fixture. Under the existing Number-entry guard, its `typeof`
+decision tree can be partially evaluated: internal compiler-owned locals and
+static type-name comparisons are folded, while the final numeric equality is
+emitted as native code. Non-Number calls resume in the interpreter. The
+compiled Boolean result returns through the existing frame so shared-VM
+unwinding stays intact.
+
+The one-round JIT diagnostic passed stock fixture output validation. It
+compiled `equals` once (8.5 ms, 4,096 mapped code bytes) and recorded
+53,999,969 native entries. Quench scored 1.54 with 71.8 MiB peak RSS in
+270.6 s; Bun scored 364.13 at 93.8 MiB and Node 153.63 at 161.0 MiB. A prior
+one-round Quench screen scored 2.46 in 239.1 s. This is not a speed win and
+the two screens are not a paired comparison. The native body is tiny, but the
+per-call VM frame, entry guard, and return transition remain; compiling the
+callee alone does not remove those boundaries.
+
+The current entry tier remains an experiment until its performance value is
+established. Raw one-round data was captured at
+`target/jit-hash-map-after.json` in the working tree; that diagnostic includes
+source-dirty state and must not be treated as qualification evidence.
+
+The follow-up adds a same-program fast path for already-compiled callees. At a
+plain `Call`, the runtime checks the existing tier and Number arguments before
+activating a frame; cold calls, non-Number arguments, other programs, tail
+calls, and interpreter mode retain the normal VM path. On a second one-round
+screen, output validation passed and Quench scored 2.15 at 71.7 MiB in 253.3 s.
+That is directionally faster than the earlier 1.54 / 270.6 s frame-entry
+screen, but the screens were unpaired and Bun/Node timings also shifted. It
+does not establish a gain, and Quench remains far behind both runtimes. The
+diagnostics still show `runIteration` unsupported; compiling `equals` does not
+remove the interpreter loop around the 54 million calls. A controlled paired
+comparison is now the next step before keeping this fast path. Its diagnostic is
+`target/jit-hash-map-direct-call.json` in the working tree.
