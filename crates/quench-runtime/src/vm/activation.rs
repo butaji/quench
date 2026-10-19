@@ -147,6 +147,7 @@ impl Continuation {
         resume_register: Option<u16>,
         promise: Value,
     ) -> Self {
+        frame.js_jit_interpreter_started = None;
         frame.initialized_registers = 0;
         Self {
             context: std::mem::replace(&mut frame.context, CallContext::Internal),
@@ -192,6 +193,7 @@ impl Continuation {
             active_iterators: self.active_iterators,
             with_objects: self.with_objects,
             with_base,
+            js_jit_interpreter_started: None,
             fixed_this: false,
         }
     }

@@ -1154,6 +1154,7 @@ impl<H: Host> Vm<H> {
     /// `fixed_this` itself.
     pub(super) fn recycle_frame(frame: &mut Frame) {
         frame.context = CallContext::Internal;
+        frame.js_jit_interpreter_started = None;
         frame.original_arguments.clear();
         frame.with_objects.clear();
         frame.dynamic_bindings.clear();
@@ -1292,14 +1293,23 @@ impl<H: Host> Vm<H> {
             // A supported native function still returns through the ordinary
             // Return instruction, preserving the dispatch loop's frame and
             // constructor unwind path. Guard misses leave pc at zero.
-            if pc == 0
-                && self.execution_mode == ExecutionMode::Compiled
-                && let Some((return_pc, return_register, value)) =
-                    self.js_jit_at_entry(p, frame)
-            {
-                self.write(frame, return_register, value);
-                pc = return_pc;
-                continue;
+            if pc == 0 && self.execution_mode == ExecutionMode::Compiled {
+                if let Some((return_pc, return_register, value)) = self.js_jit_at_entry(p, frame) {
+                    self.write(frame, return_register, value);
+                    pc = return_pc;
+                    continue;
+                }
+                let (program_id, function_id) =
+                    (self.frames[frame].program, self.frames[frame].function);
+                self.programs
+                    .record_js_jit_fallback_entry(program_id, function_id);
+                if p.kind != crate::bytecode::ProgramKind::Wasm
+                    && self.programs.js_jit_diagnostics_enabled()
+                    && self.frames[frame].js_jit_interpreter_started.is_none()
+                {
+                    self.frames[frame].js_jit_interpreter_started =
+                        Some(std::time::Instant::now());
+                }
             }
             if Self::lane_runs(cursor.lane, pc) {
                 pc = self.run_fast_lane(
@@ -1629,7 +1639,22 @@ impl<H: Host> Vm<H> {
                 _ => self.step(p, frame, ins, &mut pc, allow_inline_calls),
             };
             match step {
-                Ok(StepResult::Return(mut value)) => loop {
+                Ok(StepResult::Return(mut value)) => {
+                    let completion = {
+                        let completed = &mut self.frames[frame];
+                        completed.js_jit_interpreter_started.take().map(|started| {
+                            (
+                                completed.program,
+                                completed.function,
+                                u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX),
+                            )
+                        })
+                    };
+                    if let Some((program, function, elapsed_ns)) = completion {
+                        self.programs
+                            .record_js_jit_interpreter_completion(program, function, elapsed_ns);
+                    }
+                    loop {
                     if let Some(mut pending) = pending_calls.pop() {
                         debug_assert_eq!(frame, pending.caller + 1);
                         let completed_frame = self.frames.pop().unwrap();
@@ -1682,6 +1707,7 @@ impl<H: Host> Vm<H> {
                     self.frames[frame].pc = pc;
                     self.frames[frame].pc_is_resume = true;
                     return Ok(FrameOutcome::Complete(value));
+                    }
                 },
                 Ok(StepResult::Continue) => {}
                 Ok(StepResult::PushFrame {
