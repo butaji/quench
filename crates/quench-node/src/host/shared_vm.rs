@@ -6,6 +6,7 @@ use quench_runtime::{HostFunction, HostFunctionId, NativeContext, RootedError, S
 pub(crate) mod commonjs;
 mod commonjs_exports;
 mod esm_errors;
+pub(crate) mod esm_wasm;
 pub(crate) mod policy_projection;
 pub(crate) use commonjs::source_kind;
 
@@ -37,6 +38,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "contextifyCompileFunction" (0) => crate::modules::contextify_shared_vm::compile_function,
         method "nodePrintEvalScript" (1) => crate::shared_run::print_eval_script,
         method "builtinExportValues" (2) => commonjs::builtin_export_values,
+        method "esmWasmInstantiate" (6) => esm_wasm::instantiate,
+        method "esmWasmRead" (1) => esm_wasm::read,
         method "callbackify" (1) => crate::modules::util_callbackify_shared_vm::callbackify,
         method "gc" (0) => crate::modules::process_shared_vm::collect_garbage,
         method "utilCallbackified" (2) => crate::modules::util_callbackify_shared_vm::callbackified,
@@ -1253,6 +1256,11 @@ impl quench_runtime::Host for NodeHost {
         } else {
             path.to_string_lossy().into_owned()
         };
+        if extension == "wasm" {
+            // Node's `wasm` format: the module record is a facade over the instance.
+            let source = esm_wasm::facade(&name, &path, &bytes)?;
+            return Ok(Some(quench_runtime::ModuleSource::text(name, source)));
+        }
         let source = if extension == "json" {
             String::from_utf8_lossy(&bytes).into_owned()
         } else {
