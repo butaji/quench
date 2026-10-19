@@ -56,6 +56,11 @@ struct RuntimeAtoms {
     /// An iterator result's keys, in its literal order.
     value: Atom,
     done: Atom,
+    /// The internal keys a bound function's environment holds its parts under
+    /// (`Vm::bound_function_parts`).
+    bound_target: Atom,
+    bound_this: Atom,
+    bound_args: Atom,
 }
 pub(crate) mod activation;
 mod activation_lifecycle;
@@ -581,6 +586,10 @@ struct FieldCache {
     holder: u32,
     slot: u16,
 }
+/// The internal keys of a bound function's environment object.
+const BOUND_TARGET_KEY: &str = "\0quench:bound-target";
+const BOUND_THIS_KEY: &str = "\0quench:bound-this";
+const BOUND_ARGS_KEY: &str = "\0quench:bound-args";
 const NO_FIELD_HOLDER: u32 = u32::MAX;
 /// A field site's read of an accessor on the immediate prototype of a shaped receiver: it
 /// holds while receiver and prototype keep these shapes, whose `slot` attributes carry the
@@ -2243,6 +2252,9 @@ impl<H: Host> Vm<H> {
             empty: self.intern_atom(""),
             value: self.intern_atom("value"),
             done: self.intern_atom("done"),
+            bound_target: self.intern_atom(BOUND_TARGET_KEY),
+            bound_this: self.intern_atom(BOUND_THIS_KEY),
+            bound_args: self.intern_atom(BOUND_ARGS_KEY),
         };
         self.field_caches = vec![EMPTY_CACHE; program.cache_sites as usize];
         Self::prime_loop_decoding(program);

@@ -207,9 +207,10 @@ impl<H: Host> Vm<H> {
         Some((program, function, env))
     }
 
-    /// `f.call(this, ...args)` and `f.apply(this, list)` of the intrinsic natives invoke `f`
-    /// with no observable step of their own, so when `try_inline_user_call` declines a call
-    /// whose callee is one of them and `f` is a user function, `f` is pushed directly. It
+    /// `f.call(this, ...args)` and `f.apply(this, list)` of the intrinsic natives, and a
+    /// call of `f.bind(this, ...bound)`, invoke `f` with no observable step of their own, so
+    /// when `try_inline_user_call` declines a call whose callee is one of them and `f` is a
+    /// user function, `f` is pushed directly. It
     /// applies `try_inline_user_call`'s conditions to the call and to `f`; it stays out of
     /// line so ordinary user calls keep their code.
     #[inline(never)]
@@ -231,13 +232,31 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let callee = self.read(f, i.register_b());
-        let target = self.read(f, i.register_c());
+        let mut target = self.read(f, i.register_c());
         let window: *const [Value] = self.register_window(f, i.call_window());
         // SAFETY: see `push_general_user_frame`; the window outlives callee setup.
         let window = unsafe { &*window };
-        let this = window.first().copied().unwrap_or(Value::UNDEFINED);
+        let mut this = window.first().copied().unwrap_or(Value::UNDEFINED);
         let apply_arguments;
+        let bound_arguments;
         let arguments = match self.heap.get(callee) {
+            // A bound function calls its target with its bound `this`, its bound arguments
+            // and then the call's, and takes no observable step of its own.
+            Some(Cell::Function {
+                kind: FunctionKind::Native(Native::FunctionBoundCall),
+                env,
+                ..
+            }) => {
+                // A forwarded `arguments` reaches here unmaterialized, which only `apply`
+                // takes as its list.
+                if i.op() != Op::Call {
+                    return None;
+                }
+                let (bound_target, bound_this, bound) = self.bound_function_parts(*env)?;
+                (target, this) = (bound_target, bound_this);
+                bound_arguments = bound.iter().chain(window).copied().collect::<Vec<_>>();
+                bound_arguments.as_slice()
+            }
             Some(Cell::Function {
                 kind: FunctionKind::Native(Native::FunctionCall),
                 ..

@@ -103,7 +103,7 @@ impl<H: Host> Vm<H> {
     /// holds no original name yet, and no construction has seen its cell since the last
     /// collection, which cleared `constructed_shapes`, so no memo entry names it.
     pub(super) fn capture_fresh_closure_name(&mut self, function: Value, name: Option<Atom>) {
-        let name = name.unwrap_or_else(|| self.intern_atom(""));
+        let name = name.unwrap_or(self.runtime_atoms.empty);
         let Some(shape) = self.object_data(function).map(Object::shape) else { return; };
         debug_assert!(shape_names(&self.shapes, shape).0.is_none(), "a fresh closure has no original name");
         self.append_function_name(function, shape, name);
