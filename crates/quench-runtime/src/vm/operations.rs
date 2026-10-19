@@ -399,12 +399,15 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         self.check_execution_interrupt()?;
-        self.with_call_roots(std::iter::once(this).chain(args.iter().copied()), |vm| {
+        let result = self.with_call_roots(std::iter::once(this).chain(args.iter().copied()), |vm| {
             let receiver = vm.string_method_receiver(p, native, this)?;
             vm.with_call_roots([receiver], |vm| {
                 vm.call_native_dispatch(p, native, receiver, args)
             })
-        })
+        });
+        // String natives make text on demand; charge it before the caller's next safepoint.
+        self.heap.charge_materialized_text();
+        result
     }
 
     fn call_native_dispatch(
