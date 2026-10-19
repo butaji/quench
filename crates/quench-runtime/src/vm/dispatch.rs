@@ -68,7 +68,7 @@ impl<H: Host> Vm<H> {
             || self.frames[f].function == super::ROOT_FUNCTION_ID
             || (self.host.proper_tail_calls()
                 && i.returns_from_frame()
-                && p.functions[self.frames[f].function as usize].strict)
+                && p.function(self.frames[f].function as usize).strict)
         {
             return None;
         }
@@ -206,8 +206,7 @@ impl<H: Host> Vm<H> {
         if function == super::ROOT_FUNCTION_ID
             || owner.kind == crate::bytecode::ProgramKind::Wasm
             || !owner
-                .functions
-                .get(function as usize)
+                .function_get(function as usize)
                 .is_some_and(|function| function.call_plan(owner).in_loop)
         {
             return None;
@@ -242,7 +241,7 @@ impl<H: Host> Vm<H> {
             || p.kind == crate::bytecode::ProgramKind::Wasm
             || f + 1 != self.frames.len()
             || self.frames[f].function == super::ROOT_FUNCTION_ID
-            || (i.returns_from_frame() && p.functions[self.frames[f].function as usize].strict)
+            || (i.returns_from_frame() && p.function(self.frames[f].function as usize).strict)
         {
             return None;
         }
@@ -280,8 +279,7 @@ impl<H: Host> Vm<H> {
         if id == super::ROOT_FUNCTION_ID
             || program_id != self.active_program
             || !p
-                .functions
-                .get(id as usize)
+                .function_get(id as usize)
                 .is_some_and(|function| function.call_plan(p).in_loop)
         {
             return None;
@@ -374,7 +372,7 @@ impl<H: Host> Vm<H> {
         match i.op() {
             Op::Nop => {}
             Op::CloneEnv => {
-                let plan = &p.functions[self.frames[f].function as usize].environment_clones
+                let plan = &p.function(self.frames[f].function as usize).environment_clones
                     [i.environment_clone_index()];
                 self.clone_frame_environment(f, &plan.fresh, &plan.reset)?;
             }
@@ -406,7 +404,7 @@ impl<H: Host> Vm<H> {
             Op::StoreLocal => {
                 let value = self.read(f, i.register_a());
                 let slot = i.local_slot();
-                let function = &p.functions[self.frames[f].function as usize];
+                let function = &p.function(self.frames[f].function as usize);
                 if function.is_self_binding_slot(slot) {
                     if function.strict {
                         return Err(
@@ -456,7 +454,7 @@ impl<H: Host> Vm<H> {
             Op::StoreEnvLocal => {
                 let value = self.read(f, i.register_a());
                 let slot = i.local_slot();
-                let function = &p.functions[self.frames[f].function as usize];
+                let function = &p.function(self.frames[f].function as usize);
                 let atom = function.local_atoms.get(slot).copied();
                 if let Some(atom) = atom
                     && self.store_with_binding(p, f, atom, value, function.strict)?
@@ -503,7 +501,7 @@ impl<H: Host> Vm<H> {
                         value,
                         self.realm.globals,
                     )?;
-                    if !written && p.functions[self.frames[f].function as usize].strict {
+                    if !written && p.function(self.frames[f].function as usize).strict {
                         return Err(
                             self.type_error(p, "cannot assign to read-only global binding".into())
                         );
@@ -760,7 +758,7 @@ impl<H: Host> Vm<H> {
                     let sink = p.field_sites[site].sink.expect("fused field sink");
                     self.with_field_source(f, site, crate::bytecode::FieldPart::Sink, |vm| vm.set_field_cached(
                         p, vm.frames[f].this, sink.0, v, sink.1,
-                        p.functions[vm.frames[f].function as usize].strict,
+                        p.function(vm.frames[f].function as usize).strict,
                     ))?;
                 }
                 if i.returns_from_frame() {
@@ -971,7 +969,7 @@ impl<H: Host> Vm<H> {
             }
             Op::Yield => {
                 let value = self.read(f, i.register_b());
-                let value = if p.functions[self.frames[f].function as usize].is_async {
+                let value = if p.function(self.frames[f].function as usize).is_async {
                     self.promise_for_value(p, value)?
                 } else {
                     value
@@ -986,7 +984,7 @@ impl<H: Host> Vm<H> {
                 let iterator = self.read(f, i.register_c());
                 let iterator = if iterator.is_undefined() {
                     let source = self.read(f, i.register_b());
-                    let asynchronous = p.functions[self.frames[f].function as usize].is_async;
+                    let asynchronous = p.function(self.frames[f].function as usize).is_async;
                     let iterator = if asynchronous {
                         self.get_async_iterator(p, source)?
                     } else {
@@ -1021,7 +1019,7 @@ impl<H: Host> Vm<H> {
                     next_method
                 };
                 let awaited_result = self.read(f, state_register);
-                let asynchronous = p.functions[self.frames[f].function as usize].is_async;
+                let asynchronous = p.function(self.frames[f].function as usize).is_async;
                 let result = if asynchronous && !awaited_result.is_undefined() {
                     self.write(f, state_register, Value::UNDEFINED);
                     awaited_result
@@ -1126,7 +1124,7 @@ impl<H: Host> Vm<H> {
                     self.read(f, i.register_b()),
                     self.read(f, i.register_c()),
                     self.read(f, i.register_a()),
-                    p.functions[self.frames[f].function as usize].strict
+                    p.function(self.frames[f].function as usize).strict
                         || i.boolean_flag().expect("validated boolean immediate"),
                 )?
             }
@@ -1213,7 +1211,7 @@ impl<H: Host> Vm<H> {
                     self.read(f, i.register_c()),
                 )?;
                 if !self.truthy(result)
-                    && (p.functions[self.frames[f].function as usize].strict
+                    && (p.function(self.frames[f].function as usize).strict
                         || i.boolean_flag().expect("validated boolean immediate"))
                 {
                     return Err(self.type_error(p, "Cannot delete property in strict mode".into()));
@@ -1349,14 +1347,14 @@ impl<H: Host> Vm<H> {
                 if terminal
                     && self.host.proper_tail_calls()
                     && p.kind != crate::bytecode::ProgramKind::Wasm
-                    && p.functions[self.frames[f].function as usize]
+                    && p.function(self.frames[f].function as usize)
                         .permits_js_tail_call_at(pc.saturating_sub(1) as u32)
                     && !matches!(self.heap.get(callee), Some(Cell::Proxy { .. }))
                     && let Some(CallTarget::User(program_id, id, env)) =
                         self.call_target(callee).ok()
                     && program_id == self.frames[f].program
-                    && !p.functions[id as usize].is_async
-                    && !p.functions[id as usize].is_generator
+                    && !p.function(id as usize).is_async
+                    && !p.function(id as usize).is_generator
                 {
                     self.with_call_roots(
                         [callee, this].into_iter().chain(args.iter().copied()),
@@ -1475,10 +1473,10 @@ impl<H: Host> Vm<H> {
                     || (p.kind != crate::bytecode::ProgramKind::Wasm
                         && self.host.proper_tail_calls()
                         && terminal
-                        && p.functions[self.frames[f].function as usize]
+                        && p.function(self.frames[f].function as usize)
                             .permits_js_tail_call_at(pc.saturating_sub(1) as u32)))
-                    && !p.functions[function_index as usize].is_async
-                    && !p.functions[function_index as usize].is_generator
+                    && !p.function(function_index as usize).is_async
+                    && !p.function(function_index as usize).is_generator
                 {
                     self.prepare_user_tail(
                         p,
@@ -1632,7 +1630,7 @@ impl<H: Host> Vm<H> {
             Some(crate::bytecode::OperandKind::Local) => {
                 let slot = operand.payload() as usize;
                 // A plain slot is exactly what `LoadLocalPlain` reads.
-                if p.functions[self.frames[frame].function as usize].plain_local(p, slot) {
+                if p.function(self.frames[frame].function as usize).plain_local(p, slot) {
                     return Ok(self.frames[frame].locals[slot]);
                 }
                 self.load_local_binding(p, frame, slot, None)

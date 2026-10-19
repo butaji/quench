@@ -66,3 +66,89 @@ impl FromIterator<(Atom, u16)> for CaptureScope {
         Self::new(Rc::new(bindings.into_iter().collect()))
     }
 }
+
+/// The nearest bindings a function's compilation found in the scopes it closes over: each
+/// name it looked up that some scope binds, with that scope's depth and the slot.
+type ScopeMemo = FxHashMap<Atom, (u32, u16)>;
+
+/// The scopes a function closes over, innermost first, as its compilation reads them: by
+/// the nearest binding of a name.
+#[derive(Clone)]
+pub(super) enum ScopeChain {
+    /// The scopes themselves. A replayable function's compilation keeps `memo`, the record of
+    /// every binding it finds, which is all a replay of it reads.
+    Scopes {
+        levels: Vec<Rc<CaptureScope>>,
+        memo: Option<Rc<std::cell::RefCell<ScopeMemo>>>,
+    },
+    /// The bindings a load-time compilation found, by atom. A name it looked up and found
+    /// in no scope has no entry, so a replay finds it in none.
+    Memo(Rc<[(Atom, u32, u16)]>),
+}
+
+impl ScopeChain {
+    pub(super) fn new(levels: Vec<Rc<CaptureScope>>) -> Self {
+        Self::Scopes { levels, memo: None }
+    }
+
+    /// The same chain, recording the names its compilation looks up.
+    pub(super) fn recording(self) -> Self {
+        match self {
+            Self::Scopes { levels, .. } => Self::Scopes {
+                levels,
+                memo: Some(Rc::default()),
+            },
+            memo => memo,
+        }
+    }
+
+    /// The recorded lookups in place of the scopes, which a replay does not need.
+    pub(super) fn into_memo(self) -> Self {
+        match self {
+            Self::Scopes {
+                memo: Some(memo), ..
+            } => {
+                let mut found: Vec<(Atom, u32, u16)> = std::mem::take(&mut *memo.borrow_mut())
+                    .into_iter()
+                    .map(|(atom, (depth, slot))| (atom, depth, slot))
+                    .collect();
+                found.sort_unstable();
+                Self::Memo(found.into())
+            }
+            chain => chain,
+        }
+    }
+
+    /// The depth and slot of the nearest scope binding `atom`.
+    pub(super) fn find(&self, atom: Atom) -> Option<(usize, u16)> {
+        match self {
+            Self::Scopes { levels, memo } => {
+                let found = levels
+                    .iter()
+                    .enumerate()
+                    .find_map(|(depth, scope)| scope.get(&atom).map(|slot| (depth, *slot)));
+                if let (Some(memo), Some((depth, slot))) = (memo, found) {
+                    memo.borrow_mut().insert(atom, (depth as u32, slot));
+                }
+                found
+            }
+            Self::Memo(found) => found
+                .binary_search_by_key(&atom, |(atom, _, _)| *atom)
+                .ok()
+                .map(|index| (found[index].1 as usize, found[index].2)),
+        }
+    }
+
+    pub(super) fn contains(&self, atom: Atom) -> bool {
+        self.find(atom).is_some()
+    }
+
+    /// The scopes, which closures made inside the function extend. A replay compiles none of
+    /// them, and has none.
+    pub(super) fn levels(&self) -> &[Rc<CaptureScope>] {
+        match self {
+            Self::Scopes { levels, .. } => levels,
+            Self::Memo(_) => &[],
+        }
+    }
+}

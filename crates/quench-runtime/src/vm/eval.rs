@@ -130,7 +130,7 @@ impl<H: Host> Vm<H> {
         let inherited_strict = self.direct_eval
             && (self.in_class_initializer(p)
                 || self.frames.last()
-                    .and_then(|frame| p.functions.get(frame.function as usize))
+                    .and_then(|frame| p.function_get(frame.function as usize))
                     .is_some_and(|function| function.strict));
         self.validate_eval_arguments_context(p, &text)?;
         let source_name = format!("<Eval:{}>", self.programs.len());
@@ -250,6 +250,20 @@ impl<H: Host> Vm<H> {
         self.evaluate_embedding_prepared_script(&prepared)
     }
 
+    /// `evaluate_embedding_specialized_script_with_origin` for a program whose functions keep
+    /// their compiled records instead of compiling again on first call: an application's
+    /// entry, whose own functions mostly run.
+    pub(crate) fn evaluate_embedding_entry_script_with_origin(
+        &mut self,
+        source: &str,
+        name: &str,
+        origin: Option<(u32, u32)>,
+    ) -> Result<Value, JsError> {
+        let prepared =
+            self.prepare_embedding_specialized_script_retaining(source, name, origin, None, true)?;
+        self.evaluate_embedding_prepared_script(&prepared)
+    }
+
     /// Compiles a host wrapper `prefix + body + suffix` whose body is static host text: the
     /// program's positions start at the wrapper origin and it retains the body itself.
     pub(crate) fn prepare_embedding_static_body(
@@ -260,13 +274,13 @@ impl<H: Host> Vm<H> {
             .ok_or_else(|| JsError("host wrapper origin exceeds compiler positions".into()))?;
         let base = u32::try_from(prefix.len())
             .map_err(|_| JsError("host wrapper prefix exceeds compiler positions".into()))?;
-        self.prepare_embedding_specialized_script_retaining(&wrapped, name, Some(origin), Some((body, base)))
+        self.prepare_embedding_specialized_script_retaining(&wrapped, name, Some(origin), Some((body, base)), true)
     }
 
     pub(crate) fn prepare_embedding_specialized_script(
         &mut self, source: &str, name: &str, origin: Option<(u32, u32)>,
     ) -> Result<crate::PreparedScript, JsError> {
-        self.prepare_embedding_specialized_script_retaining(source, name, origin, None)
+        self.prepare_embedding_specialized_script_retaining(source, name, origin, None, false)
     }
 
     /// `retained` names static text the program keeps in place of its compiled source, and
@@ -274,9 +288,16 @@ impl<H: Host> Vm<H> {
     fn prepare_embedding_specialized_script_retaining(
         &mut self, source: &str, name: &str, origin: Option<(u32, u32)>,
         retained: Option<(&'static str, u32)>,
+        keep_records: bool,
     ) -> Result<crate::PreparedScript, JsError> {
         let program = self.embedding_program()?;
-        let mut residual = crate::Engine::specialize_script_with_atom_prefix(source, name, &*self)
+        // A program keeping only static text cannot compile its functions again from it.
+        let compiled = if keep_records {
+            crate::Engine::specialize_kept_script_with_atom_prefix(source, name, &*self)
+        } else {
+            crate::Engine::specialize_script_with_atom_prefix(source, name, &*self)
+        };
+        let mut residual = compiled
             .map_err(|diagnostics| {
                 if diagnostics
                     .iter()
@@ -298,7 +319,9 @@ impl<H: Host> Vm<H> {
             source.text = crate::bytecode::SourceText::Static(text);
             source.base = base;
         }
-        let residual = self.intern_program_atoms(residual);
+        let mut residual = self.intern_program_atoms(residual);
+        // Its final source is settled, so a function compiles again from it on first call.
+        residual.release_replayable_records();
         Ok(crate::PreparedScript { program: Rc::new(residual) })
     }
 
@@ -397,7 +420,7 @@ impl<H: Host> Vm<H> {
         if !direct_eval {
             self.programs.mark_global_scope(program_id);
         }
-        let root_function = residual.functions[super::ROOT_FUNCTION_ID as usize].clone();
+        let root_function = residual.function(super::ROOT_FUNCTION_ID as usize).clone();
         let root_scope = self.running_global_code();
         let caller_scope = direct_eval && !root_scope && !root_function.strict;
         if direct_eval && !root_function.strict {
@@ -415,7 +438,7 @@ impl<H: Host> Vm<H> {
         );
         let result = (|| {
             if !root_function.strict {
-                let global_function_atoms = residual.functions[super::ROOT_FUNCTION_ID as usize]
+                let global_function_atoms = residual.function(super::ROOT_FUNCTION_ID as usize)
                     .global_function_atoms()
                     .to_vec();
                 for atom in &global_function_atoms {
@@ -437,7 +460,7 @@ impl<H: Host> Vm<H> {
                     let name = self.atom_name(*atom).to_owned();
                     self.check_global_eval_declaration(p, globals, &name, true)?;
                 }
-                for atom in residual.functions[super::ROOT_FUNCTION_ID as usize]
+                for atom in residual.function(super::ROOT_FUNCTION_ID as usize)
                     .global_var_atoms()
                     .iter()
                     .copied()
@@ -447,7 +470,7 @@ impl<H: Host> Vm<H> {
                         && self
                             .frames
                             .last()
-                            .and_then(|frame| p.functions.get(frame.function as usize))
+                            .and_then(|frame| p.function_get(frame.function as usize))
                             .is_some_and(|function| function.parameter_atoms.contains(&atom))
                     {
                         return self.syntax_error_result(
@@ -575,8 +598,7 @@ impl<H: Host> Vm<H> {
                 .get(self.frames[frame].program)
                 .is_some_and(|program| {
                     program
-                        .functions
-                        .get(self.frames[frame].function as usize)
+                        .function_get(self.frames[frame].function as usize)
                         .and_then(|function| {
                             function
                                 .binding_sites
@@ -645,7 +667,7 @@ impl<H: Host> Vm<H> {
     fn in_class_initializer(&mut self, p: &ResidualProgram) -> bool {
         self.frames
             .last()
-            .and_then(|frame| p.functions.get(frame.function as usize))
+            .and_then(|frame| p.function_get(frame.function as usize))
             .is_some_and(|function| function.class_initializer)
     }
 
@@ -757,7 +779,7 @@ impl<H: Host> Vm<H> {
     fn direct_eval_private_names(&mut self, p: &ResidualProgram) -> Option<(Value, Vec<(String, String)>)> {
         let frame = self.frames.len().checked_sub(1)?;
         let mut atoms = Vec::new();
-        let metadata = p.functions.get(self.frames[frame].function as usize)?;
+        let metadata = p.function_get(self.frames[frame].function as usize)?;
         if let Some(pc) = self.frames[frame].binding_site_pc
             && let Ok(index) = metadata.binding_sites.binary_search_by_key(&pc, |site| site.resume_pc)
         {
@@ -767,7 +789,7 @@ impl<H: Host> Vm<H> {
         let mut environment = self.captured_parent_environment(frame);
         while let Some(Cell::Environment { parent, function, scope, .. }) = self.heap.get(environment) {
             if let Some(owner) = scope.program().and_then(|program| self.programs.get(ProgramId::from_raw(program)))
-                && let Some(metadata) = owner.functions.get(*function as usize)
+                && let Some(metadata) = owner.function_get(*function as usize)
             {
                 atoms.extend(metadata.name_bindings.resolved().into_iter().filter(|binding| binding.kind == crate::bytecode::LexicalBindingKind::PrivateName).map(|binding| binding.atom));
             }
@@ -802,8 +824,7 @@ impl<H: Host> Vm<H> {
         }
         let frame = self.frames.len().checked_sub(1)?;
         let home_atom = p
-            .functions
-            .get(self.frames[frame].function as usize)?
+            .function_get(self.frames[frame].function as usize)?
             .super_home_atom;
         let class_initializer = self.in_class_initializer(p);
         let atom = self.runtime_atoms.lexical_this;
@@ -814,8 +835,7 @@ impl<H: Host> Vm<H> {
                 .and_then(|(program, function, _)| {
                     self.programs.get(program).and_then(|program| {
                         program
-                            .functions
-                            .get(function as usize)
+                            .function_get(function as usize)
                             .map(|f| f.derived_constructor)
                     })
                 })
@@ -830,7 +850,7 @@ impl<H: Host> Vm<H> {
 
     fn eval_home_binding(&mut self, p: &ResidualProgram) -> Option<Value> {
         let function = self.frames.last()?.function;
-        let home_atom = p.functions.get(function as usize)?.super_home_atom?;
+        let home_atom = p.function_get(function as usize)?.super_home_atom?;
         // Use the same binding operation as compiled super access. Its retained
         // metadata resolves captures across both scope views and eval programs.
         self.load_name(p, home_atom, None).ok()

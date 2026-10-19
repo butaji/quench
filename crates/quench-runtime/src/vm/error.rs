@@ -538,7 +538,7 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let residual = self.programs.get(frame.program)?;
-        let function = residual.functions.get(frame.function as usize)?;
+        let function = residual.function_get(frame.function as usize)?;
         let pc = u32::try_from(frame.source_instruction_pc()).unwrap_or(u32::MAX);
         let position = if let Some((site, part)) = frame.source_field {
             if let Some((line, column)) = residual.field_sites.get(site).and_then(|site| site.source(part)) {
@@ -570,7 +570,7 @@ impl<H: Host> Vm<H> {
             let Some(frame) = self.frames.last() else { return Ok(fallback()); };
             let Some((record, module)) = self.source_call_site_record(frame, false) else { return Ok(fallback()); };
             let Some(program) = self.programs.get(frame.program) else { return Ok(fallback()); };
-            let Some(function) = program.functions.get(frame.function as usize) else { return Ok(fallback()); };
+            let Some(function) = program.function_get(frame.function as usize) else { return Ok(fallback()); };
             let primary_constructor = self.programs.is_function_constructor_body(frame.program, frame.function);
             let name = function.name.or_else(|| (!primary_constructor)
                 .then(|| frame.context.callable().and_then(|callee| self.original_function_name(callee)))
@@ -646,7 +646,7 @@ impl<H: Host> Vm<H> {
             let Some(residual) = self.programs.get(frame.program) else {
                 continue;
             };
-            let Some(function) = residual.functions.get(frame.function as usize) else {
+            let Some(function) = residual.function_get(frame.function as usize) else {
                 continue;
             };
             hide_identity |= function.strict;
@@ -1442,7 +1442,7 @@ impl<H: Host> Vm<H> {
                 .functions
                 .iter()
                 .enumerate()
-                .find(|(_, function)| function.parent == Some(super::ROOT_FUNCTION_ID))
+                .find(|(_, function)| function.header().parent == Some(super::ROOT_FUNCTION_ID))
                 .map(|(id, _)| id as u32)
                 .ok_or_else(|| {
                     self.type_error(program, "dynamic Function body is unavailable".into())
