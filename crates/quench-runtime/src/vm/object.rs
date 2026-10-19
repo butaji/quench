@@ -1073,11 +1073,12 @@ impl<H: Host> Vm<H> {
         let index = self.field_cache_index(site);
         // SAFETY: the active program's layout reserves every compiler-emitted site.
         let cache = unsafe { *self.field_caches.get_unchecked(index) };
-        if cache.receiver != receiver.shape() || cache.holder != NO_FIELD_HOLDER {
+        // The exact shape matches only outside dictionary storage (`Object::exact_shape`).
+        if cache.receiver != receiver.exact_shape() || cache.holder != NO_FIELD_HOLDER {
             return None;
         }
-        // SAFETY: as for `cached_field_hit`.
-        let value = unsafe { self.heap.property_get_shaped(receiver, cache.slot as usize) }?;
+        // SAFETY: as for `cached_field_hit`; the exact match rules out a dictionary.
+        let value = unsafe { self.heap.property_get_flat(receiver, cache.slot as usize) };
         self.profile.field_cache_hit(0, 0);
         Some(value)
     }
@@ -1107,10 +1108,11 @@ impl<H: Host> Vm<H> {
         }
         // SAFETY: the active program's layout reserves every compiler-emitted site.
         let cache = unsafe { *self.field_caches.get_unchecked(self.field_cache_index(site)) };
-        if cache.receiver != receiver.shape() || cache.holder != NO_FIELD_HOLDER {
+        if cache.receiver != receiver.exact_shape() || cache.holder != NO_FIELD_HOLDER {
             return false;
         }
-        // SAFETY: a matching immutable shape proves the cached slot layout.
+        // SAFETY: a matching exact shape proves the cached slot layout outside dictionary
+        // storage (`Object::exact_shape`).
         if !unsafe { self.heap.record_property_set_flat::<LOGS>(record_id, cache.slot as usize, value) } {
             return false;
         }
@@ -1178,11 +1180,11 @@ impl<H: Host> Vm<H> {
         let receiver = self.heap.object(object)?;
         // SAFETY: the active program's layout reserves every compiler-emitted site.
         let cache = unsafe { *self.field_caches.get_unchecked(self.field_cache_index(site)) };
-        if cache.receiver != receiver.shape() || cache.holder != NO_FIELD_HOLDER {
+        if cache.receiver != receiver.exact_shape() || cache.holder != NO_FIELD_HOLDER {
             return None;
         }
-        // SAFETY: as for `cached_field_hit`.
-        let value = unsafe { self.heap.property_get_shaped(receiver, cache.slot as usize) }?;
+        // SAFETY: as for `cached_field_hit`; the exact match rules out a dictionary.
+        let value = unsafe { self.heap.property_get_flat(receiver, cache.slot as usize) };
         self.profile.field_cache_hit(0, 0);
         Some(value)
     }
@@ -1247,7 +1249,7 @@ impl<H: Host> Vm<H> {
         let cache = unsafe { self.inherited_field_caches.get_unchecked(index as usize) };
         if cache.receiver != receiver.shape()
             || cache.proved_epoch != crate::heap::prototype_layout_epoch()
-            || cache.proved_prototype != receiver.proto()
+            || cache.proved_prototype != receiver.proto_link()
         {
             return None;
         }
@@ -1310,7 +1312,9 @@ impl<H: Host> Vm<H> {
         site: u16,
     ) -> Option<Value> {
         debug_assert!(self.lane_admits(p));
-        let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
+        // Any record receiver, an array's too: entries name only shape slots, which an
+        // array's length and elements are not.
+        let receiver = self.heap.record_object_value(object)?;
         let index = self.field_cache_index(site);
         // SAFETY: compiler-produced sites index exactly-sized cache vectors;
         // every non-sentinel index was installed together with its table.
@@ -1319,7 +1323,9 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let set = unsafe { self.megamorphic_fields.get_unchecked(table_index as usize) };
-        let shape = receiver.shape();
+        // Exact shapes: a match proves a layout outside dictionary storage, so each hit
+        // reads its slot flat (`Object::exact_shape`).
+        let shape = receiver.exact_shape();
         if set.overflow.is_some() {
             if !HASHED {
                 return None;
@@ -1331,17 +1337,17 @@ impl<H: Host> Vm<H> {
                 && let Some(entry) = set.get(shape, NO_FIELD_HOLDER)
             {
                 // SAFETY: as for `cached_field_hit`.
-                let value = unsafe { self.heap.property_get_shaped(receiver, usize::from(entry.slot)) }?;
+                let value = unsafe { self.heap.property_get_flat(receiver, usize::from(entry.slot)) };
                 self.profile.field_cache_hit(2, 0);
                 return Some(value);
             }
-            let holder = self.heap.object_record(receiver.proto())?;
+            let holder = self.heap.record_prototype(receiver)?;
             if holder.is_module_namespace() {
                 return None;
             }
-            let entry = set.get(shape, holder.shape())?;
+            let entry = set.get(shape, holder.exact_shape())?;
             // SAFETY: as for the inline holder entries below.
-            let value = unsafe { self.heap.property_get_shaped(holder, usize::from(entry.slot)) }?;
+            let value = unsafe { self.heap.property_get_flat(holder, usize::from(entry.slot)) };
             self.profile.field_cache_hit(2, 1);
             return Some(value);
         }
@@ -1351,18 +1357,18 @@ impl<H: Host> Vm<H> {
             }
             if entry.holder == NO_FIELD_HOLDER {
                 // SAFETY: as for `cached_field_hit`.
-                let value = unsafe { self.heap.property_get_shaped(receiver, usize::from(entry.slot)) }?;
+                let value = unsafe { self.heap.property_get_flat(receiver, usize::from(entry.slot)) };
                 self.profile.field_cache_hit(2, 0);
                 return Some(value);
             }
-            // A prototype outside the object records takes the slow path.
-            let holder = self.heap.object_record(receiver.proto())?;
-            if holder.is_module_namespace() || holder.shape() != entry.holder {
+            // A prototype outside the records takes the slow path.
+            let holder = self.heap.record_prototype(receiver)?;
+            if holder.is_module_namespace() || holder.exact_shape() != entry.holder {
                 continue;
             }
             // SAFETY: both immutable shapes and the property slot were recorded together
             // after confirming an immediate-prototype data property.
-            let value = unsafe { self.heap.property_get_shaped(holder, usize::from(entry.slot)) }?;
+            let value = unsafe { self.heap.property_get_flat(holder, usize::from(entry.slot)) };
             self.profile.field_cache_hit(2, 1);
             return Some(value);
         }
@@ -1662,7 +1668,7 @@ impl<H: Host> Vm<H> {
     ) -> Option<FieldCacheHit> {
         // SAFETY: the active program's layout reserves every compiler-emitted site.
         let cache = unsafe { *self.field_caches.get_unchecked(site) };
-        if cache.holder == NO_FIELD_HOLDER || cache.receiver != receiver.shape() {
+        if cache.holder == NO_FIELD_HOLDER || cache.receiver != receiver.exact_shape() {
             return None;
         }
         // Most prototypes are object records, read from the stored link without decoding it
@@ -1671,12 +1677,13 @@ impl<H: Host> Vm<H> {
             Some(record) => self.heap.object_record_by_id(record),
             None => self.heap.object(receiver.proto())?,
         };
-        if holder.is_module_namespace() || cache.holder != holder.shape() {
+        if holder.is_module_namespace() || cache.holder != holder.exact_shape() {
             return None;
         }
         // SAFETY: both immutable shapes and the property slot were recorded together after
-        // confirming an immediate-prototype data property.
-        let value = unsafe { self.heap.property_get_shaped(holder, cache.slot as usize) }?;
+        // confirming an immediate-prototype data property; the exact holder match rules out
+        // a dictionary.
+        let value = unsafe { self.heap.property_get_flat(holder, cache.slot as usize) };
         Some(FieldCacheHit {
             value,
             tier: 0,
@@ -1691,13 +1698,14 @@ impl<H: Host> Vm<H> {
         receiver: &Object,
         atom: Atom,
     ) -> Option<FieldCacheHit> {
-        let holder_value = receiver.proto();
-        // An ordinary record prototype is the holder as it stands: entries record only holder
-        // shapes whose lookup answered the atom (`shape_property_lookup`), and a shape fixes
-        // its dictionary state and keys, so a matching entry proves what the lookup would.
-        let holder = match self.heap.object_record(holder_value) {
+        // A record prototype (an object's, or an array's as `Array.prototype`) is the holder as
+        // it stands: entries record only holder shapes whose lookup answered the atom
+        // (`shape_property_lookup`), and a shape fixes its dictionary state and keys, so a
+        // matching entry proves what the lookup would. An array's length and elements are no
+        // shape slots, so no entry names them.
+        let holder = match self.heap.record_prototype(receiver) {
             Some(holder) if !holder.is_module_namespace() => holder,
-            _ => self.shape_property_lookup(holder_value, atom)?,
+            _ => self.shape_property_lookup(receiver.proto(), atom)?,
         };
         // SAFETY: the active program's layout reserves every compiler-emitted site.
         let cache = unsafe { *self.field_caches.get_unchecked(site) };
@@ -1959,7 +1967,7 @@ impl<H: Host> Vm<H> {
         };
         let first = receiver.proto();
         let epoch = crate::heap::prototype_layout_epoch();
-        if cache.proved_epoch == epoch && cache.proved_prototype == first {
+        if cache.proved_epoch == epoch && cache.proved_prototype == receiver.proto_link() {
             let value = match cache.answer {
                 InheritedFieldAnswer::Slot(slot) => {
                     // A holder in the object records, as most prototypes are, without the
@@ -2024,7 +2032,7 @@ impl<H: Host> Vm<H> {
         }
         let cache = &mut self.inherited_field_caches[proof.index as usize];
         cache.proved_epoch = proof.epoch;
-        cache.proved_prototype = proof.prototype;
+        cache.proved_prototype = crate::heap::ProtoLink::of(proof.prototype);
         cache.proved_holder = proof.holder;
     }
 
@@ -2048,7 +2056,7 @@ impl<H: Host> Vm<H> {
             depth: 0,
             answer: InheritedFieldAnswer::Absent,
             proved_epoch: NO_PROVED_EPOCH,
-            proved_prototype: Value::UNDEFINED,
+            proved_prototype: crate::heap::ProtoLink::NULL,
             proved_holder: Value::UNDEFINED,
             next: NO_INHERITED_FIELD,
         };

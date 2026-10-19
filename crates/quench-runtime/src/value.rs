@@ -420,6 +420,13 @@ impl Value {
         self.0 == TAG_DELETED
     }
 
+    /// Whether this is any `TAG_DELETED` marker: `DELETED`, a shared environment slot, an
+    /// environment index or unmaterialized arguments. None is a value a program observes.
+    #[inline(always)]
+    pub(crate) fn is_internal_marker(self) -> bool {
+        self.0 & TAG_MASK == TAG_DELETED
+    }
+
     #[inline(always)]
     fn is_tagged(self) -> bool {
         // The tag field, shifted down, compared as one small range.
