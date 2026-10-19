@@ -18,7 +18,7 @@ use crate::bytecode::{
 use crate::heap::CellKind;
 use crate::heap::{
     CallSiteLocation, CallSiteName, CallSiteRecord, Cell, FunctionKind, FunctionRecord, GcTraceKind, IteratorRecord, Heap, IteratorConsumer,
-    IteratorHelper, IteratorKind, Native, Object, ProxyKind, RootId, StackData, TypedArrayKind,
+    IteratorHelper, IteratorKind, Native, Object, ProtoLink, ProxyKind, RootId, StackData, TypedArrayKind,
     WeakHandle,
 };
 use crate::host::{CapabilityId, Host, HostContext};
@@ -622,7 +622,9 @@ struct InheritedFieldCache {
     /// `proved_prototype` up to `proved_holder`, its last recorded prototype, or
     /// `NO_PROVED_EPOCH`; while both hold the chain needs no walk.
     proved_epoch: u64,
-    proved_prototype: Value,
+    /// The receiver's prototype link the proof holds for, compared undecoded; a
+    /// collection advances the epoch, so it never outlives the record it names.
+    proved_prototype: ProtoLink,
     proved_holder: Value,
     /// The site's next older entry, or `NO_INHERITED_FIELD`: a site keeps up to
     /// `INHERITED_FIELD_CACHE_WAYS` receiver shapes, newest first.
@@ -2517,8 +2519,26 @@ impl<H: Host> Vm<H> {
     }
     fn materialize_program_constants(&mut self, id: ProgramId, program: &ResidualProgram) {
         let mut constants = Vec::with_capacity(program.constants.len());
+        // Equal string constants share one cell, as engines intern literals: a string is an
+        // immutable primitive, so which cell holds it is unobservable, and `===` between
+        // literals from different sites then decides by identity before comparing text.
+        let mut strings: std::collections::HashMap<StringConstantKey<'_>, Value> =
+            std::collections::HashMap::new();
         for constant in &program.constants {
-            let value = self.materialize_constant(constant);
+            let key = match constant {
+                Constant::String(text) => Some(StringConstantKey::Text(text)),
+                Constant::StringUnits(units) => Some(StringConstantKey::Units(units)),
+                _ => None,
+            };
+            let value = match key.and_then(|key| strings.get(&key).copied().map(Ok).or(Some(Err(key)))) {
+                Some(Ok(shared)) => shared,
+                Some(Err(key)) => {
+                    let value = self.materialize_constant(constant);
+                    strings.insert(key, value);
+                    value
+                }
+                None => self.materialize_constant(constant),
+            };
             constants.push(value);
         }
         self.programs.set_constants(id, constants);
@@ -2832,4 +2852,12 @@ impl<H: Host> Vm<H> {
             )),
         }
     }
+}
+
+/// A program string constant's text as written, the key under which equal constants share a
+/// cell (`Vm::materialize_program_constants`).
+#[derive(PartialEq, Eq, Hash)]
+enum StringConstantKey<'a> {
+    Text(&'a str),
+    Units(&'a [u16]),
 }

@@ -4,10 +4,13 @@ impl FunctionCompiler<'_, '_> {
     pub(crate) fn statements(&mut self, body: &[Statement<'_>]) {
         for statement in body {
             self.statement(statement);
-            self.release_temporaries();
         }
     }
 
+    /// Compiles `statement`, then frees its temporaries: nothing after a statement reads a
+    /// register it allocated, wherever it stands (a list, an `if` branch, a loop body), and a
+    /// construct reading registers across its body holds them (`with_registers_held`). So
+    /// the branches of an `if` chain share one run of registers.
     pub(super) fn statement(&mut self, statement: &Statement<'_>) {
         let position = self.owner.source_position(statement.span().start);
         let previous = self
@@ -15,6 +18,7 @@ impl FunctionCompiler<'_, '_> {
             .replace((position.line, position.column));
         self.statement_at_current_position(statement);
         self.current_source_position = previous;
+        self.release_temporaries();
     }
 
     fn statement_at_current_position(&mut self, statement: &Statement<'_>) {

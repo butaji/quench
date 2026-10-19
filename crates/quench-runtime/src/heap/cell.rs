@@ -1274,6 +1274,12 @@ pub(crate) struct ProtoLink(u32);
 impl ProtoLink {
     pub(crate) const NULL: Self = Self(PROTO_NULL);
 
+    /// The link naming `prototype`, an object or null (`Object::encode_proto`).
+    #[inline(always)]
+    pub(crate) fn of(prototype: Value) -> Self {
+        Self(Object::encode_proto(prototype))
+    }
+
     /// The link naming object record `id`.
     #[inline(always)]
     pub(crate) fn object_record(id: u32) -> Self {
@@ -1984,6 +1990,13 @@ impl Object {
     pub(crate) fn shape(&self) -> u32 {
         ValueVec::from_parts(0, self.auxiliary).auxiliary()
     }
+    /// The shape with its dictionary bit (`ValueVec::exact_auxiliary`): a cache entry,
+    /// which records only non-dictionary shapes, matches it exactly when it matches the
+    /// shape of an object outside dictionary storage.
+    #[inline(always)]
+    pub(crate) fn exact_shape(&self) -> u32 {
+        ValueVec::from_parts(0, self.auxiliary).exact_auxiliary()
+    }
     #[inline(always)]
     pub(crate) fn set_shape(&mut self, shape: u32) {
         self.note_prototype_layout_change();
@@ -2449,19 +2462,20 @@ impl EnvironmentSlots {
             None => EnvironmentSlotState::Shared(owner),
         })
     }
-    /// This storage when it is dense, which a caller may then read with `dense_owned`.
+    /// This storage when it is dense, which a caller may then read with `dense_plain`.
     #[inline(always)]
     pub(crate) fn dense(&self) -> Option<&Self> {
         (!self.0.marked()).then_some(self)
     }
-    /// `owned` of storage `dense` returned, without testing its layout again.
+    /// A dense slot's ordinary value (storage `dense` returned): `None` past the storage or
+    /// for any internal marker it holds (`Value::is_internal_marker`: a shared slot, an
+    /// uninitialized binding), which the caller resolves the long way. One tag test answers
+    /// both the shared-slot and the initialization check.
     #[inline(always)]
-    pub(crate) fn dense_owned(&self, slot: usize) -> Option<Value> {
+    pub(crate) fn dense_plain(&self, slot: usize) -> Option<Value> {
         debug_assert!(!self.0.marked());
-        match self.0.get(slot)?.state() {
-            EnvironmentSlotState::Owned(value) => Some(value),
-            EnvironmentSlotState::Shared(_) => None,
-        }
+        let value = self.0.get(slot)?.0;
+        (!value.is_internal_marker()).then_some(value)
     }
     /// The value of a slot this environment owns; a shared slot lives in its owner.
     #[inline(always)]

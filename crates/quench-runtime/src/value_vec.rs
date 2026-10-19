@@ -64,6 +64,13 @@ impl ValueVec {
         self.auxiliary & SHAPE_MASK
     }
 
+    /// The auxiliary word with its dictionary bit: equal to `auxiliary` exactly when the
+    /// vector is not in dictionary storage, so one comparison with a recorded shape, which
+    /// is never a dictionary's, proves both.
+    pub(crate) const fn exact_auxiliary(self) -> u32 {
+        self.auxiliary
+    }
+
     pub(crate) fn has_inline_property_storage(self) -> bool {
         self.start() as u32 == INLINE_PROPERTY_START
     }
@@ -75,7 +82,9 @@ impl ValueVec {
     }
 
     pub(crate) fn set_auxiliary(&mut self, value: u32) {
-        assert!(value <= SHAPE_MASK, "object shape table exhausted");
+        // The last shape stays unused, so a dictionary vector's exact auxiliary
+        // (`exact_auxiliary`) never equals the all-ones sentinel caches record as "none".
+        assert!(value < SHAPE_MASK, "object shape table exhausted");
         self.auxiliary = (self.auxiliary & DICTIONARY_STORAGE) | value;
     }
 
@@ -228,6 +237,19 @@ impl ValueArena {
         }
         // SAFETY: caller provides the initialized-range invariant; every
         // vector range was allocated from `values` and remains reserved.
+        unsafe { *self.values.get_unchecked(vector.start() + index) }
+    }
+
+    /// `get_unchecked` of a vector known to be outside dictionary mode (`exact_auxiliary`
+    /// matched a recorded shape).
+    ///
+    /// # Safety
+    /// As for `get_unchecked`, and the vector is not a dictionary.
+    #[inline(always)]
+    pub(crate) unsafe fn get_flat(&self, vector: ValueVec, index: usize) -> Value {
+        debug_assert!(!vector.has_inline_property_storage() && !vector.is_dictionary());
+        debug_assert!(index < self.len(vector));
+        // SAFETY: as for `get_unchecked`.
         unsafe { *self.values.get_unchecked(vector.start() + index) }
     }
 
