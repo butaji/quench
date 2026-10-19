@@ -2601,6 +2601,9 @@ pub(crate) struct ProgramSource {
     pub(crate) base: u32,
     pub(crate) line_offset: u32,
     pub(crate) column_offset: u32,
+    /// `source_line_starts(text)`, indexed on the first line read: error source positions
+    /// read a line per throw, which a scan from the top would make linear in the source.
+    pub(crate) line_starts: std::cell::OnceCell<Box<[u32]>>,
 }
 
 /// Starts of JavaScript source lines, including an empty line after a final terminator.
@@ -2642,10 +2645,14 @@ impl ProgramSource {
         } else {
             (0, 0)
         };
-        let compiled_line = line.checked_add(line_offset)?.checked_sub(1)?;
-        let mut starts = source_line_starts(&self.text);
-        let start = starts.nth(compiled_line as usize)?;
-        let end = starts.next().unwrap_or(self.text.len());
+        let compiled_line = line.checked_add(line_offset)?.checked_sub(1)? as usize;
+        let starts = self.line_starts.get_or_init(|| {
+            source_line_starts(&self.text)
+                .map(|start| u32::try_from(start).unwrap_or(u32::MAX))
+                .collect()
+        });
+        let start = *starts.get(compiled_line)? as usize;
+        let end = starts.get(compiled_line + 1).map_or(self.text.len(), |&end| end as usize);
         let text = self.text.get(start..end)?
             .trim_end_matches(['\r', '\n', '\u{2028}', '\u{2029}']);
         if line != 1 {

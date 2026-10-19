@@ -3311,7 +3311,7 @@ impl Heap {
                 | Cell::WasmTag { .. } => 0,
                 Cell::Promise(promise) => {
                     size_of::<PromiseCell>()
-                        + promise.record.reactions.capacity() * size_of::<PromiseReaction>()
+                        + promise.record.reaction_heap_bytes()
                 }
                 Cell::WasmException { payload, .. } => payload.capacity() * size_of::<Value>(),
                 Cell::WasmHostFunction { target, signature } => {

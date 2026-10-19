@@ -1040,20 +1040,21 @@ impl<H: Host> Vm<H> {
             .heap
             .clone_environment_slots(source, fresh, reset)
             .ok_or_else(|| JsError("invalid environment clone slots".into()))?;
-        // A copy shares the activation's dynamic bindings with it: the ones a direct eval
-        // declares, and the implicit `this` and `new.target` its closures read, which `super()`
-        // initializes later. A function whose names all resolve statically declares none by
-        // eval, and one whose implicit bindings no closure or name reads keeps none
-        // (`Function::activation_bindings_observable`), so its copies need no link and keep the
-        // activation's unboxed scope.
+        // A copy shares the activation's dynamic bindings with it: its implicit `this` and
+        // `new.target` and any a direct eval declares. A function whose names all resolve
+        // statically has no direct eval, so an activation holding none now never will, and
+        // its copies keep an unboxed scope of their own.
         let (program, function) = (self.frames[frame].program, self.frames[frame].function);
-        let declares_no_dynamic_bindings = self.programs.residual(program).is_some_and(|p| {
-            p.function_get(function as usize).is_some_and(|function| {
-                function.names_resolve_statically(&p.functions, &p.atoms)
-                    && !function.activation_bindings_observable(&p.atoms, &p.functions)
-            })
-        });
-        let owner = if declares_no_dynamic_bindings {
+        let never_binds_dynamically = self
+            .heap
+            .environment_bindings(source)
+            .is_some_and(Vec::is_empty)
+            && self.programs.residual(program).is_some_and(|p| {
+                p.function_get(function as usize).is_some_and(|function| {
+                    function.names_resolve_statically(&p.functions, &p.atoms)
+                })
+            });
+        let owner = if never_binds_dynamically {
             None
         } else {
             Some(
