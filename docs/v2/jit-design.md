@@ -567,3 +567,77 @@ eleven rounds, and neither beat Bun or Node on Score. The compiler switch and
 diagnostic runner option were removed. Full runs and the rejection decision
 are recorded in
 `evidence/jit-jetstream3-wasm-2026-10-18/indexed-offset-reuse/`.
+
+## GCC-Wasm four-lane affine pair experiment
+
+The GCC `example1` loop computes two independent adjacent `i32` sums per
+backedge. A restricted matcher proves static non-aliasing, memory32 range
+validity, a zero-start induction variable, and safe loop entry. The candidate
+uses Cranelift's supported `I32X4` operation, stores results in the original
+two-element order, and polls interrupts at both original backedges. An initial
+`I32X2` prototype could not be lowered by Cranelift 0.134.3's x64 backend and
+was discarded before timing.
+
+The valid three-round paired screen passed JetStream output validation but
+regressed Score: candidate/baseline was 0.927 (paired bootstrap 95% interval
+0.862–0.973). Peak RSS was effectively flat at 0.995 of baseline
+(0.992–0.997). The candidate scored 53.24 versus Bun's 184.91 and Node's
+180.36, while using 47.91 MiB versus 56.11 MiB and 92.01 MiB. Since the
+optimization regressed against the same Quench binary, it did not advance to
+eleven rounds. It remains available only by explicitly setting
+`QUENCH_WASM_JIT_AFFINE_PAIR=1`; the default path leaves it off. The
+instrumented one-round run only confirms native compilation and equal output;
+it is not timing evidence. Reports and paired analysis are in
+`evidence/jit-jetstream3-wasm-2026-10-18/affine-pair/`.
+
+## QuickSort root-first admission screen
+
+Three-round default and explicit root-9-first screens both passed output
+validation, but neither improved QuickSort Score. The root-9 screen recorded
+211.07 versus 219.12 for the default policy with the same 43.09 MiB Quench
+peak RSS; both remained below Bun and Node on Score. This admission-policy
+variant was rejected without changing production selection. Reports and the
+directional result are in
+`evidence/jit-jetstream3-wasm-2026-10-18/root-first/`.
+
+## Same-artifact body-pointer cache screen
+
+The TSF diagnostic A/B compared the same production executable with the
+same-artifact indirect-call body-pointer cache disabled and enabled, rotating
+Quench, Bun, and Node over three valid rounds. All outputs matched. Enabling
+the cache changed Quench's median Score from 10.95 to 10.40 (paired ratio
+0.960, 95% interval 0.920–1.013) and left peak RSS effectively unchanged
+(ratio 1.000, interval 0.9998–1.0002). The interval includes a tie, so this
+does not establish a regression or a gain; TSF remains far below both peers
+on Score and above them on RSS. The cache is now opt-in via
+`QUENCH_WASM_JIT_REFERENCE_BODY_CACHE=1` pending a workload that demonstrates
+payback. The screen is diagnostic rather than qualification evidence. Raw
+rounds and paired analysis are in
+`evidence/jit-jetstream3-wasm-2026-10-18/reference-body-cache/`.
+
+## GCC-Wasm native Emscripten memcpy leaf screen
+
+The next boundary experiment emitted a direct native leaf for the exact
+`_emscripten_memcpy_js(i32, i32, i32) -> ()` import. It used the existing
+live-view, method, and unshared-memory guard on the slow path, and revoked the
+raw-memory certificate at import and indirect-reference callouts. After a
+provenance review, both paired arms enabled the same direct, raw-i32, and
+early-import paths, with only the leaf switch differing. The corrected
+three-round screen had valid equal outputs, but leaf-on Score was 50.02 versus
+51.20 off (paired ratio 0.977, 95% interval 0.944–1.024) and peak RSS was flat
+(0.99984, 0.99829–1.00016). The interval includes a tie, so there was no
+supported speedup; the screen did not advance to eleven rounds. Quench's
+leaf-on Score was 50.02 versus Bun's 172.94 and Node's 177.67, while Quench
+used less peak RSS than both peers.
+
+The instrumented mechanism check found 307,300 early memcpy imports but zero
+native leaf hits. Both arms counted the same 307,300 early imports; the summed
+compiled code was 1,280 bytes larger with the leaf switch, but the specialized
+path was not reached. More call-pattern instrumentation is needed to
+distinguish cache-scope limits from a call-site or guard mismatch. Keep the
+switch as an opt-in experiment; it is not a default optimization, and advance
+it only if a safe certificate reaches hot calls and a fresh paired screen
+supports it. An earlier screen compared different import paths and is retained
+as a confounded result, not evidence for the leaf. Corrected reports, the
+hit-count diagnostic, and reproduction commands are in
+`evidence/jit-jetstream3-wasm-2026-10-18/memcpy-native-leaf/`.
