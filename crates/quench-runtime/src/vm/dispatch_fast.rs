@@ -2789,6 +2789,24 @@ script_handler! {
 }
 
 script_handler! {
+    /// `lane_instanceof_value` run with the `JumpTrue` of its result that follows it, the
+    /// `!(x instanceof C)` test of compiled code (`specialize_negated_instanceof`): the
+    /// record carries the jump's distance from itself, and the result register is written
+    /// as the pair would. A case the steady test leaves runs the pair unfused, from the walk.
+    fn lane_instanceof_jump_true<BACKWARD: bool>(cx, r, ip, i, view) {
+        let Some(holds) = (unsafe { vm(cx) }).steady_instanceof(r.get(i.b), r.get(i.c)) else {
+            sibling!(lane_instanceof_value_walk::<H>, r, ip, Carried::script(cx))
+        };
+        if holds {
+            return lane_jump(cx, r, ip, BACKWARD, Carried::script(cx), Some((i.a, Value::TRUE)));
+        }
+        r.set(i.a, Value::FALSE);
+        // SAFETY: the fused pair is two records, the second never the view's last.
+        next!(cx, r, unsafe { ip.add(2) }, Carried::script(cx))
+    }
+}
+
+script_handler! {
     /// `lane_instanceof_value` that its steady case leaves (`Vm::steady_instanceof`): the
     /// whole ordinary walk, out of line so the steady case calls nothing.
     #[inline(never)]
@@ -7858,6 +7876,7 @@ fn derive_lane_view<H: Host>(
     }
     specialize_register_operands::<H>(function, constants, &mut records);
     specialize_updates::<H>(&mut records);
+    specialize_negated_instanceof::<H>(&mut records);
     let min_run = if closes_loop(function, &exits) {
         LANE_ENTRY_MIN_RUN
     } else {
@@ -8098,6 +8117,32 @@ fn specialize_updates<H: Host>(records: &mut [LaneInstruction]) {
             b: conversion.b,
             c: update.a,
         };
+    }
+}
+
+/// Runs each `instanceof` value record whose result the next record, a `JumpTrue`, tests as
+/// one record (`lane_instanceof_jump_true`), with the jump's distance taken from the fused
+/// record. The `JumpTrue` record stays for jumps that reach it.
+fn specialize_negated_instanceof<H: Host>(records: &mut [LaneInstruction]) {
+    let instanceof = lane_instanceof_value::<H> as Handler as *const ();
+    let forward = lane_jump_true::<H, false> as Handler as *const ();
+    let backward = lane_jump_true::<H, true> as Handler as *const ();
+    for pc in 0..records.len().saturating_sub(1) {
+        let (test, jump) = (&records[pc], &records[pc + 1]);
+        if test.handler != instanceof
+            || (jump.handler != forward && jump.handler != backward)
+            || jump.a != test.a
+        {
+            continue;
+        }
+        let handler: Handler = if jump.handler == backward {
+            lane_instanceof_jump_true::<H, true>
+        } else {
+            lane_instanceof_jump_true::<H, false>
+        };
+        let distance = jump.jump() + size_of::<LaneInstruction>() as isize;
+        records[pc].handler = handler as *const ();
+        records[pc].operand = LaneOperand { jump: distance };
     }
 }
 
