@@ -361,6 +361,9 @@ pub(crate) struct Heap {
     array_records: ArrayRecordSpace,
     function_records: FunctionRecordSpace,
     promise_records: PromiseRecordSpace,
+    /// Allocations per cell variant (`Cell::profile_variant_name`), finer than `CellKind`.
+    #[cfg(feature = "profile-aggregate")]
+    allocated_variants: std::collections::BTreeMap<&'static str, u64>,
     marks: Vec<AtomicU64>,
     remembered_marks: Vec<u64>,
     remembered: Vec<u32>,
@@ -892,6 +895,10 @@ impl Heap {
             let kind = Self::cell_kind(&cell) as usize;
             let bytes = Self::cell_payload_bytes(&cell);
             self.gc_profile.allocated_kinds[kind] += 1;
+            *self
+                .allocated_variants
+                .entry(cell.profile_variant_name())
+                .or_default() += 1;
             self.gc_profile.allocated_payload_bytes[kind] += bytes as u64;
             self.gc_profile.allocated_size_buckets[kind][Self::size_bucket(bytes)] += 1;
         }
@@ -995,6 +1002,12 @@ impl Heap {
 
     /// `alloc(Cell::Promise(..))` without boxing the promise first: a promise record while
     /// one is free.
+    /// Allocations per cell variant.
+    #[cfg(feature = "profile-aggregate")]
+    pub(crate) fn allocated_variants(&self) -> &std::collections::BTreeMap<&'static str, u64> {
+        &self.allocated_variants
+    }
+
     pub(crate) fn alloc_promise(&mut self, promise: PromiseCell) -> Value {
         if cfg!(feature = "profile-aggregate") {
             return self.alloc(Cell::Promise(Box::new(promise)));
