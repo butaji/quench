@@ -384,6 +384,9 @@ pub(super) struct ScriptCallTarget {
     env: Value,
     view: *const LaneView,
     registers: u16,
+    /// The lane-stack room its plain activation fills (`fill_room::<SCRIPT_FILL_BLOCK>` of
+    /// `registers`), derived once.
+    room: u16,
     params: u16,
     strict: bool,
     /// `new` may activate it too (`Vm::inline_constructible`).
@@ -400,11 +403,12 @@ pub(super) struct ScriptCallTarget {
     /// of `this` (`Function::forwarded_this_method`), which a construction may activate
     /// directly, or `NO_FORWARDED_METHOD`. An index, not the record, keeps every target's
     /// cache entry its size.
-    forwarded_method: u32,
+    forwarded_method: u16,
 }
 
-/// A `ScriptCallTarget::forwarded_method` that names no record.
-const NO_FORWARDED_METHOD: u32 = u32::MAX;
+/// A `ScriptCallTarget::forwarded_method` that names no record. A program with more distinct
+/// forwarding bodies than the index spans leaves the rest unrecorded.
+const NO_FORWARDED_METHOD: u16 = u16::MAX;
 
 const EMPTY_SCRIPT_CALL_TARGET: ScriptCallTarget = ScriptCallTarget {
     callee: Value::UNDEFINED,
@@ -413,6 +417,7 @@ const EMPTY_SCRIPT_CALL_TARGET: ScriptCallTarget = ScriptCallTarget {
     env: Value::UNDEFINED,
     view: std::ptr::null(),
     registers: 0,
+    room: 0,
     params: 0,
     strict: false,
     constructs: false,
@@ -540,14 +545,18 @@ impl LaneStack {
         *self.script_targets = [EMPTY_SCRIPT_CALL_TARGET; SCRIPT_CALL_TARGETS];
     }
 
-    /// The index of `method` in `forwarded_methods`, recording it when new.
-    fn forwarded_method_index(&mut self, method: crate::bytecode::ForwardedThisMethod) -> u32 {
-        match self.forwarded_methods.iter().position(|known| *known == method) {
-            Some(index) => index as u32,
-            None => {
+    /// The index of `method` in `forwarded_methods`, recording it when new, or
+    /// `NO_FORWARDED_METHOD` once the index space is spent.
+    fn forwarded_method_index(&mut self, method: crate::bytecode::ForwardedThisMethod) -> u16 {
+        if let Some(index) = self.forwarded_methods.iter().position(|known| *known == method) {
+            return index as u16;
+        }
+        match u16::try_from(self.forwarded_methods.len()) {
+            Ok(index) if index != NO_FORWARDED_METHOD => {
                 self.forwarded_methods.push(method);
-                (self.forwarded_methods.len() - 1) as u32
+                index
             }
+            _ => NO_FORWARDED_METHOD,
         }
     }
 
@@ -4224,6 +4233,7 @@ impl<H: Host> Vm<H> {
             env,
             view,
             registers: body.registers,
+            room: u16::try_from(fill_room::<SCRIPT_FILL_BLOCK>(usize::from(body.registers))).ok()?,
             params: body.params,
             strict: body.strict,
             constructs: Self::inline_constructible(body),
@@ -5091,7 +5101,7 @@ fn lane_activate<H: Host>(
     // Capacity, the guest-call budget and a due collection (`LaneStack::activation_limit`).
     if vm.lane_stack.activations.len() >= vm.lane_stack.activation_limit.get()
         || vm.lane_stack.values.capacity() - vm.lane_stack.values.len()
-            < fill_room::<SCRIPT_FILL_BLOCK>(count)
+            < usize::from(target.room)
     {
         return Err(lane_script_call_frame::<H>(ip));
     }
