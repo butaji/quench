@@ -3342,6 +3342,7 @@ mod tests {
 
     #[test]
     fn compiled_wasm_fallback_caller_keeps_native_callee_entries() {
+        crate::wasm::COMPILED_CALLS_KEPT_FOR_TEST.with(|kept| kept.set(true));
         let caller_signature = crate::WasmSignature {
             params: vec![],
             results: vec![crate::WasmType::I32],
@@ -3467,6 +3468,7 @@ mod tests {
 
     #[test]
     fn compiled_wasm_known_fallback_offsets_defined_index_by_import_count() {
+        crate::wasm::COMPILED_CALLS_KEPT_FOR_TEST.with(|kept| kept.set(true));
         let signature = crate::WasmSignature {
             params: vec![],
             results: vec![crate::WasmType::I32],
