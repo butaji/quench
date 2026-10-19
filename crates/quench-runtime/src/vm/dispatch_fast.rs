@@ -2587,6 +2587,29 @@ lane_handler! {
     }
 }
 
+lane_handler! {
+    /// `lane_jump_binary_false` of a register under strict (in)equality against a heap
+    /// constant (a string or BigInt), both decoded when the view was derived
+    /// (`specialize_register_operands`): equal exactly when identical or of equal contents
+    /// (`Vm::strict_equal`), with no Number or `instanceof` test on the way.
+    fn lane_jump_strict_constant_false<BACKWARD: bool>(cx, r, ip, i, view) {
+        let value = r.get(i.b);
+        // SAFETY: the run's program keeps its constants (`LaneContext::constants`), and the
+        // view was derived with `c` indexing one.
+        let constant = unsafe { *(&*(*cx).constants).get_unchecked(usize::from(i.c)) };
+        let negated = u32::from(i.a) == STRICT_INEQUALITY_OPERATOR;
+        let equal = value == constant || (value.is_heap() && unsafe { vm(cx) }.strict_equal(value, constant));
+        if equal == negated {
+            return lane_jump(cx, r, ip, BACKWARD, view, None);
+        }
+        next!(cx, r, following(ip), view)
+    }
+}
+
+/// The strict operators `lane_jump_strict_constant_false` decides.
+const STRICT_EQUALITY_OPERATOR: u32 = oxc_ast::ast::BinaryOperator::StrictEquality as u32;
+const STRICT_INEQUALITY_OPERATOR: u32 = oxc_ast::ast::BinaryOperator::StrictInequality as u32;
+
 /// The nullish constant a `lane_jump_nullish_false` record compares against, in its `c`
 /// field.
 const NULLISH_NULL: u16 = 0;
@@ -7458,6 +7481,24 @@ fn specialize_register_operands<H: Host>(
             record.handler = handler as *const ();
             record.b = left.payload();
             record.c = constant;
+            continue;
+        }
+        let operator = u32::from(instruction.a());
+        if right_kind == Constant
+            && record.handler != get_index
+            && matches!(operator, STRICT_EQUALITY_OPERATOR | STRICT_INEQUALITY_OPERATOR)
+            && constants
+                .get(usize::from(right.payload()))
+                .is_some_and(|constant| constant.is_heap())
+        {
+            let handler: Handler = if backward {
+                lane_jump_strict_constant_false::<H, true>
+            } else {
+                lane_jump_strict_constant_false::<H, false>
+            };
+            record.handler = handler as *const ();
+            record.b = left.payload();
+            record.c = right.payload();
             continue;
         }
         if right_kind == Constant
