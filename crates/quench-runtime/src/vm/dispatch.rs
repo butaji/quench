@@ -1078,7 +1078,7 @@ impl<H: Host> Vm<H> {
             Op::DefineField => {
                 let object = self.read(f, i.register_b());
                 let value = self.read(f, i.register_a());
-                self.define_class_field(p, object, PropertyKey::string(i.atom_index()), value)?;
+                self.define_field_cached(p, object, i.atom_index(), value, i.cache_site_index())?;
             }
             Op::DefineComputedField => {
                 let object = self.read(f, i.register_b());

@@ -485,39 +485,15 @@ impl FunctionCompiler<'_, '_> {
     }
 
     pub(super) fn function_expression(&mut self, value: &oxc_ast::ast::Function<'_>) -> Register {
-        let params = Self::params(value, self.owner);
-        let body = value
-            .body
-            .as_ref()
-            .map_or(&[][..], |body| body.statements.as_slice());
-        let name = value.id.as_ref().map(|id| id.name.as_str());
-        let name_binding = value
-            .id
-            .as_ref()
-            .map(|id| self.owner.atom(id.name.as_str()));
-        let scopes = self.capture_scopes();
-        let function = self.owner.compile_function(
-            name,
-            &params,
-            FunctionBody::Statements(body),
-            &scopes,
-            Some(self.function_id),
-            FunctionOptions {
-                source_span: self.owner.source_span(value.span),
-                defaults: Some(&value.params),
-                name_binding,
-                async_function: value.r#async,
-                generator: value.generator,
-                with_depth: self.with_depth,
-                strict: self.strict
-                    || value.body.as_ref().is_some_and(|body| {
-                        body.directives
-                            .iter()
-                            .any(|directive| directive.directive == "use strict")
-                    }),
-                ..FunctionOptions::default()
-            },
-        );
+        let context = super::super::replay::PlainFunctionContext {
+            expression: true,
+            default_export: false,
+            scopes: self.capture_scopes(),
+            parent: self.function_id,
+            with_depth: self.with_depth,
+            inherited_strict: self.strict,
+        };
+        let function = self.owner.compile_plain_function(value, context);
         let dst = self.reg();
         self.emit(Op::MakeClosure, dst, 0, 0, function);
         dst
@@ -531,20 +507,19 @@ impl FunctionCompiler<'_, '_> {
             self.store_atom(atom, this);
             atom
         });
-        let scopes = self.capture_scopes();
-        let function = self.owner.compile_arrow_function(
-            value,
-            &scopes,
-            Some(self.function_id),
-            self.super_static,
-            self.super_home,
-            self.super_home_atom,
-            self.strict,
-            self.class_initializer,
+        let context = super::super::replay::ArrowContext {
+            scopes: self.capture_scopes(),
+            parent: Some(self.function_id),
+            super_static: self.super_static,
+            super_home: self.super_home,
+            super_home_atom: self.super_home_atom,
+            inherited_strict: self.strict,
+            class_initializer: self.class_initializer,
             lexical_this_atom,
-            self.super_call_binds_this,
-            self.with_depth,
-        );
+            super_call_binds_this: self.super_call_binds_this,
+            with_depth: self.with_depth,
+        };
+        let function = self.owner.compile_replayable_arrow(value, context);
         let dst = self.reg();
         self.emit(Op::MakeClosure, dst, 0, 0, function);
         dst
