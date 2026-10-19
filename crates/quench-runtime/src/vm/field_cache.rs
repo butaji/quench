@@ -30,6 +30,9 @@ impl<H: Host> Vm<H> {
         if let Some(function) = self.heap.function(value) {
             return self.shape_property_lookup_function(function, atom);
         }
+        if let Some(iterator) = self.heap.iterator(value) {
+            return self.shape_answers(&iterator.object, atom, ReceiverKind::Exotic);
+        }
         self.shape_property_lookup_cell(self.heap.get(value)?, atom)
     }
 
