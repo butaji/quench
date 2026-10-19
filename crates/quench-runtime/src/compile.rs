@@ -1,10 +1,11 @@
 use crate::bytecode::{
-    Atom, Constant, DispatchClass, FieldBase, FieldSite, Function as BcFunction, Instr,
+    Atom, Constant, DispatchClass, FieldBase, FieldSite, Function as BcFunction, FunctionSlot, Instr,
     LexicalBindingKind, MethodSite, ModuleImportBinding, ModuleImportName, ModuleLinkPlan,
     ModuleRequest, ModuleRequestPhase, ObjectSite, Op, Operand, Register, ResidualProgram,
     SET_THIS_REGISTER, SourcePosition, Superinstruction, WideInstruction,
 };
 use oxc_allocator::Allocator;
+use replay::SiteTable;
 use oxc_ast::ast::*;
 use oxc_parser::Parser;
 use oxc_span::{GetSpan, SourceType, Span};
@@ -35,6 +36,7 @@ pub(crate) mod regexp;
 mod program_profile;
 #[cfg(feature = "profile-memory")]
 mod register_profile;
+pub(crate) mod replay;
 mod rewrite;
 mod sequence;
 mod stack;
@@ -944,6 +946,10 @@ impl Engine {
             None
         };
         let mut compiler = Compiler::new(name, &normalized, mode, atom_prefix, private_name_ids);
+        compiler.source_type = source_type;
+        // Eval code and dynamic functions are compiled from a wrapper, or a tree changed after
+        // parsing, that their source text alone does not give back.
+        compiler.replayable_source = matches!(expected_shape, ParsedProgramShape::Any);
         compiler.private_name_labels = private_name_labels;
         compiler.private_name_overrides = private_aliases;
         compiler.capture_script_completion = capture_script_completion;
@@ -966,7 +972,10 @@ impl Engine {
         drop(parsed);
         drop(allocator);
         let (compiler, module) = emitted?;
-        compiler.finish(module)
+        let program = compiler.finish(module)?;
+        #[cfg(feature = "verify-replay")]
+        replay::verify(&program);
+        Ok(program)
     }
 
     pub(crate) fn strict_eval_syntax_error(source: &str, in_function: bool) -> Option<String> {
@@ -1383,11 +1392,11 @@ impl SpecializationMode {
 struct Compiler<'a> {
     source: &'a str,
     text: &'a str,
-    source_line_starts: Vec<usize>,
+    source_line_starts: std::borrow::Cow<'a, [usize]>,
     source_comments: Vec<Span>,
     /// Byte offset of each non-ASCII character with the running excess of
     /// UTF-8 bytes over UTF-16 units through it; columns count UTF-16 units.
-    source_utf16_excess: Vec<(usize, usize)>,
+    source_utf16_excess: std::borrow::Cow<'a, [(usize, usize)]>,
     mode: SpecializationMode,
     root_strict: bool,
     module_goal: bool,
@@ -1404,18 +1413,18 @@ struct Compiler<'a> {
     private_name_ids: FxHashMap<(u32, u32), u32>,
     private_name_labels: FxHashMap<(u32, u32), String>,
     private_name_overrides: FxHashMap<u32, String>,
-    constants: Vec<Constant>,
-    constant_index: FxHashMap<ConstantKey, u32>,
-    functions: Vec<Option<BcFunction>>,
+    constants: SiteTable<'a, Constant>,
+    constant_index: std::borrow::Cow<'a, FxHashMap<ConstantKey, u32>>,
+    functions: replay::FunctionTable<'a>,
     errors: Vec<Diagnostic>,
     cache_sites: u16,
     template_sites: u32,
-    method_sites: Vec<MethodSiteSpec>,
-    field_sites: Vec<FieldSite>,
-    object_sites: Vec<ObjectSite>,
-    regexp_literal_sites: Vec<crate::bytecode::RegExpLiteralSite>,
-    literal_templates: Vec<Box<[crate::bytecode::LiteralStep]>>,
-    superinstructions: Vec<Superinstruction>,
+    method_sites: SiteTable<'a, MethodSiteSpec>,
+    field_sites: SiteTable<'a, FieldSite>,
+    object_sites: SiteTable<'a, ObjectSite>,
+    regexp_literal_sites: SiteTable<'a, crate::bytecode::RegExpLiteralSite>,
+    literal_templates: SiteTable<'a, Box<[crate::bytecode::LiteralStep]>>,
+    superinstructions: SiteTable<'a, Superinstruction>,
     /// Distinct `name_bindings` lists: sibling functions that see the same bindings,
     /// such as every function declared in one module scope, share one list.
     /// The captured scopes and declared names of each function's name bindings, resolved
@@ -1429,9 +1438,31 @@ struct Compiler<'a> {
             std::rc::Rc<crate::bytecode::CapturedNames>,
         ),
     >,
+    /// The tables' cursors once each function, its nested ones included, is compiled.
+    function_exits: Vec<replay::TableCursors>,
+    /// How each replayable function was compiled, with the cursors it started from.
+    replay_calls: FxHashMap<u32, (replay::TableCursors, replay::ReplayCall)>,
+    /// In a replay, the function it recompiles and where the load left each function.
+    replay_target: Option<(u32, &'a [replay::TableCursors])>,
+    source_type: oxc_span::SourceType,
+    /// Whether the program's functions compile again from their text alone.
+    replayable_source: bool,
 }
 
 type MethodSiteSpec = (Atom, u16, Vec<Register>, Option<(Atom, u16)>);
+
+/// Byte offset of each non-ASCII character of `text` with the running excess of UTF-8 bytes
+/// over UTF-16 units through it.
+fn source_utf16_excess(text: &str) -> Vec<(usize, usize)> {
+    let mut excess = 0;
+    text.char_indices()
+        .filter(|(_, character)| !character.is_ascii())
+        .map(|(offset, character)| {
+            excess += character.len_utf8() - character.len_utf16();
+            (offset, excess)
+        })
+        .collect()
+}
 
 /// The name prefix of a catch parameter's capture marker (`Compiler::capture_marker`).
 const CATCH_CAPTURE_PREFIX: &str = "\0quench:catch-capture:";
@@ -1582,8 +1613,7 @@ impl<'a> Compiler<'a> {
     /// (`capture_layout::dynamic_name_scopes`), of every function private member access
     /// resolves through, and of the root; the rest keep their direct bindings, as no lookup
     /// reaches their captured names.
-    fn resolve_name_bindings(&mut self, functions: &mut [BcFunction], dynamic: &[bool]) {
-        let reachable = capture_layout::dynamic_name_scopes(functions, dynamic);
+    fn resolve_name_bindings(&mut self, functions: &mut [BcFunction], reachable: &[bool]) {
         for (id, function) in functions.iter_mut().enumerate() {
             let Some(deferred) = self.deferred_name_bindings.remove(&(id as u32)) else {
                 continue;
@@ -1716,22 +1746,14 @@ impl<'a> Compiler<'a> {
         private_name_ids: FxHashMap<(u32, u32), u32>,
     ) -> Self {
         let atoms = CompilerAtoms::new(atom_prefix);
-        let source_line_starts = crate::bytecode::source_line_starts(text).collect();
-        let mut excess = 0;
-        let source_utf16_excess = text
-            .char_indices()
-            .filter(|(_, character)| !character.is_ascii())
-            .map(|(offset, character)| {
-                excess += character.len_utf8() - character.len_utf16();
-                (offset, excess)
-            })
-            .collect();
         Self {
             source,
             text,
-            source_line_starts,
+            source_line_starts: std::borrow::Cow::Owned(
+                crate::bytecode::source_line_starts(text).collect(),
+            ),
             source_comments: Vec::new(),
-            source_utf16_excess,
+            source_utf16_excess: std::borrow::Cow::Owned(source_utf16_excess(text)),
             mode,
             root_strict: false,
             module_goal: false,
@@ -1744,21 +1766,158 @@ impl<'a> Compiler<'a> {
             private_name_ids,
             private_name_labels: FxHashMap::default(),
             private_name_overrides: FxHashMap::default(),
-            constants: vec![],
-            constant_index: FxHashMap::default(),
-            functions: vec![],
+            constants: SiteTable::default(),
+            constant_index: std::borrow::Cow::Owned(FxHashMap::default()),
+            functions: replay::FunctionTable::default(),
             errors: vec![],
             cache_sites: 0,
             template_sites: 0,
-            method_sites: vec![],
-            field_sites: vec![],
-            object_sites: vec![],
-            regexp_literal_sites: vec![],
-            literal_templates: vec![],
-            superinstructions: vec![],
+            method_sites: SiteTable::default(),
+            field_sites: SiteTable::default(),
+            object_sites: SiteTable::default(),
+            regexp_literal_sites: SiteTable::default(),
+            literal_templates: SiteTable::default(),
+            superinstructions: SiteTable::default(),
             deferred_name_bindings: FxHashMap::default(),
             captured_name_scopes: FxHashMap::default(),
+            function_exits: Vec::new(),
+            replay_calls: FxHashMap::default(),
+            replay_target: None,
+            source_type: oxc_span::SourceType::default(),
+            replayable_source: false,
         }
+    }
+
+    /// The next index of every table and counter.
+    fn cursors(&self) -> replay::TableCursors {
+        replay::TableCursors {
+            functions: self.functions.len() as u32,
+            constants: self.constants.len() as u32,
+            cache_sites: self.cache_sites,
+            template_sites: self.template_sites,
+            method_sites: self.method_sites.len() as u32,
+            field_sites: self.field_sites.len() as u32,
+            object_sites: self.object_sites.len() as u32,
+            regexp_literal_sites: self.regexp_literal_sites.len() as u32,
+            literal_templates: self.literal_templates.len() as u32,
+        }
+    }
+
+    /// Moves a replay to `cursors`, where the load stood at the same point.
+    fn seek(&mut self, cursors: replay::TableCursors) {
+        self.functions.seek(cursors.functions);
+        self.constants.skip_to(cursors.constants as usize);
+        self.cache_sites = cursors.cache_sites;
+        self.template_sites = cursors.template_sites;
+        self.method_sites.skip_to(cursors.method_sites as usize);
+        self.field_sites.skip_to(cursors.field_sites as usize);
+        self.object_sites.skip_to(cursors.object_sites as usize);
+        self.regexp_literal_sites.skip_to(cursors.regexp_literal_sites as usize);
+        self.literal_templates.skip_to(cursors.literal_templates as usize);
+    }
+
+    /// In a replay, the id of a function nested in the replayed one, past whose compilation
+    /// the replay moves: the load compiled it, and it keeps that record.
+    fn skip_replayed_child(&mut self) -> Option<u32> {
+        let (target, exits) = self.replay_target?;
+        let id = self.functions.len() as u32;
+        if id == target {
+            return None;
+        }
+        self.seek(exits[id as usize]);
+        Some(id)
+    }
+
+    /// Notes where the tables stand once function `id` and those nested in it are compiled.
+    fn record_function_exit(&mut self, id: u32) {
+        if self.replay_target.is_some() {
+            return;
+        }
+        let id = id as usize;
+        if self.function_exits.len() <= id {
+            self.function_exits.resize(id + 1, replay::TableCursors::default());
+        }
+        self.function_exits[id] = self.cursors();
+    }
+
+    /// Keeps how function `id` was compiled from `entry`, unless it resolved private names:
+    /// their identities are numbered over the whole program, which a replay does not see.
+    fn record_replay_call(
+        &mut self,
+        id: u32,
+        entry: replay::TableCursors,
+        private_names: (u64, usize),
+        call: replay::ReplayCall,
+    ) {
+        if self.replay_target.is_none()
+            && private_names == (self.private_name_references, self.private_name_ids.len())
+        {
+            self.replay_calls.insert(id, (entry, call));
+        }
+    }
+
+    /// A function declaration or expression, compiled from its syntax and `context`, which
+    /// is all a replay of it needs besides the program.
+    fn compile_plain_function(
+        &mut self,
+        function: &oxc_ast::ast::Function<'_>,
+        context: replay::PlainFunctionContext,
+    ) -> u32 {
+        let entry = self.cursors();
+        let private_names = (self.private_name_references, self.private_name_ids.len());
+        let params = FunctionCompiler::params_from_formals(&function.params, self);
+        let body = function
+            .body
+            .as_ref()
+            .map_or(&[][..], |body| body.statements.as_slice());
+        let name = function
+            .id
+            .as_ref()
+            .map(|id| id.name.as_str())
+            .or(context.default_export.then_some("default"));
+        let name_binding = if context.expression {
+            function.id.as_ref().map(|id| self.atom(id.name.as_str()))
+        } else {
+            None
+        };
+        let strict = context.inherited_strict
+            || function.body.as_ref().is_some_and(|body| {
+                body.directives
+                    .iter()
+                    .any(|directive| directive.directive == "use strict")
+            });
+        let id = self.compile_function(
+            name,
+            &params,
+            FunctionBody::Statements(body),
+            &context.scopes,
+            Some(context.parent),
+            FunctionOptions {
+                source_span: self.source_span(function.span),
+                defaults: Some(&function.params),
+                name_binding,
+                async_function: function.r#async,
+                generator: function.generator,
+                with_depth: context.with_depth,
+                strict,
+                ..FunctionOptions::default()
+            },
+        );
+        self.record_replay_call(id, entry, private_names, replay::ReplayCall::Plain(context));
+        id
+    }
+
+    /// An arrow function, compiled from its syntax and `context`.
+    fn compile_replayable_arrow(
+        &mut self,
+        arrow: &oxc_ast::ast::ArrowFunctionExpression<'_>,
+        context: replay::ArrowContext,
+    ) -> u32 {
+        let entry = self.cursors();
+        let private_names = (self.private_name_references, self.private_name_ids.len());
+        let id = self.compile_arrow_function(arrow, &context);
+        self.record_replay_call(id, entry, private_names, replay::ReplayCall::Arrow(context));
+        id
     }
 
     /// Locate a delimiter between OXC-owned expression boundaries. Comment text
@@ -2016,7 +2175,7 @@ impl<'a> Compiler<'a> {
             .iter()
             .filter_map(|name| self.atoms.find(name))
             .collect();
-        if let Some(Some(root)) = self.functions.first_mut() {
+        if let Some(root) = self.functions.first_mut() {
             root.global_declarations = crate::bytecode::GlobalDeclarations {
                 lexical: global_lexical_atoms,
                 var: global_var_atoms,
@@ -2085,23 +2244,46 @@ impl<'a> Compiler<'a> {
             imports: module_imports,
             link_plan: module_link_plan,
         } = module;
-        let mut functions: Vec<_> = std::mem::take(&mut self.functions)
-            .into_iter()
-            .map(Option::unwrap)
-            .collect();
+        let mut functions = std::mem::take(&mut self.functions).into_records();
         // Functions the compiler synthesizes (class constructors and initializers) may have
         // grown the reservation.
         functions.shrink_to_fit();
         let dynamic = capture_layout::dynamic_name_resolution(&functions, &self.atoms);
-        self.resolve_name_bindings(&mut functions, &dynamic);
-        capture_layout::apply(&mut functions, &self.atoms, &dynamic);
-        if self.mode == SpecializationMode::Enabled {
-            Self::apply_rewrites(
-                &mut functions,
-                &self.method_sites,
-                &mut self.field_sites,
-                &mut self.superinstructions,
-            );
+        let reachable = capture_layout::dynamic_name_scopes(&functions, &dynamic);
+        self.resolve_name_bindings(&mut functions, &reachable);
+        let layout_inputs = capture_layout::inputs(&functions, &dynamic);
+        // A replayable function resolves every name statically and no dynamic lookup reaches
+        // its bindings, so nothing outside its own compilation and layout decides its code.
+        let mut replays: FxHashMap<u32, replay::FunctionReplay> = if self.replayable_source {
+            std::mem::take(&mut self.replay_calls)
+                .into_iter()
+                .filter(|(id, _)| !dynamic[*id as usize] && !reachable[*id as usize])
+                .map(|(id, (entry, call))| {
+                    let function = &functions[id as usize];
+                    let replay = replay::FunctionReplay {
+                        entry,
+                        call,
+                        layout: layout_inputs[id as usize].clone(),
+                        arguments_slot: function.arguments_slot,
+                        rewrite_cursors: (0, 0),
+                    };
+                    (id, replay)
+                })
+                .collect()
+        } else {
+            FxHashMap::default()
+        };
+        for (id, function) in functions.iter_mut().enumerate() {
+            capture_layout::apply_function(function, id, &layout_inputs[id], &self.atoms);
+        }
+        for (id, function) in functions.iter_mut().enumerate() {
+            if let Some(replay) = replays.get_mut(&(id as u32)) {
+                replay.rewrite_cursors = (
+                    self.field_sites.len() as u32,
+                    self.superinstructions.len() as u32,
+                );
+            }
+            self.rewrite_function(function);
         }
         #[cfg(feature = "profile-memory")]
         if std::env::var_os("QUENCH_MEMORY").is_some() {
@@ -2109,56 +2291,21 @@ impl<'a> Compiler<'a> {
         }
         let undefined_constant = self.constant(Constant::Undefined);
         for function in &mut functions {
-            rewrite::return_through_shared_returns(function);
-            rewrite::express_strict_sets(function);
-            function.dispatch = if self.mode == SpecializationMode::Enabled {
-                Self::dispatch_class(&function.code, &function.wide)
-            } else {
-                DispatchClass::General
-            };
-            if function.dispatch == DispatchClass::Numeric {
-                let live = liveness::analyze(
-                    function,
-                    self.method_sites.as_slice(),
-                    &self.field_sites,
-                    &self.superinstructions,
-                );
-                numeric::apply(function, live.as_deref());
-            }
-            Self::specialize_plain_local_operations(function, &self.superinstructions);
-            frame_registers::promote(
-                function,
-                &self.superinstructions,
-                undefined_constant,
-                |atom| self.atoms.get(atom),
-            );
-            if function
-                .code
-                .iter()
-                .any(|instruction| instruction.op() == Op::StoreLocalPlain)
-            {
-                let live = liveness::analyze(
-                    function,
-                    self.method_sites.as_slice(),
-                    &self.field_sites,
-                    &self.superinstructions,
-                );
-                numeric::apply_plain_local_stores(function, live.as_deref());
-            }
+            self.lower_function(function, undefined_constant);
         }
         liveness::mark_register_roots(
             &mut functions,
             self.method_sites.as_slice(),
-            &self.field_sites,
-            &self.superinstructions,
+            self.field_sites.as_slice(),
+            self.superinstructions.as_slice(),
         );
         #[cfg(feature = "profile-memory")]
         if std::env::var_os("QUENCH_MEMORY").is_some() {
             register_profile::report(
                 &functions,
-                &self.method_sites,
-                &self.field_sites,
-                &self.superinstructions,
+                self.method_sites.as_slice(),
+                self.field_sites.as_slice(),
+                self.superinstructions.as_slice(),
             );
         }
         for function in &mut functions {
@@ -2167,13 +2314,15 @@ impl<'a> Compiler<'a> {
             function.source_positions.shrink_to_fit();
         }
         let (mut method_sites, mut method_arguments) =
-            Self::flatten_method_sites(self.method_sites);
+            Self::flatten_method_sites(self.method_sites.into_vec());
         let atoms = self.atoms.table();
-        self.constants.shrink_to_fit();
+        let mut constants = self.constants.into_vec();
+        constants.shrink_to_fit();
         functions.shrink_to_fit();
         method_sites.shrink_to_fit();
         method_arguments.shrink_to_fit();
-        self.field_sites.shrink_to_fit();
+        let mut field_sites = self.field_sites.into_vec();
+        field_sites.shrink_to_fit();
         let program = ResidualProgram {
             specialized: self.mode == SpecializationMode::Enabled,
             // Eval code is code compiled for an eval; a host script that only captures its
@@ -2196,16 +2345,27 @@ impl<'a> Compiler<'a> {
                 column_offset: 0,
             }),
             atoms,
-            constants: self.constants,
-            functions,
+            constants,
+            functions: functions.into_iter().map(FunctionSlot::compiled).collect(),
             cache_sites: self.cache_sites,
             method_sites,
             method_arguments,
-            field_sites: self.field_sites,
-            object_sites: self.object_sites,
-            regexp_literal_sites: self.regexp_literal_sites,
-            literal_templates: self.literal_templates,
-            superinstructions: self.superinstructions,
+            field_sites,
+            object_sites: self.object_sites.into_vec(),
+            regexp_literal_sites: self.regexp_literal_sites.into_vec(),
+            literal_templates: self.literal_templates.into_vec(),
+            superinstructions: self.superinstructions.into_vec(),
+            replay: (!replays.is_empty()).then(|| {
+                std::rc::Rc::new(replay::ProgramReplay {
+                    source_type: self.source_type,
+                    root_strict: self.root_strict,
+                    module_goal: self.module_goal,
+                    specialized: self.mode == SpecializationMode::Enabled,
+                    exits: std::mem::take(&mut self.function_exits).into_boxed_slice(),
+                    functions: replays,
+                    views: replay::ReplayViews::default(),
+                })
+            }),
         };
         #[cfg(feature = "profile-aggregate")]
         debug_assert!(crate::profile::instruction_word_domains_fit(&program));
@@ -2313,12 +2473,16 @@ impl<'a> Compiler<'a> {
 
     fn constant(&mut self, value: Constant) -> u32 {
         let key = ConstantKey::from(&value);
-        if let Some(index) = self.constant_index.get(&key) {
-            return *index;
+        if let Some(index) = self.constant_index.get(&key).copied() {
+            // A replay finds every constant; one at its cursor was added here at load.
+            if index as usize == self.constants.len() {
+                self.constants.push(value);
+            }
+            return index;
         }
         let index = self.constants.len() as u32;
         self.constants.push(value);
-        self.constant_index.insert(key, index);
+        self.constant_index.to_mut().insert(key, index);
         index
     }
 
@@ -2336,9 +2500,11 @@ impl<'a> Compiler<'a> {
         let start = self.constants.len() as u32;
         for value in values {
             let index = self.constants.len() as u32;
-            self.constant_index
-                .entry(ConstantKey::from(&value))
-                .or_insert(index);
+            let key = ConstantKey::from(&value);
+            // A replay's index already holds every constant, so it is only read.
+            if !self.constant_index.contains_key(&key) {
+                self.constant_index.to_mut().insert(key, index);
+            }
             self.constants.push(value);
         }
         start
@@ -2510,8 +2676,10 @@ impl<'a> Compiler<'a> {
             FunctionBody::Statements(body) => (body, None),
             FunctionBody::Expression(expression) => (&[][..], Some(expression)),
         };
-        let id = self.functions.len() as u32;
-        self.functions.push(None);
+        if let Some(id) = self.skip_replayed_child() {
+            return id;
+        }
+        let id = self.functions.reserve();
         let body_lexicals = self.collect_body_lexical_bindings(body);
         let lexical_atoms: Vec<_> = body_lexicals.iter().map(|(atom, _)| *atom).collect();
         let params: Vec<Atom> = params.iter().map(|name| self.atom(name)).collect();
@@ -2806,8 +2974,29 @@ impl<'a> Compiler<'a> {
             parameter_registers: None,
             initial_register: Default::default(),
         };
-        self.functions[id as usize] = Some(result);
+        self.functions.set(id, result);
+        self.record_function_exit(id);
         id
+    }
+
+    /// Makes the anonymous function definition `id` with `name`, when it has none of its own
+    /// and is no class constructor; whether it did. A replay skips the definition, which the
+    /// load named exactly when it could.
+    fn name_made_function(&mut self, id: u32, name: Atom) -> bool {
+        if let Some(function) = self.functions.get_mut(id) {
+            let nameable = function.name.is_none()
+                && function.inferred_name.is_none()
+                && !function.is_class_constructor;
+            if nameable {
+                function.inferred_name = Some(name);
+            }
+            return nameable;
+        }
+        self.functions.loaded_header(id).is_some_and(|header| {
+            header.name.is_none()
+                && !header.is_class_constructor
+                && header.inferred_name == Some(name)
+        })
     }
 
     /// Whether code nested in function `owner` can reach its `arguments` binding in local
@@ -2817,7 +3006,7 @@ impl<'a> Compiler<'a> {
     /// `with` statement or an enclosing one), which may denote it.
     fn arrows_reach_arguments(&self, owner: u32, slot: u16) -> bool {
         let is_with_enter = |atom: usize| self.atoms.get(atom) == Some(crate::bytecode::WITH_ENTER_BINDING);
-        self.functions.iter().flatten().any(|function| {
+        self.functions.records().any(|function| {
             // The function levels between `function` and `owner`, along arrows alone.
             let mut distance = 0;
             let mut current = function;
@@ -2828,9 +3017,9 @@ impl<'a> Compiler<'a> {
                 distance += 1;
                 match current.parent {
                     Some(parent) if parent == owner => break,
-                    Some(parent) => match self.functions.get(parent as usize) {
-                        Some(Some(parent)) => current = parent,
-                        _ => return false,
+                    Some(parent) => match self.functions.get(parent) {
+                        Some(parent) => current = parent,
+                        None => return false,
                     },
                     None => return false,
                 }
@@ -2853,14 +3042,46 @@ impl<'a> Compiler<'a> {
             .count()
     }
 
-    fn apply_rewrites(
-        functions: &mut [BcFunction],
-        method_sites: &[MethodSiteSpec],
-        field_sites: &mut Vec<FieldSite>,
-        superinstructions: &mut Vec<Superinstruction>,
-    ) {
-        for function in functions {
-            rewrite::apply(function, method_sites, field_sites, superinstructions);
+    /// The specializing rewrites of one function, the only finishing pass that adds sites.
+    fn rewrite_function(&mut self, function: &mut BcFunction) {
+        if self.mode == SpecializationMode::Enabled {
+            rewrite::apply(
+                function,
+                self.method_sites.as_slice(),
+                &mut self.field_sites,
+                &mut self.superinstructions,
+            );
+        }
+    }
+
+    /// The finishing passes of one function after every function's rewrites: shared returns,
+    /// dispatch class, numeric and plain-local specialization and frame registers.
+    fn lower_function(&self, function: &mut BcFunction, undefined_constant: u32) {
+        let method_sites = self.method_sites.as_slice();
+        let field_sites = self.field_sites.as_slice();
+        let superinstructions = self.superinstructions.as_slice();
+        rewrite::return_through_shared_returns(function);
+        rewrite::express_strict_sets(function);
+        function.dispatch = if self.mode == SpecializationMode::Enabled {
+            Self::dispatch_class(&function.code, &function.wide)
+        } else {
+            DispatchClass::General
+        };
+        if function.dispatch == DispatchClass::Numeric {
+            let live = liveness::analyze(function, method_sites, field_sites, superinstructions);
+            numeric::apply(function, live.as_deref());
+        }
+        Self::specialize_plain_local_operations(function, superinstructions);
+        frame_registers::promote(function, superinstructions, undefined_constant, |atom| {
+            self.atoms.get(atom)
+        });
+        if function
+            .code
+            .iter()
+            .any(|instruction| instruction.op() == Op::StoreLocalPlain)
+        {
+            let live = liveness::analyze(function, method_sites, field_sites, superinstructions);
+            numeric::apply_plain_local_stores(function, live.as_deref());
         }
     }
 

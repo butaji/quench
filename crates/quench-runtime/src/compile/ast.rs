@@ -510,47 +510,18 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 _ => (None, false),
             };
             if let Some(function) = function {
-                let name = function
-                    .id
-                    .as_ref()
-                    .map(|name| name.name.as_str())
-                    .or(default_export.then_some("default"));
-                let Some(name) = name else { continue };
-                let params = Self::params(function, self.owner);
-                let Some(body) = &function.body else { continue };
-                let scopes = self.capture_scopes();
-                let id = self.owner.compile_function(
-                    Some(name),
-                    &params,
-                    FunctionBody::Statements(&body.statements),
-                    &scopes,
-                    Some(self.function_id),
-                    FunctionOptions {
-                        directive_completion: None,
-                        defaults: Some(&function.params),
-                        source_span: self.owner.source_span(function.span),
-                        name_binding: None,
-                        async_function: function.r#async,
-                        generator: function.generator,
-                        class_constructor: false,
-                        derived_constructor: false,
-                        non_constructible: false,
-                        class_initializer: false,
-                        instance_fields: None,
-                        instance_private_methods: None,
-                        super_static: false,
-                        super_home: false,
-                        super_home_atom: None,
-                        rest_override: false,
-                        implicit_super: false,
-                        with_depth: self.with_depth,
-                        strict: self.strict
-                            || body
-                                .directives
-                                .iter()
-                                .any(|directive| directive.directive == "use strict"),
-                    },
-                );
+                if function.id.is_none() && !default_export || function.body.is_none() {
+                    continue;
+                }
+                let context = super::replay::PlainFunctionContext {
+                    expression: false,
+                    default_export,
+                    scopes: self.capture_scopes(),
+                    parent: self.function_id,
+                    with_depth: self.with_depth,
+                    inherited_strict: self.strict,
+                };
+                let id = self.owner.compile_plain_function(function, context);
                 let dst = self.reg();
                 self.emit(Op::MakeClosure, dst, 0, 0, id);
                 if default_export {
@@ -578,13 +549,6 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 self.release_temporaries();
             }
         }
-    }
-
-    fn params<'c>(
-        function: &'c oxc_ast::ast::Function<'c>,
-        owner: &mut Compiler<'_>,
-    ) -> Vec<String> {
-        Self::params_from_formals(&function.params, owner)
     }
 
     pub(super) fn params_from_formals<'c>(
@@ -690,12 +654,8 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         if let Some(made) = self.code.last()
             && made.op() == Op::MakeClosure
             && made.result_register() == value
-            && let Some(Some(function)) = self.owner.functions.get_mut(made.closure_function_index() as usize)
-            && function.name.is_none()
-            && function.inferred_name.is_none()
-            && !function.is_class_constructor
+            && self.owner.name_made_function(made.closure_function_index(), name)
         {
-            function.inferred_name = Some(name);
             return;
         }
         self.emit(Op::SetFunctionName, value, 0, 0, name);
