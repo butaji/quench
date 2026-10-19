@@ -31,6 +31,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "workerPoll" (0) => crate::modules::worker_threads_shared_vm::poll_native,
 
         method "nodeLibraryRequire" (1) => commonjs::require_node_library,
+        method "primordialsCopy" (7) => crate::modules::primordials_shared_vm::copy,
         method "nodeTestMock" (0) => crate::modules::test_shared_vm::mock,
         method "nodeTestNamespace" (0) => crate::modules::test_shared_vm::namespace,
         method "contextifyScript" (0) => crate::modules::contextify_shared_vm::script,

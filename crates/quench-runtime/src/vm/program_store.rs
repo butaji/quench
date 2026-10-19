@@ -68,6 +68,9 @@ struct ProgramEntry {
     module: bool,
     /// Per-function lane views, derived from the residual on first lane entry.
     lane_views: Vec<std::cell::OnceCell<super::dispatch_fast::LaneView>>,
+    /// Per function: the general loop has entered it without its lane view
+    /// (`entry_lane_view`).
+    lane_deferred: Vec<std::cell::Cell<bool>>,
     /// The program's compiled functions, once the compiled mode first calls
     /// one; `Some(None)` records that none compile.
     compiled: Option<Option<Rc<super::compiled::CompiledProgram>>>,
@@ -505,6 +508,7 @@ impl ProgramStore {
             .iter()
             .map(|_| std::cell::OnceCell::new())
             .collect();
+        let lane_deferred = vec![std::cell::Cell::new(false); program.functions.len()];
         let origin = if program.kind == crate::bytecode::ProgramKind::Eval { CompilationOrigin::Eval { caller: None } } else { CompilationOrigin::Source };
         self.programs.push(Some(ProgramEntry {
             residual: program,
@@ -519,6 +523,7 @@ impl ProgramStore {
             root_slots: std::cell::OnceCell::new(),
             module: false,
             lane_views,
+            lane_deferred,
             compiled: None,
             js_tiers: FxHashMap::default(),
             wasm_tiers: FxHashMap::default(),
@@ -1235,6 +1240,33 @@ impl ProgramStore {
         id: ProgramId,
     ) -> Option<&[std::cell::OnceCell<super::dispatch_fast::LaneView>]> {
         Some(&self.entry(id)?.lane_views)
+    }
+
+    /// The lane view a general-loop entry of `function` runs with. A function that may loop
+    /// gets it at its first entry; any other at its second, so code that runs once without
+    /// looping (a module body) runs its single pass on the general path instead of first
+    /// deriving a view of every instruction, which costs more than that pass.
+    pub(super) fn entry_lane_view(
+        &self,
+        id: ProgramId,
+        function: u32,
+        may_loop: impl FnOnce(&crate::bytecode::Function) -> bool,
+        derive: impl FnOnce(
+            &crate::bytecode::Function,
+            &[Value],
+            crate::bytecode::ProgramKind,
+        ) -> super::dispatch_fast::LaneView,
+    ) -> Option<*const super::dispatch_fast::LaneView> {
+        let entry = self.entry(id)?;
+        let view = entry.lane_views.get(function as usize)?;
+        if let Some(view) = view.get() {
+            return Some(view);
+        }
+        let code = entry.residual.function_get(function as usize)?;
+        if !entry.lane_deferred.get(function as usize)?.replace(true) && !may_loop(code) {
+            return None;
+        }
+        Some(view.get_or_init(|| derive(code, &entry.constants, entry.residual.kind)))
     }
 
     pub(super) fn lane_view(
