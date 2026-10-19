@@ -70,19 +70,75 @@ pub fn release_read_only_pages() {
     // SAFETY: the linker defines both symbols at the bounds of the read-only segments, which
     // are never written, so discarding their pages loses nothing.
     unsafe {
-        let page = libc::sysconf(libc::_SC_PAGESIZE) as usize;
+        let page = page_size();
         let start = &raw const __executable_start as usize;
         let end = &raw const etext as usize;
         let start = start - start % page;
         let length = (end - start) - (end - start) % page;
         libc::madvise(start as *mut libc::c_void, length, libc::MADV_DONTNEED);
     }
-    for (start, end) in file_mappings(&[CODE_MAPPING]) {
-        // SAFETY: a private, read-only, executable file mapping is never written.
+    for (start, end) in library_code_segments() {
+        // SAFETY: a library's read-only, executable segment is a private file mapping that is
+        // never written.
         unsafe {
             libc::madvise(start as *mut libc::c_void, end - start, libc::MADV_DONTNEED);
         }
     }
+}
+
+/// The page-aligned address ranges of every loaded library's read-only, executable segments,
+/// from the loader's own table. Releases run at every collection, and reading `MAPS_PATH`
+/// for them made the kernel format, and the host parse, the whole mapping table each time
+/// (about 4% of a `require('util')` run's instructions). The executable itself, which has no
+/// path in the table, and the kernel's vDSO, whose name is not a path, are left out, as
+/// `file_mappings` leaves out mappings without a path.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn library_code_segments() -> Vec<(usize, usize)> {
+    unsafe extern "C" fn visit(
+        info: *mut libc::dl_phdr_info,
+        _size: libc::size_t,
+        segments: *mut libc::c_void,
+    ) -> libc::c_int {
+        // SAFETY: the loader passes a valid record for each object, and `segments` is the
+        // vector below for the duration of the call.
+        let (info, segments) = unsafe { (&*info, &mut *segments.cast::<Vec<(usize, usize)>>()) };
+        // SAFETY: a non-null name is a NUL-terminated string the loader owns.
+        let named_by_path = !info.dlpi_name.is_null()
+            && unsafe { *info.dlpi_name } == b'/' as libc::c_char;
+        if !named_by_path || info.dlpi_phdr.is_null() {
+            return 0;
+        }
+        // SAFETY: `dlpi_phdr` points at `dlpi_phnum` program headers.
+        let headers = unsafe { std::slice::from_raw_parts(info.dlpi_phdr, info.dlpi_phnum.into()) };
+        let page = page_size();
+        segments.extend(
+            headers
+                .iter()
+                .filter(|header| {
+                    header.p_type == libc::PT_LOAD
+                        && header.p_flags & libc::PF_X != 0
+                        && header.p_flags & libc::PF_W == 0
+                })
+                .map(|header| {
+                    let start = info.dlpi_addr as usize + header.p_vaddr as usize;
+                    let end = start + header.p_memsz as usize;
+                    (start - start % page, end.next_multiple_of(page))
+                }),
+        );
+        0
+    }
+    let mut segments = Vec::new();
+    // SAFETY: `visit` only reads the records and pushes onto `segments`.
+    unsafe {
+        libc::dl_iterate_phdr(Some(visit), (&raw mut segments).cast());
+    }
+    segments
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn page_size() -> usize {
+    // SAFETY: `sysconf` reads a constant of the system.
+    unsafe { libc::sysconf(libc::_SC_PAGESIZE) as usize }
 }
 
 /// Collections the host has seen, and the count at the last release before output.

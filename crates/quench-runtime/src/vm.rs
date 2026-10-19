@@ -1065,6 +1065,48 @@ impl ShapeLookupIndex {
             attributes,
         }
     }
+    /// The index of a child shape, from its parent's index and the transition between
+    /// them, as `derive_shape_lookup_index` would build it. A deletion moves entries, so it
+    /// leaves the child to derive its own index.
+    fn extended_by(mut self: Box<Self>, transition: ShapeTransition) -> Option<Box<Self>> {
+        match transition {
+            ShapeTransition::Add {
+                key,
+                slot,
+                attributes,
+            } => {
+                debug_assert!(self.slot(key).is_none(), "a shape adds only absent keys");
+                let position = u32::try_from(self.entries.len()).expect("shape width fits u32");
+                self.entries.push((key, slot));
+                let entries = &self.entries;
+                self.positions
+                    .insert_unique(Self::key_hash(key), position, |&position| {
+                        Self::key_hash(entries[position as usize].0)
+                    });
+                self.record_attributes(slot, attributes.shape());
+            }
+            ShapeTransition::Descriptor { slot, attributes } => {
+                self.record_attributes(slot, attributes);
+            }
+            ShapeTransition::Delete { .. } => return None,
+            ShapeTransition::FunctionName { .. }
+            | ShapeTransition::FunctionNameReconfigured
+            | ShapeTransition::FunctionLengthReconfigured
+            | ShapeTransition::Constructed { .. }
+            | ShapeTransition::Root
+            | ShapeTransition::Vacant
+            | ShapeTransition::Dictionary { .. } => {}
+        }
+        Some(self)
+    }
+    /// The slot's newest attributes; default ones are not stored.
+    fn record_attributes(&mut self, slot: u32, attributes: ShapeAttributes) {
+        if attributes == DEFAULT_SHAPE_ATTRIBUTES {
+            self.attributes.remove(&slot);
+        } else {
+            self.attributes.insert(slot, attributes);
+        }
+    }
     fn slot(&self, key: property_key::PropertyKey) -> Option<u32> {
         self.positions
             .find(Self::key_hash(key), |&position| {
