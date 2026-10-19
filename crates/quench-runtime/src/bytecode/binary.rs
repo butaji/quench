@@ -902,7 +902,12 @@ fn decode_program(
         source,
         atoms,
         constants,
-        functions: functions.into_iter().map(FunctionSlot::compiled).collect(),
+        // Collected in place, the slots would keep the larger function buffer.
+        functions: {
+            let mut slots = Vec::with_capacity(functions.len());
+            slots.extend(functions.into_iter().map(FunctionSlot::compiled));
+            slots
+        },
         cache_sites,
         method_sites,
         method_arguments,
@@ -1045,9 +1050,16 @@ impl<'a> BinaryReader<'a> {
             _ => Err("invalid residual source option".into()),
         }
     }
+    /// A counted list, allocated at its exact length: collecting through `Result` would
+    /// lose the count and leave each list with doubling slack. Every element takes at least
+    /// a byte, which bounds the allocation a corrupt count can ask for.
     pub(super) fn list<T>(&mut self, mut read: impl FnMut(&mut Self) -> Result<T, String>) -> Result<Vec<T>, String> {
         let len = self.u32()? as usize;
-        (0..len).map(|_| read(self)).collect()
+        let mut values = Vec::with_capacity(len.min(self.bytes.len() - self.cursor));
+        for _ in 0..len {
+            values.push(read(self)?);
+        }
+        Ok(values)
     }
     pub(super) fn finish(self) -> Result<(), String> {
         if self.cursor == self.bytes.len() { Ok(()) } else { Err("trailing residual data".into()) }
