@@ -930,7 +930,9 @@ impl Heap {
             self.gc_profile.allocated_payload_bytes[kind] += bytes as u64;
             self.gc_profile.allocated_size_buckets[kind][Self::size_bucket(bytes)] += 1;
         }
-        let payload = cell.payload_bytes();
+        // Text made on demand since the last allocation through here is charged with this
+        // one: strings, which carry it, allocate through `alloc`, which safepoints never pay.
+        let payload = cell.payload_bytes() + crate::vm::wtf16::take_materialized_bytes();
         let weight = 1 + payload / payload_unit();
         self.payload_bytes = self.payload_bytes.saturating_add(payload);
         self.allocations += weight;
@@ -1395,9 +1397,7 @@ impl Heap {
         }
     }
     pub fn should_collect(&self) -> bool {
-        self.allocations
-            .saturating_add(crate::vm::wtf16::materialized_bytes() / payload_unit())
-            >= self.threshold
+        self.allocations >= self.threshold
     }
     /// The job contexts of promises freed since the last call, which their reactions held.
     pub(crate) fn take_abandoned_job_contexts(&mut self) -> Vec<crate::HostExecutionContext> {
