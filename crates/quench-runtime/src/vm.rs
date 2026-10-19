@@ -53,6 +53,9 @@ struct RuntimeAtoms {
     name: Atom,
     /// The empty string, an anonymous function's initial name.
     empty: Atom,
+    /// An iterator result's keys, in its literal order.
+    value: Atom,
+    done: Atom,
 }
 pub(crate) mod activation;
 mod activation_lifecycle;
@@ -1446,6 +1449,9 @@ pub(crate) struct Vm<H> {
     /// `prototype` (`construction::ClosureShapes`); derived from shapes, so field-cache
     /// invalidation clears it.
     closure_shapes: [Option<construction::ClosureShapes>; 2],
+    /// The shape of an iterator result `{ value, done }` (`Vm::iterator_result`); derived
+    /// from shapes, so field-cache invalidation clears it.
+    iterator_result_shape: Option<u32>,
     /// The shape a new RegExp object starts in and the one its own `lastIndex` moves it to
     /// (`Vm::regexp_from_matcher`), as the first one recorded; derived from shapes, so
     /// field-cache invalidation clears it.
@@ -2235,6 +2241,8 @@ impl<H: Host> Vm<H> {
             constructor: self.intern_atom("constructor"),
             name: self.intern_atom("name"),
             empty: self.intern_atom(""),
+            value: self.intern_atom("value"),
+            done: self.intern_atom("done"),
         };
         self.field_caches = vec![EMPTY_CACHE; program.cache_sites as usize];
         Self::prime_loop_decoding(program);
@@ -2259,6 +2267,7 @@ impl<H: Host> Vm<H> {
         self.programs.reset(program.clone());
         self.instanceof_constructor_layout = None;
         self.closure_shapes = [None; 2];
+        self.iterator_result_shape = None;
         self.regexp_object_shapes = None;
         self.regexp_last_index_layout = None;
         self.regexp_builtin_layout = None;
