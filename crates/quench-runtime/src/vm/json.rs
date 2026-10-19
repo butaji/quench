@@ -1153,7 +1153,7 @@ impl<H: Host> Vm<H> {
                 self.json_serialize_object(p, value, state).map(Some)
             }
             Some(Cell::Environment { .. })
-            | Some(Cell::Iterator { .. })
+            | Some(Cell::Iterator(_))
             | Some(Cell::ArrayFromAsyncState(_))
             | Some(Cell::AwaitState(_))
             | Some(Cell::PromiseResolvingState { .. })

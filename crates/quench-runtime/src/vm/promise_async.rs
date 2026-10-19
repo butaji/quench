@@ -90,13 +90,13 @@ impl<H: Host> Vm<H> {
         source: Value,
         yielded: bool,
     ) -> Result<(), JsError> {
-        let state = self.heap.alloc(Cell::AwaitState(Box::new(AwaitState {
+        let state = self.heap.alloc_await_state(AwaitState {
             continuation: Some(Box::new(continuation)),
             realm: self.realm.globals,
             promise,
             generator,
             yielded,
-        })));
+        });
         // Host lifecycle observers can run before a reaction holds the state.
         self.with_call_roots([state, source], |vm| {
             vm.attach_await_reactions(p, state, promise, generator, source)
@@ -171,7 +171,7 @@ impl<H: Host> Vm<H> {
         rejected: bool,
         value: Value,
     ) -> Result<Value, JsError> {
-        let Some(Cell::AwaitState(state)) = self.heap.get_mut(state) else {
+        let Some(state) = self.heap.await_state_mut(state) else {
             return Err(JsError("await reaction without its state".into()));
         };
         let continuation = state.continuation.take().map(|continuation| *continuation);
