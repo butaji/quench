@@ -357,6 +357,11 @@ pub(super) struct ScriptCallTarget {
     registers: u16,
     params: u16,
     strict: bool,
+    /// An arrow's `this`, found in its environment when it was resolved: `None` for any
+    /// other function, `Some(None)` for an arrow whose environment binds none, which then
+    /// takes its caller's receiver. An arrow whose binding is still uninitialized (before
+    /// `super()`) is never resolved, and an initialized binding never changes.
+    lexical_this: Option<Option<Value>>,
     /// `new` may activate it too (`Vm::inline_constructible`).
     constructs: bool,
     /// `new` may run its body as the stores alone (`Function::only_initializes_this_fields`).
@@ -379,6 +384,7 @@ const EMPTY_SCRIPT_CALL_TARGET: ScriptCallTarget = ScriptCallTarget {
     registers: 0,
     params: 0,
     strict: false,
+    lexical_this: None,
     constructs: false,
     initializes: false,
     forwards: false,
@@ -4073,6 +4079,15 @@ impl<H: Host> Vm<H> {
         if !plan.registers_only {
             return None;
         }
+        let lexical_this = if body.is_arrow {
+            let this = self.captured_lexical_this(env);
+            if this.is_some_and(Value::is_deleted) {
+                return None;
+            }
+            Some(this)
+        } else {
+            None
+        };
         let view = self.lane_view_any(program, function)?;
         // A frameless activation's function has no environment of its own.
         let capture = match self.environment_capture_slots(env, false, 0) {
@@ -4089,6 +4104,7 @@ impl<H: Host> Vm<H> {
             registers: body.registers,
             params: body.params,
             strict: body.strict,
+            lexical_this,
             constructs: Self::inline_constructible(body),
             initializes: Self::inline_constructible(body)
                 && body.only_initializes_this_fields(&code.constants),
@@ -4133,12 +4149,7 @@ lane_handler! {
             sibling!(lane_script_call_keeping::<H>, r, ip, Carried::SCRIPT)
         }
         let receiver = r.get(i.c);
-        // `call_this_value` without its boxing of primitives, which allocates.
-        let this = if target.strict || vm.is_object_like(receiver) {
-            receiver
-        } else if receiver.is_null() || receiver.is_undefined() {
-            vm.realm.globals
-        } else {
+        let Some(this) = lane_activation_this(vm, &target, receiver) else {
             return exit(ip);
         };
         let arguments = ImmediateLayout::call_window_base(i.imm());
@@ -4295,12 +4306,7 @@ lane_handler! {
         let window = ImmediateLayout::call_window_base(i.imm());
         let argc = usize::from(ImmediateLayout::argument_count(i.imm()));
         let receiver = if argc == 0 { Value::UNDEFINED } else { r.get(window) };
-        // `call_this_value` without its boxing of primitives, which allocates.
-        let this = if target.strict || vm.is_object_like(receiver) {
-            receiver
-        } else if receiver.is_null() || receiver.is_undefined() {
-            vm.realm.globals
-        } else {
+        let Some(this) = lane_activation_this(vm, &target, receiver) else {
             return exit(ip);
         };
         // SAFETY: the values after `thisArg` are registers of the running function, which
@@ -4542,11 +4548,7 @@ lane_handler! {
             return exit(ip);
         };
         let receiver = r.get(i.c);
-        let this = if target.strict || vm.is_object_like(receiver) {
-            receiver
-        } else if receiver.is_null() || receiver.is_undefined() {
-            vm.realm.globals
-        } else {
+        let Some(this) = lane_activation_this(vm, &target, receiver) else {
             return exit(ip);
         };
         let arguments = ActivationArguments::Window(ImmediateLayout::call_window_base(i.imm()));
@@ -4627,11 +4629,7 @@ fn lane_forward_activation<H: Host>(
         return Err(exit(ip));
     };
     let receiver = r.get(window);
-    let this = if target.strict || vm.is_object_like(receiver) {
-        receiver
-    } else if receiver.is_null() || receiver.is_undefined() {
-        vm.realm.globals
-    } else {
+    let Some(this) = lane_activation_this(vm, &target, receiver) else {
         return Err(exit(ip));
     };
     lane_activate_keeping(cx, r, ip, target, kept, this, false)
@@ -4685,6 +4683,24 @@ lane_handler! {
 #[inline(always)]
 fn lane_constructing<H: Host>(vm: &Vm<H>, callee: Value) -> bool {
     vm.construct_target.is_some_and(|target| target.callee == callee)
+}
+
+/// The `this` an activation of `target` called with `receiver` binds: an arrow's lexical
+/// one (`ScriptCallTarget::lexical_this`), else `call_this_value`'s without its boxing of
+/// primitives, which allocates. `None` leaves a sloppy function's primitive receiver to
+/// the general path.
+#[inline(always)]
+fn lane_activation_this<H: Host>(vm: &Vm<H>, target: &ScriptCallTarget, receiver: Value) -> Option<Value> {
+    if let Some(lexical) = target.lexical_this {
+        return Some(lexical.unwrap_or(receiver));
+    }
+    if target.strict || vm.is_object_like(receiver) {
+        Some(receiver)
+    } else if receiver.is_null() || receiver.is_undefined() {
+        Some(vm.realm.globals)
+    } else {
+        None
+    }
 }
 
 #[inline(always)]
