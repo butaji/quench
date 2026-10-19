@@ -33,7 +33,10 @@ const JS_JIT_MAX_TRACKED_FUNCTIONS: usize = 256;
 const JS_JIT_MAX_DIAGNOSTIC_FUNCTIONS: usize = 4096;
 const JS_JIT_MAX_REJECTED_FUNCTIONS: usize = 4096;
 const JS_JIT_REJECTION_DIAGNOSTIC_ENTRIES: u64 = 32;
-const JS_JIT_MAX_MAPPED_BYTES: usize = 64 * 1024;
+// Cranelift executable mappings are page-rounded. A 64 KiB cap admitted only
+// sixteen tiny JS artifacts on 4 KiB systems, starving later high-frequency
+// helpers; the function-count cap still bounds artifact proliferation.
+const JS_JIT_MAX_MAPPED_BYTES: usize = 512 * 1024;
 /// Promote a Wasm function only after repeated interpreter entries. Wasm
 /// signatures and bytecode are fixed, so this is a call-hotness gate.
 pub(super) const WASM_JIT_PROMOTION_ENTRIES: u8 = 32;

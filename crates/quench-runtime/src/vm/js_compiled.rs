@@ -122,6 +122,51 @@ pub(super) fn number_capture_candidate(function: &Function) -> Option<JsJitCaptu
     })
 }
 
+/// Restrict bitwise-number lowering to expressions whose operands are either
+/// direct parameters (guarded as signed Int32 at entry) or static Int32 number
+/// constants. This keeps JavaScript ToInt32 semantics exact without a coercion
+/// slow path inside generated code.
+pub(super) fn has_int32_bitwise_candidate(program: &ResidualProgram, function: &Function) -> bool {
+    let mut found = false;
+    function.code.iter().all(|packed| {
+        let instruction = packed.as_wide();
+        if instruction.op() != Op::Binary
+            || !matches!(
+                instruction.binary_operator(),
+                x if x == BinaryOperator::BitwiseAnd as u32
+                    || x == BinaryOperator::BitwiseOR as u32
+                    || x == BinaryOperator::BitwiseXOR as u32
+            )
+        {
+            return true;
+        }
+        found = true;
+        [instruction.operand_b(), instruction.operand_c()]
+            .into_iter()
+            .all(|operand| match operand.kind() {
+                Some(crate::bytecode::OperandKind::Register) => operand
+                    .register_index()
+                    .is_some_and(|register| usize::from(register) < usize::from(function.params)),
+                Some(crate::bytecode::OperandKind::Constant) => {
+                    let Some(Constant::Number(value)) =
+                        program.constants.get(usize::from(operand.payload()))
+                    else {
+                        return false;
+                    };
+                    is_i32_number(*value)
+                }
+                _ => false,
+            })
+    }) && found
+}
+
+pub(super) fn is_i32_number(value: f64) -> bool {
+    value.is_finite()
+        && value.fract() == 0.0
+        && value >= f64::from(i32::MIN)
+        && value <= f64::from(i32::MAX)
+}
+
 fn compile_capture_number(
     function_id: u32,
     capture: JsJitCaptureArgument,
@@ -1757,6 +1802,25 @@ fn compile_numeric(program: &ResidualProgram, function_id: u32) -> Option<JsJitA
                 let right =
                     operand_value(&mut builder, program, instruction.operand_c(), &registers)?;
                 let value = match (instruction.op(), instruction.binary_operator()) {
+                    (Op::Binary, op)
+                        if (op == BinaryOperator::BitwiseAnd as u32
+                            || op == BinaryOperator::BitwiseOR as u32
+                            || op == BinaryOperator::BitwiseXOR as u32)
+                            && has_int32_bitwise_candidate(program, function) =>
+                    {
+                        let left = builder.ins().fcvt_to_sint(types::I32, left);
+                        let right = builder.ins().fcvt_to_sint(types::I32, right);
+                        let value = match op {
+                            x if x == BinaryOperator::BitwiseAnd as u32 => {
+                                builder.ins().band(left, right)
+                            }
+                            x if x == BinaryOperator::BitwiseOR as u32 => {
+                                builder.ins().bor(left, right)
+                            }
+                            _ => builder.ins().bxor(left, right),
+                        };
+                        builder.ins().fcvt_from_sint(types::F64, value)
+                    }
                     (Op::Binary, op) if op == BinaryOperator::Addition as u32 => {
                         builder.ins().fadd(left, right)
                     }
@@ -3018,7 +3082,7 @@ fn eligible(function: &Function, atoms: &crate::bytecode::AtomTable) -> bool {
         || function.rest
         || !function.simple_parameters
         || !function.handlers.is_empty()
-        || !function.plain_activation(atoms)
+        || (!function.plain_activation(atoms) && !activation_is_irrelevant(function))
     {
         return false;
     }
@@ -3034,6 +3098,37 @@ fn eligible(function: &Function, atoms: &crate::bytecode::AtomTable) -> bool {
         .enumerate()
         .all(|(index, binding)| {
             usize::from(binding.local) == index && usize::from(binding.register) == index
+        })
+}
+
+/// Some closures need a non-plain environment only because their source
+/// nesting supplies one; a pure numeric body that never reads it has no
+/// observable dependency on that activation. Keep this proof deliberately
+/// narrow so calls, captures, dynamic names, `this`, and closure creation stay
+/// on the interpreter path.
+fn activation_is_irrelevant(function: &Function) -> bool {
+    function.arguments_slot.is_none()
+        && !function.inherited_with_scope
+        && function.wide.is_empty()
+        && function.code.iter().all(|packed| {
+            matches!(
+                packed.as_wide().op(),
+                Op::LoadConst
+                    | Op::Move
+                    | Op::Unary
+                    | Op::Binary
+                    | Op::NumericAdd
+                    | Op::NumericMultiply
+                    | Op::LoadLocal
+                    | Op::LoadLocalPlain
+                    | Op::StoreLocal
+                    | Op::StoreLocalPlain
+                    | Op::Jump
+                    | Op::JumpFalse
+                    | Op::JumpTrue
+                    | Op::JumpBinaryFalse
+                    | Op::Return
+            )
         })
 }
 
