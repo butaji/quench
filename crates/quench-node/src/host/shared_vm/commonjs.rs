@@ -981,10 +981,17 @@ pub(super) fn require_node_library(
     context: &mut Context<'_>, receiver: RootId, args: &[RootId],
 ) -> Result<RootId, RootedError> {
     if let Some(value) = args.first() {
-        if context.string_text(*value)?.is_some_and(|name| {
-            name.strip_prefix("node:").unwrap_or(&name) == "internal/timers"
-        }) {
-            return cached_builtin(context, BuiltinModule::InternalTimers);
+        match context.string_text(*value)?.as_deref() {
+            Some(name) if name.strip_prefix("node:").unwrap_or(name) == "internal/timers" => {
+                return cached_builtin(context, BuiltinModule::InternalTimers);
+            }
+            Some(crate::modules::buffer_shared_vm::FAST_BUFFER_REQUEST) => {
+                return crate::modules::buffer_shared_vm::fast_buffer_request(context);
+            }
+            Some(crate::modules::buffer_shared_vm::BUFFER_POOL_REQUEST) => {
+                return crate::modules::buffer_shared_vm::buffer_pool_request(context);
+            }
+            _ => {}
         }
     }
     require(context, receiver, args)
@@ -1524,7 +1531,10 @@ fn cached_builtin(
         return Ok(module);
     }
 
-    let module = context.with_startup_intrinsics(|context| build_builtin(context, builtin))?;
+    let module = host_load(|| {
+        HOST_LOADS.with(|loads| loads.compiled.set(true));
+        context.with_startup_intrinsics(|context| build_builtin(context, builtin))
+    })?;
     let retained = context.retain(module)?;
     let previous = roots.borrow_mut().builtin_cache.insert(key.clone(), retained);
     if let Some(previous) = previous { context.release_root(previous); }
@@ -1607,31 +1617,38 @@ pub(crate) fn node_library_export(
 pub(crate) fn node_library_module(context: &mut Context<'_>, owner: &str, relative: &str) -> Result<RootId, RootedError> {
     let root = context.host_mut().node_library_root.clone();
     let parent = module_record(context, &root.join("lib").join(owner), None, false)?;
-    LIBRARY_LOADS.with(|loads| loads.depth.set(loads.depth.get() + 1));
-    let module = context.with_startup_intrinsics(|context| {
-        load(context, &root.join("lib").join(relative), Some(parent), EntryGoal::CommonJs)
-    });
-    // A library loaded on first use compiles after the entry's compilation released the
-    // pages compiling touches: release them again once the outermost load has compiled.
-    let compiled = LIBRARY_LOADS.with(|loads| {
+    host_load(|| {
+        context.with_startup_intrinsics(|context| {
+            load(context, &root.join("lib").join(relative), Some(parent), EntryGoal::CommonJs)
+        })
+    })
+}
+
+/// Runs a load of host code: a library module or a builtin the host builds. A load on first
+/// use compiles after the entry's compilation released the pages compiling touches; they are
+/// released again once the outermost load ends, if any load inside it compiled.
+fn host_load<T>(load: impl FnOnce() -> T) -> T {
+    HOST_LOADS.with(|loads| loads.depth.set(loads.depth.get() + 1));
+    let result = load();
+    let compiled = HOST_LOADS.with(|loads| {
         loads.depth.set(loads.depth.get() - 1);
         loads.depth.get() == 0 && loads.compiled.replace(false)
     });
     if compiled {
         crate::host::resident_pages::release_read_only_pages();
     }
-    module
+    result
 }
 
-/// Host library loads in progress, and whether one compiled a module since the last release.
-struct LibraryLoads {
+/// Host loads in progress, and whether one compiled since the last release.
+struct HostLoads {
     depth: std::cell::Cell<u32>,
     compiled: std::cell::Cell<bool>,
 }
 
 thread_local! {
-    static LIBRARY_LOADS: LibraryLoads = const {
-        LibraryLoads { depth: std::cell::Cell::new(0), compiled: std::cell::Cell::new(false) }
+    static HOST_LOADS: HostLoads = const {
+        HostLoads { depth: std::cell::Cell::new(0), compiled: std::cell::Cell::new(false) }
     };
 }
 
@@ -2539,7 +2556,7 @@ fn load_with_resolution(
     }
     cache.insert(context, &key, module)?;
     if library_relative.is_some() {
-        LIBRARY_LOADS.with(|loads| loads.compiled.set(true));
+        HOST_LOADS.with(|loads| loads.compiled.set(true));
     }
     if let Some((directory, specifier)) = resolution {
         let name = context.string_rooted(&key);
@@ -2581,6 +2598,10 @@ fn load_with_resolution(
                 super::policy_projection::project(&file_text, &["BoundSocket"]).map_err(RootedError::host)?.into(),
             Some(path) if path == Path::new("lib/child_process.js") =>
                 super::policy_projection::project(&file_text, &["_forkChild"]).map_err(RootedError::host)?.into(),
+            Some(path) if path == Path::new("lib/internal/buffer.js") =>
+                crate::modules::buffer_shared_vm::project_internal_buffer(&file_text)?.into(),
+            Some(path) if path == Path::new("lib/buffer.js") =>
+                crate::modules::buffer_shared_vm::project_buffer(&file_text)?.into(),
             _ => file_text,
         };
         // An embedded library file is static text the compiled program can retain as is;

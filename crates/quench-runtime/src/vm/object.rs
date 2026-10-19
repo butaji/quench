@@ -674,6 +674,7 @@ impl<H: Host> Vm<H> {
     }
     pub(super) fn invalidate_field_caches(&mut self) {
         self.field_caches.fill(EMPTY_CACHE);
+        self.symbol_write_proofs.clear();
         self.field_add_indices.fill(NO_FIELD_ADD_SET);
         self.field_add_sets.clear();
         self.megamorphic_field_indices.fill(NO_MEGAMORPHIC_FIELD);
@@ -823,6 +824,16 @@ fn field_cache_key(receiver: u32, holder: u32) -> u64 {
     (u64::from(receiver) << u32::BITS) | u64::from(holder)
 }
 impl<H: Host> Vm<H> {
+    /// A fresh array of the active realm holding `length` holes: `MakeArray`'s result.
+    pub(super) fn hole_array(&mut self, length: usize) -> Value {
+        self.heap.alloc(Cell::Array {
+            object: crate::heap::ArrayObject::new(
+                Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
+                Rc::new(vec![Value::DELETED; length]),
+            ),
+        })
+    }
+
     pub(super) fn object_pair(
         &mut self,
         program: &ResidualProgram,
@@ -1076,7 +1087,7 @@ impl<H: Host> Vm<H> {
 
     /// The add `cached_field_add_hit` makes for a lane: an ordinary record's cached add,
     /// without the specialization test (`Vm::lane_admits`) or the store probe before it. The
-    /// caller proved `atom` eligible (`field_cache_atom_eligible`) for the site.
+    /// caller proved `atom` eligible (`field_add_atom_eligible`) for the site.
     #[inline(always)]
     pub(super) fn primary_field_add_hit(
         &mut self,
@@ -1086,7 +1097,7 @@ impl<H: Host> Vm<H> {
         value: Value,
         site: u16,
     ) -> bool {
-        debug_assert!(self.lane_admits(p) && self.field_cache_atom_eligible(atom));
+        debug_assert!(self.lane_admits(p) && self.field_add_atom_eligible(atom));
         let Some(data) = self.heap.object_record(object) else {
             return false;
         };
@@ -1259,7 +1270,7 @@ impl<H: Host> Vm<H> {
         None
     }
 
-    /// `get_field_polymorphic` for an ordinary record receiver up to the point where it
+    /// `get_field_polymorphic` for an object receiver up to the point where it
     /// would run guest code: hashed megamorphic and prototype-holder entries, then the data
     /// lookup of `get_field_miss`. `None` leaves the read to `get_property`.
     pub(super) fn cached_field_polymorphic_hit(
@@ -1273,11 +1284,13 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let index = self.field_cache_index(site);
-        let receiver = self.heap.record_object(object.heap_reference()?)?;
-        if let Some(hit) = self
-            .cached_field_value(index, receiver)
-            .or_else(|| self.cached_holder_field_value(index, receiver, atom))
-        {
+        // A record's own and holder entries; any other object (a function, say) goes
+        // straight to the data lookup, whose shape proof covers every object kind.
+        let receiver = self.heap.record_object(object.heap_reference()?);
+        if let Some(hit) = receiver.and_then(|receiver| {
+            self.cached_field_value(index, receiver)
+                .or_else(|| self.cached_holder_field_value(index, receiver, atom))
+        }) {
             self.profile
                 .field_cache_hit(usize::from(hit.tier), hit.depth);
             return Some(hit.value);
@@ -1772,13 +1785,16 @@ impl<H: Host> Vm<H> {
         let epoch = crate::heap::prototype_layout_epoch();
         if cache.proved_epoch == epoch && cache.proved_prototype == first {
             let value = match cache.answer {
-                // SAFETY: the proof keeps the holder and its recorded shape.
-                InheritedFieldAnswer::Slot(slot) => unsafe {
-                    self.heap.property_get_shaped(
-                        self.heap.ordinary_object(cache.proved_holder)?,
-                        usize::from(slot),
-                    )
-                }?,
+                InheritedFieldAnswer::Slot(slot) => {
+                    // A holder in the object records, as most prototypes are, without the
+                    // out-of-line lookup of one in a slot.
+                    let holder = match self.heap.object_record(cache.proved_holder) {
+                        Some(holder) => holder,
+                        None => self.heap.ordinary_object(cache.proved_holder)?,
+                    };
+                    // SAFETY: the proof keeps the holder and its recorded shape.
+                    unsafe { self.heap.property_get_shaped(holder, usize::from(slot)) }?
+                }
                 InheritedFieldAnswer::Absent => Value::UNDEFINED,
             };
             return Some((hit(value), None));
@@ -1965,6 +1981,9 @@ impl<H: Host> Vm<H> {
         value: Value,
         receiver: Value,
     ) -> Result<bool, JsError> {
+        if target == receiver && self.set_plain_named_property(target, atom, value).is_some() {
+            return Ok(true);
+        }
         let _stack = self.enter_stack()?;
         if self.is_private_name(atom) {
             self.check_private_brand(p, target, atom)?;
@@ -2401,7 +2420,7 @@ impl<H: Host> Vm<H> {
         value: Value,
         site: u16,
     ) -> bool {
-        if !(self.specialized && p.specialized) || !self.field_cache_atom_eligible(atom) {
+        if !(self.specialized && p.specialized) || !self.field_add_atom_eligible(atom) {
             return false;
         }
         let Some(data) = self.heap.ordinary_object(object) else {
@@ -2561,8 +2580,8 @@ impl<H: Host> Vm<H> {
             .map(Object::shape)
             .unwrap_or(u32::MAX);
         let add_prototype_guard =
-            if existing.is_none() && shape != u32::MAX && self.field_cache_atom_eligible(atom) {
-                self.field_add_prototype_guard(object, atom)
+            if existing.is_none() && shape != u32::MAX && self.field_add_atom_eligible(atom) {
+                self.add_prototype_guard(object, PropertyKey::string(atom))
             } else {
                 None
             };
@@ -2662,11 +2681,11 @@ impl<H: Host> Vm<H> {
         true
     }
 
-    /// The prototype shapes a cached add of `atom` to `object` must find again, as the depth and
-    /// shape fields of a `FieldAddCache`.
-    fn field_add_prototype_guard(&self, object: Value, atom: Atom) -> Option<FieldAddCache> {
+    /// The prototype shapes a cached add of `key` to `object` must find again, as the depth and
+    /// shape fields of a `FieldAddCache`; `None` when a link is exotic, a dictionary, or holds
+    /// `key` as an accessor or read-only.
+    pub(super) fn add_prototype_guard(&self, object: Value, key: PropertyKey) -> Option<FieldAddCache> {
         let mut prototype = self.object_data(object)?.proto();
-        let key = PropertyKey::string(atom);
         let mut guard = FieldAddCache::EMPTY;
         while !prototype.is_null() {
             let depth = usize::from(guard.prototype_depth);
@@ -2707,11 +2726,7 @@ impl<H: Host> Vm<H> {
         depth: u8,
         epoch: u64,
     ) {
-        let mut link = proto;
-        for _ in 0..depth {
-            self.heap.mark_prototype(link);
-            link = self.heap.object_record(link).map_or(Value::NULL, Object::proto);
-        }
+        self.mark_prototype_links(proto, depth);
         // Marking a link that was no prototype yet leaves the epoch where it was, so the
         // proof made before it holds.
         if crate::heap::prototype_layout_epoch() != epoch {
@@ -2720,6 +2735,16 @@ impl<H: Host> Vm<H> {
         if let Some(cache) = self.field_add_sets[set].find_mut(shape, atom) {
             cache.proved_epoch = epoch;
             cache.proved_prototype = proto;
+        }
+    }
+
+    /// Marks the `depth` links of the chain from `proto` as prototypes, so a later change to
+    /// any of them advances `prototype_layout_epoch`.
+    pub(super) fn mark_prototype_links(&mut self, proto: Value, depth: u8) {
+        let mut link = proto;
+        for _ in 0..depth {
+            self.heap.mark_prototype(link);
+            link = self.heap.object_record(link).map_or(Value::NULL, Object::proto);
         }
     }
 

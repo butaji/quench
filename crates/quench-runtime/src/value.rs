@@ -36,6 +36,9 @@ const DIRECT_OBJECT_HANDLE_BIT: u64 = 1 << 47;
 /// The `TAG_DELETED` payload bit of `Value::shared_environment_slot`. Environments are legacy
 /// slot cells, whose payload never sets the direct-handle bits.
 const SHARED_ENVIRONMENT_SLOT_BIT: u64 = DIRECT_OBJECT_HANDLE_BIT;
+/// The `TAG_DELETED` payload bit of `Value::environment_index`, distinct from the shared-slot
+/// bit and from the `DELETED`/`UNMATERIALIZED_ARGUMENTS` sentinels.
+const ENVIRONMENT_INDEX_BIT: u64 = DIRECT_ARRAY_HANDLE_BIT;
 const DIRECT_ARRAY_HANDLE_BIT: u64 = 1 << 46;
 /// The bits that name a heap value's reference family (`Value::heap_reference`).
 const HEAP_FAMILY_MASK: u64 = TAG_MASK | DIRECT_OBJECT_HANDLE_BIT | DIRECT_ARRAY_HANDLE_BIT;
@@ -126,6 +129,20 @@ impl Value {
     pub(crate) fn shared_environment_slot(owner: Self) -> Self {
         debug_assert!(owner.is_heap() && owner.0 & SHARED_ENVIRONMENT_SLOT_BIT == 0);
         Self(TAG_DELETED | SHARED_ENVIRONMENT_SLOT_BIT | (owner.0 & PAYLOAD_MASK))
+    }
+
+    /// A slot index or length inside a sparse environment's slot storage
+    /// (`EnvironmentSlots`): a `TAG_DELETED` payload of `ENVIRONMENT_INDEX_BIT` and the number,
+    /// which no guest operation produces.
+    pub(crate) fn environment_index(index: u32) -> Self {
+        Self(TAG_DELETED | ENVIRONMENT_INDEX_BIT | u64::from(index))
+    }
+
+    /// The number of an `environment_index`.
+    #[inline(always)]
+    pub(crate) fn as_environment_index(self) -> Option<u32> {
+        (self.0 & (TAG_MASK | ENVIRONMENT_INDEX_BIT) == TAG_DELETED | ENVIRONMENT_INDEX_BIT)
+            .then_some(self.0 as u32)
     }
 
     /// The owner environment of a `shared_environment_slot`.

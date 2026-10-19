@@ -179,6 +179,10 @@ fn promoted_locals_preserve_order_and_survive_collection() {
       function keyed(x, i) { x[i] = x[++i] * 10; return x.join() + ":" + i; }
       function window(i) { var a = [i, ++i, i++, i]; return a.join() + ":" + i; }
       function compound(i) { i += i++ + ++i; return i; }
+      // A `var` read before its first write is undefined, whatever an earlier frame left
+      // in the register it moved to.
+      function dirty() { var a = "stale", b = "stale"; return a + b; }
+      function unset(o) { var n; (function (e) { e.k = 1; })(n || (o.x = n = {})); return typeof o.x + ":" + n.k; }
       print(read({ answer: 42 }));
       print(ordered(5));
       print(destructured(9));
@@ -186,6 +190,8 @@ fn promoted_locals_preserve_order_and_survive_collection() {
       print(keyed([1, 2, 3, 4], 0));
       print(window(0));
       print(compound(2));
+      dirty();
+      print(unset({}));
     "#;
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::new(RecordingHost(output.clone()));
@@ -193,7 +199,7 @@ fn promoted_locals_preserve_order_and_survive_collection() {
     vm.execute(&program).unwrap();
     assert_eq!(
         output.borrow().as_slice(),
-        ["42", "3", "3", "602", "20,2,3,4:1", "0,1,1,2:2", "8"]
+        ["42", "3", "3", "602", "20,2,3,4:1", "0,1,1,2:2", "8", "object:1"]
     );
 
     // Every binding here stays in a register, including those written inside expressions.
@@ -744,11 +750,17 @@ fn unreachable_promise_callback_and_aggregate_cycles_are_collected() {
     let values = vm
         .call_value(&program, factory, Value::UNDEFINED, &[])
         .unwrap();
-    let owners: Vec<_> = vm
-        .realm
-        .promise
-        .records
-        .keys()
+    let promises: Vec<_> = vm
+        .heap
+        .array_elements(values)
+        .unwrap()
+        .iter()
+        .copied()
+        .filter(|value| vm.is_promise(*value))
+        .collect();
+    assert_eq!(promises.len(), 6);
+    let owners: Vec<_> = promises
+        .iter()
         .chain(vm.realm.promise.finally_handler_callbacks.keys())
         .chain(vm.realm.promise.aggregates.keys())
         .chain(vm.realm.promise.aggregate_jobs.keys())
@@ -775,7 +787,6 @@ fn unreachable_promise_callback_and_aggregate_cycles_are_collected() {
         weak.iter()
             .all(|handle| vm.heap.weak_value(*handle).is_none())
     );
-    assert!(vm.realm.promise.records.is_empty());
     assert!(vm.realm.promise.finally_handler_callbacks.is_empty());
     assert!(vm.realm.promise.aggregates.is_empty());
     assert!(vm.realm.promise.aggregate_jobs.is_empty());
@@ -1181,10 +1192,7 @@ fn promise_record_edges_follow_promise_and_resolver_lifetime() {
     assert!(vm.heap.is_live(promise));
     assert!(vm.heap.is_live(result));
     assert_eq!(
-        vm.realm
-            .promise
-            .records
-            .get(&promise)
+        vm.promise_record(promise)
             .map(|record| record.result),
         Some(result)
     );
@@ -1198,7 +1206,7 @@ fn promise_record_edges_follow_promise_and_resolver_lifetime() {
     vm.collect_now(&program);
     assert!(vm.heap.weak_value(promise_weak).is_none());
     assert!(vm.heap.weak_value(result_weak).is_none());
-    assert!(!vm.realm.promise.records.contains_key(&promise));
+    assert!(!vm.is_promise(promise));
 }
 
 #[test]
@@ -4485,11 +4493,7 @@ fn dynamic_import_waiters_are_rooted_while_queued_and_during_batch_evaluation() 
             let source = "$262.gc(); export const value = 57;".to_owned();
             vm.realm.promise.dynamic_import_jobs.push(DynamicImportJob {
                 cache_key: format!("{name}:javascript"),
-                module: crate::ModuleSource {
-                    name,
-                    bytes: source.as_bytes().to_vec(),
-                    source,
-                },
+                module: crate::ModuleSource::text(name, source),
                 promise,
             });
         }
@@ -4506,14 +4510,14 @@ fn dynamic_import_waiters_are_rooted_while_queued_and_during_batch_evaluation() 
         for (promise, weak) in &promises {
             assert_eq!(vm.heap.weak_value(*weak), Some(*promise));
             assert_eq!(
-                vm.realm.promise.records[promise].state,
+                vm.promise_record(*promise).expect("promise record").state,
                 PromiseState::Fulfilled
             );
         }
         vm.collect_now(&program);
         for (promise, weak) in promises {
             assert!(vm.heap.weak_value(weak).is_none());
-            assert!(!vm.realm.promise.records.contains_key(&promise));
+            assert!(!vm.is_promise(promise));
         }
     }
 }
@@ -4535,14 +4539,7 @@ fn async_continuation_lifetime_follows_reachable_callbacks_and_jobs() {
         let held_atom = vm.intern_atom("held");
         let held = vm.own_property(values, held_atom).unwrap();
         let held_weak = vm.heap.weak_handle(held).unwrap();
-        let token = vm
-            .realm
-            .promise
-            .async_resume_jobs
-            .values()
-            .next()
-            .unwrap()
-            .continuation;
+        assert_eq!(pending_await_continuations(&mut vm), 1);
         let root = vm.heap.root(values);
         vm.collect_now(&program);
         assert_eq!(vm.heap.weak_value(held_weak), Some(held));
@@ -4563,17 +4560,22 @@ fn async_continuation_lifetime_follows_reachable_callbacks_and_jobs() {
             vm.collect_now(&program);
         }
         assert!(vm.heap.weak_value(held_weak).is_none(), "queued={queued}");
-        assert!(
-            vm.suspended
-                .iter()
-                .all(|entry| entry.continuation.is_none())
-        );
-        assert!(vm.resume_continuation(token).is_none());
+        assert_eq!(pending_await_continuations(&mut vm), 0, "queued={queued}");
     }
 }
 
+fn pending_await_continuations(vm: &mut Vm<SilentHost>) -> usize {
+    let mut pending = 0;
+    vm.heap.for_each_cell(|cell| {
+        if let crate::heap::Cell::AwaitState(state) = cell {
+            pending += usize::from(state.continuation.is_some());
+        }
+    });
+    pending
+}
+
 #[test]
-fn suspended_continuations_are_rooted_until_generation_checked_resume() {
+fn await_state_traces_its_continuation_until_a_reaction_takes_it() {
     let mut vm = Vm::new(SilentHost);
     let program = Engine::specialize("print(0);", "continuation.js").unwrap();
     vm.initialize(&program).unwrap();
@@ -4599,7 +4601,7 @@ fn suspended_continuations_are_rooted_until_generation_checked_resume() {
         .heap
         .alloc(crate::heap::Cell::Error("suspended scope".into()));
     let held_atom = vm.intern_atom("held");
-    let id = vm.suspend_continuation(Continuation {
+    let continuation = Continuation {
         context: super::activation::CallContext::Internal,
         reflected_parameters: 0,
         original_arguments: vec![original],
@@ -4617,60 +4619,35 @@ fn suspended_continuations_are_rooted_until_generation_checked_resume() {
         captured: false,
         resume_register: None,
         promise: Value::UNDEFINED,
-    });
+    };
+    let state = vm.heap.alloc(crate::heap::Cell::AwaitState(Box::new(
+        crate::heap::AwaitState {
+            continuation: Some(Box::new(continuation)),
+            realm: Value::UNDEFINED,
+            promise: Value::UNDEFINED,
+            generator: None,
+            yielded: false,
+        },
+    )));
+    let root = vm.heap.root(state);
     vm.collect_now(&program);
     assert!(vm.heap.is_live(live));
     assert!(vm.heap.is_live(held));
     assert!(vm.heap.is_live(original));
     assert!(vm.heap.is_live(scope));
-    assert_eq!(
-        vm.resume_continuation(id).unwrap().original_arguments,
-        [original]
-    );
-    assert!(vm.resume_continuation(id).is_none());
+    let take = |vm: &mut Vm<SilentHost>| match vm.heap.get_mut(state) {
+        Some(crate::heap::Cell::AwaitState(state)) => state.continuation.take(),
+        _ => panic!("await state"),
+    };
+    assert_eq!(take(&mut vm).unwrap().original_arguments, [original]);
+    assert!(take(&mut vm).is_none());
     vm.collect_now(&program);
     assert!(!vm.heap.is_live(live));
     assert!(!vm.heap.is_live(held));
     assert!(!vm.heap.is_live(original));
     assert!(!vm.heap.is_live(scope));
-}
-
-#[test]
-fn exhausted_continuation_generations_retire_slots_without_resumer_aliasing() {
-    let mut vm = Vm::new(SilentHost);
-    let program = Engine::specialize("print(0);", "continuation-generation.js").unwrap();
-    vm.initialize(&program).unwrap();
-    let continuation = || Continuation {
-        context: CallContext::Internal,
-        reflected_parameters: 0,
-        original_arguments: vec![],
-        program: super::program_store::ProgramId::MAIN,
-        function: 0,
-        pc: 0,
-        env: Value::NULL,
-        this: Value::UNDEFINED,
-        locals: vec![],
-        dynamic_bindings: vec![],
-        registers: vec![],
-        active_iterators: vec![],
-        with_objects: Vec::new(),
-        completion: Completion::Yield(Value::UNDEFINED),
-        captured: false,
-        resume_register: None,
-        promise: Value::UNDEFINED,
-    };
-    let initial = vm.suspend_continuation(continuation());
-    vm.suspended[initial.slot as usize].generation = u32::MAX;
-    let final_generation = super::activation::ContinuationId {
-        slot: initial.slot,
-        generation: u32::MAX,
-    };
-    assert!(vm.resume_continuation(final_generation).is_some());
-
-    let replacement = vm.suspend_continuation(continuation());
-    assert_ne!(replacement.slot, final_generation.slot);
-    assert!(vm.resume_continuation(final_generation).is_none());
-    assert!(vm.resume_continuation(replacement).is_some());
+    assert!(vm.heap.is_live(state));
+    assert!(vm.heap.release_root(root));
 }
 
 #[test]
@@ -6980,9 +6957,7 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                     && frame.active_iterators.is_empty()
             );
             let roots = vm.heap.root_count_for_test();
-            let mut owner = None;
-            let mut token = None;
-            if generator {
+            let owner = if generator {
                 let value = vm.heap.alloc(super::Cell::Iterator {
                     object: Box::new(Vm::<SilentHost>::empty_object(Value::NULL)),
                     source: Value::NULL,
@@ -7009,10 +6984,19 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                         })),
                     }),
                 });
-                owner = Some(vm.heap.root(value));
+                vm.heap.root(value)
             } else {
-                token = Some(vm.suspend_continuation(continuation));
-            }
+                let value = vm.heap.alloc(super::Cell::AwaitState(Box::new(
+                    crate::heap::AwaitState {
+                        continuation: Some(Box::new(continuation)),
+                        realm: Value::UNDEFINED,
+                        promise,
+                        generator: None,
+                        yielded: false,
+                    },
+                )));
+                vm.heap.root(value)
+            };
             vm.collect_now(&program);
             for (handle, value) in handles.iter().zip(&owned) {
                 assert_eq!(
@@ -7022,22 +7006,17 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                     completion(completion_value)
                 );
             }
-            let resumed = if let Some(token) = token {
-                let continuation = vm.resume_continuation(token).unwrap();
-                assert!(vm.resume_continuation(token).is_none());
-                continuation
-            } else {
-                let value = vm.heap.root_value(owner.unwrap()).unwrap();
-                match vm.heap.get_mut(value) {
-                    Some(super::Cell::Iterator { ext, .. }) => ext
-                        .generator
-                        .as_mut()
-                        .expect("generator owner")
-                        .continuation
-                        .take()
-                        .unwrap(),
-                    _ => panic!("generator owner"),
-                }
+            let value = vm.heap.root_value(owner).unwrap();
+            let resumed = match vm.heap.get_mut(value) {
+                Some(super::Cell::Iterator { ext, .. }) => ext
+                    .generator
+                    .as_mut()
+                    .expect("generator owner")
+                    .continuation
+                    .take()
+                    .unwrap(),
+                Some(super::Cell::AwaitState(state)) => *state.continuation.take().unwrap(),
+                _ => panic!("suspended owner"),
             };
             assert_eq!(resumed.completion, completion(completion_value));
             assert_eq!(resumed.promise, promise);
@@ -7052,9 +7031,7 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                     done: 2
                 }]
             );
-            if let Some(owner) = owner {
-                vm.heap.release_root(owner);
-            }
+            vm.heap.release_root(owner);
             assert_eq!(vm.heap.root_count_for_test(), roots);
             vm.collect_now(&program);
             for handle in handles {
@@ -10311,15 +10288,22 @@ fn js_jit_compiles_hot_numeric_functions_and_guards_polymorphic_inputs() {
     let source = r#"
       function add(left, right) { return left + right; }
       function divide(left, right) { return left / right; }
+      function plusOne(value) { return value + 1; }
       for (let index = 0; index < 40; index++) {
         if (add(index, 2) !== index + 2) throw new Error('numeric result');
         if (divide(index + 1, 2) !== (index + 1) / 2) throw new Error('division result');
+        if (plusOne(index) !== index + 1) throw new Error('numeric constant result');
       }
       if (add('value:', 2) !== 'value:2') throw new Error('guard fallback');
+      if (plusOne('value') !== 'value1') throw new Error('constant string fallback');
       if (add(1n, 2n) !== 3n) throw new Error('BigInt fallback');
+      let bigintAdditionThrew = false;
+      try { plusOne(1n); } catch (error) { bigintAdditionThrew = error instanceof TypeError; }
+      if (!bigintAdditionThrew) throw new Error('constant BigInt fallback');
       let coercions = 0;
       const boxed = { valueOf() { coercions++; return 3; } };
       if (add(boxed, 4) !== 7 || coercions !== 1) throw new Error('effectful fallback');
+      if (plusOne(boxed) !== 4 || coercions !== 2) throw new Error('constant effectful fallback');
       if (!(new add(1, 2) instanceof add)) throw new Error('constructor unwind');
       if (!Object.is(divide(-0, 2), -0)) throw new Error('signed zero');
       if (!Number.isNaN(divide(0, 0))) throw new Error('NaN');
@@ -10335,7 +10319,7 @@ fn js_jit_compiles_hot_numeric_functions_and_guards_polymorphic_inputs() {
     vm.set_execution_mode(crate::ExecutionMode::Compiled);
     vm.execute(&program).unwrap();
 
-    for function in [1, 2] {
+    for function in [1, 2, 3] {
         assert!(matches!(
             vm.programs
                 .js_tier(super::program_store::ProgramId::MAIN, function),
@@ -10482,6 +10466,26 @@ fn js_jit_profile_gate_uses_prespecified_exact_binomial_looks() {
             numeric: 31
         })
     ));
+}
+
+#[test]
+fn js_jit_keeps_promotion_pending_until_a_numeric_entry() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        "void 0",
+        "js-jit-pending-promotion.js",
+    ))
+    .unwrap();
+    let mut programs = super::program_store::ProgramStore::default();
+    let id = programs.insert(program).unwrap();
+    for _ in 0..31 {
+        assert!(!programs.note_js_function_entry(id, 1, true));
+    }
+    assert!(!programs.note_js_function_entry(id, 1, false));
+    assert!(matches!(
+        programs.js_tier(id, 1),
+        Some(super::program_store::JsTierState::PromotionPending)
+    ));
+    assert!(programs.note_js_function_entry(id, 1, true));
 }
 
 #[cfg(any(
