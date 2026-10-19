@@ -176,6 +176,7 @@ impl FunctionCompiler<'_, '_> {
     }
 
     pub(super) fn call(&mut self, value: &CallExpression<'_>) -> Register {
+        self.owner.note_invoked_callee(&value.callee);
         if Self::has_spread(&value.arguments) {
             if super::super::early::is_direct_eval_call(value) {
                 return self.direct_eval_spread_call(value);

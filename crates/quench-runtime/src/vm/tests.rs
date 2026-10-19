@@ -423,6 +423,7 @@ fn repeated_normal_closures_reuse_function_descriptor_shapes() {
         "closure-shape-transition.js",
     )
     .unwrap();
+    program.compile_released();
     let closure_id = program
         .functions
         .iter()
@@ -459,6 +460,7 @@ fn closures_share_on_demand_function_source_and_program_roots_it() {
         "closure-source-cache.js",
     )
     .unwrap();
+    program.compile_released();
     let inner = program
         .functions
         .iter()
@@ -800,6 +802,7 @@ fn loop_clones_reset_bindings_of_scopes_out_of_reach() {
         "loop-clone-reset.js",
     )
     .unwrap();
+    program.compile_released();
     let plans: Vec<_> = program
         .functions
         .iter()
@@ -4716,6 +4719,7 @@ fn wasm_retirement_invalidates_register_reuse_after_shrinking() {
     // initialize the retired buffer, rather than set its length past capacity.
     let mut program =
         Engine::specialize("function identity(x) { return x; }", "retired-frame.js").unwrap();
+    program.compile_released();
     let function = &mut program.functions[1];
     function.registers = u16::MAX;
     function.register_roots = crate::bytecode::RegisterRoots::new(true);
@@ -10717,6 +10721,7 @@ fn lexical_slots_read_only_after_initialization_become_plain_and_keep_their_dead
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::new(RecordingHost(output.clone()));
     let program = Engine::specialize(source, "lexical-initialization.js").unwrap();
+    program.compile_released();
     let proven = program
         .functions
         .iter()
@@ -10754,6 +10759,7 @@ fn anonymous_function_definitions_are_named_by_their_plan() {
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::new(RecordingHost(output.clone()));
     let program = Engine::specialize(source, "named-definitions.js").unwrap();
+    program.compile_released();
     // Closures made straight into the named value are created with the name
     // (`inferred_name`); classes, computed keys and static field values are named at run time.
     for name in ["arrow", "expression", "fallback", "method"] {
