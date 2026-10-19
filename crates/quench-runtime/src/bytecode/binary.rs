@@ -403,6 +403,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             base: input.u32()?,
             line_offset: input.u32()?,
             column_offset: input.u32()?,
+            line_starts: Default::default(),
         }),
         None => None,
     };

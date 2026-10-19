@@ -2346,6 +2346,7 @@ impl<'a> Compiler<'a> {
                 base: 0,
                 line_offset: 0,
                 column_offset: 0,
+                line_starts: Default::default(),
             }),
             atoms,
             constants,
