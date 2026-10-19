@@ -10889,8 +10889,8 @@ fn constant_field_initializers_evaluate_in_the_constructor() {
 
 #[test]
 fn function_field_initializers_keep_their_scope_and_activation() {
-    // Arrow and function initializers evaluate inline unless the constructor shadows a name
-    // they read, or they read `new.target` or call `eval`; `this` and `super` stay the same.
+    // Arrow and function initializers evaluate inline unless the constructor binds a name
+    // they read (their own parameters aside), or they read `new.target` or call `eval`.
     let source = r#"
       const out = [];
       const tag = "outer";
@@ -10911,12 +10911,15 @@ fn function_field_initializers_keep_their_scope_and_activation() {
         constructor(tag) { this.p = tag; }
       }
       class C { inc = () => ++this.n; n = 0; }
+      const e = "outer-e", x = "outer-x";
+      class M { own = (e, ...rest) => e + rest.length; reads = (y) => x + y; constructor(e, x) { this.e = e; } }
       for (let i = 0; i < 3; i++) {
         const a = new A(i), a2 = new A(i + 10);
         out.push(a.get(), a2.get(), a.shadow(), a.nt(), a.ev(), a.sup(), a.fn(), a.fn.call(5), a.named.name, a.get.name, a.get !== a2.get);
         const b = new B("ctor-param");
         out.push(b.shadow(), b.self() === b, b.p, Object.keys(b).join());
         const c = new C(); c.inc(); out.push(c.inc(), c.n);
+        const m = new M("ctor-e", "ctor-x"); out.push(m.own("arg", 1, 2), m.reads("!"), m.e);
       }
       print(out.join("|"));
     "#;
@@ -10925,7 +10928,7 @@ fn function_field_initializers_keep_their_scope_and_activation() {
     vm.execute(&Engine::specialize(source, "class-field-functions.js").unwrap()).unwrap();
     assert_eq!(
         output.borrow().as_slice(),
-        ["0|10|outer|undefined|string|base-hello|object|number|named|get|true|outer|true|ctor-param|shadow,self,p|2|2|1|11|outer|undefined|string|base-hello|object|number|named|get|true|outer|true|ctor-param|shadow,self,p|2|2|2|12|outer|undefined|string|base-hello|object|number|named|get|true|outer|true|ctor-param|shadow,self,p|2|2"]
+        ["0|10|outer|undefined|string|base-hello|object|number|named|get|true|outer|true|ctor-param|shadow,self,p|2|2|arg2|outer-x!|ctor-e|1|11|outer|undefined|string|base-hello|object|number|named|get|true|outer|true|ctor-param|shadow,self,p|2|2|arg2|outer-x!|ctor-e|2|12|outer|undefined|string|base-hello|object|number|named|get|true|outer|true|ctor-param|shadow,self,p|2|2|arg2|outer-x!|ctor-e"]
     );
 }
 
