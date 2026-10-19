@@ -40,14 +40,23 @@ const SHARED_ENVIRONMENT_SLOT_BIT: u64 = DIRECT_OBJECT_HANDLE_BIT;
 /// bit and from the `DELETED`/`UNMATERIALIZED_ARGUMENTS` sentinels.
 const ENVIRONMENT_INDEX_BIT: u64 = DIRECT_ARRAY_HANDLE_BIT;
 const DIRECT_ARRAY_HANDLE_BIT: u64 = 1 << 46;
+/// Both direct-handle bits: the function record family's code.
+const DIRECT_FUNCTION_HANDLE_BITS: u64 = DIRECT_OBJECT_HANDLE_BIT | DIRECT_ARRAY_HANDLE_BIT;
+/// The promise record family's code, below the other direct-handle bits. Legacy slot and
+/// record indices stay below it (`MAX_HEAP_CELLS`, `RECORD_SPACE_CAPACITY`).
+const DIRECT_PROMISE_HANDLE_BIT: u64 = 1 << 45;
+/// The payload bits that code a heap value's reference family.
+const HEAP_FAMILY_BITS: u64 = DIRECT_FUNCTION_HANDLE_BITS | DIRECT_PROMISE_HANDLE_BIT;
 /// The bits that name a heap value's reference family (`Value::heap_reference`).
-const HEAP_FAMILY_MASK: u64 = TAG_MASK | DIRECT_OBJECT_HANDLE_BIT | DIRECT_ARRAY_HANDLE_BIT;
+const HEAP_FAMILY_MASK: u64 = TAG_MASK | HEAP_FAMILY_BITS;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum HeapReference {
     LegacySlot(u32),
     ObjectRecord(u32),
     ArrayRecord(u32),
+    FunctionRecord(u32),
+    PromiseRecord(u32),
 }
 
 /// `value` truncated toward zero when it fits `i32`; any other result is some `i32` whose
@@ -245,6 +254,16 @@ impl Value {
         Self(TAG_HEAP | DIRECT_ARRAY_HANDLE_BIT | u64::from(index))
     }
 
+    #[inline(always)]
+    pub(crate) fn direct_function(index: u32) -> Self {
+        Self(TAG_HEAP | DIRECT_FUNCTION_HANDLE_BITS | u64::from(index))
+    }
+
+    #[inline(always)]
+    pub(crate) fn direct_promise(index: u32) -> Self {
+        Self(TAG_HEAP | DIRECT_PROMISE_HANDLE_BIT | u64::from(index))
+    }
+
     /// The Number this value holds. Doubles are tested first: arithmetic that reaches this
     /// conversion has already handled the integer pair.
     #[inline(always)]
@@ -278,10 +297,12 @@ impl Value {
         }
         let index = self.0 as u32;
         Some(
-            match self.0 & (DIRECT_OBJECT_HANDLE_BIT | DIRECT_ARRAY_HANDLE_BIT) {
+            match self.0 & HEAP_FAMILY_BITS {
                 0 => HeapReference::LegacySlot(index),
                 DIRECT_OBJECT_HANDLE_BIT => HeapReference::ObjectRecord(index),
                 DIRECT_ARRAY_HANDLE_BIT => HeapReference::ArrayRecord(index),
+                DIRECT_FUNCTION_HANDLE_BITS => HeapReference::FunctionRecord(index),
+                DIRECT_PROMISE_HANDLE_BIT => HeapReference::PromiseRecord(index),
                 _ => return None,
             },
         )
@@ -291,7 +312,10 @@ impl Value {
     pub(crate) fn legacy_heap_index(self) -> Option<u32> {
         match self.heap_reference()? {
             HeapReference::LegacySlot(index) => Some(index),
-            HeapReference::ObjectRecord(_) | HeapReference::ArrayRecord(_) => None,
+            HeapReference::ObjectRecord(_)
+            | HeapReference::ArrayRecord(_)
+            | HeapReference::FunctionRecord(_)
+            | HeapReference::PromiseRecord(_) => None,
         }
     }
 
@@ -306,6 +330,16 @@ impl Value {
         (self.0 & HEAP_FAMILY_MASK == TAG_HEAP | DIRECT_ARRAY_HANDLE_BIT).then_some(self.0 as u32)
     }
 
+    #[inline(always)]
+    pub(crate) fn direct_promise_index(self) -> Option<u32> {
+        (self.0 & HEAP_FAMILY_MASK == TAG_HEAP | DIRECT_PROMISE_HANDLE_BIT).then_some(self.0 as u32)
+    }
+
+    #[inline(always)]
+    pub(crate) fn direct_function_index(self) -> Option<u32> {
+        (self.0 & HEAP_FAMILY_MASK == TAG_HEAP | DIRECT_FUNCTION_HANDLE_BITS).then_some(self.0 as u32)
+    }
+
     pub fn is_undefined(self) -> bool {
         self.0 == TAG_UNDEFINED
     }
@@ -318,7 +352,11 @@ impl Value {
     /// object or an array: never a string, a BigInt or a function.
     #[inline(always)]
     pub(crate) fn is_record(self) -> bool {
-        self.is_heap() && self.0 & (DIRECT_OBJECT_HANDLE_BIT | DIRECT_ARRAY_HANDLE_BIT) != 0
+        self.is_heap()
+            && matches!(
+                self.0 & HEAP_FAMILY_BITS,
+                DIRECT_OBJECT_HANDLE_BIT | DIRECT_ARRAY_HANDLE_BIT
+            )
     }
 
     /// ToBoolean where the value alone decides it: Numbers, the primitive tags, and object
@@ -442,6 +480,26 @@ mod tests {
             Some(super::HeapReference::ArrayRecord(42))
         );
         assert_ne!(direct_array, direct_object);
+        let direct_function = Value::direct_function(42);
+        assert_eq!(direct_function.direct_function_index(), Some(42));
+        assert_eq!(direct_function.direct_object_index(), None);
+        assert_eq!(direct_function.direct_array_index(), None);
+        assert_eq!(direct_function.legacy_heap_index(), None);
+        assert_eq!(
+            direct_function.heap_reference(),
+            Some(super::HeapReference::FunctionRecord(42))
+        );
+        // A function may be the IsHTMLDDA object, so truthiness never answers for one.
+        assert!(!direct_function.is_record());
+        assert!(direct_object.is_record() && direct_array.is_record());
+        let direct_promise = Value::direct_promise(42);
+        assert_eq!(direct_promise.direct_promise_index(), Some(42));
+        assert_eq!(direct_promise.direct_object_index(), None);
+        assert_eq!(direct_promise.direct_function_index(), None);
+        assert_eq!(
+            direct_promise.heap_reference(),
+            Some(super::HeapReference::PromiseRecord(42))
+        );
         assert_eq!(
             Value::int_pair(Value::integer(-2), Value::integer(3)),
             Some((-2, 3))

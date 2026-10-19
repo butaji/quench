@@ -1061,11 +1061,11 @@ impl<H: Host> Vm<H> {
         if signature.params.as_slice() != [I32, I32, I32] {
             return None;
         }
-        let Cell::Function {
+        let FunctionRecord {
             kind: FunctionKind::User(program_id, function_id),
             env,
             ..
-        } = self.heap.get(function)?
+        } = self.heap.function(function)?
         else {
             return None;
         };
@@ -1294,8 +1294,8 @@ impl<H: Host> Vm<H> {
 
     /// The Wasm closure behind an exported-function wrapper.
     fn wasm_exported_closure(&self, value: Value) -> Option<Value> {
-        match self.heap.get(value)? {
-            Cell::Function {
+        match self.heap.function(value)? {
+            FunctionRecord {
                 kind: FunctionKind::Native(Native::WasmExportedFunction),
                 env,
                 ..
@@ -1332,8 +1332,8 @@ impl<H: Host> Vm<H> {
             .into_iter()
             .map(|value| self.encode_wasm_value(value))
             .collect::<Vec<_>>();
-        let (result, declarations) = match self.heap.get(function) {
-            Some(Cell::Function {
+        let (result, declarations) = match self.heap.function(function) {
+            Some(FunctionRecord {
                 kind: FunctionKind::User(program, index),
                 env,
                 ..
@@ -1638,8 +1638,8 @@ impl<H: Host> Vm<H> {
         self.data_property_without_getter(view, copy_within_atom)
             .is_some_and(|method| {
                 matches!(
-                    self.heap.get(method),
-                    Some(Cell::Function {
+                    self.heap.function(method),
+                    Some(FunctionRecord {
                         kind: FunctionKind::Native(Native::Uint8ArrayCopyWithin),
                         ..
                     })
