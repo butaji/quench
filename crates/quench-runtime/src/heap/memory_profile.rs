@@ -543,7 +543,6 @@ fn cell_bytes(cell: &Cell) -> usize {
         .map_or(0, |object| object.allocated_extra_bytes());
     object_extra_bytes
         + match cell {
-            Cell::Promise { .. } => size_of::<super::PromiseRecord>(),
             Cell::Object(_)
             | Cell::WasmObject { .. }
             | Cell::Function { .. }
