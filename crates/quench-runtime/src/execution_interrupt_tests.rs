@@ -52,7 +52,7 @@ fn termination_unwinds_both_javascript_modes_without_guest_handlers() {
  let program=if specialized{Engine::specialize(source,"interrupt.js")}else{Engine::specialize_unspecialized(source,"interrupt.js")}.unwrap();
  let error=runtime.execute(&program).unwrap_err();assert!(error.is_execution_terminated());assert!(error.thrown_value().is_none());
  let global=runtime.global_root().unwrap();for name in["caught","finalized"]{let k=runtime.string_rooted(name);let v=runtime.get_property_rooted(global,k).unwrap();assert_eq!(runtime.rooted_value(v),Some(crate::Value::FALSE));runtime.release_root(v);runtime.release_root(k);}runtime.release_root(global);
- assert_eq!(runtime.heap_memory_composition().cell_size_bytes,32);
+ assert_eq!(runtime.heap_memory_composition().cell_size_bytes,(2+crate::value_vec::INLINE_PROPERTY_COUNT)*std::mem::size_of::<crate::Value>());
  }).unwrap();
         let handle = rx.recv().unwrap();
         wait.recv_timeout(Duration::from_secs(5)).unwrap();

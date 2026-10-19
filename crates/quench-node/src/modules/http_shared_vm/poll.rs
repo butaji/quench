@@ -1686,21 +1686,14 @@ fn set_named(
     name: &str,
     value: RootId,
 ) -> Result<(), String> {
-    let key = runtime.string_rooted(name);
-    set(runtime, object, key, value)
+    let result = runtime.set_named_property_rooted(object, name, value);
+    runtime.release_root(value);
+    accepted(result.map_err(|error| error.to_string())?)
 }
 
-fn set(
-    runtime: &mut Runtime<NodeHost>,
-    object: RootId,
-    key: RootId,
-    value: RootId,
-) -> Result<(), String> {
-    let result = runtime.set_property_rooted(object, key, value, object);
-    runtime.release_root(key);
-    runtime.release_root(value);
-    let result = result.map_err(|error| error.to_string())?;
-    if result {
+/// A required property write's outcome: a refusal is an error.
+fn accepted(written: bool) -> Result<(), String> {
+    if written {
         Ok(())
     } else {
         Err("shared HTTP object rejected a required property".into())

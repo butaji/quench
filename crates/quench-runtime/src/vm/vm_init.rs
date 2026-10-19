@@ -82,8 +82,6 @@ impl<H: Host> Vm<H> {
             active_call_roots: vec![],
             with_stack: vec![],
             with_scope_entered: false,
-            suspended: vec![],
-            suspended_free: vec![],
             test262_agent: Default::default(),
             shared_async_waiters:Vec::new(),
             programs: ProgramStore::default(),
@@ -99,6 +97,7 @@ impl<H: Host> Vm<H> {
             #[cfg(not(feature = "profile-aggregate"))]
             profile: Profile,
             shape_slot_memo: Default::default(),
+            symbol_write_proofs: Default::default(),
             shape_attribute_memo: Default::default(),
             name_atom_memo: Default::default(),
             shapes: Shape::table(),

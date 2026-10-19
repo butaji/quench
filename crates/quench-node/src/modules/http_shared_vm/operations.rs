@@ -1798,8 +1798,7 @@ fn set(
     name: &str,
     value: RootId,
 ) -> Result<(), RootedError> {
-    let key = context.string_rooted(name);
-    if context.set_property_rooted(object, key, value, object)? {
+    if context.set_named_property_rooted(object, name, value)? {
         Ok(())
     } else {
         Err(RootedError::host(format!(
