@@ -250,6 +250,20 @@ impl<H: Host> Vm<H> {
         self.evaluate_embedding_prepared_script(&prepared)
     }
 
+    /// `evaluate_embedding_specialized_script_with_origin` for a program whose functions keep
+    /// their compiled records instead of compiling again on first call: an application's
+    /// entry, whose own functions mostly run.
+    pub(crate) fn evaluate_embedding_entry_script_with_origin(
+        &mut self,
+        source: &str,
+        name: &str,
+        origin: Option<(u32, u32)>,
+    ) -> Result<Value, JsError> {
+        let prepared =
+            self.prepare_embedding_specialized_script_retaining(source, name, origin, None, true)?;
+        self.evaluate_embedding_prepared_script(&prepared)
+    }
+
     /// Compiles a host wrapper `prefix + body + suffix` whose body is static host text: the
     /// program's positions start at the wrapper origin and it retains the body itself.
     pub(crate) fn prepare_embedding_static_body(
@@ -260,13 +274,13 @@ impl<H: Host> Vm<H> {
             .ok_or_else(|| JsError("host wrapper origin exceeds compiler positions".into()))?;
         let base = u32::try_from(prefix.len())
             .map_err(|_| JsError("host wrapper prefix exceeds compiler positions".into()))?;
-        self.prepare_embedding_specialized_script_retaining(&wrapped, name, Some(origin), Some((body, base)))
+        self.prepare_embedding_specialized_script_retaining(&wrapped, name, Some(origin), Some((body, base)), true)
     }
 
     pub(crate) fn prepare_embedding_specialized_script(
         &mut self, source: &str, name: &str, origin: Option<(u32, u32)>,
     ) -> Result<crate::PreparedScript, JsError> {
-        self.prepare_embedding_specialized_script_retaining(source, name, origin, None)
+        self.prepare_embedding_specialized_script_retaining(source, name, origin, None, false)
     }
 
     /// `retained` names static text the program keeps in place of its compiled source, and
@@ -274,10 +288,12 @@ impl<H: Host> Vm<H> {
     fn prepare_embedding_specialized_script_retaining(
         &mut self, source: &str, name: &str, origin: Option<(u32, u32)>,
         retained: Option<(&'static str, u32)>,
+        keep_records: bool,
     ) -> Result<crate::PreparedScript, JsError> {
         let program = self.embedding_program()?;
-        let compiled = if retained.is_some() {
-            crate::Engine::specialize_host_body_with_atom_prefix(source, name, &*self)
+        // A program keeping only static text cannot compile its functions again from it.
+        let compiled = if keep_records {
+            crate::Engine::specialize_kept_script_with_atom_prefix(source, name, &*self)
         } else {
             crate::Engine::specialize_script_with_atom_prefix(source, name, &*self)
         };

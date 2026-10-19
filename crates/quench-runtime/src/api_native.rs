@@ -913,6 +913,23 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.completion(result)
     }
 
+    /// `evaluate_specialized_script_with_origin_rooted` for an application's entry, whose
+    /// functions keep their compiled records instead of compiling again on first call.
+    pub fn evaluate_entry_script_with_origin_rooted(
+        &mut self,
+        source: &str,
+        name: &str,
+        line_offset: u32,
+        column_offset: u32,
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.evaluate_embedding_entry_script_with_origin(
+            source,
+            name,
+            Some((line_offset, column_offset)),
+        );
+        self.completion(result)
+    }
+
     /// Compile host-wrapped source with an explicit original-source origin.
     /// The offsets remove wrapper lines and its first-line UTF-16 columns from
     /// compiler-owned locations and diagnostic excerpts, not executable code.
