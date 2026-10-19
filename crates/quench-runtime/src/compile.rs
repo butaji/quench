@@ -2649,6 +2649,7 @@ impl<'a> Compiler<'a> {
                 base: 0,
                 line_offset: 0,
                 column_offset: 0,
+                line_starts: Default::default(),
             }),
             atoms,
             constants,
@@ -3421,6 +3422,9 @@ impl<'a> Compiler<'a> {
         frame_registers::promote(function, plain_slots, superinstructions, undefined_constant, |atom| {
             self.atoms.get(atom)
         });
+        if self.mode == SpecializationMode::Enabled {
+            rewrite::coalesce_promoted_moves(function, method_sites, field_sites, superinstructions);
+        }
         if function
             .code
             .iter()
