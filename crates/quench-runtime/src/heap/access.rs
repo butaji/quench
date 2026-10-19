@@ -1,5 +1,5 @@
 use super::{
-    ArrayObject, Cell, EnvironmentBindings, EnvironmentSlot, EnvironmentSlotState, EnvironmentSlots, Heap, Object,
+    ArrayObject, Cell, EnvironmentBindings, EnvironmentSlotState, EnvironmentSlots, Heap, Object,
 };
 use crate::bytecode::Atom;
 use crate::value::{HeapReference, Value};
@@ -132,26 +132,11 @@ impl Heap {
         let Cell::Environment { slots, .. } = self.get(environment)? else {
             return None;
         };
-        // Most slots share one owner: the source, or the owner a sparse source shares.
-        let default_owner = slots.default_owner().unwrap_or(environment);
-        EnvironmentSlots::try_from_slots(slots.len(), Some(default_owner), |index| {
-            let slot = u16::try_from(index).ok()?;
-            if reset.binary_search(&slot).is_ok() {
-                return Some(EnvironmentSlot::owned(Value::UNDEFINED));
-            }
-            let fresh = fresh.binary_search(&slot).is_ok();
-            Some(match slots.state(index)? {
-                EnvironmentSlotState::Owned(value) if fresh => EnvironmentSlot::owned(value),
-                EnvironmentSlotState::Owned(_) => EnvironmentSlot::shared(environment),
-                // A shared slot names its owner, which holds the slot itself.
-                EnvironmentSlotState::Shared(owner) if fresh => {
-                    let Cell::Environment { slots, .. } = self.get(owner)? else {
-                        return None;
-                    };
-                    EnvironmentSlot::owned(slots.owned(index)?)
-                }
-                EnvironmentSlotState::Shared(owner) => EnvironmentSlot::shared(owner),
-            })
+        slots.iteration_copy(environment, fresh, reset, |owner, index| {
+            let Cell::Environment { slots, .. } = self.get(owner)? else {
+                return None;
+            };
+            slots.owned(index)
         })
     }
 
