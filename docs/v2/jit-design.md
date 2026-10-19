@@ -709,11 +709,20 @@ the two screens are not a paired comparison. The native body is tiny, but the
 per-call VM frame, entry guard, and return transition remain; compiling the
 callee alone does not remove those boundaries.
 
-Next, measure whether call-boundary removal is the dominant cost by comparing
-the interpreted call, current native-entry call, and a guarded direct/inlined
-callee path on this fixture. Preserve the one-VM fallback and require a paired
-JetStream screen before retaining a candidate. The current entry tier remains
-an experiment until its performance value is established. Raw one-round data
-was captured at `target/jit-hash-map-after.json` in the working tree; that
-diagnostic includes source-dirty state and must not be treated as qualification
-evidence.
+The current entry tier remains an experiment until its performance value is
+established. Raw one-round data was captured at
+`target/jit-hash-map-after.json` in the working tree; that diagnostic includes
+source-dirty state and must not be treated as qualification evidence.
+
+The follow-up adds a same-program fast path for already-compiled callees. At a
+plain `Call`, the runtime checks the existing tier and Number arguments before
+activating a frame; cold calls, non-Number arguments, other programs, tail
+calls, and interpreter mode retain the normal VM path. On a second one-round
+screen, output validation passed and Quench scored 2.15 at 71.7 MiB in 253.3 s.
+That is directionally faster than the earlier 1.54 / 270.6 s frame-entry
+screen, but the screens were unpaired and Bun/Node timings also shifted. It
+does not establish a gain, and Quench remains far behind both runtimes. The
+diagnostics still show `runIteration` unsupported; compiling `equals` does not
+remove the interpreter loop around the 54 million calls. A controlled paired
+comparison is now the next step before keeping this fast path. Its diagnostic is
+`target/jit-hash-map-direct-call.json` in the working tree.
