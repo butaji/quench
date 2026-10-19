@@ -1,0 +1,9 @@
+{"requests":0,"VmHWM":"29.0","VmRSS":"28.6","RssAnon":"23.3","RssFile":"5.4","cpu_ms":850}
+{"requests":2500,"ms":25155,"bad":0,"VmHWM":"30.1","VmRSS":"29.7","RssAnon":"25.6","RssFile":"4.1","cpu_ms":5950}
+{"requests":5000,"ms":50160,"bad":0,"VmHWM":"30.6","VmRSS":"30.6","RssAnon":"26.5","RssFile":"4.1","cpu_ms":10930}
+{"requests":7500,"ms":75227,"bad":0,"VmHWM":"31.4","VmRSS":"31.1","RssAnon":"27.0","RssFile":"4.1","cpu_ms":15860}
+{"requests":10000,"ms":100191,"bad":0,"VmHWM":"31.6","VmRSS":"31.6","RssAnon":"27.5","RssFile":"4.1","cpu_ms":20500}
+{"requests":12500,"ms":125251,"bad":0,"VmHWM":"33.6","VmRSS":"32.0","RssAnon":"28.5","RssFile":"3.5","cpu_ms":25360}
+{"requests":15000,"ms":150131,"bad":0,"VmHWM":"33.6","VmRSS":"33.3","RssAnon":"29.2","RssFile":"4.1","cpu_ms":30340}
+{"requests":17500,"ms":174987,"bad":0,"VmHWM":"33.9","VmRSS":"33.9","RssAnon":"29.8","RssFile":"4.1","cpu_ms":35110}
+{"requests":20000,"ms":199863,"bad":0,"VmHWM":"33.9","VmRSS":"33.9","RssAnon":"29.8","RssFile":"4.1","cpu_ms":39920}
