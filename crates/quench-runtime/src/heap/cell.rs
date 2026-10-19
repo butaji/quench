@@ -1274,6 +1274,12 @@ pub(crate) struct ProtoLink(u32);
 impl ProtoLink {
     pub(crate) const NULL: Self = Self(PROTO_NULL);
 
+    /// The link naming `prototype`, an object or null (`Object::encode_proto`).
+    #[inline(always)]
+    pub(crate) fn of(prototype: Value) -> Self {
+        Self(Object::encode_proto(prototype))
+    }
+
     /// The link naming object record `id`.
     #[inline(always)]
     pub(crate) fn object_record(id: u32) -> Self {

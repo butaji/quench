@@ -1230,7 +1230,7 @@ impl<H: Host> Vm<H> {
         let cache = unsafe { self.inherited_field_caches.get_unchecked(index as usize) };
         if cache.receiver != receiver.shape()
             || cache.proved_epoch != crate::heap::prototype_layout_epoch()
-            || cache.proved_prototype != receiver.proto()
+            || cache.proved_prototype != receiver.proto_link()
         {
             return None;
         }
@@ -1945,7 +1945,7 @@ impl<H: Host> Vm<H> {
         };
         let first = receiver.proto();
         let epoch = crate::heap::prototype_layout_epoch();
-        if cache.proved_epoch == epoch && cache.proved_prototype == first {
+        if cache.proved_epoch == epoch && cache.proved_prototype == receiver.proto_link() {
             let value = match cache.answer {
                 InheritedFieldAnswer::Slot(slot) => {
                     // A holder in the object records, as most prototypes are, without the
@@ -2010,7 +2010,7 @@ impl<H: Host> Vm<H> {
         }
         let cache = &mut self.inherited_field_caches[proof.index as usize];
         cache.proved_epoch = proof.epoch;
-        cache.proved_prototype = proof.prototype;
+        cache.proved_prototype = crate::heap::ProtoLink::of(proof.prototype);
         cache.proved_holder = proof.holder;
     }
 
@@ -2034,7 +2034,7 @@ impl<H: Host> Vm<H> {
             depth: 0,
             answer: InheritedFieldAnswer::Absent,
             proved_epoch: NO_PROVED_EPOCH,
-            proved_prototype: Value::UNDEFINED,
+            proved_prototype: crate::heap::ProtoLink::NULL,
             proved_holder: Value::UNDEFINED,
             next: NO_INHERITED_FIELD,
         };

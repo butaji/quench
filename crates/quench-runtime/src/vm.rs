@@ -18,7 +18,7 @@ use crate::bytecode::{
 use crate::heap::CellKind;
 use crate::heap::{
     CallSiteLocation, CallSiteName, CallSiteRecord, Cell, FunctionKind, FunctionRecord, GcTraceKind, IteratorRecord, Heap, IteratorConsumer,
-    IteratorHelper, IteratorKind, Native, Object, ProxyKind, RootId, StackData, TypedArrayKind,
+    IteratorHelper, IteratorKind, Native, Object, ProtoLink, ProxyKind, RootId, StackData, TypedArrayKind,
     WeakHandle,
 };
 use crate::host::{CapabilityId, Host, HostContext};
@@ -615,7 +615,9 @@ struct InheritedFieldCache {
     /// `proved_prototype` up to `proved_holder`, its last recorded prototype, or
     /// `NO_PROVED_EPOCH`; while both hold the chain needs no walk.
     proved_epoch: u64,
-    proved_prototype: Value,
+    /// The receiver's prototype link the proof holds for, compared undecoded; a
+    /// collection advances the epoch, so it never outlives the record it names.
+    proved_prototype: ProtoLink,
     proved_holder: Value,
     /// The site's next older entry, or `NO_INHERITED_FIELD`: a site keeps up to
     /// `INHERITED_FIELD_CACHE_WAYS` receiver shapes, newest first.
