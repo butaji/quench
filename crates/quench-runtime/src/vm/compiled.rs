@@ -312,6 +312,7 @@ const JIT_DIRECT_COMPARE_BRANCHES_ENV: &str = "QUENCH_WASM_JIT_DIRECT_COMPARE_BR
 const JIT_AFFINE_PAIR_ENV: &str = "QUENCH_WASM_JIT_AFFINE_PAIR";
 const JIT_REFERENCE_BODY_CACHE_ENV: &str = "QUENCH_WASM_JIT_REFERENCE_BODY_CACHE";
 const JIT_EMSCRIPTEN_MEMCPY_LEAF_ENV: &str = "QUENCH_WASM_JIT_EMSCRIPTEN_MEMCPY_LEAF";
+const JIT_NATIVE_ENTRY_SAMPLE_INTERVAL: u64 = 256;
 const MAX_JIT_ROOT_FUNCTIONS: usize = 128;
 const MAX_JIT_ROOT_BYTECODES_PER_FUNCTION: usize = 80_000;
 const MAX_JIT_ROOT_CODE_BYTES: usize = 2 * 1024 * 1024;
@@ -445,16 +446,20 @@ pub(super) fn with_jit_direct_compare_branches_for_test<R>(
 }
 
 fn jit_root_opt_level(root: Option<usize>, root_only: bool) -> Result<&'static str, ()> {
-    if root_only {
-        return Ok("none");
-    }
     if root.is_none() {
         return Ok("speed");
     }
-    let Some(level) = std::env::var_os(JIT_ROOT_OPT_LEVEL_ENV) else {
-        return Ok("speed");
+    match std::env::var_os(JIT_ROOT_OPT_LEVEL_ENV) {
+        Some(level) => parse_jit_root_opt_level(root_only, Some(level.to_str().ok_or(())?)),
+        None => parse_jit_root_opt_level(root_only, None),
+    }
+}
+
+fn parse_jit_root_opt_level(root_only: bool, level: Option<&str>) -> Result<&'static str, ()> {
+    let Some(level) = level else {
+        return Ok(if root_only { "none" } else { "speed" });
     };
-    match level.to_str().ok_or(())? {
+    match level {
         "none" => Ok("none"),
         "speed" => Ok("speed"),
         "speed_and_size" => Ok("speed_and_size"),
@@ -777,6 +782,10 @@ fn note_compiled_callout(counter: *mut u64) {
             *counter = (*counter).saturating_add(1);
         }
     }
+}
+
+fn native_entry_sample_due(entry_count: u64) -> bool {
+    entry_count > 0 && entry_count % JIT_NATIVE_ENTRY_SAMPLE_INTERVAL == 0
 }
 
 unsafe fn note_import_callout_target(
@@ -1184,7 +1193,7 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
                     );
                 }
             }
-            compiled.note_direct_reference_entry(function);
+            let native_entry_should_sample = compiled.note_direct_reference_entry(function);
             let mut nested = context.nested_entry();
             nested.compiled = Rc::as_ptr(&compiled);
             nested.reference_fast_caches = compiled.reference_fast_caches_ptr();
@@ -1231,6 +1240,8 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
                 same_artifact_direct_hit = same_artifact;
                 target_same_artifact_native = same_artifact_direct_hit;
             }
+            let native_entry_sample_started =
+                native_entry_should_sample.then(std::time::Instant::now);
             let status = match guard_trampoline() {
                 Some(trampoline) => {
                     let outer = ACTIVE_CONTEXT.with(|active| active.replace(&mut nested));
@@ -1240,6 +1251,9 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
                 }
                 None => unsafe { entry(&mut nested, base, length, args, out) },
             };
+            if let Some(started) = native_entry_sample_started {
+                compiled.finish_native_entry_sample(function, started);
+            }
             if status == RAISED_STATUS as u32 {
                 match nested.raised.take() {
                     Some(Raised::Error(error)) => return Err(error),
@@ -1722,6 +1736,10 @@ struct WasmJitDiagnostics {
     mapped_bytes: usize,
     compile_ns: u128,
     native_entry_requests: Vec<std::cell::Cell<u64>>,
+    /// Deterministic 1-in-256 samples of inclusive native-entry wall time.
+    native_entry_samples: Vec<std::cell::Cell<u64>>,
+    /// Sum of sampled elapsed nanoseconds; nested native calls may overlap.
+    native_entry_sampled_ns: Vec<std::cell::Cell<u64>>,
     interpreter_fallback_entries: Vec<std::cell::Cell<u64>>,
     compiled_to_vm_callouts: std::cell::Cell<u64>,
     compiled_import_callouts: std::cell::Cell<u64>,
@@ -1748,6 +1766,18 @@ impl Drop for CompiledProgram {
             .filter_map(|(function, count)| {
                 let count = count.get();
                 (count > 0).then(|| format!("[{function},{count}]"))
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        let native_entry_samples = stats
+            .native_entry_samples
+            .iter()
+            .zip(&stats.native_entry_sampled_ns)
+            .enumerate()
+            .filter_map(|(function, (samples, elapsed_ns))| {
+                let samples = samples.get();
+                let elapsed_ns = elapsed_ns.get();
+                (samples > 0).then(|| format!("[{function},{samples},{elapsed_ns}]"))
             })
             .collect::<Vec<_>>()
             .join(",");
@@ -1812,7 +1842,7 @@ impl Drop for CompiledProgram {
             .map(|site| site.counts.get().same_artifact_direct)
             .fold(0u64, u64::saturating_add);
         eprintln!(
-            "QUENCH_WASM_JIT_STATS {{\"program\":{},\"compile_attempts\":1,\"compiled_functions\":{},\"total_functions\":{},\"code_bytes\":{},\"mapped_bytes\":{},\"compile_ns\":{},\"native_entry_requests\":[{}],\"interpreter_fallback_entries\":[{}],\"compiled_to_vm_callouts\":{},\"compiled_import_callouts\":{},\"compiled_known_callouts\":{},\"compiled_reference_callouts\":{},\"import_callout_targets\":[{}],\"emscripten_memcpy_direct_copy_switch\":\"{}\",\"emscripten_memcpy_direct_copy_enabled\":{},\"emscripten_memcpy_fast_path_hits\":{},\"emscripten_memcpy_raw_i32_switch\":\"{}\",\"emscripten_memcpy_raw_i32_enabled\":{},\"emscripten_memcpy_raw_i32_hits\":{},\"emscripten_memcpy_early_import_switch\":\"{}\",\"emscripten_memcpy_early_import_enabled\":{},\"emscripten_memcpy_early_import_hits\":{},\"emscripten_memcpy_leaf_switch\":\"{}\",\"emscripten_memcpy_leaf_hits\":{},\"reference_call_sites\":[{}],\"same_artifact_direct_reference_hits\":{},\"reference_call_targets\":[{}]}}",
+            "QUENCH_WASM_JIT_STATS {{\"program\":{},\"compile_attempts\":1,\"compiled_functions\":{},\"total_functions\":{},\"code_bytes\":{},\"mapped_bytes\":{},\"compile_ns\":{},\"native_entry_requests\":[{}],\"native_entry_sampling_interval\":{},\"native_entry_samples\":[{}],\"interpreter_fallback_entries\":[{}],\"compiled_to_vm_callouts\":{},\"compiled_import_callouts\":{},\"compiled_known_callouts\":{},\"compiled_reference_callouts\":{},\"import_callout_targets\":[{}],\"emscripten_memcpy_direct_copy_switch\":\"{}\",\"emscripten_memcpy_direct_copy_enabled\":{},\"emscripten_memcpy_fast_path_hits\":{},\"emscripten_memcpy_raw_i32_switch\":\"{}\",\"emscripten_memcpy_raw_i32_enabled\":{},\"emscripten_memcpy_raw_i32_hits\":{},\"emscripten_memcpy_early_import_switch\":\"{}\",\"emscripten_memcpy_early_import_enabled\":{},\"emscripten_memcpy_early_import_hits\":{},\"emscripten_memcpy_leaf_switch\":\"{}\",\"emscripten_memcpy_leaf_hits\":{},\"reference_call_sites\":[{}],\"same_artifact_direct_reference_hits\":{},\"reference_call_targets\":[{}]}}",
             stats.program,
             stats.compiled_functions,
             stats.total_functions,
@@ -1820,6 +1850,8 @@ impl Drop for CompiledProgram {
             stats.mapped_bytes,
             stats.compile_ns,
             entries,
+            JIT_NATIVE_ENTRY_SAMPLE_INTERVAL,
+            native_entry_samples,
             fallbacks,
             stats.compiled_to_vm_callouts.get(),
             stats.compiled_import_callouts.get(),
@@ -1983,28 +2015,50 @@ impl CompiledProgram {
             .map_or(0, |stats| stats.emscripten_memcpy_early_import_hits.get())
     }
 
-    fn note_direct_reference_entry(&self, function: usize) {
-        self.note_native_entry(function);
+    fn note_direct_reference_entry(&self, function: usize) -> bool {
+        let native_entry_should_sample = self.note_native_entry(function);
         #[cfg(test)]
         if let Some(Some(function)) = self.functions.get(function) {
             function
                 .direct_reference_entries
                 .set(function.direct_reference_entries.get().saturating_add(1));
         }
+        native_entry_should_sample
     }
 
-    fn note_native_entry(&self, function: usize) {
-        if let Some(stats) = &self.diagnostics
+    fn note_native_entry(&self, function: usize) -> bool {
+        let native_entry_should_sample = if let Some(stats) = &self.diagnostics
             && let Some(entries) = stats.native_entry_requests.get(function)
         {
-            entries.set(entries.get().saturating_add(1));
-        }
+            let entry_count = entries.get().saturating_add(1);
+            entries.set(entry_count);
+            native_entry_sample_due(entry_count)
+        } else {
+            false
+        };
         #[cfg(test)]
         if let Some(Some(function)) = self.functions.get(function) {
             function
                 .native_entries
                 .set(function.native_entries.get().saturating_add(1));
         }
+        native_entry_should_sample
+    }
+
+    fn finish_native_entry_sample(&self, function: usize, started: std::time::Instant) {
+        let stats = self
+            .diagnostics
+            .as_ref()
+            .expect("sampled entries require JIT diagnostics");
+        let (Some(samples), Some(sampled_ns)) = (
+            stats.native_entry_samples.get(function),
+            stats.native_entry_sampled_ns.get(function),
+        ) else {
+            unreachable!("sampled function is present in diagnostic function tables");
+        };
+        let elapsed_ns = u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX);
+        samples.set(samples.get().saturating_add(1));
+        sampled_ns.set(sampled_ns.get().saturating_add(elapsed_ns));
     }
 
     pub(super) fn has_function(&self, function: usize) -> bool {
@@ -6527,6 +6581,8 @@ impl<H: Host> Vm<H> {
                 mapped_bytes,
                 compile_ns: compile_started.map_or(0, |started| started.elapsed().as_nanos()),
                 native_entry_requests: (0..count).map(|_| std::cell::Cell::new(0)).collect(),
+                native_entry_samples: (0..count).map(|_| std::cell::Cell::new(0)).collect(),
+                native_entry_sampled_ns: (0..count).map(|_| std::cell::Cell::new(0)).collect(),
                 interpreter_fallback_entries: (0..count).map(|_| std::cell::Cell::new(0)).collect(),
                 compiled_to_vm_callouts: std::cell::Cell::new(0),
                 compiled_import_callouts: std::cell::Cell::new(0),
@@ -6966,7 +7022,9 @@ impl<H: Host> Vm<H> {
                     .map_or(0, |stats| stats.import_callout_counts.len()),
             };
             let mut out = 0u64;
-            compiled.note_native_entry(id as usize);
+            let native_entry_should_sample = compiled.note_native_entry(id as usize);
+            let native_entry_sample_started =
+                native_entry_should_sample.then(std::time::Instant::now);
             let status = match guard_trampoline() {
                 Some(trampoline) => {
                     // The trampoline gives this entry its own resumable stack
@@ -6995,6 +7053,9 @@ impl<H: Host> Vm<H> {
                     (function.entry)(&mut context, base, length, raw.as_ptr(), &mut out)
                 },
             };
+            if let Some(started) = native_entry_sample_started {
+                compiled.finish_native_entry_sample(id as usize, started);
+            }
             if let Some(stats) = &compiled.diagnostics {
                 stats.compiled_to_vm_callouts.set(
                     stats
@@ -7504,6 +7565,19 @@ mod tests {
     }
 
     #[test]
+    fn native_entry_sampling_is_sparse_and_deterministic() {
+        assert!(!native_entry_sample_due(0));
+        assert!(!native_entry_sample_due(1));
+        assert!(native_entry_sample_due(JIT_NATIVE_ENTRY_SAMPLE_INTERVAL));
+        assert!(!native_entry_sample_due(
+            JIT_NATIVE_ENTRY_SAMPLE_INTERVAL + 1
+        ));
+        assert!(native_entry_sample_due(
+            JIT_NATIVE_ENTRY_SAMPLE_INTERVAL * 2
+        ));
+    }
+
+    #[test]
     fn emscripten_memcpy_leaf_copies_overlap_and_observes_cache_miss_and_interrupt() {
         use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -7655,8 +7729,16 @@ mod tests {
     }
 
     #[test]
-    fn root_only_jit_forces_cranelift_opt_level_none() {
-        assert_eq!(jit_root_opt_level(Some(0), true), Ok("none"));
+    fn root_only_jit_defaults_to_none_and_accepts_explicit_opt_level() {
+        assert_eq!(parse_jit_root_opt_level(true, None), Ok("none"));
+        assert_eq!(parse_jit_root_opt_level(false, None), Ok("speed"));
+        assert_eq!(parse_jit_root_opt_level(true, Some("none")), Ok("none"));
+        assert_eq!(parse_jit_root_opt_level(true, Some("speed")), Ok("speed"));
+        assert_eq!(
+            parse_jit_root_opt_level(true, Some("speed_and_size")),
+            Ok("speed_and_size")
+        );
+        assert_eq!(parse_jit_root_opt_level(true, Some("invalid")), Err(()));
     }
 
     #[test]
