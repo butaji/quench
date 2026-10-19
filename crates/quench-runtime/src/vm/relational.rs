@@ -235,12 +235,11 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let Some(record) = value.direct_object_index() else {
-            // A primitive has no prototype chain to hold the prototype; any other object
-            // takes the walk. A value outside the heap is never an object.
-            if value.heap_index().is_none() {
-                return Some(false);
-            }
-            return (!self.is_object_like(value)).then_some(false);
+            // A primitive has no prototype chain to hold the prototype: a value outside the
+            // heap, or a string. Any other value takes the walk, whose object test makes a
+            // call this steady case leaves out.
+            return (value.heap_index().is_none() || matches!(self.heap.get(value), Some(Cell::String(_))))
+                .then_some(false);
         };
         let mut link = self.heap.object_record_by_id(record).proto();
         loop {
