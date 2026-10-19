@@ -551,20 +551,20 @@ impl<H: Host> Vm<H> {
                 self.heap.alloc(Cell::String(text.into()))
             }
         };
-        Ok(self.heap.alloc(Cell::Iterator {
-            object: Box::new(Self::empty_object(self.string_iterator_proto)),
+        Ok(self.heap.alloc_iterator(IteratorRecord {
+            object: Self::empty_object(self.string_iterator_proto),
             source,
             kind: IteratorKind::String,
             index: 0,
             done: false,
-            ext: Box::new(crate::heap::IteratorExt {
+            ext: crate::heap::IteratorExt {
                 position_high: 0,
                 next_method: None,
                 helper: None,
                 helper_running: false,
                 helper_started: false,
                 generator: None,
-            }),
+            },
         }))
     }
 

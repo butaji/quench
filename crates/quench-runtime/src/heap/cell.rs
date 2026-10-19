@@ -721,6 +721,22 @@ pub(crate) struct AwaitState {
     /// The await of an async generator's `yield`, which settles the request with the value.
     pub(crate) yielded: bool,
 }
+impl AwaitState {
+    /// The program its suspended continuation resumes in, which stays alive with it.
+    pub(crate) fn program_references(&self, mut visit: impl FnMut(ProgramId)) {
+        if let Some(continuation) = &self.continuation {
+            visit(continuation.program);
+        }
+    }
+
+    /// Its edges: the realm and promise it resumes, the generator, the suspended frame.
+    pub(crate) fn roots(&self) -> impl Iterator<Item = Value> + '_ {
+        [self.realm, self.promise]
+            .into_iter()
+            .chain(self.generator)
+            .chain(self.continuation.iter().flat_map(|continuation| continuation.roots()))
+    }
+}
 impl TypedArrayKind {
     pub(crate) const fn is_bigint(self) -> bool {
         matches!(self, Self::BigInt64 | Self::BigUint64)
@@ -1246,7 +1262,8 @@ const PROTO_OBJECT_RECORD_BASE: u32 = MAX_HEAP_CELLS as u32;
 const PROTO_ARRAY_RECORD_BASE: u32 = PROTO_OBJECT_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
 const PROTO_FUNCTION_RECORD_BASE: u32 = PROTO_ARRAY_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
 const PROTO_PROMISE_RECORD_BASE: u32 = PROTO_FUNCTION_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
-const PROTO_RECORD_END: u32 = PROTO_PROMISE_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
+const PROTO_ITERATOR_RECORD_BASE: u32 = PROTO_PROMISE_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
+const PROTO_RECORD_END: u32 = PROTO_ITERATOR_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
 const _: () = assert!(PROTO_RECORD_END <= PROTO_UNDEFINED);
 const OBJECT_ARRAY: u32 = 1 << 28;
 const OBJECT_INLINE_STORAGE: u32 = 1 << 29;
@@ -1599,6 +1616,8 @@ impl Object {
             Some(HeapReference::ArrayRecord(id)) => PROTO_ARRAY_RECORD_BASE + id,
             Some(HeapReference::FunctionRecord(id)) => PROTO_FUNCTION_RECORD_BASE + id,
             Some(HeapReference::PromiseRecord(id)) => PROTO_PROMISE_RECORD_BASE + id,
+            Some(HeapReference::IteratorRecord(id)) => PROTO_ITERATOR_RECORD_BASE + id,
+            Some(HeapReference::AwaitRecord(_)) => unreachable!("an await state is never a prototype"),
             None if proto.is_null() => PROTO_NULL,
             None => {
                 debug_assert!(proto.is_undefined(), "a prototype is an object or null");
@@ -1621,9 +1640,12 @@ impl Object {
             index if index < PROTO_PROMISE_RECORD_BASE => {
                 Value::direct_function(index - PROTO_FUNCTION_RECORD_BASE)
             }
+            index if index < PROTO_ITERATOR_RECORD_BASE => {
+                Value::direct_promise(index - PROTO_PROMISE_RECORD_BASE)
+            }
             index => {
                 debug_assert!(index < PROTO_RECORD_END);
-                Value::direct_promise(index - PROTO_PROMISE_RECORD_BASE)
+                Value::direct_iterator(index - PROTO_ITERATOR_RECORD_BASE)
             }
         }
     }
@@ -2515,6 +2537,35 @@ impl IteratorExt {
     }
 }
 
+/// An iterator object: built-in iterators, iterator helpers and generators. The heap keeps
+/// it in the iterator record family (`Heap::iterator`); a heap whose record range is
+/// unavailable boxes it in a `Cell::Iterator` slot.
+#[derive(Clone, Debug)]
+pub(crate) struct IteratorRecord {
+    pub(crate) object: Object,
+    pub(crate) source: Value,
+    pub(crate) kind: IteratorKind,
+    /// Low half of the position within `source`; `IteratorExt::position` joins it with
+    /// the upper half.
+    pub(crate) index: u32,
+    pub(crate) done: bool,
+    pub(crate) ext: IteratorExt,
+}
+
+impl IteratorRecord {
+    /// A suspended generator's program, which stays alive with it.
+    pub(crate) fn program_references(&self, mut visit: impl FnMut(ProgramId)) {
+        if let Some(continuation) = self
+            .ext
+            .generator
+            .as_ref()
+            .and_then(|generator| generator.continuation.as_ref())
+        {
+            visit(continuation.program);
+        }
+    }
+}
+
 /// A function: its ordinary object, creation realm, code and closure environment. The
 /// heap keeps it in the function record family (`Heap::function`), where a dead closure
 /// costs its occupancy bit; a heap whose record range is unavailable boxes it in a
@@ -2714,16 +2765,8 @@ pub(crate) enum Cell {
         callback: Value,
         entries: Box<FinalizationEntries>,
     },
-    Iterator {
-        object: Box<Object>,
-        source: Value,
-        kind: IteratorKind,
-        /// Low half of the position within `source`; `IteratorExt::position` joins it with
-        /// the upper half.
-        index: u32,
-        done: bool,
-        ext: Box<IteratorExt>,
-    },
+    /// An iterator where no iterator record is available (`IteratorRecord`).
+    Iterator(Box<IteratorRecord>),
     ArrayFromAsyncState(Box<ArrayFromAsyncState>),
     AwaitState(Box<AwaitState>),
     Proxy {
@@ -2870,7 +2913,7 @@ impl Cell {
             Self::WeakSet { .. } => "weak_set",
             Self::WeakRef { .. } => "weak_ref",
             Self::FinalizationRegistry { .. } => "finalization_registry",
-            Self::Iterator { .. } => "iterator",
+            Self::Iterator(_) => "iterator",
             Self::ArrayFromAsyncState(_) => "array_from_async_state",
             Self::AwaitState(_) => "await_state",
             Self::Proxy { .. } => "proxy",
@@ -2918,20 +2961,8 @@ impl Cell {
                     visit(ProgramId::from_raw(program));
                 }
             }
-            Self::Iterator { ext, .. } => {
-                if let Some(continuation) = ext
-                    .generator
-                    .as_ref()
-                    .and_then(|generator| generator.continuation.as_ref())
-                {
-                    visit(continuation.program);
-                }
-            }
-            Self::AwaitState(state) => {
-                if let Some(continuation) = &state.continuation {
-                    visit(continuation.program);
-                }
-            }
+            Self::Iterator(iterator) => iterator.program_references(&mut visit),
+            Self::AwaitState(state) => state.program_references(&mut visit),
             _ => {}
         }
     }
