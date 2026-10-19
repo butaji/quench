@@ -1327,7 +1327,7 @@ impl<H: Host> Vm<H> {
         } else {
             None
         };
-        let promise = self.heap.alloc(Cell::Promise(Box::new(crate::heap::PromiseCell {
+        let promise = self.heap.alloc_promise(crate::heap::PromiseCell {
             object: Self::empty_object(prototype),
             record: PromiseRecord {
                 state: PromiseState::Pending,
@@ -1337,7 +1337,7 @@ impl<H: Host> Vm<H> {
                 rejection_id: None,
                 host_context,
             },
-        })));
+        });
         if let Some(identity) = host_context {
             let mut context = crate::NativeContext::new(self);
             let resource = context.scoped_value(promise);

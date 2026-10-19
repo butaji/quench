@@ -1206,7 +1206,7 @@ fn promise_record_edges_follow_promise_and_resolver_lifetime() {
     vm.collect_now(&program);
     assert!(vm.heap.weak_value(promise_weak).is_none());
     assert!(vm.heap.weak_value(result_weak).is_none());
-    assert!(!vm.is_promise(promise));
+    assert!(!vm.heap.is_live(promise));
 }
 
 #[test]
@@ -4515,7 +4515,7 @@ fn dynamic_import_waiters_are_rooted_while_queued_and_during_batch_evaluation() 
         vm.collect_now(&program);
         for (promise, weak) in promises {
             assert!(vm.heap.weak_value(weak).is_none());
-            assert!(!vm.is_promise(promise));
+            assert!(!vm.heap.is_live(promise));
         }
     }
 }

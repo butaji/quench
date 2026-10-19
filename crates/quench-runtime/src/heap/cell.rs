@@ -1245,7 +1245,8 @@ pub(crate) const MAX_HEAP_CELLS: usize = 1 << 27;
 const PROTO_OBJECT_RECORD_BASE: u32 = MAX_HEAP_CELLS as u32;
 const PROTO_ARRAY_RECORD_BASE: u32 = PROTO_OBJECT_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
 const PROTO_FUNCTION_RECORD_BASE: u32 = PROTO_ARRAY_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
-const PROTO_RECORD_END: u32 = PROTO_FUNCTION_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
+const PROTO_PROMISE_RECORD_BASE: u32 = PROTO_FUNCTION_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
+const PROTO_RECORD_END: u32 = PROTO_PROMISE_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
 const _: () = assert!(PROTO_RECORD_END <= PROTO_UNDEFINED);
 const OBJECT_ARRAY: u32 = 1 << 28;
 const OBJECT_INLINE_STORAGE: u32 = 1 << 29;
@@ -1597,6 +1598,7 @@ impl Object {
             Some(HeapReference::ObjectRecord(id)) => PROTO_OBJECT_RECORD_BASE + id,
             Some(HeapReference::ArrayRecord(id)) => PROTO_ARRAY_RECORD_BASE + id,
             Some(HeapReference::FunctionRecord(id)) => PROTO_FUNCTION_RECORD_BASE + id,
+            Some(HeapReference::PromiseRecord(id)) => PROTO_PROMISE_RECORD_BASE + id,
             None if proto.is_null() => PROTO_NULL,
             None => {
                 debug_assert!(proto.is_undefined(), "a prototype is an object or null");
@@ -1616,9 +1618,12 @@ impl Object {
             index if index < PROTO_FUNCTION_RECORD_BASE => {
                 Value::direct_array(index - PROTO_ARRAY_RECORD_BASE)
             }
+            index if index < PROTO_PROMISE_RECORD_BASE => {
+                Value::direct_function(index - PROTO_FUNCTION_RECORD_BASE)
+            }
             index => {
                 debug_assert!(index < PROTO_RECORD_END);
-                Value::direct_function(index - PROTO_FUNCTION_RECORD_BASE)
+                Value::direct_promise(index - PROTO_PROMISE_RECORD_BASE)
             }
         }
     }
