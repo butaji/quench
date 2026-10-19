@@ -1410,6 +1410,44 @@ lane_handler! {
     }
 }
 
+lane_handler! {
+    /// `MakeClosure` in a frame's own lane run (`lane_closure_value`).
+    fn lane_make_closure<>(cx, r, ip, i, view) {
+        let Some(value) = lane_closure_value(cx, i) else {
+            return exit(ip);
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+/// The closure a `MakeClosure` record makes as the general loop does, in a frame's own lane
+/// run of a function with no binding sites outside a module's root: its environment is the
+/// frame's, promoted once, and making it allocates and runs no guest code. Any other
+/// closure takes the general path; a promotion made first is idempotent.
+#[inline(never)]
+fn lane_closure_value<H: Host>(cx: *mut LaneContext<H>, i: &LaneInstruction) -> Option<Value> {
+    let vm = unsafe { vm(cx) };
+    if !vm.lane_stack.activations.is_empty() {
+        return None;
+    }
+    // SAFETY: the context's program outlives the lane run.
+    let (code, frame) = unsafe { (&*(*cx).code, (*cx).frame) };
+    let function = vm.frames[frame].function;
+    if function == super::ROOT_FUNCTION_ID
+        || !code.functions.get(function as usize)?.binding_sites.is_empty()
+    {
+        return None;
+    }
+    let env = vm.promote_frame_environment(frame);
+    // Promotion moves the frame's captured locals into the environment, so a capture
+    // slot pointer found before it is not reused.
+    unsafe { (*cx).capture = std::ptr::null() };
+    let value = vm.closure(code, i.imm(), env).ok();
+    note_allocation(vm);
+    value
+}
+
 /// The object a `CreateRegExpLiteral` record makes in a frame's own lane run, whose frame
 /// names the literal's program. A pattern that fails to compile raises at its instruction
 /// through `Vm::lane_raised`; inside a lane activation, `None` leaves it to the general path.
@@ -1455,6 +1493,17 @@ lane_handler! {
         // other reference into it is live while the object is allocated.
         let properties = unsafe { std::slice::from_raw_parts(r.0.add(usize::from(i.b)), usize::from(i.c)) };
         let value = vm.heap.alloc_object_with_properties(vm.object_proto, shape, properties);
+        note_allocation(vm);
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    /// `MakeObject`: an empty ordinary object (`Vm::object`), as the general loop makes it.
+    fn lane_make_object<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let value = vm.object();
         note_allocation(vm);
         r.set(i.a, value);
         next!(cx, r, following(ip), view)
@@ -5526,7 +5575,9 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::MakeObject2 => Some(lane_make_object2::<H>),
         Op::MakeObjectLiteral => Some(lane_make_object_literal::<H>),
         Op::MakeArray => Some(lane_make_array::<H>),
+        Op::MakeObject => Some(lane_make_object::<H>),
         Op::CreateRegExpLiteral => Some(lane_regexp_literal::<H>),
+        Op::MakeClosure => Some(lane_make_closure::<H>),
         Op::CallForwardingArguments => Some(lane_forward_call::<H>),
         Op::SuperConstArrayObject2 => Some(lane_const_array_object2::<H>),
         Op::Return => Some(lane_return::<H>),
