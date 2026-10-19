@@ -574,6 +574,8 @@ impl Heap {
         }
     }
 
+    /// The write barrier: an old (marked) cell written to joins the remembered set once.
+    #[inline(always)]
     pub(super) fn remember(&mut self, index: usize) {
         if !self.tracks_young_cells()
             || index >= self.slots.len()
@@ -581,11 +583,19 @@ impl Heap {
         {
             return;
         }
-        self.remembered_marks.resize(self.marks.len(), 0);
-        if self.remembered_marks[index / 64] & (1 << (index % 64)) != 0 {
+        let (word, bit) = (index / u64::BITS as usize, 1_u64 << (index % u64::BITS as usize));
+        // A cell already remembered needs nothing more: the common repeated write.
+        if self.remembered_marks.get(word).is_some_and(|marks| marks & bit != 0) {
             return;
         }
-        self.remembered_marks[index / 64] |= 1 << (index % 64);
+        self.remember_first(word, bit, index);
+    }
+
+    /// `remember` of a cell not yet in the remembered set.
+    #[inline(never)]
+    fn remember_first(&mut self, word: usize, bit: u64, index: usize) {
+        self.remembered_marks.resize(self.marks.len(), 0);
+        self.remembered_marks[word] |= bit;
         self.remembered.push(index as u32);
     }
 }
