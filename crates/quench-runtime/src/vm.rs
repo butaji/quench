@@ -1531,6 +1531,10 @@ pub(crate) struct Vm<H> {
     active_program: ProgramId,
     profile: Profile,
     shapes: Vec<Shape>,
+    /// Each shape's constructor (`ShapeTransition::Constructed` on its chain), derived for
+    /// the shapes created since the last collection: a shape's parent precedes it, so a
+    /// collection extends this instead of walking every shape. Reset with the shape table.
+    shape_constructors: Vec<Value>,
     /// The getters and setters of shapes' accessor descriptors (`ShapeAttributes`).
     shape_accessors: Vec<ShapeAccessors>,
     transitions: shape_transitions::ShapeTransitionIndex,
@@ -2341,6 +2345,7 @@ impl<H: Host> Vm<H> {
         self.construct_target = None;
         self.realm.promise = Default::default();
         self.shapes.truncate(1);
+        self.shape_constructors.clear();
         // The kept root forgets its transitions along with the index.
         self.shapes[0].last_child.set(NO_LAST_CHILD);
         self.transitions.clear();
