@@ -5,7 +5,8 @@
 //! can load its rooted constant and preserve ordinary frame unwinding.
 
 use crate::bytecode::{
-    Constant, Function, Op, OperandKind, ProgramKind, RETURN_REGISTER, ResidualProgram,
+    Constant, FieldBase, FieldLookup, Function, Op, OperandKind, ProgramKind, RETURN_REGISTER,
+    ResidualProgram,
 };
 use cranelift_codegen::ir::{
     self, AbiParam, InstBuilder, UserFuncName, condcodes::FloatCC, immediates::Ieee64, types,
@@ -26,6 +27,8 @@ pub(super) struct JsJitArtifact {
 
 pub(super) enum JsJitResultKind {
     Number,
+    NumberInterruptible,
+    StringHashLoop,
     StringReturnPc(Vec<(u32, u32)>),
     Boolean,
 }
@@ -44,7 +47,10 @@ pub(super) fn compile(program: &ResidualProgram, function_id: u32) -> Option<JsJ
     if program.kind == ProgramKind::Wasm || function_id == 0 {
         return None;
     }
-    let function = program.functions.get(function_id as usize)?;
+    let function = program.function_get(function_id as usize)?;
+    if string_hash_loop_candidate(program, function) {
+        return compile_string_hash_loop(program, function_id, function);
+    }
     if function.code.iter().any(|packed| {
         !packed.is_wide()
             && matches!(
@@ -52,11 +58,437 @@ pub(super) fn compile(program: &ResidualProgram, function_id: u32) -> Option<JsJ
                 Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse
             )
     }) {
-        compile_number_domain_boolean_tree(program, function_id, function)
+        compile_numeric_loop(program, function_id, function)
+            .or_else(|| compile_number_domain_boolean_tree(program, function_id, function))
             .or_else(|| compile_string_branches(program, function_id, function))
     } else {
         compile_numeric(program, function_id)
     }
+}
+
+pub(super) fn has_string_hash_loop_candidate(
+    program: &ResidualProgram,
+    function: &Function,
+) -> bool {
+    string_hash_loop_candidate(program, function)
+}
+
+/// Where a hash-loop local lives: its frame slot, or the register frame-register promotion
+/// moved it into (`compile::frame_registers`), where loads and stores are `Move`s.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LoopLocal {
+    Slot(u16),
+    Register(crate::bytecode::Register),
+}
+
+/// Reads a function's instructions in order for `string_hash_loop_candidate`, matching each
+/// local access in either of its forms.
+struct LoopReader<'a> {
+    function: &'a Function,
+    pc: usize,
+}
+
+impl LoopReader<'_> {
+    fn next(&mut self) -> Option<crate::bytecode::WideInstruction> {
+        let instruction = self.function.code.get(self.pc)?.as_wide();
+        self.pc += 1;
+        Some(instruction)
+    }
+
+    fn next_op(&mut self, op: Op) -> Option<crate::bytecode::WideInstruction> {
+        let instruction = self.next()?;
+        (instruction.op() == op).then_some(instruction)
+    }
+
+    /// A store of `source` into a local, which it names.
+    fn store(&mut self, source: crate::bytecode::Register) -> Option<LoopLocal> {
+        let instruction = self.next()?;
+        match instruction.op() {
+            Op::StoreLocalPlain if instruction.register_a() == source => {
+                Some(LoopLocal::Slot(instruction.local_slot() as u16))
+            }
+            Op::Move if instruction.register_b() == source => {
+                Some(LoopLocal::Register(instruction.result_register()))
+            }
+            _ => None,
+        }
+    }
+
+    fn store_into(&mut self, local: LoopLocal, source: crate::bytecode::Register) -> Option<()> {
+        (self.store(source)? == local).then_some(())
+    }
+
+    /// A load of `local` into a register, which it names.
+    fn load(&mut self, local: LoopLocal) -> Option<crate::bytecode::Register> {
+        let instruction = self.next()?;
+        match (instruction.op(), local) {
+            (Op::LoadLocalPlain, LoopLocal::Slot(slot)) if instruction.local_slot() as u16 == slot => {
+                Some(instruction.result_register())
+            }
+            (Op::Move, LoopLocal::Register(register)) if instruction.register_b() == register => {
+                Some(instruction.result_register())
+            }
+            _ => None,
+        }
+    }
+
+    /// A `Binary` whose result goes to `local`: fused into its numeric local target, or
+    /// followed by a store of its result.
+    fn binary_into(&mut self, local: LoopLocal) -> Option<crate::bytecode::WideInstruction> {
+        let binary = self.next_op(Op::Binary)?;
+        match (binary.numeric_local_target(), local) {
+            (Some(target), LoopLocal::Slot(slot)) if target == slot => Some(binary),
+            (None, LoopLocal::Register(_)) => {
+                self.store_into(local, binary.result_register())?;
+                Some(binary)
+            }
+            _ => None,
+        }
+    }
+}
+
+fn string_hash_loop_candidate(program: &ResidualProgram, function: &Function) -> bool {
+    function.params == 1 && function.wide.is_empty() && string_hash_loop_shape(program, function).is_some()
+}
+
+/// The guarded hash loop `compile_string_hash_loop` emits, matched over the whole function
+/// by data flow rather than by instruction positions, so it holds whether its two locals stay
+/// in frame slots or were promoted to registers.
+fn string_hash_loop_shape(program: &ResidualProgram, function: &Function) -> Option<()> {
+    let number = |index: usize| match program.constants.get(index) {
+        Some(Constant::Number(value)) => Some(*value),
+        _ => None,
+    };
+    let operand_constant = |operand: crate::bytecode::Operand| {
+        (operand.kind() == Some(OperandKind::Constant))
+            .then(|| number(usize::from(operand.payload())))
+            .flatten()
+    };
+    let field_is = |instruction: crate::bytecode::WideInstruction, name: &str| {
+        instruction.op() == Op::GetField
+            && matches!(
+                instruction.field_lookup(),
+                Some(FieldLookup::Atom {
+                    atom,
+                    base: FieldBase(0),
+                    ..
+                }) if (atom as usize) < program.atoms.len() && &program.atoms[atom as usize] == name
+            )
+    };
+    let operator_is = |instruction: crate::bytecode::WideInstruction, operator: BinaryOperator| {
+        instruction_binary_operator(instruction) == Some(operator as u32)
+    };
+    let check = |condition: bool| condition.then_some(());
+    let mut code = LoopReader { function, pc: 0 };
+
+    // let hash = 5381; let index = str.length;
+    let seed = code.next_op(Op::LoadConst)?;
+    check(number(seed.constant_index()) == Some(5381.0))?;
+    let hash = code.store(seed.result_register())?;
+    let length = code.next()?;
+    check(field_is(length, "length"))?;
+    let index = code.store(length.result_register())?;
+    check(hash != index)?;
+
+    // while (index > 0)
+    let head = code.pc;
+    let tested = code.load(index)?;
+    let exit = code.next_op(Op::JumpBinaryFalse)?;
+    check(
+        super::operations::NumberRelation::from_operator(exit.binary_operator_field())
+            == Some(super::operations::NumberRelation::GreaterThan)
+            && operand_register(exit.operand_b()) == Some(tested)
+            && operand_constant(exit.operand_c()) == Some(0.0),
+    )?;
+
+    // hash = hash * 33 ^ (str.charCodeAt(index) | 0);
+    let current = code.load(hash)?;
+    let scaled = code.next_op(Op::Binary)?;
+    check(
+        operator_is(scaled, BinaryOperator::Multiplication)
+            && operand_register(scaled.operand_b()) == Some(current)
+            && operand_constant(scaled.operand_c()) == Some(33.0),
+    )?;
+    let method = code.next()?;
+    check(field_is(method, "charCodeAt"))?;
+    let argument = code.load(index)?;
+    let call = code.next_op(Op::Call)?;
+    check(
+        call.register_b() == method.result_register()
+            && call.call_window().base == argument
+            && call.call_window().count == 1,
+    )?;
+    let unit = code.next_op(Op::Binary)?;
+    check(
+        operator_is(unit, BinaryOperator::BitwiseOR)
+            && operand_register(unit.operand_b()) == Some(call.result_register())
+            && operand_constant(unit.operand_c()) == Some(0.0),
+    )?;
+    let mixed = code.binary_into(hash)?;
+    check(
+        operator_is(mixed, BinaryOperator::BitwiseXOR)
+            && operand_register(mixed.operand_b()) == Some(scaled.result_register())
+            && operand_register(mixed.operand_c()) == Some(unit.result_register()),
+    )?;
+
+    // index -= 919;
+    let counted = code.load(index)?;
+    let step = code.binary_into(index)?;
+    check(
+        operator_is(step, BinaryOperator::Subtraction)
+            && operand_register(step.operand_b()) == Some(counted)
+            && operand_constant(step.operand_c()) == Some(919.0),
+    )?;
+    let back = code.next_op(Op::Jump)?;
+    check(back.jump_target() as usize == head)?;
+
+    // return hash | 0;
+    check(exit.jump_target() as usize == code.pc)?;
+    let result = code.load(hash)?;
+    let returned = code.next_op(Op::Binary)?;
+    check(
+        returned.returns_from_frame()
+            && operator_is(returned, BinaryOperator::BitwiseOR)
+            && operand_register(returned.operand_b()) == Some(result)
+            && operand_constant(returned.operand_c()) == Some(0.0),
+    )?;
+    // The implicit `return undefined` after it.
+    let undefined = code.next_op(Op::LoadConst)?;
+    check(undefined.constant_index() < program.constants.len())?;
+    let tail = code.next_op(Op::Return)?;
+    check(tail.register_a() == undefined.result_register() && code.pc == function.code.len())
+}
+
+fn operand_register(operand: crate::bytecode::Operand) -> Option<u16> {
+    (operand.kind() == Some(OperandKind::Register)).then_some(operand.payload())
+}
+
+fn instruction_binary_operator(instruction: crate::bytecode::WideInstruction) -> Option<u32> {
+    match instruction.op().immediate_role() {
+        crate::bytecode::ImmediateRole::BinaryOperator
+        | crate::bytecode::ImmediateRole::AdditionOperator
+        | crate::bytecode::ImmediateRole::MultiplicationOperator => {
+            Some(instruction.binary_operator())
+        }
+        _ if instruction.op() == Op::JumpBinaryFalse => Some(instruction.binary_operator_field()),
+        _ => None,
+    }
+}
+
+fn compile_string_hash_loop(
+    program: &ResidualProgram,
+    function_id: u32,
+    function: &Function,
+) -> Option<JsJitArtifact> {
+    if !function_candidate(function, program) {
+        // The string-hash matcher has already checked the bytecode shape; the
+        // regular candidate guard still enforces activation and size limits.
+        return None;
+    }
+    let mut flags = settings::builder();
+    flags.set("opt_level", "speed").ok()?;
+    let isa_builder = cranelift_native::builder().ok()?;
+    let isa = isa_builder.finish(settings::Flags::new(flags)).ok()?;
+    let mut signature = ir::Signature::new(isa.default_call_conv());
+    signature.params.push(AbiParam::new(isa.pointer_type()));
+    signature.params.push(AbiParam::new(isa.pointer_type()));
+    signature.params.push(AbiParam::new(types::I32));
+    signature.params.push(AbiParam::new(isa.pointer_type()));
+    signature.params.push(AbiParam::new(isa.pointer_type()));
+    signature.returns.push(AbiParam::new(types::F64));
+    let mut native =
+        ir::Function::with_name_signature(UserFuncName::user(0x5155_454e, function_id), signature);
+    let mut builder_context = FunctionBuilderContext::new();
+    let mut builder = FunctionBuilder::new(&mut native, &mut builder_context);
+    let entry = builder.create_block();
+    builder.append_block_params_for_function_params(entry);
+    builder.switch_to_block(entry);
+    let units = builder.block_params(entry)[0];
+    let length = builder.block_params(entry)[1];
+    let ascii = builder.block_params(entry)[2];
+    let interrupt = builder.block_params(entry)[3];
+    let status = builder.block_params(entry)[4];
+    let length = builder
+        .ins()
+        .load(isa.pointer_type(), ir::MemFlagsData::trusted(), length, 0);
+    let length = builder.ins().fcvt_from_uint(types::F64, length);
+    let index_variable = builder.declare_var(types::F64);
+    builder.def_var(index_variable, length);
+    let hash_variable = builder.declare_var(types::I32);
+    let hash = builder.ins().iconst(types::I32, 5381);
+    builder.def_var(hash_variable, hash);
+    let counter_variable = builder.declare_var(types::I32);
+    let zero = builder.ins().iconst(types::I32, 0);
+    builder.def_var(counter_variable, zero);
+    let header = builder.create_block();
+    let body = builder.create_block();
+    let load_character = builder.create_block();
+    let load_ascii_character = builder.create_block();
+    let load_wide_character = builder.create_block();
+    let zero_character = builder.create_block();
+    let join_character = builder.create_block();
+    let character = builder.append_block_param(join_character, types::I32);
+    let normal_exit = builder.create_block();
+    let interrupt_exit = builder.create_block();
+    let interrupt_status = builder.append_block_param(interrupt_exit, isa.pointer_type());
+    builder.ins().jump(header, &[]);
+
+    builder.switch_to_block(header);
+    let index = builder.use_var(index_variable);
+    let zero_number = builder.ins().f64const(Ieee64::with_bits(0.0f64.to_bits()));
+    let more = builder.ins().fcmp(FloatCC::GreaterThan, index, zero_number);
+    builder.ins().brif(more, body, &[], normal_exit, &[]);
+
+    builder.switch_to_block(body);
+    let index = builder.use_var(index_variable);
+    let in_range = builder.ins().fcmp(FloatCC::LessThan, index, length);
+    builder
+        .ins()
+        .brif(in_range, load_character, &[], zero_character, &[]);
+
+    builder.switch_to_block(load_character);
+    let index = builder.use_var(index_variable);
+    let index = builder.ins().fcvt_to_sint_sat(isa.pointer_type(), index);
+    let is_ascii =
+        builder
+            .ins()
+            .icmp_imm_u(cranelift_codegen::ir::condcodes::IntCC::Equal, ascii, 1);
+    builder.ins().brif(
+        is_ascii,
+        load_ascii_character,
+        &[],
+        load_wide_character,
+        &[],
+    );
+
+    builder.switch_to_block(load_ascii_character);
+    let address = builder.ins().iadd(units, index);
+    let code_unit = builder
+        .ins()
+        .load(types::I8, ir::MemFlagsData::trusted(), address, 0);
+    let code_unit = builder.ins().uextend(types::I32, code_unit);
+    builder
+        .ins()
+        .jump(join_character, &[ir::BlockArg::Value(code_unit)]);
+
+    builder.switch_to_block(load_wide_character);
+    let index = builder.use_var(index_variable);
+    let index = builder.ins().fcvt_to_sint_sat(isa.pointer_type(), index);
+    let byte_offset = builder.ins().ishl_imm_u(index, 1);
+    let address = builder.ins().iadd(units, byte_offset);
+    let code_unit = builder
+        .ins()
+        .load(types::I16, ir::MemFlagsData::trusted(), address, 0);
+    let code_unit = builder.ins().uextend(types::I32, code_unit);
+    builder
+        .ins()
+        .jump(join_character, &[ir::BlockArg::Value(code_unit)]);
+
+    builder.switch_to_block(zero_character);
+    let zero_character = builder.ins().iconst(types::I32, 0);
+    builder
+        .ins()
+        .jump(join_character, &[ir::BlockArg::Value(zero_character)]);
+
+    builder.switch_to_block(join_character);
+    let hash = builder.use_var(hash_variable);
+    let multiplier = builder.ins().iconst(types::I32, 33);
+    let hash = builder.ins().imul(hash, multiplier);
+    let hash = builder.ins().bxor(hash, character);
+    builder.def_var(hash_variable, hash);
+    let index = builder.use_var(index_variable);
+    let stride = builder
+        .ins()
+        .f64const(Ieee64::with_bits(919.0f64.to_bits()));
+    let index = builder.ins().fsub(index, stride);
+    builder.def_var(index_variable, index);
+    let counter = builder.use_var(counter_variable);
+    let counter = builder.ins().iadd_imm_s(counter, 1);
+    builder.def_var(counter_variable, counter);
+    let interval = builder.ins().band_imm_u(counter, 1023);
+    let should_poll =
+        builder
+            .ins()
+            .icmp_imm_u(cranelift_codegen::ir::condcodes::IntCC::Equal, interval, 0);
+    let poll = builder.create_block();
+    let continue_loop = builder.create_block();
+    builder
+        .ins()
+        .brif(should_poll, poll, &[], continue_loop, &[]);
+    builder.switch_to_block(poll);
+    let requested = builder
+        .ins()
+        .atomic_load(types::I8, ir::MemFlagsData::trusted(), interrupt);
+    let cancelled = builder.ins().icmp_imm_u(
+        cranelift_codegen::ir::condcodes::IntCC::NotEqual,
+        requested,
+        0,
+    );
+    let return_loop = builder.create_block();
+    builder.ins().brif(
+        cancelled,
+        interrupt_exit,
+        &[ir::BlockArg::Value(status)],
+        return_loop,
+        &[],
+    );
+    builder.switch_to_block(return_loop);
+    builder.ins().jump(continue_loop, &[]);
+    builder.switch_to_block(continue_loop);
+    builder.ins().jump(header, &[]);
+
+    builder.switch_to_block(normal_exit);
+    let hash = builder.use_var(hash_variable);
+    let result = builder.ins().fcvt_from_sint(types::F64, hash);
+    let complete = builder.ins().iconst(types::I32, 1);
+    builder
+        .ins()
+        .store(ir::MemFlagsData::trusted(), complete, status, 0);
+    builder.ins().return_(&[result]);
+    builder.switch_to_block(interrupt_exit);
+    let interrupted = builder.ins().iconst(types::I32, 0);
+    builder.ins().store(
+        ir::MemFlagsData::trusted(),
+        interrupted,
+        interrupt_status,
+        0,
+    );
+    let no_result = builder.ins().f64const(Ieee64::with_bits(0.0f64.to_bits()));
+    builder.ins().return_(&[no_result]);
+    builder.seal_all_blocks();
+    builder.finalize(isa.frontend_config());
+    let mut context = cranelift_codegen::Context::for_function(native);
+    let compiled = context
+        .compile(
+            &*isa,
+            &mut cranelift_codegen::control::ControlPlane::default(),
+        )
+        .ok()?;
+    if !compiled.buffer.relocs().is_empty() {
+        return None;
+    }
+    let code = compiled.code_buffer().to_vec();
+    if code.is_empty() || code.len() > MAX_CODE_BYTES {
+        return None;
+    }
+    Some(JsJitArtifact {
+        code,
+        params: 1,
+        result: JsJitResultKind::StringHashLoop,
+    })
+}
+
+pub(super) fn has_numeric_loop_candidate(function: &Function) -> bool {
+    function.code.iter().enumerate().any(|(pc, instruction)| {
+        if instruction.is_wide() {
+            return false;
+        }
+        let instruction = instruction.as_wide();
+        matches!(
+            instruction.op(),
+            Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse
+        ) && usize::try_from(instruction.jump_target()).is_ok_and(|target| target <= pc)
+    })
 }
 
 /// Compile a forward-only boolean tree after specializing formal parameters to
@@ -755,7 +1187,7 @@ fn branch_numeric_operand(
 }
 
 fn compile_numeric(program: &ResidualProgram, function_id: u32) -> Option<JsJitArtifact> {
-    let function = program.functions.get(function_id as usize)?;
+    let function = program.function_get(function_id as usize)?;
     if !function_candidate(function, program)
         || function
             .code
@@ -908,6 +1340,826 @@ fn compile_numeric(program: &ResidualProgram, function_id: u32) -> Option<JsJitA
         params,
         result: JsJitResultKind::Number,
     })
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NumericFlowKind {
+    Uninitialized,
+    Number,
+    Boolean,
+    Conflict,
+}
+
+/// Compile pure numeric loops as Cranelift CFGs. Every backedge polls the
+/// VM's cancellation flag; an interrupted function has no guest-visible
+/// effects, so it safely resumes through the ordinary interpreter path.
+fn compile_numeric_loop(
+    program: &ResidualProgram,
+    function_id: u32,
+    function: &Function,
+) -> Option<JsJitArtifact> {
+    if !function_candidate(function, program)
+        || function
+            .code
+            .iter()
+            .any(|instruction| instruction.is_wide())
+    {
+        return None;
+    }
+    let code_len = function.code.len();
+    let registers = usize::from(function.registers);
+    let locals = usize::from(function.locals);
+    let state_len = registers.checked_add(locals)?;
+    let params = usize::from(function.params);
+    let mut states = vec![None::<Vec<NumericFlowKind>>; code_len];
+    let mut pending = std::collections::VecDeque::new();
+    let mut initial = vec![NumericFlowKind::Uninitialized; state_len];
+    for kind in initial.iter_mut().take(params) {
+        *kind = NumericFlowKind::Number;
+    }
+    states[0] = Some(initial);
+    pending.push_back(0usize);
+
+    while let Some(pc) = pending.pop_front() {
+        let mut state = states.get(pc)?.as_ref()?.clone();
+        let instruction = function.code.get(pc)?.as_wide();
+        let mut successors = smallvec::SmallVec::<[usize; 2]>::new();
+        match instruction.op() {
+            Op::LoadConst => {
+                if instruction.result_flags() != 0 || instruction.returns_from_frame() {
+                    return None;
+                }
+                if !matches!(
+                    program.constants.get(instruction.constant_index())?,
+                    Constant::Number(_)
+                ) {
+                    return None;
+                }
+                *state.get_mut(usize::from(instruction.result_register()))? =
+                    NumericFlowKind::Number;
+                successors.push(pc.checked_add(1)?);
+            }
+            Op::Move => {
+                if instruction.result_flags() != 0 || instruction.returns_from_frame() {
+                    return None;
+                }
+                let source = *state.get(usize::from(instruction.register_b()))?;
+                if !matches!(source, NumericFlowKind::Number | NumericFlowKind::Boolean) {
+                    return None;
+                }
+                *state.get_mut(usize::from(instruction.result_register()))? = source;
+                successors.push(pc.checked_add(1)?);
+            }
+            Op::LoadLocalPlain => {
+                if instruction.result_flags() != 0 || instruction.returns_from_frame() {
+                    return None;
+                }
+                let local = registers.checked_add(instruction.local_slot())?;
+                let kind = *state.get(local)?;
+                if !matches!(kind, NumericFlowKind::Number | NumericFlowKind::Boolean) {
+                    return None;
+                }
+                *state.get_mut(usize::from(instruction.result_register()))? = kind;
+                successors.push(pc.checked_add(1)?);
+            }
+            Op::StoreLocalPlain => {
+                if instruction.result_flags() != 0 || instruction.returns_from_frame() {
+                    return None;
+                }
+                let source = *state.get(usize::from(instruction.register_a()))?;
+                if !matches!(source, NumericFlowKind::Number | NumericFlowKind::Boolean) {
+                    return None;
+                }
+                let local = registers.checked_add(instruction.local_slot())?;
+                *state.get_mut(local)? = source;
+                if let Some(register) = instruction.optional_register_b() {
+                    *state.get_mut(usize::from(register))? = source;
+                }
+                successors.push(pc.checked_add(1)?);
+            }
+            Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
+                if (instruction.returns_from_frame()
+                    && (instruction.result_flags() != RETURN_REGISTER
+                        || instruction.numeric_local_target().is_some()))
+                    || (!instruction.returns_from_frame()
+                        && instruction.result_flags() != 0
+                        && instruction.numeric_local_target().is_none())
+                {
+                    return None;
+                }
+                let left =
+                    numeric_flow_operand(program, &state, registers, instruction.operand_b())?;
+                let right =
+                    numeric_flow_operand(program, &state, registers, instruction.operand_c())?;
+                let kind = match (instruction.op(), instruction.binary_operator()) {
+                    (Op::Binary, operator)
+                        if matches!(
+                            operator,
+                            value if value == BinaryOperator::Addition as u32
+                                || value == BinaryOperator::Subtraction as u32
+                                || value == BinaryOperator::Multiplication as u32
+                                || value == BinaryOperator::Division as u32
+                        ) && left == NumericFlowKind::Number
+                            && right == NumericFlowKind::Number =>
+                    {
+                        NumericFlowKind::Number
+                    }
+                    (Op::Binary, operator)
+                        if left == NumericFlowKind::Number
+                            && right == NumericFlowKind::Number
+                            && matches!(
+                                operator,
+                                value if value == BinaryOperator::BitwiseOR as u32
+                                    || value == BinaryOperator::BitwiseXOR as u32
+                                    || value == BinaryOperator::BitwiseAnd as u32
+                                    || value == BinaryOperator::ShiftLeft as u32
+                                    || value == BinaryOperator::ShiftRight as u32
+                                    || value == BinaryOperator::ShiftRightZeroFill as u32
+                            ) =>
+                    {
+                        NumericFlowKind::Number
+                    }
+                    (Op::NumericAdd, operator)
+                        if operator == BinaryOperator::Addition as u32
+                            && left == NumericFlowKind::Number
+                            && right == NumericFlowKind::Number =>
+                    {
+                        NumericFlowKind::Number
+                    }
+                    (Op::NumericMultiply, operator)
+                        if operator == BinaryOperator::Multiplication as u32
+                            && left == NumericFlowKind::Number
+                            && right == NumericFlowKind::Number =>
+                    {
+                        NumericFlowKind::Number
+                    }
+                    (Op::Binary, operator)
+                        if left == NumericFlowKind::Number
+                            && right == NumericFlowKind::Number
+                            && super::operations::NumberRelation::from_operator(operator)
+                                .is_some() =>
+                    {
+                        NumericFlowKind::Boolean
+                    }
+                    _ => return None,
+                };
+                let destination = match instruction.numeric_local_target() {
+                    Some(local) => registers.checked_add(usize::from(local))?,
+                    None => usize::from(instruction.result_register()),
+                };
+                if instruction.returns_from_frame() {
+                    if kind != NumericFlowKind::Number
+                        || instruction.numeric_local_target().is_some()
+                    {
+                        return None;
+                    }
+                } else {
+                    *state.get_mut(destination)? = kind;
+                    successors.push(pc.checked_add(1)?);
+                }
+            }
+            Op::Jump => {
+                let target = usize::try_from(instruction.jump_target()).ok()?;
+                successors.push(target);
+            }
+            Op::JumpFalse | Op::JumpTrue => {
+                let condition = *state.get(usize::from(instruction.register_a()))?;
+                if !matches!(
+                    condition,
+                    NumericFlowKind::Number | NumericFlowKind::Boolean
+                ) {
+                    return None;
+                }
+                let target = usize::try_from(instruction.jump_target()).ok()?;
+                successors.push(pc.checked_add(1)?);
+                successors.push(target);
+            }
+            Op::JumpBinaryFalse => {
+                let left =
+                    numeric_flow_operand(program, &state, registers, instruction.operand_b())?;
+                let right =
+                    numeric_flow_operand(program, &state, registers, instruction.operand_c())?;
+                if left != NumericFlowKind::Number
+                    || right != NumericFlowKind::Number
+                    || super::operations::NumberRelation::from_operator(
+                        instruction.binary_operator_field(),
+                    )
+                    .is_none()
+                {
+                    return None;
+                }
+                let target = usize::try_from(instruction.jump_target()).ok()?;
+                successors.push(pc.checked_add(1)?);
+                successors.push(target);
+            }
+            Op::Return => {
+                if instruction.result_flags() != 0
+                    || *state.get(usize::from(instruction.register_a()))? != NumericFlowKind::Number
+                {
+                    return None;
+                }
+            }
+            _ => return None,
+        }
+
+        for successor in successors {
+            let target = states.get_mut(successor)?;
+            match target {
+                None => {
+                    *target = Some(state.clone());
+                    pending.push_back(successor);
+                }
+                Some(existing) => {
+                    let mut changed = false;
+                    for (current, incoming) in existing.iter_mut().zip(&state) {
+                        // A value written only on a prior loop iteration is not
+                        // definitely initialized at the loop header. Keep the
+                        // conflict marker and reject only if bytecode reads it;
+                        // dead temporaries can still flow through the join.
+                        let joined = if *current == *incoming {
+                            *current
+                        } else {
+                            NumericFlowKind::Conflict
+                        };
+                        if joined != *current {
+                            *current = joined;
+                            changed = true;
+                        }
+                    }
+                    if changed {
+                        pending.push_back(successor);
+                    }
+                }
+            }
+        }
+    }
+    if !function
+        .code
+        .iter()
+        .any(|instruction| !instruction.is_wide() && instruction.as_wide().op() == Op::Return)
+    {
+        return None;
+    }
+
+    let mut flags = settings::builder();
+    flags.set("opt_level", "speed").ok()?;
+    let isa_builder = cranelift_native::builder().ok()?;
+    let isa = isa_builder.finish(settings::Flags::new(flags)).ok()?;
+    let mut signature = ir::Signature::new(isa.default_call_conv());
+    signature.params.push(AbiParam::new(isa.pointer_type()));
+    signature.params.push(AbiParam::new(isa.pointer_type()));
+    signature.params.push(AbiParam::new(isa.pointer_type()));
+    signature.returns.push(AbiParam::new(types::F64));
+    let name = UserFuncName::user(0x5155_454e, function_id);
+    let mut native = ir::Function::with_name_signature(name, signature);
+    let mut builder_context = FunctionBuilderContext::new();
+    let mut builder = FunctionBuilder::new(&mut native, &mut builder_context);
+    let entry = builder.create_block();
+    builder.append_block_params_for_function_params(entry);
+    builder.switch_to_block(entry);
+    let arguments = builder.block_params(entry)[0];
+    let interrupt = builder.block_params(entry)[1];
+    let status = builder.block_params(entry)[2];
+    let numeric_variables = (0..state_len)
+        .map(|_| {
+            let variable = builder.declare_var(types::F64);
+            Some(variable)
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let boolean_variables = (0..state_len)
+        .map(|_| {
+            let variable = builder.declare_var(types::I8);
+            Some(variable)
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let backedge_counter = builder.declare_var(types::I32);
+    let counter_zero = builder.ins().iconst(types::I32, 0);
+    builder.def_var(backedge_counter, counter_zero);
+    let blocks = (0..code_len)
+        .map(|_| builder.create_block())
+        .collect::<Vec<_>>();
+    let interrupt_exit = builder.create_block();
+    let interrupt_status = builder.append_block_param(interrupt_exit, isa.pointer_type());
+    for index in 0..params {
+        let offset = i32::try_from(index.checked_mul(std::mem::size_of::<f64>())?).ok()?;
+        let value = builder
+            .ins()
+            .load(types::F64, ir::MemFlagsData::trusted(), arguments, offset);
+        builder.def_var(numeric_variables[index], value);
+    }
+    builder.ins().jump(*blocks.first()?, &[]);
+
+    for pc in 0..code_len {
+        let Some(state) = states[pc].as_ref() else {
+            continue;
+        };
+        builder.switch_to_block(blocks[pc]);
+        let instruction = function.code[pc].as_wide();
+        match instruction.op() {
+            Op::LoadConst => {
+                let Constant::Number(value) =
+                    program.constants.get(instruction.constant_index())?
+                else {
+                    return None;
+                };
+                let value = builder.ins().f64const(Ieee64::with_bits(value.to_bits()));
+                builder.def_var(
+                    numeric_variables[usize::from(instruction.result_register())],
+                    value,
+                );
+                builder.ins().jump(*blocks.get(pc.checked_add(1)?)?, &[]);
+            }
+            Op::Move => {
+                let source = usize::from(instruction.register_b());
+                let destination = usize::from(instruction.result_register());
+                match state[source] {
+                    NumericFlowKind::Number => {
+                        let value = builder.use_var(numeric_variables[source]);
+                        builder.def_var(numeric_variables[destination], value);
+                    }
+                    NumericFlowKind::Boolean => {
+                        let value = builder.use_var(boolean_variables[source]);
+                        builder.def_var(boolean_variables[destination], value);
+                    }
+                    _ => return None,
+                }
+                builder.ins().jump(*blocks.get(pc.checked_add(1)?)?, &[]);
+            }
+            Op::LoadLocalPlain => {
+                let local = registers.checked_add(instruction.local_slot())?;
+                let destination = usize::from(instruction.result_register());
+                match state[local] {
+                    NumericFlowKind::Number => {
+                        let value = builder.use_var(numeric_variables[local]);
+                        builder.def_var(numeric_variables[destination], value);
+                    }
+                    NumericFlowKind::Boolean => {
+                        let value = builder.use_var(boolean_variables[local]);
+                        builder.def_var(boolean_variables[destination], value);
+                    }
+                    _ => return None,
+                }
+                builder.ins().jump(*blocks.get(pc.checked_add(1)?)?, &[]);
+            }
+            Op::StoreLocalPlain => {
+                let source = usize::from(instruction.register_a());
+                let local = registers.checked_add(instruction.local_slot())?;
+                match state[source] {
+                    NumericFlowKind::Number => {
+                        let value = builder.use_var(numeric_variables[source]);
+                        builder.def_var(numeric_variables[local], value);
+                        if let Some(register) = instruction.optional_register_b() {
+                            builder.def_var(numeric_variables[usize::from(register)], value);
+                        }
+                    }
+                    NumericFlowKind::Boolean => {
+                        let value = builder.use_var(boolean_variables[source]);
+                        builder.def_var(boolean_variables[local], value);
+                        if let Some(register) = instruction.optional_register_b() {
+                            builder.def_var(boolean_variables[usize::from(register)], value);
+                        }
+                    }
+                    _ => return None,
+                }
+                builder.ins().jump(*blocks.get(pc.checked_add(1)?)?, &[]);
+            }
+            Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
+                let left = numeric_loop_operand(
+                    &mut builder,
+                    program,
+                    &state,
+                    &numeric_variables,
+                    registers,
+                    instruction.operand_b(),
+                )?;
+                let right = numeric_loop_operand(
+                    &mut builder,
+                    program,
+                    &state,
+                    &numeric_variables,
+                    registers,
+                    instruction.operand_c(),
+                )?;
+                let operator = instruction.binary_operator();
+                let value = match (instruction.op(), operator) {
+                    (Op::Binary, value) if value == BinaryOperator::Addition as u32 => {
+                        let result = builder.ins().fadd(left, right);
+                        Some((NumericFlowKind::Number, result))
+                    }
+                    (Op::Binary, value) if value == BinaryOperator::Subtraction as u32 => {
+                        let result = builder.ins().fsub(left, right);
+                        Some((NumericFlowKind::Number, result))
+                    }
+                    (Op::Binary, value) if value == BinaryOperator::Multiplication as u32 => {
+                        let result = builder.ins().fmul(left, right);
+                        Some((NumericFlowKind::Number, result))
+                    }
+                    (Op::Binary, value) if value == BinaryOperator::Division as u32 => {
+                        let result = builder.ins().fdiv(left, right);
+                        Some((NumericFlowKind::Number, result))
+                    }
+                    (Op::Binary, value)
+                        if value == BinaryOperator::BitwiseOR as u32
+                            || value == BinaryOperator::BitwiseXOR as u32
+                            || value == BinaryOperator::BitwiseAnd as u32
+                            || value == BinaryOperator::ShiftLeft as u32
+                            || value == BinaryOperator::ShiftRight as u32
+                            || value == BinaryOperator::ShiftRightZeroFill as u32 =>
+                    {
+                        let left = numeric_to_i32(&mut builder, left);
+                        let right = numeric_to_i32(&mut builder, right);
+                        let shift = builder.ins().band_imm_u(right, 31);
+                        let integer = match value {
+                            value if value == BinaryOperator::BitwiseOR as u32 => {
+                                builder.ins().bor(left, right)
+                            }
+                            value if value == BinaryOperator::BitwiseXOR as u32 => {
+                                builder.ins().bxor(left, right)
+                            }
+                            value if value == BinaryOperator::BitwiseAnd as u32 => {
+                                builder.ins().band(left, right)
+                            }
+                            value if value == BinaryOperator::ShiftLeft as u32 => {
+                                builder.ins().ishl(left, shift)
+                            }
+                            value if value == BinaryOperator::ShiftRight as u32 => {
+                                builder.ins().sshr(left, shift)
+                            }
+                            _ => builder.ins().ushr(left, shift),
+                        };
+                        let result = if value == BinaryOperator::ShiftRightZeroFill as u32 {
+                            let unsigned = builder.ins().uextend(types::I64, integer);
+                            builder.ins().fcvt_from_uint(types::F64, unsigned)
+                        } else {
+                            builder.ins().fcvt_from_sint(types::F64, integer)
+                        };
+                        Some((NumericFlowKind::Number, result))
+                    }
+                    (Op::NumericAdd, value) if value == BinaryOperator::Addition as u32 => {
+                        let result = builder.ins().fadd(left, right);
+                        Some((NumericFlowKind::Number, result))
+                    }
+                    (Op::NumericMultiply, value)
+                        if value == BinaryOperator::Multiplication as u32 =>
+                    {
+                        let result = builder.ins().fmul(left, right);
+                        Some((NumericFlowKind::Number, result))
+                    }
+                    (Op::Binary, value)
+                        if super::operations::NumberRelation::from_operator(value).is_some() =>
+                    {
+                        let condition =
+                            builder.ins().fcmp(numeric_relation_cc(value)?, left, right);
+                        let one = builder.ins().iconst(types::I8, 1);
+                        let zero = builder.ins().iconst(types::I8, 0);
+                        let result = builder.ins().select(condition, one, zero);
+                        Some((NumericFlowKind::Boolean, result))
+                    }
+                    _ => return None,
+                };
+                let (kind, value) = value?;
+                if instruction.returns_from_frame() {
+                    if kind != NumericFlowKind::Number {
+                        return None;
+                    }
+                    let complete = builder.ins().iconst(types::I32, 1);
+                    builder
+                        .ins()
+                        .store(ir::MemFlagsData::trusted(), complete, status, 0);
+                    builder.ins().return_(&[value]);
+                    continue;
+                }
+                let destination = match instruction.numeric_local_target() {
+                    Some(local) => registers.checked_add(usize::from(local))?,
+                    None => usize::from(instruction.result_register()),
+                };
+                match kind {
+                    NumericFlowKind::Number => {
+                        builder.def_var(numeric_variables[destination], value)
+                    }
+                    NumericFlowKind::Boolean => {
+                        builder.def_var(boolean_variables[destination], value)
+                    }
+                    _ => return None,
+                }
+                builder.ins().jump(*blocks.get(pc.checked_add(1)?)?, &[]);
+            }
+            Op::Jump => {
+                let target = usize::try_from(instruction.jump_target()).ok()?;
+                emit_numeric_loop_backedge_poll(
+                    &mut builder,
+                    pc,
+                    target,
+                    interrupt,
+                    status,
+                    interrupt_exit,
+                    backedge_counter,
+                    &blocks,
+                )?;
+            }
+            Op::JumpFalse | Op::JumpTrue => {
+                let register = usize::from(instruction.register_a());
+                let truthy = match state[register] {
+                    NumericFlowKind::Boolean => {
+                        let condition = builder.use_var(boolean_variables[register]);
+                        builder.ins().icmp_imm_u(
+                            cranelift_codegen::ir::condcodes::IntCC::NotEqual,
+                            condition,
+                            0,
+                        )
+                    }
+                    NumericFlowKind::Number => {
+                        let value = builder.use_var(numeric_variables[register]);
+                        let zero = builder.ins().f64const(Ieee64::with_bits(0.0f64.to_bits()));
+                        let less = builder.ins().fcmp(FloatCC::LessThan, value, zero);
+                        let greater = builder.ins().fcmp(FloatCC::GreaterThan, value, zero);
+                        builder.ins().bor(less, greater)
+                    }
+                    _ => return None,
+                };
+                let target = usize::try_from(instruction.jump_target()).ok()?;
+                let (then_pc, else_pc) = if instruction.op() == Op::JumpFalse {
+                    (pc.checked_add(1)?, target)
+                } else {
+                    (target, pc.checked_add(1)?)
+                };
+                emit_numeric_loop_conditional(
+                    &mut builder,
+                    pc,
+                    then_pc,
+                    else_pc,
+                    truthy,
+                    interrupt,
+                    status,
+                    interrupt_exit,
+                    backedge_counter,
+                    &blocks,
+                )?;
+            }
+            Op::JumpBinaryFalse => {
+                let left = numeric_loop_operand(
+                    &mut builder,
+                    program,
+                    state,
+                    &numeric_variables,
+                    registers,
+                    instruction.operand_b(),
+                )?;
+                let right = numeric_loop_operand(
+                    &mut builder,
+                    program,
+                    state,
+                    &numeric_variables,
+                    registers,
+                    instruction.operand_c(),
+                )?;
+                let condition = builder.ins().fcmp(
+                    numeric_relation_cc(instruction.binary_operator_field())?,
+                    left,
+                    right,
+                );
+                let target = usize::try_from(instruction.jump_target()).ok()?;
+                emit_numeric_loop_conditional(
+                    &mut builder,
+                    pc,
+                    pc.checked_add(1)?,
+                    target,
+                    condition,
+                    interrupt,
+                    status,
+                    interrupt_exit,
+                    backedge_counter,
+                    &blocks,
+                )?;
+            }
+            Op::Return => {
+                let result =
+                    builder.use_var(numeric_variables[usize::from(instruction.register_a())]);
+                let complete = builder.ins().iconst(types::I32, 1);
+                builder
+                    .ins()
+                    .store(ir::MemFlagsData::trusted(), complete, status, 0);
+                builder.ins().return_(&[result]);
+            }
+            _ => return None,
+        }
+    }
+
+    builder.switch_to_block(interrupt_exit);
+    let interrupted = builder.ins().iconst(types::I32, 0);
+    builder.ins().store(
+        ir::MemFlagsData::trusted(),
+        interrupted,
+        interrupt_status,
+        0,
+    );
+    let no_result = builder.ins().f64const(Ieee64::with_bits(0.0f64.to_bits()));
+    builder.ins().return_(&[no_result]);
+    builder.seal_all_blocks();
+    builder.finalize(isa.frontend_config());
+    let mut context = cranelift_codegen::Context::for_function(native);
+    let compiled = context
+        .compile(
+            &*isa,
+            &mut cranelift_codegen::control::ControlPlane::default(),
+        )
+        .ok()?;
+    if !compiled.buffer.relocs().is_empty() {
+        return None;
+    }
+    let code = compiled.code_buffer().to_vec();
+    if code.is_empty() || code.len() > MAX_CODE_BYTES {
+        return None;
+    }
+    Some(JsJitArtifact {
+        code,
+        params,
+        result: JsJitResultKind::NumberInterruptible,
+    })
+}
+
+fn numeric_flow_operand(
+    program: &ResidualProgram,
+    state: &[NumericFlowKind],
+    registers: usize,
+    operand: crate::bytecode::Operand,
+) -> Option<NumericFlowKind> {
+    match operand.kind()? {
+        OperandKind::Register => {
+            let kind = *state.get(usize::from(operand.register_index()?))?;
+            matches!(kind, NumericFlowKind::Number | NumericFlowKind::Boolean).then_some(kind)
+        }
+        OperandKind::Constant => matches!(
+            program.constants.get(usize::from(operand.payload()))?,
+            Constant::Number(_)
+        )
+        .then_some(NumericFlowKind::Number),
+        OperandKind::Local => {
+            let local = usize::try_from(operand.payload()).ok()?;
+            let kind = *state.get(registers.checked_add(local)?)?;
+            matches!(kind, NumericFlowKind::Number | NumericFlowKind::Boolean).then_some(kind)
+        }
+        OperandKind::Field => None,
+    }
+}
+
+fn numeric_loop_operand(
+    builder: &mut FunctionBuilder<'_>,
+    program: &ResidualProgram,
+    state: &[NumericFlowKind],
+    variables: &[cranelift_frontend::Variable],
+    registers: usize,
+    operand: crate::bytecode::Operand,
+) -> Option<ir::Value> {
+    match operand.kind()? {
+        OperandKind::Register => {
+            let register = usize::from(operand.register_index()?);
+            if state.get(register).copied()? != NumericFlowKind::Number {
+                return None;
+            }
+            Some(builder.use_var(*variables.get(register)?))
+        }
+        OperandKind::Constant => {
+            let Constant::Number(value) = program.constants.get(usize::from(operand.payload()))?
+            else {
+                return None;
+            };
+            Some(builder.ins().f64const(Ieee64::with_bits(value.to_bits())))
+        }
+        OperandKind::Local => {
+            let local = registers.checked_add(usize::try_from(operand.payload()).ok()?)?;
+            if state.get(local).copied()? != NumericFlowKind::Number {
+                return None;
+            }
+            Some(builder.use_var(*variables.get(local)?))
+        }
+        OperandKind::Field => None,
+    }
+}
+
+/// Apply ECMAScript ToUint32 modulo conversion to an already numeric value.
+/// Reducing before the saturating conversion preserves wraparound for large
+/// finite values and maps NaN and infinities to zero.
+fn numeric_to_i32(builder: &mut FunctionBuilder<'_>, value: ir::Value) -> ir::Value {
+    let modulus = builder
+        .ins()
+        .f64const(Ieee64::with_bits(4_294_967_296.0f64.to_bits()));
+    let quotient = builder.ins().fdiv(value, modulus);
+    let quotient = builder.ins().trunc(quotient);
+    let product = builder.ins().fmul(quotient, modulus);
+    let reduced = builder.ins().fsub(value, product);
+    let truncated = builder.ins().fcvt_to_sint_sat(types::I64, reduced);
+    builder.ins().ireduce(types::I32, truncated)
+}
+
+fn numeric_relation_cc(operator: u32) -> Option<FloatCC> {
+    Some(
+        match super::operations::NumberRelation::from_operator(operator)? {
+            super::operations::NumberRelation::Equal => FloatCC::Equal,
+            super::operations::NumberRelation::NotEqual => FloatCC::NotEqual,
+            super::operations::NumberRelation::LessThan => FloatCC::LessThan,
+            super::operations::NumberRelation::LessEqual => FloatCC::LessThanOrEqual,
+            super::operations::NumberRelation::GreaterThan => FloatCC::GreaterThan,
+            super::operations::NumberRelation::GreaterEqual => FloatCC::GreaterThanOrEqual,
+        },
+    )
+}
+
+fn emit_numeric_loop_backedge_poll(
+    builder: &mut FunctionBuilder<'_>,
+    pc: usize,
+    target: usize,
+    interrupt: ir::Value,
+    status: ir::Value,
+    interrupt_exit: ir::Block,
+    backedge_counter: cranelift_frontend::Variable,
+    blocks: &[ir::Block],
+) -> Option<()> {
+    if target <= pc {
+        emit_numeric_loop_interrupt_gate(
+            builder,
+            interrupt,
+            status,
+            interrupt_exit,
+            backedge_counter,
+        );
+    }
+    builder.ins().jump(*blocks.get(target)?, &[]);
+    Some(())
+}
+
+fn emit_numeric_loop_conditional(
+    builder: &mut FunctionBuilder<'_>,
+    pc: usize,
+    then_pc: usize,
+    else_pc: usize,
+    condition: ir::Value,
+    interrupt: ir::Value,
+    status: ir::Value,
+    interrupt_exit: ir::Block,
+    backedge_counter: cranelift_frontend::Variable,
+    blocks: &[ir::Block],
+) -> Option<()> {
+    if then_pc <= pc || else_pc <= pc {
+        emit_numeric_loop_interrupt_gate(
+            builder,
+            interrupt,
+            status,
+            interrupt_exit,
+            backedge_counter,
+        );
+    }
+    builder.ins().brif(
+        condition,
+        *blocks.get(then_pc)?,
+        &[],
+        *blocks.get(else_pc)?,
+        &[],
+    );
+    Some(())
+}
+
+/// Count backedges cheaply and load the shared cancellation flag once every
+/// 1024 iterations, keeping interrupt latency bounded without an atomic load
+/// on every numeric loop iteration.
+fn emit_numeric_loop_interrupt_gate(
+    builder: &mut FunctionBuilder<'_>,
+    interrupt: ir::Value,
+    status: ir::Value,
+    interrupt_exit: ir::Block,
+    backedge_counter: cranelift_frontend::Variable,
+) {
+    let count = builder.use_var(backedge_counter);
+    let count = builder.ins().iadd_imm_s(count, 1);
+    builder.def_var(backedge_counter, count);
+    let interval = builder.ins().band_imm_u(count, 1023);
+    let check =
+        builder
+            .ins()
+            .icmp_imm_u(cranelift_codegen::ir::condcodes::IntCC::Equal, interval, 0);
+    let poll = builder.create_block();
+    let skip = builder.create_block();
+    builder.ins().brif(check, poll, &[], skip, &[]);
+    builder.switch_to_block(poll);
+    let requested = builder
+        .ins()
+        .atomic_load(types::I8, ir::MemFlagsData::trusted(), interrupt);
+    let cancelled = builder.ins().icmp_imm_u(
+        cranelift_codegen::ir::condcodes::IntCC::NotEqual,
+        requested,
+        0,
+    );
+    let continue_loop = builder.create_block();
+    builder.ins().brif(
+        cancelled,
+        interrupt_exit,
+        &[ir::BlockArg::Value(status)],
+        continue_loop,
+        &[],
+    );
+    builder.switch_to_block(continue_loop);
+    builder.ins().jump(skip, &[]);
+    builder.switch_to_block(skip);
 }
 
 /// Compile a forward-only decision tree whose conditions compare Numbers and
@@ -1141,8 +2393,9 @@ fn comparison(
     registers: &[cranelift_frontend::Variable],
     strings: &[Option<StringJitRegister>],
 ) -> Option<ir::Value> {
-    // A conditional jump's operator is its first field; the immediate is the target.
-    let relation = super::operations::NumberRelation::from_operator(instruction.binary_operator_field())?;
+    let relation = super::operations::NumberRelation::from_operator(instruction_binary_operator(
+        instruction,
+    )?)?;
     let code = match relation {
         super::operations::NumberRelation::LessThan => FloatCC::LessThan,
         super::operations::NumberRelation::LessEqual => FloatCC::LessThanOrEqual,

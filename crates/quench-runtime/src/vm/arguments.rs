@@ -8,7 +8,7 @@ impl<H: Host> Vm<H> {
         slot: usize,
         fallback: Value,
     ) -> Value {
-        let function = &p.functions[self.frames[frame].function as usize];
+        let function = &p.function(self.frames[frame].function as usize);
         let Some(argument_slot) = mapped_arguments_slot(function, slot) else {
             return fallback;
         };
@@ -32,7 +32,7 @@ impl<H: Host> Vm<H> {
         slot: usize,
         value: Value,
     ) {
-        let function = &p.functions[self.frames[frame].function as usize];
+        let function = &p.function(self.frames[frame].function as usize);
         let Some(argument_slot) = mapped_arguments_slot(function, slot) else {
             return;
         };
@@ -50,7 +50,7 @@ impl<H: Host> Vm<H> {
         slot: usize,
         value: Value,
     ) {
-        let function = &p.functions[function as usize];
+        let function = &p.function(function as usize);
         let Some(argument_slot) = mapped_arguments_slot(function, slot) else {
             return;
         };
@@ -119,7 +119,7 @@ impl<H: Host> Vm<H> {
         let Some(function) = self
             .programs
             .residual(frame.program)
-            .and_then(|program| program.functions.get(frame.function as usize))
+            .and_then(|program| program.function_get(frame.function as usize))
         else {
             return false;
         };
