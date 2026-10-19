@@ -4994,8 +4994,11 @@ lane_handler! {
             sibling!(lane_script_construct_keeping::<H>, r, ip, Carried::SCRIPT)
         }
         let built = if target.initializes {
-            // SAFETY: the context's program outlives the lane run.
-            lane_initialize_fields(vm, unsafe { &*(*cx).code }, callee, target.function, r, i)
+            match lane_planned_construction(vm, callee, r, i) {
+                Some(this) => Some((this, true)),
+                // SAFETY: the context's program outlives the lane run.
+                None => lane_initialize_fields(vm, unsafe { &*(*cx).code }, callee, target.function, r, i),
+            }
         } else {
             vm.inline_construct_receiver(callee).map(|this| (this, false))
         };
@@ -5482,8 +5485,9 @@ fn lane_activate<H: Host>(
 /// miss the constructor activates on the receiver: its body repeats the stores made so far
 /// as stores of the same values to the own data properties they added, which leaves the
 /// object as one activation would. A body whose adds all hit leaves its `ConstructPlan`,
-/// with which a later construct allocates the finished object at once. Out of line, so the
-/// construct keeps its tail dispatch.
+/// with which a later construct allocates the finished object at once
+/// (`lane_planned_construction`), which comes first. Out of line, so the construct keeps
+/// its tail dispatch.
 #[inline(never)]
 fn lane_initialize_fields<H: Host>(
     vm: &mut Vm<H>,
@@ -5502,21 +5506,7 @@ fn lane_initialize_fields<H: Host>(
             Value::UNDEFINED
         }
     };
-    // A plan holds while its callee's layout and `prototype` do: the receiver's template is
-    // derived from those alone, and the epoch keeps the adds it planned free of setters.
     let plan_index = construct_plan_index(callee);
-    if let Some(plan) = holding_construct_plan(vm, callee) {
-        let mut values = [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS];
-        for (value, parameter) in values.iter_mut().zip(&plan.parameters[..usize::from(plan.fields)]) {
-            *value = argument(*parameter);
-        }
-        let this = vm.heap.alloc_object_with_properties(
-            plan.prototype,
-            plan.shape,
-            &values[..usize::from(plan.fields)],
-        );
-        return Some((this, true));
-    }
     let template = vm.inline_construct_template(callee)?;
     let (prototype, source_shape) = (template.proto(), template.shape());
     let this = vm.heap.alloc_object(template);
@@ -5557,6 +5547,29 @@ fn lane_initialize_fields<H: Host>(
         vm.lane_stack.construct_plans[index] = plan;
     }
     Some((this, true))
+}
+
+/// `lane_initialize_fields` while `callee`'s plan holds: the finished receiver, its fields
+/// the arguments the plan's parameters name. A plan holds while its callee's layout and
+/// `prototype` do: the receiver's template is derived from those alone, and the epoch keeps
+/// the adds it planned free of setters. Apart from the planning, whose frame is larger.
+#[inline(always)]
+fn lane_planned_construction<H: Host>(
+    vm: &mut Vm<H>,
+    callee: Value,
+    r: Registers,
+    i: &LaneInstruction,
+) -> Option<Value> {
+    let plan = holding_construct_plan(vm, callee)?;
+    let argc = ImmediateLayout::argument_count(i.imm());
+    let mut values = [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS];
+    for (value, parameter) in values.iter_mut().zip(&plan.parameters[..usize::from(plan.fields)]) {
+        // Parameter `k` is argument `k`, or undefined when not passed.
+        if *parameter < argc {
+            *value = r.get(i.c + parameter);
+        }
+    }
+    Some(vm.heap.alloc_object_with_properties(plan.prototype, plan.shape, &values[..usize::from(plan.fields)]))
 }
 
 /// The construct plan cache entry `callee` owns, when it names a heap cell.
