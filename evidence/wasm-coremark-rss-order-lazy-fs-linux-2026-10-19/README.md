@@ -86,6 +86,31 @@ Comparators in the same session (`bm`, evicted): Wasm3 3,896–4,156 KB (no-JIT 
 Winch 12.00 MB and Wasmtime 14.07 MB. No-JIT scores of the builds above stay within
 2,756–2,929 (Wasmi 2,652–2,690 today).
 
+## Campaign (`coremark-11.csv`, 11 rounds)
+
+`run-coremark-evicted.sh`: the 2026-10-17 campaign with each engine's binary evicted before
+each of its runs, one engine per process under `maxrss.c`, order rotated per round. Static
+`quench-node` from `d4beb8dfe` (the merged tree, rustc 1.99.0, the b38 order) bolted from this
+corpus's Callgrind run profiles (hash in `binaries.sha256`); Node is official v26.12.0;
+the other engines are the wasm-coremark-rs `bm` harness.
+
+| Mode | Runtime | Median Score | Range | Median max RSS |
+| -- | -- | --: | -- | --: |
+| No JIT | **quench-node** | **2,867.2** | 2,790–2,935 | **3.58 MB** |
+| No JIT | Wasmi v2 | 2,691.4 | 2,604–2,771 | 5.05 MB |
+| No JIT | Stitch | 2,005.2 | 1,896–2,039 | 4.30 MB |
+| No JIT | Wasm3 | 1,824.9 | 1,772–1,846 | 3.86 MB |
+| No JIT | WAMR | 1,718.0 | 1,687–1,764 | 4.05 MB |
+| JIT | Node v26.12.0 | **19,541.4** | 18,981–19,843 | 52.32 MB |
+| JIT | **quench-node --jit** | 18,728.9 | 18,255–19,525 | **5.23 MB** |
+| JIT | Wasmtime | 18,135.7 | 17,869–18,516 | 13.33 MB |
+| JIT | Winch | 9,306.3 | 8,440–9,681 | 11.67 MB |
+
+* **No-JIT Score: won** (1.065x Wasmi v2, ahead in 11 of 11 rounds).
+* **No-JIT max RSS: won** (3,664 KB in every round; Wasm3 3,860–4,068 KB, below it in 11 of 11).
+* **JIT max RSS: won** (5.23 MB against Winch 11.67 MB, 11 of 11).
+* **JIT Score: lost** (0.958x Node, ahead in 1 of 11); ahead of Wasmtime (1.033x).
+
 ## Page cache
 
 A binary that `llvm-bolt` (or any large sequential write) just wrote sits in the page cache
