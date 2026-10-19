@@ -172,7 +172,7 @@ fn decoder_rejects_out_of_range_local_load() {
             undefined_register: None,
             parameter_registers: None,
             initial_register: Default::default(),
-        }],
+        }.into()],
         cache_sites: 0,
         method_sites: vec![],
         method_arguments: vec![],
@@ -181,6 +181,7 @@ fn decoder_rejects_out_of_range_local_load() {
         regexp_literal_sites: vec![],
         literal_templates: Vec::new(),
         superinstructions: vec![],
+        replay: None,
     };
     let path = std::env::temp_dir().join(format!("quench-invalid-local-{}", std::process::id()));
     program.write_binary(&path).unwrap();
@@ -253,7 +254,7 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
             undefined_register: None,
             parameter_registers: None,
             initial_register: Default::default(),
-        }],
+        }.into()],
         cache_sites: 0,
         method_sites: vec![],
         method_arguments: vec![],
@@ -262,6 +263,7 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
         regexp_literal_sites: vec![],
         literal_templates: Vec::new(),
         superinstructions: vec![],
+        replay: None,
     };
     let path = std::env::temp_dir().join(format!("quench-invalid-abi-{}", std::process::id()));
     program.write_binary(&path).unwrap();
@@ -292,7 +294,7 @@ fn decoder_rejects_unknown_property_definition_modes() {
         ));
         program.write_binary(&path).unwrap();
         ResidualProgram::read_binary(&path).unwrap();
-        let function = program
+        let function: &mut Function = program
             .functions
             .iter_mut()
             .find(|f| f.code.iter().any(|i| i.op() == Op::DefinePropertyRecord))
