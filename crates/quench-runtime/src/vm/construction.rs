@@ -40,7 +40,7 @@ impl<H: Host> Vm<H> {
         };
         match origin {
             Origin::Bound(env) => {
-                let target_atom = self.intern_atom("\0quench:bound-target");
+                let target_atom = self.runtime_atoms.bound_target;
                 let target = self
                     .own_property(env, target_atom)
                     .unwrap_or(Value::UNDEFINED);
@@ -93,11 +93,19 @@ impl<H: Host> Vm<H> {
     /// The string value spelling `atom`, shared for program atoms and the anonymous name.
     /// Other dynamic atoms grow with guest input, so their strings stay collectable.
     pub(super) fn atom_string(&mut self, atom: Atom) -> Value {
+        let keep = (atom as usize) < self.atom_text.len() || atom == self.runtime_atoms.empty;
+        self.atom_string_kept(atom, keep)
+    }
+
+    /// `atom`'s string, kept for the next request when `keep` holds. Program atoms are kept
+    /// always; a dynamic atom is kept only where its kind bounds how many there can be, as a
+    /// function's name is.
+    fn atom_string_kept(&mut self, atom: Atom, keep: bool) -> Value {
         if let Some(&value) = self.atom_strings.get(&atom) {
             return value;
         }
         let value = self.heap.alloc(Cell::String(self.atom_value(atom)));
-        if (atom as usize) < self.atom_text.len() || atom == self.runtime_atoms.empty {
+        if keep {
             self.atom_strings.insert(atom, value);
         }
         value
@@ -165,8 +173,7 @@ impl<H: Host> Vm<H> {
                     let Cell::Function { env, .. } = cell else {
                         return false;
                     };
-                    self.lookup_atom("\0quench:bound-target")
-                        .and_then(|atom| self.own_property(*env, atom))
+                    self.own_property(*env, self.runtime_atoms.bound_target)
                         .is_some_and(|target| self.is_constructable(p, target))
                 }
                 FunctionKind::Native(native) => matches!(
@@ -351,7 +358,9 @@ impl<H: Host> Vm<H> {
             );
         }
         let plan_name = function_plan.name.or(function_plan.inferred_name);
-        let name_value = self.atom_string(plan_name.unwrap_or(self.runtime_atoms.empty));
+        // Names are the compiled functions' own, so keeping each one's string is bounded by
+        // the code loaded, while every closure of a module function would otherwise make one.
+        let name_value = self.atom_string_kept(plan_name.unwrap_or(self.runtime_atoms.empty), true);
         let length_value = Value::number(function_plan.length as f64);
         // An ordinary closure's own properties and its prototype's `constructor` take the
         // shapes the first one recorded; every other closure defines them one by one.
@@ -552,8 +561,8 @@ impl<H: Host> Vm<H> {
                         Some(Cell::Function { env, .. }) => *env,
                         _ => return Err(vm.type_error(p, "invalid bound function".into())),
                     };
-                    let target_atom = vm.intern_atom("\0quench:bound-target");
-                    let args_atom = vm.intern_atom("\0quench:bound-args");
+                    let target_atom = vm.runtime_atoms.bound_target;
+                    let args_atom = vm.runtime_atoms.bound_args;
                     let target = vm
                         .own_property(env, target_atom)
                         .ok_or_else(|| vm.type_error(p, "invalid bound function".into()))?;
@@ -704,14 +713,15 @@ impl<H: Host> Vm<H> {
         Some((id, env, self.inline_construct_receiver(callee)?))
     }
 
-    /// A body whose [[Construct]] the dispatch loop may push in place: an ordinary
-    /// constructible function that binds its receiver itself, with no class semantics.
+    /// A body whose [[Construct]] the dispatch loop may push in place: a constructible
+    /// function that binds its receiver itself. A base class constructor qualifies, since its
+    /// `this` is the new object from entry and its fields are a call its own body makes; a
+    /// derived one binds `this` at `super()`, which also runs its `instance_initializer`.
     pub(super) fn inline_constructible(function: &crate::bytecode::Function) -> bool {
         function.dispatch == DispatchClass::General
             && function.constructible
             && !function.is_async
             && !function.is_generator
-            && !function.is_class_constructor
             && !function.derived_constructor
             && !function.class_initializer
             && !function.parameter_eval_arguments_error
