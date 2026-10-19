@@ -1574,9 +1574,7 @@ lane_handler! {
         let value = if ImmediateLayout::capture_depth(imm) == 0 && !slots.is_null() {
             // SAFETY: the running function's dense capture slots, found this run
             // (`LaneContext::capture`).
-            (unsafe { &*slots })
-                .dense_owned(usize::from(ImmediateLayout::capture_slot(imm)))
-                .filter(|value| !value.is_deleted())
+            (unsafe { &*slots }).dense_plain(usize::from(ImmediateLayout::capture_slot(imm)))
         } else {
             None
         };
