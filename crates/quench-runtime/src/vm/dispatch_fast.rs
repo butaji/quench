@@ -342,13 +342,15 @@ enum ActivationArguments {
 }
 
 /// A user function a lane `Call` may activate without a frame, valid as the general loop's
-/// `InLoopCallTarget` is: for `callee` while the collection epoch, realm and program it was
-/// resolved under hold, which its `generation` names.
+/// `InLoopCallTarget` is: for `callee` while the collection epoch and realm it was resolved
+/// under hold, which its `generation` names, and only from `program`, the callee's own,
+/// since every lane call stays within the running program.
 #[derive(Clone, Copy)]
 pub(super) struct ScriptCallTarget {
     callee: Value,
     /// The `LaneStack::generation` it was resolved in.
     generation: u64,
+    program: ProgramId,
     function: u32,
     env: Value,
     view: *const LaneView,
@@ -370,6 +372,7 @@ pub(super) struct ScriptCallTarget {
 const EMPTY_SCRIPT_CALL_TARGET: ScriptCallTarget = ScriptCallTarget {
     callee: Value::UNDEFINED,
     generation: NO_SCRIPT_GENERATION,
+    program: ProgramId::MAIN,
     function: 0,
     env: Value::UNDEFINED,
     view: std::ptr::null(),
@@ -384,6 +387,18 @@ const EMPTY_SCRIPT_CALL_TARGET: ScriptCallTarget = ScriptCallTarget {
 
 /// Entries of the script call cache, indexed by the callee's heap index.
 const SCRIPT_CALL_TARGETS: usize = 256;
+
+/// A callee that has no frameless target while `generation` and `program` hold: its calls
+/// take the general path without resolving it again.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct RejectedCallTarget {
+    callee: Value,
+    generation: u64,
+    program: ProgramId,
+}
+
+const NO_REJECTED_CALL_TARGET: RejectedCallTarget =
+    RejectedCallTarget { callee: Value::UNDEFINED, generation: NO_SCRIPT_GENERATION, program: ProgramId::MAIN };
 
 /// What a constructor's initializer body (`ScriptCallTarget::initializes`) made of a receiver
 /// whose adds all hit: the callee's receiver template under `prototype`, which the callee and
@@ -436,13 +451,17 @@ pub(super) struct LaneStack {
     activations: Vec<Activation>,
     /// Resolved targets of lane `Call` records (`Vm::script_call_target`).
     script_targets: Box<[ScriptCallTarget; SCRIPT_CALL_TARGETS]>,
+    /// Callees `Vm::resolve_script_call_target` found no frameless target for, by the same
+    /// index, with the generation and program that answer held under.
+    rejected_targets: Box<[RejectedCallTarget; SCRIPT_CALL_TARGETS]>,
     /// Initializer constructors' plans (`lane_initialize_fields`).
     construct_plans: Box<[ConstructPlan; CONSTRUCT_PLANS]>,
-    /// Names the collection epoch, realm and program of the running lane, which no lane
-    /// instruction changes: a target resolved under another generation is stale.
+    /// Names the collection epoch and realm of the running lane, which no lane instruction
+    /// changes: a target resolved under another generation is stale. Lane runs move between
+    /// programs far more often than either changes, so each target names its program instead.
     generation: u64,
-    /// The epoch, realm and program `generation` names.
-    generation_key: (u64, Value, ProgramId),
+    /// The epoch and realm `generation` names.
+    generation_key: (u64, Value),
 }
 
 /// A generation no lane runs under: an empty target entry never matches.
@@ -454,9 +473,10 @@ impl Default for LaneStack {
             values: Vec::new(),
             activations: Vec::new(),
             script_targets: Box::new([EMPTY_SCRIPT_CALL_TARGET; SCRIPT_CALL_TARGETS]),
+            rejected_targets: Box::new([NO_REJECTED_CALL_TARGET; SCRIPT_CALL_TARGETS]),
             construct_plans: Box::new([EMPTY_CONSTRUCT_PLAN; CONSTRUCT_PLANS]),
             generation: NO_SCRIPT_GENERATION,
-            generation_key: (0, Value::UNDEFINED, ProgramId::MAIN),
+            generation_key: (0, Value::UNDEFINED),
         }
     }
 }
@@ -465,6 +485,7 @@ impl LaneStack {
     /// Forget resolved call targets, as the general loop's call target cache is reset.
     pub(super) fn clear_script_targets(&mut self) {
         *self.script_targets = [EMPTY_SCRIPT_CALL_TARGET; SCRIPT_CALL_TARGETS];
+        *self.rejected_targets = [NO_REJECTED_CALL_TARGET; SCRIPT_CALL_TARGETS];
     }
 
     /// Push `activation` onto the stack's reserved capacity, without `Vec::push`'s growth.
@@ -485,7 +506,7 @@ impl LaneStack {
 
     /// The generation of a lane run under `key`: the current one while the key holds, else
     /// a new one, which retires every target resolved before.
-    fn enter_generation(&mut self, key: (u64, Value, ProgramId)) {
+    fn enter_generation(&mut self, key: (u64, Value)) {
         if self.generation == NO_SCRIPT_GENERATION || self.generation_key != key {
             self.generation += 1;
             self.generation_key = key;
@@ -3955,13 +3976,14 @@ impl<H: Host> Vm<H> {
     fn script_call_target(&self, callee: Value) -> Option<ScriptCallTarget> {
         let index = callee.heap_index()? as usize & (SCRIPT_CALL_TARGETS - 1);
         let cached = self.lane_stack.script_targets[index];
-        (cached.callee == callee && cached.generation == self.lane_stack.generation)
+        (cached.callee == callee
+            && cached.generation == self.lane_stack.generation
+            && cached.program == self.active_program)
             .then_some(cached)
     }
 
-    /// Resolve and cache `callee` as a frameless lane call target: a user function of the
-    /// active program whose activation is its registers, plus the values it was passed when
-    /// it forwards them (`CallPlan::registers_only`).
+    /// Resolve and cache `callee` as a frameless lane call target, remembering a callee that
+    /// has none (`LaneStack::rejected_targets`).
     #[inline(never)]
     fn resolve_script_call_target(
         &mut self,
@@ -3969,6 +3991,30 @@ impl<H: Host> Vm<H> {
         callee: Value,
     ) -> Option<ScriptCallTarget> {
         let index = callee.heap_index()? as usize & (SCRIPT_CALL_TARGETS - 1);
+        let rejected = RejectedCallTarget {
+            callee,
+            generation: self.lane_stack.generation,
+            program: self.active_program,
+        };
+        if self.lane_stack.rejected_targets[index] == rejected {
+            return None;
+        }
+        let target = self.frameless_call_target(code, callee, index);
+        if target.is_none() {
+            self.lane_stack.rejected_targets[index] = rejected;
+        }
+        target
+    }
+
+    /// `resolve_script_call_target`'s answer: a user function of the active program whose
+    /// activation is its registers, plus the values it was passed when it forwards them
+    /// (`CallPlan::registers_only`), cached at `index`.
+    fn frameless_call_target(
+        &mut self,
+        code: &ResidualProgram,
+        callee: Value,
+        index: usize,
+    ) -> Option<ScriptCallTarget> {
         let (program, function, env) = self.same_realm_user_target(callee)?;
         if function == super::ROOT_FUNCTION_ID || program != self.active_program {
             return None;
@@ -3987,6 +4033,7 @@ impl<H: Host> Vm<H> {
         let target = ScriptCallTarget {
             callee,
             generation: self.lane_stack.generation,
+            program,
             function,
             env,
             view,
@@ -6673,11 +6720,7 @@ impl<H: Host> Vm<H> {
             stack_pointer().saturating_sub(LANE_STACK_SLACK)
         };
         let outer_floor = LANE_FLOOR.with(|current| current.replace(floor));
-        self.lane_stack.enter_generation((
-            self.heap.collection_epoch(),
-            self.realm.globals,
-            self.active_program,
-        ));
+        self.lane_stack.enter_generation((self.heap.collection_epoch(), self.realm.globals));
         let mut context = LaneContext {
             vm: self,
             code,
