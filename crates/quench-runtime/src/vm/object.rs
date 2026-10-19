@@ -1761,6 +1761,11 @@ impl<H: Host> Vm<H> {
     /// Records the accessor a field read at `site` meets on `object`'s immediate prototype,
     /// when shapes answer both lookups and `object` holds no own `atom`.
     fn record_accessor_field_cache(&mut self, object: Value, atom: Atom, site: usize) {
+        // The shared overflow site serves reads of every atom; an entry there would answer
+        // one name's read with another's getter.
+        if !self.field_cache_records(site) {
+            return;
+        }
         let Some(receiver) = self.shape_property_lookup(object, atom) else {
             return;
         };

@@ -1494,6 +1494,9 @@ type MethodSiteSpec = (Atom, u16, Vec<Register>, Option<(Atom, u16)>);
 /// Byte offset of each non-ASCII character of `text` with the running excess of UTF-8 bytes
 /// over UTF-16 units through it.
 fn source_utf16_excess(text: &str) -> Vec<(usize, usize)> {
+    if text.is_ascii() {
+        return Vec::new();
+    }
     let mut excess = 0;
     text.char_indices()
         .filter(|(_, character)| !character.is_ascii())

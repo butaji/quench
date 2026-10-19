@@ -65,6 +65,16 @@ impl<H: Host> Vm<H> {
         self.find_atom(hash, |atom| self.atom_units_equal(atom, name.units()))
     }
 
+    /// The text of `atom` as it is held: a host string, or the units of an atom added later.
+    pub(super) fn atom_text(&self, atom: Atom) -> AtomText<'_> {
+        let index = atom as usize;
+        if index < self.atom_text.len() {
+            AtomText::Host(&self.atom_text[index])
+        } else {
+            AtomText::Js(self.dynamic_atom(index))
+        }
+    }
+
     pub(super) fn atom_value(&self, atom: Atom) -> JsString {
         let index = atom as usize;
         if index < self.atom_text.len() {
@@ -112,4 +122,10 @@ impl<H: Host> crate::compile::AtomPrefix for Vm<H> {
     fn specialized(&self) -> bool {
         self.specialized
     }
+}
+
+/// How an atom's text is held (`Vm::atom_text`).
+pub(super) enum AtomText<'a> {
+    Host(&'a str),
+    Js(&'a JsString),
 }
