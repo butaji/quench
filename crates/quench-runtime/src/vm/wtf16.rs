@@ -761,7 +761,7 @@ impl JsString {
                 let mut written = 0;
                 inner.for_each_run(|run| {
                     if let Units::Ascii(bytes) = run {
-                        output[written..written + bytes.len()].copy_from_slice(bytes);
+                        output[written..written + bytes.len()].write_copy_of_slice(bytes);
                         written += bytes.len();
                     }
                 });
