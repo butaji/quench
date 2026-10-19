@@ -1,5 +1,5 @@
 use super::{
-    ArrayObject, Cell, EnvironmentBindings, FunctionRecord, PromiseCell, EnvironmentSlot, EnvironmentSlotState, EnvironmentSlots, Heap, Object,
+    ArrayObject, AwaitState, Cell, EnvironmentBindings, FunctionRecord, PromiseCell, EnvironmentSlot, EnvironmentSlotState, EnvironmentSlots, Heap, Object,
 };
 use crate::bytecode::Atom;
 use crate::value::{HeapReference, Value};
@@ -221,6 +221,30 @@ impl Heap {
         }
     }
 
+    /// An await state (`AwaitState`), in its record or in a slot.
+    pub(crate) fn await_state(&self, value: Value) -> Option<&AwaitState> {
+        if let Some(record_id) = value.direct_await_index() {
+            // SAFETY: a direct-await Value names an initialized await record.
+            return Some(unsafe { self.await_records.get_live(record_id) });
+        }
+        match self.get(value)? {
+            Cell::AwaitState(state) => Some(state),
+            _ => None,
+        }
+    }
+
+    /// `await_state`, mutably, past the write barrier.
+    pub(crate) fn await_state_mut(&mut self, value: Value) -> Option<&mut AwaitState> {
+        if let Some(record_id) = value.direct_await_index() {
+            // SAFETY: direct-await Values name live records; `&mut self` is exclusive.
+            return Some(unsafe { self.await_records.get_live_mut(record_id) });
+        }
+        match self.get_mut(value)? {
+            Cell::AwaitState(state) => Some(state),
+            _ => None,
+        }
+    }
+
     /// `promise`, mutably, past the write barrier.
     pub(crate) fn promise_mut(&mut self, value: Value) -> Option<&mut PromiseCell> {
         if let Some(record_id) = value.direct_promise_index() {
@@ -367,6 +391,7 @@ impl Heap {
             HeapReference::PromiseRecord(record_id) => {
                 &mut unsafe { promise_records.get_live_mut(record_id) }.object
             }
+            HeapReference::AwaitRecord(_) => return None,
             HeapReference::LegacySlot(index) => {
                 slots.get_mut(index as usize)?.cell.as_mut()?.object_mut()?
             }
@@ -470,7 +495,9 @@ impl Heap {
                 // SAFETY: the tagged Value identifies an initialized live promise record.
                 Some(&unsafe { self.promise_records.get_live(record_id) }.object)
             }
-            HeapReference::FunctionRecord(_) | HeapReference::LegacySlot(_) => None,
+            HeapReference::FunctionRecord(_)
+            | HeapReference::AwaitRecord(_)
+            | HeapReference::LegacySlot(_) => None,
         }
     }
 
@@ -493,6 +520,7 @@ impl Heap {
             Some(HeapReference::ArrayRecord(id)) => self.array_records.is_live(id),
             Some(HeapReference::FunctionRecord(id)) => self.function_records.is_live(id),
             Some(HeapReference::PromiseRecord(id)) => self.promise_records.is_live(id),
+            Some(HeapReference::AwaitRecord(id)) => self.await_records.is_live(id),
             None => false,
         }
     }
