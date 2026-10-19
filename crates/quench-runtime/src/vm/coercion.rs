@@ -42,21 +42,24 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn typeof_value(&mut self, value: Value) -> Value {
         use crate::ValueType as T;
-        let text = if self.is_html_dda(value) {
-            "undefined"
-        } else {
-            match self.value_type(value) {
-                T::Undefined => "undefined",
-                T::Null | T::Object => "object",
-                T::Boolean => "boolean",
-                T::Number => "number",
-                T::String => "string",
-                T::BigInt => "bigint",
-                T::Symbol => "symbol",
-                T::Function => "function",
-            }
+        let kind = if self.is_html_dda(value) { T::Undefined } else { self.value_type(value) };
+        let cached = self.typeof_names[kind as usize];
+        if !cached.is_undefined() {
+            return cached;
+        }
+        let text = match kind {
+            T::Undefined => "undefined",
+            T::Null | T::Object => "object",
+            T::Boolean => "boolean",
+            T::Number => "number",
+            T::String => "string",
+            T::BigInt => "bigint",
+            T::Symbol => "symbol",
+            T::Function => "function",
         };
-        self.intern_dynamic_ascii(text)
+        let name = self.intern_dynamic_ascii(text);
+        self.typeof_names[kind as usize] = name;
+        name
     }
 
     pub(super) fn to_numeric(
