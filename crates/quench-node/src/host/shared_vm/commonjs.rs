@@ -2702,7 +2702,13 @@ const getLinkedBinding = () => ({});
                         // compiling it.
                         drop(text);
                         drop(file_text);
-                        let wrapper = evaluate_wrapper(context, &prefix, &wrapper_source, &key)?;
+                        let wrapper = evaluate_wrapper(
+                            context,
+                            &prefix,
+                            &wrapper_source,
+                            &key,
+                            is_main,
+                        )?;
                         // The compiled program keeps its own source; the module body runs
                         // inside this call, so the wrapper is released before it.
                         drop(wrapper_source);
@@ -2804,10 +2810,23 @@ fn script_body(text: &str) -> &str {
     }
 }
 
-fn evaluate_wrapper(context: &mut Context<'_>, prefix: &str, source: &str, filename: &str) -> Result<RootId, RootedError> {
+/// Compiles and evaluates a CommonJS wrapper. An entry module's functions keep their compiled
+/// records: an application's own code mostly runs, so compiling it again on first call would
+/// only repeat work; the modules it loads compile their functions on first call.
+fn evaluate_wrapper(
+    context: &mut Context<'_>,
+    prefix: &str,
+    source: &str,
+    filename: &str,
+    entry: bool,
+) -> Result<RootId, RootedError> {
     let (line_offset, column_offset) = quench_runtime::wrapper_origin(prefix)
         .ok_or_else(|| RootedError::host("CommonJS wrapper origin exceeds compiler positions"))?;
-    context.evaluate_specialized_script_with_origin_rooted(source, filename, line_offset, column_offset)
+    if entry {
+        context.evaluate_entry_script_with_origin_rooted(source, filename, line_offset, column_offset)
+    } else {
+        context.evaluate_specialized_script_with_origin_rooted(source, filename, line_offset, column_offset)
+    }
 }
 
 pub(crate) fn compile_public(context: &mut Context<'_>, module: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
@@ -2818,7 +2837,7 @@ pub(crate) fn compile_public(context: &mut Context<'_>, module: RootId, args: &[
     let text = content.as_str();
     let text = if text.starts_with("#!") { text.find('\n').map_or("", |end| &text[end..]) } else { text };
     let source = [WRAPPER_PREFIX, text, WRAPPER_SUFFIX].concat();
-    let wrapper = evaluate_wrapper(context, WRAPPER_PREFIX, &source, &name)?;
+    let wrapper = evaluate_wrapper(context, WRAPPER_PREFIX, &source, &name, false)?;
     let exports = get(context, module, "exports")?;
     let require = context.host_function_with_data(super::operation("require"), module)?;
     install_resolve(context, require, module)?;

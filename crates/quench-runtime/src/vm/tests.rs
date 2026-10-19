@@ -203,9 +203,9 @@ fn promoted_locals_preserve_order_and_survive_collection() {
     );
 
     // Every binding here stays in a register, including those written inside expressions.
-    assert_eq!(program.functions[1].local_registers.len(), 3);
-    assert_eq!(program.functions[2].local_registers.len(), 1);
-    assert_eq!(program.functions[3].local_registers.len(), 1);
+    assert_eq!(program.function(1).local_registers.len(), 3);
+    assert_eq!(program.function(2).local_registers.len(), 1);
+    assert_eq!(program.function(3).local_registers.len(), 1);
 }
 
 #[test]
@@ -423,6 +423,7 @@ fn repeated_normal_closures_reuse_function_descriptor_shapes() {
         "closure-shape-transition.js",
     )
     .unwrap();
+    program.compile_released();
     let closure_id = program
         .functions
         .iter()
@@ -459,6 +460,7 @@ fn closures_share_on_demand_function_source_and_program_roots_it() {
         "closure-source-cache.js",
     )
     .unwrap();
+    program.compile_released();
     let inner = program
         .functions
         .iter()
@@ -800,6 +802,7 @@ fn loop_clones_reset_bindings_of_scopes_out_of_reach() {
         "loop-clone-reset.js",
     )
     .unwrap();
+    program.compile_released();
     let plans: Vec<_> = program
         .functions
         .iter()
@@ -2939,7 +2942,7 @@ fn module_namespace_operations_share_uninitialized_export_errors() {
             let namespace = vm.object();
             let atom = vm.intern_atom("answer");
             vm.set_property(namespace, atom, Value::UNDEFINED).unwrap();
-            let slot = program.functions[0]
+            let slot = program.function(0)
                 .local_atoms
                 .iter()
                 .position(|candidate| *candidate == atom)
@@ -2947,7 +2950,7 @@ fn module_namespace_operations_share_uninitialized_export_errors() {
             let environment = vm.heap.alloc(crate::heap::Cell::Environment {
                 parent: Value::NULL,
                 function: super::ROOT_FUNCTION_ID,
-                slots: vec![Value::DELETED; program.functions[0].local_atoms.len()]
+                slots: vec![Value::DELETED; program.function(0).local_atoms.len()]
                     .into_boxed_slice()
                     .into(),
                 scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
@@ -4711,6 +4714,7 @@ fn wasm_retirement_invalidates_register_reuse_after_shrinking() {
     // initialize the retired buffer, rather than set its length past capacity.
     let mut program =
         Engine::specialize("function identity(x) { return x; }", "retired-frame.js").unwrap();
+    program.compile_released();
     let function = &mut program.functions[1];
     function.registers = u16::MAX;
     function.register_roots = crate::bytecode::RegisterRoots::new(true);
@@ -10832,6 +10836,7 @@ fn lexical_slots_read_only_after_initialization_become_plain_and_keep_their_dead
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::new(RecordingHost(output.clone()));
     let program = Engine::specialize(source, "lexical-initialization.js").unwrap();
+    program.compile_released();
     let proven = program
         .functions
         .iter()
@@ -10869,6 +10874,7 @@ fn anonymous_function_definitions_are_named_by_their_plan() {
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::new(RecordingHost(output.clone()));
     let program = Engine::specialize(source, "named-definitions.js").unwrap();
+    program.compile_released();
     // Closures made straight into the named value are created with the name
     // (`inferred_name`); classes, computed keys and static field values are named at run time.
     for name in ["arrow", "expression", "fallback", "method"] {

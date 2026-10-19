@@ -22,10 +22,10 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         context: CallContext,
     ) -> Result<Value, JsError> {
-        if p.functions[id as usize].is_generator {
+        if p.function(id as usize).is_generator {
             return self.call_generator(p, id, env, this, args, context);
         }
-        if !p.functions[id as usize].is_async {
+        if !p.function(id as usize).is_async {
             return self.call_user(p, id, env, this, args, context);
         }
         // Init observers run before the async frame exists. Keep its incoming

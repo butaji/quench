@@ -1753,14 +1753,14 @@ impl<H: Host> Vm<H> {
         if current.function != ROOT_FUNCTION_ID {
             return;
         }
-        let Some(atom) = program.functions[ROOT_FUNCTION_ID as usize]
+        let Some(atom) = program.function(ROOT_FUNCTION_ID as usize)
             .local_atoms
             .get(slot)
             .copied()
         else {
             return;
         };
-        if program.functions[ROOT_FUNCTION_ID as usize]
+        if program.function(ROOT_FUNCTION_ID as usize)
             .global_lexical_atoms()
             .contains(&atom)
         {
@@ -1782,7 +1782,7 @@ impl<H: Host> Vm<H> {
 
     #[inline(never)]
     fn persist_root_global_lexical_bindings(&mut self, program: &ResidualProgram, frame: &Frame) {
-        let metadata = &program.functions[ROOT_FUNCTION_ID as usize];
+        let metadata = &program.function(ROOT_FUNCTION_ID as usize);
         let bindings = metadata
             .global_lexical_atoms()
             .iter()
@@ -1954,7 +1954,7 @@ impl<H: Host> Vm<H> {
     pub(crate) fn report_function_use(&self) {
         let (mut functions, mut called, mut uncalled_bytes) = (0usize, 0usize, 0usize);
         for program in self.programs.residuals() {
-            for function in &program.functions {
+            for function in program.functions.iter().filter_map(crate::bytecode::FunctionSlot::record) {
                 functions += 1;
                 if function.call_plan.get().is_some() {
                     called += 1;
@@ -2353,7 +2353,8 @@ impl<H: Host> Vm<H> {
     }
     /// Primes every looping function of an installed `program` to expand on first entry.
     fn prime_loop_decoding(program: &ResidualProgram) {
-        for function in &program.functions {
+        // A released function primes as it compiles again (`ResidualProgram::function`).
+        for function in program.functions.iter().filter_map(crate::bytecode::FunctionSlot::record) {
             function.decoded.prime_loop(&function.code, &function.wide);
         }
     }
@@ -2559,8 +2560,7 @@ impl<H: Host> Vm<H> {
                     .map_or(self.realm.globals, |function| function.realm);
                 let current_global = self.switch_realm_global(realm);
                 let result = if program
-                    .functions
-                    .get(id as usize)
+                    .function_get(id as usize)
                     .is_some_and(|function| function.is_class_constructor)
                     && !self.construct_target.is_some_and(|target| target.callee == callee)
                 {
