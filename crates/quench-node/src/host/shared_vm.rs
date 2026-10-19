@@ -39,7 +39,6 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "nodePrintEvalScript" (1) => crate::shared_run::print_eval_script,
         method "builtinExportValues" (2) => commonjs::builtin_export_values,
         method "esmWasmInstantiate" (6) => esm_wasm::instantiate,
-        method "esmWasmRead" (1) => esm_wasm::read,
         method "callbackify" (1) => crate::modules::util_callbackify_shared_vm::callbackify,
         method "gc" (0) => crate::modules::process_shared_vm::collect_garbage,
         method "utilCallbackified" (2) => crate::modules::util_callbackify_shared_vm::callbackified,
@@ -174,6 +173,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "webApisInitialize" (0) => commonjs::initialize_web_apis,
         method "webFetchInitialize" (0) => commonjs::initialize_fetch_apis,
         method "processSurfaceInitialize" (0) => commonjs::initialize_process_surface,
+        method "processReleaseInitialize" (0) => commonjs::initialize_process_release,
         method "processRawDebug" (0) => crate::modules::process_shared_vm::raw_debug,
         method "processReport" (0) => crate::modules::report_configuration_shared_vm::report,
         method "reportConfigGet" (0) => crate::modules::report_configuration_shared_vm::get,
@@ -215,6 +215,11 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "consoleLog" (0) => crate::modules::console_shared_vm::log,
         method "consoleLoad" (0) => crate::modules::console_shared_vm::load,
         method "processWarningListener" (0) => crate::modules::process_shared_vm::warning_listener,
+        method "processWarningLibrary" (1) => crate::modules::process_warning_shared_vm::library,
+        method "processWarningOption" (1) => crate::modules::process_warning_shared_vm::option,
+        method "processWarningBasename" (2) => crate::modules::process_warning_shared_vm::path_basename,
+        method "consoleWarningWriter" (0) => crate::modules::console_shared_vm::warning_writer,
+        method "consoleWarningWrite" (1) => crate::modules::console_shared_vm::warning_write,
         method "processMethodsInitialize" (0) => crate::modules::process_metrics_shared_vm::initialize_methods,
         method "processEmitWarningInitialize" (0) => crate::modules::process_shared_vm::initialize_emit_warning,
         method "processEnvInitialize" (0) => crate::modules::process_shared_vm::initialize_env,
@@ -1039,6 +1044,13 @@ impl quench_runtime::Host for NodeHost {
         crate::host::resident_pages::release_free_heap_pages();
     }
 
+    /// The pages loading, linking and instantiating the module touched leave the resident set
+    /// before the code generator's join it, as compiling the module's bytecode does
+    /// (`compile_wasm`).
+    fn before_wasm_native_compilation(&mut self) {
+        crate::host::resident_pages::release_read_only_pages();
+    }
+
     fn proper_tail_calls(&self) -> bool {
         false
     }
@@ -1081,8 +1093,9 @@ impl quench_runtime::Host for NodeHost {
         mode: quench_runtime::ExecutionMode,
     ) -> Result<quench_runtime::WasmModule, String> {
         // Decoding with validation, and lowering, each run once per module and touch code
-        // the other does not: each phase's pages leave the resident set before the next
-        // phase, and the module runs.
+        // the other does not, nor what ran before them: each phase's pages leave the
+        // resident set before the next phase, and the module runs.
+        crate::host::resident_pages::release_read_only_pages();
         let module = quench_wasm::Engine::new().compile(bytes);
         crate::host::resident_pages::release_read_only_pages();
         let module = module

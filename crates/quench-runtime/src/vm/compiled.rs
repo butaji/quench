@@ -7165,6 +7165,13 @@ impl<H: Host> Vm<H> {
         let baseline = match self.programs.compiled(program) {
             Some(compiled) => compiled,
             None => {
+                if self
+                    .programs
+                    .residual(program)
+                    .is_some_and(|code| code.kind == crate::bytecode::ProgramKind::Wasm)
+                {
+                    self.host.before_wasm_native_compilation();
+                }
                 if wasm_root_only || wasm_root_first {
                     // This explicit diagnostic mode compiles only the
                     // function named by QUENCH_WASM_JIT_ROOT. Root-only mode
