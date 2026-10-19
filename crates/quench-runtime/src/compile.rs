@@ -941,6 +941,8 @@ impl Engine {
         // Validate in method grammar, then remove the context wrapper. Original
         // spans still address `normalized`, retaining exact nested function source.
         drop(semantic);
+        // Parsing and analysis are done; the code generator's work starts here.
+        compile_phase_boundary();
         let eval_context = if let ParsedProgramShape::Eval(context, _) = expected_shape {
             if wrapped_eval {
                 let body = eval_method_body(&mut parsed.program, ordinary_private_context)
@@ -1028,6 +1030,22 @@ impl Engine {
             .diagnostics
             .first()
             .map(|diagnostic| format!("SyntaxError: {diagnostic}"))
+    }
+}
+
+/// What a compilation does between parsing and code generation, set once by the embedding:
+/// a host may return the parser's read-only pages there, so they and the code generator's are
+/// not resident together at a compilation's peak.
+static COMPILE_PHASE_BOUNDARY: std::sync::OnceLock<fn()> = std::sync::OnceLock::new();
+
+/// Sets the action a compilation takes once it has parsed its source; the first call wins.
+pub fn set_compile_phase_boundary(action: fn()) {
+    let _ = COMPILE_PHASE_BOUNDARY.set(action);
+}
+
+fn compile_phase_boundary() {
+    if let Some(action) = COMPILE_PHASE_BOUNDARY.get() {
+        action();
     }
 }
 
@@ -1491,6 +1509,9 @@ type MethodSiteSpec = (Atom, u16, Vec<Register>, Option<(Atom, u16)>);
 /// Byte offset of each non-ASCII character of `text` with the running excess of UTF-8 bytes
 /// over UTF-16 units through it.
 fn source_utf16_excess(text: &str) -> Vec<(usize, usize)> {
+    if text.is_ascii() {
+        return Vec::new();
+    }
     let mut excess = 0;
     text.char_indices()
         .filter(|(_, character)| !character.is_ascii())
