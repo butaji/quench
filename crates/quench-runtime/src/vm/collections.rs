@@ -1229,6 +1229,30 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// `Map.prototype.get` or `has` of a Map, or `Set.prototype.has` of a Set: lookups that
+    /// read entries only. `None` for any other receiver, whose call raises.
+    pub(super) fn pure_collection_lookup(
+        &self,
+        native: Native,
+        receiver: Value,
+        key: Value,
+    ) -> Option<Value> {
+        let boolean = |found: bool| if found { Value::TRUE } else { Value::FALSE };
+        match (native, self.heap.get(receiver)?) {
+            (Native::MapGet, Cell::Map { entries, .. }) => Some(
+                self.map_entry_index(receiver, key)
+                    .map_or(Value::UNDEFINED, |index| entries.value_at(index)),
+            ),
+            (Native::MapHas, Cell::Map { .. }) => {
+                Some(boolean(self.map_entry_index(receiver, key).is_some()))
+            }
+            (Native::SetHas, Cell::Set { .. }) => {
+                Some(boolean(self.set_entry_index(receiver, key).is_some()))
+            }
+            _ => None,
+        }
+    }
+
     pub(super) fn map_entry_index(&self, map: Value, key: Value) -> Option<usize> {
         let Some(Cell::Map { entries, .. }) = self.heap.get(map) else {
             return None;
