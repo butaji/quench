@@ -499,17 +499,34 @@ impl JsStringBuilder {
     pub(super) fn finish(self) -> Result<JsString, StringBuildError> {
         let length = self.length?;
         if self.parts.iter().all(|part| part.units.is_ascii()) {
-            let mut output = Vec::new();
+            let ascii_parts = || {
+                self.parts.iter().filter_map(|part| match part.units.view().slice(part.range.clone()) {
+                    Units::Ascii(bytes) => Some(bytes),
+                    Units::Wide(_) => None,
+                })
+            };
+            if length <= SHORT_ASCII_CAPACITY {
+                // Short text is the string's own bytes: no buffer to allocate or copy.
+                let mut bytes = [0; SHORT_ASCII_CAPACITY];
+                let mut end = 0;
+                for part in ascii_parts() {
+                    bytes[end..end + part.len()].copy_from_slice(part);
+                    end += part.len();
+                }
+                return Ok(JsString::from_flat(FlatUnits::Short(ShortAscii {
+                    length: end as u8,
+                    bytes,
+                })));
+            }
+            let mut output = String::new();
             output
                 .try_reserve_exact(length)
                 .map_err(|_| StringBuildError::Allocation)?;
-            for part in &self.parts {
-                if let Units::Ascii(bytes) = part.units.view().slice(part.range.clone()) {
-                    output.extend_from_slice(bytes);
-                }
+            for part in ascii_parts() {
+                // SAFETY: every part is ASCII, which is UTF-8 on its own.
+                output.push_str(unsafe { std::str::from_utf8_unchecked(part) });
             }
-            let text = std::str::from_utf8(&output).expect("ASCII units are UTF-8");
-            return Ok(JsString::from_flat(FlatUnits::ascii(text)));
+            return Ok(JsString::from_flat(FlatUnits::Ascii(Rc::from(output))));
         }
         let mut output = Vec::new();
         output
