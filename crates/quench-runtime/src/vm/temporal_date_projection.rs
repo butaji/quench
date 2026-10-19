@@ -144,7 +144,7 @@ impl<H: Host> Vm<H> {
             for (method, native) in methods {
                 self.set_builtin_named(p, prototype, method, *native)?;
             }
-            if let Some(symbol) = self.well_known_symbols.get("toStringTag").copied() {
+            if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::ToStringTag) {
                 let tag = self
                     .heap
                     .alloc(Cell::String(format!("Temporal.{name}").into()));

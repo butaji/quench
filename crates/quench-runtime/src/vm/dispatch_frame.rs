@@ -895,7 +895,7 @@ impl<H: Host> Vm<H> {
                 },
             );
         }
-        if let Some(iterator) = self.well_known_symbols.get("iterator").copied() {
+        if let Some(iterator) = self.well_known_symbols.get(WellKnownSymbol::Iterator) {
             let iterator_method = self.native_value(Native::ArrayValues);
             self.set_symbol_property(arguments, iterator, iterator_method)?;
             self.set_property_attributes(

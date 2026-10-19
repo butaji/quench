@@ -295,7 +295,7 @@ impl<H: Host> Vm<H> {
         for (name, native) in ZONED_DATE_TIME_METHODS.iter().copied() {
             self.set_builtin_named(p, prototype, name, native)?;
         }
-        if let Some(symbol) = self.well_known_symbols.get("toStringTag").copied() {
+        if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::ToStringTag) {
             let tag = self
                 .heap
                 .alloc(Cell::String("Temporal.ZonedDateTime".into()));

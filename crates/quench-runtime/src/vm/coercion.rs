@@ -315,7 +315,7 @@ impl<H: Host> Vm<H> {
         if !self.is_object_like(value) {
             return Ok(value);
         }
-        if let Some(symbol) = self.well_known_symbols.get("toPrimitive").copied() {
+        if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::ToPrimitive) {
             let method = self.get_index(program, value, symbol)?;
             if !method.is_undefined() && !method.is_null() {
                 if !self.is_function(method) {

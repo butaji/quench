@@ -218,8 +218,7 @@ impl<H: Host> Vm<H> {
             None
         } else {
             self.well_known_symbols
-                .get("toStringTag")
-                .copied()
+                .get(WellKnownSymbol::ToStringTag)
                 .map(|symbol| self.get_index(p, value, symbol))
                 .transpose()?
         };

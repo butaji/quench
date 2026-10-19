@@ -76,7 +76,7 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
-        let iterator = self.well_known_symbols.get("iterator").copied()?;
+        let iterator = self.well_known_symbols.get(WellKnownSymbol::Iterator)?;
         let key = PropertyKey::symbol(iterator);
         if self.property_shape_slot(array.shape(), key).is_some() {
             return None;
@@ -389,7 +389,7 @@ impl<H: Host> Vm<H> {
         )?;
         self.install_builtin_to_string_tag(self.array_iterator_proto, "Array Iterator")?;
         self.install_collection_iterators(p)?;
-        let Some(iterator) = self.well_known_symbols.get("iterator").copied() else {
+        let Some(iterator) = self.well_known_symbols.get(WellKnownSymbol::Iterator) else {
             return Ok(());
         };
         self.set_index(
@@ -604,7 +604,7 @@ impl<H: Host> Vm<H> {
                 setter: Some(constructor_setter),
             },
         )?;
-        if let Some(symbol) = self.well_known_symbols.get("toStringTag").copied() {
+        if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::ToStringTag) {
             self.set_symbol_property(prototype, symbol, Value::UNDEFINED)?;
             let getter = self.iterator_native(Native::IteratorPrototypeToStringTagGetter, realm);
             let setter = self.iterator_native(Native::IteratorPrototypeToStringTagSetter, realm);
@@ -621,7 +621,7 @@ impl<H: Host> Vm<H> {
                 },
             );
         }
-        if let Some(symbol) = self.well_known_symbols.get("iterator").copied() {
+        if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::Iterator) {
             self.install_iterator_symbol_method(
                 prototype,
                 symbol,
@@ -630,7 +630,7 @@ impl<H: Host> Vm<H> {
                 realm,
             )?;
         }
-        if let Some(symbol) = self.well_known_symbols.get("dispose").copied() {
+        if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::Dispose) {
             self.install_iterator_symbol_method(
                 prototype,
                 symbol,
@@ -758,7 +758,7 @@ impl<H: Host> Vm<H> {
     }
 
     fn install_generator_to_string_tag(&mut self, prototype: Value) -> Result<(), JsError> {
-        if let Some(symbol) = self.well_known_symbols.get("toStringTag").copied() {
+        if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::ToStringTag) {
             let tag = self
                 .heap
                 .alloc(Cell::String(JsString::from_str("Generator")));
@@ -800,7 +800,7 @@ impl<H: Host> Vm<H> {
                 "[Symbol.asyncDispose]",
             ),
         ] {
-            let Some(symbol) = self.well_known_symbols.get(symbol_name).copied() else {
+            let Some(symbol) = self.well_known_symbols.named(symbol_name) else {
                 continue;
             };
             let method = realm
@@ -915,7 +915,7 @@ impl<H: Host> Vm<H> {
         let root = self.heap.root(source);
         let outcome = (|| {
             let source = self.heap.root_value(root).unwrap();
-            if let Some(symbol) = self.well_known_symbols.get("iterator").copied() {
+            if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::Iterator) {
                 let method = self.get_index(p, source, symbol)?;
                 if method.is_undefined() || method.is_null() {
                     return Err(self.type_error(p, "value is not iterable".into()));
@@ -1016,7 +1016,7 @@ impl<H: Host> Vm<H> {
         let value_root = self.heap.root(value);
         let result = (|| {
             let value = self.heap.root_value(value_root).unwrap();
-            let Some(symbol) = self.well_known_symbols.get("iterator").copied() else {
+            let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::Iterator) else {
                 return self.get_iterator(p, value);
             };
             let method = self.get_index(p, value, symbol)?;
@@ -1725,8 +1725,7 @@ impl<H: Host> Vm<H> {
         }
         let iterator_symbol = self
             .well_known_symbols
-            .get("iterator")
-            .copied()
+            .get(WellKnownSymbol::Iterator)
             .ok_or_else(|| self.type_error(p, "Symbol.iterator is unavailable".into()))?;
         let mut items = Vec::with_capacity(args.len());
         let mut methods = Vec::with_capacity(args.len());
@@ -2632,7 +2631,7 @@ impl<H: Host> Vm<H> {
         let key = if name == "constructor" {
             self.heap.alloc(Cell::String(JsString::from_str(name)))
         } else {
-            self.well_known_symbols.get("toStringTag").copied().unwrap()
+            self.well_known_symbols.get(WellKnownSymbol::ToStringTag).unwrap()
         };
         let receiver = self.heap.root_value(receiver_root).unwrap();
         let value = self.heap.root_value(value_root).unwrap();
@@ -2649,7 +2648,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         source: Value,
     ) -> Result<Value, JsError> {
-        if let Some(symbol) = self.well_known_symbols.get("asyncIterator").copied() {
+        if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::AsyncIterator) {
             let method = self.get_index(p, source, symbol)?;
             if !method.is_undefined() && !method.is_null() {
                 if !self.is_function(method) {
@@ -3235,7 +3234,7 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
-        let iterator_key = PropertyKey::symbol(*self.well_known_symbols.get("iterator")?);
+        let iterator_key = PropertyKey::symbol(self.well_known_symbols.get(WellKnownSymbol::Iterator)?);
         let mut holder = source;
         let method = loop {
             if matches!(self.heap.get(holder), Some(Cell::Proxy { .. })) {
