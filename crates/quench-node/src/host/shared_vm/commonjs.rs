@@ -2693,7 +2693,7 @@ const getLinkedBinding = () => ({});
                 if parent.is_none() {
                     // The entry's compilation is the start-up peak: only the parser's and
                     // compiler's pages, not the bootstrap's, need be resident across it.
-                    crate::host::resident_pages::release_read_only_pages();
+                    crate::host::resident_pages::release_read_only_code_and_data();
                 }
                 let wrapper = match embedded.filter(|_| !is_primordials) {
                     // The program retains the embedded text itself, not a wrapped copy.
@@ -2720,7 +2720,7 @@ const getLinkedBinding = () => ({});
                     }
                 };
                 if parent.is_none() {
-                    crate::host::resident_pages::release_read_only_pages();
+                    crate::host::resident_pages::release_read_only_code_and_data();
                     crate::host::resident_pages::release_free_heap_pages();
                     crate::host::resident_pages::quench_entry_compiled();
                 } else if in_node_internal {
