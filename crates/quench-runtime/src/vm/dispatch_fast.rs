@@ -1666,6 +1666,44 @@ lane_handler! {
     }
 }
 
+lane_handler! {
+    /// `MakeClosure` in a frame's own lane run (`lane_closure_value`).
+    fn lane_make_closure<>(cx, r, ip, i, view) {
+        let Some(value) = lane_closure_value(cx, i) else {
+            return exit(ip);
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+/// The closure a `MakeClosure` record makes as the general loop does, in a frame's own lane
+/// run of a function with no binding sites outside a module's root: its environment is the
+/// frame's, promoted once, and making it allocates and runs no guest code. Any other
+/// closure takes the general path; a promotion made first is idempotent.
+#[inline(never)]
+fn lane_closure_value<H: Host>(cx: *mut LaneContext<H>, i: &LaneInstruction) -> Option<Value> {
+    let vm = unsafe { vm(cx) };
+    if !vm.lane_stack.activations.is_empty() {
+        return None;
+    }
+    // SAFETY: the context's program outlives the lane run.
+    let (code, frame) = unsafe { (&*(*cx).code, (*cx).frame) };
+    let function = vm.frames[frame].function;
+    if function == super::ROOT_FUNCTION_ID
+        || !code.function_get(function as usize)?.binding_sites.is_empty()
+    {
+        return None;
+    }
+    let env = vm.promote_frame_environment(frame);
+    // Promotion moves the frame's captured locals into the environment, so a capture
+    // slot pointer found before it is not reused.
+    unsafe { (*cx).capture = std::ptr::null() };
+    let value = vm.closure(code, i.imm(), env).ok();
+    note_allocation(vm);
+    value
+}
+
 /// The object a `CreateRegExpLiteral` record makes in a frame's own lane run, whose frame
 /// names the literal's program. A pattern that fails to compile raises at its instruction
 /// through `Vm::lane_raised`; inside a lane activation, `None` leaves it to the general path.
@@ -1711,6 +1749,17 @@ lane_handler! {
         // other reference into it is live while the object is allocated.
         let properties = unsafe { std::slice::from_raw_parts(r.0.add(usize::from(i.b)), usize::from(i.c)) };
         let value = vm.heap.alloc_object_with_properties(vm.object_proto, shape, properties);
+        note_allocation(vm);
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    /// `MakeObject`: an empty ordinary object (`Vm::object`), as the general loop makes it.
+    fn lane_make_object<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let value = vm.object();
         note_allocation(vm);
         r.set(i.a, value);
         next!(cx, r, following(ip), view)
@@ -6424,37 +6473,6 @@ lane_handler! {
 }
 
 lane_handler! {
-    /// `MakeClosure` in a VM frame (a frameless activation makes none,
-    /// `CallPlan::registers_only`) of a function that records no binding sites: the general
-    /// path's closure over the frame's promoted environment (`Vm::promote_frame_environment`,
-    /// `Vm::closure`), which allocates and runs no guest code. A root's closures, which a
-    /// module caches, binding sites, which give the environment an eval scope, and a failure
-    /// take the general path.
-    #[inline(never)]
-    fn lane_make_closure<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        // SAFETY: the context's program outlives the lane run.
-        let code = unsafe { &*(*cx).code };
-        let frame = unsafe { (*cx).frame };
-        let function = vm.frames[frame].function;
-        if !vm.lane_stack.activations.is_empty()
-            || function == super::ROOT_FUNCTION_ID
-            || !code.function(function as usize).binding_sites.is_empty()
-        {
-            return exit(ip);
-        }
-        let environment = vm.promote_frame_environment(frame);
-        let Ok(closure) = vm.closure(code, i.imm(), environment) else {
-            return exit(ip);
-        };
-        note_allocation(vm);
-        vm.write(frame, i.a, closure);
-        // Promotion keeps the frame's register file in place.
-        next!(cx, r, following(ip), Carried::SCRIPT)
-    }
-}
-
-lane_handler! {
     /// A JavaScript `Call` of a user function that needs a VM frame (no frameless target,
     /// `Vm::resolve_script_call_target`): the frame and pending call the general loop's
     /// in-loop call makes (`Vm::push_in_loop_call`), entered in place. Lane activations become
@@ -6746,6 +6764,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::MakeClosure => Some(lane_make_closure::<H>),
         Op::MakeObjectLiteral => Some(lane_make_object_literal::<H>),
         Op::MakeArray => Some(lane_make_array::<H>),
+        Op::MakeObject => Some(lane_make_object::<H>),
         Op::CreateRegExpLiteral => Some(lane_regexp_literal::<H>),
         Op::CallForwardingArguments => Some(lane_forward_call::<H>),
         Op::SuperConstArrayObject2 => Some(lane_const_array_object2::<H>),
