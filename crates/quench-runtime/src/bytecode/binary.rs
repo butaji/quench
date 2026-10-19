@@ -88,7 +88,19 @@ pub(super) fn write_program(
 /// order its table names them (`decode_compact_program` maps each name to its reader's id).
 /// The source text is left out: whoever decodes it supplies the same text.
 pub(super) fn encode_compact_program(program: &super::ResidualProgram) -> (Vec<u8>, Vec<u32>) {
-    encode_program(program, AtomEncoding::Compact(Default::default()))
+    let (mut bytes, order) = encode_program(program, AtomEncoding::Compact(Default::default()));
+    let checksum = compact_checksum(&bytes);
+    bytes.extend_from_slice(&checksum.to_le_bytes());
+    (bytes, order)
+}
+
+/// A compact encoding ends with this checksum of the bytes before it, which a decoder checks
+/// before trusting them as the compiler output they encode (`decode_compact_program`).
+fn compact_checksum(bytes: &[u8]) -> u64 {
+    use std::hash::Hasher;
+    let mut hasher = rustc_hash::FxHasher::default();
+    hasher.write(bytes);
+    hasher.finish()
 }
 
 fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding) -> (Vec<u8>, Vec<u32>) {
@@ -419,14 +431,20 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
 }
 
 /// Decodes `encode_compact_program`'s bytes, naming each atom by `intern`'s id for its text
-/// and supplying `text` as the source. The program's atom table is left empty for the caller,
-/// which owns the ids `intern` returns, and the caller validates the program.
+/// and supplying `text` as the source, once their checksum shows they are what the encoder
+/// wrote. The program's atom table is left empty for the caller, which owns the ids `intern`
+/// returns.
 pub(super) fn decode_compact_program(
     bytes: &[u8],
     intern: &mut dyn FnMut(&str) -> u32,
     text: super::SourceText,
 ) -> Result<super::ResidualProgram, String> {
-    decode_program(bytes, Some((intern, text)))
+    let checksum_start = bytes.len().checked_sub(std::mem::size_of::<u64>()).ok_or("truncated residual")?;
+    let (body, checksum) = bytes.split_at(checksum_start);
+    if u64::from_le_bytes(checksum.try_into().unwrap()) != compact_checksum(body) {
+        return Err("residual checksum mismatch".into());
+    }
+    decode_program(body, Some((intern, text)))
 }
 
 fn decode_program(
