@@ -280,16 +280,28 @@ direction.
 
 The root selector also supports two distinct experimental admission policies.
 `--jit-wasm-root-only` with `--jit-wasm-root <residual-function-id>` compiles
-only that function, forces Cranelift `opt_level=none`, and permanently leaves
-known callees in the VM. `--jit-wasm-root-first` starts from the same single
-function artifact and compile level, then lets hot fallback callees use the
-existing bounded promotion tier. The strict mode is useful for measuring the
-cost of one native entry; root-first tests whether the selected root can benefit
-from a smaller first compile while retaining tier-up. The CLI records separate
-checkpoint/report fields and provenance for both, and neither mode is eligible
-for qualification. Root-first promotion is enabled only if the selected root
-compiles successfully; a rejected root leaves the workload interpreted. Their runtime switches are
+only that function and defaults Cranelift `opt_level=none`; `--jit-wasm-root-first`
+starts with the selected function at `speed`, then lets hot fallback callees use
+the existing bounded promotion tier. Either selected root can override its
+compile level with `QUENCH_WASM_JIT_ROOT_OPT_LEVEL=none|speed|speed_and_size`.
+The strict mode is useful for measuring the cost of one native entry; root-first
+tests whether the selected root can benefit from a smaller first compile while
+retaining tier-up. The CLI records separate checkpoint/report fields and
+provenance for both, and neither mode is eligible for qualification. Root-first
+promotion is enabled only if the selected root compiles successfully; a rejected
+root leaves the workload interpreted. Their runtime switches are
 `QUENCH_WASM_JIT_ROOT_ONLY=1` and `QUENCH_WASM_JIT_ROOT_FIRST=1`, respectively.
+
+On JetStream 3 QuickSort, root-only function 1 at `speed` scored 282.94 versus
+258.72 at its default `none` level over separate 11-round Linux windows. Median
+RSS was 41.50 versus 41.36 MiB. Against full eager JIT in a matching 11-round
+window, root-only `speed` scored 282.94 versus 233.91 and used 41.50 versus
+42.76 MiB. It remained below Bun's 376.21 score, while using less RSS than both
+Bun (47.43 MiB) and Node (88.37 MiB). This is a promising opt-in tiering/codegen
+tradeoff, not a peer score win or qualification result; the root-only mode is
+intentionally excluded from qualification. See
+`evidence/jit-jetstream3-wasm-2026-10-19/root-only-opt-level/` for the reports
+and reproduction details.
 
 The root-first GCC-Wasm experiment selected residual function 19, then allowed
 hot fallback callees to use the bounded tier. An 11-round Linux screen scored
