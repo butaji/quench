@@ -486,8 +486,12 @@ impl JsStringInner {
 /// piece, and a rope's leaves then hold at least this many units each.
 const ROPE_LEAF_MAX_UNITS: usize = 512;
 /// A flat left side at most this long takes a short right side by copy, so text built by
-/// appends stays flat until it is long; past it, an append copies at most a leaf.
-const FLAT_PREFIX_MAX_UNITS: usize = 8192;
+/// appends stays flat until it is long; past it, an append copies at most a leaf. Each such
+/// append copies the whole prefix, so the bound is the most an append copies: from 8192,
+/// pdfjs 12.67G -> 9.42G instructions with max RSS 84.8 -> 86.8 MB, and web-ssr's built
+/// text 89.8 -> 100.9 MB (Bun without its JIT: 88.8 and 124.3 MB; 512 saved 2% more on
+/// pdfjs for 3.5 MB more on web-ssr; JetStream, Linux x86_64, 2026-10-19).
+const FLAT_PREFIX_MAX_UNITS: usize = 2048;
 
 /// Flat UTF-16 strings retain the existing Node-compatible length policy.
 /// V8's public String::kMaxLength on the supported 64-bit host is this limit;
