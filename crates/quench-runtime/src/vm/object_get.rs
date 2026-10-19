@@ -771,7 +771,7 @@ impl<H: Host> Vm<H> {
                     | Some(Cell::WeakSet { object: x, .. }) => object = x.proto(),
                     Some(Cell::WeakRef { object: x, .. }) => object = x.proto(),
                     Some(Cell::FinalizationRegistry { object: x, .. }) => object = x.proto(),
-                    Some(Cell::Iterator { object: x, .. }) => object = x.proto(),
+                    Some(Cell::Iterator(x)) => object = x.object.proto(),
                     Some(Cell::Function(x)) => object = x.object.proto(),
                     _ => match self.heap.object(object) {
                         Some(x) => object = x.proto(),

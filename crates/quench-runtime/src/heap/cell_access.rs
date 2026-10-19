@@ -23,7 +23,6 @@ impl Cell {
             | Self::WeakSet { object, .. }
             | Self::WeakRef { object, .. }
             | Self::FinalizationRegistry { object, .. }
-            | Self::Iterator { object, .. }
             | Self::Date { object, .. }
             | Self::RegExp { object, .. }
             | Self::Proxy { object, .. }
@@ -40,6 +39,7 @@ impl Cell {
             Self::WasmGlobal { header, .. } => Some(&header.object),
             Self::WasmMemory { header, .. } => Some(&header.object),
             Self::Function(function) => Some(&function.object),
+            Self::Iterator(iterator) => Some(&iterator.object),
             Self::TypedArray { object, .. } | Self::DataView { object, .. } => Some(&object.object),
             _ => None,
         }
@@ -60,7 +60,6 @@ impl Cell {
             | Self::WeakSet { object, .. }
             | Self::WeakRef { object, .. }
             | Self::FinalizationRegistry { object, .. }
-            | Self::Iterator { object, .. }
             | Self::Date { object, .. }
             | Self::RegExp { object, .. }
             | Self::Proxy { object, .. }
@@ -77,6 +76,7 @@ impl Cell {
             Self::WasmGlobal { header, .. } => Some(&mut header.object),
             Self::WasmMemory { header, .. } => Some(&mut header.object),
             Self::Function(function) => Some(&mut function.object),
+            Self::Iterator(iterator) => Some(&mut iterator.object),
             Self::TypedArray { object, .. } | Self::DataView { object, .. } => {
                 Some(&mut object.object)
             }
