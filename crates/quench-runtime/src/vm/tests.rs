@@ -10769,6 +10769,41 @@ fn anonymous_function_definitions_are_named_by_their_plan() {
 }
 
 #[test]
+fn bound_calls_and_base_class_constructions_pushed_in_place_keep_their_semantics() {
+    // Bound calls and base class constructions run as in-loop frames: bound `this` and
+    // argument order, nested binds, sloppy `this` coercion, `new.target`, fields, and a
+    // constructor's primitive or object return all stay as a nested call makes them.
+    let source = r#"
+      'use strict';
+      const out = [];
+      function show(a, b, c) { return [this === undefined ? 'u' : typeof this === 'object' ? this.tag : String(this), a, b, c].join(':'); }
+      const bound = show.bind({ tag: 'T' }, 1);
+      const twice = bound.bind({ tag: 'ignored' }, 2);
+      const loose = Function('return function(){ return this === globalThis ? "global" : typeof this; }')();
+      for (let i = 0; i < 3; i++) {
+        out.push(bound(i, 'x'), twice(i), show.bind(undefined)(i), loose.bind(null)(), loose.bind(5)());
+      }
+      class Base { x = 1; #p = 2; constructor(v) { this.v = v; this.nt = new.target === Base; } get p() { return this.#p; } }
+      class Prim { constructor() { this.a = 1; return 7; } }
+      class Obj { constructor() { return { other: true }; } }
+      for (let i = 0; i < 2; i++) {
+        const b = new Base(i);
+        out.push([b.x, b.p, b.v, b.nt, Object.getPrototypeOf(b) === Base.prototype].join(','));
+        out.push(new Prim().a, JSON.stringify(new Obj()));
+        try { Base(1); } catch (e) { out.push(e.constructor.name); }
+      }
+      print(out.join('|'));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "bound-and-class-in-place.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["T:1:0:x|T:1:2:0|u:0::|global|object|T:1:1:x|T:1:2:1|u:1::|global|object|T:1:2:x|T:1:2:2|u:2::|global|object|1,2,0,true,true|1|{\"other\":true}|TypeError|1,2,1,true,true|1|{\"other\":true}|TypeError"]
+    );
+}
+
+#[test]
 fn lane_regexp_exec_keeps_last_index_and_coercion_order() {
     // Exec calls made from frameless activations: a global pattern advances `lastIndex`,
     // an object `lastIndex` is still converted exactly once per call, and a frozen global
