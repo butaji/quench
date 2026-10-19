@@ -6,6 +6,8 @@
 use std::fmt;
 
 mod decode;
+mod interface;
+pub use interface::{interface, Export, ExternKind, Import, Interface};
 mod legacy_try;
 mod shared;
 mod shared_wast;
