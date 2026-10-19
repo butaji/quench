@@ -2214,6 +2214,9 @@ pub(super) struct CompiledJsFunction {
 #[derive(Clone, Copy)]
 enum CompiledJsEntry {
     Number(unsafe extern "C" fn(*const f64) -> f64),
+    NumberInterruptible(
+        unsafe extern "C" fn(*const f64, *const std::sync::atomic::AtomicBool, *mut u32) -> f64,
+    ),
     StringReturnPc(unsafe extern "C" fn(*const f64) -> u32),
     Boolean(unsafe extern "C" fn(*const f64) -> u32),
 }
@@ -2237,6 +2240,21 @@ impl CompiledJsFunction {
                     )
                 };
                 (CompiledJsEntry::Number(entry), Vec::new())
+            }
+            super::js_compiled::JsJitResultKind::NumberInterruptible => {
+                // SAFETY: the loop compiler emits the matching guarded ABI and
+                // writes completion status before every return.
+                let entry = unsafe {
+                    std::mem::transmute::<
+                        *mut u8,
+                        unsafe extern "C" fn(
+                            *const f64,
+                            *const std::sync::atomic::AtomicBool,
+                            *mut u32,
+                        ) -> f64,
+                    >(code.pointer)
+                };
+                (CompiledJsEntry::NumberInterruptible(entry), Vec::new())
             }
             super::js_compiled::JsJitResultKind::StringReturnPc(return_constants) => {
                 // SAFETY: the static-string compiler emits `fn(*const f64) -> u32`.
@@ -2272,7 +2290,11 @@ impl CompiledJsFunction {
         self.params
     }
 
-    pub(super) fn call(&self, arguments: &[f64]) -> CompiledJsResult {
+    pub(super) fn call(
+        &self,
+        arguments: &[f64],
+        interrupt: &std::sync::atomic::AtomicBool,
+    ) -> Option<CompiledJsResult> {
         #[cfg(test)]
         self.native_entries
             .set(self.native_entries.get().saturating_add(1));
@@ -2281,13 +2303,18 @@ impl CompiledJsFunction {
         unsafe {
             match self.entry {
                 CompiledJsEntry::Number(entry) => {
-                    CompiledJsResult::Number(entry(arguments.as_ptr()))
+                    Some(CompiledJsResult::Number(entry(arguments.as_ptr())))
+                }
+                CompiledJsEntry::NumberInterruptible(entry) => {
+                    let mut completed = 0_u32;
+                    let result = entry(arguments.as_ptr(), interrupt, &mut completed);
+                    (completed != 0).then_some(CompiledJsResult::Number(result))
                 }
                 CompiledJsEntry::StringReturnPc(entry) => {
-                    CompiledJsResult::StringReturnPc(entry(arguments.as_ptr()))
+                    Some(CompiledJsResult::StringReturnPc(entry(arguments.as_ptr())))
                 }
                 CompiledJsEntry::Boolean(entry) => {
-                    CompiledJsResult::Boolean(entry(arguments.as_ptr()) != 0)
+                    Some(CompiledJsResult::Boolean(entry(arguments.as_ptr()) != 0))
                 }
             }
         }
@@ -6005,6 +6032,7 @@ impl<H: Host> Vm<H> {
         if tier.is_none() && !super::js_compiled::function_candidate(function, &program.atoms) {
             return None;
         }
+        let numeric_loop_candidate = super::js_compiled::has_numeric_loop_candidate(function);
 
         let params = usize::from(function.params);
         let registers = self.frames[frame].registers.get(..params)?;
@@ -6035,10 +6063,12 @@ impl<H: Host> Vm<H> {
             Some(super::program_store::JsTierState::Hot { .. })
             | Some(super::program_store::JsTierState::PromotionPending)
             | None => {
-                if !self
-                    .programs
-                    .note_js_function_entry(program_id, function_id, numeric)
-                    || !numeric
+                if !self.programs.note_js_function_entry(
+                    program_id,
+                    function_id,
+                    numeric,
+                    numeric_loop_candidate,
+                ) || !numeric
                 {
                     return None;
                 }
@@ -6084,7 +6114,7 @@ impl<H: Host> Vm<H> {
             self.programs
                 .record_js_jit_native_entry(program_id, function_id);
         }
-        match compiled.call(&arguments) {
+        match compiled.call(&arguments, self.execution_interrupt.atomic_flag())? {
             CompiledJsResult::Number(value) => {
                 let last_pc = function.code.len().checked_sub(1)?;
                 let terminal = function.code.get(last_pc)?.as_wide();
@@ -6127,6 +6157,7 @@ impl<H: Host> Vm<H> {
         program: &ResidualProgram,
         function_id: u32,
         arguments: &[Value],
+        interrupt: &std::sync::atomic::AtomicBool,
     ) -> Option<Value> {
         if cfg!(any(
             feature = "profile-aggregate",
@@ -6154,7 +6185,7 @@ impl<H: Host> Vm<H> {
             programs.record_js_jit_entry(program_id, function_id, true);
             programs.record_js_jit_native_entry(program_id, function_id);
         }
-        match compiled.call(&numeric_arguments) {
+        match compiled.call(&numeric_arguments, interrupt)? {
             CompiledJsResult::Number(value) => Some(Value::number(value)),
             CompiledJsResult::Boolean(value) => {
                 Some(if value { Value::TRUE } else { Value::FALSE })
