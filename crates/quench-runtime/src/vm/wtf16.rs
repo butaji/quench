@@ -5,6 +5,23 @@ use std::hash::{Hash, Hasher};
 use std::ops::Range;
 use std::rc::Rc;
 
+thread_local! {
+    /// Bytes of text made on demand (a rope's flat units, a wide string's host text) since
+    /// the collector last took them. A string is charged its flat bytes when allocated; text
+    /// made later is charged here, so collections follow the memory programs materialize.
+    static MATERIALIZED_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+fn charge_materialized(bytes: usize) {
+    MATERIALIZED_BYTES.with(|total| total.set(total.get().saturating_add(bytes)));
+}
+
+/// Text bytes made on demand and not yet charged, which the caller now charges.
+#[inline(always)]
+pub(crate) fn take_materialized_bytes() -> usize {
+    MATERIALIZED_BYTES.with(|total| total.replace(0))
+}
+
 /// Heap-owned JavaScript string. Its code units are authoritative: one byte each when every
 /// unit is ASCII, UTF-16 otherwise. `host` is the explicit lossy Rust-text view used at
 /// host/API boundaries; an ASCII string is its own host text.
@@ -446,7 +463,9 @@ impl JsStringInner {
         unsafe {
             let slot = self.aside.get();
             if (*slot).is_none() {
-                *slot = Some(Rc::new(Aside::Host(make())));
+                let host = make();
+                charge_materialized(host.len());
+                *slot = Some(Rc::new(Aside::Host(host)));
             }
             match (*slot).as_deref() {
                 Some(Aside::Host(host)) => host,
@@ -712,6 +731,10 @@ impl JsString {
         inner.flat.get_or_init(|| {
             let units = Self::flattened(inner);
             inner.release_halves();
+            charge_materialized(match units.view() {
+                Units::Ascii(bytes) => bytes.len(),
+                Units::Wide(units) => std::mem::size_of_val(units),
+            });
             units
         })
     }
