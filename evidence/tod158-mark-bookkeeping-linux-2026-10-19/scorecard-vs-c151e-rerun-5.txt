@@ -1,0 +1,9 @@
+js3/typescript-lib               speed x1.077 wins 5/5  RSS   240.1 ->   254.0 MB  wall 575.8s
+js3/validatorjs                  speed x1.104 wins 4/5  RSS    23.7 ->    22.3 MB  wall 6.5s
+js3/web-ssr                      speed x1.163 wins 5/5  RSS    54.5 ->    53.9 MB  wall 8.1s
+js3/zlib-wasm                    speed x0.975 wins 0/5  RSS    17.6 ->    16.6 MB  wall 4.5s
+js3/source-map-wtb               speed x0.859 wins 0/5  RSS    61.6 ->    58.9 MB  wall 25.2s
+js3/doxbee-async                 speed x0.966 wins 2/5  RSS    53.0 ->    52.2 MB  wall 3.2s
+js3/espree-wtb                   speed x0.938 wins 0/5  RSS    57.0 ->    53.8 MB  wall 56.3s
+js3/stanford-crypto-aes          speed x1.100 wins 3/5  RSS    23.9 ->    24.0 MB  wall 4.2s
+js3/bigint-noble-ed25519         speed x0.951 wins 1/5  RSS    26.7 ->    24.7 MB  wall 26.4s

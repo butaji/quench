@@ -84,6 +84,49 @@ fn append_shape_roots(
 /// indexed by owner for the collection that derived them. Owners hold one to three such
 /// edges, so the first two stay inline.
 type OwnedRoots = FxHashMap<Value, SmallVec<[Value; OWNED_ROOTS_INLINE]>>;
+
+/// Filter bits per owned-roots owner: a marked object probes the map only when its bit is
+/// set, so the hundreds of owners cost the millions of marked objects one bit test each.
+const OWNED_ROOT_FILTER_BITS_PER_OWNER: usize = 16;
+
+/// Which owners `OwnedRoots` may hold: one bit per owner, by a hash of its identity.
+struct OwnedRootFilter {
+    words: Vec<u64>,
+    /// `words.len() * 64 - 1`; the bit count is a power of two.
+    mask: usize,
+}
+
+impl OwnedRootFilter {
+    fn new(roots: &OwnedRoots) -> Self {
+        let bits = (roots.len() * OWNED_ROOT_FILTER_BITS_PER_OWNER)
+            .next_power_of_two()
+            .max(u64::BITS as usize);
+        let mut filter = Self {
+            words: vec![0; bits / u64::BITS as usize],
+            mask: bits - 1,
+        };
+        for owner in roots.keys() {
+            let bit = filter.bit(*owner);
+            filter.words[bit / u64::BITS as usize] |= 1 << (bit % u64::BITS as usize);
+        }
+        filter
+    }
+
+    #[inline(always)]
+    fn bit(&self, owner: Value) -> usize {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = rustc_hash::FxHasher::default();
+        owner.hash(&mut hasher);
+        // The high bits of the multiplicative hash spread consecutive heap indices.
+        (hasher.finish() >> 32) as usize & self.mask
+    }
+
+    #[inline(always)]
+    fn may_hold(&self, owner: Value) -> bool {
+        let bit = self.bit(owner);
+        self.words[bit / u64::BITS as usize] & (1 << (bit % u64::BITS as usize)) != 0
+    }
+}
 const OWNED_ROOTS_INLINE: usize = 2;
 
 struct ParallelShapeTrace<'a> {
@@ -94,6 +137,7 @@ struct ParallelShapeTrace<'a> {
     marked_constructor_shapes: &'a [AtomicU64],
     constructors: &'a [Value],
     owned_roots: &'a OwnedRoots,
+    owned_root_filter: &'a OwnedRootFilter,
     _shape_borrow: std::marker::PhantomData<&'a [Shape]>,
 }
 
@@ -145,11 +189,17 @@ impl ParallelShapeTrace<'_> {
         // A prototype no longer owns its original base constructor. Keep this
         // trace bit separate: a prototype may be the first holder of a shape.
         let constructor = self.constructors[shape_index];
+        // As for the shape bit: a plain load first, so a shape already counted costs no
+        // locked read-modify-write.
         if !prototype && !constructor.is_undefined() &&
-            (trace_kind == GcTraceKind::VerifyFull || self.marked_constructor_shapes[word].fetch_or(mask, Ordering::Relaxed) & mask == 0) {
+            (trace_kind == GcTraceKind::VerifyFull
+                || (self.marked_constructor_shapes[word].load(Ordering::Relaxed) & mask == 0
+                    && self.marked_constructor_shapes[word].fetch_or(mask, Ordering::Relaxed) & mask == 0)) {
             roots.push(constructor);
         }
-        if let Some(edges) = self.owned_roots.get(&owner) {
+        if self.owned_root_filter.may_hold(owner)
+            && let Some(edges) = self.owned_roots.get(&owner)
+        {
             roots.extend(edges.iter().copied());
         }
     }
@@ -703,22 +753,25 @@ impl<H: Host> Vm<H> {
             .map(|_| AtomicU64::new(0))
             .collect::<Vec<_>>();
         let marked_constructor_shape_bits = (0..shape_word_count).map(|_| AtomicU64::new(0)).collect::<Vec<_>>();
-        let mut constructors = Vec::with_capacity(shape_count);
-        for shape in &self.shapes {
+        let constructors = &mut self.shape_constructors;
+        for shape in &self.shapes[constructors.len()..] {
             let constructor = match shape.transition {
                 ShapeTransition::Constructed { constructor, .. } => constructor,
                 _ => shape.parent().map(|parent| constructors[parent as usize]).unwrap_or(Value::UNDEFINED),
             };
             constructors.push(constructor);
         }
+        let constructors = &self.shape_constructors;
+        let owned_root_filter = OwnedRootFilter::new(&owned_roots);
         let shape_trace = ParallelShapeTrace {
             shapes: self.shapes.as_ptr(),
             shape_count,
             accessors: &self.shape_accessors,
             marked_shapes: &marked_shape_bits,
             marked_constructor_shapes: &marked_constructor_shape_bits,
-            constructors: &constructors,
+            constructors,
             owned_roots: &owned_roots,
+            owned_root_filter: &owned_root_filter,
             _shape_borrow: std::marker::PhantomData,
         };
         let parallel_object_roots =
@@ -880,6 +933,7 @@ impl<H: Host> Vm<H> {
         self.heap.remap_live_object_shapes(&mapping, &lengths);
         self.startup_intrinsics.remap_shapes(&mapping);
         self.shapes = shapes;
+        self.shape_constructors.clear();
         self.transitions = transitions;
         self.shape_slot_memo.clear();
         self.shape_attribute_memo.clear();
