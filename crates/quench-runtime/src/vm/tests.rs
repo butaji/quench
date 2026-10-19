@@ -10851,6 +10851,85 @@ fn lane_char_code_at_keeps_its_coercions_and_patched_methods() {
 }
 
 #[test]
+fn constant_field_initializers_evaluate_in_the_constructor() {
+    // Literal and literal-container initializers evaluate inline: order, signed zero, fresh
+    // containers per instance, `__proto__` keys, setters on the prototype and derived classes.
+    let source = r#"
+      const out = [];
+      let order = [];
+      const key = (k) => (order.push(k), k);
+      class Base { constructor() { out.push(Object.keys(this).join("+")); } }
+      class A extends Base {
+        n = -0; s = "str"; b = !0; u = void 0; arr = [1, "two", null]; obj = { a: 1, "b-c": 2, __proto__: null };
+        [key("computed")] = 5; later = this.n; #p = 7; e = [];
+        constructor(x) { super(); this.x = x; }
+        get p() { return this.#p; }
+      }
+      class B { set s(v) { out.push("setter"); } }
+      class C extends B { s = 1; }
+      class D { y = 1; constructor(y) { out.push(this.y); } }
+      for (let i = 0; i < 3; i++) {
+        const a = new A(i), a2 = new A(i);
+        out.push(Object.is(a.n, -0), a.s, a.b, a.u, a.arr.join("/"), a.arr !== a2.arr, a.e !== a2.e, Object.getPrototypeOf(a.obj) === null, a.obj["b-c"]);
+        out.push(Object.keys(a).join(","), a.computed, Object.is(a.later, -0), a.p, Object.getOwnPropertyDescriptor(a, "s").writable);
+        const c = new C(); out.push(c.s, Object.getOwnPropertyNames(c).join());
+        out.push(new D(5).y);
+      }
+      out.push(order.join());
+      print(out.join("|"));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "class-field-constants.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["||true|str|true||1/two/|true|true|true|2|n,s,b,u,arr,obj,computed,later,e,x|5|true|7|true|1|s|1|1|||true|str|true||1/two/|true|true|true|2|n,s,b,u,arr,obj,computed,later,e,x|5|true|7|true|1|s|1|1|||true|str|true||1/two/|true|true|true|2|n,s,b,u,arr,obj,computed,later,e,x|5|true|7|true|1|s|1|1|computed"]
+    );
+}
+
+#[test]
+fn function_field_initializers_keep_their_scope_and_activation() {
+    // Arrow and function initializers evaluate inline unless the constructor shadows a name
+    // they read, or they read `new.target` or call `eval`; `this` and `super` stay the same.
+    let source = r#"
+      const out = [];
+      const tag = "outer";
+      class Base { hello() { return "base-hello"; } }
+      class A extends Base {
+        get = () => this.v;
+        shadow = () => tag;
+        nt = () => typeof new.target;
+        ev = () => eval("typeof tag");
+        sup = () => super.hello();
+        fn = function () { return this === undefined ? "u" : typeof this; };
+        named = () => 1;
+        constructor(v) { super(); this.v = v; }
+      }
+      class B {
+        shadow = () => tag;
+        self = () => this;
+        constructor(tag) { this.p = tag; }
+      }
+      class C { inc = () => ++this.n; n = 0; }
+      for (let i = 0; i < 3; i++) {
+        const a = new A(i), a2 = new A(i + 10);
+        out.push(a.get(), a2.get(), a.shadow(), a.nt(), a.ev(), a.sup(), a.fn(), a.fn.call(5), a.named.name, a.get.name, a.get !== a2.get);
+        const b = new B("ctor-param");
+        out.push(b.shadow(), b.self() === b, b.p, Object.keys(b).join());
+        const c = new C(); c.inc(); out.push(c.inc(), c.n);
+      }
+      print(out.join("|"));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "class-field-functions.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["0|10|outer|undefined|string|base-hello|object|number|named|get|true|outer|true|ctor-param|shadow,self,p|2|2|1|11|outer|undefined|string|base-hello|object|number|named|get|true|outer|true|ctor-param|shadow,self,p|2|2|2|12|outer|undefined|string|base-hello|object|number|named|get|true|outer|true|ctor-param|shadow,self,p|2|2"]
+    );
+}
+
+#[test]
 fn lane_arrows_take_this_from_their_environment() {
     // Arrows called as frameless activations read `this` from the environment they
     // closed over: call/apply/bind receivers are ignored, a derived constructor's
