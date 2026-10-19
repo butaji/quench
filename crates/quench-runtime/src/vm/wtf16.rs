@@ -15,13 +15,8 @@ fn charge_materialized(bytes: usize) {
     MATERIALIZED_BYTES.with(|total| total.set(total.get().saturating_add(bytes)));
 }
 
-/// Text bytes made on demand and not yet charged to a collection.
+/// Text bytes made on demand and not yet charged, which the caller now charges.
 #[inline(always)]
-pub(crate) fn materialized_bytes() -> usize {
-    MATERIALIZED_BYTES.with(std::cell::Cell::get)
-}
-
-/// `materialized_bytes`, which the collection now charges.
 pub(crate) fn take_materialized_bytes() -> usize {
     MATERIALIZED_BYTES.with(|total| total.replace(0))
 }
