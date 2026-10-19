@@ -44,7 +44,7 @@ impl<H: Host> Vm<H> {
             Native::BigIntToLocaleString,
         )?;
         self.set_realm_bigint_method(global, prototype, "valueOf", Native::BigIntValueOf)?;
-        if self.well_known_symbols.contains_key("toStringTag") {
+        if self.well_known_symbols.get(WellKnownSymbol::ToStringTag).is_some() {
             self.install_builtin_to_string_tag(prototype, "BigInt")?;
         }
         if global == self.realm.globals {

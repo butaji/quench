@@ -617,7 +617,16 @@ struct InheritedFieldCache {
     proved_epoch: u64,
     proved_prototype: Value,
     proved_holder: Value,
+    /// The site's next older entry, or `NO_INHERITED_FIELD`: a site keeps up to
+    /// `INHERITED_FIELD_CACHE_WAYS` receiver shapes, newest first.
+    next: u32,
 }
+/// Receiver shapes one site's inherited entries remember: a method inherited from beyond the
+/// immediate prototype read on instances of several subclasses (DeltaBlue's constraints)
+/// reaches one site with a shape per class. A further shape reuses the oldest entry.
+const INHERITED_FIELD_CACHE_WAYS: usize = 4;
+// Reusing the oldest entry unlinks it from an older-than-head predecessor.
+const _: () = assert!(INHERITED_FIELD_CACHE_WAYS > 1);
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum InheritedFieldAnswer {
     /// The last recorded prototype holds the data property at this slot.
@@ -770,6 +779,113 @@ impl ProgramCacheLayout {
             .then(|| field_base + usize::from(crate::bytecode::SHARED_UNCACHED_SITE))
     }
 }
+/// The well-known symbols (ECMA-262 Table 1), in their installation order on `Symbol`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum WellKnownSymbol {
+    AsyncDispose,
+    AsyncIterator,
+    Dispose,
+    HasInstance,
+    IsConcatSpreadable,
+    Iterator,
+    Match,
+    MatchAll,
+    Metadata,
+    Replace,
+    Search,
+    Species,
+    Split,
+    ToPrimitive,
+    ToStringTag,
+    Unscopables,
+}
+
+impl WellKnownSymbol {
+    pub(crate) const ALL: [Self; 16] = [
+        Self::AsyncDispose,
+        Self::AsyncIterator,
+        Self::Dispose,
+        Self::HasInstance,
+        Self::IsConcatSpreadable,
+        Self::Iterator,
+        Self::Match,
+        Self::MatchAll,
+        Self::Metadata,
+        Self::Replace,
+        Self::Search,
+        Self::Species,
+        Self::Split,
+        Self::ToPrimitive,
+        Self::ToStringTag,
+        Self::Unscopables,
+    ];
+
+    /// The property name on `Symbol`; the description is `Symbol.` and this name.
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::AsyncDispose => "asyncDispose",
+            Self::AsyncIterator => "asyncIterator",
+            Self::Dispose => "dispose",
+            Self::HasInstance => "hasInstance",
+            Self::IsConcatSpreadable => "isConcatSpreadable",
+            Self::Iterator => "iterator",
+            Self::Match => "match",
+            Self::MatchAll => "matchAll",
+            Self::Metadata => "metadata",
+            Self::Replace => "replace",
+            Self::Search => "search",
+            Self::Species => "species",
+            Self::Split => "split",
+            Self::ToPrimitive => "toPrimitive",
+            Self::ToStringTag => "toStringTag",
+            Self::Unscopables => "unscopables",
+        }
+    }
+}
+
+/// The realm-independent well-known symbol values, one slot per `WellKnownSymbol`, empty
+/// until `Symbol` is installed.
+#[derive(Clone, Default)]
+pub(crate) struct WellKnownSymbols([Option<Value>; WellKnownSymbol::ALL.len()]);
+
+impl WellKnownSymbols {
+    #[inline(always)]
+    pub(crate) fn get(&self, symbol: WellKnownSymbol) -> Option<Value> {
+        self.0[symbol as usize]
+    }
+    pub(crate) fn insert(&mut self, symbol: WellKnownSymbol, value: Value) {
+        self.0[symbol as usize] = Some(value);
+    }
+    /// The symbol whose `Symbol` property name is `name`.
+    pub(crate) fn named(&self, name: &str) -> Option<Value> {
+        WellKnownSymbol::ALL
+            .into_iter()
+            .find(|symbol| symbol.name() == name)
+            .and_then(|symbol| self.get(symbol))
+    }
+    /// The installed symbols with their names, in `WellKnownSymbol::ALL` order.
+    pub(crate) fn entries(&self) -> impl Iterator<Item = (&'static str, Value)> + '_ {
+        WellKnownSymbol::ALL
+            .into_iter()
+            .filter_map(|symbol| self.get(symbol).map(|value| (symbol.name(), value)))
+    }
+    pub(crate) fn values(&self) -> impl Iterator<Item = Value> + '_ {
+        self.0.iter().flatten().copied()
+    }
+    pub(crate) fn clear(&mut self) {
+        self.0 = [None; WellKnownSymbol::ALL.len()];
+    }
+}
+
+impl std::ops::Index<WellKnownSymbol> for WellKnownSymbols {
+    type Output = Value;
+    fn index(&self, symbol: WellKnownSymbol) -> &Value {
+        self.0[symbol as usize]
+            .as_ref()
+            .expect("well-known symbols are installed with Symbol")
+    }
+}
+
 /// Entries of the in-loop call target cache, indexed by the callee's heap index.
 const CALL_TARGET_CACHE_SIZE: usize = 64;
 const _: () = assert!(CALL_TARGET_CACHE_SIZE.is_power_of_two());
@@ -1089,17 +1205,26 @@ impl ShapeFacts {
     /// Some property of the chain was a `SLOT_GETTER` accessor, so a raw slot read must check
     /// whether the slot holds a getter rather than a value.
     const SLOT_GETTERS: u8 = 1 << 1;
+    /// Some property of the chain was made an accessor. Only a descriptor transition makes
+    /// one, as an add carries data attributes, so a chain without this fact holds data
+    /// properties alone and a read of any slot is its value.
+    const ACCESSORS: u8 = 1 << 2;
 
     fn extended_by(self, transition: ShapeTransition) -> Self {
         let introduced = |fact: bool, bit: u8| if fact { bit } else { 0 };
+        let descriptor = |test: fn(ShapeAttributes) -> bool| {
+            matches!(transition, ShapeTransition::Descriptor { attributes, .. } if test(attributes))
+        };
         Self(
             self.0
                 | introduced(transition.introduces_gc_roots(), Self::MAY_HAVE_GC_ROOTS)
-                | introduced(
-                    matches!(transition, ShapeTransition::Descriptor { attributes, .. } if attributes.slot_getter()),
-                    Self::SLOT_GETTERS,
-                ),
+                | introduced(descriptor(ShapeAttributes::slot_getter), Self::SLOT_GETTERS)
+                | introduced(descriptor(|attributes| attributes.accessor), Self::ACCESSORS),
         )
+    }
+
+    fn accessors(self) -> bool {
+        self.0 & Self::ACCESSORS != 0
     }
 
     fn may_have_gc_roots(self) -> bool {
@@ -1438,7 +1563,7 @@ pub(crate) struct Vm<H> {
     atom_classes: Vec<std::cell::Cell<u8>>,
     dynamic_strings: Option<Box<FxHashMap<u64, Value>>>,
     symbol_registry: FxHashMap<String, Value>,
-    well_known_symbols: FxHashMap<String, Value>,
+    well_known_symbols: WellKnownSymbols,
     string_concats: Option<Box<[StringConcatCache]>>,
     call_targets: Box<[InLoopCallTarget; CALL_TARGET_CACHE_SIZE]>,
     field_caches: Vec<FieldCache>,

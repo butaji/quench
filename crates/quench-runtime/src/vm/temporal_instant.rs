@@ -138,7 +138,7 @@ impl<H: Host> Vm<H> {
     }
 
     fn install_instant_to_string_tag(&mut self, prototype: Value) -> Result<(), JsError> {
-        let Some(symbol) = self.well_known_symbols.get("toStringTag").copied() else {
+        let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::ToStringTag) else {
             return Ok(());
         };
         let tag = self.heap.alloc(Cell::String("Temporal.Instant".into()));

@@ -132,8 +132,7 @@ impl<H: Host> Vm<H> {
     fn install_temporal_to_string_tag(&mut self, object: Value, tag: &str) -> Result<(), JsError> {
         let symbol = self
             .well_known_symbols
-            .get("toStringTag")
-            .copied()
+            .get(WellKnownSymbol::ToStringTag)
             .ok_or_else(|| JsError("Symbol.toStringTag is not initialized".into()))?;
         let value = self.heap.alloc(Cell::String(tag.into()));
         self.set_symbol_property(object, symbol, value)?;
@@ -185,7 +184,7 @@ impl<H: Host> Vm<H> {
         ] {
             self.set_builtin_named(p, now, name, native)?;
         }
-        if let Some(symbol) = self.well_known_symbols.get("toStringTag").copied() {
+        if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::ToStringTag) {
             let tag = self.heap.alloc(Cell::String("Temporal.Now".into()));
             self.set_symbol_property(now, symbol, tag)?;
             self.set_property_attributes(

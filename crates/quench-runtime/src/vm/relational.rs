@@ -1,4 +1,5 @@
 use std::cmp::Ordering;
+use crate::heap::ProtoLink;
 
 use crate::bigint::{
     IEEE754_EXPONENT_BIAS, IEEE754_FRACTION_BITS, IEEE754_MAX_EXPONENT_BITS,
@@ -177,7 +178,7 @@ impl<H: Host> Vm<H> {
             if !vm.is_object_like(constructor) {
                 return Err(vm.type_error(p, "right-hand side of 'instanceof' is not an object".into()));
             }
-            if let Some(has_instance) = vm.well_known_symbols.get("hasInstance").copied() {
+            if let Some(has_instance) = vm.well_known_symbols.get(WellKnownSymbol::HasInstance) {
                 let method = vm.get_index(p, constructor, has_instance)?;
                 if !method.is_undefined() && !method.is_null() {
                     if !vm.is_function(method) {
@@ -231,26 +232,31 @@ impl<H: Host> Vm<H> {
         // SAFETY: the memo names the slot of `prototype` in the shape it holds, which is
         // never a dictionary's, so the slot exists.
         let prototype = unsafe { self.heap.property_get_shaped(object, slot) }?;
-        if prototype.is_deleted() || prototype.direct_object_index().is_none() {
+        if prototype.is_deleted() {
             return None;
         }
+        let target = ProtoLink::object_record(prototype.direct_object_index()?);
         let Some(record) = value.direct_object_index() else {
-            // A primitive has no prototype chain to hold the prototype; any other object
-            // takes the walk. A value outside the heap is never an object.
-            if value.heap_index().is_none() {
-                return Some(false);
-            }
-            return (!self.is_object_like(value)).then_some(false);
+            // A primitive has no prototype chain to hold the prototype: a value outside the
+            // heap, or a string. Any other value takes the walk, whose object test makes a
+            // call this steady case leaves out.
+            return (value.heap_index().is_none() || matches!(self.heap.get(value), Some(Cell::String(_))))
+                .then_some(false);
         };
-        let mut link = self.heap.object_record_by_id(record).proto();
+        // The walk compares encoded links; only a link outside the object records decodes.
+        let mut object = self.heap.object_record_by_id(record);
         loop {
-            if link == prototype {
+            let link = object.proto_link();
+            if link == target {
                 return Some(true);
             }
-            if link.is_null() {
+            if link == ProtoLink::NULL {
                 return Some(false);
             }
-            link = self.heap.object_record(link)?.proto();
+            object = match link.object_record_id() {
+                Some(id) => self.heap.object_record_by_id(id),
+                None => self.heap.object_record(object.proto())?,
+            };
         }
     }
 
@@ -320,7 +326,7 @@ impl<H: Host> Vm<H> {
 
     /// The slot of `constructor`'s own data `prototype` when it has no own `@@hasInstance`.
     fn instanceof_constructor_slot(&mut self, constructor: Value) -> Option<usize> {
-        let has_instance = PropertyKey::symbol(*self.well_known_symbols.get("hasInstance")?);
+        let has_instance = PropertyKey::symbol(self.well_known_symbols.get(WellKnownSymbol::HasInstance)?);
         if self.property_attributes(constructor, has_instance).is_some() {
             return None;
         }
@@ -338,7 +344,7 @@ impl<H: Host> Vm<H> {
     /// with an own `@@hasInstance` holds it, and no proxy precedes it. A subclass constructor
     /// inherits it through its parent constructors.
     fn inherits_native_has_instance(&mut self, holder: Value) -> bool {
-        let Some(&symbol) = self.well_known_symbols.get("hasInstance") else {
+        let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::HasInstance) else {
             return false;
         };
         let mut current = holder;
@@ -366,7 +372,7 @@ impl<H: Host> Vm<H> {
     }
 
     fn verify_has_instance_holder(&mut self, holder: Value) -> bool {
-        let Some(&symbol) = self.well_known_symbols.get("hasInstance") else {
+        let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::HasInstance) else {
             return false;
         };
         let Some(attributes) = self.property_attributes(holder, PropertyKey::symbol(symbol))
