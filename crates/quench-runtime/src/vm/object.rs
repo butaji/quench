@@ -386,6 +386,13 @@ impl<H: Host> Vm<H> {
     pub(super) fn shape_is_dictionary(&self, shape: u32) -> bool {
         self.shapes[shape as usize].dictionary_trigger.is_some()
     }
+    /// Whether a property of `shape` may be an accessor: a dictionary shape keeps its
+    /// attributes outside its transitions, any other knows from its chain (`ShapeFacts`).
+    #[inline(always)]
+    pub(super) fn shape_may_have_accessors(&self, shape: u32) -> bool {
+        let entry = &self.shapes[shape as usize];
+        entry.dictionary_trigger.is_some() || entry.facts.accessors()
+    }
     pub(super) fn mark_object_dictionary(&mut self, object: Value, trigger: DictionaryTrigger) {
         let Some(shape) = self.object_data(object).map(Object::shape) else {
             return;
@@ -416,11 +423,20 @@ impl<H: Host> Vm<H> {
         // Non-shape properties, including array length and indexed elements,
         // keep explicit attributes in descriptors. Array length always exists;
         // its unchanged attributes derive from the array exotic contract.
-        self.descriptors.get(&(object, key)).copied().or_else(|| {
+        self.side_descriptor(object, key).or_else(|| {
             (key == PropertyKey::string(self.length_atom)
                 && self.own_array_length(object).is_some())
             .then_some(super::object_array::ARRAY_LENGTH_ATTRIBUTES)
         })
+    }
+    /// `object`'s attributes for `key` in the descriptor table, which an object only has
+    /// entries in once marked (`Object::has_side_descriptors`); any other value is looked up.
+    #[inline(always)]
+    pub(super) fn side_descriptor(&self, object: Value, key: PropertyKey) -> Option<PropertyAttributes> {
+        if self.object_data(object).is_some_and(|data| !data.has_side_descriptors()) {
+            return None;
+        }
+        self.descriptors.get(&(object, key)).copied()
     }
     /// The one place descriptors are recorded. Objects remember whether any index-keyed entry
     /// exists, so plain arrays can skip the per-index descriptor proof, and whether a `length`
@@ -431,18 +447,19 @@ impl<H: Host> Vm<H> {
         key: PropertyKey,
         attributes: PropertyAttributes,
     ) {
-        if let PropertyKey::String(atom) = key {
-            let length = atom == self.length_atom;
-            let index = self.atom_class(atom).contains(AtomClass::ARRAY_INDEX);
-            if (length || index)
-                && let Some(data) = self.object_data_mut(object)
-            {
-                if index {
-                    data.mark_indexed_descriptors();
-                }
-                if length {
-                    data.mark_length_descriptor();
-                }
+        let (length, index) = match key {
+            PropertyKey::String(atom) => {
+                (atom == self.length_atom, self.atom_class(atom).contains(AtomClass::ARRAY_INDEX))
+            }
+            _ => (false, false),
+        };
+        if let Some(data) = self.object_data_mut(object) {
+            data.mark_side_descriptors();
+            if index {
+                data.mark_indexed_descriptors();
+            }
+            if length {
+                data.mark_length_descriptor();
             }
         }
         self.descriptors.insert((object, key), attributes);

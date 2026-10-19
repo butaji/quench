@@ -391,6 +391,11 @@ pub(super) struct ScriptCallTarget {
     room: u16,
     params: u16,
     strict: bool,
+    /// An arrow's `this`, found in its environment when it was resolved: `None` for any
+    /// other function, `Some(None)` for an arrow whose environment binds none, which then
+    /// takes its caller's receiver. An arrow whose binding is still uninitialized (before
+    /// `super()`) is never resolved, and an initialized binding never changes.
+    lexical_this: Option<Option<Value>>,
     /// `new` may activate it too (`Vm::inline_constructible`).
     constructs: bool,
     /// `new` may run its body as the stores alone (`Function::only_initializes_this_fields`).
@@ -516,6 +521,7 @@ const EMPTY_SCRIPT_CALL_TARGET: ScriptCallTarget = ScriptCallTarget {
     room: 0,
     params: 0,
     strict: false,
+    lexical_this: None,
     constructs: false,
     initializes: false,
     entry: CallEntry::Activates,
@@ -4542,6 +4548,17 @@ impl<H: Host> Vm<H> {
         }
         let body = code.function_get(function as usize)?;
         let plan = body.call_plan(code);
+        // An arrow binds the `this` of its environment, found once here: one still
+        // uninitialized (before `super()`) leaves its calls to the general path, uncached.
+        let lexical_this = if body.is_arrow {
+            let this = self.captured_lexical_this(env);
+            if this.is_some_and(Value::is_deleted) {
+                return None;
+            }
+            Some(this)
+        } else {
+            None
+        };
         // A numeric body's own frame constructs nothing in place
         // (`LaneContext::script_constructs`), which its activation would inherit from the
         // caller, so only one that constructs nothing runs frameless; its other records are
@@ -4590,6 +4607,7 @@ impl<H: Host> Vm<H> {
             room: u16::try_from(fill_room::<SCRIPT_FILL_BLOCK>(usize::from(body.registers))).ok()?,
             params: body.params,
             strict: body.strict,
+            lexical_this,
             constructs: Self::inline_constructible(body),
             initializes: Self::inline_constructible(body)
                 && body.only_initializes_this_fields(&code.constants),
@@ -4670,8 +4688,9 @@ lane_handler! {
     }
 }
 
-/// The `this` a plain call of `target` binds for `receiver`: `call_this_value` without its
-/// boxing of primitives, which allocates, so `None` for a sloppy callee's primitive.
+/// The `this` a plain call of `target` binds for `receiver`: an arrow's lexical one
+/// (`ScriptCallTarget::lexical_this`), else `call_this_value`'s without its boxing of
+/// primitives, which allocates, so `None` for a sloppy callee's primitive.
 #[inline(always)]
 fn lane_call_this<H: Host>(vm: &Vm<H>, target: &ScriptCallTarget, receiver: Value) -> Option<Value> {
     lane_direct_call_this(vm, target, receiver)
@@ -4687,7 +4706,10 @@ fn lane_direct_call_this<H: Host>(
     target: &ScriptCallTarget,
     receiver: Value,
 ) -> Option<Value> {
-    if target.strict || receiver.direct_object_index().is_some() {
+    if let Some(lexical) = target.lexical_this {
+        // An arrow's own `this`, or its caller's receiver when its environment binds none.
+        Some(lexical.unwrap_or(receiver))
+    } else if target.strict || receiver.direct_object_index().is_some() {
         Some(receiver)
     } else if receiver.is_null() || receiver.is_undefined() {
         Some(vm.realm.globals)
@@ -4925,11 +4947,7 @@ fn lane_function_call_activation<H: Host>(
     let argc = usize::from(ImmediateLayout::argument_count(i.imm()));
     let receiver = if argc == 0 { Value::UNDEFINED } else { r.get(window) };
     // `call_this_value` without its boxing of primitives, which allocates.
-    let this = if target.strict || vm.is_object_like(receiver) {
-        receiver
-    } else if receiver.is_null() || receiver.is_undefined() {
-        vm.realm.globals
-    } else {
+    let Some(this) = lane_call_this(vm, &target, receiver) else {
         return Err(exit(ip));
     };
     // SAFETY: the values after `thisArg` are registers of the running function, which the
@@ -5230,11 +5248,7 @@ fn lane_call_keeping_activation<H: Host>(
         return Err(exit(ip));
     };
     let receiver = r.get(i.c);
-    let this = if target.strict || vm.is_object_like(receiver) {
-        receiver
-    } else if receiver.is_null() || receiver.is_undefined() {
-        vm.realm.globals
-    } else {
+    let Some(this) = lane_call_this(vm, &target, receiver) else {
         return Err(exit(ip));
     };
     let arguments = ActivationArguments::Window(ImmediateLayout::call_window_base(i.imm()));
@@ -5496,11 +5510,7 @@ fn lane_forward_activation<H: Host>(
         return Err(exit(ip));
     };
     let receiver = r.get(window);
-    let this = if target.strict || vm.is_object_like(receiver) {
-        receiver
-    } else if receiver.is_null() || receiver.is_undefined() {
-        vm.realm.globals
-    } else {
+    let Some(this) = lane_call_this(vm, &target, receiver) else {
         return Err(exit(ip));
     };
     lane_activate_keeping(cx, r, ip, target, kept, this, false, None)

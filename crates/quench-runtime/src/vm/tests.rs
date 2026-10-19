@@ -10918,6 +10918,39 @@ fn lane_closures_share_and_update_their_promoted_environment() {
 }
 
 #[test]
+fn lane_arrows_take_this_from_their_environment() {
+    // Arrows called as frameless activations read `this` from the environment they
+    // closed over: call/apply/bind receivers are ignored, a derived constructor's
+    // arrow throws before `super()` and sees the object after, and strict and
+    // sloppy outer functions keep their own `this`.
+    let source = r#"
+      const out = [];
+      const obj = { tag: 'o', m() { const a = () => this.tag; const b = (x) => x + (this ? this.tag : '-'); return [a(), b(1), a.call({ tag: 'X' }), b.apply({ tag: 'Y' }, [2])].join(); } };
+      class P { constructor() { this.v = 'p'; } }
+      class D extends P { constructor() { const early = () => { try { return this.v; } catch (e) { return e.constructor.name; } }; out.push(early()); super(); const late = () => this.v; out.push(late(), early()); } }
+      function sloppyOuter() { const a = () => typeof this; return a(); }
+      function strictOuter() { 'use strict'; const a = () => this; return a(); }
+      function args() { const a = () => arguments.length; return a(); }
+      const top = () => typeof this;
+      for (let i = 0; i < 3; i++) {
+        out.push(obj.m());
+        new D();
+        out.push(sloppyOuter(), String(strictOuter()), strictOuter.call(5), args(1, 2, 3), top());
+        const bound = (() => this).bind({ z: 1 }); out.push(typeof bound());
+        out.push([1, 2, 3].map((x) => x * 2).join(''));
+      }
+      print(out.join('|'));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "lane-arrows.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["o,1o,o,2o|ReferenceError|p|p|object|undefined|5|3|object|object|246|o,1o,o,2o|ReferenceError|p|p|object|undefined|5|3|object|object|246|o,1o,o,2o|ReferenceError|p|p|object|undefined|5|3|object|object|246"]
+    );
+}
+
+#[test]
 fn bound_calls_and_base_class_constructions_pushed_in_place_keep_their_semantics() {
     // Bound calls and base class constructions run as in-loop frames: bound `this` and
     // argument order, nested binds, sloppy `this` coercion, `new.target`, fields, and a
