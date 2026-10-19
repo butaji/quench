@@ -6190,6 +6190,8 @@ impl<H: Host> Vm<H> {
         };
         let numeric_loop_candidate =
             compiled_tier.is_none() && super::js_compiled::has_numeric_loop_candidate(function);
+        let int32_bitwise_candidate =
+            super::js_compiled::has_int32_bitwise_candidate(program, function);
         let capture_argument = match compiled_tier {
             Some(compiled) => compiled.capture_argument(),
             None => super::js_compiled::number_capture_candidate(function),
@@ -6228,6 +6230,11 @@ impl<H: Host> Vm<H> {
                 arguments.push(number);
                 numeric = true;
             }
+        }
+        if numeric && int32_bitwise_candidate {
+            numeric = arguments
+                .iter()
+                .all(|value| super::js_compiled::is_i32_number(*value));
         }
         let string_hash_candidate = match compiled_tier {
             Some(compiled) => compiled.is_string_hash_loop(),
