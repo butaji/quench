@@ -1557,6 +1557,40 @@ impl<'a, H: Host> NativeContext<'a, H> {
         result.map_err(|error| self.error(error))
     }
 
+    /// `define_data_property_rooted` with a string key the host spells, without allocating
+    /// the key where the object is plain.
+    pub fn define_named_data_property_rooted(
+        &mut self,
+        object: RootId,
+        name: &str,
+        value: RootId,
+        writable: bool,
+        enumerable: bool,
+        configurable: bool,
+    ) -> Result<bool, RootedError> {
+        let result = self.vm.define_named_data_property_rooted(
+            object,
+            name,
+            value,
+            writable,
+            enumerable,
+            configurable,
+        );
+        result.map_err(|error| self.error(error))
+    }
+
+    /// `set_property_rooted` with the receiver `object` and a string key the host spells,
+    /// without allocating the key.
+    pub fn set_named_property_rooted(
+        &mut self,
+        object: RootId,
+        name: &str,
+        value: RootId,
+    ) -> Result<bool, RootedError> {
+        let result = self.vm.set_named_property_rooted(object, name, value);
+        result.map_err(|error| self.error(error))
+    }
+
     pub fn define_data_property_rooted(
         &mut self,
         object: RootId,
@@ -1602,6 +1636,19 @@ impl<'a, H: Host> NativeContext<'a, H> {
             .map_err(|error| self.error(error))
     }
 
+    /// Whether `holder`'s own property `name` is still a lazy data property, observing nothing:
+    /// its group has not materialized and script has not replaced it, so it holds the value
+    /// its initializer will define.
+    pub fn is_pending_lazy_data_property_rooted(
+        &mut self,
+        holder: RootId,
+        name: &str,
+    ) -> Result<bool, RootedError> {
+        self.vm
+            .is_pending_lazy_data_property_rooted(holder, name)
+            .map_err(|error| self.error(error))
+    }
+
     /// Defines `names` on `holder` as one group of writable, configurable lazy data
     /// properties: the first time script observes any of them, `initializer` runs once, with
     /// the startup intrinsics in place, and defines them all.
@@ -1614,6 +1661,20 @@ impl<'a, H: Host> NativeContext<'a, H> {
     ) -> Result<(), RootedError> {
         self.vm
             .define_lazy_data_properties_rooted(holder, names, enumerable, initializer)
+            .map_err(|error| self.error(error))
+    }
+
+    /// Defines `members` (a name and whether it is enumerable) on `holder` as one group of
+    /// lazy data properties, like `define_lazy_data_properties_rooted` with each member's own
+    /// enumerability.
+    pub fn define_lazy_data_members_rooted(
+        &mut self,
+        holder: RootId,
+        members: &[(&str, bool)],
+        initializer: RootId,
+    ) -> Result<(), RootedError> {
+        self.vm
+            .define_lazy_group_rooted(holder, members, false, initializer)
             .map_err(|error| self.error(error))
     }
 

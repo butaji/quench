@@ -28,6 +28,8 @@ Deegen supplies a useful meta-compiler pattern: write bytecode semantics once, g
 
 Use online statistics for promotion and acceptance instead of a fixed “hot” intuition. A candidate is worthwhile when its estimated future execution savings exceed compile cost plus its code-memory charge: `E[remaining runs] × E[time saved per run] > compile time + λ × native bytes`. Type stability is only evidence for a guard, not evidence of payback; calibrate compile cost, per-call savings, and future reuse before adding an economic promotion gate. Apply an explicit process-wide code-byte/page budget and discard low-value code when full. For benchmark decisions, pair engine runs by fixture and round, use randomized or balanced engine order, compare log score ratios and RSS ratios, and bootstrap the paired rounds; do not infer a win from unpaired averages or one run. Size confirmatory samples from paired-log-ratio variance and a predeclared minimum effect, because more bootstrap replicates do not create more process samples. Keep cold-start and warmed paths separately visible because compilation can raise both elapsed time and RSS before it pays back. These policies are Quench design inferences, not guarantees from the cited papers.
 
+Function-entry counts miss a long loop that is called only once. If diagnostic evidence identifies that profile, add backedge hotness and an on-stack replacement entry at a loop header, with an explicit register/PC map so the same activation can move into compiled code. V8's interrupt budget and OSR path, and Deegen's selected-bytecode OSR, provide precedents; they do not justify adding loop compilation before a workload demonstrates the need. Keep baseline code and optimizing code under one memory budget, and retire the baseline mapping when replacement is safe. A Copy-and-Patch baseline is a later candidate only if measured Cranelift compile cost or temporary RSS limits payback; Sethi-Ullman scheduling belongs in that baseline only for pure expression trees, since Cranelift already owns SSA register allocation. [V8 tiering and interrupt budgets](https://github.com/v8/v8/blob/main/docs/runtime/tiering.md), [V8 OSR path](https://github.com/v8/v8/blob/main/src/execution/tiering-manager.cc), [Deegen paper](https://arxiv.org/abs/2411.11469), [Copy-and-Patch](https://doi.org/10.1145/3485513), [Sethi and Ullman](https://doi.org/10.1145/321607.321620).
+
 JetStream 3 is the acceptance workload, not a code-generation oracle. Its stock driver and per-test validation remain unchanged. The repo's runner already provides JetStream's shell surface through `node:vm`, fresh realms, on-demand resource loading and process-level maximum RSS, so benchmark changes should be limited to selecting the Quench execution mode and recording its identity. [JetStream 3 announcement](https://webkit.org/blog/17899/introducing-the-jetstream-3-benchmark-suite/), [pinned JetStream corpus](https://github.com/WebKit/JetStream/tree/JetStream3.0)
 
 ## Implementation sequence
@@ -41,9 +43,9 @@ JetStream 3 is the acceptance workload, not a code-generation oracle. Its stock 
 
 ## First JS tier in this branch
 
-`quench-node --jit` selects `ExecutionMode::Compiled` on the same runtime and VM; the default remains interpreted. The first JS tier is intentionally narrow. Its profile is a Bernoulli observation per eligible entry: success means every formal argument is a Number. For each function, it tests at four prespecified looks (32, 64, 128, 255), with critical success counts (31, 59, 113, 219). Each exact binomial upper-tail test spends at most `0.05 / 4` under the null that Number-entry probability is at most 0.80, so a union bound limits false promotion across repeated looks for one function to 5%, assuming stationary independent entries. The 256-function tracking cap does not turn this into a 5% VM-wide family-wise guarantee; controlling that would require allocating error across candidates or a separately calibrated online procedure. A successful look permits compilation; a failed final look leaves the function interpreted. This improves the former repeatedly-peeked Wilson threshold, which did not retain its nominal fixed-sample coverage after optional stopping. If workload phase changes violate the stationary model, a time-uniform confidence sequence is a suitable follow-up, with its own stated assumptions and calibration ([Howard et al.](https://doi.org/10.1214/20-AOS1991)). The profile gate estimates guard stability, not native speedup or compilation payback. Cranelift lowers straight-line numeric functions containing constants, moves, `+`, `-`, `*`, `/`, and a terminal return. It also lowers forward-only decision trees that compare Number parameters with Number constants and return static string constants, including Unicode `StringUnits` values. That result is a bytecode Return PC; the VM retrieves the rooted constant, writes the selected Return register, and resumes ordinary dispatch and unwind. All formal parameters are guarded as Numbers before native entry. A failed guard leaves the initialized frame at PC 0, and unsupported bytecode stays interpreted. This uses Futamura-style specialization of fixed residual functions, but does not yet generate the interpreter/compiler from one semantic source as Deegen does.
+`quench-node --jit` selects `ExecutionMode::Compiled` on the same runtime and VM; the default remains interpreted. The first JS tier is intentionally narrow. Its profile is a Bernoulli observation per eligible entry: success means every formal argument is a Number. For each function, it tests at four prespecified looks (32, 64, 128, 255), with critical success counts (31, 59, 113, 219). Each exact binomial upper-tail test spends at most `0.05 / 4` under the null that Number-entry probability is at most 0.80, so a union bound limits false promotion across repeated looks for one function to 5%, assuming stationary independent entries. The 256-function tracking cap does not turn this into a 5% VM-wide family-wise guarantee; controlling that would require allocating error across candidates or a separately calibrated online procedure. A successful look marks promotion; if that entry has a non-Number argument, promotion stays pending until the next Number entry can compile and enter natively. A failed final look leaves the function interpreted. This improves the former repeatedly-peeked Wilson threshold, which did not retain its nominal fixed-sample coverage after optional stopping. If workload phase changes violate the stationary model, a time-uniform confidence sequence is a suitable follow-up, with its own stated assumptions and calibration ([Howard et al.](https://doi.org/10.1214/20-AOS1991)). The profile gate estimates guard stability, not native speedup or compilation payback. Cranelift lowers straight-line numeric functions containing Number parameters and Number constants, moves, `+`, `-`, `*`, `/`, and a terminal return; non-Number constants remain interpreter-only. It also lowers forward-only decision trees that compare Number parameters with Number constants and return static string constants, including Unicode `StringUnits` values. That result is a bytecode Return PC; the VM retrieves the rooted constant, writes the selected Return register, and resumes ordinary dispatch and unwind. All formal parameters are guarded as Numbers before native entry. A failed guard leaves the initialized frame at PC 0, and unsupported bytecode stays interpreted. This uses Futamura-style specialization of fixed residual functions, but does not yet generate the interpreter/compiler from one semantic source as Deegen does.
 
-The current tier is a prototype, not a measured optimization strategy: its exact sequential gate estimates guard stability, but compilation cost, observed time saved and expected remaining calls are not yet included in the payback estimator above. Ershov/Sethi-Ullman scheduling is not yet applied because these functions are short and Cranelift handles native register allocation. The category-theory state relation is expressed through a shared comparison classifier, guard invariant, forward-DAG restriction, rooted return map, and ordinary dispatcher return; it is not a runtime type or compiler abstraction. The string-return tier rejects loops, joins, heap access, calls, exceptions and dynamic return values; all non-Number inputs and unsupported shapes remain in the interpreter. Native candidates are capped at 256 bytecodes and 256 registers; the compiled body has no internal poll, so the shared dispatcher checks cancellation before entering and immediately after returning. Profiling-feature builds leave this JS tier disabled so native execution cannot omit interpreter instrumentation. Unit tests count actual native calls in test builds; benchmark reports still record mode selection rather than per-entry counts to avoid timing instrumentation.
+The current tier is a prototype, not a measured optimization strategy: its exact sequential gate estimates guard stability, but compilation cost, observed time saved and expected remaining calls are not yet included in the payback estimator above. Ershov/Sethi-Ullman scheduling is not yet applied because these functions are short and Cranelift handles native register allocation. The category-theory state relation is expressed through a shared comparison classifier, guard invariant, forward-DAG restriction, rooted return map, and ordinary dispatcher return; it is not a runtime type or compiler abstraction. The string-return tier rejects loops, joins, heap access, calls, exceptions and dynamic return values; all non-Number inputs and unsupported shapes remain in the interpreter. Native candidates are capped at 256 bytecodes and 256 registers; the compiled body has no internal poll, so the shared dispatcher checks cancellation before entering and immediately after returning. Profiling-feature builds leave this JS tier disabled so native execution cannot omit interpreter instrumentation. Unit tests count actual native calls in test builds; normal benchmark reports record mode selection; opt-in `--jit-diagnostics` adds candidate entries, profiles, promotions, compile time, mapped bytes, and native entries to captured stderr for attribution-only runs.
 
 Tier metadata is sparse and capped at 256 functions per VM. At most eight functions and 64 KiB of page-rounded executable mappings are retained; unsupported functions, mapping failures and budget exhaustion continue in the interpreter. This bounds executable mappings and profile state, but does not include Cranelift's temporary compilation allocations in the RSS budget. Page-rounded mapping capacity is not a resident-set measurement; benchmark RSS remains the acceptance metric.
 
@@ -115,6 +117,29 @@ counter distinguishes reference/table calls from statically imported calls,
 but does not show which reference calls enter compiled callees versus VM
 fallback. Raw diagnostic data and reproduction details are in
 `evidence/jit-jetstream3-wasm-2026-10-18/callout-attribution/`.
+
+## Sampled native-entry timing
+
+The opt-in `QUENCH_WASM_JIT_STATS` record now samples every 256th native entry
+per artifact/function. It reports `[function, sample_count, elapsed_ns]`
+tuples in `native_entry_samples`. The timer starts after compilation and
+context setup and brackets the native entry/trampoline, so it includes
+callouts and trap work but excludes compilation. These are inclusive wall-time
+samples: recursive and nested entries overlap, deterministic periodic call
+patterns can alias with the sample interval, and linked `CallKnown` machine
+calls bypass the entry hook and are charged to the enclosing entry. Use the
+data to choose a function for deeper profiling, not as per-function CPU time
+or benchmark evidence.
+
+A clean-source, one-round selective diagnostic sampled QuickSort's defined
+body index 1 (`Quicksort`, symbol index 3) 12 times for 1.203 ms total, out of
+3,112 recorded entries. In GCC loops, the top sampled bodies were
+`example25` at 0.673 ms and `example10a` at 0.552 ms. This identifies
+QuickSort's recursive sort body as the next codegen inspection target, but
+does not isolate its loop-body cost or establish a JIT speed change. Both
+fixture outputs validated; the diagnostic report is not performance evidence.
+The report, sample mapping and reproduction command are in
+`evidence/jit-jetstream3-wasm-2026-10-19/native-entry-sampling/`.
 
 ## Deferred indirect-call fallback lookups
 
@@ -232,7 +257,7 @@ fallbacks are rejected because the current callout ABI returns at most one
 value. The direct-entry raw argument path also marshals directly from the
 caller register window into owned Wasm words before native entry.
 
-The root mode has limits of 32 selected functions, 80,000 bytecodes per
+The root mode has limits of 128 selected functions, 80,000 bytecodes per
 function, and 2 MiB emitted code. It is opt-in with
 `--jit-wasm-root <residual-function-id>` and never marks a report eligible for
 qualification. The one-round HashSet diagnostic confirms root 3 entered native
@@ -252,6 +277,132 @@ useful for pinpointing the hot caller, but this Cranelift admission strategy is
 not suitable for the requested score-and-RSS win. Lower-memory baseline code
 generation or reducing Quench's JIT-mode base footprint is the next research
 direction.
+
+The root selector also supports two distinct experimental admission policies.
+`--jit-wasm-root-only` with `--jit-wasm-root <residual-function-id>` compiles
+only that function and defaults Cranelift `opt_level=none`; `--jit-wasm-root-first`
+starts with the selected function at `speed`, then lets hot fallback callees use
+the existing bounded promotion tier. Either selected root can override its
+compile level with `QUENCH_WASM_JIT_ROOT_OPT_LEVEL=none|speed|speed_and_size`.
+The strict mode is useful for measuring the cost of one native entry; root-first
+tests whether the selected root can benefit from a smaller first compile while
+retaining tier-up. The CLI records separate checkpoint/report fields and
+provenance for both, and neither mode is eligible for qualification. Root-first
+promotion is enabled only if the selected root compiles successfully; a rejected
+root leaves the workload interpreted. Their runtime switches are
+`QUENCH_WASM_JIT_ROOT_ONLY=1` and `QUENCH_WASM_JIT_ROOT_FIRST=1`, respectively.
+
+On JetStream 3 QuickSort, root-only function 1 at `speed` scored 292.02 versus
+247.90 at its default `none` level over separate 11-round clean-source Linux
+windows; median RSS was 41.50 versus 41.36 MiB. Against full eager JIT in a
+matching 11-round window, root-only `speed` scored 292.02 versus 237.33 and used
+41.50 versus 42.83 MiB. It remained below Bun's 393.36 score, while using less
+RSS than both Bun (47.72 MiB) and Node (88.38 MiB). This is a promising opt-in
+tiering/codegen tradeoff, not a peer score win or qualification result; the
+root-only mode is intentionally excluded from qualification. See
+`evidence/jit-jetstream3-wasm-2026-10-19/root-only-opt-level/` for the reports
+and reproduction details.
+
+The root-first GCC-Wasm experiment selected residual function 19, then allowed
+hot fallback callees to use the bounded tier. An 11-round Linux screen scored
+58.62 / 48.20 MiB versus Bun 174.49 / 54.10 MiB and Node 179.90 / 62.38 MiB.
+Paired Score ratios were 0.351 [0.327, 0.359] vs Bun and 0.329 [0.324,
+0.345] vs Node; RSS ratios were 0.893 [0.881, 0.910] and 0.773 [0.772,
+0.773]. The mode preserves Quench's RSS edge but remains far below both JIT
+Score bars and the prior selective-tier GCC screen. Keep it as an opt-in
+diagnostic policy, not a default tier strategy. Evidence and reproduction
+commands are in `evidence/jit-jetstream3-wasm-2026-10-18/root-first/`.
+
+The next GCC hypothesis is narrower and higher leverage: diagnostics
+attributed 307,270 of 309,039 imported callouts to `_emscripten_memcpy_js`.
+W-08 tested a same-memory direct copy inside the existing VM boundary, guarded
+by the exact helper, current captured view and method, active unshared Wasm
+memory identity, and copyWithin-compatible signed index clamping. Every failed
+guard keeps the ordinary JavaScript path. The callout's interrupt, stack,
+roots, realm, panic, and cleanup behavior stays in place. Its focused runtime
+test passed, including overlap, extreme signed indices, stale and reloaded
+views after memory growth, alternate buffers, replaced methods, and cleanup.
+
+The cleanly paired 11-round GCC-Wasm diagnostic A/B found median Score 53.23
+with the late direct-copy path enabled vs. 51.71 disabled. The paired ratio was
+1.0425 (95% interval 1.0263–1.0750), below its predeclared 1.10 keep
+threshold; peak RSS was effectively unchanged at a paired ratio of 1.0000
+(0.99935–1.00049). Diagnostics recorded 307,300 direct copies out of 308,232
+import callouts. Quench retains lower RSS than Bun and Node but remains far
+below their Scores: the enabled arm reached 0.314 of Bun's and 0.295 of Node's
+paired Score. The late-bound optimization is rejected as insufficient in
+isolation. Its diagnostic report, raw A/B, analysis, and reproduction command
+are in `evidence/jit-jetstream3-wasm-2026-10-18/direct-emscripten-copy/`.
+
+TOD-143 tests the next boundary: recognize the exact imported helper and
+perform the same dynamic guards on raw Wasm i32 arguments before building
+`SmallVec<Value>`. On guard miss it keeps the existing import path. This targets
+the measured argument conversion and dispatch work; it is not an expected RSS
+optimization. The paired A/B keeps the late direct path enabled in both arms
+and toggles only raw-i32 admission. It remains a diagnostic experiment, and a
+peer win still requires Score and RSS intervals to favor Quench.
+
+The raw-i32 path was exercised: its one-round diagnostic recorded 307,300 hits
+out of 308,232 import callouts, with no late-path hits. The 11-round A/B scored
+53.82 vs. 53.61 with raw admission off; its paired Score ratio was 1.0211
+(95% interval 0.9814–1.0491), below the predeclared 1.25 keep threshold and
+including a tie. RSS stayed flat at 0.99984 (0.99943–1.00041). The implementation
+remains opt-in and disabled by default for reproducibility, but does not count
+as a performance win. Quench remains below Bun and Node on Score at 0.318 and
+0.291, respectively, while keeping lower RSS. Full raw samples and analysis
+are in `evidence/jit-jetstream3-wasm-2026-10-18/raw-emscripten-copy/`.
+
+TOD-144 adds an opt-in lowering for QuickSort's comparison-only Wasm branches.
+The compiler passes signed or unsigned Cranelift `icmp` conditions directly to
+the existing branch emitter; value-producing comparisons are unchanged, and
+the taken loop-backedge interrupt safepoint remains in place. The focused
+regression covers register and immediate comparisons at i32 extrema, both
+outcomes, and the full runtime suite still passes. Cranelift's vendored x64
+lowering already recognizes both the old `uextend(icmp)` branch input and the
+direct `icmp` shape, so the source change was not expected to guarantee a
+different machine instruction sequence.
+
+The three-round QuickSort screen improved the median Score by 20.3%, but its
+paired interval included a tie, so the predeclared 11-round confirmation ran.
+That trial scored 211.41 with direct compare branches on vs. 217.46 off: a
+paired ratio of 0.9693 (95% interval 0.9362–1.0238). Peak RSS was effectively
+flat at ratio 1.0031 (0.9947–1.0092). The candidate remains below Bun on Score
+(0.5914, 0.4953–0.6592) and Node (0.5045, 0.4492–0.5094), while retaining lower
+RSS than both. Leave the feature opt-in and disabled by default; it does not
+meet the 1.02 keep threshold or establish a peer win. Reports and reproduction
+commands are in
+`evidence/jit-jetstream3-wasm-2026-10-18/direct-compare-branch/`.
+
+The next optimization should focus on emitted QuickSort work rather than
+branch-condition representation, or return to gcc-loops' measured import-call
+hotspot with a lower-cost boundary specialization.
+
+TOD-145 tests a narrower staged specialization at that import boundary. When
+enabled, the compiled callout recognizes only the matching Emscripten memcpy
+function index, signature, and per-instance host binding, then passes its raw
+Wasm i32 arguments to the existing dynamic current-view and bounds guards. A
+miss falls through to the ordinary Wasm-to-JS import path. Stack and interrupt
+gates still run before the copy, and the enclosing callout retains panic
+handling, active-context restoration, memory refresh, and completion behavior.
+This is a Futamura-style partial evaluation of known import metadata around
+dynamic arguments: the fixed import identity is staged, while memory state,
+argument ranges, and observable copy semantics remain checked at runtime. It
+reduces generic dispatch work without adding a second VM or changing module
+semantics. The early-import switch is opt-in and the experiment is diagnostic;
+it qualifies only if paired Score improves with its confidence interval above
+a tie and peak RSS stays within the predeclared 0.5 MiB budget.
+
+The early path was exercised on the target: a separate counter recorded
+307,300 successful early admissions among 308,232 compiled import callouts.
+Despite that coverage, the three-round paired screen regressed: Score was
+50.51 with early admission vs. 56.48 without, a ratio of 0.9527 (95% interval
+0.8943–0.9661). Peak RSS was effectively unchanged at ratio 1.0004
+(0.9996–1.0027). This fails the predeclared keep threshold, so no 11-round
+confirmation was run. Leave the switch disabled and do not count the feature
+as a win. The result shows that resolving and checking the early binding costs
+more than the generic import setup it avoids on gcc-loops. Raw samples, paired
+analysis, and path-coverage diagnostics are in
+`evidence/jit-jetstream3-wasm-2026-10-18/early-emscripten-copy/`.
 
 ## Sparse analysis and compile-cost screens
 
@@ -311,27 +462,40 @@ compile attempt. The regression uses a four-function chain so the frontend
 does not inline away the target; it checks the residual `CallKnown`, correct
 result, tier threshold, and native entries.
 
-On the same clean source revision, an 11-round selective-mode screen improved
-gcc-loops median Score from 57.11 to 71.28 (+24.8%) relative to default JIT;
-the median first timed iteration fell from about 306 ms to 118 ms, while
-average iteration time changed from about 33 ms to 35 ms. QuickSort Score was
-roughly flat (183.47 default, 180.05 selective). Both modes retain lower RSS
-than Bun and Node but remain below both peers on Score. The default paired
-analysis has Score ratios of 0.320 [0.311, 0.351] for gcc-loops vs Bun and
-0.474 [0.459, 0.514] for QuickSort vs Bun. Selective mode intentionally has
-`qualification_ready: false`; its medians are a screen without a paired
-qualification claim. Raw reports and diagnostic limits are documented in
-`evidence/jit-jetstream3-wasm-2026-10-18/selective-callknown-handoff/`.
+The selective-mode one-round diagnostic and an eleven-round uninstrumented
+paired A/B now isolate this handoff on gcc-loops. In the eleven-round run,
+selective Quench scored 67.45 versus 54.63 for default JIT, a paired ratio of
+1.236 [1.195, 1.275]. Peak RSS changed from 47.77 to 47.50 MiB, ratio 0.9942
+[0.9939, 0.9966]. The three-round screen showed the same direction: score
+ratio 1.272 [1.242, 1.280] and RSS ratio 0.9958 [0.9916, 0.9967]. Selective
+Quench still scored only 0.358 of Bun and 0.347 of Node; its 47.50 MiB RSS
+was lower than Bun's 55.18 MiB and Node's 92.08 MiB. This passes the local
+advancement gate, but does not meet the required score-and-RSS win against
+other JIT runtimes. Experimental A/B reports remain explicitly nonqualifying.
+Raw reports, paired analyses, and reproduction commands are in
+`evidence/jit-jetstream3-wasm-2026-10-19/selective-gcc-handoff/`.
 
-The selective one-round diagnostic reports 309,089 gcc-loops native-to-VM
-callouts (309,039 imported), against 9,955 total for QuickSort. It reports
-345.5 ms summed tier compilation time for gcc-loops and 39.7 ms for QuickSort.
-The aggregate does not attribute individual import symbols. This separates
-two next optimization problems: attribute and lower repeated imported-call
-boundary costs for gcc-loops, and improve generated code or native-entry
-overhead for QuickSort, whose hot sort path has few callouts. Selective tier-up
-is only an admission mechanism; it does not by itself solve either runtime
-cost and it does not satisfy the requested peer-score target.
+The instrumented one-round mechanism check recorded 75 selective-tier
+compilation events, 352,517 summed emitted code bytes, and 286.5 ms summed
+compile time, versus 8 events, 569,416 bytes, and 603.1 ms in default mode.
+Both still recorded about 309,000 import callouts (309,039 selective,
+309,150 default). These counters show that the handoff activates while the
+import boundary remains a substantial cost; diagnostic scores and timings
+are not performance evidence. The aggregate does not attribute individual
+import symbols. Selective tier-up is only an admission mechanism; it does not
+by itself close the peer-score gap.
+
+The follow-up adds per-import attribution to `QUENCH_WASM_JIT_STATS`, gated by
+the existing diagnostics switch. A clean-source, one-round selective GCC
+diagnostic attributes 307,270 of 309,039 imported callbacks to
+`env._emscripten_memcpy_js` and 1,769 to `env.emscripten_date_now`; the symbol
+counts sum to the aggregate on every compiled artifact. The counter records
+the Wasm function index and original import declaration index, since other
+import kinds may interleave in the module section. This is boundary-coverage
+evidence only. The early-import screen lost Score, and the leaf screen
+recorded zero native-leaf hits, so this attribution does not support another
+memcpy-specific specialization. The raw report, binary hashes, and command
+are in `evidence/jit-jetstream3-wasm-2026-10-19/import-callout-attribution/`.
 
 ## Safepoints on compiled control-flow cycles
 
@@ -432,3 +596,96 @@ motivate a future single-source, low-cost baseline compiler if Cranelift
 compilation remains a measured cost. [JetStream 3](https://webkit.org/blog/17899/introducing-the-jetstream-3-benchmark-suite/),
 [Deegen](https://compilers.stanford.edu/software/deegen/),
 [Copy-and-Patch](https://compilers.stanford.edu/software/copy-and-patch/).
+
+## Indexed i32 offset reuse experiment
+
+The indexed i32 offset-reuse experiment tested the exact relation
+`(x ± y) * 4 mod 2^32 = (x * 4 ± y * 4) mod 2^32` in two compiler variants.
+Both kept address formation, bounds checks, trap order, and loop safepoints on
+the existing path and passed interpreter/compiled-off/compiled-on smoke checks
+for ordinary, wrapped, and out-of-bounds indices. The first variant tracked
+every register in structurally matching functions; the second used a
+backward-use slice from `i32.shl 2` operands.
+
+Neither variant passed the predeclared three-round QuickSort screen. The
+first's paired Score ratio was 1.0395 [0.8684, 1.1094], below the 1.05 gate
+and crossing a tie. The narrower variant regressed, with a paired ratio of
+0.8320 [0.8075, 0.8383]; RSS was effectively unchanged. Neither advanced to
+eleven rounds, and neither beat Bun or Node on Score. The compiler switch and
+diagnostic runner option were removed. Full runs and the rejection decision
+are recorded in
+`evidence/jit-jetstream3-wasm-2026-10-18/indexed-offset-reuse/`.
+
+## GCC-Wasm four-lane affine pair experiment
+
+The GCC `example1` loop computes two independent adjacent `i32` sums per
+backedge. A restricted matcher proves static non-aliasing, memory32 range
+validity, a zero-start induction variable, and safe loop entry. The candidate
+uses Cranelift's supported `I32X4` operation, stores results in the original
+two-element order, and polls interrupts at both original backedges. An initial
+`I32X2` prototype could not be lowered by Cranelift 0.134.3's x64 backend and
+was discarded before timing.
+
+The valid three-round paired screen passed JetStream output validation but
+regressed Score: candidate/baseline was 0.927 (paired bootstrap 95% interval
+0.862–0.973). Peak RSS was effectively flat at 0.995 of baseline
+(0.992–0.997). The candidate scored 53.24 versus Bun's 184.91 and Node's
+180.36, while using 47.91 MiB versus 56.11 MiB and 92.01 MiB. Since the
+optimization regressed against the same Quench binary, it did not advance to
+eleven rounds. It remains available only by explicitly setting
+`QUENCH_WASM_JIT_AFFINE_PAIR=1`; the default path leaves it off. The
+instrumented one-round run only confirms native compilation and equal output;
+it is not timing evidence. Reports and paired analysis are in
+`evidence/jit-jetstream3-wasm-2026-10-18/affine-pair/`.
+
+## QuickSort root-first admission screen
+
+Three-round default and explicit root-9-first screens both passed output
+validation, but neither improved QuickSort Score. The root-9 screen recorded
+211.07 versus 219.12 for the default policy with the same 43.09 MiB Quench
+peak RSS; both remained below Bun and Node on Score. This admission-policy
+variant was rejected without changing production selection. Reports and the
+directional result are in
+`evidence/jit-jetstream3-wasm-2026-10-18/root-first/`.
+
+## Same-artifact body-pointer cache screen
+
+The TSF diagnostic A/B compared the same production executable with the
+same-artifact indirect-call body-pointer cache disabled and enabled, rotating
+Quench, Bun, and Node over three valid rounds. All outputs matched. Enabling
+the cache changed Quench's median Score from 10.95 to 10.40 (paired ratio
+0.960, 95% interval 0.920–1.013) and left peak RSS effectively unchanged
+(ratio 1.000, interval 0.9998–1.0002). The interval includes a tie, so this
+does not establish a regression or a gain; TSF remains far below both peers
+on Score and above them on RSS. The cache is now opt-in via
+`QUENCH_WASM_JIT_REFERENCE_BODY_CACHE=1` pending a workload that demonstrates
+payback. The screen is diagnostic rather than qualification evidence. Raw
+rounds and paired analysis are in
+`evidence/jit-jetstream3-wasm-2026-10-18/reference-body-cache/`.
+
+## GCC-Wasm native Emscripten memcpy leaf screen
+
+The next boundary experiment emitted a direct native leaf for the exact
+`_emscripten_memcpy_js(i32, i32, i32) -> ()` import. It used the existing
+live-view, method, and unshared-memory guard on the slow path, and revoked the
+raw-memory certificate at import and indirect-reference callouts. After a
+provenance review, both paired arms enabled the same direct, raw-i32, and
+early-import paths, with only the leaf switch differing. The corrected
+three-round screen had valid equal outputs, but leaf-on Score was 50.02 versus
+51.20 off (paired ratio 0.977, 95% interval 0.944–1.024) and peak RSS was flat
+(0.99984, 0.99829–1.00016). The interval includes a tie, so there was no
+supported speedup; the screen did not advance to eleven rounds. Quench's
+leaf-on Score was 50.02 versus Bun's 172.94 and Node's 177.67, while Quench
+used less peak RSS than both peers.
+
+The instrumented mechanism check found 307,300 early memcpy imports but zero
+native leaf hits. Both arms counted the same 307,300 early imports; the summed
+compiled code was 1,280 bytes larger with the leaf switch, but the specialized
+path was not reached. More call-pattern instrumentation is needed to
+distinguish cache-scope limits from a call-site or guard mismatch. Keep the
+switch as an opt-in experiment; it is not a default optimization, and advance
+it only if a safe certificate reaches hot calls and a fresh paired screen
+supports it. An earlier screen compared different import paths and is retained
+as a confounded result, not evidence for the leaf. Corrected reports, the
+hit-count diagnostic, and reproduction commands are in
+`evidence/jit-jetstream3-wasm-2026-10-18/memcpy-native-leaf/`.

@@ -1,6 +1,5 @@
 use super::root::WeakHandle;
 use super::*;
-use std::sync::atomic::Ordering;
 
 impl Heap {
     pub(crate) fn weak_handle(&self, value: Value) -> Option<WeakHandle> {
@@ -88,27 +87,23 @@ impl Heap {
         let Self {
             object_records,
             array_records,
+            function_records,
+            promise_records,
             marks,
             slots,
             young_weak,
             remembered,
             ..
         } = self;
-        let mut finalization_jobs = Vec::new();
-        let is_marked = |value: Value| {
-            if let Some(record_id) = value.direct_object_index() {
-                return object_records.is_marked(record_id);
-            }
-            if let Some(record_id) = value.direct_array_index() {
-                return array_records.is_marked(record_id);
-            }
-            let Some(index) = value.legacy_heap_index().map(|index| index as usize) else {
-                return false;
-            };
-            marks.get(index / u64::BITS as usize).is_some_and(|word| {
-                word.load(Ordering::Relaxed) & (1 << (index % u64::BITS as usize)) != 0
-            })
+        let mark_bits = MarkBits {
+            object_records,
+            array_records,
+            function_records,
+            promise_records,
+            marks,
         };
+        let mut finalization_jobs = Vec::new();
+        let is_marked = |value: Value| mark_bits.is_marked(value);
         if full {
             for (index, slot) in slots.iter_mut().enumerate() {
                 if is_marked(Value::heap(index as u32))

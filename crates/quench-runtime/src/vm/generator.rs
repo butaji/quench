@@ -144,7 +144,7 @@ impl<H: Host> Vm<H> {
                 }
             }
         }
-        frame.with_objects = self.captured_with_objects_for_function(parent, function, p.kind);
+        frame.with_objects = self.captured_with_objects_for_function(parent, function.inherited_with_scope, p.kind);
         let function_object = context.callee();
         let realm = function_object
             .map(|function| self.function_realm(p, function))
@@ -1104,8 +1104,7 @@ impl<H: Host> Vm<H> {
                 Ok((rejected, promise))
             })
         })?;
-        let id = self.suspend_continuation(continuation);
-        self.enqueue_async_resume(p, id, promise, Some(generator), rejected, false)?;
+        self.enqueue_async_resume(p, continuation, promise, Some(generator), rejected, false)?;
         Ok(promise)
     }
 
@@ -1579,8 +1578,7 @@ impl<H: Host> Vm<H> {
                         Some(destination),
                         promise,
                     );
-                    let id = vm.suspend_continuation(continuation);
-                    vm.enqueue_async_resume(p, id, promise, Some(generator), value, false)?;
+                    vm.enqueue_async_resume(p, continuation, promise, Some(generator), value, false)?;
                 }
                 Ok(_) => {
                     vm.pool_frame(frame);
@@ -1621,8 +1619,7 @@ impl<H: Host> Vm<H> {
             self.promise_resolve_value(p, promise, result)?;
             return Ok(());
         }
-        let id = self.suspend_continuation(continuation);
-        self.enqueue_async_resume(p, id, promise, Some(generator), value, true)
+        self.enqueue_async_resume(p, continuation, promise, Some(generator), value, true)
     }
 
     pub(super) fn finish_async_generator(

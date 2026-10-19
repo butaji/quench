@@ -597,7 +597,7 @@ const NATIVES: &[Native] = &[
     Native::PromiseAll, Native::PromiseAllKeyed, Native::PromiseRace, Native::PromiseAllSettled, Native::PromiseAllSettledKeyed, Native::PromiseAny,
     Native::PromiseThenableJob,
     Native::PromiseAggregateJob,
-    Native::PromiseAsyncResumeJob, Native::DynamicImport, Native::AsyncFromSyncValue,
+    Native::DynamicImport, Native::AsyncFromSyncValue,
     Native::AsyncFromSyncValueRejected, Native::AsyncGeneratorDelegateFulfilled,
     Native::AsyncGeneratorDelegateRejected,
     Native::WebAssemblyValidate, Native::WebAssemblyCompile, Native::WebAssemblyInstantiate,
@@ -908,11 +908,9 @@ impl<H: Host> Vm<H> {
         self.object_proto = self
             .heap
             .alloc(Cell::Object(Self::empty_object(Value::NULL)));
-        self.function_proto = self.heap.alloc(Cell::Function {
-            object: Box::new(crate::heap::FunctionObject {
-                object: Self::empty_object(self.object_proto),
-                realm: self.realm.globals,
-            }),
+        self.function_proto = self.heap.alloc_function(FunctionRecord {
+            object: Self::empty_object(self.object_proto),
+            realm: self.realm.globals,
             kind: FunctionKind::Native(Native::FunctionPrototype),
             env: Value::NULL,
         });

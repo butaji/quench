@@ -1531,15 +1531,16 @@ fn cached_builtin(
         return Ok(module);
     }
 
-    let module = context.with_startup_intrinsics(|context| build_builtin(context, builtin))?;
+    let module = host_load(|| {
+        HOST_LOADS.with(|loads| loads.compiled.set(true));
+        context.with_startup_intrinsics(|context| build_builtin(context, builtin))
+    })?;
     let retained = context.retain(module)?;
     let previous = roots.borrow_mut().builtin_cache.insert(key.clone(), retained);
     if let Some(previous) = previous { context.release_root(previous); }
-    if matches!(builtin, BuiltinModule::Crypto | BuiltinModule::Events | BuiltinModule::Fs) {
+    // `fs` installs its library policy with the rest of its members (`initialize_module`).
+    if matches!(builtin, BuiltinModule::Crypto | BuiltinModule::Events) {
         let policy = context.with_startup_intrinsics(|context| {
-            if matches!(builtin, BuiltinModule::Fs) {
-                return crate::modules::fs_shared_vm::install_library_policy(context, module);
-            }
             if matches!(builtin, BuiltinModule::Events) {
                 let listener = get(context, module, "addAbortListener")?;
                 let data = context.array_rooted(&[module, listener])?;
@@ -1614,31 +1615,38 @@ pub(crate) fn node_library_export(
 pub(crate) fn node_library_module(context: &mut Context<'_>, owner: &str, relative: &str) -> Result<RootId, RootedError> {
     let root = context.host_mut().node_library_root.clone();
     let parent = module_record(context, &root.join("lib").join(owner), None, false)?;
-    LIBRARY_LOADS.with(|loads| loads.depth.set(loads.depth.get() + 1));
-    let module = context.with_startup_intrinsics(|context| {
-        load(context, &root.join("lib").join(relative), Some(parent), EntryGoal::CommonJs)
-    });
-    // A library loaded on first use compiles after the entry's compilation released the
-    // pages compiling touches: release them again once the outermost load has compiled.
-    let compiled = LIBRARY_LOADS.with(|loads| {
+    host_load(|| {
+        context.with_startup_intrinsics(|context| {
+            load(context, &root.join("lib").join(relative), Some(parent), EntryGoal::CommonJs)
+        })
+    })
+}
+
+/// Runs a load of host code: a library module or a builtin the host builds. A load on first
+/// use compiles after the entry's compilation released the pages compiling touches; they are
+/// released again once the outermost load ends, if any load inside it compiled.
+fn host_load<T>(load: impl FnOnce() -> T) -> T {
+    HOST_LOADS.with(|loads| loads.depth.set(loads.depth.get() + 1));
+    let result = load();
+    let compiled = HOST_LOADS.with(|loads| {
         loads.depth.set(loads.depth.get() - 1);
         loads.depth.get() == 0 && loads.compiled.replace(false)
     });
     if compiled {
         crate::host::resident_pages::release_read_only_pages();
     }
-    module
+    result
 }
 
-/// Host library loads in progress, and whether one compiled a module since the last release.
-struct LibraryLoads {
+/// Host loads in progress, and whether one compiled since the last release.
+struct HostLoads {
     depth: std::cell::Cell<u32>,
     compiled: std::cell::Cell<bool>,
 }
 
 thread_local! {
-    static LIBRARY_LOADS: LibraryLoads = const {
-        LibraryLoads { depth: std::cell::Cell::new(0), compiled: std::cell::Cell::new(false) }
+    static HOST_LOADS: HostLoads = const {
+        HostLoads { depth: std::cell::Cell::new(0), compiled: std::cell::Cell::new(false) }
     };
 }
 
@@ -2546,7 +2554,7 @@ fn load_with_resolution(
     }
     cache.insert(context, &key, module)?;
     if library_relative.is_some() {
-        LIBRARY_LOADS.with(|loads| loads.compiled.set(true));
+        HOST_LOADS.with(|loads| loads.compiled.set(true));
     }
     if let Some((directory, specifier)) = resolution {
         let name = context.string_rooted(&key);

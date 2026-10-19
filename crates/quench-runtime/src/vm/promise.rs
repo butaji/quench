@@ -1,4 +1,3 @@
-use super::activation::ContinuationId;
 use super::module::{ModuleEvaluationStack, ModuleOutcome, ModulePhase, ModuleRecord};
 use super::*;
 use crate::HostExecutionContext;
@@ -1051,17 +1050,6 @@ pub(super) struct AggregateJob {
     pub(super) rejected: bool,
 }
 
-#[derive(Clone, Copy, Debug)]
-pub(super) struct AsyncResumeJob {
-    pub(super) continuation: ContinuationId,
-    pub(super) promise: Value,
-    pub(super) generator: Option<Value>,
-    pub(super) rejected: bool,
-    pub(super) yielded: bool,
-    /// The other reaction of the same `await`, removed when either one runs.
-    pub(super) sibling: Value,
-}
-
 #[derive(Clone, Debug)]
 pub(super) struct DynamicImportJob {
     pub(super) cache_key: String,
@@ -1079,7 +1067,6 @@ pub(super) struct PromiseRuntime {
     pub(super) aggregates: FxHashMap<Value, AggregateRecord>,
     pub(super) aggregate_jobs: FxHashMap<Value, AggregateJob>,
     pub(super) reaction_capabilities: FxHashMap<Value, (Value, Value)>,
-    pub(super) async_resume_jobs: FxHashMap<Value, AsyncResumeJob>,
     pub(super) modules: FxHashMap<String, ModuleRecord>,
     pub(super) dynamic_import_jobs: Vec<DynamicImportJob>,
     pub(super) async_module_order: VecDeque<String>,
@@ -1116,9 +1103,6 @@ impl PromiseRuntime {
         });
         edges!(self.aggregate_jobs, |job| [job.aggregate]);
         edges!(self.reaction_capabilities, |capability| [capability.0, capability.1]);
-        edges!(self.async_resume_jobs, |job| {
-            [Some(job.promise), job.generator].into_iter().flatten()
-        });
     }
 }
 
@@ -1147,11 +1131,11 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         // A realm's own natives run in that realm; a native shared by every realm runs in
         // its caller's, which is the realm whose objects it builds.
-        let realm = match self.heap.get(callee) {
-            Some(Cell::Function { object, .. })
-                if object.realm == self.realm.globals || !self.shared_natives.contains(&callee) =>
+        let realm = match self.heap.function(callee) {
+            Some(FunctionRecord { realm, .. })
+                if *realm == self.realm.globals || !self.shared_natives.contains(&callee) =>
             {
-                object.realm
+                *realm
             }
             _ => self.realm.globals,
         };
@@ -1187,11 +1171,9 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn native_with_realm(&mut self, kind: Native, env: Value, realm: Value) -> Value {
-        let function = self.heap.alloc(Cell::Function {
-            object: Box::new(crate::heap::FunctionObject {
-                object: Self::empty_object(self.realm_function_prototype(realm)),
-                realm: realm,
-            }),
+        let function = self.heap.alloc_function(FunctionRecord {
+            object: Self::empty_object(self.realm_function_prototype(realm)),
+            realm,
             kind: FunctionKind::Native(kind),
             env,
         });
@@ -1345,7 +1327,7 @@ impl<H: Host> Vm<H> {
         } else {
             None
         };
-        let promise = self.heap.alloc(Cell::Promise(Box::new(crate::heap::PromiseCell {
+        let promise = self.heap.alloc_promise(crate::heap::PromiseCell {
             object: Self::empty_object(prototype),
             record: PromiseRecord {
                 state: PromiseState::Pending,
@@ -1355,7 +1337,7 @@ impl<H: Host> Vm<H> {
                 rejection_id: None,
                 host_context,
             },
-        })));
+        });
         if let Some(identity) = host_context {
             let mut context = crate::NativeContext::new(self);
             let resource = context.scoped_value(promise);
@@ -1579,9 +1561,6 @@ impl<H: Host> Vm<H> {
             Native::PromiseThenableJob => self.promise_thenable_job(p),
             Native::PromiseAggregateJob => {
                 self.promise_aggregate_job(p, args.first().copied().unwrap_or(Value::UNDEFINED))
-            }
-            Native::PromiseAsyncResumeJob => {
-                self.promise_async_resume_job(p, args.first().copied().unwrap_or(Value::UNDEFINED))
             }
             Native::ArrayFromAsyncFulfilled | Native::ArrayFromAsyncRejected => self
                 .array_from_async_reaction(
@@ -2117,7 +2096,7 @@ impl<H: Host> Vm<H> {
         }
         match module_type {
             "bytes" => {
-                let bytes = module.bytes.clone();
+                let bytes = module.bytes().to_vec();
                 let length = bytes.len();
                 let kind = crate::heap::TypedArrayKind::Uint8;
                 let buffer = self.heap.alloc(Cell::ArrayBuffer {
@@ -2578,11 +2557,7 @@ impl<H: Host> Vm<H> {
         if !p.is_module() {
             return Ok(());
         }
-        let root = ModuleSource {
-            name: p.source_name.clone(),
-            source: String::new(),
-            bytes: Vec::new(),
-        };
+        let root = ModuleSource::text(p.source_name.clone(), "");
         let namespace = self.module_namespace(Vec::new())?;
         self.realm.promise.modules.insert(
             module_cache_key(&p.source_name, "javascript"),
@@ -4355,11 +4330,7 @@ impl<H: Host> Vm<H> {
                 .position(|request| request.source == source)
             && let Some(name) = record.resolved_requests.get(index)
         {
-            return Ok(Some(ModuleSource {
-                name: name.clone(),
-                source: String::new(),
-                bytes: Vec::new(),
-            }));
+            return Ok(Some(ModuleSource::text(name.clone(), "")));
         }
         self.host
             .resolve_dynamic_import(referrer, source)
@@ -5015,8 +4986,8 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn active_native_env(&self) -> Option<Value> {
         let callee = self.active_native_callable()?;
-        match self.heap.get(callee) {
-            Some(Cell::Function { env, .. }) if !env.is_null() => Some(*env),
+        match self.heap.function(callee) {
+            Some(FunctionRecord { env, .. }) if !env.is_null() => Some(*env),
             _ => None,
         }
     }

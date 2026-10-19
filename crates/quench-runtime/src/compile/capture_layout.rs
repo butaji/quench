@@ -2,60 +2,82 @@ use super::CompilerAtoms;
 
 use crate::bytecode::{Function, Op, WITH_ENTER_BINDING};
 
+/// What the layout of a function's activation depends on beyond its own code: the slots of
+/// its locals that functions nested in it capture, and whether one of them resolves names
+/// at run time.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct LayoutInputs {
+    pub(crate) captured: Vec<u16>,
+    pub(crate) dynamic_descendant: bool,
+}
+
 /// `dynamic` is `dynamic_name_resolution` of `functions`.
-pub(super) fn apply(functions: &mut [Function], atoms: &CompilerAtoms<'_>, dynamic: &[bool]) {
-    let mut captured = captured_slots(functions);
+pub(super) fn inputs(functions: &[Function], dynamic: &[bool]) -> Vec<LayoutInputs> {
     let dynamic_ancestors = dynamic_scope_ancestors(functions, dynamic);
+    captured_slots(functions)
+        .into_iter()
+        .zip(dynamic_ancestors)
+        .map(|(captured, dynamic_descendant)| LayoutInputs {
+            captured,
+            dynamic_descendant,
+        })
+        .collect()
+}
 
-    for (id, function) in functions.iter_mut().enumerate() {
-        if !has_closure(function) {
-            // No closure of this activation can exist, and no nested function captures
-            // its locals: a per-iteration or block copy of the environment is unobservable
-            // under the same layout conditions that let a closure's activation split.
-            if captured[id].is_empty()
-                && selective_layout_is_safe(function, id, dynamic_ancestors[id])
-            {
-                remove_unobservable_clones(function, &captured[id]);
-            }
-            continue;
+/// Lays out the activation of function `id` from its own code and its `inputs`.
+pub(super) fn apply_function(
+    function: &mut Function,
+    id: usize,
+    inputs: &LayoutInputs,
+    atoms: &CompilerAtoms<'_>,
+) {
+    let mut captured = inputs.captured.clone();
+    if !has_closure(function) {
+        // No closure of this activation can exist, and no nested function captures
+        // its locals: a per-iteration or block copy of the environment is unobservable
+        // under the same layout conditions that let a closure's activation split.
+        if captured.is_empty() && selective_layout_is_safe(function, id, inputs.dynamic_descendant)
+        {
+            remove_unobservable_clones(function, &captured);
         }
+        return;
+    }
 
-        let can_split = selective_layout_is_safe(function, id, dynamic_ancestors[id]);
-        if can_split {
-            // The runtime finds compiler bindings such as class home objects by name in
-            // the environment, so they live there like captured bindings; the other
-            // locals stay in registers.
-            captured[id].extend(
-                function
-                    .local_atoms
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, atom)| {
-                        atoms
-                            .get(**atom as usize)
-                            .is_some_and(crate::bytecode::local_name_requires_environment)
-                    })
-                    .filter_map(|(slot, _)| u16::try_from(slot).ok()),
-            );
-            captured[id].sort_unstable();
-            captured[id].dedup();
-            // An `arguments` binding that no instruction addresses and no closure captures is
-            // unobservable, as `Compiler::compile_function` finds for a closure-free body.
-            if let Some(slot) = function.arguments_slot
-                && captured[id].binary_search(&slot).is_err()
-                && !function
-                    .instructions()
-                    .any(|instruction| instruction.addressed_local_slots().any(|local| local == slot))
-            {
-                function.arguments_slot = None;
-            }
-            function.selective_capture_slots = Some(captured[id].clone());
-            rewrite_local_ownership(function, &captured[id]);
-            remove_unobservable_clones(function, &captured[id]);
-        } else {
-            function.selective_capture_slots = None;
-            rewrite_all_locals_to_environment(function);
+    let can_split = selective_layout_is_safe(function, id, inputs.dynamic_descendant);
+    if can_split {
+        // The runtime finds compiler bindings such as class home objects by name in
+        // the environment, so they live there like captured bindings; the other
+        // locals stay in registers.
+        captured.extend(
+            function
+                .local_atoms
+                .iter()
+                .enumerate()
+                .filter(|(_, atom)| {
+                    atoms
+                        .get(**atom as usize)
+                        .is_some_and(crate::bytecode::local_name_requires_environment)
+                })
+                .filter_map(|(slot, _)| u16::try_from(slot).ok()),
+        );
+        captured.sort_unstable();
+        captured.dedup();
+        // An `arguments` binding that no instruction addresses and no closure captures is
+        // unobservable, as `Compiler::compile_function` finds for a closure-free body.
+        if let Some(slot) = function.arguments_slot
+            && captured.binary_search(&slot).is_err()
+            && !function
+                .instructions()
+                .any(|instruction| instruction.addressed_local_slots().any(|local| local == slot))
+        {
+            function.arguments_slot = None;
         }
+        function.selective_capture_slots = Some(captured.clone());
+        rewrite_local_ownership(function, &captured);
+        remove_unobservable_clones(function, &captured);
+    } else {
+        function.selective_capture_slots = None;
+        rewrite_all_locals_to_environment(function);
     }
 }
 
