@@ -33,12 +33,31 @@ use crate::Diagnostic;
 /// call site; larger callees keep their call.
 const INTERPRETED_LEAF_OPERATORS: usize = 512;
 
-/// The leaf budget for a module lowered for `mode`. Compiled code calls
-/// cheaply and allocates registers per function, where a copied body only
-/// adds pressure and spills, so compiled lowering keeps every call.
-pub(super) fn leaf_budget(mode: crate::ExecutionMode) -> usize {
+/// Operators up to which a module lowered for compiled code inlines leaves as the
+/// interpreter does. A compiled call is cheap, but its activation still costs a frame, a
+/// stack check, an interrupt check and a status test, and a copy lets Cranelift optimize the
+/// leaf with its caller's values. Wasm compiles eagerly, so every copy is compiled whether it
+/// runs or not; past this size the copies' compile time outweighs them on a module's first
+/// runs, and larger modules keep every call.
+const COMPILED_INLINING_MODULE_OPERATORS: usize = 32_768;
+
+#[cfg(test)]
+thread_local! {
+    /// Set by tests of compiled calls themselves: compiled lowering then keeps every call.
+    pub(crate) static COMPILED_CALLS_KEPT_FOR_TEST: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
+}
+
+/// The leaf budget for a module lowered for `mode`, whose operators `module_operators`
+/// counts (asked only for compiled code).
+pub(super) fn leaf_budget(mode: crate::ExecutionMode, module_operators: impl FnOnce() -> usize) -> usize {
     match mode {
         crate::ExecutionMode::Interpreted => INTERPRETED_LEAF_OPERATORS,
+        #[cfg(test)]
+        crate::ExecutionMode::Compiled if COMPILED_CALLS_KEPT_FOR_TEST.with(std::cell::Cell::get) => 0,
+        crate::ExecutionMode::Compiled if module_operators() <= COMPILED_INLINING_MODULE_OPERATORS => {
+            INTERPRETED_LEAF_OPERATORS
+        }
         crate::ExecutionMode::Compiled => 0,
     }
 }

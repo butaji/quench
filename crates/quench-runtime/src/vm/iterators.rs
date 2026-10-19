@@ -83,9 +83,9 @@ impl<H: Host> Vm<H> {
         }
         let realm_native = |value: Option<Value>, native: Native| {
             matches!(
-                value.and_then(|value| self.heap.get(value)),
-                Some(Cell::Function { kind: FunctionKind::Native(kind), object, .. })
-                    if *kind == native && object.realm == self.realm.globals
+                value.and_then(|value| self.heap.function(value)),
+                Some(FunctionRecord { kind: FunctionKind::Native(kind), realm, .. })
+                    if *kind == native && *realm == self.realm.globals
             )
         };
         let next = self.lookup_atom("next")?;
@@ -3198,13 +3198,13 @@ impl<H: Host> Vm<H> {
     /// or one every realm shares (`shared_natives`).
     pub(super) fn is_current_realm_native(&self, value: Value, native: Native) -> bool {
         matches!(
-            self.heap.get(value),
-            Some(Cell::Function {
+            self.heap.function(value),
+            Some(FunctionRecord {
                 kind: FunctionKind::Native(kind),
-                object,
+                realm,
                 ..
             }) if *kind == native
-                && (object.realm == self.realm.globals || self.shared_natives.contains(&value))
+                && (*realm == self.realm.globals || self.shared_natives.contains(&value))
         )
     }
 

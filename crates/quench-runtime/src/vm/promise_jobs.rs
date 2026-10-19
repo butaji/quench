@@ -559,12 +559,12 @@ impl<H: Host> Vm<H> {
     /// Whether `then` is this realm's own %Promise.prototype.then%.
     fn is_intrinsic_promise_then(&self, then: Value) -> bool {
         matches!(
-            self.heap.get(then),
-            Some(Cell::Function {
+            self.heap.function(then),
+            Some(FunctionRecord {
                 kind: FunctionKind::Native(Native::PromiseThen),
-                object,
+                realm,
                 ..
-            }) if object.realm == self.realm.globals
+            }) if *realm == self.realm.globals
         )
     }
 
