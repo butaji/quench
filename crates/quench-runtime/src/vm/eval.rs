@@ -276,7 +276,12 @@ impl<H: Host> Vm<H> {
         retained: Option<(&'static str, u32)>,
     ) -> Result<crate::PreparedScript, JsError> {
         let program = self.embedding_program()?;
-        let mut residual = crate::Engine::specialize_script_with_atom_prefix(source, name, &*self)
+        let compiled = if retained.is_some() {
+            crate::Engine::specialize_host_body_with_atom_prefix(source, name, &*self)
+        } else {
+            crate::Engine::specialize_script_with_atom_prefix(source, name, &*self)
+        };
+        let mut residual = compiled
             .map_err(|diagnostics| {
                 if diagnostics
                     .iter()
