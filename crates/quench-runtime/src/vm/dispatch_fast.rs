@@ -4529,13 +4529,15 @@ lane_handler! {
     #[inline(never)]
     fn lane_script_call_full<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
-        let Some(target) = vm.script_call_target(r.get(i.b)) else {
+        let Some(target) = vm.script_call_entry(r.get(i.b)) else {
             return exit(ip);
         };
+        // SAFETY: as `Vm::script_call_entry`; a read resolves no target and collects nothing.
+        let target = unsafe { &*target };
         if target.forwards() {
             sibling!(lane_script_call_keeping::<H>, r, ip, Carried::SCRIPT)
         }
-        let Some(this) = lane_call_this(vm, &target, r.get(i.c)) else {
+        let Some(this) = lane_call_this(vm, target, r.get(i.c)) else {
             return exit(ip);
         };
         let arguments = ImmediateLayout::call_window_base(i.imm());
@@ -4547,10 +4549,10 @@ lane_handler! {
             None
         } else {
             let argument = |parameter: u16| (parameter < argc).then(|| r.get(arguments + parameter));
-            unsafe { lane_call_read(cx, &target, argument, this) }
+            unsafe { lane_call_read(cx, target, argument, this) }
         };
         let Some(value) = value else {
-            match lane_activate(cx, r, ip, &target, arguments, this, false) {
+            match lane_activate(cx, r, ip, target, arguments, this, false) {
                 Ok((registers, base)) => next!(cx, registers, base, Carried::SCRIPT),
                 Err(next) => return next,
             }
