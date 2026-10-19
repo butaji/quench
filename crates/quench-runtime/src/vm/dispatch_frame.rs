@@ -1849,12 +1849,20 @@ impl<H: Host> Vm<H> {
         };
         let with_depth = self.frames[frame].with_base + usize::from(handler.with_depth);
         self.with_stack.truncate(with_depth);
-        if let Some(slot) = handler.slot {
-            let value = self.thrown_value_for(program, error);
-            if wasm {
-                self.frames[frame].locals[usize::from(slot)] = value;
-            } else {
-                self.initialize_handler_binding(program, frame, slot, value)?;
+        match handler.slot {
+            None => {}
+            Some(crate::bytecode::ThrownValueSlot::Local(slot)) => {
+                let value = self.thrown_value_for(program, error);
+                if wasm {
+                    self.frames[frame].locals[usize::from(slot)] = value;
+                } else {
+                    self.initialize_handler_binding(program, frame, slot, value)?;
+                }
+            }
+            // A promoted binding is a plain local, which no environment captures.
+            Some(crate::bytecode::ThrownValueSlot::Register(register)) => {
+                let value = self.thrown_value_for(program, error);
+                self.frames[frame].registers[usize::from(register)] = value;
             }
         }
         Ok(handler.target as usize)

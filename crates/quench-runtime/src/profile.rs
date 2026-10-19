@@ -653,6 +653,14 @@ impl Profile {
         let binary_dependencies = dependencies::binary_pairs(&self.pair_sites, program_id, program);
         regional::report(self, program_id, program);
         eprintln!(
+            "{{\"kind\":\"quench-allocation-variants\",\"counts\":{{{}}}}}",
+            heap.allocated_variants()
+                .iter()
+                .map(|(name, count)| format!("\"{name}\":{count}"))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        eprintln!(
             "{{\"kind\":\"quench-gc-breakdown\",\"collections\":{},\"mark_nanos\":{},\"sweep_nanos\":{},\"mark_clear_nanos\":{},\"allocations_between_collections\":{{\"total\":{},\"min\":{},\"max\":{}}},\"survivors\":{{\"total\":{},\"min\":{},\"max\":{}}},\"sweep_slots\":{}}}",
             heap_stats.1,
             gc.mark_nanos,

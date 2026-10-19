@@ -74,11 +74,11 @@ impl<H: Host> Vm<H> {
         let function = self
             .root_value(root)
             .ok_or_else(|| JsError::wasm_link("invalid Wasm host function root"))?;
-        let Some(Cell::Function {
+        let Some(FunctionRecord {
             kind: FunctionKind::Native(Native::WasmHost),
             env,
             ..
-        }) = self.heap.get(function)
+        }) = self.heap.function(function)
         else {
             return Err(JsError::wasm_link("not a typed Wasm host function"));
         };
@@ -107,12 +107,12 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn wasm_callable_signature(&self, function: Value) -> Option<&WasmSignature> {
-        match self.heap.get(function)? {
-            Cell::Function {
+        match self.heap.function(function)? {
+            FunctionRecord {
                 kind: FunctionKind::User(program, index),
                 ..
             } => self.programs.wasm_function_signature(*program, *index),
-            Cell::Function {
+            FunctionRecord {
                 kind: FunctionKind::Native(Native::WasmHost),
                 env,
                 ..
@@ -133,8 +133,8 @@ impl<H: Host> Vm<H> {
         expected_index: u32,
         exact: bool,
     ) -> Option<bool> {
-        match self.heap.get(function)? {
-            Cell::Function {
+        match self.heap.function(function)? {
+            FunctionRecord {
                 kind: FunctionKind::User(program, index),
                 ..
             } => {
@@ -146,7 +146,7 @@ impl<H: Host> Vm<H> {
                     exact,
                 ))
             }
-            Cell::Function {
+            FunctionRecord {
                 kind: FunctionKind::Native(Native::WasmHost),
                 ..
             } => Some(
@@ -327,12 +327,11 @@ impl<H: Host> Vm<H> {
         self.profile
             .call_target(0, args.len() + raw_i32_args.map_or(0, |_| 3));
 
-        let realm = match self.heap.get(wrapper) {
-            Some(Cell::Function { object, .. })
-                if object.realm == self.realm.globals
-                    || !self.shared_natives.contains(&wrapper) =>
+        let realm = match self.heap.function(wrapper) {
+            Some(FunctionRecord { realm, .. })
+                if *realm == self.realm.globals || !self.shared_natives.contains(&wrapper) =>
             {
-                object.realm
+                *realm
             }
             _ => self.realm.globals,
         };
@@ -616,11 +615,11 @@ mod tests {
         let helper = vm.own_property(exports, helper_atom).unwrap();
         let replacement_atom = vm.intern_atom("replacement");
         let replacement = vm.own_property(exports, replacement_atom).unwrap();
-        let Cell::Function {
+        let FunctionRecord {
             kind: FunctionKind::User(program_id, function_id),
             env,
             ..
-        } = vm.heap.get(helper).unwrap()
+        } = vm.heap.function(helper).unwrap()
         else {
             panic!("helper should be a user function")
         };
@@ -1297,7 +1296,7 @@ mod tests {
                 signature,
             )
             .unwrap();
-        let Some(Cell::Function { env, .. }) = vm.heap.get(function) else {
+        let Some(FunctionRecord { env, .. }) = vm.heap.function(function) else {
             panic!()
         };
         let descriptor = *env;

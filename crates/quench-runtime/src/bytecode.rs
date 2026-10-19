@@ -668,7 +668,7 @@ opcodes!(
     InitializeThis => CALL_EFFECT.union(Effect::CONTROL); layout Scalar; meaning Unused, @ Register, @ fields(Register, Unused, Unused),
     CacheTemplateObject => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning TemplateSiteIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
     LoadCachedTemplateObject => Effect::READS_HEAP; layout Scalar; meaning TemplateSiteIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
-    DefineField => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Register, Unused),
+    DefineField => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Register, CacheSiteIndex),
     ValidateClassHeritage => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(Register, Unused, Unused),
     SetFieldStrict => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Register, CacheSiteIndex),
     SetThisFieldStrict => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Unused, CacheSiteIndex),
@@ -1798,11 +1798,13 @@ impl Function {
                 && !self.activation_binding_reads(atoms)
                 // A plain activation makes no closure, whichever bindings it would see.
                 && !self.instructions().any(|instruction| instruction.op() == Op::MakeClosure);
+            // A field initializer is an ordinary method call on the instance whose
+            // activation keeps its implicit bindings (`activation_binding_reads`); only the
+            // derived instance initializer, which `super()` runs, is entered natively.
             let in_loop = !self.is_async
                 && !self.is_generator
                 && !self.is_class_constructor
                 && !self.derived_constructor
-                && !self.class_initializer
                 && !self.parameter_eval_arguments_error;
             let legacy_reflection = !self.has_restricted_legacy_caller_access();
             let live_parameters = self.reflects_live_parameters(program);
@@ -2217,12 +2219,20 @@ impl Superinstruction {
     }
 }
 
+/// Where a handler stores the value thrown to it: a frame local, or the register late
+/// frame-register promotion moved that local into (`compile::frame_registers`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ThrownValueSlot {
+    Local(u16),
+    Register(Register),
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Handler {
     pub start: u32,
     pub end: u32,
     pub target: u32,
-    pub slot: Option<u16>,
+    pub slot: Option<ThrownValueSlot>,
     pub return_target: Option<u32>,
     pub return_slot: Option<u16>,
     pub with_depth: u16,
@@ -2754,7 +2764,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 99;
+    pub const FORMAT_VERSION: u8 = 101;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;
@@ -2771,12 +2781,16 @@ impl ResidualProgram {
                 && self.functions.first().is_some_and(|root| root.strict))
     }
 
-    /// The root function's slots project no global var or global lexical binding, so each
-    /// slot of its environment is the binding itself.
-    pub(crate) fn root_slots_are_bindings(&self) -> bool {
+    /// Whether root `slot` is the binding itself: it projects no global var, and no global
+    /// lexical binding unless `lexical_slots_are_bindings` (outside a dynamic script's
+    /// evaluation, a Script's global lexical binding lives in its root slot).
+    pub(crate) fn root_slot_is_binding(&self, slot: u16, lexical_slots_are_bindings: bool) -> bool {
         self.functions.first().is_some_and(|root| {
-            (self.root_variables_are_local() || root.global_var_atoms().is_empty())
-                && (self.kind != ProgramKind::Script || root.global_lexical_atoms().is_empty())
+            let declaration = root.slot_declaration(usize::from(slot));
+            (!declaration.global_var || self.root_variables_are_local())
+                && (!declaration.global_lexical
+                    || lexical_slots_are_bindings
+                    || self.kind != ProgramKind::Script)
         })
     }
 

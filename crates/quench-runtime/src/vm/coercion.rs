@@ -274,7 +274,7 @@ impl<H: Host> Vm<H> {
             return self.to_string(program, primitive);
         }
         match self.heap.get(value) {
-            Some(Cell::Function { .. }) => return Ok("function () { [native code] }".into()),
+            Some(Cell::Function(_)) => return Ok("function () { [native code] }".into()),
             Some(Cell::String(value)) => return Ok(value.to_string()),
             Some(Cell::Error(value)) => return Ok(value.clone()),
             Some(Cell::BigInt(value)) => return Ok(value.to_string()),
@@ -386,18 +386,14 @@ impl<H: Host> Vm<H> {
         match self.heap.get(v) {
             Some(Cell::String(text)) => !text.units().is_empty(),
             Some(Cell::BigInt(value)) => value.sign() != num_bigint::Sign::NoSign,
-            Some(Cell::Function {
-                kind: FunctionKind::Native(Native::IsHTMLDDA),
-                ..
-            }) => false,
-            _ => true,
+            _ => !self.is_html_dda(v),
         }
     }
 
     pub(super) fn is_html_dda(&self, value: Value) -> bool {
         matches!(
-            self.heap.get(value),
-            Some(Cell::Function {
+            self.heap.function(value),
+            Some(FunctionRecord {
                 kind: FunctionKind::Native(Native::IsHTMLDDA),
                 ..
             })
