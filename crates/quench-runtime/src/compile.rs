@@ -971,12 +971,9 @@ impl Engine {
         let mut compiler = Compiler::new(name, &normalized, mode, atom_prefix, private_name_ids);
         compiler.source_type = source_type;
         // Eval code and dynamic functions are compiled from a wrapper, or a tree changed after
-        // parsing, that their source text alone does not give back. Only `verify-replay`
-        // recompiles yet, so production keeps no replay until a call compiles from it (V8-v7
-        // RegExp anonymous peak 5416 -> 5340 KiB, Crypto 1980 -> 1840, static x86_64,
-        // 2026-10-19).
-        compiler.replayable_source =
-            cfg!(feature = "verify-replay") && matches!(expected_shape, ParsedProgramShape::Any);
+        // parsing, that their source text alone does not give back. A released function
+        // compiles again from its replay on first call (`ResidualProgram::function`).
+        compiler.replayable_source = matches!(expected_shape, ParsedProgramShape::Any);
         compiler.private_name_labels = private_name_labels;
         compiler.private_name_overrides = private_aliases;
         compiler.capture_script_completion = capture_script_completion;
