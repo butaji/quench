@@ -157,7 +157,8 @@ impl<H: Host> Vm<H> {
                 FunctionKind::User(program_id, id) | FunctionKind::NumericUser(program_id, id) => {
                     self.programs.get(*program_id).is_some_and(|program| {
                         program.functions.get(*id as usize).is_some_and(|function| {
-                            function.constructible && !function.is_async && !function.is_generator
+                            let header = function.header();
+                            header.constructible && !header.is_async && !header.is_generator
                         })
                     })
                 }
@@ -272,11 +273,11 @@ impl<H: Host> Vm<H> {
         mut env: Value,
         realm: Value,
     ) -> Result<Value, JsError> {
-        let function_plan = &p.functions[id as usize];
+        let function_plan = p.functions[id as usize].header();
         let with_objects = if env.is_null() {
             Vec::new()
         } else {
-            let inherited = self.captured_with_objects_for_function(env, function_plan, p.kind);
+            let inherited = self.captured_with_objects_for_function(env, function_plan.inherited_with_scope, p.kind);
             let active = self.frames.last().map_or(&[][..], |frame| {
                 &self.with_stack[frame.with_base.min(self.with_stack.len())..]
             });

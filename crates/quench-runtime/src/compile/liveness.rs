@@ -33,8 +33,8 @@ impl MethodArguments for crate::bytecode::ResidualProgram {
 
 /// Records which functions liveness covers; the collector derives a covered function's
 /// per-pc root masks when it first finds one on the stack (`ResidualProgram::register_root_mask`).
-pub(crate) fn mark_register_roots(
-    functions: &mut [Function],
+pub(crate) fn mark_register_roots<'a>(
+    functions: impl IntoIterator<Item = &'a mut Function>,
     methods: &(impl MethodArguments + ?Sized),
     fields: &[FieldSite],
     superinstructions: &[Superinstruction],

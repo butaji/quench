@@ -55,7 +55,7 @@ fn atom_in_bounds(atom: u32, atoms: usize) -> bool {
 fn eval_binding_is_valid(
     binding: &super::EvalBinding,
     function: &super::Function,
-    functions: &[super::Function],
+    functions: &[super::FunctionSlot],
     atoms: usize,
 ) -> bool {
     let target = match binding.location {
@@ -67,7 +67,7 @@ fn eval_binding_is_valid(
                     .and_then(|id| functions.get(id as usize))
                     .and_then(|function| function.parent);
             }
-            parent.and_then(|id| functions.get(id as usize))
+            parent.and_then(|id| functions.get(id as usize).map(|slot| &**slot))
         }
     };
     let slot = match binding.location {
@@ -84,7 +84,7 @@ fn eval_binding_is_valid(
 /// of the function it resolves to.
 fn name_bindings_are_valid(
     function: &super::Function,
-    functions: &[super::Function],
+    functions: &[super::FunctionSlot],
     atoms: usize,
     checked_captured: &mut rustc_hash::FxHashSet<(usize, u16, Option<u32>)>,
 ) -> bool {
@@ -981,7 +981,7 @@ function.plain_local_slots(&self.superinstructions)
 }
 
 fn selective_capture_scope_unsafe(
-    functions: &[super::Function],
+    functions: &[super::FunctionSlot],
     atoms: &super::AtomTable,
 ) -> Vec<bool> {
     let is_with_enter =
@@ -1247,7 +1247,7 @@ mod tests {
             source: None,
             atoms: AtomTable::default(),
             constants: vec![],
-            functions: vec![function],
+            functions: vec![function.into()],
             cache_sites: 0,
             method_sites: vec![],
             method_arguments: vec![],
@@ -1256,6 +1256,7 @@ mod tests {
             regexp_literal_sites: vec![],
             literal_templates: Vec::new(),
             superinstructions: vec![],
+            replay: None,
         }
     }
 
