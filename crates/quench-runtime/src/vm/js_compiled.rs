@@ -57,6 +57,9 @@ pub(super) fn compile(program: &ResidualProgram, function_id: u32) -> Option<JsJ
                 packed.as_wide().op(),
                 Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse
             )
+            || (packed.as_wide().op() == Op::Unary
+                && packed.as_wide().unary_operator()
+                    == oxc_ast::ast::UnaryOperator::LogicalNot as u32)
     }) {
         compile_numeric_loop(program, function_id, function)
             .or_else(|| compile_number_domain_boolean_tree(program, function_id, function))
@@ -450,17 +453,12 @@ fn compile_number_domain_boolean_tree(
 ) -> Option<JsJitArtifact> {
     if !function_candidate(function, &program.atoms)
         || usize::from(function.registers) > MAX_REGISTERS
-        || function
-            .code
-            .iter()
-            .any(|instruction| instruction.is_wide())
     {
         return None;
     }
 
     let code_len = function.code.len();
     let mut states = vec![None::<BranchState>; code_len];
-    let mut predecessors = vec![0_u8; code_len];
     let mut entry = BranchState {
         registers: vec![BranchValue::Unknown; usize::from(function.registers)],
         locals: vec![BranchValue::Unknown; usize::from(function.locals)],
@@ -488,7 +486,9 @@ fn compile_number_domain_boolean_tree(
                     return None;
                 }
                 let value = match program.constants.get(instruction.constant_index())? {
-                    Constant::Number(_) => BranchValue::Number,
+                    Constant::Number(_) => {
+                        BranchValue::NumberConstant(instruction.constant_index() as u32)
+                    }
                     Constant::String(_) | Constant::StringUnits(_) => {
                         BranchValue::String(instruction.constant_index() as u32)
                     }
@@ -514,14 +514,38 @@ fn compile_number_domain_boolean_tree(
                 successors.push(pc + 1);
             }
             Op::Unary => {
-                if instruction.result_flags() != 0
-                    || instruction.unary_operator() != oxc_ast::ast::UnaryOperator::Typeof as u32
+                if instruction.result_flags() != 0 && instruction.result_flags() != RETURN_REGISTER
                 {
                     return None;
                 }
                 let source = *state.registers.get(usize::from(instruction.register_b()))?;
+                if instruction.unary_operator() == oxc_ast::ast::UnaryOperator::LogicalNot as u32 {
+                    let result = match source {
+                        BranchValue::NumberConstant(constant) => {
+                            let Constant::Number(value) =
+                                program.constants.get(constant as usize)?
+                            else {
+                                return None;
+                            };
+                            BranchValue::BooleanFolded(*value == 0.0 || value.is_nan())
+                        }
+                        BranchValue::BooleanLiteral { value, .. }
+                        | BranchValue::BooleanFolded(value) => BranchValue::BooleanFolded(!value),
+                        _ => return None,
+                    };
+                    *state
+                        .registers
+                        .get_mut(usize::from(instruction.result_register()))? = result;
+                    if instruction.result_flags() == 0 {
+                        successors.push(pc + 1);
+                    }
+                    continue;
+                }
+                if instruction.unary_operator() != oxc_ast::ast::UnaryOperator::Typeof as u32 {
+                    return None;
+                }
                 let type_name = match source {
-                    BranchValue::Number => BranchType::Number,
+                    BranchValue::Number | BranchValue::NumberConstant(_) => BranchType::Number,
                     BranchValue::String(_) => BranchType::String,
                     BranchValue::BooleanLiteral { .. } | BranchValue::BooleanFolded(_) => {
                         BranchType::Boolean
@@ -532,15 +556,14 @@ fn compile_number_domain_boolean_tree(
                     .registers
                     .get_mut(usize::from(instruction.result_register()))? =
                     BranchValue::TypeName(type_name);
-                successors.push(pc + 1);
-            }
-            Op::StoreLocal => {
-                let slot = usize::from(instruction.local_slot());
-                if !hidden_local(program, function, slot) {
-                    return None;
+                if instruction.result_flags() == 0 {
+                    successors.push(pc + 1);
                 }
+            }
+            Op::StoreLocal | Op::StoreLocalPlain => {
+                let slot = usize::from(instruction.local_slot());
                 let value = *state.registers.get(usize::from(instruction.register_a()))?;
-                if !branch_value_is_static(value) {
+                if !branch_value_supported_local(value) {
                     return None;
                 }
                 *state.locals.get_mut(slot)? = value;
@@ -549,13 +572,10 @@ fn compile_number_domain_boolean_tree(
                 }
                 successors.push(pc + 1);
             }
-            Op::LoadLocal => {
+            Op::LoadLocal | Op::LoadLocalPlain => {
                 let slot = usize::from(instruction.local_slot());
-                if !hidden_local(program, function, slot) {
-                    return None;
-                }
                 let value = *state.locals.get(slot)?;
-                if !branch_value_is_static(value) {
+                if !branch_value_supported_local(value) {
                     return None;
                 }
                 *state
@@ -571,11 +591,13 @@ fn compile_number_domain_boolean_tree(
                 let left = branch_operand(program, &state.registers, instruction.operand_b())?;
                 let right = branch_operand(program, &state.registers, instruction.operand_c())?;
                 let result = match (left, right) {
-                    (BranchValue::Number, BranchValue::Number)
-                        if super::operations::NumberRelation::from_operator(
-                            instruction.binary_operator(),
-                        )
-                        .is_some() =>
+                    (left, right)
+                        if branch_value_is_number(left)
+                            && branch_value_is_number(right)
+                            && super::operations::NumberRelation::from_operator(
+                                instruction.binary_operator(),
+                            )
+                            .is_some() =>
                     {
                         BranchValue::BooleanDynamic
                     }
@@ -637,7 +659,8 @@ fn compile_number_domain_boolean_tree(
                     } else {
                         instruction.jump_target() as usize
                     });
-                } else if matches!((left, right), (BranchValue::Number, BranchValue::Number))
+                } else if branch_value_is_number(left)
+                    && branch_value_is_number(right)
                     && super::operations::NumberRelation::from_operator(
                         instruction.binary_operator_field(),
                     )
@@ -670,12 +693,10 @@ fn compile_number_domain_boolean_tree(
             if target <= pc || target >= code_len {
                 return None;
             }
-            let predecessor_count = predecessors.get_mut(target)?;
-            *predecessor_count = predecessor_count.checked_add(1)?;
-            if *predecessor_count > 1 || states[target].is_some() {
-                return None;
+            match states.get_mut(target)? {
+                Some(existing) => merge_branch_state(existing, &state),
+                slot @ None => *slot = Some(state.clone()),
             }
-            states[target] = Some(state.clone());
         }
     }
 
@@ -683,6 +704,8 @@ fn compile_number_domain_boolean_tree(
         *is_reachable
             && (function.code[pc].as_wide().op() == Op::Return
                 || (function.code[pc].as_wide().op() == Op::Binary
+                    && function.code[pc].as_wide().result_flags() == RETURN_REGISTER)
+                || (function.code[pc].as_wide().op() == Op::Unary
                     && function.code[pc].as_wide().result_flags() == RETURN_REGISTER))
     }) {
         return None;
@@ -702,6 +725,9 @@ fn compile_number_domain_boolean_tree(
     let mut builder_context = FunctionBuilderContext::new();
     let mut builder = FunctionBuilder::new(&mut native, &mut builder_context);
     let variables: Vec<_> = (0..usize::from(function.registers))
+        .map(|_| builder.declare_var(types::F64))
+        .collect();
+    let local_variables: Vec<_> = (0..usize::from(function.locals))
         .map(|_| builder.declare_var(types::F64))
         .collect();
     let blocks: Vec<_> = reachable
@@ -750,12 +776,51 @@ fn compile_number_domain_boolean_tree(
                     );
                 }
             }
-            Op::StoreLocal | Op::LoadLocal => {}
+            Op::StoreLocal | Op::StoreLocalPlain => {
+                let source = usize::from(instruction.register_a());
+                let value_kind = *state.registers.get(source)?;
+                if matches!(
+                    value_kind,
+                    BranchValue::Number
+                        | BranchValue::NumberConstant(_)
+                        | BranchValue::BooleanDynamic
+                ) {
+                    let value = builder.use_var(*variables.get(source)?);
+                    builder.def_var(
+                        *local_variables.get(usize::from(instruction.local_slot()))?,
+                        value,
+                    );
+                    if let Some(register) = instruction.optional_register_b() {
+                        builder.def_var(*variables.get(usize::from(register))?, value);
+                    }
+                }
+            }
+            Op::LoadLocal | Op::LoadLocalPlain => {
+                let local = usize::from(instruction.local_slot());
+                if matches!(
+                    state.locals.get(local),
+                    Some(
+                        BranchValue::Number
+                            | BranchValue::NumberConstant(_)
+                            | BranchValue::BooleanDynamic
+                    )
+                ) {
+                    let value = builder.use_var(*local_variables.get(local)?);
+                    builder.def_var(
+                        *variables.get(usize::from(instruction.result_register()))?,
+                        value,
+                    );
+                }
+            }
             Op::Move => {
                 let source = usize::from(instruction.register_b());
                 if matches!(
                     state.registers.get(source),
-                    Some(BranchValue::Number | BranchValue::BooleanDynamic)
+                    Some(
+                        BranchValue::Number
+                            | BranchValue::NumberConstant(_)
+                            | BranchValue::BooleanDynamic
+                    )
                 ) {
                     let value = builder.use_var(*variables.get(source)?);
                     builder.def_var(
@@ -764,11 +829,34 @@ fn compile_number_domain_boolean_tree(
                     );
                 }
             }
-            Op::Unary => {}
+            Op::Unary => {
+                if instruction.result_flags() == RETURN_REGISTER {
+                    let source = match state
+                        .registers
+                        .get(usize::from(instruction.register_b()))
+                        .copied()?
+                    {
+                        BranchValue::NumberConstant(constant) => {
+                            let Constant::Number(value) =
+                                program.constants.get(constant as usize)?
+                            else {
+                                return None;
+                            };
+                            *value == 0.0 || value.is_nan()
+                        }
+                        BranchValue::BooleanLiteral { value, .. }
+                        | BranchValue::BooleanFolded(value) => !value,
+                        _ => return None,
+                    };
+                    let result = builder.ins().iconst(types::I32, i64::from(source));
+                    builder.ins().return_(&[result]);
+                    emitted_return = true;
+                }
+            }
             Op::Binary => {
                 let left = branch_operand(program, &state.registers, instruction.operand_b())?;
                 let right = branch_operand(program, &state.registers, instruction.operand_c())?;
-                if matches!((left, right), (BranchValue::Number, BranchValue::Number)) {
+                if branch_value_is_number(left) && branch_value_is_number(right) {
                     let condition = branch_number_comparison(
                         &mut builder,
                         instruction.binary_operator(),
@@ -919,7 +1007,8 @@ fn compile_number_domain_boolean_tree(
             instruction.op(),
             Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse | Op::Return
         ) || (instruction.op() == Op::Binary
-            && instruction.result_flags() == RETURN_REGISTER);
+            && instruction.result_flags() == RETURN_REGISTER)
+            || (instruction.op() == Op::Unary && instruction.result_flags() == RETURN_REGISTER);
         if !terminal {
             builder
                 .ins()
@@ -969,6 +1058,7 @@ struct BranchState {
 enum BranchValue {
     Unknown,
     Number,
+    NumberConstant(u32),
     String(u32),
     TypeName(BranchType),
     BooleanLiteral { constant: u32, value: bool },
@@ -976,21 +1066,21 @@ enum BranchValue {
     BooleanDynamic,
 }
 
-fn hidden_local(program: &ResidualProgram, function: &Function, slot: usize) -> bool {
-    function
-        .local_atoms
-        .get(slot)
-        .is_some_and(|atom| program.atoms[*atom as usize].starts_with("\0quench:"))
-}
-
-fn branch_value_is_static(value: BranchValue) -> bool {
+fn branch_value_supported_local(value: BranchValue) -> bool {
     matches!(
         value,
-        BranchValue::String(_)
+        BranchValue::Number
+            | BranchValue::NumberConstant(_)
+            | BranchValue::String(_)
             | BranchValue::TypeName(_)
             | BranchValue::BooleanLiteral { .. }
             | BranchValue::BooleanFolded(_)
+            | BranchValue::BooleanDynamic
     )
+}
+
+fn branch_value_is_number(value: BranchValue) -> bool {
+    matches!(value, BranchValue::Number | BranchValue::NumberConstant(_))
 }
 
 fn branch_operand(
@@ -1006,7 +1096,7 @@ fn branch_operand(
         OperandKind::Constant => {
             let index = usize::from(operand.payload());
             match program.constants.get(index)? {
-                Constant::Number(_) => Some(BranchValue::Number),
+                Constant::Number(_) => Some(BranchValue::NumberConstant(index as u32)),
                 Constant::String(_) | Constant::StringUnits(_) => {
                     Some(BranchValue::String(u32::try_from(index).ok()?))
                 }
@@ -1116,10 +1206,16 @@ fn branch_numeric_operand(
     match operand.kind()? {
         OperandKind::Register => {
             let index = usize::from(operand.register_index()?);
-            if state.get(index).copied()? != BranchValue::Number {
-                return None;
+            match state.get(index).copied()? {
+                BranchValue::Number => Some(builder.use_var(*variables.get(index)?)),
+                BranchValue::NumberConstant(constant) => {
+                    let Constant::Number(value) = program.constants.get(constant as usize)? else {
+                        return None;
+                    };
+                    Some(builder.ins().f64const(Ieee64::with_bits(value.to_bits())))
+                }
+                _ => return None,
             }
-            Some(builder.use_var(*variables.get(index)?))
         }
         OperandKind::Constant => {
             let Constant::Number(value) = program.constants.get(usize::from(operand.payload()))?
@@ -2313,6 +2409,38 @@ fn compile_string_branches(
     })
 }
 
+fn merge_branch_state(target: &mut BranchState, incoming: &BranchState) {
+    for (target, incoming) in target.registers.iter_mut().zip(&incoming.registers) {
+        *target = merge_branch_value(*target, *incoming);
+    }
+    for (target, incoming) in target.locals.iter_mut().zip(&incoming.locals) {
+        *target = merge_branch_value(*target, *incoming);
+    }
+}
+
+fn merge_branch_value(left: BranchValue, right: BranchValue) -> BranchValue {
+    if left == right {
+        return left;
+    }
+    if branch_value_is_number(left) && branch_value_is_number(right) {
+        return BranchValue::Number;
+    }
+    if matches!(
+        left,
+        BranchValue::BooleanLiteral { .. }
+            | BranchValue::BooleanFolded(_)
+            | BranchValue::BooleanDynamic
+    ) && matches!(
+        right,
+        BranchValue::BooleanLiteral { .. }
+            | BranchValue::BooleanFolded(_)
+            | BranchValue::BooleanDynamic
+    ) {
+        return BranchValue::BooleanDynamic;
+    }
+    BranchValue::Unknown
+}
+
 fn push_string_state(
     states: &mut [Option<Vec<Option<StringJitRegister>>>],
     target: usize,
@@ -2398,10 +2526,40 @@ fn numeric_operand(
 pub(super) fn function_candidate(function: &Function, atoms: &crate::bytecode::AtomTable) -> bool {
     !function.code.is_empty()
         && function.code.len() <= MAX_INSTRUCTIONS
-        && function.wide.is_empty()
+        && (function.wide.is_empty() || wide_boolean_tree_candidate(function))
         && usize::from(function.registers) <= MAX_REGISTERS
         && usize::from(function.params) <= MAX_PARAMETERS
         && eligible(function, atoms)
+}
+
+fn wide_boolean_tree_candidate(function: &Function) -> bool {
+    let mut has_forward_branch = false;
+    function.code.iter().enumerate().all(|(pc, instruction)| {
+        let op = instruction.as_wide().op();
+        has_forward_branch |= matches!(op, Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse);
+        let supported = matches!(
+            op,
+            Op::LoadConst
+                | Op::Move
+                | Op::Unary
+                | Op::StoreLocal
+                | Op::StoreLocalPlain
+                | Op::LoadLocal
+                | Op::LoadLocalPlain
+                | Op::Binary
+                | Op::Jump
+                | Op::JumpFalse
+                | Op::JumpTrue
+                | Op::JumpBinaryFalse
+                | Op::Return
+        );
+        supported
+            && (!matches!(
+                op,
+                Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse
+            ) || usize::try_from(instruction.as_wide().jump_target())
+                .is_ok_and(|target| target > pc))
+    }) && has_forward_branch
 }
 
 fn eligible(function: &Function, atoms: &crate::bytecode::AtomTable) -> bool {
