@@ -1921,8 +1921,26 @@ lane_handler! {
 lane_handler! {
     /// `GetField` of a register or `this` at a site with an inherited entry
     /// (`Vm::field_site_inherited`), a method read beyond the immediate prototype: that entry
-    /// inline; any other read takes `lane_get_field_miss`.
+    /// inline while its proof holds (`Vm::proved_inherited_field_hit`); any other read takes
+    /// `lane_get_field_inherited_walk`.
     fn lane_get_field_inherited<THIS: bool>(cx, r, ip, i, view) {
+        // SAFETY: the context's program outlives the lane run.
+        let code = unsafe { &*(*cx).code };
+        let Some(value) = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) })
+            .and_then(|object| (unsafe { vm(cx) }).proved_inherited_field_hit(code, object, i.c))
+        else {
+            sibling!(lane_get_field_inherited_walk::<H, THIS>, r, ip, Carried::SCRIPT)
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::SCRIPT)
+    }
+}
+
+lane_handler! {
+    /// `lane_get_field_inherited` past its proof: the entry's chain walk, which proves it
+    /// again (`Vm::inherited_field_hit`); any other read takes `lane_get_field_miss`.
+    #[inline(never)]
+    fn lane_get_field_inherited_walk<THIS: bool>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let Some(value) = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) })
