@@ -4405,11 +4405,23 @@ impl<H: Host> Vm<H> {
         callee: Value,
     ) -> Option<ScriptCallTarget> {
         let index = callee.heap_index()? as usize & (SCRIPT_CALL_TARGETS - 1);
-        let (program, function, env) = self.same_realm_user_target(callee)?;
+        let (program, function, env, numeric) = self.same_realm_script_target(callee)?;
         if function == super::ROOT_FUNCTION_ID || program != self.active_program {
             return None;
         }
         let body = code.functions.get(function as usize)?;
+        // A numeric body's own frame constructs nothing in place
+        // (`LaneContext::script_constructs`), which its activation would inherit from the
+        // caller, so only one that constructs nothing runs frameless; its other records are
+        // the lane's, with or without a frame.
+        if numeric
+            && body
+                .code
+                .iter()
+                .any(|packed| decoded_instruction(body, *packed).op() == Op::Construct)
+        {
+            return None;
+        }
         let plan = body.call_plan(code);
         if !plan.registers_only {
             return None;
@@ -4795,6 +4807,18 @@ lane_handler! {
             })
         ) {
             sibling!(lane_frame_call::<H>, r, ip, Carried::SCRIPT)
+        }
+        // A numeric function the lane activates without a frame
+        // (`Vm::resolve_script_call_target`) takes the script call.
+        if matches!(
+            vm.heap.get(r.get(i.b)),
+            Some(Cell::Function {
+                kind: FunctionKind::NumericUser(..),
+                ..
+            })
+        ) && lane_script_target(cx, r.get(i.b)).is_some()
+        {
+            sibling!(lane_script_call::<H>, r, ip, Carried::SCRIPT)
         }
         if matches!(
             vm.heap.get(r.get(i.b)),
