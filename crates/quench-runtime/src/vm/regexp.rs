@@ -2378,10 +2378,8 @@ impl<H: Host> Vm<H> {
         receiver: Value,
         args: &[Value],
     ) -> Option<Value> {
-        if !matches!(
-            self.heap.get(callee),
-            Some(Cell::Function { kind: FunctionKind::Native(Native::RegExpExec), .. })
-        ) || !matches!(self.heap.get(receiver), Some(Cell::RegExp { .. }))
+        if !self.is_native_function(callee, Native::RegExpExec)
+            || !matches!(self.heap.get(receiver), Some(Cell::RegExp { .. }))
             || !args.first().is_some_and(|subject| self.is_string(*subject))
             || self.method_caches_may_name(self.runtime_atoms.last_index)
         {
