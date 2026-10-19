@@ -73,23 +73,96 @@ pub(super) fn has_string_hash_loop_candidate(
     string_hash_loop_candidate(program, function)
 }
 
-fn string_hash_loop_candidate(program: &ResidualProgram, function: &Function) -> bool {
-    if function.params != 1 || function.code.len() != 20 || !function.wide.is_empty() {
-        return false;
+/// Where a hash-loop local lives: its frame slot, or the register frame-register promotion
+/// moved it into (`compile::frame_registers`), where loads and stores are `Move`s.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LoopLocal {
+    Slot(u16),
+    Register(crate::bytecode::Register),
+}
+
+/// Reads a function's instructions in order for `string_hash_loop_candidate`, matching each
+/// local access in either of its forms.
+struct LoopReader<'a> {
+    function: &'a Function,
+    pc: usize,
+}
+
+impl LoopReader<'_> {
+    fn next(&mut self) -> Option<crate::bytecode::WideInstruction> {
+        let instruction = self.function.code.get(self.pc)?.as_wide();
+        self.pc += 1;
+        Some(instruction)
     }
-    let Some(get_length) = function
-        .code
-        .get(2)
-        .map(|instruction| instruction.as_wide())
-    else {
-        return false;
+
+    fn next_op(&mut self, op: Op) -> Option<crate::bytecode::WideInstruction> {
+        let instruction = self.next()?;
+        (instruction.op() == op).then_some(instruction)
+    }
+
+    /// A store of `source` into a local, which it names.
+    fn store(&mut self, source: crate::bytecode::Register) -> Option<LoopLocal> {
+        let instruction = self.next()?;
+        match instruction.op() {
+            Op::StoreLocalPlain if instruction.register_a() == source => {
+                Some(LoopLocal::Slot(instruction.local_slot() as u16))
+            }
+            Op::Move if instruction.register_b() == source => {
+                Some(LoopLocal::Register(instruction.result_register()))
+            }
+            _ => None,
+        }
+    }
+
+    fn store_into(&mut self, local: LoopLocal, source: crate::bytecode::Register) -> Option<()> {
+        (self.store(source)? == local).then_some(())
+    }
+
+    /// A load of `local` into a register, which it names.
+    fn load(&mut self, local: LoopLocal) -> Option<crate::bytecode::Register> {
+        let instruction = self.next()?;
+        match (instruction.op(), local) {
+            (Op::LoadLocalPlain, LoopLocal::Slot(slot)) if instruction.local_slot() as u16 == slot => {
+                Some(instruction.result_register())
+            }
+            (Op::Move, LoopLocal::Register(register)) if instruction.register_b() == register => {
+                Some(instruction.result_register())
+            }
+            _ => None,
+        }
+    }
+
+    /// A `Binary` whose result goes to `local`: fused into its numeric local target, or
+    /// followed by a store of its result.
+    fn binary_into(&mut self, local: LoopLocal) -> Option<crate::bytecode::WideInstruction> {
+        let binary = self.next_op(Op::Binary)?;
+        match (binary.numeric_local_target(), local) {
+            (Some(target), LoopLocal::Slot(slot)) if target == slot => Some(binary),
+            (None, LoopLocal::Register(_)) => {
+                self.store_into(local, binary.result_register())?;
+                Some(binary)
+            }
+            _ => None,
+        }
+    }
+}
+
+fn string_hash_loop_candidate(program: &ResidualProgram, function: &Function) -> bool {
+    function.params == 1 && function.wide.is_empty() && string_hash_loop_shape(program, function).is_some()
+}
+
+/// The guarded hash loop `compile_string_hash_loop` emits, matched over the whole function
+/// by data flow rather than by instruction positions, so it holds whether its two locals stay
+/// in frame slots or were promoted to registers.
+fn string_hash_loop_shape(program: &ResidualProgram, function: &Function) -> Option<()> {
+    let number = |index: usize| match program.constants.get(index) {
+        Some(Constant::Number(value)) => Some(*value),
+        _ => None,
     };
-    let Some(get_char_code) = function
-        .code
-        .get(8)
-        .map(|instruction| instruction.as_wide())
-    else {
-        return false;
+    let operand_constant = |operand: crate::bytecode::Operand| {
+        (operand.kind() == Some(OperandKind::Constant))
+            .then(|| number(usize::from(operand.payload())))
+            .flatten()
     };
     let field_is = |instruction: crate::bytecode::WideInstruction, name: &str| {
         instruction.op() == Op::GetField
@@ -102,107 +175,88 @@ fn string_hash_loop_candidate(program: &ResidualProgram, function: &Function) ->
                 }) if (atom as usize) < program.atoms.len() && &program.atoms[atom as usize] == name
             )
     };
-    if !field_is(get_length, "length") || !field_is(get_char_code, "charCodeAt") {
-        return false;
-    }
-    let ops = [
-        Op::LoadConst,
-        Op::StoreLocalPlain,
-        Op::GetField,
-        Op::StoreLocalPlain,
-        Op::LoadLocalPlain,
-        Op::JumpBinaryFalse,
-        Op::LoadLocalPlain,
-        Op::Binary,
-        Op::GetField,
-        Op::LoadLocalPlain,
-        Op::Call,
-        Op::Binary,
-        Op::Binary,
-        Op::LoadLocalPlain,
-        Op::Binary,
-        Op::Jump,
-        Op::LoadLocalPlain,
-        Op::Binary,
-        Op::LoadConst,
-        Op::Return,
-    ];
-    if function
-        .code
-        .iter()
-        .zip(ops)
-        .any(|(packed, op)| packed.as_wide().op() != op)
-    {
-        return false;
-    }
-    let instruction = |pc: usize| function.code[pc].as_wide();
-    let constant = |pc: usize| match program.constants.get(instruction(pc).constant_index()) {
-        Some(Constant::Number(value)) => Some(*value),
-        _ => None,
+    let operator_is = |instruction: crate::bytecode::WideInstruction, operator: BinaryOperator| {
+        instruction_binary_operator(instruction) == Some(operator as u32)
     };
-    let operand_constant = |operand: crate::bytecode::Operand| {
-        (operand.kind() == Some(OperandKind::Constant))
-            .then(|| program.constants.get(usize::from(operand.payload())))
-            .flatten()
-            .and_then(|constant| match constant {
-                Constant::Number(value) => Some(*value),
-                _ => None,
-            })
-    };
-    let jump = instruction(5);
-    let call = instruction(10);
-    constant(0) == Some(5381.0)
-        && instruction(1).local_slot() == 1
-        && instruction(2).field_lookup().is_some()
-        && instruction(3).local_slot() == 2
-        && instruction(4).local_slot() == 2
-        && instruction(0).result_register() == 2
-        && instruction(1).register_a() == 2
-        && instruction(2).result_register() == 2
-        && instruction(3).register_a() == 2
-        && instruction(4).result_register() == 2
-        && jump.jump_target() == 16
-        && super::operations::NumberRelation::from_operator(jump.binary_operator_field())
+    let check = |condition: bool| condition.then_some(());
+    let mut code = LoopReader { function, pc: 0 };
+
+    // let hash = 5381; let index = str.length;
+    let seed = code.next_op(Op::LoadConst)?;
+    check(number(seed.constant_index()) == Some(5381.0))?;
+    let hash = code.store(seed.result_register())?;
+    let length = code.next()?;
+    check(field_is(length, "length"))?;
+    let index = code.store(length.result_register())?;
+    check(hash != index)?;
+
+    // while (index > 0)
+    let head = code.pc;
+    let tested = code.load(index)?;
+    let exit = code.next_op(Op::JumpBinaryFalse)?;
+    check(
+        super::operations::NumberRelation::from_operator(exit.binary_operator_field())
             == Some(super::operations::NumberRelation::GreaterThan)
-        && jump.operand_b().kind() == Some(OperandKind::Register)
-        && jump.operand_b().payload() == 2
-        && operand_constant(jump.operand_c()) == Some(0.0)
-        && instruction(6).local_slot() == 1
-        && instruction(6).result_register() == 3
-        && instruction_binary_operator(instruction(7))
-            == Some(BinaryOperator::Multiplication as u32)
-        && instruction(7).result_register() == 4
-        && operand_register(instruction(7).operand_b()) == Some(3)
-        && operand_constant(instruction(7).operand_c()) == Some(33.0)
-        && instruction(8).result_register() == 5
-        && instruction(9).local_slot() == 2
-        && instruction(9).result_register() == 7
-        && call.register_b() == instruction(8).result_register()
-        && call.call_window().base == instruction(9).result_register()
-        && call.call_window().count == 1
-        && instruction_binary_operator(instruction(11)) == Some(BinaryOperator::BitwiseOR as u32)
-        && operand_register(instruction(11).operand_b()) == Some(8)
-        && operand_constant(instruction(11).operand_c()) == Some(0.0)
-        && instruction_binary_operator(instruction(12)) == Some(BinaryOperator::BitwiseXOR as u32)
-        && instruction(12).numeric_local_target() == Some(1)
-        && operand_register(instruction(12).operand_b()) == Some(4)
-        && operand_register(instruction(12).operand_c()) == Some(9)
-        && instruction(13).local_slot() == 2
-        && instruction(13).result_register() == 2
-        && instruction_binary_operator(instruction(14)) == Some(BinaryOperator::Subtraction as u32)
-        && instruction(14).numeric_local_target() == Some(2)
-        && operand_register(instruction(14).operand_b()) == Some(2)
-        && operand_constant(instruction(14).operand_c()) == Some(919.0)
-        && instruction(15).jump_target() == 4
-        && instruction(16).local_slot() == 1
-        && instruction(16).result_register() == 2
-        && instruction(17).returns_from_frame()
-        && instruction_binary_operator(instruction(17)) == Some(BinaryOperator::BitwiseOR as u32)
-        && operand_register(instruction(17).operand_b()) == Some(2)
-        && operand_constant(instruction(17).operand_c()) == Some(0.0)
-        && instruction(18).constant_index() < program.constants.len()
-        && instruction(18).result_register() == 2
-        && instruction(19).register_a() == instruction(18).result_register()
+            && operand_register(exit.operand_b()) == Some(tested)
+            && operand_constant(exit.operand_c()) == Some(0.0),
+    )?;
+
+    // hash = hash * 33 ^ (str.charCodeAt(index) | 0);
+    let current = code.load(hash)?;
+    let scaled = code.next_op(Op::Binary)?;
+    check(
+        operator_is(scaled, BinaryOperator::Multiplication)
+            && operand_register(scaled.operand_b()) == Some(current)
+            && operand_constant(scaled.operand_c()) == Some(33.0),
+    )?;
+    let method = code.next()?;
+    check(field_is(method, "charCodeAt"))?;
+    let argument = code.load(index)?;
+    let call = code.next_op(Op::Call)?;
+    check(
+        call.register_b() == method.result_register()
+            && call.call_window().base == argument
+            && call.call_window().count == 1,
+    )?;
+    let unit = code.next_op(Op::Binary)?;
+    check(
+        operator_is(unit, BinaryOperator::BitwiseOR)
+            && operand_register(unit.operand_b()) == Some(call.result_register())
+            && operand_constant(unit.operand_c()) == Some(0.0),
+    )?;
+    let mixed = code.binary_into(hash)?;
+    check(
+        operator_is(mixed, BinaryOperator::BitwiseXOR)
+            && operand_register(mixed.operand_b()) == Some(scaled.result_register())
+            && operand_register(mixed.operand_c()) == Some(unit.result_register()),
+    )?;
+
+    // index -= 919;
+    let counted = code.load(index)?;
+    let step = code.binary_into(index)?;
+    check(
+        operator_is(step, BinaryOperator::Subtraction)
+            && operand_register(step.operand_b()) == Some(counted)
+            && operand_constant(step.operand_c()) == Some(919.0),
+    )?;
+    let back = code.next_op(Op::Jump)?;
+    check(back.jump_target() as usize == head)?;
+
+    // return hash | 0;
+    check(exit.jump_target() as usize == code.pc)?;
+    let result = code.load(hash)?;
+    let returned = code.next_op(Op::Binary)?;
+    check(
+        returned.returns_from_frame()
+            && operator_is(returned, BinaryOperator::BitwiseOR)
+            && operand_register(returned.operand_b()) == Some(result)
+            && operand_constant(returned.operand_c()) == Some(0.0),
+    )?;
+    // The implicit `return undefined` after it.
+    let undefined = code.next_op(Op::LoadConst)?;
+    check(undefined.constant_index() < program.constants.len())?;
+    let tail = code.next_op(Op::Return)?;
+    check(tail.register_a() == undefined.result_register() && code.pc == function.code.len())
 }
 
 fn operand_register(operand: crate::bytecode::Operand) -> Option<u16> {
