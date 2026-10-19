@@ -659,6 +659,7 @@ impl<H: Host> Vm<H> {
         roots.extend(self.active_call_roots.iter().copied());
         roots.extend(self.symbol_registry.values().copied());
         roots.extend(self.well_known_symbols.values());
+        roots.extend(self.typeof_names);
         roots.extend(self.startup_intrinsic_roots());
         roots.extend(self.frames.iter().flat_map(|frame| {
             // A missing map means the function uses a register form

@@ -572,6 +572,9 @@ struct ParkedRealm {
 }
 /// The natives whose prototypes VM fields follow from the active realm
 /// (`Vm::realm_prototype_field`).
+/// One `typeof` name per `crate::ValueType`, indexed by its discriminant; `Function` is the
+/// last type.
+const TYPEOF_NAMES: usize = crate::ValueType::Function as usize + 1;
 const REALM_FOLLOWING_PROTOTYPES: [Native; 4] =
     [Native::Object, Native::Function, Native::Array, Native::String];
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1532,6 +1535,9 @@ pub(crate) struct Vm<H> {
     // One lazily derived class byte per atom; length tracks `atom_sequence`.
     atom_classes: Vec<std::cell::Cell<u8>>,
     dynamic_strings: Option<Box<FxHashMap<u64, Value>>>,
+    /// The `typeof` result string of each value type, made on first use; `undefined` until
+    /// then. Rooted, so `typeof` neither hashes nor allocates once warm.
+    typeof_names: [Value; TYPEOF_NAMES],
     symbol_registry: FxHashMap<String, Value>,
     well_known_symbols: WellKnownSymbols,
     string_concats: Option<Box<[StringConcatCache]>>,
@@ -2358,6 +2364,7 @@ impl<H: Host> Vm<H> {
         self.atom_classes
             .resize_with(self.atom_text.len(), Default::default);
         self.dynamic_strings = None;
+        self.typeof_names = [Value::UNDEFINED; TYPEOF_NAMES];
         self.symbol_registry.clear();
         self.well_known_symbols.clear();
         self.string_concats = None;
