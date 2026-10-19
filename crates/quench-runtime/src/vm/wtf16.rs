@@ -1,3 +1,4 @@
+use std::mem::MaybeUninit;
 use std::borrow::Cow;
 use std::cell::{OnceCell, UnsafeCell};
 use std::hash::{Hash, Hasher};
@@ -88,24 +89,30 @@ impl FlatUnits {
     /// ASCII `text` in its canonical storage.
     fn ascii(text: &str) -> Self {
         debug_assert!(text.is_ascii());
-        Self::ascii_with(text.len(), |bytes| bytes.copy_from_slice(text.as_bytes()))
+        Self::ascii_with(text.len(), |bytes| {
+            bytes.write_copy_of_slice(text.as_bytes());
+        })
     }
 
     /// The canonical storage of `length` ASCII bytes that `fill` writes in place: short text
-    /// inline, longer text straight into its shared allocation, with no staging copy.
-    fn ascii_with(length: usize, fill: impl FnOnce(&mut [u8])) -> Self {
+    /// inline, longer text straight into its shared allocation, with no staging copy or
+    /// zeroing. `fill` must write every byte of the slice it is given.
+    fn ascii_with(length: usize, fill: impl FnOnce(&mut [MaybeUninit<u8>])) -> Self {
         if length <= SHORT_ASCII_CAPACITY {
-            let mut bytes = [0; SHORT_ASCII_CAPACITY];
+            let mut bytes = [MaybeUninit::new(0); SHORT_ASCII_CAPACITY];
             fill(&mut bytes[..length]);
+            // SAFETY: every byte started initialized, and `fill` writes only bytes.
+            let bytes = bytes.map(|byte| unsafe { byte.assume_init() });
             debug_assert!(bytes.is_ascii());
             return Self::Short(ShortAscii {
                 length: length as u8,
                 bytes,
             });
         }
-        // SAFETY: zeroed bytes are initialized `u8`s.
-        let mut storage = unsafe { Rc::<[u8]>::new_zeroed_slice(length).assume_init() };
+        let mut storage = Rc::<[u8]>::new_uninit_slice(length);
         fill(Rc::get_mut(&mut storage).expect("a new allocation is unshared"));
+        // SAFETY: `fill` wrote every byte.
+        let storage = unsafe { storage.assume_init() };
         debug_assert!(storage.is_ascii());
         // SAFETY: `str` and `[u8]` share a layout, and ASCII bytes are UTF-8.
         Self::Ascii(unsafe { Rc::from_raw(Rc::into_raw(storage) as *const str) })
@@ -372,7 +379,7 @@ fn flat_units(units: &[u16]) -> FlatUnits {
     if units.iter().all(|unit| is_ascii_unit(*unit)) {
         FlatUnits::ascii_with(units.len(), |bytes| {
             for (byte, unit) in bytes.iter_mut().zip(units) {
-                *byte = *unit as u8;
+                byte.write(*unit as u8);
             }
         })
     } else {
@@ -498,8 +505,12 @@ impl JsStringInner {
 /// piece, and a rope's leaves then hold at least this many units each.
 const ROPE_LEAF_MAX_UNITS: usize = 512;
 /// A flat left side at most this long takes a short right side by copy, so text built by
-/// appends stays flat until it is long; past it, an append copies at most a leaf.
-const FLAT_PREFIX_MAX_UNITS: usize = 8192;
+/// appends stays flat until it is long; past it, an append copies at most a leaf. Each such
+/// append copies the whole prefix, so the bound is the most an append copies: from 8192,
+/// pdfjs 12.67G -> 9.42G instructions with max RSS 84.8 -> 86.8 MB, and web-ssr's built
+/// text 89.8 -> 100.9 MB (Bun without its JIT: 88.8 and 124.3 MB; 512 saved 2% more on
+/// pdfjs for 3.5 MB more on web-ssr; JetStream, Linux x86_64, 2026-10-19).
+const FLAT_PREFIX_MAX_UNITS: usize = 2048;
 
 /// Flat UTF-16 strings retain the existing Node-compatible length policy.
 /// V8's public String::kMaxLength on the supported 64-bit host is this limit;
@@ -589,14 +600,14 @@ impl JsStringBuilder {
                 let mut written = 0;
                 for part in &self.parts {
                     if let Units::Ascii(bytes) = part.units.view().slice(part.range.clone()) {
-                        output[written..written + bytes.len()].copy_from_slice(bytes);
+                        output[written..written + bytes.len()].write_copy_of_slice(bytes);
                         written += bytes.len();
                     }
                 }
+                assert_eq!(written, output.len(), "the parts fill the string's length");
             })));
         }
-        // SAFETY: zeroed units are initialized `u16`s.
-        let mut storage = unsafe { Rc::<[u16]>::new_zeroed_slice(length).assume_init() };
+        let mut storage = Rc::<[u16]>::new_uninit_slice(length);
         let output = Rc::get_mut(&mut storage).expect("a new allocation is unshared");
         let mut written = 0;
         for part in &self.parts {
@@ -605,13 +616,18 @@ impl JsStringBuilder {
             match units {
                 Units::Ascii(bytes) => {
                     for (unit, byte) in target.iter_mut().zip(bytes) {
-                        *unit = u16::from(*byte);
+                        unit.write(u16::from(*byte));
                     }
                 }
-                Units::Wide(units) => target.copy_from_slice(units),
+                Units::Wide(units) => {
+                    target.write_copy_of_slice(units);
+                }
             }
             written += units.len();
         }
+        assert_eq!(written, length, "the parts fill the string's length");
+        // SAFETY: the parts wrote every unit.
+        let storage = unsafe { storage.assume_init() };
         // Wide parts can contribute only ASCII units; such text is stored narrow.
         if storage.iter().all(|unit| is_ascii_unit(*unit)) {
             return Ok(JsString::from_units(&storage));

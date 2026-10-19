@@ -1026,6 +1026,18 @@ pub(crate) struct DeclaredAtomSets {
 }
 
 /// Whether a local slot's name is among `global_var_atoms` and `global_lexical_atoms`.
+/// What a root environment slot holds for the reads through it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RootSlotRule {
+    /// The binding itself.
+    Binding,
+    /// A Script's global lexical binding: the slot itself outside a dynamic script's
+    /// evaluation, the realm's record during one.
+    GlobalLexical,
+    /// A global var or module import, which reads go through.
+    Projection,
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct SlotDeclaration {
     pub(crate) global_var: bool,
@@ -2578,10 +2590,25 @@ pub(crate) struct ProgramSource {
 
 /// Starts of JavaScript source lines, including an empty line after a final terminator.
 pub(crate) fn source_line_starts(text: &str) -> impl Iterator<Item = usize> + '_ {
-    std::iter::once(0).chain(text.char_indices().filter_map(|(index, character)| {
-        let crlf_prefix = character == '\r' && text.as_bytes().get(index + 1) == Some(&b'\n');
-        (matches!(character, '\n' | '\r' | '\u{2028}' | '\u{2029}') && !crlf_prefix)
-            .then_some(index + character.len_utf8())
+    const LINE_SEPARATOR: &[u8] = "\u{2028}".as_bytes();
+    const PARAGRAPH_SEPARATOR: &[u8] = "\u{2029}".as_bytes();
+    // Scanned as bytes: every terminator but LS and PS is ASCII, and those two share their
+    // UTF-8 lead byte, so no other byte needs decoding.
+    let bytes = text.as_bytes();
+    std::iter::once(0).chain(bytes.iter().enumerate().filter_map(move |(index, &byte)| {
+        let width = match byte {
+            b'\n' => 1,
+            // CR LF ends one line, after the LF.
+            b'\r' if bytes.get(index + 1) != Some(&b'\n') => 1,
+            lead if lead == LINE_SEPARATOR[0]
+                && (bytes[index..].starts_with(LINE_SEPARATOR)
+                    || bytes[index..].starts_with(PARAGRAPH_SEPARATOR)) =>
+            {
+                LINE_SEPARATOR.len()
+            }
+            _ => return None,
+        };
+        Some(index + width)
     }))
 }
 
@@ -2781,17 +2808,19 @@ impl ResidualProgram {
                 && self.functions.first().is_some_and(|root| root.strict))
     }
 
-    /// Whether root `slot` is the binding itself: it projects no global var, and no global
-    /// lexical binding unless `lexical_slots_are_bindings` (outside a dynamic script's
-    /// evaluation, a Script's global lexical binding lives in its root slot).
-    pub(crate) fn root_slot_is_binding(&self, slot: u16, lexical_slots_are_bindings: bool) -> bool {
-        self.functions.first().is_some_and(|root| {
-            let declaration = root.slot_declaration(usize::from(slot));
-            (!declaration.global_var || self.root_variables_are_local())
-                && (!declaration.global_lexical
-                    || lexical_slots_are_bindings
-                    || self.kind != ProgramKind::Script)
-        })
+    /// What root `slot` of this program holds (`RootSlotRule`), from its declaration.
+    pub(crate) fn root_slot_rule(&self, slot: usize) -> RootSlotRule {
+        let Some(root) = self.functions.first() else {
+            return RootSlotRule::Binding;
+        };
+        let declaration = root.slot_declaration(slot);
+        if declaration.global_var && !self.root_variables_are_local() {
+            RootSlotRule::Projection
+        } else if declaration.global_lexical && self.kind == ProgramKind::Script {
+            RootSlotRule::GlobalLexical
+        } else {
+            RootSlotRule::Binding
+        }
     }
 
     pub fn function_count(&self) -> usize {
