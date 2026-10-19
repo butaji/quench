@@ -10822,6 +10822,35 @@ fn unary_operators_on_literals_fold_to_their_constants() {
 }
 
 #[test]
+fn lane_char_code_at_keeps_its_coercions_and_patched_methods() {
+    // `charCodeAt` of a string at an integer index runs in the lane; other receivers and
+    // indexes, out-of-range positions and a replaced method keep their semantics.
+    let source = r#"
+      const out = [];
+      function scan(s) { let t = 0; for (let i = -1; i <= s.length; i++) { const c = s.charCodeAt(i); t += Number.isNaN(c) ? 1000 : c; } return t; }
+      for (let k = 0; k < 3; k++) {
+        out.push(scan("abc"), scan(""), scan("é\u{1F600}"), "abc".charCodeAt(), "abc".charCodeAt(1.7), "abc".charCodeAt("2"), "abc".charCodeAt(NaN));
+        out.push(new String("xyz").charCodeAt(1), String.prototype.charCodeAt.call(12, 0), "a".charCodeAt(2 ** 31));
+        try { String.prototype.charCodeAt.call(null, 0); } catch (e) { out.push(e.constructor.name); }
+        const o = { valueOf() { out.push("vo"); return 1; } }; out.push("abc".charCodeAt(o));
+      }
+      const saved = String.prototype.charCodeAt;
+      String.prototype.charCodeAt = function (i) { return "patched" + i; };
+      out.push("abc".charCodeAt(1));
+      String.prototype.charCodeAt = saved;
+      out.push("abc".charCodeAt(1));
+      print(out.join(","));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "lane-char-code-at.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["2294,2000,114422,97,98,99,97,121,49,NaN,TypeError,vo,98,2294,2000,114422,97,98,99,97,121,49,NaN,TypeError,vo,98,2294,2000,114422,97,98,99,97,121,49,NaN,TypeError,vo,98,patched1,98"]
+    );
+}
+
+#[test]
 fn lane_arrows_take_this_from_their_environment() {
     // Arrows called as frameless activations read `this` from the environment they
     // closed over: call/apply/bind receivers are ignored, a derived constructor's
