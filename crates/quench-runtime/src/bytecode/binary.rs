@@ -7,6 +7,11 @@ use super::{
     WideInstruction,
 };
 
+/// The encoded kinds of `Handler::slot`: none, a frame local, or a register.
+const THROWN_VALUE_DISCARDED: u8 = 0;
+const THROWN_VALUE_IN_LOCAL: u8 = 1;
+const THROWN_VALUE_IN_REGISTER: u8 = 2;
+
 /// Encodes a function without an `undefined` register.
 const NO_UNDEFINED_REGISTER: u16 = u16::MAX;
 const RESIDUAL_MAGIC: &[u8; 8] = &[
@@ -179,6 +184,7 @@ pub(super) fn write_program(
             Constant::Undefined => out.u8(5),
         }
     }
+    program.compile_released();
     out.u32(program.functions.len() as u32);
     for function in &program.functions {
         out.option_u32(function.parent);
@@ -310,7 +316,13 @@ pub(super) fn write_program(
             out.u32(handler.start);
             out.u32(handler.end);
             out.u32(handler.target);
-            out.u16(handler.slot.unwrap_or(u16::MAX));
+            let (kind, slot) = match handler.slot {
+                None => (THROWN_VALUE_DISCARDED, u16::MAX),
+                Some(super::ThrownValueSlot::Local(slot)) => (THROWN_VALUE_IN_LOCAL, slot),
+                Some(super::ThrownValueSlot::Register(register)) => (THROWN_VALUE_IN_REGISTER, register),
+            };
+            out.u8(kind);
+            out.u16(slot);
             out.u32(handler.return_target.unwrap_or(u32::MAX));
             out.u16(handler.return_slot.unwrap_or(u16::MAX));
             out.u16(handler.with_depth);
@@ -660,7 +672,14 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             let start = input.u32()?;
             let end = input.u32()?;
             let target = input.u32()?;
+            let kind = input.u8()?;
             let slot = input.u16()?;
+            let slot = match kind {
+                THROWN_VALUE_DISCARDED => None,
+                THROWN_VALUE_IN_LOCAL => Some(super::ThrownValueSlot::Local(slot)),
+                THROWN_VALUE_IN_REGISTER => Some(super::ThrownValueSlot::Register(slot)),
+                _ => return Err("invalid residual handler slot kind".into()),
+            };
             let return_target = input.u32()?;
             let return_slot = input.u16()?;
             let with_depth = input.u16()?;
@@ -668,7 +687,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
                 start,
                 end,
                 target,
-                slot: (slot != u16::MAX).then_some(slot),
+                slot,
                 return_target: (return_target != u32::MAX).then_some(return_target),
                 return_slot: (return_slot != u16::MAX).then_some(return_slot),
                 with_depth,

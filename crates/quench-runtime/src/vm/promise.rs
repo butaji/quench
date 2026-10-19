@@ -2749,8 +2749,9 @@ impl<H: Host> Vm<H> {
                     .enumerate()
                     .skip(1)
                     .find(|(_, function)| {
-                        function.parent == Some(super::ROOT_FUNCTION_ID)
-                            && function
+                        let header = function.header();
+                        header.parent == Some(super::ROOT_FUNCTION_ID)
+                            && header
                                 .name
                                 .is_some_and(|atom| self.atom_name(atom) == function_name)
                     })
@@ -4008,7 +4009,7 @@ impl<H: Host> Vm<H> {
                 .position(|name| name == &import.local)
                 .ok_or_else(|| self.type_error(p, "source import binding is unavailable".into()))?
                 as u32;
-            let slot = residual.functions[0]
+            let slot = residual.function(0)
                 .local_atoms
                 .iter()
                 .position(|candidate| *candidate == atom)
@@ -4090,13 +4091,14 @@ impl<H: Host> Vm<H> {
                     .iter()
                     .enumerate()
                     .find(|(_, function)| {
-                        function.parent == Some(0)
-                            && function
+                        let header = function.header();
+                        header.parent == Some(0)
+                            && header
                                 .name
                                 .is_some_and(|name| residual.atoms[name as usize] == local)
                     })
                     .and_then(|(id, _)| self.cached_functions(program_id, id as u32).next_back());
-                let slot = residual.functions[0]
+                let slot = residual.function(0)
                     .local_atoms
                     .iter()
                     .position(|candidate| *candidate == atom)

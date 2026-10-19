@@ -61,8 +61,7 @@ impl<H: Host> Vm<H> {
                 ..
             }) => self.programs.get(*program_id).is_some_and(|program| {
                 program
-                    .functions
-                    .get(*id as usize)
+                    .function_get(*id as usize)
                     .is_some_and(|function| function.has_restricted_legacy_caller_access())
             }),
             Some(FunctionRecord {
@@ -108,7 +107,7 @@ impl<H: Host> Vm<H> {
                     };
                     let visible = *realm == self.realm.globals
                         && self.programs.get(*program_id).is_some_and(|program| {
-                            program.functions.get(*id as usize).is_some_and(|metadata| {
+                            program.function_get(*id as usize).is_some_and(|metadata| {
                                 !metadata.strict && !metadata.is_async && !metadata.is_generator
                             })
                         });
@@ -129,7 +128,7 @@ impl<H: Host> Vm<H> {
         let program = self.programs.get(frame.program);
         let metadata = program
             .as_deref()
-            .and_then(|program| program.functions.get(frame.function as usize));
+            .and_then(|program| program.function_get(frame.function as usize));
         let expose_callee = metadata.is_some_and(|metadata| metadata.simple_parameters);
         let reflected = (0..frame.reflected_parameters).map(|parameter| {
             let metadata = metadata.expect("reflected parameters belong to a live function");
