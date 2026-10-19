@@ -827,7 +827,10 @@ function.plain_local_slots(&self.superinstructions)
                 {
                     return Err(format!("function {index} has an invalid handler"));
                 }
-                if handler.slot.is_some_and(|slot| slot >= function.locals) {
+                if handler.slot.is_some_and(|slot| match slot {
+                    super::ThrownValueSlot::Local(slot) => slot >= function.locals,
+                    super::ThrownValueSlot::Register(register) => register >= function.registers,
+                }) {
                     return Err(format!("function {index} handler slot is out of bounds"));
                 }
                 if handler

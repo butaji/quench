@@ -685,10 +685,16 @@ impl ProgramStore {
     }
 
     /// Whether `slot` of `id`'s root environment is the binding itself: no global var,
-    /// global lexical or module-import projection reads through it.
-    pub(crate) fn root_slot_is_binding(&self, id: ProgramId, slot: u16) -> bool {
+    /// global lexical (`ResidualProgram::root_slot_is_binding`) or module-import projection
+    /// reads through it.
+    pub(crate) fn root_slot_is_binding(
+        &self,
+        id: ProgramId,
+        slot: u16,
+        lexical_slots_are_bindings: bool,
+    ) -> bool {
         self.entry(id).is_some_and(|entry| {
-            entry.residual.root_slots_are_bindings()
+            entry.residual.root_slot_is_binding(slot, lexical_slots_are_bindings)
                 && !entry.module_imports.iter().any(|(local, _)| *local == slot)
         })
     }
@@ -974,6 +980,13 @@ impl ProgramStore {
 
     pub(super) fn js_tier(&self, id: ProgramId, function: u32) -> Option<JsTierState> {
         self.entry(id)?.js_tiers.get(&function).cloned()
+    }
+
+    /// Whether the JavaScript tier settled on not compiling `function`.
+    pub(super) fn js_tier_declined(&self, id: ProgramId, function: u32) -> bool {
+        self.entry(id)
+            .and_then(|entry| entry.js_tiers.get(&function))
+            .is_some_and(|state| matches!(state, JsTierState::Unsupported))
     }
 
     pub(super) fn js_jit_diagnostics_enabled(&self) -> bool {

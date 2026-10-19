@@ -1056,9 +1056,10 @@ impl<H: Host> Vm<H> {
     }
 
     /// The store `cached_field_store_hit` makes to an own data field of a direct object that
-    /// the site's primary entry names, without its other tiers.
+    /// the site's primary entry names, without its other tiers. Without `LOGS`, `false` also
+    /// leaves a store the write barrier logs (`Heap::record_property_set_flat`).
     #[inline(always)]
-    pub(super) fn primary_own_field_store_hit(
+    pub(super) fn primary_own_field_store_hit<const LOGS: bool>(
         &mut self,
         p: &ResidualProgram,
         object: Value,
@@ -1083,7 +1084,7 @@ impl<H: Host> Vm<H> {
             return false;
         }
         // SAFETY: a matching immutable shape proves the cached slot layout.
-        if !unsafe { self.heap.record_property_set_flat(record_id, cache.slot as usize, value) } {
+        if !unsafe { self.heap.record_property_set_flat::<LOGS>(record_id, cache.slot as usize, value) } {
             return false;
         }
         self.profile.field_cache_hit(0, 0);
