@@ -625,7 +625,7 @@ mod tests {
             panic!("helper should be a user function")
         };
         let helper_program = vm.programs.get(*program_id).unwrap();
-        let helper_metadata = &helper_program.functions[*function_id as usize];
+        let helper_metadata = &helper_program.function(*function_id as usize);
         let helper_source = helper_metadata.source_span.map(|span| {
             &helper_program.source.as_ref().unwrap().text[span.start as usize..span.end as usize]
         });

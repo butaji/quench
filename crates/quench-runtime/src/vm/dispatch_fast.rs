@@ -4083,7 +4083,7 @@ impl<H: Host> Vm<H> {
             let mut result = unsafe { (*activation.call).a };
             self.frames[caller].pc = call_pc + 1;
             self.frames[caller].pc_is_resume = true;
-            let count = usize::from(code.functions[activation.function as usize].registers);
+            let count = usize::from(code.function(activation.function as usize).registers);
             let window = &registers[activation.window..activation.window + count];
             let construct_this = activation
                 .script()
@@ -4107,7 +4107,7 @@ impl<H: Host> Vm<H> {
                             .expect("each forwarder activation has its skipped constructor");
                         let constructor_registers = vec![
                             Value::UNDEFINED;
-                            usize::from(code.functions[forwarder.function as usize].registers)
+                            usize::from(code.function(forwarder.function as usize).registers)
                         ];
                         self.push_script_frame_with_registers(
                             code,
@@ -4213,7 +4213,7 @@ impl<H: Host> Vm<H> {
         if function == super::ROOT_FUNCTION_ID || program != self.active_program {
             return None;
         }
-        let body = code.functions.get(function as usize)?;
+        let body = code.function_get(function as usize)?;
         let plan = body.call_plan(code);
         if !plan.registers_only {
             return None;
@@ -4349,7 +4349,7 @@ lane_handler! {
         let global = function != super::ROOT_FUNCTION_ID
             && vm.programs.runs_in_global_scope(unsafe { (*cx).program })
             && !vm.atom_class(i.imm()).contains(AtomClass::INTERNAL)
-            && code.functions.get(function as usize).is_some_and(|function| {
+            && code.function_get(function as usize).is_some_and(|function| {
                 function.names_resolve_statically(&code.functions, &code.atoms)
             });
         if global {
@@ -5029,7 +5029,7 @@ unsafe fn lane_kept_arguments<H: Host>(cx: *mut LaneContext<H>) -> Option<Activa
     }
     let activation = vm.lane_stack.activations.last()?;
     let script = activation.script().filter(|script| script.forwards)?;
-    let registers = usize::from(unsafe { &*(*cx).code }.functions[activation.function as usize].registers);
+    let registers = usize::from(unsafe { &*(*cx).code }.function(activation.function as usize).registers);
     // SAFETY: the activation's window holds its registers, then its kept values.
     let values = unsafe { vm.lane_stack.values.as_ptr().add(activation.window + registers) };
     Some(ActivationArguments::Kept(values, usize::from(script.argc)))
@@ -5209,7 +5209,7 @@ fn lane_initialize_fields<H: Host>(
         forwarded: None,
     };
     let mut plannable = true;
-    for store in code.functions[function as usize].this_field_stores() {
+    for store in code.function(function as usize).this_field_stores() {
         let atom = store.imm();
         let parameter = store.a();
         if !vm.field_cache_atom_eligible(atom)
@@ -5558,7 +5558,7 @@ fn lane_call_frame<H: Host>(ip: Ip) -> Ip {
     let vm = unsafe { vm(cx) };
     let code = unsafe { &*(*cx).code };
     let callee = u32::from(i.b);
-    let count = usize::from(code.functions[usize::from(i.b)].registers);
+    let count = usize::from(code.function(usize::from(i.b)).registers);
     let window = fill_room::<ACTIVATION_FILL_BLOCK>(count);
     let stack = &vm.lane_stack;
     let values_full = stack.values.capacity() - stack.values.len() < window;
@@ -5630,7 +5630,7 @@ fn lane_returning_call_admitted<H: Host>(cx: *mut LaneContext<H>) -> bool {
         Some(caller) => caller.function,
         None => vm.frames[unsafe { (*cx).frame }].function,
     };
-    !unsafe { &*(*cx).code }.functions[function as usize].strict
+    !unsafe { &*(*cx).code }.function(function as usize).strict
 }
 
 /// The frame's own call record at `call` returns `value`, its callee's completion: the
@@ -5881,7 +5881,7 @@ lane_handler! {
         let function = vm.frames[frame].function;
         if !vm.lane_stack.activations.is_empty()
             || function == super::ROOT_FUNCTION_ID
-            || !code.functions[function as usize].binding_sites.is_empty()
+            || !code.function(function as usize).binding_sites.is_empty()
         {
             return exit(ip);
         }
@@ -5984,8 +5984,7 @@ fn lane_enter_script_frame<H: Host>(cx: *mut LaneContext<H>, frame: usize) -> Ip
     let function = vm.frames[frame].function;
     unsafe {
         (*cx).script_constructs = code
-            .functions
-            .get(function as usize)
+            .function_get(function as usize)
             .is_some_and(|function| function.dispatch == crate::bytecode::DispatchClass::General);
     }
     lane_enter_frame(cx, frame, vm.frames[frame].pc)
@@ -7437,8 +7436,7 @@ impl<H: Host> Vm<H> {
                 && *frame + 1 == self.frames.len()
                 && self.frames[*frame].function != super::ROOT_FUNCTION_ID,
             script_constructs: code
-                .functions
-                .get(self.frames[*frame].function as usize)
+                .function_get(self.frames[*frame].function as usize)
                 .is_some_and(|function| {
                     function.dispatch == crate::bytecode::DispatchClass::General
                 }),

@@ -60,7 +60,7 @@ pub(super) const WASM_ACTIVATION_LIMIT: usize = crate::stack::MAX_GUEST_CALL_DEP
 
 impl GeneralCodeCursor {
     fn new(program_id: ProgramId, program: &ResidualProgram, function: u32) -> Self {
-        let function_code = &program.functions[function as usize];
+        let function_code = &program.function(function as usize);
         let decoded = function_code
             .decoded
             .on_entry(&function_code.code, &function_code.wide)
@@ -234,7 +234,7 @@ impl<H: Host> Vm<H> {
         // against the live guest-call budget.
         let call_guard = crate::stack::GuestCallGuard::enter()
             .map_err(|()| JsError::wasm_trap_error(crate::WasmTrap::CallStackExhausted))?;
-        let function = &p.functions[id as usize];
+        let function = &p.function(id as usize);
         let program = self.active_program;
         let with_base = self.with_stack.len();
         let mut frame = self
@@ -282,7 +282,7 @@ impl<H: Host> Vm<H> {
         id: u32,
         registers: &[Value],
     ) {
-        debug_assert_eq!(p.functions[id as usize].locals, 0);
+        debug_assert_eq!(p.function(id as usize).locals, 0);
         let program = self.active_program;
         let with_base = self.with_stack.len();
         let mut frame = self
@@ -407,7 +407,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         context: CallContext,
     ) -> Result<usize, JsError> {
-        let function = &p.functions[id as usize];
+        let function = &p.function(id as usize);
         if id != super::ROOT_FUNCTION_ID && function.plain_activation(p) {
             self.activate_plain_frame(p, id, function, parent, this, args, context)
         } else {
@@ -505,12 +505,12 @@ impl<H: Host> Vm<H> {
     ) -> Result<usize, JsError> {
         self.profile
             .function(self.active_program.raw(), id as usize);
-        if p.functions[id as usize].parameter_eval_arguments_error {
+        if p.function(id as usize).parameter_eval_arguments_error {
             return Err(self
                 .syntax_error_result(p, "arguments binding is not allowed in function parameters")
                 .expect_err("syntax_error_result must throw"));
         }
-        let function = &p.functions[id as usize];
+        let function = &p.function(id as usize);
         let mut frame = self.pooled_frame();
         self.bind_activation_arguments(p, &mut frame, function, context, args)?;
         frame.function = id;
@@ -588,12 +588,12 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         self.profile
             .function(self.active_program.raw(), id as usize);
-        if p.functions[id as usize].parameter_eval_arguments_error {
+        if p.function(id as usize).parameter_eval_arguments_error {
             return Err(self
                 .syntax_error_result(p, "arguments binding is not allowed in function parameters")
                 .expect_err("syntax_error_result must throw"));
         }
-        let function = &p.functions[id as usize];
+        let function = &p.function(id as usize);
         let placeholder = self.pooled_frame();
         let old = std::mem::replace(&mut self.frames[frame_index], placeholder);
         self.with_stack.truncate(old.with_base);
@@ -698,7 +698,7 @@ impl<H: Host> Vm<H> {
         f: usize,
     ) -> Result<Value, JsError> {
         let frame = &self.frames[f];
-        let function = &p.functions[frame.function as usize];
+        let function = &p.function(frame.function as usize);
         let slot = usize::from(
             function
                 .arguments_slot
@@ -976,7 +976,7 @@ impl<H: Host> Vm<H> {
         let state = &mut *self.frames[frame];
         let selective = program
             .as_ref()
-            .and_then(|program| program.functions.get(state.function as usize))
+            .and_then(|program| program.function_get(state.function as usize))
             .and_then(|function| function.selective_capture_slots.as_deref());
         let slots = match selective {
             Some(captured) => crate::heap::EnvironmentSlots::from_values(
@@ -1841,7 +1841,7 @@ impl<H: Host> Vm<H> {
         if wasm && error.wasm_exception().is_none() {
             return Err(error);
         }
-        let handler = program.functions[function].handler_at(throwing_pc);
+        let handler = program.function(function).handler_at(throwing_pc);
         let Some(handler) = handler else {
             let mut error = error;
             error.capture_source_location(program, function as u32, throwing_pc);

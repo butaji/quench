@@ -526,16 +526,15 @@ impl FunctionCompiler<'_, '_> {
                 None
             };
             self.store_atom(home_atom, target);
-            let function_id = self.owner.compile_class_method(
+            let function_id = self.owner.compile_replayable_class_method(
                 method,
-                Some(element.span()),
-                &scopes,
-                Some(self.function_id),
-                None,
-                None,
-                false,
-                home_atom,
-                self.with_depth,
+                super::replay::ClassMethodContext {
+                    element_span: element.span(),
+                    home_atom,
+                    scopes: scopes.clone(),
+                    parent: Some(self.function_id),
+                    with_depth: self.with_depth,
+                },
             );
             let function = self.reg();
             self.emit(Op::MakeClosure, function, 0, 0, function_id);
@@ -885,7 +884,7 @@ impl Compiler<'_> {
     fn compile_auto_accessor_methods(
         &mut self,
         accessor: &AccessorProperty<'_>,
-        scopes: &[Rc<super::capture_scope::CaptureScope>],
+        scopes: &super::capture_scope::ScopeChain,
         parent: Option<u32>,
         home_atom: Atom,
         with_depth: u16,
@@ -953,11 +952,11 @@ impl Compiler<'_> {
         Some((getter, setter))
     }
 
-    fn compile_class_method(
+    pub(super) fn compile_class_method(
         &mut self,
         method: &MethodDefinition<'_>,
         source_span: Option<Span>,
-        scopes: &[Rc<super::capture_scope::CaptureScope>],
+        scopes: &super::capture_scope::ScopeChain,
         parent: Option<u32>,
         instance_fields: Option<&[ClassField<'_>]>,
         instance_private_methods: Option<&[Atom]>,
@@ -1023,7 +1022,7 @@ impl Compiler<'_> {
     fn compile_class_static_block(
         &mut self,
         block: &StaticBlock<'_>,
-        scopes: &[Rc<super::capture_scope::CaptureScope>],
+        scopes: &super::capture_scope::ScopeChain,
         parent: Option<u32>,
         home_atom: Atom,
         with_depth: u16,

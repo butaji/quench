@@ -1414,7 +1414,7 @@ struct Compiler<'a> {
     private_name_labels: FxHashMap<(u32, u32), String>,
     private_name_overrides: FxHashMap<u32, String>,
     constants: SiteTable<'a, Constant>,
-    constant_index: std::borrow::Cow<'a, FxHashMap<ConstantKey, u32>>,
+    constant_index: replay::ConstantIndex<'a>,
     functions: replay::FunctionTable<'a>,
     errors: Vec<Diagnostic>,
     cache_sites: u16,
@@ -1445,6 +1445,8 @@ struct Compiler<'a> {
     /// In a replay, the function it recompiles and where the load left each function.
     replay_target: Option<(u32, &'a [replay::TableCursors])>,
     source_type: oxc_span::SourceType,
+    /// In a replay, the finished program whose function it compiles.
+    replay_program: Option<&'a ResidualProgram>,
     /// Whether the program's functions compile again from their text alone.
     replayable_source: bool,
 }
@@ -1474,7 +1476,7 @@ struct DeferredNameBindings {
     /// home through these bindings.
     names_private_members: bool,
     direct: Vec<crate::bytecode::EvalBinding>,
-    scopes: Vec<std::rc::Rc<capture_scope::CaptureScope>>,
+    scopes: capture_scope::ScopeChain,
     function_scope: Vec<Atom>,
 }
 
@@ -1624,7 +1626,7 @@ impl<'a> Compiler<'a> {
             {
                 continue;
             }
-            let captured = self.captured_names(&deferred.scopes);
+            let captured = self.captured_names(deferred.scopes.levels());
             let mut hidden: Vec<Atom> = deferred
                 .function_scope
                 .into_iter()
@@ -1745,15 +1747,34 @@ impl<'a> Compiler<'a> {
         atom_prefix: &'a dyn AtomPrefix,
         private_name_ids: FxHashMap<(u32, u32), u32>,
     ) -> Self {
+        Self::with_layout(
+            source,
+            text,
+            mode,
+            atom_prefix,
+            private_name_ids,
+            std::borrow::Cow::Owned(crate::bytecode::source_line_starts(text).collect()),
+            std::borrow::Cow::Owned(source_utf16_excess(text)),
+        )
+    }
+
+    /// `new`, with `text`'s line starts and UTF-16 excess table already derived.
+    fn with_layout(
+        source: &'a str,
+        text: &'a str,
+        mode: SpecializationMode,
+        atom_prefix: &'a dyn AtomPrefix,
+        private_name_ids: FxHashMap<(u32, u32), u32>,
+        source_line_starts: std::borrow::Cow<'a, [usize]>,
+        source_utf16_excess: std::borrow::Cow<'a, [(usize, usize)]>,
+    ) -> Self {
         let atoms = CompilerAtoms::new(atom_prefix);
         Self {
             source,
             text,
-            source_line_starts: std::borrow::Cow::Owned(
-                crate::bytecode::source_line_starts(text).collect(),
-            ),
+            source_line_starts,
             source_comments: Vec::new(),
-            source_utf16_excess: std::borrow::Cow::Owned(source_utf16_excess(text)),
+            source_utf16_excess,
             mode,
             root_strict: false,
             module_goal: false,
@@ -1767,7 +1788,7 @@ impl<'a> Compiler<'a> {
             private_name_labels: FxHashMap::default(),
             private_name_overrides: FxHashMap::default(),
             constants: SiteTable::default(),
-            constant_index: std::borrow::Cow::Owned(FxHashMap::default()),
+            constant_index: replay::ConstantIndex::default(),
             functions: replay::FunctionTable::default(),
             errors: vec![],
             cache_sites: 0,
@@ -1784,6 +1805,7 @@ impl<'a> Compiler<'a> {
             replay_calls: FxHashMap::default(),
             replay_target: None,
             source_type: oxc_span::SourceType::default(),
+            replay_program: None,
             replayable_source: false,
         }
     }
@@ -1861,8 +1883,9 @@ impl<'a> Compiler<'a> {
     fn compile_plain_function(
         &mut self,
         function: &oxc_ast::ast::Function<'_>,
-        context: replay::PlainFunctionContext,
+        mut context: replay::PlainFunctionContext,
     ) -> u32 {
+        context.scopes = context.scopes.recording();
         let entry = self.cursors();
         let private_names = (self.private_name_references, self.private_name_ids.len());
         let params = FunctionCompiler::params_from_formals(&function.params, self);
@@ -1903,7 +1926,77 @@ impl<'a> Compiler<'a> {
                 ..FunctionOptions::default()
             },
         );
+        context.scopes = context.scopes.into_memo();
         self.record_replay_call(id, entry, private_names, replay::ReplayCall::Plain(context));
+        id
+    }
+
+    /// A method of an object literal, compiled from its syntax and `context`.
+    fn compile_replayable_object_method(
+        &mut self,
+        function: &oxc_ast::ast::Function<'_>,
+        mut context: replay::ObjectMethodContext,
+    ) -> u32 {
+        context.scopes = context.scopes.recording();
+        let entry = self.cursors();
+        let private_names = (self.private_name_references, self.private_name_ids.len());
+        let params = FunctionCompiler::params_from_formals(&function.params, self);
+        let body = function
+            .body
+            .as_ref()
+            .map_or(&[][..], |body| body.statements.as_slice());
+        let strict = context.inherited_strict
+            || function.body.as_ref().is_some_and(|body| {
+                body.directives
+                    .iter()
+                    .any(|directive| directive.directive == "use strict")
+            });
+        let id = self.compile_function(
+            None,
+            &params,
+            FunctionBody::Statements(body),
+            &context.scopes,
+            Some(context.parent),
+            FunctionOptions {
+                defaults: Some(&function.params),
+                source_span: self.source_span(context.property_span),
+                async_function: function.r#async,
+                generator: function.generator,
+                with_depth: context.with_depth,
+                non_constructible: true,
+                super_home: true,
+                super_home_atom: Some(context.home_atom),
+                strict,
+                ..FunctionOptions::default()
+            },
+        );
+        context.scopes = context.scopes.into_memo();
+        self.record_replay_call(id, entry, private_names, replay::ReplayCall::ObjectMethod(context));
+        id
+    }
+
+    /// A class's method, getter or setter, compiled from its syntax and `context`.
+    fn compile_replayable_class_method(
+        &mut self,
+        method: &oxc_ast::ast::MethodDefinition<'_>,
+        mut context: replay::ClassMethodContext,
+    ) -> u32 {
+        context.scopes = context.scopes.recording();
+        let entry = self.cursors();
+        let private_names = (self.private_name_references, self.private_name_ids.len());
+        let id = self.compile_class_method(
+            method,
+            Some(context.element_span),
+            &context.scopes,
+            context.parent,
+            None,
+            None,
+            false,
+            context.home_atom,
+            context.with_depth,
+        );
+        context.scopes = context.scopes.into_memo();
+        self.record_replay_call(id, entry, private_names, replay::ReplayCall::ClassMethod(context));
         id
     }
 
@@ -1911,11 +2004,13 @@ impl<'a> Compiler<'a> {
     fn compile_replayable_arrow(
         &mut self,
         arrow: &oxc_ast::ast::ArrowFunctionExpression<'_>,
-        context: replay::ArrowContext,
+        mut context: replay::ArrowContext,
     ) -> u32 {
+        context.scopes = context.scopes.recording();
         let entry = self.cursors();
         let private_names = (self.private_name_references, self.private_name_ids.len());
         let id = self.compile_arrow_function(arrow, &context);
+        context.scopes = context.scopes.into_memo();
         self.record_replay_call(id, entry, private_names, replay::ReplayCall::Arrow(context));
         id
     }
@@ -2023,7 +2118,7 @@ impl<'a> Compiler<'a> {
             None,
             &[],
             FunctionBody::Statements(&program.body),
-            &[],
+            &capture_scope::ScopeChain::new(Vec::new()),
             None,
             FunctionOptions {
                 defaults: None,
@@ -2316,6 +2411,8 @@ impl<'a> Compiler<'a> {
         let (mut method_sites, mut method_arguments) =
             Self::flatten_method_sites(self.method_sites.into_vec());
         let atoms = self.atoms.table();
+        let replay_atoms = (!replays.is_empty())
+            .then(|| replay::ProgramAtomIndex::new(self.atoms.interned(), &atoms));
         let mut constants = self.constants.into_vec();
         constants.shrink_to_fit();
         functions.shrink_to_fit();
@@ -2346,7 +2443,13 @@ impl<'a> Compiler<'a> {
             }),
             atoms,
             constants,
-            functions: functions.into_iter().map(FunctionSlot::compiled).collect(),
+            // Collected into a table of its own size: an in-place collect would keep the
+            // records' larger allocation.
+            functions: {
+                let mut slots = Vec::with_capacity(functions.len());
+                slots.extend(functions.into_iter().map(FunctionSlot::compiled));
+                slots
+            },
             cache_sites: self.cache_sites,
             method_sites,
             method_arguments,
@@ -2355,12 +2458,13 @@ impl<'a> Compiler<'a> {
             regexp_literal_sites: self.regexp_literal_sites.into_vec(),
             literal_templates: self.literal_templates.into_vec(),
             superinstructions: self.superinstructions.into_vec(),
-            replay: (!replays.is_empty()).then(|| {
+            replay: replay_atoms.map(|atoms| {
                 std::rc::Rc::new(replay::ProgramReplay {
                     source_type: self.source_type,
                     root_strict: self.root_strict,
                     module_goal: self.module_goal,
                     specialized: self.mode == SpecializationMode::Enabled,
+                    atoms,
                     exits: std::mem::take(&mut self.function_exits).into_boxed_slice(),
                     functions: replays,
                     views: replay::ReplayViews::default(),
@@ -2473,7 +2577,7 @@ impl<'a> Compiler<'a> {
 
     fn constant(&mut self, value: Constant) -> u32 {
         let key = ConstantKey::from(&value);
-        if let Some(index) = self.constant_index.get(&key).copied() {
+        if let Some(index) = self.constant_index.get(&key) {
             // A replay finds every constant; one at its cursor was added here at load.
             if index as usize == self.constants.len() {
                 self.constants.push(value);
@@ -2482,7 +2586,7 @@ impl<'a> Compiler<'a> {
         }
         let index = self.constants.len() as u32;
         self.constants.push(value);
-        self.constant_index.to_mut().insert(key, index);
+        self.constant_index.insert(key, index);
         index
     }
 
@@ -2502,8 +2606,8 @@ impl<'a> Compiler<'a> {
             let index = self.constants.len() as u32;
             let key = ConstantKey::from(&value);
             // A replay's index already holds every constant, so it is only read.
-            if !self.constant_index.contains_key(&key) {
-                self.constant_index.to_mut().insert(key, index);
+            if self.constant_index.get(&key).is_none() {
+                self.constant_index.insert(key, index);
             }
             self.constants.push(value);
         }
@@ -2668,7 +2772,7 @@ impl<'a> Compiler<'a> {
         name: Option<&str>,
         params: &[String],
         body: FunctionBody<'_>,
-        scopes: &[Rc<capture_scope::CaptureScope>],
+        scopes: &capture_scope::ScopeChain,
         parent: Option<u32>,
         options: FunctionOptions<'_>,
     ) -> u32 {
@@ -2796,7 +2900,7 @@ impl<'a> Compiler<'a> {
             locals,
             function_scope,
             annex_b_collisions,
-            scopes.to_vec(),
+            scopes.clone(),
             id,
             (options.super_static, options.super_home),
             options.async_function,
@@ -3042,12 +3146,25 @@ impl<'a> Compiler<'a> {
             .count()
     }
 
+    /// The argument registers of each method site: at load the compiler's own sites; in a
+    /// replay, which adds none, the finished program's.
+    fn method_arguments(&self) -> &dyn liveness::MethodArguments {
+        match self.replay_program {
+            Some(program) => program,
+            None => &self.method_sites,
+        }
+    }
+
     /// The specializing rewrites of one function, the only finishing pass that adds sites.
     fn rewrite_function(&mut self, function: &mut BcFunction) {
         if self.mode == SpecializationMode::Enabled {
+            let methods: &dyn liveness::MethodArguments = match self.replay_program {
+                Some(program) => program,
+                None => &self.method_sites,
+            };
             rewrite::apply(
                 function,
-                self.method_sites.as_slice(),
+                methods,
                 &mut self.field_sites,
                 &mut self.superinstructions,
             );
@@ -3057,7 +3174,7 @@ impl<'a> Compiler<'a> {
     /// The finishing passes of one function after every function's rewrites: shared returns,
     /// dispatch class, numeric and plain-local specialization and frame registers.
     fn lower_function(&self, function: &mut BcFunction, undefined_constant: u32) {
-        let method_sites = self.method_sites.as_slice();
+        let method_sites = self.method_arguments();
         let field_sites = self.field_sites.as_slice();
         let superinstructions = self.superinstructions.as_slice();
         rewrite::return_through_shared_returns(function);

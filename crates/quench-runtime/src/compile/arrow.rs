@@ -97,7 +97,7 @@ impl Compiler<'_> {
             locals,
             function_scope,
             annex_b_collisions,
-            scopes.to_vec(),
+            scopes.clone(),
             id,
             (false, false),
             value.r#async,

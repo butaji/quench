@@ -166,7 +166,7 @@ fn object_literal_site_executions(
     program: &crate::bytecode::ResidualProgram,
 ) -> Vec<ObjectLiteralSiteExecution> {
     let mut sites = Vec::new();
-    for (function_id, function) in program.functions.iter().enumerate() {
+    for (function_id, function) in program.functions.iter().enumerate().filter_map(|(id, slot)| slot.record().map(|function| (id, function))) {
         for (pc, encoded) in function.code.iter().copied().enumerate() {
             let Some((dispatch_op, site_op, site)) =
                 object_literal_site(encoded, function, program)
@@ -765,7 +765,7 @@ impl Profile {
             if position != 0 {
                 eprint!(",");
             }
-            let code = &program.functions[*function as usize].code;
+            let code = &program.function(*function as usize).code;
             eprint!(
                 "{{\"function\":{},\"pc\":{},\"first\":\"{}\",\"second\":\"{}\",\"count\":{}}}",
                 function,
