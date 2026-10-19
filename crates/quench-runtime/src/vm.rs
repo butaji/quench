@@ -1,5 +1,6 @@
 mod compiled;
 mod js_compiled;
+mod jit_backend;
 mod shape_transitions;
 mod startup_intrinsics;
 mod wasm;

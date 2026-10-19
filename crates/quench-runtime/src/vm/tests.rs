@@ -10468,6 +10468,56 @@ fn js_jit_compiles_guarded_string_hash_loop_and_falls_back_after_intrinsic_chang
     feature = "profile-memory",
     feature = "profile-gc-time"
 )))]
+fn js_jit_compiles_leading_underscore_string_helpers_and_guards_intrinsic_changes() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function escapeLeadingUnderscores(value) {
+            return value.length >= 2 && value.charCodeAt(0) === 95 && value.charCodeAt(1) === 95
+              ? '_' + value : value;
+          }
+          function unescapeLeadingUnderscores(value) {
+            const alias = value;
+            return alias.length >= 3 && alias.charCodeAt(0) === 95
+              && alias.charCodeAt(1) === 95 && alias.charCodeAt(2) === 95
+              ? alias.substr(1) : alias;
+          }
+          for (let i = 0; i < 40; i++) {
+            if (escapeLeadingUnderscores('__x') !== '___x') throw Error('escape match');
+            if (escapeLeadingUnderscores('_x') !== '_x') throw Error('escape short prefix');
+            if (escapeLeadingUnderscores('x') !== 'x') throw Error('escape miss');
+            if (unescapeLeadingUnderscores('___x') !== '__x') throw Error('unescape match');
+            if (unescapeLeadingUnderscores('__x') !== '__x') throw Error('unescape short prefix');
+            if (unescapeLeadingUnderscores('x') !== 'x') throw Error('unescape miss');
+          }
+          String.prototype.charCodeAt = function() { return 95; };
+          if (escapeLeadingUnderscores('ax') !== '_ax') throw Error('escape intrinsic fallback');
+          if (unescapeLeadingUnderscores('abc') !== 'bc') throw Error('unescape intrinsic fallback');
+        "#,
+        "js-jit-leading-underscore.js",
+    ))
+    .unwrap();
+    let mut vm = Vm::new(SilentHost);
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+    assert!(matches!(
+        vm.programs
+            .js_tier(super::program_store::ProgramId::MAIN, 1),
+        Some(super::program_store::JsTierState::Compiled(_))
+    ));
+    assert!(matches!(
+        vm.programs
+            .js_tier(super::program_store::ProgramId::MAIN, 2),
+        Some(super::program_store::JsTierState::Compiled(_))
+    ));
+}
+
+#[test]
+#[cfg(not(any(
+    feature = "profile-aggregate",
+    feature = "profile-trace",
+    feature = "profile-memory",
+    feature = "profile-gc-time"
+)))]
 fn js_jit_merges_boolean_branch_states_for_numeric_equality_chains() {
     let source =
         r#"

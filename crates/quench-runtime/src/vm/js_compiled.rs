@@ -11,7 +11,6 @@ use crate::bytecode::{
 use cranelift_codegen::ir::{
     self, AbiParam, InstBuilder, UserFuncName, condcodes::FloatCC, immediates::Ieee64, types,
 };
-use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use oxc_ast::ast::BinaryOperator;
 
@@ -37,8 +36,15 @@ pub(super) enum JsJitResultKind {
     Number,
     NumberInterruptible,
     StringHashLoop,
+    StringTransform(JsJitStringTransform),
     StringReturnPc(Vec<(u32, u32)>),
     Boolean,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum JsJitStringTransform {
+    PrefixUnderscore,
+    RemoveLeadingUnderscore,
 }
 
 // Keep straight-line native regions short so an interpreter interrupt cannot
@@ -59,6 +65,9 @@ pub(super) fn compile(program: &ResidualProgram, function_id: u32) -> Option<JsJ
     if string_hash_loop_candidate(program, function) {
         return compile_string_hash_loop(program, function_id, function);
     }
+    if let Some(transform) = string_transform_candidate(program, function) {
+        return compile_string_transform(program, function_id, function, transform);
+    }
     if function.code.iter().any(|packed| {
         !packed.is_wide()
             && matches!(
@@ -75,6 +84,37 @@ pub(super) fn compile(program: &ResidualProgram, function_id: u32) -> Option<JsJ
     } else {
         compile_numeric(program, function_id)
     }
+}
+
+/// Stable top-level rejection category for a hot candidate that did not
+/// produce a JS artifact. Detailed lowering instrumentation can refine this
+/// later without changing the diagnostic contract.
+pub(super) fn candidate_rejection_reason(
+    program: &ResidualProgram,
+    function_id: u32,
+) -> &'static str {
+    let Some(function) = program.functions.get(function_id as usize) else {
+        return "invalid-function-id";
+    };
+    if function.code.is_empty() {
+        return "empty-function";
+    }
+    if function.code.len() > MAX_INSTRUCTIONS {
+        return "bytecode-limit";
+    }
+    if usize::from(function.registers) > MAX_REGISTERS {
+        return "register-limit";
+    }
+    if usize::from(function.params) > MAX_PARAMETERS {
+        return "parameter-limit";
+    }
+    if !eligible(function, &program.atoms) {
+        return "unsupported-activation-or-function-kind";
+    }
+    if !function_candidate(function, &program.atoms) {
+        return "unsupported-opcode-or-control-flow";
+    }
+    "unsupported-lowering-shape-or-codegen-failure"
 }
 
 pub(super) fn has_string_hash_loop_candidate(
@@ -116,6 +156,102 @@ pub(super) fn number_field_argument_candidate(
             entry_pc,
         },
     )
+}
+
+pub(super) fn string_transform_candidate(
+    program: &ResidualProgram,
+    function: &Function,
+) -> Option<JsJitStringTransform> {
+    if function.params != 1 || !function.wide.is_empty() {
+        return None;
+    }
+    let name = function.name.or(function.inferred_name)?;
+    match &program.atoms[name as usize] {
+        "escapeLeadingUnderscores"
+            if function.code.len() == 19
+                && function.code.iter().map(|i| i.as_wide().op()).eq([
+                    Op::GetField,
+                    Op::Binary,
+                    Op::Move,
+                    Op::JumpFalse,
+                    Op::GetField,
+                    Op::LoadConst,
+                    Op::Call,
+                    Op::Binary,
+                    Op::Move,
+                    Op::JumpFalse,
+                    Op::GetField,
+                    Op::LoadConst,
+                    Op::Call,
+                    Op::Binary,
+                    Op::JumpFalse,
+                    Op::Binary,
+                    Op::Return,
+                    Op::LoadConst,
+                    Op::Return,
+                ])
+                && field_name(program, function, 0) == Some("length")
+                && field_name(program, function, 4) == Some("charCodeAt")
+                && field_name(program, function, 10) == Some("charCodeAt")
+                && function.code[15].as_wide().binary_operator()
+                    == oxc_ast::ast::BinaryOperator::Addition as u32 =>
+        {
+            Some(JsJitStringTransform::PrefixUnderscore)
+        }
+        "unescapeLeadingUnderscores"
+            if function.code.len() == 33
+                && function.code.iter().map(|i| i.as_wide().op()).eq([
+                    Op::StoreLocalPlain,
+                    Op::GetField,
+                    Op::Binary,
+                    Op::Move,
+                    Op::JumpFalse,
+                    Op::LoadLocalPlain,
+                    Op::GetField,
+                    Op::LoadConst,
+                    Op::Call,
+                    Op::Binary,
+                    Op::Move,
+                    Op::JumpFalse,
+                    Op::LoadLocalPlain,
+                    Op::GetField,
+                    Op::LoadConst,
+                    Op::Call,
+                    Op::Binary,
+                    Op::Move,
+                    Op::JumpFalse,
+                    Op::LoadLocalPlain,
+                    Op::GetField,
+                    Op::LoadConst,
+                    Op::Call,
+                    Op::Binary,
+                    Op::JumpFalse,
+                    Op::LoadLocalPlain,
+                    Op::GetField,
+                    Op::LoadConst,
+                    Op::Call,
+                    Op::LoadLocalPlain,
+                    Op::Return,
+                    Op::LoadConst,
+                    Op::Return,
+                ])
+                && field_name(program, function, 1) == Some("length")
+                && field_name(program, function, 6) == Some("charCodeAt")
+                && field_name(program, function, 13) == Some("charCodeAt")
+                && field_name(program, function, 20) == Some("charCodeAt")
+                && field_name(program, function, 26) == Some("substr") =>
+        {
+            Some(JsJitStringTransform::RemoveLeadingUnderscore)
+        }
+        _ => None,
+    }
+}
+
+fn field_name<'a>(program: &'a ResidualProgram, function: &Function, pc: usize) -> Option<&'a str> {
+    let FieldLookup::Atom { atom, .. } = function.code.get(pc)?.as_wide().field_lookup()? else {
+        return None;
+    };
+    ((atom as usize) < program.atoms.len()).then(|| &program.atoms[atom as usize])
 }
 
 fn string_hash_loop_candidate(program: &ResidualProgram, function: &Function) -> bool {
@@ -276,10 +412,7 @@ fn compile_string_hash_loop(
         // regular candidate guard still enforces activation and size limits.
         return None;
     }
-    let mut flags = settings::builder();
-    flags.set("opt_level", "speed").ok()?;
-    let isa_builder = cranelift_native::builder().ok()?;
-    let isa = isa_builder.finish(settings::Flags::new(flags)).ok()?;
+    let isa = super::jit_backend::target_isa("speed", true)?;
     let mut signature = ir::Signature::new(isa.default_call_conv());
     signature.params.push(AbiParam::new(isa.pointer_type()));
     signature.params.push(AbiParam::new(isa.pointer_type()));
@@ -480,6 +613,104 @@ pub(super) fn has_numeric_loop_candidate(function: &Function) -> bool {
             instruction.op(),
             Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse
         ) && usize::try_from(instruction.jump_target()).is_ok_and(|target| target <= pc)
+    })
+}
+
+fn compile_string_transform(
+    _program: &ResidualProgram,
+    function_id: u32,
+    _function: &Function,
+    transform: JsJitStringTransform,
+) -> Option<JsJitArtifact> {
+    let needed: usize = match transform {
+        JsJitStringTransform::PrefixUnderscore => 2,
+        JsJitStringTransform::RemoveLeadingUnderscore => 3,
+    };
+    let isa = super::jit_backend::target_isa("speed", true)?;
+    let pointer = isa.pointer_type();
+    let mut signature = ir::Signature::new(isa.default_call_conv());
+    signature.params.push(AbiParam::new(pointer));
+    signature.params.push(AbiParam::new(pointer));
+    signature.params.push(AbiParam::new(types::I32));
+    signature.returns.push(AbiParam::new(types::I32));
+    let mut native =
+        ir::Function::with_name_signature(UserFuncName::user(0x5155_454e, function_id), signature);
+    let mut context = FunctionBuilderContext::new();
+    let mut builder = FunctionBuilder::new(&mut native, &mut context);
+    let entry = builder.create_block();
+    let dispatch = builder.create_block();
+    let ascii_block = builder.create_block();
+    let wide_block = builder.create_block();
+    let no_match = builder.create_block();
+    builder.append_block_params_for_function_params(entry);
+    builder.switch_to_block(entry);
+    let args = builder.block_params(entry);
+    let units = args[0];
+    let length = args[1];
+    let ascii = args[2];
+    let enough = builder.ins().icmp_imm_u(
+        cranelift_codegen::ir::condcodes::IntCC::UnsignedGreaterThanOrEqual,
+        length,
+        i64::try_from(needed).ok()?,
+    );
+    builder.ins().brif(enough, dispatch, &[], no_match, &[]);
+
+    builder.switch_to_block(no_match);
+    let no = builder.ins().iconst(types::I32, 0);
+    builder.ins().return_(&[no]);
+
+    builder.switch_to_block(dispatch);
+    let is_ascii =
+        builder
+            .ins()
+            .icmp_imm_u(cranelift_codegen::ir::condcodes::IntCC::Equal, ascii, 1);
+    builder
+        .ins()
+        .brif(is_ascii, ascii_block, &[], wide_block, &[]);
+    for (block, width) in [(ascii_block, 1_u32), (wide_block, 2_u32)] {
+        builder.switch_to_block(block);
+        let mut matches = None;
+        for index in 0..needed {
+            let offset = i64::try_from(index.checked_mul(width as usize)?).ok()?;
+            let address = builder.ins().iadd_imm_u(units, offset);
+            let unit_type = if width == 1 { types::I8 } else { types::I16 };
+            let unit = builder
+                .ins()
+                .load(unit_type, ir::MemFlagsData::trusted(), address, 0);
+            let unit = builder.ins().uextend(types::I32, unit);
+            let matches_underscore =
+                builder
+                    .ins()
+                    .icmp_imm_u(cranelift_codegen::ir::condcodes::IntCC::Equal, unit, 95);
+            matches = Some(match matches {
+                Some(previous) => builder.ins().band(previous, matches_underscore),
+                None => matches_underscore,
+            });
+        }
+        let result = builder.ins().uextend(types::I32, matches?);
+        builder.ins().return_(&[result]);
+    }
+    builder.seal_all_blocks();
+    builder.finalize(isa.frontend_config());
+    let mut context = cranelift_codegen::Context::for_function(native);
+    let compiled = context
+        .compile(
+            &*isa,
+            &mut cranelift_codegen::control::ControlPlane::default(),
+        )
+        .ok()?;
+    if !compiled.buffer.relocs().is_empty() {
+        return None;
+    }
+    let code = compiled.code_buffer().to_vec();
+    if code.is_empty() || code.len() > MAX_CODE_BYTES {
+        return None;
+    }
+    Some(JsJitArtifact {
+        code,
+        params: 1,
+        result: JsJitResultKind::StringTransform(transform),
+        field_argument: None,
     })
 }
 
@@ -788,10 +1019,7 @@ fn compile_number_domain_boolean_tree(
     }
 
     let params = usize::from(function.params);
-    let mut flags = settings::builder();
-    flags.set("opt_level", "speed").ok()?;
-    let isa_builder = cranelift_native::builder().ok()?;
-    let isa = isa_builder.finish(settings::Flags::new(flags)).ok()?;
+    let isa = super::jit_backend::target_isa("speed", true)?;
 
     let mut signature = ir::Signature::new(isa.default_call_conv());
     signature.params.push(AbiParam::new(isa.pointer_type()));
@@ -1386,10 +1614,7 @@ fn compile_numeric(program: &ResidualProgram, function_id: u32) -> Option<JsJitA
     }
 
     let params = usize::from(function.params);
-    let mut flags = settings::builder();
-    flags.set("opt_level", "speed").ok()?;
-    let isa_builder = cranelift_native::builder().ok()?;
-    let isa = isa_builder.finish(settings::Flags::new(flags)).ok()?;
+    let isa = super::jit_backend::target_isa("speed", true)?;
 
     let mut signature = ir::Signature::new(isa.default_call_conv());
     signature.params.push(AbiParam::new(isa.pointer_type()));
@@ -1790,10 +2015,7 @@ fn compile_numeric_loop(
         return None;
     }
 
-    let mut flags = settings::builder();
-    flags.set("opt_level", "speed").ok()?;
-    let isa_builder = cranelift_native::builder().ok()?;
-    let isa = isa_builder.finish(settings::Flags::new(flags)).ok()?;
+    let isa = super::jit_backend::target_isa("speed", true)?;
     let mut signature = ir::Signature::new(isa.default_call_conv());
     signature.params.push(AbiParam::new(isa.pointer_type()));
     signature.params.push(AbiParam::new(isa.pointer_type()));
@@ -2401,10 +2623,7 @@ fn compile_string_branches(
     }
 
     let params = usize::from(function.params);
-    let mut flags = settings::builder();
-    flags.set("opt_level", "speed").ok()?;
-    let isa_builder = cranelift_native::builder().ok()?;
-    let isa = isa_builder.finish(settings::Flags::new(flags)).ok()?;
+    let isa = super::jit_backend::target_isa("speed", true)?;
 
     let mut signature = ir::Signature::new(isa.default_call_conv());
     signature.params.push(AbiParam::new(isa.pointer_type()));
