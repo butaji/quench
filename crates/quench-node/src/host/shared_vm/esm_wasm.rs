@@ -20,14 +20,16 @@ use quench_runtime::{NativeContext, RootId, RootedError};
 use serde_json::json;
 use quench_wasm::ExternKind;
 
-use super::commonjs::cached_native_binding;
+use super::commonjs;
 use crate::host::node_host::NodeHost;
 
 /// The hidden global the facades call.
 pub(crate) const INSTANTIATE: &str = "\0quench:wasmInstantiate";
 
-/// Node's `emitExperimentalWarning` feature name for importing Wasm module instances.
+/// Node's `emitExperimentalWarning` feature name for importing Wasm module instances, and
+/// the warning's type.
 const FEATURE: &str = "Importing WebAssembly module instances";
+const EXPERIMENTAL_WARNING: &str = "ExperimentalWarning";
 
 /// The module's imports and exports as its facade needs them.
 #[derive(Default)]
@@ -118,83 +120,144 @@ pub(crate) fn entry_facade(path: &std::path::Path) -> Result<String, String> {
     facade(&path.to_string_lossy(), path, &bytes)
 }
 
-/// The instantiation the facades share, built once over the startup intrinsics: Node's
-/// translator callback with the module's bytes read by `read`.
-const INSTANTIATE_FACTORY: &str = r#"(read, feature) => {
-  'use strict';
-  const { Module, Instance, LinkError } = WebAssembly;
-  const { assign } = Object;
-  const instances = new WeakMap();
-  const getInstance = WeakMap.prototype.get;
-  const setInstance = WeakMap.prototype.set;
-  const call = Function.prototype.call.bind(Function.prototype.call);
-  // Node's `emitExperimentalWarning` calls the public `process.emitWarning` when it warns.
-  const host = process;
-  let warned = false;
-  return function instantiate(path, self, imports, globalImports, exports, linkError) {
-    let compiled;
-    try {
-      compiled = new Module(read(path));
-    } catch (error) {
-      error.message = path + ': ' + error.message;
-      throw error;
-    }
-    if (linkError !== null) throw new LinkError(linkError);
-    if (!warned) {
-      warned = true;
-      host.emitWarning(`${feature} is an experimental feature and might change at any time`, 'ExperimentalWarning');
-    }
-    for (const module in imports) {
-      const instance = call(getInstance, instances, imports[module]);
-      if (instance) {
-        const wrapped = assign({ __proto__: null }, imports[module]);
-        for (const [from, name] of globalImports) {
-          if (from === module) wrapped[name] = instance[name];
-        }
-        imports[module] = wrapped;
-      }
-    }
-    const instance = new Instance(compiled, imports).exports;
-    call(setInstance, instances, self, instance);
-    const values = [];
-    for (const [name, global] of exports) {
-      let value = instance[name];
-      if (global) {
-        try {
-          value = value.value;
-        } catch {
-          value = undefined;
-        }
-      }
-      values.push(value);
-    }
-    return values;
-  };
-}"#;
+/// What the instantiations share, built on first use over the startup intrinsics:
+/// `[instances, Module, Instance, LinkError, WeakMap.prototype.set]`, where `instances` maps
+/// each facade's namespace to its instance's exports (Node's `wasmInstances`).
+const BINDING: &str = "\0binding:esm-wasm";
+const BINDING_MEMBERS: usize = 5;
 
-/// `INSTANTIATE`: builds the shared instantiation on first use and runs it for one facade.
-pub(crate) fn instantiate(
-    context: &mut NativeContext<'_, NodeHost>, this: RootId, args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let instantiate = cached_native_binding(context, "\0binding:esm-wasm", |context| {
-        context.with_startup_intrinsics(|context| {
-            let factory = context.evaluate_script_rooted(INSTANTIATE_FACTORY, "node:internal/modules/esm/wasm")?;
-            let read = context.host_function(crate::host::shared_vm::operation("esmWasmRead"))?;
-            let feature = context.string_rooted(FEATURE);
-            let undefined = context.undefined();
-            context.call_rooted(factory, undefined, &[read, feature])
-        })
-    })?;
-    context.call_rooted(instantiate, this, args)
+/// Whether the experimental warning was emitted (Node's `emitExperimentalWarning` warns
+/// once per feature).
+const WARNED: &str = "\0binding:esm-wasm-warned";
+
+fn get(context: &mut NativeContext<'_, NodeHost>, object: RootId, key: &str) -> Result<RootId, RootedError> {
+    let key = context.string_rooted(key);
+    context.get_property_rooted(object, key)
 }
 
-/// The bytes of the Wasm file a facade names, as a `Uint8Array`.
-pub(crate) fn read(
+fn set(context: &mut NativeContext<'_, NodeHost>, object: RootId, key: &str, value: RootId) -> Result<(), RootedError> {
+    let key = context.string_rooted(key);
+    context.set_property_rooted(object, key, value, object).map(drop)
+}
+
+fn cached(context: &mut NativeContext<'_, NodeHost>, key: &str) -> Option<RootId> {
+    context.host_mut().shared_state().borrow().builtin_cache.get(key).copied()
+}
+
+/// The entries of the facade's array argument `array` (`[[module, name], ...]` or
+/// `[[name, isGlobal], ...]`).
+fn pairs(context: &mut NativeContext<'_, NodeHost>, array: RootId) -> Result<Vec<(RootId, RootId)>, RootedError> {
+    let length = get(context, array, "length")?;
+    let length = context.to_number(length)? as usize;
+    let mut pairs = Vec::with_capacity(length);
+    for index in 0..length {
+        let pair = get(context, array, &index.to_string())?;
+        pairs.push((get(context, pair, "0")?, get(context, pair, "1")?));
+    }
+    Ok(pairs)
+}
+
+/// `INSTANTIATE(path, self, imports, globalImports, exports, linkError)`: Node's translator
+/// callback for one facade, over the startup intrinsics' `WebAssembly`. It compiles the
+/// file, prefixing a `CompileError` with the path; throws the module's `LinkError`; warns
+/// once; passes an imported Wasm module's globals as their `WebAssembly.Global`;
+/// instantiates; records the instance; and returns the exports' values, a global's as its
+/// value (`undefined` for one without, `v128`).
+pub(crate) fn instantiate(
     context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let undefined = context.undefined();
-    let path = args.first().copied().unwrap_or(undefined);
-    let path = context.to_string(path)?;
-    let bytes = std::fs::read(&path).map_err(|error| RootedError::host(format!("{path}: {error}")))?;
-    context.uint8_array_from_rooted(bytes)
+    let argument = |index: usize| args.get(index).copied().unwrap_or(undefined);
+    let (path, own_namespace, imports) = (argument(0), argument(1), argument(2));
+    let (global_imports, exports, link_error) = (argument(3), argument(4), argument(5));
+    let binding = commonjs::cached_native_binding(context, BINDING, |context| {
+        // Loading the module graph touched code that evaluating it does not run.
+        crate::host::resident_pages::release_read_only_pages();
+        // The warning comes after the module compiles, which releases the compiler's pages:
+        // its functions compile now.
+        crate::modules::process_warning_shared_vm::prepare(context)?;
+        context.with_startup_intrinsics(|context| {
+            let global = context.global_root()?;
+            let wasm = get(context, global, "WebAssembly")?;
+            let weak_map = get(context, global, "WeakMap")?;
+            let instances = context.construct_rooted(weak_map, weak_map, &[])?;
+            let prototype = get(context, weak_map, "prototype")?;
+            let members = [instances, get(context, wasm, "Module")?, get(context, wasm, "Instance")?, get(context, wasm, "LinkError")?, get(context, prototype, "set")?];
+            context.array_rooted(&members)
+        })
+    })?;
+    let mut members = Vec::with_capacity(BINDING_MEMBERS);
+    for index in 0..BINDING_MEMBERS {
+        members.push(get(context, binding, &index.to_string())?);
+    }
+    let [instances, module, instance, link_error_class, set_instance] =
+        members.try_into().map_err(|_| RootedError::host("Wasm module binding is incomplete"))?;
+    let path_text = context.to_string(path)?;
+    let bytes = std::fs::read(&path_text).map_err(|error| RootedError::host(format!("{path_text}: {error}")))?;
+    let bytes = context.uint8_array_from_rooted(bytes)?;
+    let compiled = match context.construct_rooted(module, module, &[bytes]) {
+        Ok(compiled) => compiled,
+        Err(RootedError { exception: Some(error), .. }) => {
+            let message = get(context, error, "message")?;
+            let message = context.to_string(message)?;
+            let message = context.string_rooted(&format!("{path_text}: {message}"));
+            set(context, error, "message", message)?;
+            return Err(context.throw(error));
+        }
+        Err(error) => return Err(error),
+    };
+    if context.truthy_rooted(link_error)? {
+        let error = context.construct_rooted(link_error_class, link_error_class, &[link_error])?;
+        return Err(context.throw(error));
+    }
+    if cached(context, WARNED).is_none() {
+        let warned = context.boolean(true);
+        commonjs::cached_native_binding(context, WARNED, |_| Ok(warned))?;
+        let process = context
+            .host_mut()
+            .shared_state()
+            .borrow()
+            .process_module
+            .ok_or_else(|| RootedError::host("process is not initialized"))?;
+        let emit_warning = get(context, process, "emitWarning")?;
+        let message = context.string_rooted(&format!("{FEATURE} is an experimental feature and might change at any time"));
+        let kind = context.string_rooted(EXPERIMENTAL_WARNING);
+        context.call_rooted(emit_warning, process, &[message, kind])?;
+    }
+    let global_imports = pairs(context, global_imports)?;
+    for module in context.own_keys_rooted(imports)? {
+        let namespace = context.get_property_rooted(imports, module)?;
+        let instance = context.weak_map_get_rooted(instances, namespace)?;
+        if context.rooted_value(instance).is_some_and(|value| value.is_undefined()) {
+            continue;
+        }
+        // `ObjectAssign({ __proto__: null }, namespace)`, with the instance's globals.
+        let wrapped = context.null_object_rooted()?;
+        for key in context.enumerable_own_keys_rooted(namespace, true, true)? {
+            let value = context.get_property_rooted(namespace, key)?;
+            context.set_property_rooted(wrapped, key, value, wrapped)?;
+        }
+        for &(from, name) in &global_imports {
+            if context.strict_equal_rooted(from, module)? {
+                let value = context.get_property_rooted(instance, name)?;
+                context.set_property_rooted(wrapped, name, value, wrapped)?;
+            }
+        }
+        context.set_property_rooted(imports, module, wrapped, imports)?;
+    }
+    let created = context.construct_rooted(instance, instance, &[compiled, imports])?;
+    let instance_exports = get(context, created, "exports")?;
+    context.call_rooted(set_instance, instances, &[own_namespace, instance_exports])?;
+    let mut values = Vec::new();
+    for (name, is_global) in pairs(context, exports)? {
+        let value = context.get_property_rooted(instance_exports, name)?;
+        let value = if context.truthy_rooted(is_global)? {
+            let key = context.string_rooted("value");
+            context.get_property_rooted(value, key).unwrap_or(undefined)
+        } else {
+            value
+        };
+        values.push(value);
+    }
+    context.array_rooted(&values)
 }

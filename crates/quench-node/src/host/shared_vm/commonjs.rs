@@ -178,6 +178,11 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     let global = context.global_root()?;
     let process_key = context.string_rooted("process");
     let process = context.get_property_rooted(global, process_key)?;
+    // `process.release` is its own group: Node's warning listener reads it, and it needs
+    // none of the surface script.
+    let release = context.host_function(super::operation("processReleaseInitialize"))?;
+    context.define_lazy_data_properties_rooted(process, &[PROCESS_RELEASE], true, release)?;
+    context.release_root(release);
     let initializer = context.host_function(super::operation("processSurfaceInitialize"))?;
     context.define_lazy_data_properties_rooted(
         process,
@@ -559,6 +564,30 @@ pub(super) fn initialize_web_streams(
         let key = context.string_rooted(name);
         context.define_data_property_rooted(global, key, value, true, false, true)?;
     }
+    Ok(context.undefined())
+}
+
+/// `process.release`'s key and its members (`process.release.name` is Node's runtime name).
+const PROCESS_RELEASE: &str = "release";
+const RELEASE_MEMBERS: [(&str, &str); 3] = [("name", "node"), ("sourceUrl", ""), ("headersUrl", "")];
+
+/// Defines `process.release`.
+pub(super) fn initialize_process_release(
+    context: &mut Context<'_>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let global = context.global_root()?;
+    let process_key = context.string_rooted("process");
+    let process = context.get_property_rooted(global, process_key)?;
+    let release = context.object_rooted()?;
+    for (name, value) in RELEASE_MEMBERS {
+        let key = context.string_rooted(name);
+        let value = context.string_rooted(value);
+        context.define_data_property_rooted(release, key, value, true, true, true)?;
+    }
+    let key = context.string_rooted(PROCESS_RELEASE);
+    context.define_data_property_rooted(process, key, release, true, true, true)?;
     Ok(context.undefined())
 }
 
