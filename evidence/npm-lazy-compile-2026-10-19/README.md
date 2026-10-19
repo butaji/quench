@@ -93,3 +93,13 @@ from it then. Merged with compile on first call, that left every record compiled
 builds, trunk against the merge (three runs each, sampled every 2 ms). The merge is lower
 on all eight, RegExp included (5,720 → 5,704 KiB): the records it releases outweigh the
 replay data.
+
+At the published merge 9962b1a58 (`rss-report-after-merge.txt`, raw data in
+`npm-scenarios-after-merge.json.gz`), all 300 scenarios pass and Quench is lowest on 283.
+The median is Quench 18.6 MiB, Node 72.0 and Bun 37.8. The 17 not lowest are seven
+typescript-eslint packages, jiti, jsdom (97.9 against Bun's 97.6; trunk alone peaks at
+108.9 on its `require`) and eight declaration ties.
+
+The quench-node `child_entry` tests against Node v26.12.0 give the same 17 failures by
+name as before the merge. The runtime lib tests pass 747/747 on the dev profile: the
+iteration test build needs more memory than this 16 GiB host has.
