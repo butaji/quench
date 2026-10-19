@@ -704,6 +704,11 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
 
     pub(super) fn emit_parameter_bindings(&mut self, params: &oxc_ast::ast::FormalParameters<'_>) {
         let non_simple = Self::has_non_simple_parameters(params);
+        // A simple parameter list binds each name to the slot its argument already fills,
+        // so there is nothing to initialize.
+        if !non_simple {
+            return;
+        }
         let parameter_names = Self::parameter_local_names(params);
         if non_simple {
             for name in Self::parameter_bound_names(params) {
