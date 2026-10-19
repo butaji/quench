@@ -930,6 +930,7 @@ impl Heap {
             self.gc_profile.allocated_payload_bytes[kind] += bytes as u64;
             self.gc_profile.allocated_size_buckets[kind][Self::size_bucket(bytes)] += 1;
         }
+        self.charge_materialized_text();
         let payload = cell.payload_bytes();
         let weight = 1 + payload / payload_unit();
         self.payload_bytes = self.payload_bytes.saturating_add(payload);
@@ -1394,6 +1395,22 @@ impl Heap {
             self.threshold = self.threshold.min(self.allocations);
         }
     }
+    /// Charges text made on demand (`wtf16::take_materialized_bytes`) as payload allocation.
+    /// The string operations that make it allocate or return through the places that call
+    /// this (generic allocation, native and host calls, each collection); safepoints, which
+    /// run far more often, never pay for it.
+    pub(crate) fn charge_materialized_text(&mut self) {
+        let bytes = crate::vm::wtf16::take_materialized_bytes();
+        if bytes == 0 {
+            return;
+        }
+        // Allocation weight only: the payload ledger (`payload_bytes`) follows the strings
+        // themselves, whose sweep releases what they own.
+        let weight = bytes / payload_unit();
+        self.allocations = self.allocations.saturating_add(weight);
+        self.allocations_since_full = self.allocations_since_full.saturating_add(weight);
+    }
+
     pub fn should_collect(&self) -> bool {
         self.allocations >= self.threshold
     }
@@ -1454,6 +1471,7 @@ impl Heap {
         full: bool,
     ) -> Vec<(Value, Value)> {
         let full = self.collection_is_full(full);
+        self.charge_materialized_text();
         // The sweep may free a prototype whose record a later object reuses.
         advance_prototype_layout_epoch();
         debug_assert_eq!(self.collection_state, CollectionState::Idle);
