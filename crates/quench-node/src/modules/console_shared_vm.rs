@@ -17,8 +17,9 @@ const CONSOLE: &str = "\0node/console/global";
 const SDK_CONSOLE: &str = "\0node/console/sdk";
 /// Set while the SDK console's properties move to the global console.
 const ADOPTING: &str = "\0node/console/adopting";
-/// The stream the unloaded console wrote to, which the SDK console then keeps.
+/// The streams the unloaded console wrote to, which the SDK console then keeps.
 const STDOUT: &str = "\0node/console/stdout";
+const STDERR: &str = "\0node/console/stderr";
 
 /// The own string keys of the SDK's global console after Node's bootstrap, in order, with
 /// whether each is enumerable. `log` comes first and stays the global console's own.
@@ -121,20 +122,22 @@ pub(crate) fn adopt(context: &mut NativeContext<'_, NodeHost>, module: RootId, s
     cache(context, ADOPTING, marker)?;
     cache(context, SDK_CONSOLE, sdk)?;
     let stdout = cached(context, STDOUT).unwrap_or_else(|| context.undefined());
+    let stderr = cached(context, STDERR).unwrap_or_else(|| context.undefined());
     let adopt = context.evaluate_script_rooted(
-        "(sdk, console, stdout) => {\n\
+        "(sdk, console, stdout, stderr) => {\n\
            for (const key of Reflect.ownKeys(sdk)) {\n\
              if (key === 'log') continue;\n\
              if (key === Symbol.toStringTag) delete console[key];\n\
              Reflect.defineProperty(console, key, Reflect.getOwnPropertyDescriptor(sdk, key));\n\
            }\n\
            if (stdout !== undefined) sdk._stdout = stdout;\n\
+           if (stderr !== undefined) sdk._stderr = stderr;\n\
            return Reflect.ownKeys(sdk).filter((key) => typeof key === 'string');\n\
          }",
         "node:internal/console/adopt.js",
     )?;
     let undefined = context.undefined();
-    let keys = context.call_rooted(adopt, undefined, &[sdk, console, stdout])?;
+    let keys = context.call_rooted(adopt, undefined, &[sdk, console, stdout, stderr])?;
     debug_assert!(sdk_keys_match(context, keys), "CONSOLE_KEYS follows the SDK console's keys");
     let exports = context.string_rooted("exports");
     context.set_property_rooted(module, exports, console, module)?;
@@ -170,7 +173,7 @@ pub(crate) fn log(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[
         let plain = parts.len() == args.len()
             && parts.first().is_none_or(|first| !first.contains(FORMAT_SPECIFIER));
         if plain {
-            return write_stdout(context, &(parts.join(" ") + "\n"));
+            return write_stream(context, STDOUT, "stdout", &(parts.join(" ") + "\n"));
         }
         let console = facade(context)?;
         context.materialize_lazy_data_property_rooted(console, CONSOLE_KEYS[1].0)?;
@@ -181,9 +184,12 @@ pub(crate) fn log(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[
     context.call_rooted(log, sdk, args)
 }
 
-/// Writes `text` to `process.stdout` as the SDK console does, which ignores write errors.
-fn write_stdout(context: &mut NativeContext<'_, NodeHost>, text: &str) -> Result<RootId, RootedError> {
-    let stream = match cached(context, STDOUT) {
+/// Writes `text` to `process[name]`, the stream cached as `cache_key` once first written,
+/// as the SDK console does, which ignores write errors.
+fn write_stream(
+    context: &mut NativeContext<'_, NodeHost>, cache_key: &str, name: &str, text: &str,
+) -> Result<RootId, RootedError> {
+    let stream = match cached(context, cache_key) {
         Some(stream) => stream,
         None => {
             let process = context
@@ -192,9 +198,9 @@ fn write_stdout(context: &mut NativeContext<'_, NodeHost>, text: &str) -> Result
                 .borrow()
                 .process_module
                 .ok_or_else(|| RootedError::host("process is not initialized"))?;
-            let key = context.string_rooted("stdout");
+            let key = context.string_rooted(name);
             let stream = context.get_property_rooted(process, key)?;
-            cache(context, STDOUT, stream)?;
+            cache(context, cache_key, stream)?;
             stream
         }
     };
@@ -203,6 +209,35 @@ fn write_stdout(context: &mut NativeContext<'_, NodeHost>, text: &str) -> Result
     let text = context.string_rooted(text);
     let _ = context.call_rooted(write, stream, &[text]);
     Ok(context.undefined())
+}
+
+/// The console key Node's `writeOut` (`internal/process/warning.js`) writes warnings with.
+const WARNING_KEY: &str = "error";
+
+/// What Node's `writeOut` writes a warning with, read when it first writes one: the global
+/// console's `error`. While that is still the SDK's pending member, a writer that writes a
+/// line as the SDK's `error` writes one string (`warning_write`), so a warning does not
+/// load the SDK.
+pub(crate) fn warning_writer(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    let console = facade(context)?;
+    if context.is_pending_lazy_data_property_rooted(console, WARNING_KEY)? {
+        return context.host_function(crate::host::shared_vm::operation("consoleWarningWrite"));
+    }
+    let key = context.string_rooted(WARNING_KEY);
+    context.get_property_rooted(console, key)
+}
+
+/// The SDK's `error` with one string: the string and a newline on `process.stderr`, or the
+/// SDK's own `error` once the SDK is loaded (its group indentation, its stream).
+pub(crate) fn warning_write(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    if let Some(sdk) = cached(context, SDK_CONSOLE) {
+        let key = context.string_rooted(WARNING_KEY);
+        let error = context.get_property_rooted(sdk, key)?;
+        return context.call_rooted(error, sdk, args);
+    }
+    let undefined = context.undefined();
+    let message = context.to_string(args.first().copied().unwrap_or(undefined))?;
+    write_stream(context, STDERR, "stderr", &(message + "\n"))
 }
 
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {

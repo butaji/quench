@@ -2477,9 +2477,9 @@ impl<H: Host> Vm<H> {
     /// Interns the atoms `program` adds to the VM's; its atom ids are the VM's, so it then reads
     /// every name through the shared sequence instead of keeping its own copy.
     fn intern_program_atoms(&mut self, mut program: ResidualProgram) -> ResidualProgram {
-        let first_new_atom = self.atom_sequence.len();
-        for (index, name) in program.atoms.iter().enumerate().skip(first_new_atom) {
-            let atom = self.intern_atom(name);
+        // Only the names after the VM's sequence are new; the program shares the rest.
+        for index in self.atom_sequence.len()..program.atoms.len() {
+            let atom = self.intern_atom(&program.atoms[index]);
             debug_assert_eq!(atom as usize, index);
         }
         debug_assert!(
