@@ -631,6 +631,24 @@ Qualification must record both engines' ICU versions: converter tables can vary
 between releases. Complete-buffer comparisons do not qualify streaming decode,
 all input coercions, detached/shared buffers, or constructor metadata.
 
+## WebAssembly modules
+
+A `.wasm` file is an ES module, as Node's `wasm` translator and
+`createDynamicModule` define it, both as an import and as the entry
+(`quench-node main.wasm`). Its record is a generated facade
+(`host/shared_vm/esm_wasm.rs`) that imports each import module's namespace by
+its specifier and, when it evaluates, compiles the file through the
+`WebAssembly` namespace, instantiates it with those namespaces and binds each
+export. An exported global binds its value (`undefined` for `v128`), an
+imported Wasm module's global arrives as its `WebAssembly.Global`, and the
+first instantiation emits Node's `ExperimentalWarning`. Node compiles and
+rejects a module when it translates it, before any module of the graph
+evaluates; the facade throws the same classes when it evaluates: the
+`CompileError` prefixed with the module's path, and a reserved import module
+(`wasm-js:`) or import or export name (`wasm:`, `wasm-js:`) as Node's
+`LinkError`, without resolving the import modules. Messages from compilation
+and instantiation are the runtime's `WebAssembly` messages, not V8's.
+
 ## Buffer string construction byte projection
 
 `Buffer.from(string, encoding)` obtains encoded bytes from the shared Rust
