@@ -729,19 +729,7 @@ impl JsString {
             Repr::Shared(inner) => inner,
         };
         inner.flat.get_or_init(|| {
-            let units = if inner.ascii {
-                let mut output = String::with_capacity(self.len());
-                inner.for_each_run(|run| {
-                    if let Units::Ascii(bytes) = run {
-                        output.push_str(std::str::from_utf8(bytes).expect("ASCII units are UTF-8"));
-                    }
-                });
-                FlatUnits::ascii(&output)
-            } else {
-                let mut output = Vec::with_capacity(self.len());
-                inner.for_each_run(|run| run.extend_into(&mut output));
-                FlatUnits::Wide(Rc::from(output))
-            };
+            let units = Self::flattened(inner);
             inner.release_halves();
             charge_materialized(match units.view() {
                 Units::Ascii(bytes) => bytes.len(),
@@ -749,6 +737,39 @@ impl JsString {
             });
             units
         })
+    }
+
+    /// The flat units without making a rope flat: a reader that needs the text only while it
+    /// runs leaves the rope's halves, which share their storage with the strings they were
+    /// cut from, in place of a copy kept for the string's life. Regular-expression matching
+    /// flattens V8-v7 RegExp's input variants this way (306 ropes, 995K units).
+    pub(crate) fn flat_unkept(&self) -> std::borrow::Cow<'_, FlatUnits> {
+        match &self.repr {
+            Repr::Flat(units) => std::borrow::Cow::Borrowed(units),
+            Repr::Shared(inner) => match inner.flat.get() {
+                Some(units) => std::borrow::Cow::Borrowed(units),
+                None => std::borrow::Cow::Owned(Self::flattened(inner)),
+            },
+        }
+    }
+
+    /// The units of a rope's runs, in one canonical allocation.
+    fn flattened(inner: &Rc<JsStringInner>) -> FlatUnits {
+        let length = inner.length as usize;
+        if inner.ascii {
+            return FlatUnits::ascii_with(length, |output| {
+                let mut written = 0;
+                inner.for_each_run(|run| {
+                    if let Units::Ascii(bytes) = run {
+                        output[written..written + bytes.len()].write_copy_of_slice(bytes);
+                        written += bytes.len();
+                    }
+                });
+            });
+        }
+        let mut output = Vec::with_capacity(length);
+        inner.for_each_run(|run| run.extend_into(&mut output));
+        FlatUnits::Wide(Rc::from(output))
     }
 
     /// The host text a `Wide` string made, if any.
