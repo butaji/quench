@@ -313,12 +313,12 @@ impl Activation {
 }
 
 /// What a JavaScript activation's frame would hold beyond its registers
-/// (`Vm::activate_plain_frame`), and the caller's lane state its return restores.
+/// (`Vm::activate_plain_frame`), and the caller's lane state its return restores. Its own
+/// receiver and environment live in the context while it runs (`LaneContext::this`, `env`)
+/// and in the next script activation's caller state beneath that (`ActivationState::of`):
+/// one fact, held once.
 struct ScriptActivation {
     callee: Value,
-    env: Value,
-    /// The coerced receiver.
-    this: Value,
     /// Arguments passed, all in parameter registers.
     argc: u16,
     caller_this: Value,
@@ -330,6 +330,30 @@ struct ScriptActivation {
     /// `arguments` (`ScriptCallTarget::forwards`), or for the construction a skipped
     /// forwarding constructor passed on (`Completion::Forwarder`).
     forwards: bool,
+}
+
+/// A JavaScript activation's own receiver and environment, which it does not store
+/// (`ScriptActivation`).
+#[derive(Clone, Copy)]
+struct ActivationState {
+    this: Value,
+    env: Value,
+}
+
+impl ActivationState {
+    /// Each activation's state, innermost from the context, each other's from the caller
+    /// state the next script activation above it saved. A Wasm activation changes neither.
+    fn of<H: Host>(activations: &[Activation], cx: *mut LaneContext<H>) -> Vec<Self> {
+        let mut current = unsafe { Self { this: (*cx).this, env: (*cx).env } };
+        let mut states = vec![current; activations.len()];
+        for (state, activation) in states.iter_mut().zip(activations).rev() {
+            *state = current;
+            if let Some(script) = activation.script() {
+                current = Self { this: script.caller_this, env: script.caller_env };
+            }
+        }
+        states
+    }
 }
 
 /// What a JavaScript activation's return yields to its call: one byte, so a plain return
@@ -4395,7 +4419,8 @@ impl<H: Host> Vm<H> {
         let mut caller = unsafe { (*cx).frame };
         let registers = std::mem::take(&mut self.lane_stack.values);
         let mut forwarders = std::mem::take(&mut self.lane_stack.forwarders).into_iter();
-        for activation in activations.drain(..) {
+        let states = ActivationState::of(&activations, cx);
+        for (activation, state) in activations.drain(..).zip(states) {
             // SAFETY: a call record lies in its caller's view.
             let mut call_pc = unsafe { activation.call.offset_from(activation.caller_base) } as usize;
             let mut result = unsafe { (*activation.call).a };
@@ -4405,7 +4430,7 @@ impl<H: Host> Vm<H> {
             let window = &registers[activation.window..activation.window + count];
             let construct_this = activation
                 .script()
-                .and_then(|script| (script.completion == Completion::Constructs).then_some(script.this));
+                .and_then(|script| (script.completion == Completion::Constructs).then_some(state.this));
             let call_guard = match activation.kind {
                 ActivationKind::Script(script) => {
                     let argc = usize::from(script.argc);
@@ -4431,7 +4456,7 @@ impl<H: Host> Vm<H> {
                             code,
                             forwarder.function,
                             forwarder.env,
-                            script.this,
+                            state.this,
                             CallContext::user_function(forwarder.function, forwarder.callee).constructed(),
                             passed,
                             &constructor_registers,
@@ -4441,7 +4466,7 @@ impl<H: Host> Vm<H> {
                             caller_cursor: None,
                             call_pc: call_pc as u32,
                             destination: result & crate::bytecode::REGISTER_MASK,
-                            construct_this: Some(script.this),
+                            construct_this: Some(state.this),
                             returns: result & crate::bytecode::RETURN_REGISTER != 0,
                             call_guard: crate::stack::GuestCallGuard::enter().ok(),
                             caller_program: None,
@@ -4455,8 +4480,8 @@ impl<H: Host> Vm<H> {
                     self.push_script_frame_with_registers(
                         code,
                         activation.function,
-                        script.env,
-                        script.this,
+                        state.env,
+                        state.this,
                         if script.completion == Completion::Constructs {
                             CallContext::user_function(activation.function, script.callee).constructed()
                         } else {
@@ -5650,8 +5675,6 @@ fn lane_activate<H: Host>(
         window,
         kind: ActivationKind::Script(ScriptActivation {
             callee: target.callee,
-            env: target.env,
-            this,
             argc,
             caller_this: unsafe { (*cx).this },
             caller_env: unsafe { (*cx).env },
@@ -5896,8 +5919,6 @@ fn lane_activate_keeping<H: Host>(
         window,
         kind: ActivationKind::Script(ScriptActivation {
             callee: target.callee,
-            env: target.env,
-            this,
             argc: argc as u16,
             caller_this: unsafe { (*cx).this },
             caller_env: unsafe { (*cx).env },
@@ -6202,6 +6223,8 @@ fn lane_complete_activation<H: Host>(
             (*cx).memory = caller_memory;
         }
         if let ActivationKind::Script(script) = activation.kind {
+            // The returning activation's receiver, which the context holds while it runs.
+            let this = unsafe { (*cx).this };
             unsafe {
                 (*cx).this = script.caller_this;
                 (*cx).env = script.caller_env;
@@ -6214,11 +6237,11 @@ fn lane_complete_activation<H: Host>(
                 Completion::Plain => {}
                 Completion::Constructs => {
                     if !vm.is_object_like(value) {
-                        value = script.this;
+                        value = this;
                     }
                 }
                 Completion::Forwarder => {
-                    value = script.this;
+                    value = this;
                     vm.lane_stack.forwarders.pop();
                 }
             }
