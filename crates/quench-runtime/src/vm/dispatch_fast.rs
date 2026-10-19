@@ -1719,15 +1719,22 @@ script_handler! {
         let depth = ImmediateLayout::capture_depth(imm);
         let vm = unsafe { vm(cx) };
         let env = unsafe { (*cx).env };
-        let target = if env.is_deleted() {
-            vm.capture_env(unsafe { (*cx).frame }, depth)
-        } else {
-            // A frameless activation's function has no environment of its own.
-            vm.environment_capture_env(env, false, depth)
-        };
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let program = unsafe { (*cx).program };
+        // A frameless activation's function has no environment of its own: its depth-0
+        // capture is the environment it runs in, stored with one lookup.
+        if depth == 0
+            && !env.is_deleted()
+            && vm.direct_store_own_environment(code, program, env, ImmediateLayout::capture_slot(imm), r.get(i.a))
+        {
+            next!(cx, r, following(ip), view)
+        }
+        let target = if env.is_deleted() {
+            vm.capture_env(unsafe { (*cx).frame }, depth)
+        } else {
+            vm.environment_capture_env(env, false, depth)
+        };
         let stored = target.is_some_and(|target| {
             vm.direct_store_environment(code, program, target, ImmediateLayout::capture_slot(imm), r.get(i.a))
         });
