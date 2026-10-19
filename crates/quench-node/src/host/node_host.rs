@@ -32,6 +32,8 @@ impl InlineSource {
 pub struct NodeHost {
     /// Immutable installation asset root, independent of guest cwd changes.
     pub(crate) node_library_root: std::path::PathBuf,
+    /// Compiled library modules kept across runs (`compile_cache`).
+    pub(crate) compile_cache: crate::host::compile_cache::CompileCache,
     pub(crate) shared_state: Rc<RefCell<SharedNodeState>>,
     pub(crate) commonjs_entry: Option<CommonJsEntry>,
     pub(crate) inline_source: InlineSource,
@@ -386,6 +388,7 @@ impl NodeHost {
         let cwd = crate::modules::process_state::ProcessCwd::from_current_directory();
         Self {
             node_library_root,
+            compile_cache: crate::host::compile_cache::CompileCache::from_environment(),
             shared_state: Rc::new(RefCell::new(SharedNodeState::new(
                 fs,
                 cwd,

@@ -10536,3 +10536,69 @@ fn wasm_files_are_es_modules_as_in_node() {
         }
     }
 }
+
+#[test]
+fn process_warnings_match_node_without_loading_the_warning_module_graph() {
+    // `process.emitWarning` and the default listener are Node's own functions over supplied
+    // imports (`process_warning_shared_vm`): forms, validation errors, listener payloads,
+    // option handling and the console the listener writes with match Node.
+    let directory = tempfile::tempdir().unwrap();
+    let scripts = [
+        ("forms.mjs", r#"
+const seen = [];
+process.on('warning', (w) => seen.push([w.name, w.message, w.code, w.detail, w instanceof Error, w.stack.split('\n')[0]]));
+const source = process.emitWarning.toString();
+console.log(process.emitWarning.name, process.emitWarning.length, typeof process.emitWarning.prototype, source.slice(0, source.indexOf(')') + 1));
+process.emitWarning('one');
+process.emitWarning('two', 'CustomType', 'CODE1');
+process.emitWarning('three', { type: 'T', code: 'C', detail: 'more' });
+process.emitWarning(new Error('four'));
+process.emitWarning('five', 'DeprecationWarning', 'DEP0');
+function ctor() { process.emitWarning('six', 'X', undefined, ctor); }
+ctor();
+process.emitWarning('seven', '');
+for (const args of [['eight', 5], [5]]) {
+  try { process.emitWarning(...args); } catch (e) { console.log(e.code, e.message); }
+}
+setTimeout(() => console.log(JSON.stringify(seen)), 10);
+"#),
+        ("replaced.mjs", "console.error = (m) => console.log('replaced:', m); process.emitWarning('a');"),
+        ("grouped.mjs", "console.group('g'); process.emitWarning('a'); setTimeout(() => { console.groupEnd(); process.emitWarning('b'); }, 5);"),
+        ("late.mjs", "process.emitWarning('a'); setTimeout(() => { console.error = (m) => console.log('late:', m); process.emitWarning('b'); }, 5);"),
+        ("custom.mjs", "const w = new Error('custom'); w.name = 'Mine'; w.toString = () => 'TOSTRING'; process.emitWarning(w); const v = new Error('z'); v.toString = 1; process.emitWarning(v); process.emitWarning('x', 'Mine');"),
+    ];
+    for (name, source) in scripts {
+        std::fs::write(directory.path().join(name), source).unwrap();
+    }
+    let normalize = |text: &[u8]| {
+        let text = String::from_utf8_lossy(text);
+        let mut normalized = String::new();
+        for line in text.lines() {
+            // The process id, and the program name in the trace hint (`process.argv0`).
+            let line = match (line.find("(node:"), line.find(") ")) {
+                (Some(start), Some(end)) if start < end => format!("{}(node:PID{}", &line[..start], &line[end..]),
+                _ => line.to_owned(),
+            };
+            let line = match (line.find("(Use `"), line.find(" --trace")) {
+                (Some(start), Some(end)) if start < end => format!("(Use `PROGRAM{}", &line[end..]),
+                _ => line,
+            };
+            normalized.push_str(&line);
+            normalized.push('\n');
+        }
+        normalized
+    };
+    for flags in [&[][..], &["--no-warnings"], &["--disable-warning=CustomType", "--disable-warning=DeprecationWarning"], &["--no-deprecation"]] {
+        for (name, _) in scripts {
+            let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+                let mut command = Command::new(executable);
+                command.args(flags).arg(directory.path().join(name));
+                if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
+                quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
+            });
+            assert_eq!(observations[0].exit_code, observations[1].exit_code, "{name} {flags:?}");
+            assert_eq!(normalize(&observations[0].stdout), normalize(&observations[1].stdout), "{name} {flags:?}");
+            assert_eq!(normalize(&observations[0].stderr), normalize(&observations[1].stderr), "{name} {flags:?}");
+        }
+    }
+}

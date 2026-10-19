@@ -530,3 +530,54 @@ fn source_positions_round_trip_every_delta_shape() {
     assert_eq!(table.at(8), Some(positions[1]));
     assert_eq!(table.at(300), Some(positions[3]));
 }
+
+/// A compact encoding names every atom by its text: decoded under ids its reader's VM gives,
+/// here each original id shifted past names the reader already holds, the program encodes
+/// to the same bytes. The shift keeps the atoms' order, so atom-sorted bindings keep theirs,
+/// and a field the encoding misses would be written with its shifted id instead.
+#[test]
+fn compact_encoding_names_every_atom_by_its_text() {
+    let source = r#"
+        var shared = 1; let lexical = 2;
+        function outer(first, { nested: { inner } }, ...rest) {
+            const object = { alpha: first, beta: [1, 2, 3], gamma() { return this.alpha; } };
+            object.alpha.toString();
+            object.delta = object.beta.length + inner;
+            with (object) { alpha; }
+            eval("first + lexical");
+            return `${object.gamma()}-${rest.join(",")}`;
+        }
+        class Shape { field = 1; static count = 0; get area() { return this.field; } method() { return Shape.count; } }
+        const arrow = (value) => value?.property ?? /pattern/g.source;
+        function* sequence() { yield shared; }
+    "#;
+    let program = crate::Engine::specialize(source, "compact-atoms.js").unwrap();
+    let (bytes, order) = program.encode_compact();
+    let names: Vec<std::rc::Rc<str>> =
+        order.iter().map(|&atom| std::rc::Rc::from(&program.atoms[atom as usize])).collect();
+    let original: std::collections::HashMap<&str, u32> =
+        names.iter().map(|name| &**name).zip(order.iter().copied()).collect();
+    assert_eq!(original.len(), order.len(), "the test source names each atom once");
+    const SHIFT: u32 = 1 << 12;
+    let mut table = vec![std::rc::Rc::<str>::from(""); (SHIFT as usize) + program.atoms.len()];
+    for (name, &atom) in names.iter().zip(&order) {
+        table[(atom + SHIFT) as usize] = name.clone();
+    }
+    let text = super::SourceText::Shared(std::sync::Arc::from(source));
+    let mut decoded =
+        ResidualProgram::decode_compact(&bytes, &mut |name| original[name] + SHIFT, text).unwrap();
+    decoded.atoms = super::AtomTable::from_rcs(&table);
+    decoded.validate().unwrap();
+    assert_eq!(decoded.encode_compact().0, bytes);
+    let mut corrupted = bytes.clone();
+    corrupted[bytes.len() / 2] ^= 1;
+    let text = super::SourceText::Shared(std::sync::Arc::from(source));
+    assert!(ResidualProgram::decode_compact(&corrupted, &mut |name| original[name], text).is_err());
+    let shifted = |program: &ResidualProgram| {
+        program.functions.iter().filter_map(|function| function.name).collect::<Vec<_>>()
+    };
+    assert_eq!(
+        shifted(&decoded),
+        shifted(&program).iter().map(|atom| atom + SHIFT).collect::<Vec<_>>()
+    );
+}

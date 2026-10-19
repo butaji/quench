@@ -2020,16 +2020,20 @@ impl<'a> Compiler<'a> {
         );
         self.rewrite_function(&mut function);
         let undefined_constant = self.constant(Constant::Undefined);
-        self.lower_function(&mut function, undefined_constant);
-        liveness::mark_register_roots(
-            std::iter::once(&mut function),
-            self.method_arguments(),
-            self.field_sites.as_slice(),
-            self.superinstructions.as_slice(),
-        );
-        function.code.shrink_to_fit();
-        function.wide.shrink_to_fit();
-        function.source_positions.shrink_to_fit();
+        // The record is released below and only its header stays, so production settles just
+        // the dispatch class the header keeps; `verify-replay` keeps the whole record to
+        // compare each replay with.
+        if cfg!(feature = "verify-replay") {
+            self.lower_function(&mut function, undefined_constant);
+            liveness::mark_register_roots(
+                std::iter::once(&mut function),
+                self.method_arguments(),
+                self.field_sites.as_slice(),
+                self.superinstructions.as_slice(),
+            );
+        } else {
+            self.settle_dispatch(&mut function);
+        }
         self.early_replays.insert(
             id,
             replay::FunctionReplay {
@@ -3407,19 +3411,15 @@ impl<'a> Compiler<'a> {
         let method_sites = self.method_arguments();
         let field_sites = self.field_sites.as_slice();
         let superinstructions = self.superinstructions.as_slice();
-        rewrite::return_through_shared_returns(function);
-        rewrite::express_strict_sets(function);
-        function.dispatch = if self.mode == SpecializationMode::Enabled {
-            Self::dispatch_class(&function.code, &function.wide)
-        } else {
-            DispatchClass::General
-        };
+        self.settle_dispatch(function);
         if function.dispatch == DispatchClass::Numeric {
             let live = liveness::analyze(function, method_sites, field_sites, superinstructions);
             numeric::apply(function, live.as_deref());
         }
-        Self::specialize_plain_local_operations(function, superinstructions);
-        frame_registers::promote(function, superinstructions, undefined_constant, |atom| {
+        // Renaming a plain slot's operations keeps it plain (validation re-derives the same
+        // proof from the specialized code), so frame registers start from the same slots.
+        let plain_slots = Self::specialize_plain_local_operations(function, superinstructions);
+        frame_registers::promote(function, plain_slots, superinstructions, undefined_constant, |atom| {
             self.atoms.get(atom)
         });
         if function
@@ -3430,6 +3430,18 @@ impl<'a> Compiler<'a> {
             let live = liveness::analyze(function, method_sites, field_sites, superinstructions);
             numeric::apply_plain_local_stores(function, live.as_deref());
         }
+    }
+
+    /// The lowering passes the dispatch class reads (shared returns and strict sets), then
+    /// the class itself (`FunctionHeader::dispatch`).
+    fn settle_dispatch(&self, function: &mut BcFunction) {
+        rewrite::return_through_shared_returns(function);
+        rewrite::express_strict_sets(function);
+        function.dispatch = if self.mode == SpecializationMode::Enabled {
+            Self::dispatch_class(&function.code, &function.wide)
+        } else {
+            DispatchClass::General
+        };
     }
 
     fn dispatch_class(code: &[Instr], wide: &[WideInstruction]) -> DispatchClass {
@@ -3447,10 +3459,11 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    /// Renames the operations of `function`'s plain local slots, which it returns.
     fn specialize_plain_local_operations(
         function: &mut BcFunction,
         superinstructions: &[crate::bytecode::Superinstruction],
-    ) {
+    ) -> Vec<bool> {
         let plain_slots = function.plain_local_slots(superinstructions);
         for instruction in &mut function.code {
             match instruction.op() {
@@ -3480,6 +3493,7 @@ impl<'a> Compiler<'a> {
                 _ => {}
             }
         }
+        plain_slots
     }
 }
 #[cfg(test)]
