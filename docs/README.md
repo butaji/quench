@@ -205,15 +205,17 @@ QUENCH_REPLAY_LOG=target/replay.log TEST262_TEST_TIMEOUT_MS=30000 \
 Each program writes a `replay-summary` line; `replay-differs` and `replay-failed` lines name
 a function whose replay does not equal its record or does not compile.
 
-## Library compile cache
+## Host compile cache
 
-`quench-node` keeps the compiled programs of Node's own library modules (the embedded
-`lib/` text) across runs, so a process decodes them instead of compiling them again. The
-runtime encodes a compiled program in a compact form that names each atom by its text and
-leaves out the source; a later run decodes it under its own VM's atom ids and the same static
-text (`Context::evaluate_specialized_static_body_cached_rooted`). Atom-sorted binding lists
-are sorted again after decoding. A program naming an atom that has no lossless text (a lone
-surrogate) is not cached.
+`quench-node` keeps the compiled programs of Node's own library modules (the embedded `lib/`
+text) and of its own host scripts across runs, so a process decodes them instead of
+compiling them again. The runtime asks its host for a kept program before compiling one
+(`Host::kept_compiled_program`) and offers it the compiled program's compact form after
+(`Host::keep_compiled_program`). That form names each atom by its text and leaves out the
+source; a later run decodes it under its own VM's atom ids and the text it would have
+compiled. Atom-sorted binding lists are sorted again after decoding. A program naming an
+atom that has no lossless text (a lone surrogate) is not kept. Host scripts are cached only
+outside a direct eval, where their text alone decides what they compile to.
 
 Entries live in `$QUENCH_COMPILE_CACHE`, else `$XDG_CACHE_HOME/quench/compile`, else
 `~/.cache/quench/compile`; an empty `QUENCH_COMPILE_CACHE` turns the cache off. An entry is

@@ -975,7 +975,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let program = self.embedding_program()?;
         let previous = std::mem::replace(&mut self.direct_eval, false);
-        let result = self.eval_global_script_named(&program, source, false, name);
+        let result = self.eval_host_script(&program, source, name);
         self.direct_eval = previous;
         result
     }

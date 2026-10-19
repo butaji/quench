@@ -1032,6 +1032,14 @@ impl quench_runtime::Host for NodeHost {
         crate::host::resident_pages::release_read_only_pages();
     }
 
+    fn kept_compiled_program(&mut self, name: &str, parts: &[&str]) -> Option<Vec<u8>> {
+        self.compile_cache.entry(name, parts)?.load()
+    }
+    fn keep_compiled_program(&mut self, name: &str, parts: &[&str], bytes: &[u8]) {
+        if let Some(entry) = self.compile_cache.entry(name, parts) {
+            entry.store(bytes);
+        }
+    }
     fn proper_tail_calls(&self) -> bool {
         false
     }
