@@ -693,6 +693,7 @@ impl<H: Host> Vm<H> {
         self.accessor_field_caches.clear();
         self.instanceof_constructor_layout = None;
         self.closure_shapes = [None; 2];
+        self.iterator_result_shape = None;
         self.regexp_object_shapes = None;
         self.regexp_last_index_layout = None;
         self.regexp_builtin_layout = None;
