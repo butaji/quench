@@ -277,6 +277,58 @@ impl<H: Host> Vm<H> {
         self.prepare_embedding_specialized_script_retaining(&wrapped, name, Some(origin), Some((body, base)), true)
     }
 
+    /// `prepare_embedding_static_body` from a compile cache: `cached` is a program this VM's
+    /// build encoded for the same body (`encode_cached_program`), decoded under this VM's
+    /// atoms. Without it, or when it does not decode for this VM, the body compiles and the
+    /// result carries its encoding for the cache, when it has one.
+    pub(crate) fn prepare_embedding_static_body_cached(
+        &mut self, prefix: &str, body: &'static str, suffix: &str, name: &str, cached: Option<&[u8]>,
+    ) -> Result<(crate::PreparedScript, Option<Vec<u8>>), JsError> {
+        if let Some(bytes) = cached
+            && let Ok(program) = self.decode_cached_program(bytes, body, prefix.len(), name)
+        {
+            return Ok((crate::PreparedScript { program: Rc::new(program) }, None));
+        }
+        let prepared = self.prepare_embedding_static_body(prefix, body, suffix, name)?;
+        let encoded = self.encode_cached_program(&prepared.program);
+        Ok((prepared, encoded))
+    }
+
+    /// `program`'s compile-cache form, when every atom it names is found again by its text:
+    /// a VM atom whose UTF-16 has no lossless host spelling cannot be cached by name.
+    fn encode_cached_program(&self, program: &crate::ResidualProgram) -> Option<Vec<u8>> {
+        let (bytes, atoms) = program.encode_compact();
+        atoms
+            .iter()
+            .all(|&atom| {
+                let name = &program.atoms[atom as usize];
+                let hash = Self::atom_hash_str(name);
+                self.find_atom(hash, |found| self.atom_units_equal_str(found, name)) == Some(atom)
+            })
+            .then_some(bytes)
+    }
+
+    /// A program `encode_cached_program` encoded, with this VM's atom ids and `body` as its
+    /// static source, which must be the body it compiled from `name` after a `base`-byte
+    /// prefix and the specialization this VM runs.
+    fn decode_cached_program(
+        &mut self, bytes: &[u8], body: &'static str, base: usize, name: &str,
+    ) -> Result<crate::ResidualProgram, String> {
+        let mut program = crate::ResidualProgram::decode_compact(
+            bytes,
+            &mut |text| self.intern_atom(text),
+            crate::bytecode::SourceText::Static(body),
+        )?;
+        let source_matches = program.source.as_ref().is_some_and(|source| source.base as usize == base);
+        if program.source_name != name || !source_matches || program.specialized != self.specialized {
+            return Err("cached program does not match its body".into());
+        }
+        program.atoms =
+            crate::bytecode::AtomTable::shared(self.atom_sequence.clone(), self.atom_sequence.len());
+        program.validate()?;
+        Ok(program)
+    }
+
     pub(crate) fn prepare_embedding_specialized_script(
         &mut self, source: &str, name: &str, origin: Option<(u32, u32)>,
     ) -> Result<crate::PreparedScript, JsError> {

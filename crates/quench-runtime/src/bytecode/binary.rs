@@ -33,6 +33,8 @@ const EVAL_BINDING_LOCAL: u8 = 0;
 const EVAL_BINDING_CAPTURE: u8 = 1;
 const OPTIONAL_STRING_NONE: u8 = 0;
 const OPTIONAL_STRING_SOME: u8 = 1;
+/// A compact encoding's source text, which its reader supplies (`encode_compact_program`).
+const OPTIONAL_STRING_ELIDED: u8 = 2;
 const MODULE_LINK_PLAN_NONE: u8 = 0;
 const MODULE_LINK_PLAN_SOME: u8 = 1;
 const LITERAL_STEP_CONSTANT: u8 = 0;
@@ -41,7 +43,7 @@ const LITERAL_STEP_OBJECT: u8 = 2;
 
 fn read_eval_binding(input: &mut BinaryReader<'_>) -> Result<EvalBinding, String> {
     Ok(EvalBinding {
-        atom: input.u32()?,
+        atom: input.atom()?,
         location: match input.u8()? {
             EVAL_BINDING_LOCAL => EvalBindingLocation::Local(input.u16()?),
             EVAL_BINDING_CAPTURE => EvalBindingLocation::Capture {
@@ -57,7 +59,7 @@ fn read_eval_binding(input: &mut BinaryReader<'_>) -> Result<EvalBinding, String
 }
 
 fn write_eval_binding(out: &mut BinaryWriter, binding: &EvalBinding) {
-    out.u32(binding.atom);
+    out.atom(binding.atom);
     match binding.location {
         EvalBindingLocation::Local(slot) => {
             out.u8(EVAL_BINDING_LOCAL);
@@ -78,16 +80,29 @@ pub(super) fn write_program(
     program: &super::ResidualProgram,
     path: &std::path::Path,
 ) -> Result<(), String> {
+    let (bytes, _) = encode_program(program, AtomEncoding::Program);
+    std::fs::write(path, bytes).map_err(|error| error.to_string())
+}
+
+/// A compact encoding of `program` for a compile cache, with the program's atom ids in the
+/// order its table names them (`decode_compact_program` maps each name to its reader's id).
+/// The source text is left out: whoever decodes it supplies the same text.
+pub(super) fn encode_compact_program(program: &super::ResidualProgram) -> (Vec<u8>, Vec<u32>) {
+    encode_program(program, AtomEncoding::Compact(Default::default()))
+}
+
+fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding) -> (Vec<u8>, Vec<u32>) {
+    let compact = matches!(atoms, AtomEncoding::Compact(_));
     let mut out = BinaryWriter::new();
     out.bytes.extend_from_slice(RESIDUAL_MAGIC);
     out.u64(super::ResidualProgram::RUNTIME_ABI_FINGERPRINT);
     out.u8(u8::from(program.specialized));
     out.u8(program.kind.binary_tag());
     out.string(&program.source_name);
-    write_optional_string(
-        &mut out,
-        program.source.as_ref().map(|source| source.text.as_ref()),
-    );
+    match &program.source {
+        Some(_) if compact => out.u8(OPTIONAL_STRING_ELIDED),
+        source => write_optional_string(&mut out, source.as_ref().map(|source| source.text.as_ref())),
+    }
     if let Some(source) = &program.source {
         out.u32(source.base);
         out.u32(source.line_offset);
@@ -149,7 +164,8 @@ pub(super) fn write_program(
             }
         }
     }
-    out.strings(&program.atoms);
+    let mut header = out;
+    let mut out = BinaryWriter::with_atoms(atoms);
     out.u32(program.constants.len() as u32);
     for value in &program.constants {
         match value {
@@ -188,8 +204,8 @@ pub(super) fn write_program(
     out.u32(program.functions.len() as u32);
     for function in &program.functions {
         out.option_u32(function.parent);
-        out.option_u32(function.name);
-        out.option_u32(function.inferred_name);
+        out.option_atom(function.name);
+        out.option_atom(function.inferred_name);
         out.u8(u8::from(function.is_arrow));
         out.u16(function.self_binding_slot.unwrap_or(u16::MAX));
         out.u8(u8::from(function.source_span.is_some()));
@@ -202,7 +218,7 @@ pub(super) fn write_program(
         out.u32(function.parameter_end_pc);
         out.u32(function.parameter_atoms.len() as u32);
         for atom in &function.parameter_atoms {
-            out.u32(*atom);
+            out.atom(*atom);
         }
         out.u8(u8::from(function.rest));
         out.u8(u8::from(function.is_async));
@@ -210,7 +226,7 @@ pub(super) fn write_program(
         out.u8(u8::from(function.is_class_constructor));
         out.u8(u8::from(function.derived_constructor));
         out.option_u32(function.instance_initializer);
-        out.u32(function.super_home_atom.unwrap_or(u32::MAX));
+        out.option_atom(function.super_home_atom);
         out.u8(u8::from(function.constructible));
         out.u8(u8::from(function.class_initializer));
         out.u8(u8::from(function.parameter_eval_arguments_error));
@@ -220,7 +236,7 @@ pub(super) fn write_program(
         out.u16(function.locals);
         out.u32(function.local_atoms.len() as u32);
         for atom in &function.local_atoms {
-            out.u32(*atom);
+            out.atom(*atom);
         }
         out.u32(function.local_registers.len() as u32);
         for local_register in &function.local_registers {
@@ -229,7 +245,7 @@ pub(super) fn write_program(
         }
         out.u32(function.environment_atoms.len() as u32);
         for atom in &function.environment_atoms {
-            out.u32(*atom);
+            out.atom(*atom);
         }
         let name_bindings = function.name_bindings.resolved();
         out.u32(name_bindings.len() as u32);
@@ -255,27 +271,27 @@ pub(super) fn write_program(
         out.u8(u8::from(function.inherited_with_scope));
         out.u32(function.lexical_atoms.len() as u32);
         for atom in &function.lexical_atoms {
-            out.u32(*atom);
+            out.atom(*atom);
         }
         out.u32(function.global_lexical_atoms().len() as u32);
         for atom in function.global_lexical_atoms() {
-            out.u32(*atom);
+            out.atom(*atom);
         }
         out.u32(function.global_var_atoms().len() as u32);
         for atom in function.global_var_atoms() {
-            out.u32(*atom);
+            out.atom(*atom);
         }
         out.u32(function.global_function_atoms().len() as u32);
         for atom in function.global_function_atoms() {
-            out.u32(*atom);
+            out.atom(*atom);
         }
         out.u32(function.global_annex_b_var_atoms().len() as u32);
         for atom in function.global_annex_b_var_atoms() {
-            out.u32(*atom);
+            out.atom(*atom);
         }
         out.u32(function.global_immutable_atoms().len() as u32);
         for atom in function.global_immutable_atoms() {
-            out.u32(*atom);
+            out.atom(*atom);
         }
         out.u32(function.binding_sites.len() as u32);
         for site in &function.binding_sites {
@@ -297,19 +313,11 @@ pub(super) fn write_program(
         out.u8(function.initial_register as u8);
         out.u32(function.code.len() as u32);
         for instruction in &function.code {
-            out.u16(instruction.op() as u16);
-            out.u16(instruction.a());
-            out.u16(instruction.b());
-            out.u16(instruction.c());
-            out.u32(instruction.imm());
+            out.instruction(instruction.op(), instruction.a(), instruction.b(), instruction.c(), instruction.imm());
         }
         out.u32(function.wide.len() as u32);
         for instruction in &function.wide {
-            out.u16(instruction.op() as u16);
-            out.u16(instruction.a());
-            out.u16(instruction.b());
-            out.u16(instruction.c());
-            out.u32(instruction.imm());
+            out.instruction(instruction.op(), instruction.a(), instruction.b(), instruction.c(), instruction.imm());
         }
         out.u32(function.handlers.len() as u32);
         for handler in &function.handlers {
@@ -337,19 +345,19 @@ pub(super) fn write_program(
     out.u16(program.cache_sites);
     out.u32(program.method_sites.len() as u32);
     for site in &program.method_sites {
-        out.u32(site.atom);
+        out.atom(site.atom);
         out.u16(site.cache);
         out.u32(site.argument_start);
         out.u16(site.argument_count);
-        out.optional_pair(site.receiver_path);
+        out.optional_atom_pair(site.receiver_path);
     }
     out.u16s(&program.method_arguments);
     out.u32(program.field_sites.len() as u32);
     for site in &program.field_sites {
         out.u16(site.base.0);
-        out.pair(site.first);
-        out.optional_pair(site.second);
-        out.optional_pair(site.sink);
+        out.atom_pair(site.first);
+        out.optional_atom_pair(site.second);
+        out.optional_atom_pair(site.sink);
         for source in site.sources {
             out.u8(source.is_some() as u8);
             if let Some((line, column)) = source { out.u32(line); out.u32(column); }
@@ -359,7 +367,7 @@ pub(super) fn write_program(
     for site in &program.object_sites {
         out.u32(site.atoms.len() as u32);
         for atom in &site.atoms {
-            out.u32(*atom);
+            out.atom(*atom);
         }
     }
     out.u32(program.regexp_literal_sites.len() as u32);
@@ -383,19 +391,53 @@ pub(super) fn write_program(
     out.u32(program.superinstructions.len() as u32);
     for site in &program.superinstructions {
         for instruction in site.code {
-            out.u16(instruction.op() as u16);
-            out.u16(instruction.a());
-            out.u16(instruction.b());
-            out.u16(instruction.c());
-            out.u32(instruction.imm());
+            out.instruction(instruction.op(), instruction.a(), instruction.b(), instruction.c(), instruction.imm());
         }
     }
-    std::fs::write(path, out.bytes).map_err(|error| error.to_string())
+    let order = match out.atoms {
+        AtomEncoding::Program => {
+            header.strings(&program.atoms);
+            Vec::new()
+        }
+        AtomEncoding::Compact(compact) => {
+            header.u32(compact.order.len() as u32);
+            for &atom in &compact.order {
+                header.string(&program.atoms[atom as usize]);
+            }
+            compact.order
+        }
+    };
+    header.bytes.extend_from_slice(&out.bytes);
+    (header.bytes, order)
 }
 
 pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProgram, String> {
     let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
-    let mut input = BinaryReader::new(&bytes);
+    let program = decode_program(&bytes, None)?;
+    program.validate()?;
+    Ok(program)
+}
+
+/// Decodes `encode_compact_program`'s bytes, naming each atom by `intern`'s id for its text
+/// and supplying `text` as the source. The program's atom table is left empty for the caller,
+/// which owns the ids `intern` returns, and the caller validates the program.
+pub(super) fn decode_compact_program(
+    bytes: &[u8],
+    intern: &mut dyn FnMut(&str) -> u32,
+    text: super::SourceText,
+) -> Result<super::ResidualProgram, String> {
+    decode_program(bytes, Some((intern, text)))
+}
+
+fn decode_program(
+    bytes: &[u8],
+    compact: Option<(&mut dyn FnMut(&str) -> u32, super::SourceText)>,
+) -> Result<super::ResidualProgram, String> {
+    let (mut intern, mut elided) = match compact {
+        Some((intern, text)) => (Some(intern), Some(text)),
+        None => (None, None),
+    };
+    let mut input = BinaryReader::new(bytes);
     input.magic(RESIDUAL_MAGIC)?;
     let abi = input.u64()?;
     if abi != super::ResidualProgram::RUNTIME_ABI_FINGERPRINT {
@@ -409,9 +451,15 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
     let kind = super::ProgramKind::from_binary_tag(input.u8()?)
         .ok_or_else(|| "invalid residual program kind".to_owned())?;
     let source_name = input.string()?;
-    let source = match read_optional_string(&mut input)? {
+    let text = match input.u8()? {
+        OPTIONAL_STRING_NONE => None,
+        OPTIONAL_STRING_SOME => Some(super::SourceText::Shared(std::sync::Arc::from(input.string()?))),
+        OPTIONAL_STRING_ELIDED => Some(elided.take().ok_or("residual source text is not supplied")?),
+        _ => return Err("invalid optional residual string".into()),
+    };
+    let source = match text {
         Some(text) => Some(super::ProgramSource {
-            text: super::SourceText::Shared(std::sync::Arc::from(text)),
+            text,
             base: input.u32()?,
             line_offset: input.u32()?,
             column_offset: input.u32()?,
@@ -475,7 +523,20 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
         }),
         _ => return Err("invalid residual module link plan tag".into()),
     };
-    let atoms = input.strings()?;
+    let atoms = match intern.as_mut() {
+        None => input.strings()?,
+        Some(intern) => {
+            let count = input.u32()? as usize;
+            let mut ids = Vec::with_capacity(count);
+            for _ in 0..count {
+                let len = input.u32()? as usize;
+                let name = std::str::from_utf8(input.take(len)?).map_err(|_| "invalid residual string")?;
+                ids.push(intern(name));
+            }
+            input.atoms = Some(ids);
+            AtomTable::default()
+        }
+    };
     let constants = input.list(|input| match input.u8()? {
         WASM_BITS64_TAG => Ok(Constant::WasmBits64(input.u64()?)),
         WASM_V128_TAG => Ok(Constant::WasmV128(
@@ -496,8 +557,8 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
     })?;
     let functions = input.list(|input| {
         let parent = input.option_u32()?;
-        let name = input.option_u32()?;
-        let inferred_name = input.option_u32()?;
+        let name = input.option_atom()?;
+        let inferred_name = input.option_atom()?;
         let is_arrow = match input.u8()? {
             0 => false,
             1 => true,
@@ -517,7 +578,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
         let params = input.u16()?;
         let length = input.u16()?;
         let parameter_end_pc = input.u32()?;
-        let parameter_atoms = input.list(|input| input.u32())?;
+        let parameter_atoms = input.list(|input| input.atom())?;
         let rest = match input.u8()? {
             0 => false,
             1 => true,
@@ -544,10 +605,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             _ => return Err("invalid derived constructor flag".into()),
         };
         let instance_initializer = input.option_u32()?;
-        let super_home_atom = match input.u32()? {
-            u32::MAX => None,
-            atom => Some(atom),
-        };
+        let super_home_atom = input.option_atom()?;
         let constructible = match input.u8()? {
             0 => false,
             1 => true,
@@ -578,15 +636,16 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             slot => Some(slot),
         };
         let locals = input.u16()?;
-        let local_atoms = input.list(|input| input.u32())?;
+        let local_atoms = input.list(|input| input.atom())?;
         let local_registers = input.list(|input| {
             Ok(LocalRegister {
                 local: input.u16()?,
                 register: input.u16()?,
             })
         })?;
-        let environment_atoms = input.list(|input| input.u32())?;
-        let name_bindings = input.list(read_eval_binding)?;
+        let environment_atoms = input.list(|input| input.atom())?;
+        let mut name_bindings = input.list(read_eval_binding)?;
+        input.restore_atom_order(&mut name_bindings);
         let environment_clones = input.list(|input| {
             Ok(crate::bytecode::EnvironmentClone {
                 fresh: input.list(|input| input.u16())?,
@@ -603,15 +662,16 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             1 => true,
             _ => return Err("invalid inherited with-scope flag".into()),
         };
-        let lexical_atoms = input.list(|input| input.u32())?;
-        let global_lexical_atoms = input.list(|input| input.u32())?;
-        let global_var_atoms = input.list(|input| input.u32())?;
-        let global_function_atoms = input.list(|input| input.u32())?;
-        let global_annex_b_var_atoms = input.list(|input| input.u32())?;
-        let global_immutable_atoms = input.list(|input| input.u32())?;
+        let lexical_atoms = input.list(|input| input.atom())?;
+        let global_lexical_atoms = input.list(|input| input.atom())?;
+        let global_var_atoms = input.list(|input| input.atom())?;
+        let global_function_atoms = input.list(|input| input.atom())?;
+        let global_annex_b_var_atoms = input.list(|input| input.atom())?;
+        let global_immutable_atoms = input.list(|input| input.atom())?;
         let binding_sites = input.list(|input| {
             let resume_pc = input.u32()?;
-            let bindings = input.list(read_eval_binding)?;
+            let mut bindings = input.list(read_eval_binding)?;
+            input.restore_atom_order(&mut bindings);
             Ok(BindingSite {
                 resume_pc,
                 bindings,
@@ -643,7 +703,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             let a = input.u16()?;
             let b = input.u16()?;
             let c = input.u16()?;
-            let imm = input.u32()?;
+            let imm = input.immediate(op, b)?;
             if op.is_wide_marker() {
                 Instr::wide_from_fields(a, b, c, imm)
                     .ok_or_else(|| String::from("residual wide index exceeds domain"))
@@ -657,13 +717,8 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             let op = Op::from_index(usize::from(opcode))
                 .filter(|op| !op.is_wide_marker())
                 .ok_or_else(|| String::from("invalid residual wide opcode"))?;
-            Ok(WideInstruction::new(
-                op,
-                input.u16()?,
-                input.u16()?,
-                input.u16()?,
-                input.u32()?,
-            ))
+            let (a, b, c) = (input.u16()?, input.u16()?, input.u16()?);
+            Ok(WideInstruction::new(op, a, b, c, input.immediate(op, b)?))
         })?;
         if !super::local_loads_in_bounds(&code, &wide, locals) {
             return Err("invalid residual local load".into());
@@ -767,20 +822,20 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
     let cache_sites = input.u16()?;
     let method_sites = input.list(|input| {
         Ok(MethodSite {
-            atom: input.u32()?,
+            atom: input.atom()?,
             cache: input.u16()?,
             argument_start: input.u32()?,
             argument_count: input.u16()?,
-            receiver_path: input.optional_pair()?,
+            receiver_path: input.optional_atom_pair()?,
         })
     })?;
     let method_arguments = input.u16s()?;
     let field_sites = input.list(|input| {
         Ok(FieldSite {
             base: FieldBase(input.u16()?),
-            first: input.pair()?,
-            second: input.optional_pair()?,
-            sink: input.optional_pair()?,
+            first: input.atom_pair()?,
+            second: input.optional_atom_pair()?,
+            sink: input.optional_atom_pair()?,
             sources: [
                 input.optional_source_location()?,
                 input.optional_source_location()?,
@@ -790,7 +845,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
     })?;
     let object_sites = input.list(|input| {
         Ok(ObjectSite {
-            atoms: input.list(|input| input.u32())?.into(),
+            atoms: input.list(|input| input.atom())?.into(),
         })
     })?;
     let regexp_literal_sites = input.list(|input| {
@@ -822,8 +877,9 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             }
             // SAFETY: same contiguous repr(u16) invariant as normal code.
             let op = unsafe { std::mem::transmute::<u16, Op>(opcode) };
+            let (a, b, c) = (input.u16()?, input.u16()?, input.u16()?);
             *instruction =
-                Instr::try_new(op, input.u16()?, input.u16()?, input.u16()?, input.u32()?)
+                Instr::try_new(op, a, b, c, input.immediate(op, b)?)
                     .ok_or_else(|| {
                         String::from("residual superinstruction exceeds packed domain")
                     })?;
@@ -857,17 +913,49 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
         superinstructions,
         replay: None,
     };
-    program.validate()?;
     Ok(program)
 }
 
 pub(super) struct BinaryWriter {
     pub(super) bytes: Vec<u8>,
+    atoms: AtomEncoding,
+}
+
+/// How an encoding names atoms: by the program's own ids, or by their positions in a compact
+/// table of the atoms it uses, in first-use order (`encode_compact_program`).
+enum AtomEncoding {
+    Program,
+    Compact(CompactAtoms),
+}
+
+#[derive(Default)]
+struct CompactAtoms {
+    positions: rustc_hash::FxHashMap<u32, u32>,
+    order: Vec<u32>,
 }
 
 #[rustfmt::skip]
 impl BinaryWriter {
-    pub(super) fn new() -> Self { Self { bytes: Vec::new() } }
+    pub(super) fn new() -> Self { Self::with_atoms(AtomEncoding::Program) }
+    fn with_atoms(atoms: AtomEncoding) -> Self { Self { bytes: Vec::new(), atoms } }
+    fn atom(&mut self, atom: u32) {
+        let encoded = match &mut self.atoms {
+            AtomEncoding::Program => atom,
+            AtomEncoding::Compact(compact) => *compact.positions.entry(atom).or_insert_with(|| {
+                compact.order.push(atom);
+                compact.order.len() as u32 - 1
+            }),
+        };
+        self.u32(encoded);
+    }
+    fn option_atom(&mut self, atom: Option<u32>) { match atom { Some(atom) => self.atom(atom), None => self.u32(u32::MAX) } }
+    fn atom_pair(&mut self, value: (u32, u16)) { self.atom(value.0); self.u16(value.1); }
+    fn optional_atom_pair(&mut self, value: Option<(u32, u16)>) { self.u8(value.is_some() as u8); if let Some(value) = value { self.atom_pair(value); } }
+    /// An instruction, whose immediate is an atom when it names one.
+    fn instruction(&mut self, op: Op, a: u16, b: u16, c: u16, imm: u32) {
+        self.u16(op as u16); self.u16(a); self.u16(b); self.u16(c);
+        if op.immediate_names_atom(b) { self.atom(imm) } else { self.u32(imm) }
+    }
     pub(super) fn u8(&mut self, value: u8) { self.bytes.push(value); }
     pub(super) fn u16(&mut self, value: u16) { self.bytes.extend_from_slice(&value.to_le_bytes()); }
     pub(super) fn u32(&mut self, value: u32) { self.bytes.extend_from_slice(&value.to_le_bytes()); }
@@ -876,18 +964,46 @@ impl BinaryWriter {
     pub(super) fn strings(&mut self, values: &AtomTable) { self.u32(values.len() as u32); for value in values.iter() { self.string(value); } }
     pub(super) fn u16s(&mut self, values: &[u16]) { self.u32(values.len() as u32); for value in values { self.u16(*value); } }
     pub(super) fn option_u32(&mut self, value: Option<u32>) { self.u32(value.unwrap_or(u32::MAX)); }
-    pub(super) fn pair(&mut self, value: (u32, u16)) { self.u32(value.0); self.u16(value.1); }
-    pub(super) fn optional_pair(&mut self, value: Option<(u32, u16)>) { self.u8(value.is_some() as u8); if let Some(value) = value { self.pair(value); } }
 }
 
 pub(super) struct BinaryReader<'a> {
     bytes: &'a [u8],
     cursor: usize,
+    /// A compact encoding's atom ids, by table position; none when ids are the program's.
+    atoms: Option<Vec<u32>>,
 }
 
 #[rustfmt::skip]
 impl<'a> BinaryReader<'a> {
-    pub(super) fn new(bytes: &'a [u8]) -> Self { Self { bytes, cursor: 0 } }
+    pub(super) fn new(bytes: &'a [u8]) -> Self { Self { bytes, cursor: 0, atoms: None } }
+    fn atom(&mut self) -> Result<u32, String> {
+        let encoded = self.u32()?;
+        match &self.atoms {
+            None => Ok(encoded),
+            Some(ids) => ids.get(encoded as usize).copied().ok_or_else(|| "residual atom outside its table".into()),
+        }
+    }
+    fn option_atom(&mut self) -> Result<Option<u32>, String> {
+        let encoded = self.u32()?;
+        if encoded == u32::MAX { return Ok(None); }
+        match &self.atoms {
+            None => Ok(Some(encoded)),
+            Some(ids) => ids.get(encoded as usize).copied().map(Some).ok_or_else(|| "residual atom outside its table".into()),
+        }
+    }
+    fn atom_pair(&mut self) -> Result<(u32, u16), String> { Ok((self.atom()?, self.u16()?)) }
+    /// Bindings are kept sorted by atom (`NameBindings`, `BindingSite`); ids a compact
+    /// encoding maps to its reader's VM keep no order, so they are sorted again.
+    fn restore_atom_order(&self, bindings: &mut [EvalBinding]) {
+        if self.atoms.is_some() { bindings.sort_unstable_by_key(|binding| binding.atom); }
+    }
+    fn optional_atom_pair(&mut self) -> Result<Option<(u32, u16)>, String> {
+        match self.u8()? { 0 => Ok(None), 1 => Ok(Some(self.atom_pair()?)), _ => Err("invalid residual option".into()) }
+    }
+    /// The immediate of an instruction of `op` with field `b`, an atom when it names one.
+    fn immediate(&mut self, op: Op, b: u16) -> Result<u32, String> {
+        if op.immediate_names_atom(b) { self.atom() } else { self.u32() }
+    }
     fn take(&mut self, len: usize) -> Result<&'a [u8], String> {
         let end = self.cursor.checked_add(len).ok_or("residual overflow")?;
         let value = self.bytes.get(self.cursor..end).ok_or("truncated residual")?;
@@ -922,16 +1038,12 @@ impl<'a> BinaryReader<'a> {
         let value = self.u32()?;
         Ok((value != u32::MAX).then_some(value))
     }
-    pub(super) fn pair(&mut self) -> Result<(u32, u16), String> { Ok((self.u32()?, self.u16()?)) }
     pub(super) fn optional_source_location(&mut self) -> Result<Option<(u32, u32)>, String> {
         match self.u8()? {
             0 => Ok(None),
             1 => Ok(Some((self.u32()?, self.u32()?))),
             _ => Err("invalid residual source option".into()),
         }
-    }
-    pub(super) fn optional_pair(&mut self) -> Result<Option<(u32, u16)>, String> {
-        match self.u8()? { 0 => Ok(None), 1 => Ok(Some(self.pair()?)), _ => Err("invalid residual option".into()) }
     }
     pub(super) fn list<T>(&mut self, mut read: impl FnMut(&mut Self) -> Result<T, String>) -> Result<Vec<T>, String> {
         let len = self.u32()? as usize;
