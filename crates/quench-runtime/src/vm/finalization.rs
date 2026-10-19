@@ -109,10 +109,9 @@ impl<H: Host> Vm<H> {
         new_target: Value,
     ) -> Result<Value, JsError> {
         let callback = args.first().copied().unwrap_or(Value::UNDEFINED);
-        if !matches!(
-            self.heap.get(callback),
-            Some(Cell::Function { .. } | Cell::Proxy { .. })
-        ) {
+        if !self.heap.is_function_value(callback)
+            && !matches!(self.heap.get(callback), Some(Cell::Proxy { .. }))
+        {
             return Err(self.type_error(p, "FinalizationRegistry callback is not callable".into()));
         }
         let prototype_atom = self.prototype_atom();
@@ -120,10 +119,10 @@ impl<H: Host> Vm<H> {
         let prototype = if self.object_data(candidate).is_some() {
             candidate
         } else {
-            let realm = match self.heap.get(new_target) {
-                Some(Cell::Function { object, .. }) => object.realm,
-                _ => self.realm.globals,
-            };
+            let realm = self
+                .heap
+                .function(new_target)
+                .map_or(self.realm.globals, |function| function.realm);
             let constructor_atom = self.intern_atom("FinalizationRegistry");
             let realm_constructor = self.get_property(p, realm, constructor_atom)?;
             let realm_prototype = self.get_property(p, realm_constructor, prototype_atom)?;

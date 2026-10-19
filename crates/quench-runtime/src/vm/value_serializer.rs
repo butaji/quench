@@ -1832,7 +1832,7 @@ impl<H: Host> Vm<H> {
         }
         let native_function = |vm: &Self, function: Option<Value>, native: Native| {
             function.is_some_and(|function| {
-                matches!(vm.heap.get(function), Some(Cell::Function { kind: FunctionKind::Native(found), .. }) if *found == native)
+                matches!(vm.heap.function(function), Some(FunctionRecord { kind: FunctionKind::Native(found), .. }) if *found == native)
             })
         };
         let to_string = self.data_property(value, "toString");

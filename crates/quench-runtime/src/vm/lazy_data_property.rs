@@ -165,8 +165,8 @@ impl<H: Host> Vm<H> {
 
     /// The member environment of `value` when it is a lazy data property's accessor.
     fn lazy_member(&self, value: Value) -> Option<Value> {
-        match self.heap.get(value) {
-            Some(Cell::Function {
+        match self.heap.function(value) {
+            Some(FunctionRecord {
                 kind: FunctionKind::Native(Native::LazyDataProperty),
                 env,
                 ..

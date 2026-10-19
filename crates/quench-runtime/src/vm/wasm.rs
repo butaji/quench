@@ -1603,8 +1603,8 @@ impl<H: Host> Vm<H> {
                 if value.is_null() {
                     return nullable;
                 }
-                match self.heap.get(value) {
-                    Some(Cell::Function {
+                match self.heap.function(value) {
+                    Some(FunctionRecord {
                         kind: FunctionKind::User(program, function),
                         ..
                     }) => self.programs.wasm_signatures(*program).is_some_and(|pool| {
@@ -1612,7 +1612,7 @@ impl<H: Host> Vm<H> {
                             pool.matches_declaration(actual, declarations, index, exact)
                         })
                     }),
-                    Some(Cell::Function {
+                    Some(FunctionRecord {
                         kind: FunctionKind::Native(Native::WasmHost),
                         ..
                     }) => self
