@@ -15,7 +15,6 @@ impl Host for SilentHost {
         0.0
     }
 }
-
 #[test]
 fn collection_construction_survives_gc_in_iterator_and_entry_callbacks() {
     let source = r#"
@@ -10554,6 +10553,42 @@ fn js_jit_merges_boolean_branch_states_for_numeric_equality_chains() {
     feature = "profile-memory",
     feature = "profile-gc-time"
 )))]
+fn js_jit_compiles_cached_numeric_kind_field_switches() {
+    let source = r#"
+      function isMethodOrAccessor(node) {
+        switch (node.kind) {
+          case 175: case 178: case 179: return true;
+          default: return false;
+        }
+      }
+      const kinds = [175, 178, 179, 180];
+      for (let i = 0; i < 40; i++) {
+        const kind = kinds[i % kinds.length];
+        if (isMethodOrAccessor({kind}) !== (kind !== 180)) throw Error('kind switch');
+      }
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        &source,
+        "js-jit-kind-field.js",
+    ))
+    .unwrap();
+    let mut vm = Vm::new(SilentHost);
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+    assert!(matches!(
+        vm.programs
+            .js_tier(super::program_store::ProgramId::MAIN, 1),
+        Some(super::program_store::JsTierState::Compiled(_))
+    ));
+}
+
+#[test]
+#[cfg(not(any(
+    feature = "profile-aggregate",
+    feature = "profile-trace",
+    feature = "profile-memory",
+    feature = "profile-gc-time"
+)))]
 fn js_jit_compiles_forward_numeric_branches_to_rooted_string_returns() {
     let source = r#"
       const rating = price => price < 100 ? '€' : price < 1000 ? '€€' : '€€€';
@@ -10898,8 +10933,6 @@ class Derived extends Base {
         std::fs::remove_file(path).unwrap();
     }
 }
-
-
 #[test]
 fn spread_of_a_branch_built_array_survives_collection() {
     // The consequent's array reaches AppendArray only through the conditional's result

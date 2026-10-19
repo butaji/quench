@@ -26,7 +26,7 @@ struct JsJitCounters {
 /// under a stationary Bernoulli model; it is not a VM-wide multiple-test bound.
 pub(super) const JS_JIT_PROMOTION_LOOKS: [(u8, u8); 4] =
     [(32, 31), (64, 59), (128, 113), (255, 219)];
-const JS_JIT_MAX_FUNCTIONS: usize = 8;
+const JS_JIT_MAX_FUNCTIONS: usize = 64;
 const JS_JIT_MAX_TRACKED_FUNCTIONS: usize = 256;
 const JS_JIT_MAX_MAPPED_BYTES: usize = 64 * 1024;
 /// Promote a Wasm function only after repeated interpreter entries. Wasm

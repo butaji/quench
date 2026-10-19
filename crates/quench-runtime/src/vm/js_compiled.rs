@@ -23,6 +23,8 @@ pub(super) struct JsJitArtifact {
     pub(super) params: usize,
     /// Numeric results retain the original ABI; string results return the selected Return PC.
     pub(super) result: JsJitResultKind,
+    /// A cached data property on parameter zero supplies the native numeric input.
+    pub(super) field_argument: Option<(u32, u16)>,
 }
 
 pub(super) enum JsJitResultKind {
@@ -74,6 +76,29 @@ pub(super) fn has_string_hash_loop_candidate(
     function: &Function,
 ) -> bool {
     string_hash_loop_candidate(program, function)
+}
+
+pub(super) fn number_field_argument_candidate(
+    program: &ResidualProgram,
+    function: &Function,
+) -> Option<(u32, u16)> {
+    if function.params != 1 {
+        return None;
+    }
+    let instruction = function.code.first()?.as_wide();
+    if instruction.op() != Op::GetField {
+        return None;
+    }
+    let FieldLookup::Atom {
+        atom,
+        base: FieldBase(0),
+        cache_site,
+    } = instruction.field_lookup()?
+    else {
+        return None;
+    };
+    ((atom as usize) < program.atoms.len() && &program.atoms[atom as usize] == "kind")
+        .then_some((atom, cache_site))
 }
 
 fn string_hash_loop_candidate(program: &ResidualProgram, function: &Function) -> bool {
@@ -424,6 +449,7 @@ fn compile_string_hash_loop(
         code,
         params: 1,
         result: JsJitResultKind::StringHashLoop,
+        field_argument: None,
     })
 }
 
@@ -470,6 +496,10 @@ fn compile_number_domain_boolean_tree(
     {
         *value = BranchValue::Number;
     }
+    let field_argument = number_field_argument_candidate(program, function);
+    if field_argument.is_some() {
+        entry.registers[0] = BranchValue::Unknown;
+    }
     states[0] = Some(entry);
     let mut reachable = vec![false; code_len];
 
@@ -501,6 +531,14 @@ fn compile_number_domain_boolean_tree(
                 *state
                     .registers
                     .get_mut(usize::from(instruction.result_register()))? = value;
+                successors.push(pc + 1);
+            }
+            Op::GetField => {
+                if pc != 0 || field_argument.is_none() {
+                    return None;
+                }
+                let result = usize::from(instruction.result_register());
+                *state.registers.get_mut(result)? = BranchValue::Number;
                 successors.push(pc + 1);
             }
             Op::Move => {
@@ -776,6 +814,13 @@ fn compile_number_domain_boolean_tree(
                     );
                 }
             }
+            Op::GetField => {
+                let source = builder.use_var(*variables.first()?);
+                builder.def_var(
+                    *variables.get(usize::from(instruction.result_register()))?,
+                    source,
+                );
+            }
             Op::StoreLocal | Op::StoreLocalPlain => {
                 let source = usize::from(instruction.register_a());
                 let value_kind = *state.registers.get(source)?;
@@ -1038,6 +1083,7 @@ fn compile_number_domain_boolean_tree(
         code,
         params,
         result: JsJitResultKind::Boolean,
+        field_argument,
     })
 }
 
@@ -1381,6 +1427,7 @@ fn compile_numeric(program: &ResidualProgram, function_id: u32) -> Option<JsJitA
         code,
         params,
         result: JsJitResultKind::Number,
+        field_argument: None,
     })
 }
 
@@ -2017,6 +2064,7 @@ fn compile_numeric_loop(
         code,
         params,
         result: JsJitResultKind::NumberInterruptible,
+        field_argument: None,
     })
 }
 
@@ -2406,6 +2454,7 @@ fn compile_string_branches(
         code,
         params,
         result: JsJitResultKind::StringReturnPc(return_sites),
+        field_argument: None,
     })
 }
 
