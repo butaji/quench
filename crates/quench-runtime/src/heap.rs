@@ -2669,6 +2669,22 @@ impl Heap {
             unsafe { self.properties.get_shaped(object.properties(), slot) }
         }
     }
+    /// `property_get_unchecked` of an object outside dictionary storage, as an exact shape
+    /// match proves (`Object::exact_shape`).
+    ///
+    /// # Safety
+    /// The slot exists and the object is not in dictionary storage.
+    #[inline(always)]
+    pub(crate) unsafe fn property_get_flat(&self, object: &Object, slot: usize) -> Value {
+        if let Some(values) = object.inline_properties() {
+            debug_assert!(slot < INLINE_PROPERTY_COUNT);
+            // SAFETY: the caller proves that the property slot exists.
+            unsafe { *values.get_unchecked(slot) }
+        } else {
+            // SAFETY: the caller proves the slot exists outside dictionary storage.
+            unsafe { self.properties.get_flat(object.properties(), slot) }
+        }
+    }
     #[inline(always)]
     pub(crate) unsafe fn property_get_unchecked(&self, object: &Object, slot: usize) -> Value {
         if let Some(values) = object.inline_properties() {

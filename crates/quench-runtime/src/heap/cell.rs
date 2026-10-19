@@ -1987,6 +1987,13 @@ impl Object {
     pub(crate) fn shape(&self) -> u32 {
         ValueVec::from_parts(0, self.auxiliary).auxiliary()
     }
+    /// The shape with its dictionary bit (`ValueVec::exact_auxiliary`): a cache entry,
+    /// which records only non-dictionary shapes, matches it exactly when it matches the
+    /// shape of an object outside dictionary storage.
+    #[inline(always)]
+    pub(crate) fn exact_shape(&self) -> u32 {
+        ValueVec::from_parts(0, self.auxiliary).exact_auxiliary()
+    }
     #[inline(always)]
     pub(crate) fn set_shape(&mut self, shape: u32) {
         self.note_prototype_layout_change();

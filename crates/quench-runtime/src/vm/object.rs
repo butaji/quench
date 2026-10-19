@@ -1056,11 +1056,12 @@ impl<H: Host> Vm<H> {
         let index = self.field_cache_index(site);
         // SAFETY: the active program's layout reserves every compiler-emitted site.
         let cache = unsafe { *self.field_caches.get_unchecked(index) };
-        if cache.receiver != receiver.shape() || cache.holder != NO_FIELD_HOLDER {
+        // The exact shape matches only outside dictionary storage (`Object::exact_shape`).
+        if cache.receiver != receiver.exact_shape() || cache.holder != NO_FIELD_HOLDER {
             return None;
         }
-        // SAFETY: as for `cached_field_hit`.
-        let value = unsafe { self.heap.property_get_shaped(receiver, cache.slot as usize) }?;
+        // SAFETY: as for `cached_field_hit`; the exact match rules out a dictionary.
+        let value = unsafe { self.heap.property_get_flat(receiver, cache.slot as usize) };
         self.profile.field_cache_hit(0, 0);
         Some(value)
     }
@@ -1656,12 +1657,13 @@ impl<H: Host> Vm<H> {
             Some(record) => self.heap.object_record_by_id(record),
             None => self.heap.object(receiver.proto())?,
         };
-        if holder.is_module_namespace() || cache.holder != holder.shape() {
+        if holder.is_module_namespace() || cache.holder != holder.exact_shape() {
             return None;
         }
         // SAFETY: both immutable shapes and the property slot were recorded together after
-        // confirming an immediate-prototype data property.
-        let value = unsafe { self.heap.property_get_shaped(holder, cache.slot as usize) }?;
+        // confirming an immediate-prototype data property; the exact holder match rules out
+        // a dictionary.
+        let value = unsafe { self.heap.property_get_flat(holder, cache.slot as usize) };
         Some(FieldCacheHit {
             value,
             tier: 0,
