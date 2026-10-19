@@ -4375,25 +4375,25 @@ lane_handler! {
                 kind: FunctionKind::Native(Native::ArrayPop),
                 ..
             }) => vm.array_pop_dense(receiver),
-            _ => {
-                // SAFETY: the context's program outlives the lane run.
-                let code = unsafe { &*(*cx).code };
+            Some(Cell::Function {
+                kind: FunctionKind::Native(Native::StringCharCodeAt),
+                ..
+            }) if ImmediateLayout::argument_count(i.imm()) != 0 => {
+                // `charCodeAt` of a string at an integer index: the unit there, or NaN outside
+                // the string. Any other receiver or index takes the native's coercions.
                 let window = ImmediateLayout::call_window_base(i.imm());
-                let argc = ImmediateLayout::argument_count(i.imm());
-                // SAFETY: the call's window is registers of the running function, which a
-                // pure string method neither moves nor frees.
-                let args = unsafe {
-                    std::slice::from_raw_parts(r.0.add(usize::from(window)), usize::from(argc))
-                };
-                vm.pure_string_method_call(code, r.get(i.b), receiver, args)
-                    .or_else(|| {
-                        let matched = vm.pure_regexp_exec(code, r.get(i.b), receiver, args)?;
-                        // The match array and its strings are new cells.
-                        note_allocation(vm);
-                        Some(matched)
-                    })
-                    .or_else(|| lane_call_native(cx, r, ip, i))
+                let index = r.get(window).as_int();
+                match (vm.heap.get(receiver), index) {
+                    (Some(Cell::String(text)), Some(index)) => Some(
+                        usize::try_from(index)
+                            .ok()
+                            .and_then(|index| text.units().get(index))
+                            .map_or(Value::number(f64::NAN), |unit| Value::number(unit.into())),
+                    ),
+                    _ => lane_string_or_native_call(cx, r, ip, i, receiver),
+                }
             }
+            _ => lane_string_or_native_call(cx, r, ip, i, receiver),
         };
         let Some(value) = value else {
             return exit(ip);
@@ -4413,6 +4413,33 @@ lane_handler! {
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::SCRIPT)
     }
+}
+
+/// A lane native call that `lane_native_call` does not make inline: a pure string method or
+/// `RegExp.prototype.exec` in place, else the native through `lane_call_native`.
+fn lane_string_or_native_call<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    ip: Ip,
+    i: &LaneInstruction,
+    receiver: Value,
+) -> Option<Value> {
+    let vm = unsafe { vm(cx) };
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    let window = ImmediateLayout::call_window_base(i.imm());
+    let argc = ImmediateLayout::argument_count(i.imm());
+    // SAFETY: the call's window is registers of the running function, which a pure string
+    // method neither moves nor frees.
+    let args = unsafe { std::slice::from_raw_parts(r.0.add(usize::from(window)), usize::from(argc)) };
+    vm.pure_string_method_call(code, r.get(i.b), receiver, args)
+        .or_else(|| {
+            let matched = vm.pure_regexp_exec(code, r.get(i.b), receiver, args)?;
+            // The match array and its strings are new cells.
+            note_allocation(vm);
+            Some(matched)
+        })
+        .or_else(|| lane_call_native(cx, r, ip, i))
 }
 
 /// A lane `Call` of a native that `Native::runs_from_lane` admits, or of a numeric function
