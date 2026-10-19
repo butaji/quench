@@ -489,8 +489,13 @@ impl ProgramStore {
             .and_then(ProgramId::from_index)
     }
 
-    pub(crate) fn insert_shared(&mut self, program: Rc<ResidualProgram>) -> Option<ProgramId> {
+    pub(crate) fn insert_shared(&mut self, mut program: Rc<ResidualProgram>) -> Option<ProgramId> {
         let id = ProgramId::from_index(self.programs.len())?;
+        // A function compiles again on its first call; until then it keeps only its header.
+        // A program other owners share keeps its records.
+        if let Some(program) = Rc::get_mut(&mut program) {
+            program.release_replayable_records();
+        }
         let regexp_literals = vec![None; program.regexp_literal_sites.len()];
         let function_sources = vec![None; program.functions.len()];
         let lane_views = program
@@ -851,8 +856,7 @@ impl ProgramStore {
         };
         if !entry
             .residual
-            .functions
-            .get(function as usize)
+            .function_get(function as usize)
             .is_some_and(|function| {
                 function.code.len() <= super::compiled::MAX_JIT_TIER_BYTECODES_PER_FUNCTION
             })
@@ -1085,7 +1089,7 @@ impl ProgramStore {
                     .residual
                     .functions
                     .get(function as usize)
-                    .and_then(|function| function.name.or(function.inferred_name))
+                    .and_then(|function| function.header().name.or(function.header().inferred_name))
                     .and_then(|atom| {
                         let index = atom as usize;
                         (index < entry.residual.atoms.len())
@@ -1202,7 +1206,7 @@ impl ProgramStore {
         ) -> super::dispatch_fast::LaneView,
     ) -> Option<*const super::dispatch_fast::LaneView> {
         let entry = self.entry(id)?;
-        let code = entry.residual.functions.get(function as usize)?;
+        let code = entry.residual.function_get(function as usize)?;
         let view = entry.lane_views.get(function as usize)?;
         Some(view.get_or_init(|| derive(code, &entry.constants, entry.residual.kind)))
     }

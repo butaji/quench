@@ -65,14 +65,14 @@ impl<H: Host> Vm<H> {
         self.profile
             .function(self.active_program.raw(), id as usize);
         let parameter_eval_arguments_error =
-            p.functions[id as usize].parameter_eval_arguments_error;
+            p.function(id as usize).parameter_eval_arguments_error;
         if parameter_eval_arguments_error {
             return self.syntax_error_result(
                 p,
                 "arguments binding is not allowed in generator parameters",
             );
         }
-        let function = &p.functions[id as usize];
+        let function = &p.function(id as usize);
         let mut frame = self.pooled_frame();
         frame
             .locals
@@ -516,7 +516,7 @@ impl<H: Host> Vm<H> {
         };
         let continuation = record.continuation.as_ref()?;
         let program = self.programs.get(continuation.program)?;
-        let function = program.functions.get(continuation.function as usize)?;
+        let function = program.function_get(continuation.function as usize)?;
         let instruction = *function.code.get(continuation.pc)?;
         let instruction = if instruction.is_wide() {
             function.wide.get(instruction.wide_index()).copied()?
@@ -628,7 +628,7 @@ impl<H: Host> Vm<H> {
                 .programs
                 .get(continuation.program)
                 .ok_or_else(|| JsError("generator continuation program is unavailable".into()))?;
-            let Some(function) = program.functions.get(continuation.function as usize) else {
+            let Some(function) = program.function_get(continuation.function as usize) else {
                 return Err(JsError("generator function is invalid".into()));
             };
             let suspended_instruction = continuation.pc.saturating_sub(1) as u32;

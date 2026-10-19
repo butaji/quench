@@ -95,6 +95,7 @@ impl<'a, T: Clone> SiteTable<'a, T> {
     }
 
     /// The entries a replay wrote, by index.
+    #[cfg(feature = "verify-replay")]
     pub(super) fn written(&self) -> impl Iterator<Item = (usize, &T)> {
         match self {
             Self::Owned(_) => None,
@@ -144,27 +145,100 @@ pub(crate) struct TableCursors {
     pub(crate) literal_templates: u32,
 }
 
-/// The names a replay interns: the finished program's table, every one of which a replay of
-/// one of its functions finds again.
+/// The names a replay interns: the atoms the program's compilation interned, in name order.
+/// A replay of one of its functions interns only names the load did.
 pub(crate) struct ProgramAtomIndex {
-    names: FxHashMap<std::rc::Rc<str>, Atom>,
+    sorted: Box<[Atom]>,
 }
 
 impl ProgramAtomIndex {
-    pub(crate) fn new(atoms: &crate::bytecode::AtomTable) -> Self {
-        let mut names = FxHashMap::default();
-        for atom in 0..atoms.len() {
-            // The first atom spelled a name is the one interning finds.
-            names
-                .entry(std::rc::Rc::from(&atoms[atom]))
-                .or_insert(atom as Atom);
+    pub(super) fn new(
+        interned: impl Iterator<Item = Atom>,
+        atoms: &crate::bytecode::AtomTable,
+    ) -> Self {
+        let mut sorted: Vec<Atom> = interned.collect();
+        sorted.sort_unstable_by(|left, right| {
+            atoms[*left as usize]
+                .cmp(&atoms[*right as usize])
+                .then(left.cmp(right))
+        });
+        Self {
+            sorted: sorted.into_boxed_slice(),
         }
-        Self { names }
     }
 
-    pub(crate) fn find(&self, name: &str) -> Option<Atom> {
-        self.names.get(name).copied()
+    pub(crate) fn find(&self, atoms: &crate::bytecode::AtomTable, name: &str) -> Option<Atom> {
+        let at = self
+            .sorted
+            .partition_point(|atom| &atoms[*atom as usize] < name);
+        self.sorted
+            .get(at)
+            .copied()
+            .filter(|atom| &atoms[*atom as usize] == name)
     }
+}
+
+/// The index of each constant a compilation added, by value. A replay finds every constant of
+/// the finished program by its key's hash, then compares the candidates' keys.
+pub(super) enum ConstantIndex<'a> {
+    Owned(FxHashMap<super::ConstantKey, u32>),
+    Replay {
+        /// Each constant's key hash with its index, in hash then index order.
+        hashes: &'a [(u64, u32)],
+        constants: &'a [crate::bytecode::Constant],
+    },
+}
+
+impl Default for ConstantIndex<'_> {
+    fn default() -> Self {
+        Self::Owned(FxHashMap::default())
+    }
+}
+
+fn constant_key_hash(key: &super::ConstantKey) -> u64 {
+    use std::hash::BuildHasher as _;
+    rustc_hash::FxBuildHasher.hash_one(key)
+}
+
+impl ConstantIndex<'_> {
+    /// The first index of a constant whose key is `key`.
+    pub(super) fn get(&self, key: &super::ConstantKey) -> Option<u32> {
+        match self {
+            Self::Owned(index) => index.get(key).copied(),
+            Self::Replay { hashes, constants } => {
+                let hash = constant_key_hash(key);
+                let start = hashes.partition_point(|(candidate, _)| *candidate < hash);
+                hashes[start..]
+                    .iter()
+                    .take_while(|(candidate, _)| *candidate == hash)
+                    .map(|(_, index)| *index)
+                    .find(|index| super::ConstantKey::from(&constants[*index as usize]) == *key)
+            }
+        }
+    }
+
+    /// Records the first index of `key`. A replay adds no constant.
+    pub(super) fn insert(&mut self, key: super::ConstantKey, index: u32) {
+        match self {
+            Self::Owned(entries) => {
+                entries.insert(key, index);
+            }
+            Self::Replay { .. } => {
+                debug_assert!(false, "a replay adds no constant");
+            }
+        }
+    }
+}
+
+/// `ConstantIndex::Replay`'s hashes of `constants`.
+fn constant_hashes(constants: &[crate::bytecode::Constant]) -> Vec<(u64, u32)> {
+    let mut hashes: Vec<(u64, u32)> = constants
+        .iter()
+        .enumerate()
+        .map(|(index, constant)| (constant_key_hash(&super::ConstantKey::from(constant)), index as u32))
+        .collect();
+    hashes.sort_unstable();
+    hashes
 }
 
 /// The functions a compilation makes, by id. At load the compiler owns every record. A replay
@@ -289,7 +363,7 @@ pub(crate) struct PlainFunctionContext {
     pub(super) expression: bool,
     /// `export default function () {}`, which is named `default`.
     pub(super) default_export: bool,
-    pub(super) scopes: Vec<std::rc::Rc<super::capture_scope::CaptureScope>>,
+    pub(super) scopes: super::capture_scope::ScopeChain,
     pub(super) parent: u32,
     pub(super) with_depth: u16,
     pub(super) inherited_strict: bool,
@@ -299,7 +373,7 @@ pub(crate) struct PlainFunctionContext {
 /// which includes the `this`, `super` and home object of the code around it.
 #[derive(Clone)]
 pub(crate) struct ArrowContext {
-    pub(super) scopes: Vec<std::rc::Rc<super::capture_scope::CaptureScope>>,
+    pub(super) scopes: super::capture_scope::ScopeChain,
     pub(super) parent: Option<u32>,
     pub(super) super_static: bool,
     pub(super) super_home: bool,
@@ -311,11 +385,48 @@ pub(crate) struct ArrowContext {
     pub(super) with_depth: u16,
 }
 
+/// Where an object literal's method is made: its property's span, the home object `super`
+/// reads, and the scopes and strictness around it.
+#[derive(Clone)]
+pub(crate) struct ObjectMethodContext {
+    pub(super) property_span: oxc_span::Span,
+    pub(super) home_atom: Atom,
+    pub(super) scopes: super::capture_scope::ScopeChain,
+    pub(super) parent: u32,
+    pub(super) with_depth: u16,
+    pub(super) inherited_strict: bool,
+}
+
+/// Where a class's method, getter or setter (not its constructor) is made: the class
+/// element's span, which includes `static`, and the home object of its class side.
+#[derive(Clone)]
+pub(crate) struct ClassMethodContext {
+    pub(super) element_span: oxc_span::Span,
+    pub(super) home_atom: Atom,
+    pub(super) scopes: super::capture_scope::ScopeChain,
+    pub(super) parent: Option<u32>,
+    pub(super) with_depth: u16,
+}
+
 /// How a replayable function was compiled at load.
 #[derive(Clone)]
 pub(crate) enum ReplayCall {
     Plain(PlainFunctionContext),
     Arrow(ArrowContext),
+    ObjectMethod(ObjectMethodContext),
+    ClassMethod(ClassMethodContext),
+}
+
+impl ReplayCall {
+    /// The source the function is parsed from again: its own text, or, for a class method,
+    /// its class element's, which also says whether it is static.
+    fn source_span(&self, function: Option<crate::bytecode::SourceSpan>) -> Option<(u32, u32)> {
+        match self {
+            Self::ClassMethod(context) => Some((context.element_span.start, context.element_span.end)),
+            Self::ObjectMethod(context) => Some((context.property_span.start, context.property_span.end)),
+            Self::Plain(_) | Self::Arrow(_) => function.map(|span| (span.start, span.end)),
+        }
+    }
 }
 
 /// What a replay of one function reads beyond the program.
@@ -334,9 +445,7 @@ pub(crate) struct FunctionReplay {
 /// Lazily derived views of a finished program that its replays share.
 #[derive(Default)]
 pub(super) struct ReplayViews {
-    pub(super) atoms: std::cell::OnceCell<ProgramAtomIndex>,
-    pub(super) constants: std::cell::OnceCell<FxHashMap<super::ConstantKey, u32>>,
-    pub(super) method_sites: std::cell::OnceCell<Vec<super::MethodSiteSpec>>,
+    pub(super) constants: std::cell::OnceCell<Vec<(u64, u32)>>,
     pub(super) line_starts: std::cell::OnceCell<Vec<usize>>,
     pub(super) utf16_excess: std::cell::OnceCell<Vec<(usize, usize)>>,
 }
@@ -347,11 +456,19 @@ pub(crate) struct ProgramReplay {
     pub(super) root_strict: bool,
     pub(super) module_goal: bool,
     pub(super) specialized: bool,
+    pub(super) atoms: ProgramAtomIndex,
     /// Where the load left the tables once each function was compiled.
     pub(super) exits: Box<[TableCursors]>,
     /// The functions a replay can compile, by id.
     pub(super) functions: FxHashMap<u32, FunctionReplay>,
     pub(super) views: ReplayViews,
+}
+
+impl ProgramReplay {
+    /// The ids of the functions a replay can compile.
+    pub(crate) fn replayable(&self) -> impl Iterator<Item = &u32> {
+        self.functions.keys()
+    }
 }
 
 impl std::fmt::Debug for ProgramReplay {
@@ -380,7 +497,7 @@ impl super::atoms::AtomPrefix for ReplayAtoms<'_> {
     }
 
     fn find(&self, name: &str) -> Option<Atom> {
-        self.index.find(name)
+        self.index.find(self.table, name)
     }
 
     fn table(&self) -> crate::bytecode::AtomTable {
@@ -399,6 +516,8 @@ impl super::atoms::AtomPrefix for ReplayAtoms<'_> {
 fn replay_wrapper(call: &ReplayCall, strict: bool) -> (&'static str, &'static str) {
     match call {
         ReplayCall::Plain(_) => ("(", ")"),
+        ReplayCall::ObjectMethod(_) => ("({", "})"),
+        ReplayCall::ClassMethod(_) => ("(class{", "})"),
         ReplayCall::Arrow(_) if strict => ("(class extends Object{constructor(){(", ")}})"),
         ReplayCall::Arrow(_) => ("({m(){(", ")}})"),
     }
@@ -461,19 +580,6 @@ fn wrapped_arrow<'s, 'a>(
     }
 }
 
-/// Inverts `Compiler::flatten_method_sites`.
-fn method_site_specs(program: &crate::bytecode::ResidualProgram) -> Vec<super::MethodSiteSpec> {
-    program
-        .method_sites
-        .iter()
-        .map(|site| {
-            let start = site.argument_start as usize;
-            let arguments = program.method_arguments[start..start + usize::from(site.argument_count)].to_vec();
-            (site.atom, site.cache, arguments, site.receiver_path)
-        })
-        .collect()
-}
-
 /// A function of a finished program, compiled again, and the table entries it wrote.
 #[cfg_attr(not(feature = "verify-replay"), allow(dead_code))]
 pub(crate) struct Recompiled {
@@ -483,7 +589,6 @@ pub(crate) struct Recompiled {
 }
 
 /// Compiles function `id` of `program` again from its source, as the load compiled it.
-#[cfg_attr(not(feature = "verify-replay"), allow(dead_code))]
 pub(crate) fn recompile(
     program: &crate::bytecode::ResidualProgram,
     id: u32,
@@ -504,14 +609,19 @@ pub(crate) fn recompile(
         .get(id as usize)
         .ok_or("no such function")?
         .header();
-    let span = header.source_span.ok_or("the function has no source span")?;
+    let (start, end) = function_replay
+        .call
+        .source_span(header.source_span)
+        .ok_or("the function has no source span")?;
     let snippet = text
-        .get(span.start as usize..span.end as usize)
+        .get(start as usize..end as usize)
         .ok_or("the source span lies outside the source")?;
     let strict = replay.module_goal
         || match &function_replay.call {
             ReplayCall::Plain(context) => context.inherited_strict,
             ReplayCall::Arrow(context) => context.inherited_strict,
+            ReplayCall::ObjectMethod(context) => context.inherited_strict,
+            ReplayCall::ClassMethod(_) => true,
         };
     let (prefix, suffix) = replay_wrapper(&function_replay.call, strict);
     let wrapped = format!("{prefix}{snippet}{suffix}");
@@ -526,13 +636,12 @@ pub(crate) fn recompile(
                 .map_or_else(String::new, ToString::to_string)
         ));
     }
-    let delta = span.start.wrapping_sub(prefix.len() as u32);
+    let delta = start.wrapping_sub(prefix.len() as u32);
     oxc_ast_visit::VisitMut::visit_program(&mut ShiftSpans(delta), &mut parsed.program);
     let views = &replay.views;
-    let atom_index = views.atoms.get_or_init(|| ProgramAtomIndex::new(&program.atoms));
     let atoms = ReplayAtoms {
         table: &program.atoms,
-        index: atom_index,
+        index: &replay.atoms,
         specialized: replay.specialized,
     };
     let mode = if replay.specialized {
@@ -540,16 +649,22 @@ pub(crate) fn recompile(
     } else {
         SpecializationMode::Disabled
     };
-    let mut compiler = Compiler::new(&program.source_name, text, mode, &atoms, FxHashMap::default());
-    compiler.source_line_starts = std::borrow::Cow::Borrowed(
-        views
-            .line_starts
-            .get_or_init(|| crate::bytecode::source_line_starts(text).collect()),
-    );
-    compiler.source_utf16_excess = std::borrow::Cow::Borrowed(
-        views
-            .utf16_excess
-            .get_or_init(|| super::source_utf16_excess(text)),
+    let mut compiler = Compiler::with_layout(
+        &program.source_name,
+        text,
+        mode,
+        &atoms,
+        FxHashMap::default(),
+        std::borrow::Cow::Borrowed(
+            views
+                .line_starts
+                .get_or_init(|| crate::bytecode::source_line_starts(text).collect()),
+        ),
+        std::borrow::Cow::Borrowed(
+            views
+                .utf16_excess
+                .get_or_init(|| super::source_utf16_excess(text)),
+        ),
     );
     compiler.source_comments = parsed
         .program
@@ -564,18 +679,16 @@ pub(crate) fn recompile(
     compiler.source_type = replay.source_type;
     compiler.root_strict = replay.root_strict;
     compiler.module_goal = replay.module_goal;
-    compiler.constant_index = std::borrow::Cow::Borrowed(views.constants.get_or_init(|| {
-        let mut index = FxHashMap::default();
-        for (position, constant) in program.constants.iter().enumerate() {
-            index
-                .entry(super::ConstantKey::from(constant))
-                .or_insert(position as u32);
-        }
-        index
-    }));
+    compiler.constant_index = ConstantIndex::Replay {
+        hashes: views
+            .constants
+            .get_or_init(|| constant_hashes(&program.constants)),
+        constants: &program.constants,
+    };
     compiler.constants = SiteTable::replay(&program.constants, 0);
-    compiler.method_sites =
-        SiteTable::replay(views.method_sites.get_or_init(|| method_site_specs(program)), 0);
+    // A replay reads method sites from the program (`Compiler::method_arguments`).
+    compiler.method_sites = SiteTable::replay(&[], 0);
+    compiler.replay_program = Some(program);
     compiler.field_sites = SiteTable::replay(&program.field_sites, 0);
     compiler.object_sites = SiteTable::replay(&program.object_sites, 0);
     compiler.regexp_literal_sites = SiteTable::replay(&program.regexp_literal_sites, 0);
@@ -601,6 +714,33 @@ pub(crate) fn recompile(
             let arrow = wrapped_arrow(&parsed.program).ok_or("the wrapped source holds no arrow")?;
             compiler.compile_replayable_arrow(arrow, context.clone())
         }
+        ReplayCall::ObjectMethod(context) => {
+            let function = match single_expression(&parsed.program.body) {
+                Some(oxc_ast::ast::Expression::ObjectExpression(object)) => {
+                    match object.properties.as_slice() {
+                        [oxc_ast::ast::ObjectPropertyKind::ObjectProperty(property)] => {
+                            match &property.value {
+                                oxc_ast::ast::Expression::FunctionExpression(function) => function,
+                                _ => return Err("the wrapped property holds no method".into()),
+                            }
+                        }
+                        _ => return Err("the wrapped object holds no property".into()),
+                    }
+                }
+                _ => return Err("the wrapped source holds no object".into()),
+            };
+            compiler.compile_replayable_object_method(function, context.clone())
+        }
+        ReplayCall::ClassMethod(context) => {
+            let method = match single_expression(&parsed.program.body) {
+                Some(oxc_ast::ast::Expression::ClassExpression(class)) => match class.body.body.as_slice() {
+                    [oxc_ast::ast::ClassElement::MethodDefinition(method)] => method,
+                    _ => return Err("the wrapped class holds no method".into()),
+                },
+                _ => return Err("the wrapped source holds no class".into()),
+            };
+            compiler.compile_replayable_class_method(method, context.clone())
+        }
     };
     if made != id {
         return Err(format!("the replay compiled function {made}, not {id}"));
@@ -625,7 +765,7 @@ pub(crate) fn recompile(
     compiler.lower_function(&mut function, undefined_constant);
     liveness::mark_register_roots(
         std::iter::once(&mut function),
-        compiler.method_sites.as_slice(),
+        compiler.method_arguments(),
         compiler.field_sites.as_slice(),
         compiler.superinstructions.as_slice(),
     );
@@ -634,7 +774,10 @@ pub(crate) fn recompile(
     function.source_positions.shrink_to_fit();
     // The function making this one named it after compiling it.
     function.inferred_name = header.inferred_name;
+    #[cfg_attr(not(feature = "verify-replay"), allow(unused_mut))]
     let mut entries = Vec::new();
+    #[cfg(feature = "verify-replay")]
+    {
     fn written<T: Clone + std::fmt::Debug>(
         entries: &mut Vec<(&'static str, usize, String, String)>,
         table: &'static str,
@@ -649,12 +792,25 @@ pub(crate) fn recompile(
         }
     }
     written(&mut entries, "constants", &compiler.constants);
-    written(&mut entries, "method_sites", &compiler.method_sites);
+    // A replay keeps no method-site table of its own; the program's are flattened.
+    for (index, value) in compiler.method_sites.written() {
+        let loaded = program.method_sites.get(index).map_or_else(
+            || "<none>".to_owned(),
+            |site| {
+                let start = site.argument_start as usize;
+                let arguments =
+                    program.method_arguments[start..start + usize::from(site.argument_count)].to_vec();
+                format!("{:?}", (site.atom, site.cache, arguments, site.receiver_path))
+            },
+        );
+        entries.push(("method_sites", index, format!("{value:?}"), loaded));
+    }
     written(&mut entries, "field_sites", &compiler.field_sites);
     written(&mut entries, "object_sites", &compiler.object_sites);
     written(&mut entries, "regexp_literal_sites", &compiler.regexp_literal_sites);
     written(&mut entries, "literal_templates", &compiler.literal_templates);
     written(&mut entries, "superinstructions", &compiler.superinstructions);
+    }
     Ok(Recompiled { function, entries })
 }
 

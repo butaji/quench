@@ -43,7 +43,7 @@ pub(super) fn compile(program: &ResidualProgram, function_id: u32) -> Option<JsJ
     if program.kind == ProgramKind::Wasm || function_id == 0 {
         return None;
     }
-    let function = program.functions.get(function_id as usize)?;
+    let function = program.function_get(function_id as usize)?;
     if function.code.iter().any(|packed| {
         !packed.is_wide() && matches!(packed.as_wide().op(), Op::Jump | Op::JumpBinaryFalse)
     }) {
@@ -54,7 +54,7 @@ pub(super) fn compile(program: &ResidualProgram, function_id: u32) -> Option<JsJ
 }
 
 fn compile_numeric(program: &ResidualProgram, function_id: u32) -> Option<JsJitArtifact> {
-    let function = program.functions.get(function_id as usize)?;
+    let function = program.function_get(function_id as usize)?;
     if !function_candidate(function, program)
         || function
             .code

@@ -203,9 +203,9 @@ fn promoted_locals_preserve_order_and_survive_collection() {
     );
 
     // Every binding here stays in a register, including those written inside expressions.
-    assert_eq!(program.functions[1].local_registers.len(), 3);
-    assert_eq!(program.functions[2].local_registers.len(), 1);
-    assert_eq!(program.functions[3].local_registers.len(), 1);
+    assert_eq!(program.function(1).local_registers.len(), 3);
+    assert_eq!(program.function(2).local_registers.len(), 1);
+    assert_eq!(program.function(3).local_registers.len(), 1);
 }
 
 #[test]
@@ -2939,7 +2939,7 @@ fn module_namespace_operations_share_uninitialized_export_errors() {
             let namespace = vm.object();
             let atom = vm.intern_atom("answer");
             vm.set_property(namespace, atom, Value::UNDEFINED).unwrap();
-            let slot = program.functions[0]
+            let slot = program.function(0)
                 .local_atoms
                 .iter()
                 .position(|candidate| *candidate == atom)
@@ -2947,7 +2947,7 @@ fn module_namespace_operations_share_uninitialized_export_errors() {
             let environment = vm.heap.alloc(crate::heap::Cell::Environment {
                 parent: Value::NULL,
                 function: super::ROOT_FUNCTION_ID,
-                slots: vec![Value::DELETED; program.functions[0].local_atoms.len()]
+                slots: vec![Value::DELETED; program.function(0).local_atoms.len()]
                     .into_boxed_slice()
                     .into(),
                 scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
