@@ -238,8 +238,8 @@ impl<H: Host> Vm<H> {
             B::ArgumentsObject => self
                 .object_data(value)
                 .is_some_and(Object::is_arguments_object),
-            B::AsyncFunction | B::GeneratorFunction => match cell {
-                Some(Cell::Function {
+            B::AsyncFunction | B::GeneratorFunction => match self.heap.function(value) {
+                Some(FunctionRecord {
                     kind:
                         FunctionKind::User(program, function)
                         | FunctionKind::NumericUser(program, function),
@@ -666,6 +666,7 @@ impl<H: Host> Vm<H> {
             Some(Cell::Map { .. }) => "#<Map>".into(),
             Some(Cell::Set { .. }) => "#<Set>".into(),
             Some(cell) => format!("[object {}]", Self::diagnostic_class_name(cell)),
+            None if self.heap.is_function_value(value) => "[object Function]".into(),
             None => "[object Unknown]".into(),
         }
     }
@@ -732,7 +733,7 @@ impl<H: Host> Vm<H> {
             Cell::Set { .. } => "Set",
             Cell::Date { .. } => "Date",
             Cell::RegExp { .. } => "RegExp",
-            Cell::Function { .. } => "Function",
+            Cell::Function(_) => "Function",
             Cell::Error(_) => "Error",
             _ => "Object",
         }
