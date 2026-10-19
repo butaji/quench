@@ -950,25 +950,20 @@ impl<'a, H: Host> NativeContext<'a, H> {
 
     /// Compile and evaluate a host wrapper `prefix + body + suffix` whose body is static
     /// host text (an embedded library module): the program retains the body instead of a
-    /// copy of the wrapped source, and positions start at the wrapper origin. The host may
-    /// keep compiled programs across runs: `cached` is what an earlier call returned for the
-    /// same arguments in this build, used when it decodes for this VM, and the second result
-    /// is the compiled program's cache form when this call compiled it.
-    pub fn evaluate_specialized_static_body_cached_rooted(
+    /// copy of the wrapped source, and positions start at the wrapper origin. The compiled
+    /// program goes through the host's compile cache (`Host::kept_compiled_program`).
+    pub fn evaluate_specialized_static_body_rooted(
         &mut self,
         prefix: &str,
         body: &'static str,
         suffix: &str,
         name: &str,
-        cached: Option<&[u8]>,
-    ) -> Result<(RootId, Option<Vec<u8>>), RootedError> {
-        let prepared = self.vm.prepare_embedding_static_body_cached(prefix, body, suffix, name, cached);
-        let (prepared, encoded) = match prepared {
-            Ok(prepared) => prepared,
-            Err(error) => return Err(self.error(error)),
-        };
-        let result = self.vm.evaluate_embedding_prepared_script(&prepared);
-        self.completion(result).map(|root| (root, encoded))
+    ) -> Result<RootId, RootedError> {
+        let result = self
+            .vm
+            .prepare_embedding_static_body_kept(prefix, body, suffix, name)
+            .and_then(|prepared| self.vm.evaluate_embedding_prepared_script(&prepared));
+        self.completion(result)
     }
 
     pub fn parse_json_rooted(&mut self, source: &str) -> Result<RootId, RootedError> {

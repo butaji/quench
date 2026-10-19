@@ -135,7 +135,7 @@ impl<H: Host> Vm<H> {
         self.validate_eval_arguments_context(p, &text)?;
         let source_name = format!("<Eval:{}>", self.programs.len());
         let cache_source = (!self.direct_eval).then_some(source_text);
-        self.eval_global_script_with_cache(p, &text, inherited_strict, &source_name, cache_source)
+        self.eval_global_script_with_cache(p, &text, inherited_strict, &source_name, cache_source, false)
     }
 
     pub(super) fn eval_global_script(
@@ -155,7 +155,18 @@ impl<H: Host> Vm<H> {
         strict: bool,
         source_name: &str,
     ) -> Result<Value, JsError> {
-        self.eval_global_script_with_cache(p, source, strict, source_name, None)
+        self.eval_global_script_with_cache(p, source, strict, source_name, None, false)
+    }
+
+    /// A host's script, which is sloppy global code no guest frame calls: its compilation goes
+    /// through the host's compile cache (`Host::kept_compiled_program`).
+    pub(super) fn eval_host_script(
+        &mut self,
+        p: &ResidualProgram,
+        source: &str,
+        source_name: &str,
+    ) -> Result<Value, JsError> {
+        self.eval_global_script_with_cache(p, source, false, source_name, None, true)
     }
 
     fn eval_global_script_with_cache(
@@ -165,6 +176,7 @@ impl<H: Host> Vm<H> {
         strict: bool,
         source_name: &str,
         cache_source: Option<JsString>,
+        host_script: bool,
     ) -> Result<Value, JsError> {
         if let Some(program) = cache_source.as_ref().and_then(|source| self.programs.cached_global_eval(source)) {
             return self.run_global_eval_program(p, program);
@@ -194,7 +206,20 @@ impl<H: Host> Vm<H> {
         } else {
             Vec::new()
         };
-        let residual = crate::Engine::specialize_eval_with_context(
+        // A host script compiles from its text alone: it is no direct eval, so it has no
+        // caller context, private names or Annex B restrictions.
+        let host_script = host_script && !self.direct_eval;
+        let kept = host_script
+            .then(|| self.host.kept_compiled_program(source_name, &[source]))
+            .flatten()
+            .and_then(|bytes| {
+                let text = crate::bytecode::SourceText::Shared(std::sync::Arc::from(source));
+                self.decode_cached_program(&bytes, text, 0, source_name).ok()
+            });
+        let compiled = kept.is_none();
+        let residual = match kept {
+            Some(residual) => Ok(residual),
+            None => crate::Engine::specialize_eval_with_context(
             source,
             source_name,
             &*self,
@@ -202,7 +227,8 @@ impl<H: Host> Vm<H> {
             context,
             &private_names,
             &annex_b_forbidden_names,
-        )
+        ),
+        }
         .map_err(|diagnostics| {
             if diagnostics
                 .iter()
@@ -223,6 +249,12 @@ impl<H: Host> Vm<H> {
         let Some(program_id) = self.store_dynamic_program(residual) else {
             return Err(self.type_error(p, "dynamic program store is full".into()));
         };
+        if host_script && compiled
+            && let Some(program) = self.programs.get(program_id)
+            && let Some(bytes) = self.encode_cached_program(&program)
+        {
+            self.host.keep_compiled_program(source_name, &[source], &bytes);
+        }
         let origin = self.capture_eval_origin(p)?;
         self.programs.set_origin(program_id, super::program_store::CompilationOrigin::Eval { caller: Some(origin) });
         // Eval code belongs to its caller's Script or Module (PerformEval).
@@ -277,21 +309,23 @@ impl<H: Host> Vm<H> {
         self.prepare_embedding_specialized_script_retaining(&wrapped, name, Some(origin), Some((body, base)), true)
     }
 
-    /// `prepare_embedding_static_body` from a compile cache: `cached` is a program this VM's
-    /// build encoded for the same body (`encode_cached_program`), decoded under this VM's
-    /// atoms. Without it, or when it does not decode for this VM, the body compiles and the
-    /// result carries its encoding for the cache, when it has one.
-    pub(crate) fn prepare_embedding_static_body_cached(
-        &mut self, prefix: &str, body: &'static str, suffix: &str, name: &str, cached: Option<&[u8]>,
-    ) -> Result<(crate::PreparedScript, Option<Vec<u8>>), JsError> {
-        if let Some(bytes) = cached
-            && let Ok(program) = self.decode_cached_program(bytes, body, prefix.len(), name)
+    /// `prepare_embedding_static_body` through the host's compile cache
+    /// (`Host::kept_compiled_program`): a kept program that decodes for this VM is used as is;
+    /// otherwise the body compiles and its compact form is offered to the host.
+    pub(crate) fn prepare_embedding_static_body_kept(
+        &mut self, prefix: &str, body: &'static str, suffix: &str, name: &str,
+    ) -> Result<crate::PreparedScript, JsError> {
+        let parts = [prefix, body, suffix];
+        if let Some(bytes) = self.host.kept_compiled_program(name, &parts)
+            && let Ok(program) = self.decode_cached_program(&bytes, crate::bytecode::SourceText::Static(body), prefix.len(), name)
         {
-            return Ok((crate::PreparedScript { program: Rc::new(program) }, None));
+            return Ok(crate::PreparedScript { program: Rc::new(program) });
         }
         let prepared = self.prepare_embedding_static_body(prefix, body, suffix, name)?;
-        let encoded = self.encode_cached_program(&prepared.program);
-        Ok((prepared, encoded))
+        if let Some(bytes) = self.encode_cached_program(&prepared.program) {
+            self.host.keep_compiled_program(name, &parts, &bytes);
+        }
+        Ok(prepared)
     }
 
     /// `program`'s compile-cache form, when every atom it names is found again by its text:
@@ -308,16 +342,16 @@ impl<H: Host> Vm<H> {
             .then_some(bytes)
     }
 
-    /// A program `encode_cached_program` encoded, with this VM's atom ids and `body` as its
-    /// static source, which must be the body it compiled from `name` after a `base`-byte
-    /// prefix and the specialization this VM runs.
+    /// A program `encode_cached_program` encoded, with this VM's atom ids and `text` as its
+    /// source, which must be what it compiled from `name` after a `base`-byte prefix, under
+    /// the specialization this VM runs.
     fn decode_cached_program(
-        &mut self, bytes: &[u8], body: &'static str, base: usize, name: &str,
+        &mut self, bytes: &[u8], text: crate::bytecode::SourceText, base: usize, name: &str,
     ) -> Result<crate::ResidualProgram, String> {
         let mut program = crate::ResidualProgram::decode_compact(
             bytes,
-            &mut |text| self.intern_atom(text),
-            crate::bytecode::SourceText::Static(body),
+            &mut |name| self.intern_atom(name),
+            text,
         )?;
         let source_matches = program.source.as_ref().is_some_and(|source| source.base as usize == base);
         if program.source_name != name || !source_matches || program.specialized != self.specialized {

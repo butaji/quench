@@ -2694,17 +2694,8 @@ const getLinkedBinding = () => ({});
                 }
                 let wrapper = match embedded.filter(|_| !is_primordials) {
                     // The program retains the embedded text itself, not a wrapped copy.
-                    Some(body) => {
-                        let entry = context.host_mut().compile_cache.entry(&key, &[&prefix, body, WRAPPER_SUFFIX]);
-                        let cached = entry.as_ref().and_then(|entry| entry.load());
-                        let (wrapper, encoded) = context.evaluate_specialized_static_body_cached_rooted(
-                            &prefix, body, WRAPPER_SUFFIX, &key, cached.as_deref(),
-                        )?;
-                        if let (Some(entry), Some(bytes)) = (entry, encoded) {
-                            entry.store(&bytes);
-                        }
-                        wrapper
-                    }
+                    Some(body) => context
+                        .evaluate_specialized_static_body_rooted(&prefix, body, WRAPPER_SUFFIX, &key)?,
                     None => {
                         // Sized exactly: a formatted string grows by doubling, copying the module text each time.
                         let wrapper_source = [prefix.as_str(), &text, WRAPPER_SUFFIX].concat();

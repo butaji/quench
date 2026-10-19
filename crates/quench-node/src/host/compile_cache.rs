@@ -1,10 +1,10 @@
-//! A cache of compiled Node library modules across runs. Every process otherwise compiles the
-//! library modules it loads from their embedded text: in the lodash npm scenario that is 60
-//! modules, about 140 ms of a 450 ms run (x86_64 VM, 2026-10-19), while decoding a compiled
-//! program takes about a tenth of its compilation. The runtime encodes a compiled program in
-//! a compact form that names atoms by text and leaves out the source, and decodes it under the
-//! loading VM's atoms (`Context::evaluate_specialized_static_body_cached_rooted`); this module
-//! only keys and stores those bytes.
+//! A cache of compiled host programs across runs: Node's library modules and the host's own
+//! scripts. Every process otherwise compiles them from their embedded text: in the lodash npm
+//! scenario that is 60 library modules (about 140 ms of a 450 ms run) and 126 host scripts
+//! (about 60 ms, x86_64 VM, 2026-10-19), while decoding a compiled program takes about a tenth
+//! of its compilation. The runtime encodes a compiled program in a compact form that names
+//! atoms by text and leaves out the source, and decodes it under the loading VM's atoms
+//! (`Host::kept_compiled_program`); this module only keys and stores those bytes.
 //!
 //! An entry is keyed by the build that wrote it (the executable's path, size and modification
 //! time, and the runtime ABI), the module's name and the exact text compiled. An entry that
