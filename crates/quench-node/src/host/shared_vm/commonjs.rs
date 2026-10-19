@@ -1538,11 +1538,9 @@ fn cached_builtin(
     let retained = context.retain(module)?;
     let previous = roots.borrow_mut().builtin_cache.insert(key.clone(), retained);
     if let Some(previous) = previous { context.release_root(previous); }
-    if matches!(builtin, BuiltinModule::Crypto | BuiltinModule::Events | BuiltinModule::Fs) {
+    // `fs` installs its library policy with the rest of its members (`initialize_module`).
+    if matches!(builtin, BuiltinModule::Crypto | BuiltinModule::Events) {
         let policy = context.with_startup_intrinsics(|context| {
-            if matches!(builtin, BuiltinModule::Fs) {
-                return crate::modules::fs_shared_vm::install_library_policy(context, module);
-            }
             if matches!(builtin, BuiltinModule::Events) {
                 let listener = get(context, module, "addAbortListener")?;
                 let data = context.array_rooted(&[module, listener])?;
