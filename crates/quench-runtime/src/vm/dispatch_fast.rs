@@ -419,6 +419,29 @@ enum CallEntry {
     /// Its body is one returning `GetField` (`returning_kind` of its first instruction),
     /// whose hit a call answers without activating it (`lane_call_read`).
     Reads,
+    /// Its body reads a field of `this` or a parameter, then an element of that by a
+    /// parameter, and returns it (`element_read_body`), which a call answers likewise.
+    ReadsElement,
+}
+
+/// Whether `body` is `GetField` of `this` or a parameter, `GetIndex` of its result by a
+/// parameter, and `Return` of that (`CallEntry::ReadsElement`), as `at(i) { return
+/// this.items[i]; }` compiles.
+fn element_read_body(body: &Function) -> bool {
+    let [field, element, done] = match body.code.get(..3) {
+        Some(&[field, element, done]) => [field, element, done].map(|packed| decoded_instruction(body, packed)),
+        _ => return false,
+    };
+    let base = crate::bytecode::FieldBase(field.b());
+    field.op() == Op::GetField
+        && !field.returns_from_frame()
+        && base.0 != crate::bytecode::FieldBase::NESTED
+        && base.register_index().is_none_or(|register| register < body.params)
+        && element.op() == Op::GetIndex
+        && element.b() == field.a()
+        && element.c() < body.params
+        && done.op() == Op::Return
+        && done.a() == element.a()
 }
 
 impl ScriptCallTarget {
@@ -2245,7 +2268,7 @@ lane_handler! {
             });
         let stored = match (value, site.sink, unsafe { lane_fixed_this(cx) }) {
             (Some(value), Some((atom, cache)), Some(this)) => {
-                vm.primary_own_field_store_hit(code, this, atom, value, cache)
+                vm.primary_own_field_store_hit::<true>(code, this, atom, value, cache)
             }
             _ => false,
         };
@@ -2307,13 +2330,32 @@ fn lane_set_field<H: Host>(
 
 lane_handler! {
     /// `SetField` or `SetFieldStrict` at a site whose primary entry names an own data field
-    /// (`Vm::primary_own_field_store_hit`): that store inline; any other takes
-    /// `lane_set_field_miss`.
+    /// (`Vm::primary_own_field_store_hit`): that store inline where the write barrier logs
+    /// nothing; any other takes `lane_set_field_logged`.
     fn lane_set_object_field_own<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
-        if !unsafe { vm(cx) }.primary_own_field_store_hit(code, r.get(i.b), i.imm(), r.get(i.a), i.c) {
-            sibling!(lane_set_field_miss::<H, false>, r, ip, Carried::SCRIPT)
+        if !unsafe { vm(cx) }.primary_own_field_store_hit::<false>(code, r.get(i.b), i.imm(), r.get(i.a), i.c) {
+            sibling!(lane_set_field_logged::<H, false>, r, ip, Carried::SCRIPT)
+        }
+        next!(cx, r, following(ip), Carried::SCRIPT)
+    }
+}
+
+lane_handler! {
+    /// An own-field store (`lane_set_object_field_own`, `lane_set_this_field_own`) the write
+    /// barrier logs, which may grow its log: the store with the barrier, out of line so the
+    /// inline store makes no call. Any other takes `lane_set_field_miss`.
+    #[inline(never)]
+    fn lane_set_field_logged<THIS: bool>(cx, r, ip, i, view) {
+        // SAFETY: the context's program outlives the lane run.
+        let code = unsafe { &*(*cx).code };
+        let object = if THIS { unsafe { lane_fixed_this(cx) } } else { Some(r.get(i.b)) };
+        let stored = object.is_some_and(|object| {
+            unsafe { vm(cx) }.primary_own_field_store_hit::<true>(code, object, i.imm(), r.get(i.a), i.c)
+        });
+        if !stored {
+            sibling!(lane_set_field_miss::<H, THIS>, r, ip, Carried::SCRIPT)
         }
         next!(cx, r, following(ip), Carried::SCRIPT)
     }
@@ -2325,10 +2367,10 @@ lane_handler! {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let stored = unsafe { lane_fixed_this(cx) }.is_some_and(|this| {
-            unsafe { vm(cx) }.primary_own_field_store_hit(code, this, i.imm(), r.get(i.a), i.c)
+            unsafe { vm(cx) }.primary_own_field_store_hit::<false>(code, this, i.imm(), r.get(i.a), i.c)
         });
         if !stored {
-            sibling!(lane_set_field_miss::<H, true>, r, ip, Carried::SCRIPT)
+            sibling!(lane_set_field_logged::<H, true>, r, ip, Carried::SCRIPT)
         }
         next!(cx, r, following(ip), Carried::SCRIPT)
     }
@@ -4338,6 +4380,8 @@ impl<H: Host> Vm<H> {
                 returning_kind(decoded_instruction(body, *packed)) == Some(RETURNING_FIELD)
             }) {
                 CallEntry::Reads
+            } else if element_read_body(body) {
+                CallEntry::ReadsElement
             } else {
                 CallEntry::Activates
             },
@@ -4386,10 +4430,9 @@ lane_handler! {
         };
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
         let target = unsafe { &*target };
-        match target.entry {
-            CallEntry::Activates => {}
-            CallEntry::Keeps => sibling!(lane_script_call_keeping::<H>, r, ip, Carried::SCRIPT),
-            CallEntry::Reads => sibling!(lane_script_call_full::<H>, r, ip, Carried::SCRIPT),
+        // One test: the out-of-line form sorts out the other entries.
+        if target.entry != CallEntry::Activates {
+            sibling!(lane_script_call_full::<H>, r, ip, Carried::SCRIPT)
         }
         // A receiver whose binding needs the heap takes the out-of-line form, so this
         // handler makes no call and keeps its registers.
@@ -4432,8 +4475,9 @@ fn lane_direct_call_this<H: Host>(
 
 lane_handler! {
     /// `lane_script_call` out of line, so the plain call keeps its registers: a receiver
-    /// whose binding reads the heap (`lane_call_this`), and a target whose body is one
-    /// returning field read (`CallEntry::Reads`), whose hit (`lane_call_read`) completes the
+    /// whose binding reads the heap (`lane_call_this`), a forwarding target, which takes
+    /// `lane_script_call_keeping`, and a target whose body is a read (`CallEntry::Reads`,
+    /// `CallEntry::ReadsElement`), whose hit (`lane_call_read`) completes the
     /// call with its value as the callee's return would; a call that returns its callee's
     /// completion completes its caller in turn (`lane_return_value!`). Anything else
     /// activates the callee.
@@ -4452,7 +4496,7 @@ lane_handler! {
         let arguments = ImmediateLayout::call_window_base(i.imm());
         let argc = ImmediateLayout::argument_count(i.imm());
         let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
-        let value = if target.entry != CallEntry::Reads
+        let value = if !matches!(target.entry, CallEntry::Reads | CallEntry::ReadsElement)
             || returns && !lane_returning_call_admitted(cx)
         {
             None
@@ -5927,8 +5971,8 @@ fn returning_field_hit<H: Host, const KIND: u8>(
 }
 
 /// The value a frameless callee whose body is one returning `GetField`
-/// (`CallEntry::Reads`) returns for this call, where the read its entry record has
-/// quickened to hits: the record's own read, of `this` or a parameter as its activation
+/// (`CallEntry::Reads`), or a field then an element read (`CallEntry::ReadsElement`),
+/// returns for this call, where the reads its records have quickened to hit: the record's own read, of `this` or a parameter as its activation
 /// would hold them (`lane_activate`). Answering it at the call leaves nothing for an
 /// activation to observe: the hit runs no guest code and allocates nothing. `None` for any
 /// other record state or a miss, which the call activates to run.
@@ -5956,6 +6000,19 @@ unsafe fn lane_call_read<H: Host>(
         None => Some(this),
     };
     let handler = entry.handler;
+    if target.entry == CallEntry::ReadsElement {
+        // The field record's own-entry read, then the dense element its `GetIndex` names.
+        // SAFETY: an element-read body's view holds its `GetIndex` record after the field's.
+        let element = unsafe { &*(*target.view).records().add(1) };
+        if handler != lane_get_field_own::<H, true> as *const ()
+            && handler != lane_get_field_own::<H, false> as *const ()
+        {
+            return None;
+        }
+        let array = vm.primary_own_field_hit(code, base(crate::bytecode::FieldBase(entry.b))?, entry.c)?;
+        let key = (element.c < argc).then(|| r.get(arguments + element.c))?;
+        return vm.direct_dense_element(array, key);
+    }
     if handler == lane_returning::<H, RETURNING_FIELD_NESTED> as *const () {
         // SAFETY: a nested record names its site.
         let site = unsafe { code.field_sites.get_unchecked(entry.imm() as usize) };
