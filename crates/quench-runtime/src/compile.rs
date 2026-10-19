@@ -2142,7 +2142,11 @@ impl<'a> Compiler<'a> {
             context.with_depth,
         );
         context.scopes = context.scopes.into_memo();
-        self.record_replay_call(id, entry, private_names, replay::ReplayCall::ClassMethod(context));
+        // A decorator's expression is part of the class element's text and belongs to the
+        // code around the class, so the method alone does not parse from it.
+        if method.decorators.is_empty() {
+            self.record_replay_call(id, entry, private_names, replay::ReplayCall::ClassMethod(context));
+        }
         id
     }
 

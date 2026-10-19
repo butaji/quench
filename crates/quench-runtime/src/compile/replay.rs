@@ -578,15 +578,20 @@ impl super::atoms::AtomPrefix for ReplayAtoms<'_> {
     }
 }
 
-/// The text around a function's source that gives it the syntactic context it had: a
-/// function parses as an expression anywhere; an arrow keeps the `this`, `super` and
-/// `new.target` of a constructor (strict code) or of a method (sloppy code, which has no
-/// `super()` to keep).
+/// The text around a function's source that gives it the syntactic context it had. A function
+/// declaration parses again as one, and an expression as one: their names follow different
+/// rules (`function* yield() {}` declares a generator only). A method's computed key belongs
+/// to the code around it, which may be a generator or async function, so a method parses inside
+/// an async generator, whose `yield` and `await` its own body does not see. An arrow keeps the
+/// `this`, `super` and `new.target` of a constructor (strict code) or of a method (sloppy
+/// code, which has no `super()` to keep).
 fn replay_wrapper(call: &ReplayCall, strict: bool) -> (&'static str, &'static str) {
     match call {
-        ReplayCall::Plain(_) => ("(", ")"),
-        ReplayCall::ObjectMethod(_) => ("({", "})"),
-        ReplayCall::ClassMethod(_) => ("(class{", "})"),
+        ReplayCall::Plain(context) if context.expression => ("(", ")"),
+        ReplayCall::Plain(context) if context.default_export => ("export default ", ""),
+        ReplayCall::Plain(_) => ("", ""),
+        ReplayCall::ObjectMethod(_) => ("(async function*(){({", "})})"),
+        ReplayCall::ClassMethod(_) => ("(async function*(){(class{", "})})"),
         ReplayCall::Arrow(_) if strict => ("(class extends Object{constructor(){(", ")}})"),
         ReplayCall::Arrow(_) => ("({m(){(", ")}})"),
     }
@@ -618,6 +623,38 @@ fn single_expression<'s, 'a>(
     match statements {
         [oxc_ast::ast::Statement::ExpressionStatement(statement)] => {
             parenthesized(&statement.expression)
+        }
+        _ => None,
+    }
+}
+
+/// The function `replay_wrapper` placed a plain function's source as.
+fn wrapped_function<'s, 'a>(
+    program: &'s oxc_ast::ast::Program<'a>,
+) -> Option<&'s oxc_ast::ast::Function<'a>> {
+    match program.body.as_slice() {
+        [oxc_ast::ast::Statement::FunctionDeclaration(function)] => Some(function),
+        [oxc_ast::ast::Statement::ExportDefaultDeclaration(export)] => match &export.declaration {
+            oxc_ast::ast::ExportDefaultDeclarationKind::FunctionDeclaration(function) => {
+                Some(function)
+            }
+            _ => None,
+        },
+        body => match single_expression(body)? {
+            oxc_ast::ast::Expression::FunctionExpression(function) => Some(function),
+            _ => None,
+        },
+    }
+}
+
+/// The class or object `replay_wrapper` placed a method's source in, inside an async
+/// generator.
+fn wrapped_method_holder<'s, 'a>(
+    program: &'s oxc_ast::ast::Program<'a>,
+) -> Option<&'s oxc_ast::ast::Expression<'a>> {
+    match single_expression(&program.body)? {
+        oxc_ast::ast::Expression::FunctionExpression(holder) => {
+            single_expression(&holder.body.as_ref()?.statements)
         }
         _ => None,
     }
@@ -773,10 +810,8 @@ pub(crate) fn recompile(
     compiler.seek(function_replay.entry);
     let made = match &function_replay.call {
         ReplayCall::Plain(context) => {
-            let function = match single_expression(&parsed.program.body) {
-                Some(oxc_ast::ast::Expression::FunctionExpression(function)) => function,
-                _ => return Err("the wrapped source holds no function".into()),
-            };
+            let function = wrapped_function(&parsed.program)
+                .ok_or("the wrapped source holds no function")?;
             compiler.compile_plain_function(function, context.clone())
         }
         ReplayCall::Arrow(context) => {
@@ -784,7 +819,7 @@ pub(crate) fn recompile(
             compiler.compile_replayable_arrow(arrow, context.clone())
         }
         ReplayCall::ObjectMethod(context) => {
-            let function = match single_expression(&parsed.program.body) {
+            let function = match wrapped_method_holder(&parsed.program) {
                 Some(oxc_ast::ast::Expression::ObjectExpression(object)) => {
                     match object.properties.as_slice() {
                         [oxc_ast::ast::ObjectPropertyKind::ObjectProperty(property)] => {
@@ -801,7 +836,7 @@ pub(crate) fn recompile(
             compiler.compile_replayable_object_method(function, context.clone())
         }
         ReplayCall::ClassMethod(context) => {
-            let method = match single_expression(&parsed.program.body) {
+            let method = match wrapped_method_holder(&parsed.program) {
                 Some(oxc_ast::ast::Expression::ClassExpression(class)) => match class.body.body.as_slice() {
                     [oxc_ast::ast::ClassElement::MethodDefinition(method)] => method,
                     _ => return Err("the wrapped class holds no method".into()),
