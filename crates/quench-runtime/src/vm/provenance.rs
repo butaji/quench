@@ -352,16 +352,16 @@ impl<H: Host> Vm<H> {
         }
         // These iterator maps have inaccessible intrinsic constructors. Their
         // immutable names derive from the existing iterator kind.
-        let name = match self.heap.get(value) {
-            Some(Cell::Iterator {
+        let name = match self.heap.iterator(value) {
+            Some(IteratorRecord {
                 kind: IteratorKind::MapKeys | IteratorKind::MapValues | IteratorKind::MapEntries,
                 ..
             }) => "MapIterator",
-            Some(Cell::Iterator {
+            Some(IteratorRecord {
                 kind: IteratorKind::SetValues | IteratorKind::SetEntries,
                 ..
             }) => "SetIterator",
-            Some(Cell::Iterator {
+            Some(IteratorRecord {
                 kind: IteratorKind::String,
                 ..
             }) => "StringIterator",
