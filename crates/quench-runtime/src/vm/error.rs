@@ -521,7 +521,7 @@ impl<H: Host> Vm<H> {
         if self.proxy_parts(receiver).is_some() {
             return Ok(Some(JsString::from_str("Proxy")));
         }
-        if matches!(self.heap.get(receiver), Some(Cell::Function { kind, .. }) if !matches!(kind, FunctionKind::Native(Native::FunctionBoundCall)))
+        if matches!(self.heap.function(receiver), Some(FunctionRecord { kind, .. }) if !matches!(kind, FunctionKind::Native(Native::FunctionBoundCall)))
         {
             if let Some(name) = self.debug_function_name(receiver) {
                 if !name.units().is_empty() {
@@ -538,7 +538,7 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let residual = self.programs.get(frame.program)?;
-        let function = residual.functions.get(frame.function as usize)?;
+        let function = residual.function_get(frame.function as usize)?;
         let pc = u32::try_from(frame.source_instruction_pc()).unwrap_or(u32::MAX);
         let position = if let Some((site, part)) = frame.source_field {
             if let Some((line, column)) = residual.field_sites.get(site).and_then(|site| site.source(part)) {
@@ -570,7 +570,7 @@ impl<H: Host> Vm<H> {
             let Some(frame) = self.frames.last() else { return Ok(fallback()); };
             let Some((record, module)) = self.source_call_site_record(frame, false) else { return Ok(fallback()); };
             let Some(program) = self.programs.get(frame.program) else { return Ok(fallback()); };
-            let Some(function) = program.functions.get(frame.function as usize) else { return Ok(fallback()); };
+            let Some(function) = program.function_get(frame.function as usize) else { return Ok(fallback()); };
             let primary_constructor = self.programs.is_function_constructor_body(frame.program, frame.function);
             let name = function.name.or_else(|| (!primary_constructor)
                 .then(|| frame.context.callable().and_then(|callee| self.original_function_name(callee)))
@@ -646,7 +646,7 @@ impl<H: Host> Vm<H> {
             let Some(residual) = self.programs.get(frame.program) else {
                 continue;
             };
-            let Some(function) = residual.functions.get(frame.function as usize) else {
+            let Some(function) = residual.function_get(frame.function as usize) else {
                 continue;
             };
             hide_identity |= function.strict;
@@ -1442,7 +1442,7 @@ impl<H: Host> Vm<H> {
                 .functions
                 .iter()
                 .enumerate()
-                .find(|(_, function)| function.parent == Some(super::ROOT_FUNCTION_ID))
+                .find(|(_, function)| function.header().parent == Some(super::ROOT_FUNCTION_ID))
                 .map(|(id, _)| id as u32)
                 .ok_or_else(|| {
                     self.type_error(program, "dynamic Function body is unavailable".into())
@@ -2087,9 +2087,9 @@ impl<H: Host> Vm<H> {
             let Some(value) = self.own_property(source_global, atom) else {
                 continue;
             };
-            let value = match self.heap.get(value) {
+            let value = match self.heap.function(value) {
                 _ if *name == "Symbol" => value,
-                Some(Cell::Function {
+                Some(FunctionRecord {
                     kind: FunctionKind::Native(native),
                     ..
                 }) => {
@@ -2133,11 +2133,9 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
-        let prototype = self.heap.alloc(Cell::Function {
-            object: Box::new(crate::heap::FunctionObject {
-                object: Self::empty_object(object_prototype),
-                realm: global,
-            }),
+        let prototype = self.heap.alloc_function(FunctionRecord {
+            object: Self::empty_object(object_prototype),
+            realm: global,
             kind: FunctionKind::Native(Native::FunctionPrototype),
             env: Value::NULL,
         });
@@ -2313,10 +2311,10 @@ impl<H: Host> Vm<H> {
         program: &ResidualProgram,
         constructor: Value,
     ) -> Result<(), JsError> {
-        let global = match self.heap.get(constructor) {
-            Some(Cell::Function { object, .. }) => object.realm,
-            _ => self.realm.globals,
-        };
+        let global = self
+            .heap
+            .function(constructor)
+            .map_or(self.realm.globals, |function| function.realm);
         let (stack_getter, stack_setter) = if constructor == self.native_value(Native::Error) {
             (
                 self.native_value(Native::ErrorStackGetter),
@@ -2412,10 +2410,10 @@ impl<H: Host> Vm<H> {
     // JSFunction newTarget. Callable proxies and bound functions are distinct
     // callable forms. Our intrinsic constructor has no JS activation to find.
     fn error_constructor_stack_target(&self, native: Native, new_target: Value) -> Option<Value> {
-        match self.heap.get(new_target) {
-            Some(Cell::Function { kind: FunctionKind::Native(target), object, .. })
-                if *target == native && object.realm == self.realm.globals => None,
-            Some(Cell::Function { kind, .. })
+        match self.heap.function(new_target) {
+            Some(FunctionRecord { kind: FunctionKind::Native(target), realm, .. })
+                if *target == native && *realm == self.realm.globals => None,
+            Some(FunctionRecord { kind, .. })
                 if !matches!(kind, FunctionKind::Native(Native::FunctionBoundCall)) => Some(new_target),
             _ => None,
         }

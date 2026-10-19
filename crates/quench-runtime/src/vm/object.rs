@@ -1056,9 +1056,10 @@ impl<H: Host> Vm<H> {
     }
 
     /// The store `cached_field_store_hit` makes to an own data field of a direct object that
-    /// the site's primary entry names, without its other tiers.
+    /// the site's primary entry names, without its other tiers. Without `LOGS`, `false` also
+    /// leaves a store the write barrier logs (`Heap::record_property_set_flat`).
     #[inline(always)]
-    pub(super) fn primary_own_field_store_hit(
+    pub(super) fn primary_own_field_store_hit<const LOGS: bool>(
         &mut self,
         p: &ResidualProgram,
         object: Value,
@@ -1083,7 +1084,7 @@ impl<H: Host> Vm<H> {
             return false;
         }
         // SAFETY: a matching immutable shape proves the cached slot layout.
-        if !unsafe { self.heap.record_property_set_flat(record_id, cache.slot as usize, value) } {
+        if !unsafe { self.heap.record_property_set_flat::<LOGS>(record_id, cache.slot as usize, value) } {
             return false;
         }
         self.profile.field_cache_hit(0, 0);
@@ -1418,7 +1419,23 @@ impl<H: Host> Vm<H> {
         }
         let legacy_cell = match heap_reference {
             Some(HeapReference::LegacySlot(index)) => self.heap.get_legacy(index),
-            Some(HeapReference::ObjectRecord(_) | HeapReference::ArrayRecord(_)) | None => None,
+            // Function and iterator records have no cell; their shape answers like the
+            // slot forms' (`shape_property_lookup`).
+            Some(HeapReference::FunctionRecord(_) | HeapReference::IteratorRecord(_)) => {
+                let lookup = if self.specialized && p.specialized {
+                    self.receiver_field_cache_read(self.shape_property_lookup(object, atom), atom, site)
+                } else {
+                    FieldCacheRead::Generic
+                };
+                return self.finish_field_cache_read(p, object, atom, lookup);
+            }
+            Some(
+                HeapReference::ObjectRecord(_)
+                | HeapReference::ArrayRecord(_)
+                | HeapReference::PromiseRecord(_)
+                | HeapReference::AwaitRecord(_),
+            )
+            | None => None,
         };
         let lookup = match legacy_cell {
             Some(Cell::String(_)) if self.specialized && p.specialized => {
@@ -1437,6 +1454,17 @@ impl<H: Host> Vm<H> {
             }
             Some(_) | None => FieldCacheRead::Generic,
         };
+        self.finish_field_cache_read(p, object, atom, lookup)
+    }
+
+    /// Completes a field read from the field cache's answer for its receiver.
+    fn finish_field_cache_read(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        atom: Atom,
+        lookup: FieldCacheRead,
+    ) -> Result<Value, JsError> {
         match lookup {
             FieldCacheRead::Proxy if self.is_private_name(atom) => {
                 self.get_private_proxy_field(p, object, atom)
@@ -1501,7 +1529,19 @@ impl<H: Host> Vm<H> {
     /// proxy: a hit, a miss at the resolved site, or no cacheable receiver.
     #[inline(always)]
     fn object_field_cache_read(&self, cell: &Cell, atom: Atom, site: u16) -> FieldCacheRead {
-        let Some(receiver) = self.shape_property_lookup_cell(cell, atom) else {
+        self.receiver_field_cache_read(self.shape_property_lookup_cell(cell, atom), atom, site)
+    }
+
+    /// The field cache's answer for a receiver whose shape answers the read (`None`: it
+    /// does not).
+    #[inline(always)]
+    fn receiver_field_cache_read(
+        &self,
+        receiver: Option<&Object>,
+        atom: Atom,
+        site: u16,
+    ) -> FieldCacheRead {
+        let Some(receiver) = receiver else {
             return FieldCacheRead::Generic;
         };
         let site = self.field_cache_index(site);
