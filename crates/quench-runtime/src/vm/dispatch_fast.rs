@@ -1345,6 +1345,7 @@ lane_handler! {
         let vm = unsafe { vm(cx) };
         let Some(value) = vm
             .dense_array_element(base, key)
+            .or_else(|| vm.absent_array_element(base, key))
             .or_else(|| vm.plain_keyed_get(base, key))
             .or_else(|| vm.plain_typed_element(base, key))
             .or_else(|| lane_string_element(vm, base, key))
@@ -1378,6 +1379,7 @@ lane_handler! {
         let (base, key) = (r.get(i.b), r.get(i.c));
         let Some(value) = vm
             .dense_array_element(base, key)
+            .or_else(|| vm.absent_array_element(base, key))
             .or_else(|| vm.plain_keyed_get(base, key))
             .or_else(|| vm.plain_typed_element(base, key))
             .or_else(|| lane_string_element(vm, base, key))
