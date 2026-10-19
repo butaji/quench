@@ -321,7 +321,7 @@ impl<H: Host> Vm<H> {
         }
         let iterator = self.native_with_realm(Native::StringValues, realm, realm);
         self.set_builtin_function_name(iterator, "[Symbol.iterator]")?;
-        let symbol = self.well_known_symbols["iterator"];
+        let symbol = self.well_known_symbols[WellKnownSymbol::Iterator];
         self.set_symbol_property(prototype, symbol, iterator)?;
         self.set_property_attributes(
             prototype,
@@ -595,7 +595,7 @@ impl<H: Host> Vm<H> {
             let limit = args.get(1).copied();
             if vm.is_object_like(separator) {
                 let symbol =
-                    vm.well_known_symbols.get("split").copied().ok_or_else(|| {
+                    vm.well_known_symbols.get(WellKnownSymbol::Split).ok_or_else(|| {
                         vm.type_error(p, "RegExp split symbol is unavailable".into())
                     })?;
                 let method = vm.string_protocol_method(p, separator, symbol)?;
@@ -652,7 +652,7 @@ impl<H: Host> Vm<H> {
             vm.require_object_coercible(p, this)?;
             let pattern = args.first().copied().unwrap_or(Value::UNDEFINED);
             let symbol =
-                vm.well_known_symbols.get(name).copied().ok_or_else(|| {
+                vm.well_known_symbols.named(name).ok_or_else(|| {
                     vm.type_error(p, "RegExp method symbol is unavailable".into())
                 })?;
             if vm.is_object_like(pattern) {
@@ -679,8 +679,7 @@ impl<H: Host> Vm<H> {
             let pattern = args.first().copied().unwrap_or(Value::UNDEFINED);
             let symbol = vm
                 .well_known_symbols
-                .get("matchAll")
-                .copied()
+                .get(WellKnownSymbol::MatchAll)
                 .ok_or_else(|| vm.type_error(p, "RegExp matchAll symbol is unavailable".into()))?;
             if vm.is_object_like(pattern) {
                 if vm.regexp_is_regexp(p, pattern)? {
@@ -758,8 +757,7 @@ impl<H: Host> Vm<H> {
                 }
                 let symbol = vm
                     .well_known_symbols
-                    .get("replace")
-                    .copied()
+                    .get(WellKnownSymbol::Replace)
                     .ok_or_else(|| {
                         vm.type_error(p, "RegExp replace symbol is unavailable".into())
                     })?;

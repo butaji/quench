@@ -770,7 +770,7 @@ impl<H: Host> Vm<H> {
         if !self.has_property(p, object, key)? {
             return Ok(false);
         }
-        let Some(unscopables) = self.well_known_symbols.get("unscopables").copied() else {
+        let Some(unscopables) = self.well_known_symbols.get(WellKnownSymbol::Unscopables) else {
             return Ok(true);
         };
         let exclusions = self.get_index(p, object, unscopables)?;

@@ -1350,8 +1350,7 @@ impl<H: Host> Vm<H> {
         );
         let to_string_tag = self
             .well_known_symbols
-            .get("toStringTag")
-            .copied()
+            .get(WellKnownSymbol::ToStringTag)
             .expect("well-known toStringTag symbol installed before module source intrinsics");
         self.set_symbol_property(prototype, to_string_tag, Value::UNDEFINED)?;
         self.set_property_attributes(
@@ -2198,7 +2197,7 @@ impl<H: Host> Vm<H> {
             self.set_builtin_function_name(method, name)?;
             self.set_builtin_value_named(prototype, name, method)?;
         }
-        if let Some(symbol) = self.well_known_symbols.get("hasInstance").copied() {
+        if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::HasInstance) {
             let method =
                 self.native_with_realm(Native::FunctionPrototypeHasInstance, global, global);
             self.set_builtin_function_name(method, "[Symbol.hasInstance]")?;

@@ -21,8 +21,8 @@ impl<H: Host> Vm<H> {
             self.set_builtin_function_name(method, name)?;
             self.set_builtin_value_named(constructor, name, method)?;
         }
-        for (name, symbol) in self.well_known_symbols.clone() {
-            self.set_named_constant(program, constructor, &name, symbol)?;
+        for (name, symbol) in self.well_known_symbols.clone().entries() {
+            self.set_named_constant(program, constructor, name, symbol)?;
         }
         for (name, native) in [
             ("toString", Native::SymbolToString),
@@ -32,7 +32,7 @@ impl<H: Host> Vm<H> {
             self.set_builtin_function_name(method, name)?;
             self.set_builtin_value_named(prototype, name, method)?;
         }
-        if let Some(to_primitive) = self.well_known_symbols.get("toPrimitive").copied() {
+        if let Some(to_primitive) = self.well_known_symbols.get(WellKnownSymbol::ToPrimitive) {
             let method = self.native_with_realm(Native::SymbolToPrimitive, global, global);
             self.set_builtin_function_name(method, "[Symbol.toPrimitive]")?;
             self.set_symbol_property(prototype, to_primitive, method)?;
@@ -51,7 +51,7 @@ impl<H: Host> Vm<H> {
         }
         let description = self.native_with_realm(Native::SymbolDescriptionGetter, global, global);
         self.install_symbol_description(prototype, description)?;
-        if let Some(to_string_tag) = self.well_known_symbols.get("toStringTag").copied() {
+        if let Some(to_string_tag) = self.well_known_symbols.get(WellKnownSymbol::ToStringTag) {
             let tag = self.heap.alloc(Cell::String(JsString::from_str("Symbol")));
             self.set_symbol_property(prototype, to_string_tag, tag)?;
             self.set_property_attributes(

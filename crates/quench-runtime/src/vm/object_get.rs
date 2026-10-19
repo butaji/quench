@@ -16,7 +16,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         constructor: Value,
     ) -> Result<Value, JsError> {
-        let Some(species) = self.well_known_symbols.get("species").copied() else {
+        let Some(species) = self.well_known_symbols.get(WellKnownSymbol::Species) else {
             return Ok(Value::UNDEFINED);
         };
         let intrinsic_getter = self

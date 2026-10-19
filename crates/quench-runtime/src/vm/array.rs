@@ -374,8 +374,7 @@ impl<H: Host> Vm<H> {
         self.with_call_roots([target], |vm| {
             let spreadable_atom = vm
                 .well_known_symbols
-                .get("isConcatSpreadable")
-                .copied()
+                .get(WellKnownSymbol::IsConcatSpreadable)
                 .ok_or_else(|| JsError("Symbol.isConcatSpreadable is not initialized".into()))?;
             let mut next = 0usize;
             for item in std::iter::once(source).chain(args.iter().copied()) {
