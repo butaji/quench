@@ -510,8 +510,7 @@ impl<H: Host> Vm<H> {
                             | FunctionKind::NumericUser(program_id, id) => {
                                 vm.programs.get(*program_id).is_some_and(|program| {
                                     program
-                                        .functions
-                                        .get(*id as usize)
+                                        .function_get(*id as usize)
                                         .is_some_and(|function| function.derived_constructor)
                                 })
                             }
@@ -529,7 +528,7 @@ impl<H: Host> Vm<H> {
                             vm.type_error(p, "function belongs to an unavailable program".into())
                         );
                     };
-                    let Some(function) = program.functions.get(id as usize) else {
+                    let Some(function) = program.function_get(id as usize) else {
                         return Err(vm.type_error(p, "function index is outside its program".into()));
                     };
                     if !function.constructible {
@@ -678,7 +677,7 @@ impl<H: Host> Vm<H> {
             || self.construct_target.is_some()
             || self.direct_eval
             || self.parameter_eval
-            || p.functions.get(caller.function as usize)?.dispatch != DispatchClass::General
+            || p.function_get(caller.function as usize)?.dispatch != DispatchClass::General
         {
             return None;
         }
@@ -699,7 +698,7 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
-        if !Self::inline_constructible(p.functions.get(id as usize)?) {
+        if !Self::inline_constructible(p.function_get(id as usize)?) {
             return None;
         }
         Some((id, env, self.inline_construct_receiver(callee)?))

@@ -2178,7 +2178,7 @@ impl<H: Host> Analysis<'_, H> {
             .as_ref()
             .map(|_| std::time::Instant::now());
         let memory_before = plan_started.and_then(|_| jit_memory_snapshot());
-        let function = &self.code.functions[index];
+        let function = &self.code.function(index);
         let Some(signature) = self.signature(index as u32) else {
             self.reject(index, || "missing-signature".into());
             return None;
@@ -4403,7 +4403,7 @@ impl<'a, H: Host> Analysis<'a, H> {
         reference_site_ids: &'a [(usize, usize)],
         diagnostics_enabled: bool,
     ) -> Option<(Vec<u8>, Vec<Call>)> {
-        let function = &self.code.functions[index];
+        let function = &self.code.function(index);
         let call_conv = isa.default_call_conv();
         let memory = MemoryArguments::of(fixed_base, guarded);
         let mut func = ir::Function::with_name_signature(
@@ -5036,7 +5036,7 @@ impl<H: Host> Vm<H> {
         }
         let program_id = self.frames[frame].program;
         let function_id = self.frames[frame].function;
-        let function = program.functions.get(function_id as usize)?;
+        let function = program.function_get(function_id as usize)?;
         let tier = self.programs.js_tier(program_id, function_id);
         if matches!(
             tier.as_ref(),
@@ -5204,7 +5204,7 @@ impl<H: Host> Vm<H> {
         let count = code.functions.len();
         let allowed = if let Some(root) = root.filter(|_| root_only) {
             let mut selected = vec![false; count];
-            let Some(function) = code.functions.get(root) else {
+            let Some(function) = code.function_get(root) else {
                 if diagnostics_enabled {
                     eprintln!("QUENCH_WASM_JIT_ROOT_REJECTION root={root} invalid-function={root}");
                 }
@@ -5236,7 +5236,7 @@ impl<H: Host> Vm<H> {
                 if *selected_function {
                     continue;
                 }
-                let function = code.functions.get(index)?;
+                let function = code.function_get(index)?;
                 if function.code.len() > MAX_JIT_ROOT_BYTECODES_PER_FUNCTION {
                     if diagnostics_enabled {
                         eprintln!(
@@ -5286,7 +5286,7 @@ impl<H: Host> Vm<H> {
                     if *selected_function {
                         continue;
                     }
-                    let function = code.functions.get(index)?;
+                    let function = code.function_get(index)?;
                     if function.code.len() > MAX_JIT_ROOT_BYTECODES_PER_FUNCTION {
                         if diagnostics_enabled {
                             eprintln!(
@@ -5399,7 +5399,7 @@ impl<H: Host> Vm<H> {
                 continue;
             }
             let full_plan = plan(index)?;
-            let function = &code.functions[index];
+            let function = &code.function(index);
             for (pc, packed) in function.code.iter().enumerate() {
                 let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
                 if instruction.op() == Op::Call
@@ -5427,7 +5427,7 @@ impl<H: Host> Vm<H> {
                 continue;
             }
             let plan = plan(index)?;
-            let function = &code.functions[index];
+            let function = &code.function(index);
             for (pc, packed) in function.code.iter().enumerate() {
                 let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
                 if !matches!(instruction.op(), Op::WasmGlobalGet | Op::WasmGlobalSet) {
@@ -5826,7 +5826,7 @@ impl<H: Host> Vm<H> {
             && root_first_ready
             && self.programs.residual(program).is_some_and(|code| {
                 code.kind == crate::bytecode::ProgramKind::Wasm
-                    && code.functions.get(id as usize).is_some_and(|function| {
+                    && code.function_get(id as usize).is_some_and(|function| {
                         function.code.len() <= MAX_JIT_TIER_BYTECODES_PER_FUNCTION
                     })
             })

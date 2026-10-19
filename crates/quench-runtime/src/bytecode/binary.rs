@@ -179,6 +179,7 @@ pub(super) fn write_program(
             Constant::Undefined => out.u8(5),
         }
     }
+    program.compile_released();
     out.u32(program.functions.len() as u32);
     for function in &program.functions {
         out.option_u32(function.parent);
