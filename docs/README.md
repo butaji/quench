@@ -174,6 +174,37 @@ For long runs, advance one stage at a time with `run-stages`; it divides
 large stages into deterministic batches of at most 100 cases and preserves
 discovery order. Reserve `run-all` for explicit whole-inventory qualification.
 
+## Compile on first call
+
+A program compiles whole at load, which decides every function's layout, constants and
+sites and reports every early error. A function that can compile again from its own source
+then keeps only its header (`FunctionHeader`: the facts closure creation, `IsConstructor`,
+brand checks and `toString` read) and compiles again on its first call
+(`ResidualProgram::function`). Replayable: function declarations and expressions, arrows,
+object literal methods and class methods, getters and setters (not constructors, field
+initializers, static blocks or decorated methods) of ordinary scripts and modules, that
+resolve every name statically, are reached by no dynamic lookup, resolve no private names,
+and are not called where they are made (an IIFE or a host wrapper). A replayable function
+inside no function that may give it binding sites (direct eval, `with`, `delete` of a name)
+finishes and releases its record as soon as it compiles; the others release theirs when the
+program is stored. Host bodies whose programs keep only static text, and the main
+CommonJS entry, whose functions run at once, stay compiled.
+
+A replay parses the function's text alone in a wrapper that gives it its syntactic context,
+and emits it against what the load recorded (`compile/replay.rs`): table cursors, the
+bindings its scopes provided, its layout inputs and its `arguments` slot. It adds no table
+entry. The `verify-replay` feature checks that each replay equals its load record; run
+Test262 with it and read the log:
+
+```sh
+cargo build --release -p quench-test262 --features verify-replay
+QUENCH_REPLAY_LOG=target/replay.log TEST262_TEST_TIMEOUT_MS=30000 \
+  target/release/run-all
+```
+
+Each program writes a `replay-summary` line; `replay-differs` and `replay-failed` lines name
+a function whose replay does not equal its record or does not compile.
+
 ## Shared runtime host roots
 
 The development `quench_runtime::Runtime` exposes `global_root`, `string_rooted`,

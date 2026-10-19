@@ -1197,6 +1197,14 @@ impl FunctionSlot {
         }
     }
 
+    /// A function whose record its program compiles again on the function's first read.
+    pub(crate) fn released(header: FunctionHeader) -> Self {
+        Self {
+            header,
+            record: std::cell::OnceCell::new(),
+        }
+    }
+
     #[inline(always)]
     pub(crate) fn header(&self) -> &FunctionHeader {
         &self.header
@@ -1206,6 +1214,11 @@ impl FunctionSlot {
     #[inline(always)]
     pub(crate) fn record(&self) -> Option<&Function> {
         self.record.get().map(|function| &**function)
+    }
+
+    /// Drops the record, which its program compiles again on the function's next read.
+    fn release(&mut self) {
+        self.record.take();
     }
 }
 
@@ -2206,12 +2219,20 @@ impl Superinstruction {
     }
 }
 
+/// Where a handler stores the value thrown to it: a frame local, or the register late
+/// frame-register promotion moved that local into (`compile::frame_registers`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ThrownValueSlot {
+    Local(u16),
+    Register(Register),
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Handler {
     pub start: u32,
     pub end: u32,
     pub target: u32,
-    pub slot: Option<u16>,
+    pub slot: Option<ThrownValueSlot>,
     pub return_target: Option<u32>,
     pub return_slot: Option<u16>,
     pub with_depth: u16,
@@ -2640,6 +2661,60 @@ fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16) 
 }
 
 impl ResidualProgram {
+    /// The record of function `index`, compiled again from source on its first read when
+    /// the program released it.
+    #[inline(always)]
+    pub(crate) fn function(&self, index: usize) -> &Function {
+        let slot = &self.functions[index];
+        match slot.record() {
+            Some(function) => function,
+            None => self.recompile_function(index),
+        }
+    }
+
+    /// `function`, for an index that may lie outside the table.
+    #[inline(always)]
+    pub(crate) fn function_get(&self, index: usize) -> Option<&Function> {
+        (index < self.functions.len()).then(|| self.function(index))
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn recompile_function(&self, index: usize) -> &Function {
+        self.functions[index].record.get_or_init(|| {
+            let function = crate::compile::replay::recompile(self, index as u32)
+                .unwrap_or_else(|error| {
+                    panic!("function {index} of {} does not compile again: {error}", self.source_name)
+                })
+                .function;
+            // As `prime_loop_decoding` primes the functions of an installed program.
+            function.decoded.prime_loop(&function.code, &function.wide);
+            Box::new(function)
+        })
+    }
+
+    /// Compiles every released record again.
+    pub(crate) fn compile_released(&self) {
+        for index in 0..self.functions.len() {
+            self.function(index);
+        }
+    }
+
+    /// Drops the record of every function the program can compile again from its source,
+    /// which then compiles on its first read. A program whose source keeps only part of
+    /// its compiled text, as host builtins do, keeps its records.
+    pub(crate) fn release_replayable_records(&mut self) {
+        let Some(replay) = self.replay.clone() else {
+            return;
+        };
+        if self.source.as_ref().is_none_or(|source| source.base != 0) {
+            return;
+        }
+        for &id in replay.replayable() {
+            self.functions[id as usize].release();
+        }
+    }
+
     /// The registers live at `pc` in `function`, when liveness covers it.
     pub(crate) fn register_root_mask(&self, function: u32, pc: usize) -> Option<u64> {
         self.register_root_masks(function)?.get(pc).copied()
@@ -2648,7 +2723,7 @@ impl ResidualProgram {
     /// `function`'s live register masks by pc, one past its last instruction included, when
     /// liveness covers it.
     pub(crate) fn register_root_masks(&self, function: u32) -> Option<&[u64]> {
-        let function = self.functions.get(function as usize)?;
+        let function = self.function_get(function as usize)?;
         if !function.register_roots.covered {
             return None;
         }
@@ -2669,7 +2744,7 @@ impl ResidualProgram {
     }
 
     pub(crate) fn source_position(&self, function: u32, pc: u32) -> Option<SourcePosition> {
-        let position = self.functions.get(function as usize)?.source_positions.at(pc)?;
+        let position = self.function_get(function as usize)?.source_positions.at(pc)?;
         self.adjust_source_position(position)
     }
 
@@ -2689,7 +2764,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 100;
+    pub const FORMAT_VERSION: u8 = 101;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;
@@ -2706,12 +2781,16 @@ impl ResidualProgram {
                 && self.functions.first().is_some_and(|root| root.strict))
     }
 
-    /// The root function's slots project no global var or global lexical binding, so each
-    /// slot of its environment is the binding itself.
-    pub(crate) fn root_slots_are_bindings(&self) -> bool {
+    /// Whether root `slot` is the binding itself: it projects no global var, and no global
+    /// lexical binding unless `lexical_slots_are_bindings` (outside a dynamic script's
+    /// evaluation, a Script's global lexical binding lives in its root slot).
+    pub(crate) fn root_slot_is_binding(&self, slot: u16, lexical_slots_are_bindings: bool) -> bool {
         self.functions.first().is_some_and(|root| {
-            (self.root_variables_are_local() || root.global_var_atoms().is_empty())
-                && (self.kind != ProgramKind::Script || root.global_lexical_atoms().is_empty())
+            let declaration = root.slot_declaration(usize::from(slot));
+            (!declaration.global_var || self.root_variables_are_local())
+                && (!declaration.global_lexical
+                    || lexical_slots_are_bindings
+                    || self.kind != ProgramKind::Script)
         })
     }
 

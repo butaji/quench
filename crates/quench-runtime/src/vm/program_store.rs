@@ -489,8 +489,13 @@ impl ProgramStore {
             .and_then(ProgramId::from_index)
     }
 
-    pub(crate) fn insert_shared(&mut self, program: Rc<ResidualProgram>) -> Option<ProgramId> {
+    pub(crate) fn insert_shared(&mut self, mut program: Rc<ResidualProgram>) -> Option<ProgramId> {
         let id = ProgramId::from_index(self.programs.len())?;
+        // A function compiles again on its first call; until then it keeps only its header.
+        // A program other owners share keeps its records.
+        if let Some(program) = Rc::get_mut(&mut program) {
+            program.release_replayable_records();
+        }
         let regexp_literals = vec![None; program.regexp_literal_sites.len()];
         let function_sources = vec![None; program.functions.len()];
         let lane_views = program
@@ -685,10 +690,16 @@ impl ProgramStore {
     }
 
     /// Whether `slot` of `id`'s root environment is the binding itself: no global var,
-    /// global lexical or module-import projection reads through it.
-    pub(crate) fn root_slot_is_binding(&self, id: ProgramId, slot: u16) -> bool {
+    /// global lexical (`ResidualProgram::root_slot_is_binding`) or module-import projection
+    /// reads through it.
+    pub(crate) fn root_slot_is_binding(
+        &self,
+        id: ProgramId,
+        slot: u16,
+        lexical_slots_are_bindings: bool,
+    ) -> bool {
         self.entry(id).is_some_and(|entry| {
-            entry.residual.root_slots_are_bindings()
+            entry.residual.root_slot_is_binding(slot, lexical_slots_are_bindings)
                 && !entry.module_imports.iter().any(|(local, _)| *local == slot)
         })
     }
@@ -851,8 +862,7 @@ impl ProgramStore {
         };
         if !entry
             .residual
-            .functions
-            .get(function as usize)
+            .function_get(function as usize)
             .is_some_and(|function| {
                 function.code.len() <= super::compiled::MAX_JIT_TIER_BYTECODES_PER_FUNCTION
             })
@@ -976,6 +986,13 @@ impl ProgramStore {
         self.entry(id)?.js_tiers.get(&function).cloned()
     }
 
+    /// Whether the JavaScript tier settled on not compiling `function`.
+    pub(super) fn js_tier_declined(&self, id: ProgramId, function: u32) -> bool {
+        self.entry(id)
+            .and_then(|entry| entry.js_tiers.get(&function))
+            .is_some_and(|state| matches!(state, JsTierState::Unsupported))
+    }
+
     pub(super) fn js_jit_diagnostics_enabled(&self) -> bool {
         self.js_jit_diagnostics.is_some()
     }
@@ -1085,7 +1102,7 @@ impl ProgramStore {
                     .residual
                     .functions
                     .get(function as usize)
-                    .and_then(|function| function.name.or(function.inferred_name))
+                    .and_then(|function| function.header().name.or(function.header().inferred_name))
                     .and_then(|atom| {
                         let index = atom as usize;
                         (index < entry.residual.atoms.len())
@@ -1202,7 +1219,7 @@ impl ProgramStore {
         ) -> super::dispatch_fast::LaneView,
     ) -> Option<*const super::dispatch_fast::LaneView> {
         let entry = self.entry(id)?;
-        let code = entry.residual.functions.get(function as usize)?;
+        let code = entry.residual.function_get(function as usize)?;
         let view = entry.lane_views.get(function as usize)?;
         Some(view.get_or_init(|| derive(code, &entry.constants, entry.residual.kind)))
     }
