@@ -45,3 +45,7 @@ cell per await to the two natives: 18% more collections on async-fs.
 - `v8-pairs-3.txt`: no await paths; geomean ×1.026, RSS unchanged (layout noise:
   crypto ×0.945, navier-stokes ×1.18).
 - Runtime lib 731/731 (debug, minor-collection verifier on).
+- Node `test/parallel` inventory (iteration build, `--jobs 3 --timeout-secs 10`,
+  inventory a417f98a082acec0): 2246 pass, as before. One pass→timeout,
+  test-performance-many-marks.js, passes alone twice; one timeout→pass,
+  test-stream2-read-sync-stack.js.
