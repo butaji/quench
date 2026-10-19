@@ -1028,8 +1028,12 @@ impl quench_runtime::Host for NodeHost {
     /// only as much of it as ran since the last collection (V8-v7 RegExp max RSS, static
     /// x86_64 unbolted, 2026-10-18: 7244-7500 -> 7136-7328 KiB at every collection's end;
     /// Splay 39800 -> 38988 KiB with the release before full collections).
+    /// The allocator's free pages, which the collection's sweep just freed, leave with them
+    /// (V8-v7 max RSS, static x86_64 unbolted, 2026-10-19: RegExp 6772-7044 -> 6664-6772 KiB,
+    /// EarleyBoyer 9048-9088 -> 8536-8576, the rest unchanged).
     fn at_collection_boundary(&mut self) {
         crate::host::resident_pages::release_read_only_pages();
+        crate::host::resident_pages::release_free_heap_pages();
     }
 
     fn proper_tail_calls(&self) -> bool {
