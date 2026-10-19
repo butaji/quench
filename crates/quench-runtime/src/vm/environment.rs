@@ -1793,25 +1793,47 @@ impl<H: Host> Vm<H> {
         else {
             return false;
         };
-        let function = *function;
         debug_assert_eq!(program, self.active_program);
-        if function == super::ROOT_FUNCTION_ID
-            || function == u32::MAX
-            || scope.program().is_some_and(|owner| owner != program.raw())
-        {
+        if !environment_admits_direct_store(p, program, *function, scope, slot) {
             return false;
         }
         let slot = usize::from(slot);
-        let Some(owner) = p.function_get(function as usize) else {
-            return false;
-        };
-        if owner.is_self_binding_slot(slot)
-            || super::arguments::mapped_arguments_slot(owner, slot).is_some()
-        {
-            return false;
-        }
         match self.heap.environment_slot_mut(env, slot) {
             Some(binding) if !binding.is_deleted() => {
+                *binding = value;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// `direct_store_environment` of a slot `env` owns: one lookup, which also makes the
+    /// write barrier's note, for the running frameless activation's own environment. A
+    /// slot another environment holds, or one holding any marker (an uninitialized binding),
+    /// returns `false` for the general store.
+    #[inline(always)]
+    pub(super) fn direct_store_own_environment(
+        &mut self,
+        p: &ResidualProgram,
+        program: super::ProgramId,
+        env: Value,
+        slot: u16,
+        value: Value,
+    ) -> bool {
+        let Some(Cell::Environment {
+            function,
+            scope,
+            slots,
+            ..
+        }) = self.heap.get_mut(env)
+        else {
+            return false;
+        };
+        if !environment_admits_direct_store(p, program, *function, scope, slot) {
+            return false;
+        }
+        match slots.owned_mut(usize::from(slot)) {
+            Some(binding) if !binding.is_internal_marker() => {
                 *binding = value;
                 true
             }
@@ -2412,4 +2434,28 @@ impl NameLookup {
             vm.outer_environment_binding(vm.captured_parent_environment(self.frame), self.atom)
         })
     }
+}
+
+/// Whether a store to `slot` of an environment of `function` with `scope` is a plain slot
+/// write in `program`: not the root's, a function-less layer's or another program's, nor a
+/// self binding or a mapped arguments parameter, which the general store handles.
+#[inline(always)]
+fn environment_admits_direct_store(
+    p: &ResidualProgram,
+    program: super::ProgramId,
+    function: u32,
+    scope: &crate::heap::EnvironmentScopeRef,
+    slot: u16,
+) -> bool {
+    if function == super::ROOT_FUNCTION_ID
+        || function == u32::MAX
+        || scope.program().is_some_and(|owner| owner != program.raw())
+    {
+        return false;
+    }
+    let slot = usize::from(slot);
+    p.functions.get(function as usize).is_some_and(|owner| {
+        !owner.is_self_binding_slot(slot)
+            && super::arguments::mapped_arguments_slot(owner, slot).is_none()
+    })
 }
