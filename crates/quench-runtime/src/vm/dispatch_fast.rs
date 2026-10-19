@@ -373,13 +373,15 @@ enum ActivationArguments {
 }
 
 /// A user function a lane `Call` may activate without a frame, valid as the general loop's
-/// `InLoopCallTarget` is: for `callee` while the collection epoch, realm and program it was
-/// resolved under hold, which its `generation` names.
+/// `InLoopCallTarget` is: for `callee` while the collection epoch and realm it was resolved
+/// under hold, which its `generation` names, and only from `program`, the callee's own,
+/// since every lane call stays within the running program.
 #[derive(Clone, Copy)]
 pub(super) struct ScriptCallTarget {
     callee: Value,
     /// The `LaneStack::generation` it was resolved in.
     generation: u64,
+    program: ProgramId,
     function: u32,
     env: Value,
     view: *const LaneView,
@@ -506,6 +508,7 @@ const NO_FORWARDED_METHOD: u16 = u16::MAX;
 const EMPTY_SCRIPT_CALL_TARGET: ScriptCallTarget = ScriptCallTarget {
     callee: Value::UNDEFINED,
     generation: NO_SCRIPT_GENERATION,
+    program: ProgramId::MAIN,
     function: 0,
     env: Value::UNDEFINED,
     view: std::ptr::null(),
@@ -540,6 +543,18 @@ fn script_target_set(callee: Value) -> Option<usize> {
     let index = (hashed >> (u32::BITS - SCRIPT_CALL_TARGETS.trailing_zeros())) as usize;
     Some(index & (SCRIPT_CALL_TARGETS - SCRIPT_TARGET_WAYS))
 }
+
+/// A callee that has no frameless target while `generation` and `program` hold: its calls
+/// take the general path without resolving it again.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct RejectedCallTarget {
+    callee: Value,
+    generation: u64,
+    program: ProgramId,
+}
+
+const NO_REJECTED_CALL_TARGET: RejectedCallTarget =
+    RejectedCallTarget { callee: Value::UNDEFINED, generation: NO_SCRIPT_GENERATION, program: ProgramId::MAIN };
 
 /// What a constructor's initializer body (`ScriptCallTarget::initializes`) made of a receiver
 /// whose adds all hit: the callee's receiver template under `prototype`, which the callee and
@@ -610,6 +625,9 @@ pub(super) struct LaneStack {
     activations: Vec<Activation>,
     /// Resolved targets of lane `Call` records (`Vm::script_call_target`).
     script_targets: Box<[ScriptCallTarget; SCRIPT_CALL_TARGETS]>,
+    /// Callees `Vm::resolve_script_call_target` found no frameless target for, by the same
+    /// index, with the generation and program that answer held under.
+    rejected_targets: Box<[RejectedCallTarget; SCRIPT_CALL_TARGETS]>,
     /// Constructors' plans (`lane_initialize_fields`, `lane_planned_receiver`).
     construct_plans: Box<[ConstructPlan; CONSTRUCT_PLANS]>,
     /// The forwarding constructors whose activations constructions skipped, one per
@@ -624,11 +642,12 @@ pub(super) struct LaneStack {
     /// which `lane_call_native` does before any guest code runs), or none while a collection
     /// is due (`note_allocation`). One comparison stands for the three.
     activation_limit: std::cell::Cell<usize>,
-    /// Names the collection epoch, realm and program of the running lane, which no lane
-    /// instruction changes: a target resolved under another generation is stale.
+    /// Names the collection epoch and realm of the running lane, which no lane instruction
+    /// changes: a target resolved under another generation is stale. Lane runs move between
+    /// programs far more often than either changes, so each target names its program instead.
     generation: u64,
-    /// The epoch, realm and program `generation` names.
-    generation_key: (u64, Value, ProgramId),
+    /// The epoch and realm `generation` names.
+    generation_key: (u64, Value),
 }
 
 /// A generation no lane runs under: an empty target entry never matches.
@@ -640,12 +659,13 @@ impl Default for LaneStack {
             values: Vec::new(),
             activations: Vec::new(),
             script_targets: Box::new([EMPTY_SCRIPT_CALL_TARGET; SCRIPT_CALL_TARGETS]),
+            rejected_targets: Box::new([NO_REJECTED_CALL_TARGET; SCRIPT_CALL_TARGETS]),
             construct_plans: Box::new([EMPTY_CONSTRUCT_PLAN; CONSTRUCT_PLANS]),
             forwarders: Vec::new(),
             forwarded_methods: Vec::new(),
             activation_limit: std::cell::Cell::new(0),
             generation: NO_SCRIPT_GENERATION,
-            generation_key: (0, Value::UNDEFINED, ProgramId::MAIN),
+            generation_key: (0, Value::UNDEFINED),
         }
     }
 }
@@ -663,6 +683,7 @@ impl LaneStack {
     /// Forget resolved call targets, as the general loop's call target cache is reset.
     pub(super) fn clear_script_targets(&mut self) {
         *self.script_targets = [EMPTY_SCRIPT_CALL_TARGET; SCRIPT_CALL_TARGETS];
+        *self.rejected_targets = [NO_REJECTED_CALL_TARGET; SCRIPT_CALL_TARGETS];
     }
 
     /// The index of `method` in `forwarded_methods`, recording it when new, or
@@ -711,7 +732,7 @@ impl LaneStack {
         self.activation_limit.set(limit);
     }
 
-    fn enter_generation(&mut self, key: (u64, Value, ProgramId)) {
+    fn enter_generation(&mut self, key: (u64, Value)) {
         if self.generation == NO_SCRIPT_GENERATION || self.generation_key != key {
             self.generation += 1;
             self.generation_key = key;
@@ -1676,6 +1697,44 @@ lane_handler! {
     }
 }
 
+lane_handler! {
+    /// `MakeClosure` in a frame's own lane run (`lane_closure_value`).
+    fn lane_make_closure<>(cx, r, ip, i, view) {
+        let Some(value) = lane_closure_value(cx, i) else {
+            return exit(ip);
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+/// The closure a `MakeClosure` record makes as the general loop does, in a frame's own lane
+/// run of a function with no binding sites outside a module's root: its environment is the
+/// frame's, promoted once, and making it allocates and runs no guest code. Any other
+/// closure takes the general path; a promotion made first is idempotent.
+#[inline(never)]
+fn lane_closure_value<H: Host>(cx: *mut LaneContext<H>, i: &LaneInstruction) -> Option<Value> {
+    let vm = unsafe { vm(cx) };
+    if !vm.lane_stack.activations.is_empty() {
+        return None;
+    }
+    // SAFETY: the context's program outlives the lane run.
+    let (code, frame) = unsafe { (&*(*cx).code, (*cx).frame) };
+    let function = vm.frames[frame].function;
+    if function == super::ROOT_FUNCTION_ID
+        || !code.function_get(function as usize)?.binding_sites.is_empty()
+    {
+        return None;
+    }
+    let env = vm.promote_frame_environment(frame);
+    // Promotion moves the frame's captured locals into the environment, so a capture
+    // slot pointer found before it is not reused.
+    unsafe { (*cx).capture = std::ptr::null() };
+    let value = vm.closure(code, i.imm(), env).ok();
+    note_allocation(vm);
+    value
+}
+
 /// The object a `CreateRegExpLiteral` record makes in a frame's own lane run, whose frame
 /// names the literal's program. A pattern that fails to compile raises at its instruction
 /// through `Vm::lane_raised`; inside a lane activation, `None` leaves it to the general path.
@@ -1721,6 +1780,17 @@ lane_handler! {
         // other reference into it is live while the object is allocated.
         let properties = unsafe { std::slice::from_raw_parts(r.0.add(usize::from(i.b)), usize::from(i.c)) };
         let value = vm.heap.alloc_object_with_properties(vm.object_proto, shape, properties);
+        note_allocation(vm);
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    /// `MakeObject`: an empty ordinary object (`Vm::object`), as the general loop makes it.
+    fn lane_make_object<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let value = vm.object();
         note_allocation(vm);
         r.set(i.a, value);
         next!(cx, r, following(ip), view)
@@ -4331,7 +4401,7 @@ impl<H: Host> Vm<H> {
             let mut result = unsafe { (*activation.call).a };
             self.frames[caller].pc = call_pc + 1;
             self.frames[caller].pc_is_resume = true;
-            let count = usize::from(code.functions[activation.function as usize].registers);
+            let count = usize::from(code.function(activation.function as usize).registers);
             let window = &registers[activation.window..activation.window + count];
             let construct_this = activation
                 .script()
@@ -4355,7 +4425,7 @@ impl<H: Host> Vm<H> {
                             .expect("each forwarder activation has its skipped constructor");
                         let constructor_registers = vec![
                             Value::UNDEFINED;
-                            usize::from(code.functions[forwarder.function as usize].registers)
+                            usize::from(code.function(forwarder.function as usize).registers)
                         ];
                         self.push_script_frame_with_registers(
                             code,
@@ -4452,8 +4522,10 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     fn script_call_entry(&self, callee: Value) -> Option<*const ScriptCallTarget> {
         let set = script_target_set(callee)?;
-        let generation = self.lane_stack.generation;
-        let holds = |cached: &ScriptCallTarget| cached.callee == callee && cached.generation == generation;
+        let (generation, program) = (self.lane_stack.generation, self.active_program);
+        let holds = |cached: &ScriptCallTarget| {
+            cached.callee == callee && cached.generation == generation && cached.program == program
+        };
         let first = &self.lane_stack.script_targets[set];
         if holds(first) {
             return Some(first as *const ScriptCallTarget);
@@ -4462,9 +4534,8 @@ impl<H: Host> Vm<H> {
         holds(second).then_some(second as *const ScriptCallTarget)
     }
 
-    /// Resolve and cache `callee` as a frameless lane call target: a user function of the
-    /// active program whose activation is its registers, plus the values it was passed when
-    /// it forwards them (`CallPlan::registers_only`).
+    /// Resolve and cache `callee` as a frameless lane call target, remembering a callee that
+    /// has none (`LaneStack::rejected_targets`).
     #[inline(never)]
     fn resolve_script_call_target(
         &mut self,
@@ -4472,11 +4543,44 @@ impl<H: Host> Vm<H> {
         callee: Value,
     ) -> Option<ScriptCallTarget> {
         let set = script_target_set(callee)?;
+        // A function the JavaScript tier may still claim keeps its frame, where the tier
+        // counts and enters it; uncached, so the lane takes it once the tier declines it.
+        if let Some((program, function, _)) = self.same_realm_user_target(callee)
+            && program == self.active_program
+            && self.js_tier_may_claim(code, program, function)
+        {
+            return None;
+        }
+        let rejected = RejectedCallTarget {
+            callee,
+            generation: self.lane_stack.generation,
+            program: self.active_program,
+        };
+        if self.lane_stack.rejected_targets[set] == rejected {
+            return None;
+        }
+        let target = self.frameless_call_target(code, callee, set);
+        if target.is_none() {
+            self.lane_stack.rejected_targets[set] = rejected;
+        }
+        target
+    }
+
+    /// `resolve_script_call_target`'s answer: a user function of the active program whose
+    /// activation is its registers, plus the values it was passed when it forwards them
+    /// (`CallPlan::registers_only`), cached in `set`; one that needs a frame is cached as
+    /// `CallEntry::Frame`, so its calls take one without resolving it again.
+    fn frameless_call_target(
+        &mut self,
+        code: &ResidualProgram,
+        callee: Value,
+        set: usize,
+    ) -> Option<ScriptCallTarget> {
         let (program, function, env, numeric) = self.same_realm_script_target(callee)?;
         if function == super::ROOT_FUNCTION_ID || program != self.active_program {
             return None;
         }
-        let body = code.functions.get(function as usize)?;
+        let body = code.function_get(function as usize)?;
         let plan = body.call_plan(code);
         // A numeric body's own frame constructs nothing in place
         // (`LaneContext::script_constructs`), which its activation would inherit from the
@@ -4499,6 +4603,7 @@ impl<H: Host> Vm<H> {
             let target = ScriptCallTarget {
                 callee,
                 generation: self.lane_stack.generation,
+                program,
                 function,
                 env,
                 entry: CallEntry::Frame,
@@ -4517,6 +4622,7 @@ impl<H: Host> Vm<H> {
         let target = ScriptCallTarget {
             callee,
             generation: self.lane_stack.generation,
+            program,
             function,
             env,
             view,
@@ -4734,7 +4840,7 @@ lane_handler! {
         let global = function != super::ROOT_FUNCTION_ID
             && vm.programs.runs_in_global_scope(unsafe { (*cx).program })
             && !vm.atom_class(i.imm()).contains(AtomClass::INTERNAL)
-            && code.functions.get(function as usize).is_some_and(|function| {
+            && code.function_get(function as usize).is_some_and(|function| {
                 function.names_resolve_statically(&code.functions, &code.atoms)
             });
         if global {
@@ -4950,6 +5056,12 @@ lane_handler! {
                     std::slice::from_raw_parts(r.0.add(usize::from(window)), usize::from(argc))
                 };
                 vm.pure_string_method_call(code, r.get(i.b), receiver, args)
+                    .or_else(|| {
+                        let matched = vm.pure_regexp_call(code, r.get(i.b), receiver, args)?;
+                        // The match array and its strings are new cells.
+                        note_allocation(vm);
+                        Some(matched)
+                    })
                     .or_else(|| lane_call_native(cx, r, ip, i))
             }
         };
@@ -5011,27 +5123,6 @@ fn lane_call_native<H: Host>(
         && let Some(result) = super::number::math_unary(native, value)
     {
         return Some(Value::number(result));
-    }
-    // A RegExp exec or test that runs no guest code and raises nothing observes no frame
-    // either (`Vm::steady_regexp_call`).
-    if let Some(native) = native
-        && argc > 0
-        // SAFETY: the context's program outlives the lane run.
-        && let Some(result) = vm.steady_regexp_call(
-            unsafe { &*(*cx).code },
-            native,
-            r.get(i.c),
-            r.get(window),
-        )
-    {
-        note_allocation(vm);
-        return match result {
-            Ok(value) => Some(value),
-            Err(error) => {
-                vm.lane_raised = Some(error);
-                None
-            }
-        };
     }
     if !unsafe { (*cx).script_calls } {
         return None;
@@ -5458,7 +5549,7 @@ unsafe fn lane_kept_arguments<H: Host>(cx: *mut LaneContext<H>) -> Option<Activa
     }
     let activation = vm.lane_stack.activations.last()?;
     let script = activation.script().filter(|script| script.forwards)?;
-    let registers = usize::from(unsafe { &*(*cx).code }.functions[activation.function as usize].registers);
+    let registers = usize::from(unsafe { &*(*cx).code }.function(activation.function as usize).registers);
     // SAFETY: the activation's window holds its registers, then its kept values.
     let values = unsafe { vm.lane_stack.values.as_ptr().add(activation.window + registers) };
     Some(ActivationArguments::Kept(values, usize::from(script.argc)))
@@ -5626,7 +5717,7 @@ fn lane_initialize_fields<H: Host>(
         forwarded: None,
     };
     let mut plannable = true;
-    for store in code.functions[function as usize].this_field_stores() {
+    for store in code.function(function as usize).this_field_stores() {
         let atom = store.imm();
         let parameter = store.a();
         if !vm.field_add_atom_eligible(atom)
@@ -6002,7 +6093,7 @@ fn lane_call_frame<H: Host>(ip: Ip) -> Ip {
     let vm = unsafe { vm(cx) };
     let code = unsafe { &*(*cx).code };
     let callee = u32::from(i.b);
-    let count = usize::from(code.functions[usize::from(i.b)].registers);
+    let count = usize::from(code.function(usize::from(i.b)).registers);
     let window = fill_room::<ACTIVATION_FILL_BLOCK>(count);
     let stack = &vm.lane_stack;
     let values_full = stack.values.capacity() - stack.values.len() < window;
@@ -6074,7 +6165,7 @@ fn lane_returning_call_admitted<H: Host>(cx: *mut LaneContext<H>) -> bool {
         Some(caller) => caller.function,
         None => vm.frames[unsafe { (*cx).frame }].function,
     };
-    !unsafe { &*(*cx).code }.functions[function as usize].strict
+    !unsafe { &*(*cx).code }.function(function as usize).strict
 }
 
 /// The frame's own call record at `call` returns `value`, its callee's completion: the
@@ -6437,37 +6528,6 @@ lane_handler! {
 }
 
 lane_handler! {
-    /// `MakeClosure` in a VM frame (a frameless activation makes none,
-    /// `CallPlan::registers_only`) of a function that records no binding sites: the general
-    /// path's closure over the frame's promoted environment (`Vm::promote_frame_environment`,
-    /// `Vm::closure`), which allocates and runs no guest code. A root's closures, which a
-    /// module caches, binding sites, which give the environment an eval scope, and a failure
-    /// take the general path.
-    #[inline(never)]
-    fn lane_make_closure<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        // SAFETY: the context's program outlives the lane run.
-        let code = unsafe { &*(*cx).code };
-        let frame = unsafe { (*cx).frame };
-        let function = vm.frames[frame].function;
-        if !vm.lane_stack.activations.is_empty()
-            || function == super::ROOT_FUNCTION_ID
-            || !code.functions[function as usize].binding_sites.is_empty()
-        {
-            return exit(ip);
-        }
-        let environment = vm.promote_frame_environment(frame);
-        let Ok(closure) = vm.closure(code, i.imm(), environment) else {
-            return exit(ip);
-        };
-        note_allocation(vm);
-        vm.write(frame, i.a, closure);
-        // Promotion keeps the frame's register file in place.
-        next!(cx, r, following(ip), Carried::SCRIPT)
-    }
-}
-
-lane_handler! {
     /// A JavaScript `Call` of a user function that needs a VM frame (no frameless target,
     /// `Vm::resolve_script_call_target`): the frame and pending call the general loop's
     /// in-loop call makes (`Vm::push_in_loop_call`), entered in place. Lane activations become
@@ -6555,8 +6615,7 @@ fn lane_enter_script_frame<H: Host>(cx: *mut LaneContext<H>, frame: usize) -> Ip
     let function = vm.frames[frame].function;
     unsafe {
         (*cx).script_constructs = code
-            .functions
-            .get(function as usize)
+            .function_get(function as usize)
             .is_some_and(|function| function.dispatch == crate::bytecode::DispatchClass::General);
     }
     lane_enter_frame(cx, frame, vm.frames[frame].pc)
@@ -6760,6 +6819,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::MakeClosure => Some(lane_make_closure::<H>),
         Op::MakeObjectLiteral => Some(lane_make_object_literal::<H>),
         Op::MakeArray => Some(lane_make_array::<H>),
+        Op::MakeObject => Some(lane_make_object::<H>),
         Op::CreateRegExpLiteral => Some(lane_regexp_literal::<H>),
         Op::CallForwardingArguments => Some(lane_forward_call::<H>),
         Op::SuperConstArrayObject2 => Some(lane_const_array_object2::<H>),
@@ -7981,11 +8041,7 @@ impl<H: Host> Vm<H> {
         };
         let outer_floor = LANE_FLOOR.with(|current| current.replace(floor));
         self.lane_stack.refresh_activation_limit();
-        self.lane_stack.enter_generation((
-            self.heap.collection_epoch(),
-            self.realm.globals,
-            self.active_program,
-        ));
+        self.lane_stack.enter_generation((self.heap.collection_epoch(), self.realm.globals));
         let mut context = LaneContext {
             vm: self,
             code,
@@ -8010,8 +8066,7 @@ impl<H: Host> Vm<H> {
                 && *frame + 1 == self.frames.len()
                 && self.frames[*frame].function != super::ROOT_FUNCTION_ID,
             script_constructs: code
-                .functions
-                .get(self.frames[*frame].function as usize)
+                .function_get(self.frames[*frame].function as usize)
                 .is_some_and(|function| {
                     function.dispatch == crate::bytecode::DispatchClass::General
                 }),

@@ -1,8 +1,9 @@
 use super::object_descriptors::PropertyDescriptorRecord;
+use super::atom_keys::AtomText;
 use super::wtf16::{JsString, Units};
 use super::*;
 use crate::unicode;
-use std::fmt::Write as _;
+use std::io::Write as _;
 
 const JSON_NULL_INITIAL: u16 = b'n' as u16;
 const JSON_TRUE_INITIAL: u16 = b't' as u16;
@@ -26,7 +27,6 @@ enum JsonValue {
     Bool(bool),
     Number(f64),
     String(JsString),
-    Raw(String),
     Source(Box<JsonValue>, JsString),
     Array(Vec<JsonValue>),
     Object(Vec<(JsString, JsonValue)>),
@@ -38,6 +38,32 @@ struct JsonSerialization {
     gap: String,
     ancestors: Vec<Value>,
     to_json: Atom,
+    /// The text written so far, and the nesting depth of the value being written.
+    output: JsonText,
+    depth: usize,
+}
+
+impl JsonSerialization {
+    /// Starts a member of an array or object that already holds `written` members: the
+    /// separator, then the line break and indentation a gap asks for.
+    fn begin_member(&mut self, written: usize) {
+        if written != 0 {
+            self.output.push(b',');
+        }
+        if !self.gap.is_empty() {
+            self.output.push(b'\n');
+            write_indent(&mut self.output, &self.gap, self.depth);
+        }
+    }
+
+    /// Closes an array or object of `written` members with `close`.
+    fn end_container(&mut self, written: usize, close: u8) {
+        if written != 0 && !self.gap.is_empty() {
+            self.output.push(b'\n');
+            write_indent(&mut self.output, &self.gap, self.depth);
+        }
+        self.output.push(close);
+    }
 }
 
 /// The key SerializeJSONProperty reads from its holder: an array index, or a property name.
@@ -48,23 +74,14 @@ enum JsonKey {
     Name(Atom),
 }
 
-fn write_json_string(value: &JsString, output: &mut String) {
-    output.push('"');
+/// The JSON text a stringification writes: UTF-8 bytes, decoded once when it completes.
+type JsonText = Vec<u8>;
+
+fn write_json_string(value: &JsString, output: &mut JsonText) {
     match value.units() {
-        // ASCII runs that need no escape are copied whole.
-        Units::Ascii(bytes) => {
-            let mut run = 0;
-            for (index, byte) in bytes.iter().enumerate() {
-                let scalar = char::from(*byte);
-                if json_escape_needed(scalar) {
-                    output.push_str(ascii_text(&bytes[run..index]));
-                    write_json_scalar(scalar, output);
-                    run = index + 1;
-                }
-            }
-            output.push_str(ascii_text(&bytes[run..]));
-        }
+        Units::Ascii(bytes) => write_json_utf8(bytes, output),
         Units::Wide(units) => {
+            output.push(b'"');
             let mut index = 0;
             while index < units.len() {
                 let unit = units[index];
@@ -80,94 +97,66 @@ fn write_json_string(value: &JsString, output: &mut String) {
                 };
                 match scalar {
                     Some(scalar) => write_json_scalar(scalar, output),
-                    None => {
-                        let _ = write!(output, "\\u{unit:04x}");
-                    }
+                    None => write_unicode_escape(u32::from(unit), output),
                 }
             }
+            output.push(b'"');
         }
     }
-    output.push('"');
+}
+
+/// QuoteJSONString of UTF-8 `text`. Every byte QuoteJSONString escapes is ASCII and no
+/// multi-byte sequence contains one, so the runs between escapes are copied whole.
+fn write_json_utf8(text: &[u8], output: &mut JsonText) {
+    output.push(b'"');
+    let mut run = 0;
+    for (index, byte) in text.iter().enumerate() {
+        if json_escape_needed(*byte) {
+            output.extend_from_slice(&text[run..index]);
+            write_json_scalar(char::from(*byte), output);
+            run = index + 1;
+        }
+    }
+    output.extend_from_slice(&text[run..]);
+    output.push(b'"');
 }
 
 /// QuoteJSONString escapes every code point up to U+001F.
-const LAST_CONTROL_CHARACTER: char = '\u{1f}';
+const LAST_CONTROL_CHARACTER: u8 = 0x1f;
 
-fn ascii_text(bytes: &[u8]) -> &str {
-    std::str::from_utf8(bytes).expect("ASCII string units")
+/// Whether QuoteJSONString writes the ASCII `byte` as an escape rather than as itself.
+fn json_escape_needed(byte: u8) -> bool {
+    matches!(byte, b'"' | b'\\') || byte <= LAST_CONTROL_CHARACTER
 }
 
-/// Whether QuoteJSONString writes `scalar` as an escape rather than as itself.
-fn json_escape_needed(scalar: char) -> bool {
-    matches!(scalar, '"' | '\\') || scalar <= LAST_CONTROL_CHARACTER
-}
-
-fn write_json_scalar(scalar: char, output: &mut String) {
-    match scalar {
-        '"' => output.push_str("\\\""),
-        '\\' => output.push_str("\\\\"),
-        '\u{08}' => output.push_str("\\b"),
-        '\u{0c}' => output.push_str("\\f"),
-        '\n' => output.push_str("\\n"),
-        '\r' => output.push_str("\\r"),
-        '\t' => output.push_str("\\t"),
-        scalar if scalar <= LAST_CONTROL_CHARACTER => {
-            let _ = write!(output, "\\u{:04x}", scalar as u32);
+fn write_json_scalar(scalar: char, output: &mut JsonText) {
+    let escape: &[u8] = match scalar {
+        '"' => b"\\\"",
+        '\\' => b"\\\\",
+        '\u{08}' => b"\\b",
+        '\u{0c}' => b"\\f",
+        '\n' => b"\\n",
+        '\r' => b"\\r",
+        '\t' => b"\\t",
+        scalar if u32::from(scalar) <= u32::from(LAST_CONTROL_CHARACTER) => {
+            return write_unicode_escape(u32::from(scalar), output);
         }
-        scalar => output.push(scalar),
-    }
+        scalar => {
+            let mut buffer = [0; char::MAX_LEN_UTF8];
+            return output.extend_from_slice(scalar.encode_utf8(&mut buffer).as_bytes());
+        }
+    };
+    output.extend_from_slice(escape);
 }
 
-fn write_json(value: &JsonValue, output: &mut String, gap: &str, depth: usize) {
-    match value {
-        JsonValue::Null => output.push_str("null"),
-        JsonValue::Bool(value) => output.push_str(if *value { "true" } else { "false" }),
-        JsonValue::Number(value) => output.push_str(&crate::number_to_string::format(*value)),
-        JsonValue::String(value) => write_json_string(value, output),
-        JsonValue::Raw(value) => output.push_str(value),
-        JsonValue::Source(value, _) => write_json(value, output, gap, depth),
-        JsonValue::Array(values) => {
-            output.push('[');
-            for (index, value) in values.iter().enumerate() {
-                if index != 0 {
-                    output.push_str(if gap.is_empty() { "," } else { ",\n" });
-                } else if !values.is_empty() && !gap.is_empty() {
-                    output.push('\n');
-                }
-                write_indent(output, gap, depth + 1);
-                write_json(value, output, gap, depth + 1);
-            }
-            if !values.is_empty() && !gap.is_empty() {
-                output.push('\n');
-                write_indent(output, gap, depth);
-            }
-            output.push(']');
-        }
-        JsonValue::Object(values) => {
-            output.push('{');
-            for (index, (key, value)) in values.iter().enumerate() {
-                if index != 0 {
-                    output.push_str(if gap.is_empty() { "," } else { ",\n" });
-                } else if !values.is_empty() && !gap.is_empty() {
-                    output.push('\n');
-                }
-                write_indent(output, gap, depth + 1);
-                write_json_string(key, output);
-                output.push_str(if gap.is_empty() { ":" } else { ": " });
-                write_json(value, output, gap, depth + 1);
-            }
-            if !values.is_empty() && !gap.is_empty() {
-                output.push('\n');
-                write_indent(output, gap, depth);
-            }
-            output.push('}');
-        }
-    }
+/// The `\uXXXX` escape of `code`.
+fn write_unicode_escape(code: u32, output: &mut JsonText) {
+    let _ = write!(output, "\\u{code:04x}");
 }
 
-fn write_indent(output: &mut String, gap: &str, depth: usize) {
+fn write_indent(output: &mut JsonText, gap: &str, depth: usize) {
     for _ in 0..depth {
-        output.push_str(gap);
+        output.extend_from_slice(gap.as_bytes());
     }
 }
 
@@ -289,7 +278,6 @@ impl<'v, H: Host> JsonHeapBuilder<'v, H> {
             JsonValue::Bool(false) => self.literal(JsonLiteral::False),
             JsonValue::Number(value) => self.number(*value),
             JsonValue::String(value) => self.vm.heap.alloc(Cell::String(value.clone())),
-            JsonValue::Raw(_) => unreachable!("raw JSON fragments are not parser values"),
             JsonValue::Source(value, _) => self.materialize(value)?,
             JsonValue::Array(values) => {
                 let values = values
@@ -903,6 +891,8 @@ impl<H: Host> Vm<H> {
             gap,
             ancestors: Vec::new(),
             to_json: self.intern_atom("toJSON"),
+            output: JsonText::new(),
+            depth: 0,
         };
         let holder = self.json_object();
         let holder_root = self.heap.root(holder);
@@ -911,11 +901,10 @@ impl<H: Host> Vm<H> {
         let holder = self.heap.root_value(holder_root).unwrap_or(holder);
         let serialized = self.json_serialize_property(p, holder, JsonKey::Name(empty), &mut state);
         self.heap.release_root(holder_root);
-        let Some(value) = serialized? else {
+        if !serialized? {
             return Ok(Value::UNDEFINED);
-        };
-        let mut text = String::new();
-        write_json(&value, &mut text, &state.gap, 0);
+        }
+        let text = String::from_utf8(state.output).expect("JSON text is written as UTF-8");
         Ok(self.heap.alloc(Cell::String(text.into())))
     }
 
@@ -1004,7 +993,7 @@ impl<H: Host> Vm<H> {
         holder: Value,
         key: JsonKey,
         state: &mut JsonSerialization,
-    ) -> Result<Option<JsonValue>, JsError> {
+    ) -> Result<bool, JsError> {
         let _stack = self.enter_stack()?;
         let holder_root = self.heap.root(holder);
         let result = (|| {
@@ -1078,21 +1067,25 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         value: Value,
         state: &mut JsonSerialization,
-    ) -> Result<Option<JsonValue>, JsError> {
+    ) -> Result<bool, JsError> {
         if value.is_undefined() || value.is_deleted() || self.is_function(value) {
-            return Ok(None);
+            return Ok(false);
         }
         if value.is_null() {
-            return Ok(Some(JsonValue::Null));
+            state.output.extend_from_slice(b"null");
+            return Ok(true);
         }
         if let Some(value) = value.as_bool() {
-            return Ok(Some(JsonValue::Bool(value)));
+            state.output.extend_from_slice(if value { b"true" } else { b"false" });
+            return Ok(true);
         }
         if let Some(value) = value.as_number() {
-            if !value.is_finite() {
-                return Ok(Some(JsonValue::Null));
+            if value.is_finite() {
+                state.output.extend_from_slice(crate::number_to_string::format(value).as_bytes());
+            } else {
+                state.output.extend_from_slice(b"null");
             }
-            return Ok(Some(JsonValue::Number(value)));
+            return Ok(true);
         }
         let unboxed = self.json_unbox(p, value)?;
         if unboxed != value {
@@ -1100,30 +1093,33 @@ impl<H: Host> Vm<H> {
         }
         let value = unboxed;
         if let Some(raw) = self.json_raw_text(value) {
-            return Ok(Some(JsonValue::Raw(raw)));
+            state.output.extend_from_slice(raw.as_bytes());
+            return Ok(true);
         }
         if self.heap.object_record(value).is_some() || self.heap.promise(value).is_some() {
-            return self.json_serialize_object(p, value, state).map(Some);
+            return self.json_serialize_object(p, value, state).map(|()| true);
         }
         if self.heap.array(value).is_some() {
-            return self.json_serialize_array(p, value, state).map(Some);
+            return self.json_serialize_array(p, value, state).map(|()| true);
         }
         match self.heap.get(value).cloned() {
-            Some(Cell::String(value)) => Ok(Some(JsonValue::String(value))),
-            Some(Cell::Symbol(_)) => Ok(None),
+            Some(Cell::String(text)) => {
+                write_json_string(&text, &mut state.output);
+                Ok(true)
+            }
+            Some(Cell::Symbol(_)) => Ok(false),
             Some(Cell::BigInt(_)) => {
                 Err(self.type_error(p, "Do not know how to serialize a BigInt".into()))
             }
-            Some(Cell::Function(_)) | None => Ok(None),
+            Some(Cell::Function(_)) | None => Ok(false),
             Some(Cell::Array { .. } | Cell::Promise(_)) => {
                 unreachable!("heap.array and heap.promise classify their values before this match")
             }
-            _ if self.json_raw_text(value).is_some() => {
-                Ok(self.json_raw_text(value).map(JsonValue::Raw))
+            _ if self.is_array(p, value)? => {
+                self.json_serialize_array(p, value, state).map(|()| true)
             }
-            _ if self.is_array(p, value)? => self.json_serialize_array(p, value, state).map(Some),
             Some(Cell::Object(_)) => {
-                self.json_serialize_object(p, value, state).map(Some)
+                self.json_serialize_object(p, value, state).map(|()| true)
             }
             Some(Cell::Proxy { .. })
             | Some(Cell::Date { .. })
@@ -1150,10 +1146,10 @@ impl<H: Host> Vm<H> {
             | Some(Cell::WasmGlobal { .. })
             | Some(Cell::WasmMemory { .. })
             | Some(Cell::WasmTable { .. }) => {
-                self.json_serialize_object(p, value, state).map(Some)
+                self.json_serialize_object(p, value, state).map(|()| true)
             }
             Some(Cell::Environment { .. })
-            | Some(Cell::Iterator { .. })
+            | Some(Cell::Iterator(_))
             | Some(Cell::ArrayFromAsyncState(_))
             | Some(Cell::AwaitState(_))
             | Some(Cell::PromiseResolvingState { .. })
@@ -1165,7 +1161,7 @@ impl<H: Host> Vm<H> {
             | Some(Cell::WasmException { .. })
             | Some(Cell::WasmV128(_))
             | Some(Cell::BindingReference { .. })
-            | Some(Cell::WasmHostFunction { .. }) => Ok(None),
+            | Some(Cell::WasmHostFunction { .. }) => Ok(false),
         }
     }
 
@@ -1198,21 +1194,24 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         array: Value,
         state: &mut JsonSerialization,
-    ) -> Result<JsonValue, JsError> {
+    ) -> Result<(), JsError> {
         self.json_push_ancestor(p, array, state)?;
         let array_root = self.heap.root(array);
         let result = (|| {
             let array = self.heap.root_value(array_root).unwrap_or(array);
             let length = self.array_like_length(p, array)?;
-            let mut output = Vec::with_capacity(length);
+            state.output.push(b'[');
+            state.depth += 1;
             for index in 0..length {
                 let array = self.heap.root_value(array_root).unwrap_or(array);
-                output.push(
-                    self.json_serialize_property(p, array, JsonKey::Index(index), state)?
-                        .unwrap_or(JsonValue::Null),
-                );
+                state.begin_member(index);
+                if !self.json_serialize_property(p, array, JsonKey::Index(index), state)? {
+                    state.output.extend_from_slice(b"null");
+                }
             }
-            Ok(JsonValue::Array(output))
+            state.depth -= 1;
+            state.end_container(length, b']');
+            Ok(())
         })();
         self.heap.release_root(array_root);
         state.ancestors.pop();
@@ -1224,7 +1223,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         object: Value,
         state: &mut JsonSerialization,
-    ) -> Result<JsonValue, JsError> {
+    ) -> Result<(), JsError> {
         self.json_push_ancestor(p, object, state)?;
         let object_root = self.heap.root(object);
         let result = (|| {
@@ -1234,20 +1233,38 @@ impl<H: Host> Vm<H> {
             } else {
                 self.json_enumerable_keys(p, object)?
             };
-            let mut output = Vec::new();
+            state.output.push(b'{');
+            state.depth += 1;
+            let mut written = 0;
             for key in keys {
                 let object = self.heap.root_value(object_root).unwrap_or(object);
-                if let Some(value) =
-                    self.json_serialize_property(p, object, JsonKey::Name(key), state)?
-                {
-                    output.push((self.atom_value(key), value));
+                // The member is written before its value is known; an omitted value
+                // takes it back.
+                let member = state.output.len();
+                state.begin_member(written);
+                self.write_json_key(key, &mut state.output);
+                state.output.extend_from_slice(if state.gap.is_empty() { b":" } else { b": " });
+                if self.json_serialize_property(p, object, JsonKey::Name(key), state)? {
+                    written += 1;
+                } else {
+                    state.output.truncate(member);
                 }
             }
-            Ok(JsonValue::Object(output))
+            state.depth -= 1;
+            state.end_container(written, b'}');
+            Ok(())
         })();
         self.heap.release_root(object_root);
         state.ancestors.pop();
         result
+    }
+
+    /// QuoteJSONString of the property name `atom`, written from the atom's own text.
+    fn write_json_key(&self, atom: Atom, output: &mut JsonText) {
+        match self.atom_text(atom) {
+            AtomText::Host(text) => write_json_utf8(text.as_bytes(), output),
+            AtomText::Js(text) => write_json_string(text, output),
+        }
     }
 
     fn json_push_ancestor(
@@ -1256,11 +1273,8 @@ impl<H: Host> Vm<H> {
         value: Value,
         state: &mut JsonSerialization,
     ) -> Result<(), JsError> {
-        if state
-            .ancestors
-            .iter()
-            .any(|ancestor| self.same_value(*ancestor, value))
-        {
+        // Every ancestor and `value` is an object, whose SameValue is its identity.
+        if state.ancestors.contains(&value) {
             return Err(self.type_error(p, "Converting circular structure to JSON".into()));
         }
         state.ancestors.push(value);
@@ -1331,17 +1345,17 @@ mod tests {
     #[test]
     fn json_string_writer_preserves_lone_surrogates() {
         let value = JsString::from_units(&[0xD800, b'a' as u16, 0xDC00]);
-        let mut output = String::new();
+        let mut output = Vec::new();
         write_json_string(&value, &mut output);
-        assert_eq!(output, "\"\\ud800a\\udc00\"");
+        assert_eq!(output, b"\"\\ud800a\\udc00\"");
     }
 
     #[test]
     fn json_string_writer_keeps_surrogate_pairs_as_scalars() {
         let value = JsString::from_units(&[0xD83E, 0xDD80]);
-        let mut output = String::new();
+        let mut output = Vec::new();
         write_json_string(&value, &mut output);
-        assert_eq!(output, "\"🦀\"");
+        assert_eq!(output, "\"🦀\"".as_bytes());
     }
 
     #[test]

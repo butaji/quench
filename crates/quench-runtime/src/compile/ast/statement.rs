@@ -105,6 +105,13 @@ impl FunctionCompiler<'_, '_> {
                 self.class_declaration(item);
             }
             Statement::ExpressionStatement(item) => {
+                // A host wrapper is a script of one function expression, which the host
+                // calls as soon as the script runs.
+                if self.function_id == crate::vm::ROOT_FUNCTION_ID
+                    && matches!(item.expression.without_parentheses(), Expression::FunctionExpression(_))
+                {
+                    self.owner.note_invoked_callee(&item.expression);
+                }
                 let value = if matches!(
                     self.statement_completion,
                     StatementCompletion::Ignored | StatementCompletion::Suppress(_)

@@ -1579,13 +1579,13 @@ impl<H: Host> Vm<H> {
                         true,
                     )?;
                     let flags = flags.host_string();
-                    Ok(vm.heap.alloc(Cell::Iterator {
-                        object: Box::new(Self::empty_object(vm.regexp_string_iterator_proto)),
+                    Ok(vm.heap.alloc_iterator(IteratorRecord {
+                        object: Self::empty_object(vm.regexp_string_iterator_proto),
                         source: matcher,
                         kind: IteratorKind::RegExpStringMatchAll,
                         index: 0,
                         done: false,
-                        ext: Box::new(crate::heap::IteratorExt {
+                        ext: crate::heap::IteratorExt {
                             position_high: 0,
                             next_method: None,
                             helper: Some(Box::new(IteratorHelper::RegExpStringMatchAll {
@@ -1596,7 +1596,7 @@ impl<H: Host> Vm<H> {
                             helper_running: false,
                             helper_started: false,
                             generator: None,
-                        }),
+                        },
                     }))
                 })
             },
@@ -2367,39 +2367,35 @@ impl<H: Host> Vm<H> {
         Ok(matched)
     }
 
-    /// `RegExp.prototype.exec` or `test` when the call runs no guest code and raises
-    /// nothing, so it observes no frame (`lane_call_native`): a RegExp receiver, a string
-    /// subject, an own writable data `lastIndex` holding a Number (`regexp_last_index_slot`,
-    /// so its conversion and any store run no guest code), and for `test` the builtin `exec`
-    /// (`regexp_builtin_exec_matcher`). The call is the native's own; `None` leaves any other
-    /// call to the general path.
-    pub(super) fn steady_regexp_call(
+    /// `RegExp.prototype.exec` or `test` called on a RegExp whose own `lastIndex` is a writable
+    /// Number, with a string to match: every step then reads or writes slots, so the call runs
+    /// no guest code and cannot throw, and a lane makes it in place, above frameless
+    /// activations too. `test` also needs the builtin `exec` (`regexp_builtin_exec_matcher`),
+    /// which it would call. `None` leaves any other call, unobserved, to the general path.
+    pub(super) fn pure_regexp_call(
         &mut self,
         p: &ResidualProgram,
-        native: Native,
+        callee: Value,
         receiver: Value,
-        subject: Value,
-    ) -> Option<Result<Value, JsError>> {
-        if !matches!(native, Native::RegExpExec | Native::RegExpTest)
+        args: &[Value],
+    ) -> Option<Value> {
+        let test = self.is_native_function(callee, Native::RegExpTest);
+        if !(test || self.is_native_function(callee, Native::RegExpExec))
             || !matches!(self.heap.get(receiver), Some(Cell::RegExp { .. }))
-            || !self.is_string(subject)
+            || !args.first().is_some_and(|subject| self.is_string(*subject))
+            || self.method_caches_may_name(self.runtime_atoms.last_index)
         {
             return None;
         }
         let slot = self.regexp_last_index_slot(receiver)?;
-        let last_index = self
-            .object_data(receiver)
-            .and_then(|object| self.heap.property_get(object, slot))?;
-        if last_index.as_number().is_none()
-            || (native == Native::RegExpTest && self.regexp_builtin_exec_matcher(receiver).is_none())
-        {
-            return None;
+        self.object_data(receiver)
+            .and_then(|object| self.heap.property_get(object, slot))?
+            .as_number()?;
+        if test {
+            self.regexp_builtin_exec_matcher(receiver)?;
+            return self.regexp_test(p, receiver, args).ok();
         }
-        let arguments = [subject];
-        Some(match native {
-            Native::RegExpExec => self.regexp_builtin_exec(p, receiver, &arguments),
-            _ => self.regexp_test(p, receiver, &arguments),
-        })
+        self.regexp_builtin_exec(p, receiver, args).ok()
     }
 
     pub(super) fn regexp_builtin_exec(

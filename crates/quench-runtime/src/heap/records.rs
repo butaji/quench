@@ -1,4 +1,4 @@
-use super::{ArrayObject, FunctionRecord, Object, PromiseCell};
+use super::{ArrayObject, AwaitState, FunctionRecord, IteratorRecord, Object, PromiseCell};
 use crate::value::Value;
 use std::alloc::Layout;
 use std::alloc::{alloc, dealloc};
@@ -13,6 +13,8 @@ pub(super) type ObjectRecordSpace = RecordSpace<Object>;
 pub(super) type ArrayRecordSpace = RecordSpace<ArrayObject>;
 pub(super) type FunctionRecordSpace = RecordSpace<FunctionRecord>;
 pub(super) type PromiseRecordSpace = RecordSpace<PromiseCell>;
+pub(super) type AwaitRecordSpace = RecordSpace<AwaitState>;
+pub(super) type IteratorRecordSpace = RecordSpace<IteratorRecord>;
 
 /// What the collector does to every record family alike, whatever its record type: the
 /// per-collection passes iterate `Heap::record_families` instead of naming each space.
