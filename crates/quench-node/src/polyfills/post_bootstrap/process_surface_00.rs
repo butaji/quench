@@ -69,7 +69,6 @@ pub const LAZY_MEMBERS: &[&str] = &[
     "abort",
     "sourceMapsEnabled",
     "debugPort",
-    "release",
     "allowedNodeEnvironmentFlags",
     "getBuiltinModule",
     "finalization",
@@ -114,11 +113,6 @@ pub const LAZY_JS: &str = quench_js_check::checked_js!(r#"{
     globalThis.process.abort ||= () => globalThis.process.exit(134);
     globalThis.process.sourceMapsEnabled = false;
     globalThis.process.debugPort = 9229;
-    globalThis.process.release = {
-      name: "node",
-      sourceUrl: "",
-      headersUrl: ""
-    };
     // Like Node, the set is built on first read: a frozen Set subclass whose mutators do
     // nothing, so Set.prototype itself stays untouched.
     const hostAllowedFlags = globalThis.__quench_allowed_node_environment_flags;

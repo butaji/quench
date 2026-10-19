@@ -63,6 +63,8 @@ struct ProgramEntry {
     module_environment: Option<Value>,
     import_meta: Option<Value>,
     module_imports: Vec<(u16, ModuleImport)>,
+    /// Each root slot's rule, derived from the residual and `module_imports` on first read.
+    root_slots: std::cell::OnceCell<Box<[crate::bytecode::RootSlotRule]>>,
     module: bool,
     /// Per-function lane views, derived from the residual on first lane entry.
     lane_views: Vec<std::cell::OnceCell<super::dispatch_fast::LaneView>>,
@@ -514,6 +516,7 @@ impl ProgramStore {
             module_environment: None,
             import_meta: None,
             module_imports: Vec::new(),
+            root_slots: std::cell::OnceCell::new(),
             module: false,
             lane_views,
             compiled: None,
@@ -690,18 +693,34 @@ impl ProgramStore {
     }
 
     /// Whether `slot` of `id`'s root environment is the binding itself: no global var,
-    /// global lexical (`ResidualProgram::root_slot_is_binding`) or module-import projection
-    /// reads through it.
+    /// module-import or (unless `lexical_slots_are_bindings`) global lexical projection reads
+    /// through it.
     pub(crate) fn root_slot_is_binding(
         &self,
         id: ProgramId,
         slot: u16,
         lexical_slots_are_bindings: bool,
     ) -> bool {
-        self.entry(id).is_some_and(|entry| {
-            entry.residual.root_slot_is_binding(slot, lexical_slots_are_bindings)
-                && !entry.module_imports.iter().any(|(local, _)| *local == slot)
-        })
+        use crate::bytecode::RootSlotRule;
+        let Some(entry) = self.entry(id) else {
+            return false;
+        };
+        let rules = entry.root_slots.get_or_init(|| {
+            let locals = entry.residual.functions.first().map_or(0, |root| root.local_atoms.len());
+            (0..locals)
+                .map(|slot| {
+                    let import = entry.module_imports.iter().any(|(local, _)| usize::from(*local) == slot);
+                    if import { RootSlotRule::Projection } else { entry.residual.root_slot_rule(slot) }
+                })
+                .collect()
+        });
+        match rules.get(usize::from(slot)).copied() {
+            Some(RootSlotRule::Binding) => true,
+            Some(RootSlotRule::GlobalLexical) => lexical_slots_are_bindings,
+            Some(RootSlotRule::Projection) => false,
+            // A slot past the root's named locals is a temporary, the binding itself.
+            None => !entry.module_imports.iter().any(|(local, _)| *local == slot),
+        }
     }
 
     pub(crate) fn is_module(&self, id: ProgramId) -> bool {
@@ -745,6 +764,7 @@ impl ProgramStore {
     pub(crate) fn set_module_imports(&mut self, id: ProgramId, imports: Vec<(u16, ModuleImport)>) {
         if let Some(entry) = self.entry_mut(id) {
             entry.module_imports = imports;
+            entry.root_slots = std::cell::OnceCell::new();
         }
     }
 
@@ -1004,6 +1024,7 @@ impl ProgramStore {
         id: ProgramId,
         function: u32,
         numeric: bool,
+        first_entry_candidate: bool,
     ) -> bool {
         let compiled_functions = self.js_jit_compiled_functions;
         let can_track = self.js_jit_tracked_functions < JS_JIT_MAX_TRACKED_FUNCTIONS;
@@ -1020,13 +1041,18 @@ impl ProgramStore {
                 inserted = true;
                 if compiled_functions >= JS_JIT_MAX_FUNCTIONS {
                     slot.insert(JsTierState::Unsupported);
+                    false
+                } else if first_entry_candidate {
+                    slot.insert(JsTierState::PromotionPending);
+                    promoted = true;
+                    true
                 } else {
                     slot.insert(JsTierState::Hot {
                         observations: 1,
                         numeric: u8::from(numeric),
                     });
+                    false
                 }
-                false
             }
             std::collections::hash_map::Entry::Occupied(mut slot) => match slot.get_mut() {
                 JsTierState::Hot {
@@ -1039,6 +1065,9 @@ impl ProgramStore {
                     if compiled_functions >= JS_JIT_MAX_FUNCTIONS {
                         *slot.get_mut() = JsTierState::Unsupported;
                         false
+                    } else if first_entry_candidate {
+                        promoted = true;
+                        true
                     } else if decision == Some(true) {
                         promoted = true;
                         if numeric {

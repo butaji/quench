@@ -444,9 +444,11 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let length = object.elements().len();
-        if self
-            .property_attributes(this, PropertyKey::string(self.length_atom))
-            .is_some_and(|attributes| !attributes.writable)
+        // An array's `length` keeps non-default attributes only as a recorded descriptor.
+        if object.has_length_descriptor()
+            && self
+                .property_attributes(this, PropertyKey::string(self.length_atom))
+                .is_some_and(|attributes| !attributes.writable)
         {
             return None;
         }

@@ -103,6 +103,11 @@ pub trait Host {
     /// Offers the host a compiled host program's compact form (`kept_compiled_program`).
     fn keep_compiled_program(&mut self, _name: &str, _parts: &[&str], _bytes: &[u8]) {}
 
+    /// A WebAssembly module's native compilation, which runs once per module, is about to
+    /// start: like `at_collection_boundary`, the code about to run (the code generator)
+    /// differs from the code that ran before it (loading, linking, instantiation).
+    fn before_wasm_native_compilation(&mut self) {}
+
     fn write_line(&mut self, text: &str);
     fn clock_millis(&mut self) -> f64;
 
