@@ -296,12 +296,13 @@ impl<H: Host> Vm<H> {
         self.evaluate_embedding_prepared_script(&prepared)
     }
 
-    /// Compiles a host wrapper `prefix + body + suffix` whose body is static host text: the
-    /// program's positions start at the wrapper origin and it retains the body itself.
-    pub(crate) fn prepare_embedding_static_body(
-        &mut self, prefix: &str, body: &'static str, suffix: &str, name: &str,
+    /// Compiles a host wrapper `prefix + body + suffix` around a library module's text: the
+    /// program's positions start at the wrapper origin and it retains the body itself (static
+    /// embedded text, or text the host derived from it), not a wrapped copy.
+    fn prepare_embedding_library_body(
+        &mut self, prefix: &str, body: crate::bytecode::SourceText, suffix: &str, name: &str,
     ) -> Result<crate::PreparedScript, JsError> {
-        let wrapped = format!("{prefix}{body}{suffix}");
+        let wrapped = [prefix, &body, suffix].concat();
         let origin = crate::api::wrapper_origin(prefix)
             .ok_or_else(|| JsError("host wrapper origin exceeds compiler positions".into()))?;
         let base = u32::try_from(prefix.len())
@@ -309,19 +310,19 @@ impl<H: Host> Vm<H> {
         self.prepare_embedding_specialized_script_retaining(&wrapped, name, Some(origin), Some((body, base)), true)
     }
 
-    /// `prepare_embedding_static_body` through the host's compile cache
+    /// `prepare_embedding_library_body` through the host's compile cache
     /// (`Host::kept_compiled_program`): a kept program that decodes for this VM is used as is;
     /// otherwise the body compiles and its compact form is offered to the host.
-    pub(crate) fn prepare_embedding_static_body_kept(
-        &mut self, prefix: &str, body: &'static str, suffix: &str, name: &str,
+    pub(crate) fn prepare_embedding_library_body_kept(
+        &mut self, prefix: &str, body: crate::bytecode::SourceText, suffix: &str, name: &str,
     ) -> Result<crate::PreparedScript, JsError> {
-        let parts = [prefix, body, suffix];
+        let parts = [prefix, &*body, suffix];
         if let Some(bytes) = self.host.kept_compiled_program(name, &parts)
-            && let Ok(program) = self.decode_cached_program(&bytes, crate::bytecode::SourceText::Static(body), prefix.len(), name)
+            && let Ok(program) = self.decode_cached_program(&bytes, body.clone(), prefix.len(), name)
         {
             return Ok(crate::PreparedScript { program: Rc::new(program) });
         }
-        let prepared = self.prepare_embedding_static_body(prefix, body, suffix, name)?;
+        let prepared = self.prepare_embedding_library_body(prefix, body.clone(), suffix, name)?;
         if let Some(bytes) = self.encode_cached_program(&prepared.program) {
             self.host.keep_compiled_program(name, &parts, &bytes);
         }
@@ -375,7 +376,7 @@ impl<H: Host> Vm<H> {
     /// the compiled byte offset where that text starts.
     fn prepare_embedding_specialized_script_retaining(
         &mut self, source: &str, name: &str, origin: Option<(u32, u32)>,
-        retained: Option<(&'static str, u32)>,
+        retained: Option<(crate::bytecode::SourceText, u32)>,
         keep_records: bool,
     ) -> Result<crate::PreparedScript, JsError> {
         let program = self.embedding_program()?;
@@ -404,7 +405,7 @@ impl<H: Host> Vm<H> {
             source.column_offset = column_offset;
         }
         if let (Some(source), Some((text, base))) = (&mut residual.source, retained) {
-            source.text = crate::bytecode::SourceText::Static(text);
+            source.text = text;
             source.base = base;
         }
         let mut residual = self.intern_program_atoms(residual);
