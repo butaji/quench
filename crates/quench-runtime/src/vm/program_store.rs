@@ -11,6 +11,7 @@ struct JsJitCounters {
     source_name: Option<Box<str>>,
     function_name: Option<Box<str>>,
     parameter_count: u16,
+    instruction_count: u32,
     entries: u64,
     numeric_entries: u64,
     promotions: u64,
@@ -20,6 +21,8 @@ struct JsJitCounters {
     compile_ns: u64,
     native_entries: u64,
     fallback_entries: u64,
+    interpreter_completions: u64,
+    interpreter_inclusive_ns: u64,
     code_bytes: usize,
 }
 
@@ -1216,13 +1219,11 @@ impl ProgramStore {
         if diagnostics.len() >= JS_JIT_MAX_DIAGNOSTIC_FUNCTIONS {
             return;
         }
-        let (source_name, function_name) = self
+        let (source_name, function_name, instruction_count) = self
             .entry(id)
             .map(|entry| {
-                let function_name = entry
-                    .residual
-                    .functions
-                    .get(function as usize)
+                let function_code = entry.residual.functions.get(function as usize);
+                let function_name = function_code
                     .and_then(|function| function.name.or(function.inferred_name))
                     .and_then(|atom| {
                         let index = atom as usize;
@@ -1230,7 +1231,14 @@ impl ProgramStore {
                             .then(|| entry.residual.atoms[index].to_owned())
                     })
                     .unwrap_or_default();
-                (entry.residual.source_name.clone(), function_name)
+                let instruction_count = function_code.map_or(0, |function| {
+                    u32::try_from(function.code.len()).unwrap_or(u32::MAX)
+                });
+                (
+                    entry.residual.source_name.clone(),
+                    function_name,
+                    instruction_count,
+                )
             })
             .unwrap_or_default();
         if let Some(diagnostics) = self.js_jit_diagnostics.as_mut() {
@@ -1238,6 +1246,7 @@ impl ProgramStore {
             counters.source_name = Some(source_name.into_boxed_str());
             counters.function_name = Some(function_name.into_boxed_str());
             counters.parameter_count = parameter_count;
+            counters.instruction_count = instruction_count;
             counters.entries = counters.entries.saturating_add(1);
             counters.numeric_entries = counters
                 .numeric_entries
@@ -1315,6 +1324,24 @@ impl ProgramStore {
             .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
         {
             counters.fallback_entries = counters.fallback_entries.saturating_add(1);
+        }
+    }
+
+    pub(super) fn record_js_jit_interpreter_completion(
+        &mut self,
+        id: ProgramId,
+        function: u32,
+        inclusive_ns: u64,
+    ) {
+        if let Some(counters) = self
+            .js_jit_diagnostics
+            .as_mut()
+            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
+        {
+            counters.interpreter_completions = counters.interpreter_completions.saturating_add(1);
+            counters.interpreter_inclusive_ns = counters
+                .interpreter_inclusive_ns
+                .saturating_add(inclusive_ns);
         }
     }
 
@@ -1537,8 +1564,9 @@ impl Drop for ProgramStore {
             }
             let _ = writeln!(
                 stderr,
-                ",\"status\":\"{status}\",\"parameter_count\":{},\"entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"compile_ns\":{},\"native_entries\":{},\"fallback_entries\":{},\"code_bytes\":{}}}",
+                ",\"status\":\"{status}\",\"parameter_count\":{},\"instruction_count\":{},\"entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"compile_ns\":{},\"native_entries\":{},\"fallback_entries\":{},\"interpreter_completions\":{},\"interpreter_inclusive_ns\":{},\"code_bytes\":{}}}",
                 counters.parameter_count,
+                counters.instruction_count,
                 counters.entries,
                 counters.numeric_entries,
                 counters.promotions,
@@ -1547,6 +1575,8 @@ impl Drop for ProgramStore {
                 counters.compile_ns,
                 counters.native_entries,
                 counters.fallback_entries,
+                counters.interpreter_completions,
+                counters.interpreter_inclusive_ns,
                 counters.code_bytes,
             );
         }
