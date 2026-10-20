@@ -141,12 +141,21 @@ impl Writer {
 pub(crate) struct Reader<'a> {
     bytes: &'a [u8],
     cursor: usize,
+    /// Given each stretch of read bytes once (`Host::snapshot_bytes_read`).
+    release: Option<fn(&[u8])>,
+    /// Where the bytes not yet given to `release` start.
+    released: usize,
 }
 
+/// The read bytes a reader gathers before it gives them to its `release`: enough pages that
+/// releasing costs a few system calls per snapshot megabyte.
+const RELEASE_STRIDE: usize = 1 << 16;
+
 impl<'a> Reader<'a> {
-    /// A reader past the header, when the header is this build's.
-    pub(crate) fn new(bytes: &'a [u8]) -> SnapshotResult<Self> {
-        let mut reader = Self { bytes, cursor: 0 };
+    /// A reader past the header, when the header is this build's, giving the bytes it has
+    /// read to `release` as it goes.
+    pub(crate) fn new(bytes: &'a [u8], release: Option<fn(&[u8])>) -> SnapshotResult<Self> {
+        let mut reader = Self { bytes, cursor: 0, release, released: 0 };
         if reader.take(MAGIC.len())? != MAGIC {
             return Err(SnapshotError("not a Quench snapshot".into()));
         }
@@ -156,13 +165,27 @@ impl<'a> Reader<'a> {
         Ok(reader)
     }
 
-    pub(crate) fn finish(self) -> SnapshotResult<()> {
+    pub(crate) fn finish(mut self) -> SnapshotResult<()> {
+        self.release_read();
         (self.cursor == self.bytes.len())
             .then_some(())
             .ok_or_else(|| SnapshotError("trailing snapshot bytes".into()))
     }
 
+    /// Gives the bytes read since the last release to `release`. A program's encoding, which
+    /// its decoder reads past this reader's cursor (`skip`), goes once that decoder is done:
+    /// when the next read follows.
+    fn release_read(&mut self) {
+        if let Some(release) = self.release {
+            release(&self.bytes[self.released..self.cursor]);
+            self.released = self.cursor;
+        }
+    }
+
     fn take(&mut self, len: usize) -> SnapshotResult<&'a [u8]> {
+        if self.cursor - self.released >= RELEASE_STRIDE {
+            self.release_read();
+        }
         let end = self.cursor.checked_add(len).ok_or_else(|| SnapshotError("snapshot overflow".into()))?;
         let bytes = self.bytes.get(self.cursor..end).ok_or_else(|| SnapshotError("truncated snapshot".into()))?;
         self.cursor = end;
