@@ -11,7 +11,7 @@
 //! does not decode, or matches nothing, only costs the compilation it would have saved. Writes
 //! go to a temporary file renamed into place, so a concurrent reader sees a whole entry or none.
 
-use std::hash::{Hash, Hasher};
+use std::hash::{BuildHasher, Hash, Hasher};
 use std::path::PathBuf;
 
 /// Names the cache directory; an empty value turns the cache off.
@@ -21,6 +21,9 @@ const CACHE_SUBDIRECTORY: &str = "quench/compile";
 /// The cache home under `HOME` when `XDG_CACHE_HOME` is unset.
 const DEFAULT_CACHE_HOME: &str = ".cache";
 const ENTRY_EXTENSION: &str = "qbc";
+/// The seeds of the two hashes that name an entry (`CompileCache::entry`): any two distinct
+/// values give independent hashes.
+const KEY_SEEDS: [u64; 2] = [0, 1];
 
 /// Where this process keeps compiled library modules, and the build identity that keys them.
 pub(crate) struct CompileCache {
@@ -47,16 +50,18 @@ impl CompileCache {
     pub(crate) fn entry(&self, name: &str, parts: &[&str]) -> Option<CacheEntry> {
         let directory = self.directory.as_ref()?;
         // Two independently seeded hashes name the entry, so distinct inputs collide only if
-        // both 64-bit hashes do.
-        let hash = |seed: u8| {
-            let mut hasher = std::collections::hash_map::DefaultHasher::new();
-            (seed, self.build, name).hash(&mut hasher);
+        // both 64-bit hashes do. The inputs are the user's own library and package files, which
+        // need no collision resistance against an adversary; SipHash had cost 2% of a small
+        // npm scenario, hashing each module's text twice.
+        let hash = |seed: u64| {
+            let mut hasher = foldhash::quality::FixedState::with_seed(seed).build_hasher();
+            (self.build, name).hash(&mut hasher);
             for part in parts {
                 part.hash(&mut hasher);
             }
             hasher.finish()
         };
-        Some(CacheEntry { path: directory.join(format!("{:016x}{:016x}.{ENTRY_EXTENSION}", hash(0), hash(1))) })
+        Some(CacheEntry { path: directory.join(format!("{:016x}{:016x}.{ENTRY_EXTENSION}", hash(KEY_SEEDS[0]), hash(KEY_SEEDS[1]))) })
     }
 }
 

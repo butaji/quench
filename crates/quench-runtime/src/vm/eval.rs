@@ -214,7 +214,8 @@ impl<H: Host> Vm<H> {
             .flatten()
             .and_then(|bytes| {
                 let text = crate::bytecode::SourceText::Shared(std::sync::Arc::from(source));
-                self.decode_cached_program(bytes, text, 0, source_name).ok()
+                let specialized = self.specialized;
+                self.decode_cached_program(bytes, text, 0, source_name, specialized).ok()
             });
         let compiled = kept.is_none();
         let residual = match kept {
@@ -318,7 +319,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<crate::PreparedScript, JsError> {
         let parts = [prefix, &*body, suffix];
         if let Some(bytes) = self.host.kept_compiled_program(name, &parts)
-            && let Ok(program) = self.decode_cached_program(bytes, body.clone(), prefix.len(), name)
+            && let Ok(program) = self.decode_cached_program(bytes, body.clone(), prefix.len(), name, self.specialized)
         {
             return Ok(crate::PreparedScript { program: Rc::new(program) });
         }
@@ -331,7 +332,7 @@ impl<H: Host> Vm<H> {
 
     /// `program`'s compile-cache form, when every atom it names is found again by its text:
     /// a VM atom whose UTF-16 has no lossless host spelling cannot be cached by name.
-    fn encode_cached_program(&self, program: &crate::ResidualProgram) -> Option<Vec<u8>> {
+    pub(super) fn encode_cached_program(&self, program: &crate::ResidualProgram) -> Option<Vec<u8>> {
         let (bytes, atoms) = program.encode_compact();
         atoms
             .iter()
@@ -344,10 +345,11 @@ impl<H: Host> Vm<H> {
     }
 
     /// A program `encode_cached_program` encoded, with this VM's atom ids and `text` as its
-    /// source, which must be what it compiled from `name` after a `base`-byte prefix, under
-    /// the specialization this VM runs.
-    fn decode_cached_program(
+    /// source, which must be what it compiled from `name` after a `base`-byte prefix, with
+    /// `specialized` as its specialization.
+    pub(super) fn decode_cached_program(
         &mut self, bytes: crate::KeptBytes, text: crate::bytecode::SourceText, base: usize, name: &str,
+        specialized: bool,
     ) -> Result<crate::ResidualProgram, String> {
         let mut program = crate::ResidualProgram::decode_compact(
             bytes,
@@ -355,7 +357,7 @@ impl<H: Host> Vm<H> {
             text,
         )?;
         let source_matches = program.source.as_ref().is_some_and(|source| source.base as usize == base);
-        if program.source_name != name || !source_matches || program.specialized != self.specialized {
+        if program.source_name != name || !source_matches || program.specialized != specialized {
             return Err("cached program does not match its body".into());
         }
         program.atoms =

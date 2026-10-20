@@ -1106,6 +1106,11 @@ impl PromiseRuntime {
     }
 }
 
+
+/// Names a static module's parse goal in its compile-cache key, apart from an application
+/// entry's (`Runtime::compile_entry`), whose cached form differs.
+const STATIC_MODULE_GOAL: &str = "static-module";
+
 impl<H: Host> Vm<H> {
     pub(super) fn abstract_module_source_to_string_tag(&mut self, receiver: Value) -> Value {
         if !self.is_object_like(receiver)
@@ -3408,6 +3413,27 @@ impl<H: Host> Vm<H> {
         Ok(graph)
     }
 
+    /// A static module's program kept by the host's compile cache
+    /// (`Host::kept_compiled_program`) for its exact text: compiled unspecialized, after its
+    /// early errors were ruled out, so neither repeats.
+    fn kept_static_module_program(&mut self, module: &ModuleSource) -> Option<ResidualProgram> {
+        let bytes = self
+            .host
+            .kept_compiled_program(&module.name, &[STATIC_MODULE_GOAL, &module.source])?;
+        let text = crate::bytecode::SourceText::Shared(std::sync::Arc::from(module.source.as_str()));
+        self.decode_cached_program(bytes, text, 0, &module.name, false).ok()
+    }
+
+    /// Offers the host the compiled program of a static module (`kept_static_module_program`).
+    fn keep_static_module_program(&mut self, module: &ModuleSource, program: ProgramId) {
+        if let Some(residual) = self.programs.get(program)
+            && let Some(bytes) = self.encode_cached_program(&residual)
+        {
+            self.host
+                .keep_compiled_program(&module.name, &[STATIC_MODULE_GOAL, &module.source], &bytes);
+        }
+    }
+
     fn collect_static_module_programs(
         &mut self,
         p: &ResidualProgram,
@@ -3435,6 +3461,9 @@ impl<H: Host> Vm<H> {
             quench_stack::StackGuard::enter().map_err(|()| self.stack_exhaustion_error())?;
         let program = match precompiled {
             Some(program) => program,
+            None if let Some(program) = self.kept_static_module_program(module) => self
+                .store_module_program(program)
+                .ok_or_else(|| self.type_error(p, "module program store is full".into()))?,
             None => {
                 if let Some(message) = crate::Engine::static_module_early_error(&module.source) {
                     return self
@@ -3459,8 +3488,11 @@ impl<H: Host> Vm<H> {
                         )
                     }
                 })?;
-                self.store_module_program(residual)
-                    .ok_or_else(|| self.type_error(p, "module program store is full".into()))?
+                let program = self
+                    .store_module_program(residual)
+                    .ok_or_else(|| self.type_error(p, "module program store is full".into()))?;
+                self.keep_static_module_program(module, program);
+                program
             }
         };
         let residual = self
