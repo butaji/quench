@@ -1569,41 +1569,16 @@ impl<H: Host> Vm<H> {
         left: Value,
         right: Value,
     ) -> Result<Value, JsError> {
-        let Some(Cell::BigInt(left)) = self.heap.get(left) else {
-            return Err(self.type_error(p, MIXED_BIGINT_TYPES.into()));
-        };
-        let Some(Cell::BigInt(right)) = self.heap.get(right) else {
-            return Err(self.type_error(p, MIXED_BIGINT_TYPES.into()));
-        };
-        let (left, right): (&num_bigint::BigInt, &num_bigint::BigInt) = (left, right);
-        let nonzero_divisor = || {
-            if right.sign() == num_bigint::Sign::NoSign {
-                Err(crate::bigint::Error::DivisionByZero)
-            } else {
-                Ok(right)
-            }
-        };
-        let result = match op {
-            8 => Ok(left + right),
-            9 => Ok(left - right),
-            10 => Ok(left * right),
-            11 => nonzero_divisor().map(|right| left / right),
-            12 => nonzero_divisor().map(|right| left % right),
-            13 => {
-                if right.sign() == num_bigint::Sign::Minus {
-                    Err(crate::bigint::Error::NegativeExponent)
+        let Some(result) = self.bigint_operation(op, left, right) else {
+            return Err(self.type_error(
+                p,
+                if self.is_bigint(left) && self.is_bigint(right) {
+                    "BigInt operation is not supported"
                 } else {
-                    u32::try_from(right.magnitude())
-                        .map(|exponent| left.pow(exponent))
-                        .map_err(|_| crate::bigint::Error::ExponentTooLarge)
+                    MIXED_BIGINT_TYPES
                 }
-            }
-            14 => crate::bigint::shift(left, right, true),
-            15 => crate::bigint::shift(left, right, false),
-            17 => Ok(left | right),
-            18 => Ok(left ^ right),
-            19 => Ok(left & right),
-            _ => return Err(self.type_error(p, "BigInt operation is not supported".into())),
+                .into(),
+            ));
         };
         match result {
             Ok(value) => Ok(self.heap.alloc(Cell::bigint(value))),
@@ -1618,6 +1593,81 @@ impl<H: Host> Vm<H> {
             }
         }
     }
+
+    fn is_bigint(&self, value: Value) -> bool {
+        matches!(self.heap.get(value), Some(Cell::BigInt(_)))
+    }
+
+    /// BigInt operator `op` of two BigInt values: the result, or the error it raises. `None`
+    /// when an operand is not a BigInt or the operator has no BigInt meaning.
+    fn bigint_operation(
+        &self,
+        op: u32,
+        left: Value,
+        right: Value,
+    ) -> Option<Result<num_bigint::BigInt, crate::bigint::Error>> {
+        const EXPONENTIAL: u32 = BinaryOperator::Exponential as u32;
+        let (Some(Cell::BigInt(left)), Some(Cell::BigInt(right))) =
+            (self.heap.get(left), self.heap.get(right))
+        else {
+            return None;
+        };
+        let (left, right): (&num_bigint::BigInt, &num_bigint::BigInt) = (left, right);
+        let nonzero_divisor = || {
+            if right.sign() == num_bigint::Sign::NoSign {
+                Err(crate::bigint::Error::DivisionByZero)
+            } else {
+                Ok(right)
+            }
+        };
+        Some(match op {
+            ADDITION => Ok(left + right),
+            SUBTRACTION => Ok(left - right),
+            MULTIPLICATION => Ok(left * right),
+            DIVISION => nonzero_divisor().map(|right| left / right),
+            REMAINDER => nonzero_divisor().map(|right| left % right),
+            EXPONENTIAL => {
+                if right.sign() == num_bigint::Sign::Minus {
+                    Err(crate::bigint::Error::NegativeExponent)
+                } else {
+                    u32::try_from(right.magnitude())
+                        .map(|exponent| left.pow(exponent))
+                        .map_err(|_| crate::bigint::Error::ExponentTooLarge)
+                }
+            }
+            SHIFT_LEFT => crate::bigint::shift(left, right, true),
+            SHIFT_RIGHT => crate::bigint::shift(left, right, false),
+            BITWISE_OR => Ok(left | right),
+            BITWISE_XOR => Ok(left ^ right),
+            BITWISE_AND => Ok(left & right),
+            _ => return None,
+        })
+    }
+
+    /// `binary_bigint` where it succeeds, for callers that leave failures to it: the result
+    /// allocated, or `None`.
+    pub(super) fn bigint_binary_value(&mut self, op: u32, left: Value, right: Value) -> Option<Value> {
+        let value = self.bigint_operation(op, left, right)?.ok()?;
+        Some(self.heap.alloc(Cell::bigint(value)))
+    }
+
+    /// A relational operator (`<`, `<=`, `>`, `>=`) of two BigInt values.
+    pub(super) fn bigint_relation(&self, op: u32, left: Value, right: Value) -> Option<bool> {
+        let (Some(Cell::BigInt(left)), Some(Cell::BigInt(right))) =
+            (self.heap.get(left), self.heap.get(right))
+        else {
+            return None;
+        };
+        let ordering = left.cmp(right);
+        Some(match NumberRelation::from_operator(op)? {
+            NumberRelation::LessThan => ordering.is_lt(),
+            NumberRelation::LessEqual => ordering.is_le(),
+            NumberRelation::GreaterThan => ordering.is_gt(),
+            NumberRelation::GreaterEqual => ordering.is_ge(),
+            NumberRelation::Equal | NumberRelation::NotEqual => return None,
+        })
+    }
+
     #[cold]
     #[inline(never)]
     /// String concatenation for `+` once at least one operand is a string: an interned
