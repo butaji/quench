@@ -10419,6 +10419,54 @@ fn js_jit_compiles_number_capture_returns_and_observes_mutation() {
     feature = "profile-memory",
     feature = "profile-gc-time"
 )))]
+fn js_jit_compiles_numeric_capture_arithmetic_and_guards_mutation() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function makeAdder() {
+            let delta = 3;
+            function add(value) { return value + delta; }
+            function update(next) { delta = next; }
+            return { add, update };
+          }
+          const adder = makeAdder();
+          for (let index = 0; index < 40; index++) {
+            if (adder.add(index) !== index + 3) throw Error('numeric capture');
+          }
+          adder.update(5);
+          if (adder.add(2) !== 7) throw Error('capture mutation');
+          adder.update('x');
+          if (adder.add(2) !== '2x') throw Error('capture fallback');
+        "#,
+        "js-jit-capture-arithmetic.js",
+    ))
+    .unwrap();
+    let add = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .name
+                .or(function.inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "add")
+        })
+        .unwrap() as u32;
+    let mut vm = Vm::new(SilentHost);
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+    assert!(matches!(
+        vm.programs
+            .js_tier(super::program_store::ProgramId::MAIN, add),
+        Some(super::program_store::JsTierState::Compiled(_))
+    ));
+}
+
+#[test]
+#[cfg(not(any(
+    feature = "profile-aggregate",
+    feature = "profile-trace",
+    feature = "profile-memory",
+    feature = "profile-gc-time"
+)))]
 fn js_jit_compiles_int32_bitwise_helpers_and_guards_the_domain() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
@@ -10780,17 +10828,17 @@ fn js_jit_field_reject_resumes_interpreter_on_match_and_accessor() {
         r#"
           function isFunctionBlock(node) { return node.isFunctionBlock === true; }
           function isBlockStatement(node) {
-            if (242 !== node.kind) return !1;
+            if (242 !== node.tag) return !1;
             return !isFunctionBlock(node);
           }
           for (let index = 0; index < 40; index++) {
             const kind = index % 3 === 0 ? 242 : 241;
-            if (isBlockStatement({kind}) !== (kind === 242)) throw Error('field reject result');
+            if (isBlockStatement({tag: kind}) !== (kind === 242)) throw Error('field reject result');
           }
           let reads = 0;
-          const accessor = { get kind() { reads++; return 242; } };
+          const accessor = { get tag() { reads++; return 242; } };
           if (isBlockStatement(accessor) !== true || reads !== 1) throw Error('accessor fallback');
-          if (isBlockStatement({kind: '242'}) !== false) throw Error('non-number field fallback');
+          if (isBlockStatement({tag: '242'}) !== false) throw Error('non-number field fallback');
         "#,
         "js-jit-field-reject.js",
     ))

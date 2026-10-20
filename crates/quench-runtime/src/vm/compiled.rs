@@ -2220,6 +2220,7 @@ pub(super) struct CompiledJsFunction {
     return_constants: Vec<(u32, u32)>,
     field_argument: Option<super::js_compiled::JsJitFieldArgument>,
     capture_argument: Option<super::js_compiled::JsJitCaptureArgument>,
+    capture_arguments: Vec<super::js_compiled::JsJitCaptureArgument>,
     #[cfg(test)]
     native_entries: std::cell::Cell<u64>,
 }
@@ -2272,6 +2273,7 @@ impl CompiledJsFunction {
         let code = CodeMemory::new(&artifact.code)?;
         let mapped_bytes = code.length;
         let field_argument = artifact.field_argument;
+        let capture_arguments = artifact.capture_arguments;
         let (entry, return_constants, capture_argument) = match artifact.result {
             super::js_compiled::JsJitResultKind::Number => {
                 // SAFETY: the numeric JS compiler emits `fn(*const f64) -> f64`.
@@ -2404,6 +2406,7 @@ impl CompiledJsFunction {
             return_constants,
             field_argument,
             capture_argument,
+            capture_arguments,
             #[cfg(test)]
             native_entries: std::cell::Cell::new(0),
         })
@@ -2419,6 +2422,10 @@ impl CompiledJsFunction {
 
     fn capture_argument(&self) -> Option<super::js_compiled::JsJitCaptureArgument> {
         self.capture_argument
+    }
+
+    fn capture_arguments(&self) -> &[super::js_compiled::JsJitCaptureArgument] {
+        &self.capture_arguments
     }
 
     pub(super) fn call(
@@ -6528,6 +6535,14 @@ impl<H: Host> Vm<H> {
             Some(compiled) => compiled.capture_argument(),
             None => super::js_compiled::number_capture_candidate(function),
         };
+        let mut capture_arguments: smallvec::SmallVec<
+            [super::js_compiled::JsJitCaptureArgument; 4],
+        > = smallvec::SmallVec::new();
+        if let Some(compiled) = compiled_tier {
+            capture_arguments.extend_from_slice(compiled.capture_arguments());
+        } else if let Some(candidate) = super::js_compiled::numeric_capture_candidate(function) {
+            capture_arguments.extend(candidate);
+        }
         let capture_number = capture_argument.and_then(|capture| {
             self.cached_direct_capture(frame, capture.depth, capture.slot)
                 .and_then(Value::as_number)
@@ -6538,11 +6553,11 @@ impl<H: Host> Vm<H> {
         let first_argument = registers.first().copied();
         let field_argument = match compiled_tier {
             Some(compiled) => compiled.field_argument(),
-            None => super::js_compiled::number_field_argument_candidate(program, function),
+            None => super::js_compiled::cached_field_argument_candidate(function),
         };
         let field_reject_candidate = match compiled_tier {
             Some(compiled) => compiled.is_field_reject(),
-            None => super::js_compiled::is_field_reject_candidate(program, function),
+            None => super::js_compiled::is_field_reject_candidate(function),
         };
         let mut arguments: smallvec::SmallVec<[f64; 8]> = smallvec::SmallVec::new();
         let mut numeric = true;
@@ -6554,6 +6569,20 @@ impl<H: Host> Vm<H> {
                     break;
                 }
             }
+        }
+        let mut capture_values: smallvec::SmallVec<[f64; 4]> = smallvec::SmallVec::new();
+        let captures_numeric = capture_arguments.iter().all(|capture| {
+            self.cached_direct_capture(frame, capture.depth, capture.slot)
+                .and_then(Value::as_number)
+                .is_some_and(|value| {
+                    capture_values.push(value);
+                    true
+                })
+        });
+        if captures_numeric {
+            arguments.extend(capture_values.iter().copied());
+        } else {
+            numeric = false;
         }
         if let Some(field_argument) = field_argument {
             let receiver = first_argument?;
@@ -6681,6 +6710,7 @@ impl<H: Host> Vm<H> {
                     (numeric && (numeric_loop_candidate || field_argument.is_some()))
                         || (field_reject_candidate && arguments.len() == 1)
                         || capture_number.is_some()
+                        || (!capture_arguments.is_empty() && captures_numeric)
                         || string_hash_units.is_some()
                         || string_transform_units.is_some(),
                 ) || (!numeric
