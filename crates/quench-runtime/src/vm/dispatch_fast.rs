@@ -95,6 +95,19 @@ pub(super) struct LaneView {
     /// How a lane call activates the function without a frame; `None`
     /// when its activation needs a frame (locals outside registers).
     activation: Option<ActivationShape>,
+    /// The facts of its body a frameless call target records (`TargetBody`), found on its
+    /// first resolution: every closure of the function shares them.
+    target_body: std::cell::OnceCell<TargetBody>,
+}
+
+/// What a function's body fixes about a frameless call target of it
+/// (`Vm::frameless_call_target`): its entry apart from a kept `arguments`, and whether `new`
+/// may activate it or run it as its stores alone.
+#[derive(Clone, Copy)]
+struct TargetBody {
+    entry: CallEntry,
+    constructs: bool,
+    initializes: bool,
 }
 
 /// Registers a lane call writes as one fixed block: a window fills whole blocks, whose slots
@@ -1890,6 +1903,31 @@ script_handler! {
             None
         };
         let Some(value) = value else {
+            sibling!(lane_load_capture_walk::<H>, r, ip, view)
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+script_handler! {
+    /// `lane_load_capture` of a capture past the running function's own scope
+    /// (`specialize_outer_captures`): a walk this lane run or an earlier one remembered
+    /// (`Vm::remembered_capture`), keyed as `lane_load_capture_walk` walks; any other read
+    /// takes the walk.
+    fn lane_load_outer_capture<>(cx, r, ip, i, view) {
+        let imm = i.imm();
+        let vm = unsafe { vm(cx) };
+        let env = unsafe { (*cx).env };
+        let (env, captured) = if env.is_deleted() {
+            let frame = &vm.frames[unsafe { (*cx).frame }];
+            (frame.env, frame.captured)
+        } else {
+            (env, false)
+        };
+        let depth = ImmediateLayout::capture_depth(imm);
+        let Some(value) = vm.remembered_capture(env, captured, depth, ImmediateLayout::capture_slot(imm))
+        else {
             sibling!(lane_load_capture_walk::<H>, r, ip, view)
         };
         r.set(i.a, value);
@@ -5031,6 +5069,25 @@ impl<H: Host> Vm<H> {
             self.lane_stack.remember_script_target(set, target);
             return Some(target);
         };
+        // SAFETY: the program store keeps a derived view alive with its program.
+        let shape = *unsafe { &*view }.target_body.get_or_init(|| {
+            let constructs = Self::inline_constructible(body);
+            TargetBody {
+                entry: if body.code.first().is_some_and(|packed| {
+                    returning_kind(decoded_instruction(body, *packed)) == Some(RETURNING_FIELD)
+                }) {
+                    CallEntry::Reads
+                } else if element_read_body(body) {
+                    CallEntry::ReadsElement
+                } else if forwarding_read_body(body) {
+                    CallEntry::ForwardsRead
+                } else {
+                    CallEntry::Activates
+                },
+                constructs,
+                initializes: constructs && body.only_initializes_this_fields(&code.constants),
+            }
+        });
         // A frameless activation's function has no environment of its own.
         let capture = match self.environment_capture_slots(env, false, 0) {
             Some((slots, None)) => slots
@@ -5050,24 +5107,11 @@ impl<H: Host> Vm<H> {
             params: body.params,
             strict: body.strict,
             lexical_this,
-            constructs: Self::inline_constructible(body),
-            initializes: Self::inline_constructible(body)
-                && body.only_initializes_this_fields(&code.constants),
-            entry: if plan.forwards_arguments {
-                CallEntry::Keeps
-            } else if body.code.first().is_some_and(|packed| {
-                returning_kind(decoded_instruction(body, *packed)) == Some(RETURNING_FIELD)
-            }) {
-                CallEntry::Reads
-            } else if element_read_body(body) {
-                CallEntry::ReadsElement
-            } else if forwarding_read_body(body) {
-                CallEntry::ForwardsRead
-            } else {
-                CallEntry::Activates
-            },
+            constructs: shape.constructs,
+            initializes: shape.initializes,
+            entry: if plan.forwards_arguments { CallEntry::Keeps } else { shape.entry },
             capture,
-            forwarded_method: match (plan.forwards_arguments && Self::inline_constructible(body))
+            forwarded_method: match (plan.forwards_arguments && shape.constructs)
                 .then(|| body.forwarded_this_method(&code.constants))
                 .flatten()
             {
@@ -8267,6 +8311,7 @@ fn derive_lane_view<H: Host>(
     specialize_updates::<H>(&mut records);
     specialize_negated_instanceof::<H>(&mut records);
     specialize_frame_locals::<H>(function, &mut records);
+    specialize_outer_captures::<H>(&mut records);
     let min_run = if closes_loop(function, &exits) {
         LANE_ENTRY_MIN_RUN
     } else {
@@ -8295,6 +8340,7 @@ fn derive_lane_view<H: Host>(
         entries,
         memory_register,
         activation,
+        target_body: std::cell::OnceCell::new(),
     }
 }
 
@@ -8525,6 +8571,17 @@ fn specialize_updates<H: Host>(records: &mut [LaneInstruction]) {
             b: conversion.b,
             c: update.a,
         };
+    }
+}
+
+/// Gives each `LoadCapture` record past the function's own scope the handler that reads
+/// remembered walks (`lane_load_outer_capture`); depth-0 reads keep `lane_load_capture`.
+fn specialize_outer_captures<H: Host>(records: &mut [LaneInstruction]) {
+    let load = lane_load_capture::<H> as Handler as *const ();
+    for record in records.iter_mut() {
+        if record.handler == load && ImmediateLayout::capture_depth(record.imm()) != 0 {
+            record.handler = lane_load_outer_capture::<H> as Handler as *const ();
+        }
     }
 }
 
