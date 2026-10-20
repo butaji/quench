@@ -1878,8 +1878,15 @@ impl<'a> Compiler<'a> {
             .as_ref()
             .map(|id| id.name.as_str())
             .or(context.default_export.then_some("default"));
+        // A named function expression binds its name in its own scope; a body that cannot
+        // observe the binding needs none, and runs without a frame where nothing else needs
+        // one (`CallPlan::registers_only`).
         let name_binding = if context.expression {
-            function.id.as_ref().map(|id| self.atom(id.name.as_str()))
+            function
+                .id
+                .as_ref()
+                .filter(|id| early::function_may_reference(&function.params, body, id.name.as_str()))
+                .map(|id| self.atom(id.name.as_str()))
         } else {
             None
         };
