@@ -140,6 +140,7 @@ impl<H: Host> Vm<H> {
             regexp_symbol_layouts: Vec::new(),
             instanceof_has_instance_holder: Value::NULL,
             instanceof_has_instance_link: crate::heap::ProtoLink::NULL,
+            capture_walks: Box::new([CaptureWalk::default(); CAPTURE_WALKS]),
             to_fixed_atom: u32::MAX,
             to_precision_atom: u32::MAX,
             runtime_atoms: RuntimeAtoms::default(),
