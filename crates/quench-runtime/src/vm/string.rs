@@ -435,35 +435,39 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        if matches!(native, Native::StringAt | Native::StringCodePointAt) {
+            let raw = self
+                .to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?
+                .trunc() as i64;
+            // Strings are immutable: the receiver's units are read in place.
+            let Some(Cell::String(receiver)) = self.heap.get(this) else {
+                return Err(JsError("string method receiver is not a string".into()));
+            };
+            let units = receiver.units();
+            let index = if native == Native::StringAt && raw < 0 {
+                units.len() as i64 + raw
+            } else {
+                raw
+            };
+            let Some((index, first)) = usize::try_from(index)
+                .ok()
+                .and_then(|index| units.get(index).map(|unit| (index, unit)))
+            else {
+                return Ok(Value::UNDEFINED);
+            };
+            if native == Native::StringAt {
+                return self.string_from_units(&[first]);
+            }
+            let code_point = units
+                .get(index + 1)
+                .and_then(|low| crate::unicode::decode_surrogate_pair(first, low))
+                .unwrap_or_else(|| u32::from(first));
+            return Ok(Value::number(code_point as f64));
+        }
         let Some(Cell::String(receiver)) = self.heap.get(this).cloned() else {
             return Err(JsError("string method receiver is not a string".into()));
         };
         match native {
-            Native::StringAt | Native::StringCodePointAt => {
-                let raw = self
-                    .to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?
-                    .trunc() as i64;
-                let units = receiver.units();
-                let index = if native == Native::StringAt && raw < 0 {
-                    units.len() as i64 + raw
-                } else {
-                    raw
-                };
-                let Some((index, first)) = usize::try_from(index)
-                    .ok()
-                    .and_then(|index| units.get(index).map(|unit| (index, unit)))
-                else {
-                    return Ok(Value::UNDEFINED);
-                };
-                if native == Native::StringAt {
-                    return self.string_from_units(&[first]);
-                }
-                let code_point = units
-                    .get(index + 1)
-                    .and_then(|low| crate::unicode::decode_surrogate_pair(first, low))
-                    .unwrap_or_else(|| u32::from(first));
-                Ok(Value::number(code_point as f64))
-            }
             Native::StringToUpperCase
             | Native::StringToLowerCase
             | Native::StringToLocaleUpperCase

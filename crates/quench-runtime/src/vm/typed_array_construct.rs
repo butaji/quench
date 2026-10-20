@@ -374,7 +374,7 @@ impl<H: Host> Vm<H> {
         let kind = self
             .typed_array_kind(source)
             .ok_or_else(|| self.type_error(p, "typed array species source is invalid".into()))?;
-        let constructor_atom = self.intern_atom("constructor");
+        let constructor_atom = self.runtime_atoms.constructor;
         let mut constructor = self.get_property(p, source, constructor_atom)?;
         if self.is_object_like(constructor) {
             constructor = self.species_of(p, constructor)?;

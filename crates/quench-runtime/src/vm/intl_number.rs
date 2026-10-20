@@ -1234,7 +1234,7 @@ impl<H: Host> Vm<H> {
         array: Value,
     ) -> Result<String, JsError> {
         let length = self.array_like_length(p, array)?;
-        let value_atom = self.intern_atom("value");
+        let value_atom = self.runtime_atoms.value;
         let mut text = String::new();
         for index in 0..length {
             let part = self.get_index(p, array, Value::number(index as f64))?;

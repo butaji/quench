@@ -142,7 +142,7 @@ impl<H: Host> Vm<H> {
         self.capture_function_name_for_atom(function, name_atom);
         if constructible {
             let prototype = self.heap.alloc(Cell::Object(Self::empty_object(self.object_proto)));
-            let constructor_atom = self.intern_atom("constructor");
+            let constructor_atom = self.runtime_atoms.constructor;
             self.set_property_with_attributes(
                 prototype,
                 constructor_atom,

@@ -559,7 +559,7 @@ impl<H: Host> Vm<H> {
             let error = self.type_error(p, "iterator return result is not an object".into());
             return self.resume_generator(p, generator, &[], Some(error));
         }
-        let done_atom = self.intern_atom("done");
+        let done_atom = self.runtime_atoms.done;
         let done = match self.get_property(p, result, done_atom) {
             Ok(done) => done,
             Err(error) => return self.resume_generator(p, generator, &[], Some(error)),
@@ -567,7 +567,7 @@ impl<H: Host> Vm<H> {
         if !self.truthy(done) {
             return Ok(result);
         }
-        let value_atom = self.intern_atom("value");
+        let value_atom = self.runtime_atoms.value;
         let value = match self.get_property(p, result, value_atom) {
             Ok(value) => value,
             Err(error) => return self.resume_generator(p, generator, &[], Some(error)),
@@ -979,13 +979,13 @@ impl<H: Host> Vm<H> {
             let error = self.type_error(p, "iterator result is not an object".into());
             return self.resume_async_generator_with_throw(p, generator, error);
         }
-        let done_atom = self.intern_atom("done");
+        let done_atom = self.runtime_atoms.done;
         let done_value = match self.get_property(p, result, done_atom) {
             Ok(value) => value,
             Err(error) => return self.resume_async_generator_with_throw(p, generator, error),
         };
         let done = self.truthy(done_value);
-        let value_atom = self.intern_atom("value");
+        let value_atom = self.runtime_atoms.value;
         let value = match self.get_property(p, result, value_atom) {
             Ok(value) => value,
             Err(error) => return self.resume_async_generator_with_throw(p, generator, error),
@@ -1136,7 +1136,7 @@ impl<H: Host> Vm<H> {
             let error = self.type_error(p, "iterator throw result is not an object".into());
             return self.resume_generator(p, generator, &[], Some(error));
         }
-        let done_atom = self.intern_atom("done");
+        let done_atom = self.runtime_atoms.done;
         let done = match self.get_property(p, result, done_atom) {
             Ok(done) => self.truthy(done),
             Err(error) => return self.resume_generator(p, generator, &[], Some(error)),
@@ -1144,7 +1144,7 @@ impl<H: Host> Vm<H> {
         if !done {
             return Ok(result);
         }
-        let value_atom = self.intern_atom("value");
+        let value_atom = self.runtime_atoms.value;
         let value = match self.get_property(p, result, value_atom) {
             Ok(value) => value,
             Err(error) => return self.resume_generator(p, generator, &[], Some(error)),

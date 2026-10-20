@@ -699,8 +699,7 @@ impl<H: Host> Vm<H> {
         direct: bool,
     ) -> Result<Value, JsError> {
         let (function, environment) = match self.call_target(callee)? {
-            CallTarget::User(_, function, environment)
-            | CallTarget::NumericUser(_, function, environment) => (function, environment),
+            CallTarget::User(_, function, environment) => (function, environment),
             CallTarget::Native(_) => return Err(JsError("eval body is not a user closure".into())),
         };
         self.with_call_roots([callee, this], |vm| {

@@ -1185,6 +1185,7 @@ mod tests {
             name: None,
             inferred_name: None,
             is_arrow: false,
+            reads_lexical_this: false,
             self_binding_slot: None,
             source_span: None,
             params: 0,

@@ -844,7 +844,7 @@ impl<H: Host> Vm<H> {
         if let Some(object) = self.object_data_mut(arguments) {
             object.set_arguments_object();
         }
-        let length = self.intern_atom("length");
+        let length = self.length_atom;
         self.set_property_with_attributes(
             arguments,
             length,

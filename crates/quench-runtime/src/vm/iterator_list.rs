@@ -25,7 +25,7 @@ impl<H: Host> Vm<H> {
         let mut values = Vec::new();
         let outcome = (|| {
             let value = self.heap.root_value(iterator_root).unwrap();
-            let next_atom = self.intern_atom("next");
+            let next_atom = self.runtime_atoms.next;
             let value = self.get_property(p, value, next_atom)?;
             let next_root = self.heap.root(value);
             next = Some(next_root);

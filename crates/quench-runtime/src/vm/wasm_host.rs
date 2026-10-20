@@ -62,7 +62,7 @@ impl<H: Host> Vm<H> {
         });
         let function = self.native_with_env(Native::WasmHost, environment);
         self.set_builtin_function_name(function, name)?;
-        let atom = self.intern_atom("length");
+        let atom = self.length_atom;
         self.set_property_with_attributes(
             function,
             atom,

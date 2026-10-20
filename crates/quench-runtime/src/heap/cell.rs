@@ -1166,7 +1166,6 @@ impl Native {
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum FunctionKind {
     User(ProgramId, u32),
-    NumericUser(ProgramId, u32),
     Native(Native),
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -3062,7 +3061,7 @@ impl Cell {
     pub(crate) fn program_references(&self, mut visit: impl FnMut(ProgramId)) {
         match self {
             Self::Function {
-                kind: FunctionKind::User(program, _) | FunctionKind::NumericUser(program, _),
+                kind: FunctionKind::User(program, _),
                 ..
             } => visit(*program),
             Self::Environment { scope, .. } => {

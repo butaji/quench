@@ -202,7 +202,7 @@ impl<H: Host> Vm<H> {
             "constructor",
             self.native_value(Native::GeneratorFunction),
         )?;
-        let constructor_atom = self.intern_atom("constructor");
+        let constructor_atom = self.runtime_atoms.constructor;
         self.set_named(
             program,
             async_generator_function_proto,
@@ -590,7 +590,7 @@ impl<H: Host> Vm<H> {
             self.iterator_native(Native::IteratorPrototypeConstructorGetter, realm);
         let constructor_setter =
             self.iterator_native(Native::IteratorPrototypeConstructorSetter, realm);
-        let constructor_atom = self.intern_atom("constructor");
+        let constructor_atom = self.runtime_atoms.constructor;
         self.set_property_with_attributes(
             prototype,
             constructor_atom,
@@ -741,7 +741,7 @@ impl<H: Host> Vm<H> {
         constructor: Value,
     ) -> Result<(), JsError> {
         self.set_builtin_value_named(prototype, "constructor", constructor)?;
-        let constructor_atom = self.intern_atom("constructor");
+        let constructor_atom = self.runtime_atoms.constructor;
         self.set_property_attributes(
             prototype,
             PropertyKey::string(constructor_atom),
@@ -842,7 +842,7 @@ impl<H: Host> Vm<H> {
             self.set_builtin_value_named(prototype, name, method)?;
         }
         self.set_builtin_value_named(prototype, "constructor", constructor)?;
-        let constructor_atom = self.intern_atom("constructor");
+        let constructor_atom = self.runtime_atoms.constructor;
         self.set_property_attributes(
             prototype,
             PropertyKey::string(constructor_atom),
@@ -972,7 +972,7 @@ impl<H: Host> Vm<H> {
         let value = args.first().copied().unwrap_or(Value::UNDEFINED);
         let iterator =
             self.iterator_flattenable_source(p, value, IteratorPrimitiveHandling::IterateStrings)?;
-        let next_atom = self.intern_atom("next");
+        let next_atom = self.runtime_atoms.next;
         let next_method = self.get_property(p, iterator, next_atom)?;
         let iterator_root = self.heap.root(iterator);
         let next_root = self.heap.root(next_method);
@@ -1272,7 +1272,7 @@ impl<H: Host> Vm<H> {
             return self.iterator_step_with_method(p, *iterator, next, args);
         }
         let source_root = self.heap.root(source);
-        let next_atom = self.intern_atom("next");
+        let next_atom = self.runtime_atoms.next;
         let source = self.heap.root_value(source_root).unwrap_or(source);
         let next = match self.get_property(p, source, next_atom) {
             Ok(next) => next,
@@ -1332,7 +1332,7 @@ impl<H: Host> Vm<H> {
             self.heap.release_root(source_root);
             return Err(self.type_error(p, "iterator next result is not an object".into()));
         }
-        let done_atom = self.intern_atom("done");
+        let done_atom = self.runtime_atoms.done;
         let result = self.heap.root_value(result_root).unwrap_or(result);
         let done = match self.get_property(p, result, done_atom) {
             Ok(done) => done,
@@ -1349,7 +1349,7 @@ impl<H: Host> Vm<H> {
             self.heap.release_root(source_root);
             return Ok(None);
         }
-        let value_atom = self.intern_atom("value");
+        let value_atom = self.runtime_atoms.value;
         let result = self.heap.root_value(result_root).unwrap_or(result);
         let value = self.get_property(p, result, value_atom);
         self.heap.release_root(result_root);
@@ -1596,7 +1596,7 @@ impl<H: Host> Vm<H> {
                     .type_error(p, "iterator method did not return an object".into())
                     .into());
             }
-            let next_atom = self.intern_atom("next");
+            let next_atom = self.runtime_atoms.next;
             let next_method = self.get_property(p, opened_iterator, next_atom)?;
             if !self.is_function(next_method) {
                 return Err(self
@@ -2137,7 +2137,7 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, "iterator receiver is not an object".into()));
         }
         let iterator_root = self.heap.root(iterator);
-        let next_atom = self.intern_atom("next");
+        let next_atom = self.runtime_atoms.next;
         let iterator = self.heap.root_value(iterator_root).unwrap_or(iterator);
         let next = match self.get_property(p, iterator, next_atom) {
             Ok(next) => next,
@@ -2825,8 +2825,8 @@ impl<H: Host> Vm<H> {
                 self.type_error(p, "async-from-sync iterator result is not an object".into());
             return self.async_from_sync_reject(p, iterator, error, close_on_rejection);
         }
-        let value_atom = self.intern_atom("value");
-        let done_atom = self.intern_atom("done");
+        let value_atom = self.runtime_atoms.value;
+        let done_atom = self.runtime_atoms.done;
         let done = match self.get_property(p, result, done_atom) {
             Ok(done) => done,
             Err(error) => {
@@ -3361,8 +3361,14 @@ impl<H: Host> Vm<H> {
     /// CreateIterResultObject: a fresh ordinary object whose `value` and `done` are data
     /// properties, laid out as the literal `{ value, done }`.
     pub(super) fn iterator_result(&mut self, value: Value, done: bool) -> Result<Value, JsError> {
-        let atoms = [self.intern_atom("value"), self.intern_atom("done")];
-        let shape = self.literal_shape(&atoms);
+        let shape = match self.iterator_result_shape {
+            Some(shape) => shape,
+            None => {
+                let shape = self.literal_shape(&[self.runtime_atoms.value, self.runtime_atoms.done]);
+                self.iterator_result_shape = Some(shape);
+                shape
+            }
+        };
         let prototype = self.realm_object_prototype(self.realm.globals);
         Ok(self.heap.alloc_object_with_properties(
             prototype,

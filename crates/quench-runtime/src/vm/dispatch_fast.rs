@@ -4845,7 +4845,7 @@ lane_handler! {
         if !matches!(
             vm.heap.get(r.get(i.b)),
             Some(Cell::Function {
-                kind: FunctionKind::Native(_) | FunctionKind::NumericUser(..),
+                kind: FunctionKind::Native(_),
                 ..
             })
         ) {
@@ -4921,9 +4921,8 @@ lane_handler! {
     }
 }
 
-/// A lane `Call` of a native that `Native::runs_from_lane` admits, or of a numeric function
-/// (`FunctionKind::NumericUser`), whose executor runs it, made as the general path makes it
-/// from the running frame: with the frame's resume PC published and the arguments
+/// A lane `Call` of a native that `Native::runs_from_lane` admits, made as the general path
+/// makes it from the running frame: with the frame's resume PC published and the arguments
 /// copied out of its registers, which stay rooted by the frame. Only a frame's own lane run
 /// calls out, so the frame stack the native and its nested calls observe is the general
 /// path's. `None` exits to the general path, which raises the error the call stashed in
@@ -4937,24 +4936,18 @@ fn lane_call_native<H: Host>(
 ) -> Option<Value> {
     let vm = unsafe { vm(cx) };
     let callee = r.get(i.b);
-    // A native the lane admits, or a numeric function, which its own executor runs.
     let native = match vm.heap.get(callee) {
         Some(Cell::Function {
             kind: FunctionKind::Native(native),
             ..
-        }) if native.runs_from_lane() => Some(*native),
-        Some(Cell::Function {
-            kind: FunctionKind::NumericUser(..),
-            ..
-        }) => None,
+        }) if native.runs_from_lane() => *native,
         _ => return None,
     };
     let window = ImmediateLayout::call_window_base(i.imm());
     let argc = ImmediateLayout::argument_count(i.imm());
     // A unary Math function of a Number runs no guest code and observes no frame, so it
     // runs from any activation.
-    if let Some(native) = native
-        && argc > 0
+    if argc > 0
         && let Some(value) = r.get(window).as_number()
         && let Some(result) = super::number::math_unary(native, value)
     {
@@ -4982,14 +4975,8 @@ fn lane_call_native<H: Host>(
     let arguments = super::call_arguments::CallArguments::from_slice(unsafe {
         std::slice::from_raw_parts(r.0.add(usize::from(window)), usize::from(argc))
     });
-    let result = match native {
-        // The native branch of `Vm::call_value_with_target_inner`, whose callee this is.
-        Some(native) => {
-            vm.call_native_guarded(code, native, r.get(i.c), arguments.as_slice(), callee)
-        }
-        // The general path's call of the frame's callee.
-        None => vm.call_value_from_frame(code, callee, r.get(i.c), arguments.as_slice()),
-    };
+    // The native branch of `Vm::call_value_with_target_inner`, whose callee this is.
+    let result = vm.call_native_guarded(code, native, r.get(i.c), arguments.as_slice(), callee);
     // The native's allocations may make a collection due, which the lane's safepoints take.
     note_allocation(vm);
     match result {
