@@ -13,6 +13,23 @@ pub(super) struct ClosureShapes {
     prototype: Option<(u32, u32)>,
 }
 
+/// What a recorded ordinary closure of one nested function in one realm is made of, apart
+/// from its environment (`Vm::closure_in_realm`): its own properties' values under their
+/// named shape, its `[[Prototype]]`, its kind, and for a constructor its prototype object's
+/// parent and the shape `constructor` gives it.
+#[derive(Clone, Copy)]
+pub(super) struct ClosureTemplate {
+    program: ProgramId,
+    function: u32,
+    realm: Value,
+    function_prototype: Value,
+    shape: u32,
+    length: Value,
+    name: Value,
+    kind: FunctionKind,
+    prototype: Option<(Value, u32)>,
+}
+
 impl<H: Host> Vm<H> {
     pub(super) fn function_realm(
         &mut self,
@@ -272,6 +289,29 @@ impl<H: Host> Vm<H> {
         self.closure_in_realm(p, id, env, self.realm.globals)
     }
 
+    /// A closure of `template`'s function over `env`, as `closure_in_realm` makes a
+    /// recorded one.
+    fn closure_of_template(&mut self, template: ClosureTemplate, env: Value) -> Value {
+        let prototype = template
+            .prototype
+            .map(|(parent, _)| self.heap.alloc(Cell::Object(Self::empty_object(parent))));
+        let object = crate::heap::Object::with_property_storage(
+            template.function_prototype,
+            crate::value_vec::ValueVec::inline_property_storage(template.shape),
+            [template.length, template.name, prototype.unwrap_or(Value::UNDEFINED)],
+        );
+        let function = self.heap.alloc_function(FunctionRecord {
+            object,
+            realm: template.realm,
+            kind: template.kind,
+            env,
+        });
+        if let (Some(prototype), Some((_, constructor))) = (prototype, template.prototype) {
+            self.heap.property_add(prototype, function, constructor);
+        }
+        function
+    }
+
     pub(super) fn closure_in_realm(
         &mut self,
         p: &ResidualProgram,
@@ -292,6 +332,15 @@ impl<H: Host> Vm<H> {
                 .unwrap_or(active)
                 .to_vec()
         };
+        let template_index = id as usize & (CLOSURE_TEMPLATES - 1);
+        let plain_scope = with_objects.is_empty();
+        if plain_scope
+            && let Some(template) = self.closure_templates[template_index].filter(|template| {
+                template.function == id && template.program == self.active_program && template.realm == realm
+            })
+        {
+            return Ok(self.closure_of_template(template, env));
+        }
         if !with_objects.is_empty() {
             env = self.heap.alloc(Cell::Environment {
                 parent: env,
@@ -347,6 +396,7 @@ impl<H: Host> Vm<H> {
         // A recorded closure is allocated finished: its `length`, `name` and `prototype` in its
         // inline slots, as the adds would leave them, under the shape they and its original
         // name would reach.
+        let mut named_shape = None;
         let object = match recorded_shapes {
             Some(shapes) => {
                 let (shape, third) = match (prototype, shapes.prototype) {
@@ -355,6 +405,7 @@ impl<H: Host> Vm<H> {
                 };
                 let named =
                     self.function_name_shape(shape, plan_name.unwrap_or(self.runtime_atoms.empty));
+                named_shape = Some(named);
                 crate::heap::Object::with_property_storage(
                     function_object_prototype,
                     crate::value_vec::ValueVec::inline_property_storage(named),
@@ -363,13 +414,14 @@ impl<H: Host> Vm<H> {
             }
             None => Self::empty_object(function_object_prototype),
         };
+        let kind = match function_plan.dispatch {
+            DispatchClass::General => FunctionKind::User(self.active_program, id),
+            DispatchClass::Numeric => FunctionKind::NumericUser(self.active_program, id),
+        };
         let function = self.heap.alloc_function(FunctionRecord {
             object,
             realm,
-            kind: match function_plan.dispatch {
-                DispatchClass::General => FunctionKind::User(self.active_program, id),
-                DispatchClass::Numeric => FunctionKind::NumericUser(self.active_program, id),
-            },
+            kind,
             env,
         });
         // Only closures of a program's top level are ever found again by plan
@@ -387,8 +439,32 @@ impl<H: Host> Vm<H> {
             );
         }
         if let Some(shapes) = recorded_shapes {
-            if let (Some(prototype), Some((_, constructor))) = (prototype, shapes.prototype) {
-                self.heap.property_add(prototype, function, constructor);
+            let constructor = match (prototype, shapes.prototype) {
+                (Some(prototype), Some((_, constructor))) => {
+                    self.heap.property_add(prototype, function, constructor);
+                    Some(constructor)
+                }
+                _ => None,
+            };
+            // A nested function's closures are found by none of its plans, so a template
+            // makes the next ones the same way; a top-level one is recorded above. A
+            // prototype the recorded shapes do not hold leaves the template unmade.
+            if plain_scope
+                && function_plan.parent.is_some_and(|parent| parent != super::ROOT_FUNCTION_ID)
+                && prototype.is_some() == constructor.is_some()
+                && let Some(shape) = named_shape
+            {
+                self.closure_templates[template_index] = Some(ClosureTemplate {
+                    program: self.active_program,
+                    function: id,
+                    realm,
+                    function_prototype: function_object_prototype,
+                    shape,
+                    length: length_value,
+                    name: name_value,
+                    kind,
+                    prototype: constructor.map(|constructor| (self.realm_object_prototype(realm), constructor)),
+                });
             }
             return Ok(function);
         }
