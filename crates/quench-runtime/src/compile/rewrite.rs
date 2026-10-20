@@ -168,13 +168,14 @@ pub(super) fn coalesce_promoted_moves(
         if !changed {
             return;
         }
-        remove_nops(function);
+        remove_nops(function, &mut liveness);
     }
 }
 
 /// Drops every `Nop`, relocating jumps, handlers and source positions onto the instruction
-/// that followed it.
-fn remove_nops(function: &mut BcFunction) {
+/// that followed it. The code's liveness, indexed by the old positions, is dropped with them.
+fn remove_nops(function: &mut BcFunction, liveness: &mut Option<CodeLiveness>) {
+    *liveness = None;
     let old = std::mem::take(&mut function.code);
     let mut code = Vec::with_capacity(old.len());
     let mut map = vec![0usize; old.len() + 1];
