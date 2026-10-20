@@ -1743,6 +1743,7 @@ impl Object {
             Some(HeapReference::PromiseRecord(id)) => PROTO_PROMISE_RECORD_BASE + id,
             Some(HeapReference::IteratorRecord(id)) => PROTO_ITERATOR_RECORD_BASE + id,
             Some(HeapReference::AwaitRecord(_)) => unreachable!("an await state is never a prototype"),
+            Some(HeapReference::StringRecord(_)) => unreachable!("a string is never a prototype"),
             None if proto.is_null() => PROTO_NULL,
             None => {
                 debug_assert!(proto.is_undefined(), "a prototype is an object or null");
@@ -3096,7 +3097,6 @@ pub(crate) enum Cell {
         element_type: wasmparser::RefType,
         declarations: Box<crate::WasmTypes>,
     },
-    String(JsString),
     /// Boxed so a slot stays one tag word plus the object layout (`cells_stay_compact`).
     BigInt(Box<num_bigint::BigInt>),
     Symbol(SymbolData),
@@ -3204,7 +3204,6 @@ impl Cell {
             Self::WasmGlobal { .. } => "wasm_global",
             Self::WasmMemory { .. } => "wasm_memory",
             Self::WasmTable { .. } => "wasm_table",
-            Self::String(_) => "string",
             Self::BigInt(_) => "bigint",
             Self::Symbol(_) => "symbol",
             Self::Date { .. } => "date",

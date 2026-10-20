@@ -120,7 +120,7 @@ impl<H: Host> Vm<H> {
         }
         self.set_builtin_named(p, prototype, "valueOf", Native::TemporalPlainTimeValueOf)?;
         if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::ToStringTag) {
-            let value = self.heap.alloc(Cell::String("Temporal.PlainTime".into()));
+            let value = self.heap.alloc_string("Temporal.PlainTime".into());
             self.set_symbol_property(prototype, symbol, value)?;
             self.set_property_attributes(
                 prototype,
@@ -638,7 +638,7 @@ impl<H: Host> Vm<H> {
         };
         Ok(self
             .heap
-            .alloc(Cell::String(format!("{time}{fraction}").into())))
+            .alloc_string(format!("{time}{fraction}").into()))
     }
 
     fn temporal_plain_time_with(

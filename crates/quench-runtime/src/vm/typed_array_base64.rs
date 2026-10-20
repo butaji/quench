@@ -96,13 +96,13 @@ impl<H: Host> Vm<H> {
                 if native == Native::Uint8ArrayToHex {
                     self.ensure_array_buffer_attached(p, buffer)?;
                     let bytes = self.uint8_base64_bytes(this, length);
-                    return Ok(self.heap.alloc(Cell::String(
+                    return Ok(self.heap.alloc_string(
                         bytes
                             .iter()
                             .map(|byte| format!("{byte:02x}"))
                             .collect::<String>()
                             .into(),
-                    )));
+                    ));
                 }
                 let options = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let (alphabet, omit_padding) = self.base64_encode_options(p, options)?;
@@ -112,7 +112,7 @@ impl<H: Host> Vm<H> {
                 if omit_padding {
                     encoded.truncate(encoded.trim_end_matches('=').len());
                 }
-                Ok(self.heap.alloc(Cell::String(encoded.into())))
+                Ok(self.heap.alloc_string(encoded.into()))
             }
             _ => unreachable!("base64 native dispatch is exhaustive"),
         }
@@ -162,9 +162,9 @@ impl<H: Host> Vm<H> {
     }
 
     fn base64_input(&mut self, p: &ResidualProgram, value: Value) -> Result<String, JsError> {
-        match self.heap.get(value) {
-            Some(Cell::String(text)) => Ok(text.to_string()),
-            _ => Err(self.type_error(p, "Uint8Array base64/hex input must be a string".into())),
+        match self.heap.string(value) {
+            Some(text) => Ok(text.to_string()),
+            None => Err(self.type_error(p, "Uint8Array base64/hex input must be a string".into())),
         }
     }
 
@@ -243,9 +243,9 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         value: Value,
     ) -> Result<String, JsError> {
-        match self.heap.get(value) {
-            Some(Cell::String(text)) => Ok(text.to_string()),
-            _ => Err(self.type_error(p, "Uint8Array option must be a string".into())),
+        match self.heap.string(value) {
+            Some(text) => Ok(text.to_string()),
+            None => Err(self.type_error(p, "Uint8Array option must be a string".into())),
         }
     }
 }

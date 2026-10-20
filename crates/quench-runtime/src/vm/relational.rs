@@ -24,8 +24,7 @@ impl<H: Host> Vm<H> {
             left,
             right,
             |vm, left, right| {
-                if let (Some(Cell::String(left)), Some(Cell::String(right))) =
-                    (vm.heap.get(left), vm.heap.get(right))
+                if let (Some(left), Some(right)) = (vm.heap.string(left), vm.heap.string(right))
                 {
                     return Ok(operator.matches(left.units().cmp(&right.units())));
                 }
@@ -106,12 +105,9 @@ impl<H: Host> Vm<H> {
                     Ok(false)
                 });
             }
-            let key_atom = match vm.heap.get(key).cloned() {
-                Some(Cell::String(name)) => Some(vm.intern_js_atom(&name)),
-                _ => None,
-            };
+            let key_atom = vm.heap.string(key).cloned().map(|name| vm.intern_js_atom(&name));
             if matches!(vm.heap.get(object), Some(Cell::TypedArray { .. }))
-                && let Some(Cell::String(name)) = vm.heap.get(key).cloned()
+                && let Some(name) = vm.heap.string(key).cloned()
             {
                 match Self::typed_array_index_key(name.host_string()) {
                     super::object_descriptors::TypedArrayIndexKey::Index(index) => {
@@ -240,7 +236,7 @@ impl<H: Host> Vm<H> {
             // A primitive has no prototype chain to hold the prototype: a value outside the
             // heap, or a string. Any other value takes the walk, whose object test makes a
             // call this steady case leaves out.
-            return (value.heap_index().is_none() || matches!(self.heap.get(value), Some(Cell::String(_))))
+            return (value.heap_index().is_none() || self.heap.is_string(value))
                 .then_some(false);
         };
         // The walk compares encoded links; only a link outside the object records decodes.
@@ -466,11 +462,11 @@ fn compare_numbers(left: f64, right: f64, operator: super::operations::Relationa
 
 fn compare_bigint_string(heap: &Heap, left: Value, right: Value) -> Option<Option<Ordering>> {
     match (heap.get(left), heap.get(right)) {
-        (Some(Cell::BigInt(bigint)), Some(Cell::String(string))) => Some(
+        (Some(Cell::BigInt(bigint)), None) if let Some(string) = heap.string(right) => Some(
             crate::bigint::parse_string(string.host_string())
                 .map(|right| bigint.as_ref().cmp(&right)),
         ),
-        (Some(Cell::String(string)), Some(Cell::BigInt(bigint))) => Some(
+        (None, Some(Cell::BigInt(bigint))) if let Some(string) = heap.string(left) => Some(
             crate::bigint::parse_string(string.host_string())
                 .map(|left| left.cmp(bigint)),
         ),

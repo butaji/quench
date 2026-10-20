@@ -21,14 +21,14 @@ fn minor_collection_traces_remembered_object_and_sparse_array_edges() {
     });
     heap.collect([owner, sparse]);
 
-    let child = heap.alloc(Cell::String("dense child".into()));
+    let child = heap.alloc_string("dense child".into());
     if let Some(elements) = heap.array_elements_mut(owner) {
         Rc::make_mut(elements)[0] = child;
     }
-    let sparse_child = heap.alloc(Cell::String("sparse child".into()));
+    let sparse_child = heap.alloc_string("sparse child".into());
     let sparse_index = MAX_DENSE_ARRAY_HOLE_LENGTH + 1;
     heap.sparse_set(sparse, sparse_index, sparse_child);
-    let garbage = heap.alloc(Cell::String("unreachable young".into()));
+    let garbage = heap.alloc_string("unreachable young".into());
 
     collect_minor(&mut heap, [owner, sparse]);
     assert!(heap.get(child).is_some());
@@ -47,7 +47,7 @@ fn minor_collection_traces_remembered_object_and_sparse_array_edges() {
 fn parallel_mark_matches_serial_verifier_for_full_and_minor_collections() {
     let mut heap = Heap::new();
     let children = (0..PARALLEL_MARK_MINIMUM_SLOTS)
-        .map(|_| heap.alloc(Cell::String("parallel survivor".into())))
+        .map(|_| heap.alloc_string("parallel survivor".into()))
         .collect::<Vec<_>>();
     // A direct-record array forces the serial collector. Keep this root in
     // the legacy space so the parallel marker and sweep remain covered.
@@ -60,7 +60,7 @@ fn parallel_mark_matches_serial_verifier_for_full_and_minor_collections() {
     assert!(children.iter().all(|child| heap.get(*child).is_some()));
 
     let young = (0..128)
-        .map(|_| heap.alloc(Cell::String("remembered young survivor".into())))
+        .map(|_| heap.alloc_string("remembered young survivor".into()))
         .collect::<Vec<_>>();
     if let Some(Cell::Set { entries, .. }) = heap.get_mut(root) {
         // The set is only traced, never searched, so the key hash is immaterial.
@@ -196,7 +196,7 @@ fn records_written_twice_are_logged_once_per_cycle() {
 #[test]
 fn gc_time_profile_records_collection_phases_without_aggregate_counters() {
     let mut heap = Heap::new();
-    let kept = heap.alloc(Cell::String("kept".into()));
+    let kept = heap.alloc_string("kept".into());
     heap.collect([kept]);
 
     let profile = heap.gc_profile();
@@ -208,7 +208,7 @@ fn gc_time_profile_records_collection_phases_without_aggregate_counters() {
 #[test]
 fn scope_slot_owners_survive_collection_and_release() {
     let mut heap = Heap::new();
-    let kept = heap.alloc(Cell::String("kept".into()));
+    let kept = heap.alloc_string("kept".into());
     let owner = heap.alloc(Cell::Environment {
         parent: Value::NULL,
         function: 0,
@@ -269,8 +269,8 @@ fn ordinary_object_payloads_live_in_compact_records() {
 #[test]
 fn strong_root_keeps_cell_alive_until_release() {
     let mut heap = Heap::new();
-    let kept = heap.alloc(Cell::String("kept".into()));
-    let dead = heap.alloc(Cell::String("dead".into()));
+    let kept = heap.alloc_string("kept".into());
+    let dead = heap.alloc_string("dead".into());
     let root = heap.root(kept);
 
     heap.collect([]);
@@ -354,7 +354,7 @@ fn weak_map_values_follow_ephemeron_key_reachability() {
         entries: Box::default(),
     });
     let key = heap.alloc(Cell::Object(plain_object()));
-    let value = heap.alloc(Cell::String("value".into()));
+    let value = heap.alloc_string("value".into());
     if let Some(Cell::WeakMap { entries, .. }) = heap.get_mut(weak_map) {
         entries.insert(key, value);
     }
@@ -380,7 +380,7 @@ fn weak_map_array_keys_follow_direct_record_liveness() {
     let key = heap.alloc(Cell::Array {
         object: ArrayObject::new(plain_object(), Rc::new(Vec::new())),
     });
-    let value = heap.alloc(Cell::String("value".into()));
+    let value = heap.alloc_string("value".into());
     assert!(key.direct_array_index().is_some());
     if let Some(Cell::WeakMap { entries, .. }) = heap.get_mut(weak_map) {
         entries.insert(key, value);
@@ -456,7 +456,7 @@ fn weak_ref_target_is_cleared_after_collection() {
 #[test]
 fn weak_ref_owner_clears_its_handle_before_slot_reuse() {
     let mut heap = Heap::new();
-    let target = heap.alloc(Cell::String("target".into()));
+    let target = heap.alloc_string("target".into());
     let target_slot = target.heap_index().unwrap();
     let target_handle = heap.weak_handle(target).unwrap();
     let reference = heap.alloc(Cell::WeakRef {
@@ -472,7 +472,7 @@ fn weak_ref_owner_clears_its_handle_before_slot_reuse() {
         Some(Cell::WeakRef { target: None, .. })
     ));
 
-    let replacement = heap.alloc(Cell::String("replacement".into()));
+    let replacement = heap.alloc_string("replacement".into());
     assert_eq!(replacement.heap_index(), Some(target_slot));
     assert!(matches!(
         heap.get(reference),
@@ -486,15 +486,15 @@ fn slab_local_free_bitmap_reuses_slots_across_slab_boundaries() {
     let mut heap = Heap::new();
     let slot_count = super::slots::SLOTS_PER_SLAB + 2;
     for _ in 0..slot_count {
-        heap.alloc(Cell::String("temporary".into()));
+        heap.alloc_string("temporary".into());
     }
 
     assert_eq!(heap.collect([]), []);
     assert_eq!(heap.free_slots, slot_count);
 
-    let first = heap.alloc(Cell::String("first".into()));
-    let second = heap.alloc(Cell::String("second".into()));
-    let third = heap.alloc(Cell::String("third".into()));
+    let first = heap.alloc_string("first".into());
+    let second = heap.alloc_string("second".into());
+    let third = heap.alloc_string("third".into());
     assert_eq!(first.heap_index(), Some((slot_count - 1) as u32));
     assert_eq!(second.heap_index(), Some((slot_count - 2) as u32));
     assert_eq!(third.heap_index(), Some((slot_count - 3) as u32));
@@ -579,8 +579,8 @@ fn sparse_array_metadata_is_removed_before_a_slot_is_reused() {
 fn direct_array_records_trace_values_and_release_shared_backing() {
     let mut heap = Heap::new();
     let object = heap.alloc(Cell::Object(plain_object()));
-    let first_child = heap.alloc(Cell::String("first".into()));
-    let second_child = heap.alloc(Cell::String("second".into()));
+    let first_child = heap.alloc_string("first".into());
+    let second_child = heap.alloc_string("second".into());
     let shared = Rc::new(vec![first_child, Value::number(1.0)]);
     let first = heap.alloc(Cell::Array {
         object: ArrayObject::new(plain_object(), Rc::clone(&shared)),
@@ -625,7 +625,7 @@ fn direct_array_records_trace_and_remove_sparse_elements() {
     let array = heap.alloc(Cell::Array {
         object: ArrayObject::new(plain_object(), Rc::new(Vec::new())),
     });
-    let child = heap.alloc(Cell::String("sparse child".into()));
+    let child = heap.alloc_string("sparse child".into());
     let index = MAX_DENSE_ARRAY_HOLE_LENGTH + 1;
     heap.sparse_set(array, index, child);
     let array_root = heap.root(array);
@@ -651,7 +651,7 @@ fn object_integrity_metadata_survives_collection() {
         data.set_frozen(true);
     }
     let garbage = (0..512)
-        .map(|_| heap.alloc(Cell::String("garbage".into())))
+        .map(|_| heap.alloc_string("garbage".into()))
         .collect::<Vec<_>>();
     heap.collect([object]);
     assert!(
@@ -689,13 +689,13 @@ fn object_property_storage_migration_preserves_writes_and_gc_roots() {
     for shape in 1..=migrated {
         heap.register_property_shape(shape as u32, shape);
     }
-    let first = heap.alloc(Cell::String("first".into()));
-    let replaced = heap.alloc(Cell::String("replaced".into()));
-    let replacement = heap.alloc(Cell::String("replacement".into()));
+    let first = heap.alloc_string("first".into());
+    let replaced = heap.alloc_string("replaced".into());
+    let replacement = heap.alloc_string("replacement".into());
     let fillers = (2..INLINE_PROPERTY_COUNT)
-        .map(|_| heap.alloc(Cell::String("filler".into())))
+        .map(|_| heap.alloc_string("filler".into()))
         .collect::<Vec<_>>();
-    let last = heap.alloc(Cell::String("last".into()));
+    let last = heap.alloc_string("last".into());
     let object = heap.alloc(Cell::Object(plain_object()));
     assert!(heap.object(object).unwrap().inline_properties().is_some());
     heap.object_record_mut(object)
@@ -738,8 +738,8 @@ fn inline_property_values_are_gc_roots_until_deleted_or_the_owner_dies() {
     let mut heap = Heap::new();
     // A shape of two properties, the pair below, whatever the inline count.
     heap.register_property_shape(1, 2);
-    let kept = heap.alloc(Cell::String("kept".into()));
-    let deleted = heap.alloc(Cell::String("deleted".into()));
+    let kept = heap.alloc_string("kept".into());
+    let deleted = heap.alloc_string("deleted".into());
     let object = heap.alloc_object_pair(Value::NULL, 1, kept, deleted);
     heap.property_set(object, 1, Value::DELETED);
 
@@ -847,7 +847,7 @@ fn regexp_legacy_constructor_is_traced_through_live_instances() {
 #[test]
 fn resolved_binding_reference_keeps_its_slot_owner_alive() {
     let mut heap = Heap::new();
-    let value = heap.alloc(Cell::String("kept".into()));
+    let value = heap.alloc_string("kept".into());
     let environment = heap.alloc(Cell::Environment {
         parent: Value::NULL,
         function: 0,
@@ -976,7 +976,7 @@ fn weak_map_pending_fan_in_releases_every_value_and_resets_between_collections()
 fn wide_environment_clones_store_only_the_slots_they_do_not_share() {
     let mut heap = Heap::new();
     let width = crate::heap::SPARSE_CLONE_MIN_SLOTS + 8;
-    let kept = heap.alloc(Cell::String("kept".into()));
+    let kept = heap.alloc_string("kept".into());
     let environment = |heap: &mut Heap, slots: EnvironmentSlots| {
         heap.alloc(Cell::Environment {
             parent: Value::NULL,
@@ -1017,7 +1017,7 @@ fn wide_environment_clones_store_only_the_slots_they_do_not_share() {
     // The copies keep the original and its values alive.
     heap.collect_with_object_roots([second], |_, _, _, _, _| {}, None, true);
     assert_eq!(heap.environment_slot(second, width - 1), Some(kept));
-    assert!(matches!(heap.get(kept), Some(Cell::String(_))));
+    assert!(heap.is_string(kept));
     // A narrow environment's copy stays dense.
     let narrow = environment(&mut heap, vec![Value::TRUE; 2].into());
     assert_eq!(heap.clone_environment_slots(narrow, &[0], &[]).unwrap().0.len(), 2);
