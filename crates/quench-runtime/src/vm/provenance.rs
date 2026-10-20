@@ -121,7 +121,7 @@ pub(super) fn shape_function_length_reconfigured(shapes: &[Shape], shape: u32) -
 
 impl<H: Host> Vm<H> {
     pub(super) fn capture_function_name(&mut self, function: Value, name: Value) {
-        let Some(Cell::String(name)) = self.heap.get(name) else {
+        let Some(name) = self.heap.string(name) else {
             return;
         };
         let name = name.clone();
@@ -276,9 +276,9 @@ impl<H: Host> Vm<H> {
             self.atom_units_equal_str(atom, "name")
         });
         if let Some(name_key) = name_key {
-            if let Some(Cell::String(name)) = self
+            if let Some(name) = self
                 .diagnostic_data_property(function, PropertyKey::string(name_key))
-                .and_then(|value| self.heap.get(value))
+                .and_then(|value| self.heap.string(value))
             {
                 return Some(name.clone());
             }

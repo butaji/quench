@@ -298,7 +298,7 @@ impl<H: Host> Vm<H> {
         if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::ToStringTag) {
             let tag = self
                 .heap
-                .alloc(Cell::String("Temporal.ZonedDateTime".into()));
+                .alloc_string("Temporal.ZonedDateTime".into());
             self.set_symbol_property(prototype, symbol, tag)?;
             self.set_property_attributes(
                 prototype,
@@ -347,7 +347,7 @@ impl<H: Host> Vm<H> {
         let calendar_value = args.get(2).copied().unwrap_or(Value::UNDEFINED);
         let calendar = if calendar_value.is_undefined() {
             "iso8601".to_owned()
-        } else if matches!(self.heap.get(calendar_value), Some(Cell::String(_))) {
+        } else if self.heap.is_string(calendar_value) {
             let text = self.to_string(p, calendar_value)?.to_string();
             super::temporal_date_parse::parse_calendar_identifier_name(&text)
                 .ok_or_else(|| self.range_error(p, "Invalid calendar".into()))?
@@ -379,7 +379,7 @@ impl<H: Host> Vm<H> {
         if let Some(Cell::TemporalZonedDateTime { instant, .. }) = self.heap.get(value) {
             return Ok(instant.time_zone.to_string());
         }
-        let Some(Cell::String(_)) = self.heap.get(value) else {
+        let Some(_) = self.heap.string(value) else {
             return Err(self.type_error(p, "Invalid time zone".into()));
         };
         let text = self.to_string(p, value)?.to_string();
@@ -607,7 +607,7 @@ impl<H: Host> Vm<H> {
                 Value::number(f64::from(fields[6])),
                 Value::number(f64::from(fields[7])),
                 Value::number(f64::from(fields[8])),
-                self.heap.alloc(Cell::String(calendar.into())),
+                self.heap.alloc_string(calendar.into()),
             ];
             return self.temporal_plain_date_time_construct(p, &args, constructor);
         }
@@ -653,16 +653,16 @@ impl<H: Host> Vm<H> {
                 if native == Native::TemporalZonedDateTimeOffsetGetter {
                     Ok(self
                         .heap
-                        .alloc(Cell::String(format_offset_nanoseconds(offset).into())))
+                        .alloc_string(format_offset_nanoseconds(offset).into()))
                 } else {
                     Ok(Value::number(offset as f64))
                 }
             }
             Native::TemporalZonedDateTimeTimeZoneIdGetter => {
-                Ok(self.heap.alloc(Cell::String(zone.into())))
+                Ok(self.heap.alloc_string(zone.into()))
             }
             Native::TemporalZonedDateTimeCalendarIdGetter => {
-                Ok(self.heap.alloc(Cell::String(calendar.into())))
+                Ok(self.heap.alloc_string(calendar.into()))
             }
             _ => {
                 let fields = zoned_date_time_fields(epoch, &zone)
@@ -674,14 +674,14 @@ impl<H: Host> Vm<H> {
                     &calendar,
                 );
                 if native == Native::TemporalZonedDateTimeMonthCodeGetter {
-                    return Ok(self.heap.alloc(Cell::String(
+                    return Ok(self.heap.alloc_string(
                         calendar_fields
                             .map_or_else(
                                 || format!("M{:0width$}", fields[1], width = ISO_MONTH_DIGITS),
                                 |fields| fields.month_code,
                             )
                             .into(),
-                    )));
+                    ));
                 }
                 let value = match native {
                     Native::TemporalZonedDateTimeYearGetter => calendar_fields
@@ -705,7 +705,7 @@ impl<H: Host> Vm<H> {
                             Native::TemporalZonedDateTimeEraGetter => calendar_fields
                                 .and_then(|fields| fields.era)
                                 .map_or(Value::UNDEFINED, |era| {
-                                    self.heap.alloc(Cell::String(era.into()))
+                                    self.heap.alloc_string(era.into())
                                 }),
                             _ => calendar_fields
                                 .and_then(|fields| fields.era_year)
@@ -839,7 +839,7 @@ impl<H: Host> Vm<H> {
             Value::number(f64::from(fields[6])),
             Value::number(f64::from(fields[7])),
             Value::number(f64::from(fields[8])),
-            self.heap.alloc(Cell::String(calendar.to_string().into())),
+            self.heap.alloc_string(calendar.to_string().into()),
         ];
         let local_date_time =
             self.temporal_plain_date_time_construct(p, &date_time_args, date_time_constructor)?;
@@ -854,7 +854,7 @@ impl<H: Host> Vm<H> {
         let internal_options = self.object();
         let overflow_key = self.intern_atom("overflow");
         let overflow = if constrain { "constrain" } else { "reject" };
-        let overflow = self.heap.alloc(Cell::String(overflow.into()));
+        let overflow = self.heap.alloc_string(overflow.into());
         self.set_property(internal_options, overflow_key, overflow)?;
         let local_date_time = self.temporal_plain_date_time_arithmetic(
             p,
@@ -915,7 +915,7 @@ impl<H: Host> Vm<H> {
         if matches!(self.heap.get(options), Some(Cell::Symbol(_))) {
             return Err(self.type_error(p, "Invalid options".into()));
         }
-        let direction = if let Some(Cell::String(value)) = self.heap.get(options) {
+        let direction = if let Some(value) = self.heap.string(options) {
             value.to_string()
         } else {
             if !self.is_object_like(options) {
@@ -1017,7 +1017,7 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, "Invalid rounding options".into()));
         }
         let (smallest_unit, increment, rounding_mode) =
-            if let Some(Cell::String(value)) = self.heap.get(options) {
+            if let Some(value) = self.heap.string(options) {
                 (
                     value.to_string(),
                     MIN_ROUNDING_INCREMENT,
@@ -1110,7 +1110,7 @@ impl<H: Host> Vm<H> {
         let record_time_zone = instant.time_zone.to_string();
         let calendar_like = args.first().copied().unwrap_or(Value::UNDEFINED);
         let calendar = match self.heap.get(calendar_like) {
-            Some(Cell::String(_)) => {
+            _ if self.heap.is_string(calendar_like)  => {
                 let text = self.to_string(p, calendar_like)?.to_string();
                 super::temporal_date_parse::calendar_identifier_from_string(&text)
                     .ok_or_else(|| self.range_error(p, "Invalid calendar".into()))?
@@ -1292,7 +1292,7 @@ impl<H: Host> Vm<H> {
                 FieldValue::Undefined
             } else if matches!(name, "monthCode" | "offset" | "era") {
                 if name == "offset"
-                    && !matches!(self.heap.get(value), Some(Cell::String(_)))
+                    && !self.heap.is_string(value)
                     && self.heap.object_record(value).is_none()
                 {
                     return Err(self.type_error(p, "Invalid offset".into()));
@@ -1375,7 +1375,7 @@ impl<H: Host> Vm<H> {
                 let value = match value {
                     FieldValue::Number(value) => Value::number(*value),
                     FieldValue::String(value) => {
-                        self.heap.alloc(Cell::String(value.clone().into()))
+                        self.heap.alloc_string(value.clone().into())
                     }
                     FieldValue::Undefined => Value::UNDEFINED,
                 };
@@ -1385,7 +1385,7 @@ impl<H: Host> Vm<H> {
         }
         let internal_options = self.object();
         let overflow_key = self.intern_atom("overflow");
-        let overflow_value = self.heap.alloc(Cell::String(overflow.clone().into()));
+        let overflow_value = self.heap.alloc_string(overflow.clone().into());
         self.set_property(internal_options, overflow_key, overflow_value)?;
         let date = if has_date_change {
             self.temporal_plain_date_with(p, base_date, &[changes, internal_options])?
@@ -1570,7 +1570,7 @@ impl<H: Host> Vm<H> {
             ("roundingMode", options.rounding_mode.as_str()),
         ] {
             let atom = self.intern_atom(name);
-            let value = self.heap.alloc(Cell::String(value.into()));
+            let value = self.heap.alloc_string(value.into());
             self.set_property(internal_options, atom, value)?;
         }
         let increment_atom = self.intern_atom("roundingIncrement");
@@ -1859,7 +1859,7 @@ impl<H: Host> Vm<H> {
             Value::number(f64::from(fields[7])),
             Value::number(f64::from(fields[8])),
             self.heap
-                .alloc(Cell::String(value.calendar.to_string().into())),
+                .alloc_string(value.calendar.to_string().into()),
         ];
         self.temporal_plain_date_time_construct(p, &args, constructor)
     }
@@ -1918,7 +1918,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         value: Value,
     ) -> Result<ZonedDateTimeRecord, JsError> {
-        if matches!(self.heap.get(value), Some(Cell::String(_))) {
+        if self.heap.is_string(value) {
             let text = self.to_string(p, value)?.to_string();
             super::temporal_plain_date_time_conversion::validate_annotations(self, p, &text)?;
             let parsed = parse_zoned_date_time_string(&text)
@@ -1949,7 +1949,7 @@ impl<H: Host> Vm<H> {
                     calendar: *calendar,
                 })
             }
-            Some(Cell::String(_)) => {
+            _ if self.heap.is_string(value)  => {
                 let text = self.to_string(p, value)?.to_string();
                 super::temporal_plain_date_time_conversion::validate_annotations(self, p, &text)?;
                 let parsed = parse_zoned_date_time_string(&text)
@@ -2076,7 +2076,7 @@ impl<H: Host> Vm<H> {
             fields[1],
             fields[2],
         );
-        Ok(self.heap.alloc(Cell::String(result.into())))
+        Ok(self.heap.alloc_string(result.into()))
     }
 
     fn temporal_zoned_date_time_string_options(
@@ -2192,7 +2192,7 @@ impl<H: Host> Vm<H> {
         let calendar_value = self.get_property(p, value, calendar_atom)?;
         let calendar = match self.heap.get(calendar_value) {
             None if calendar_value.is_undefined() => "iso8601".to_owned(),
-            Some(Cell::String(value)) => {
+            _ if let Some(value) = self.heap.string(calendar_value)  => {
                 super::temporal_date_parse::calendar_identifier_from_string(value.host_string())
                     .ok_or_else(|| self.range_error(p, "Invalid calendar".into()))?
             }
@@ -2217,7 +2217,7 @@ impl<H: Host> Vm<H> {
         let offset = if offset_value.is_undefined() {
             None
         } else {
-            if !matches!(self.heap.get(offset_value), Some(Cell::String(_)))
+            if !self.heap.is_string(offset_value)
                 && !self.is_object_like(offset_value)
             {
                 return Err(self.type_error(p, "Invalid offset".into()));

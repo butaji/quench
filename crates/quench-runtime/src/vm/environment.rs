@@ -870,7 +870,7 @@ impl<H: Host> Vm<H> {
         if objects.is_empty() {
             return Ok(None);
         }
-        let key = self.heap.alloc(Cell::String(self.atom_name(atom).into()));
+        let key = self.heap.alloc_string(self.atom_name(atom).into());
         self.with_call_roots(std::iter::once(key).chain(objects.iter().copied()), |vm| {
             for object in objects.iter().rev().copied() {
                 if vm.with_binding(p, object, key, atom)? {
@@ -1001,7 +1001,7 @@ impl<H: Host> Vm<H> {
             }
             return Err(self.reference_error(p, format!("{} is not defined", self.atom_name(atom))));
         }
-        let key = self.heap.alloc(Cell::String(self.atom_name(atom).into()));
+        let key = self.heap.alloc_string(self.atom_name(atom).into());
         // ResolveName has already selected a non-global object environment.
         // Preserve that reference even if evaluating the RHS removed the
         // binding before PutValue (the specification's captured Reference).
@@ -1297,7 +1297,7 @@ impl<H: Host> Vm<H> {
         if object == self.realm.globals {
             return self.load_name_without_with(p, atom, None, false);
         }
-        let key = self.heap.alloc(Cell::String(self.atom_name(atom).into()));
+        let key = self.heap.alloc_string(self.atom_name(atom).into());
         if !self.has_property(p, object, key)? {
             if strict {
                 return Err(
@@ -1358,7 +1358,7 @@ impl<H: Host> Vm<H> {
         if self.own_property(self.realm.globals, atom).is_some() {
             return Ok(true);
         }
-        let key = self.heap.alloc(Cell::String(self.atom_name(atom).into()));
+        let key = self.heap.alloc_string(self.atom_name(atom).into());
         self.has_property(p, self.realm.globals, key)
     }
 

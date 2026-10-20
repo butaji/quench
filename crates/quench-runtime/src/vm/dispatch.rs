@@ -614,7 +614,7 @@ impl<H: Host> Vm<H> {
                     if let Some(source_name) = self.programs.source_name(program).map(str::to_owned)
                     {
                         let url = self.host.import_meta_url(&source_name);
-                        let url = self.heap.alloc(Cell::String(url.into()));
+                        let url = self.heap.alloc_string(url.into());
                         let url_atom = self.intern_atom("url");
                         self.set_property(value, url_atom, url)?;
                     }
@@ -1124,7 +1124,7 @@ impl<H: Host> Vm<H> {
                 let key = self.read(f, i.register_c());
                 let key = self.to_property_key(p, key)?;
                 let key = match self.heap.get(key).cloned() {
-                    Some(Cell::String(text)) => PropertyKey::string(self.intern_js_atom(&text)),
+                    _ if let Some(text) = self.heap.string(key).cloned()  => PropertyKey::string(self.intern_js_atom(&text)),
                     Some(Cell::Symbol(_)) => PropertyKey::symbol(key),
                     _ => return Err(JsError::validation("invalid class field key".into())),
                 };

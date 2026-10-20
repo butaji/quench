@@ -218,11 +218,11 @@ impl<H: Host> Vm<H> {
             return Ok(receiver);
         }
         self.require_object_coercible(p, receiver)?;
-        if matches!(self.heap.get(receiver), Some(Cell::String(_))) {
+        if self.heap.is_string(receiver) {
             return Ok(receiver);
         }
         let text = self.coerce_js_string(p, receiver)?;
-        Ok(self.heap.alloc(Cell::String(text)))
+        Ok(self.heap.alloc_string(text))
     }
 
     pub(super) fn install_string(
@@ -275,7 +275,7 @@ impl<H: Host> Vm<H> {
         realm: Value,
     ) -> Result<Value, JsError> {
         self.set_builtin_function_name(constructor, "String")?;
-        let empty = self.heap.alloc(Cell::String(JsString::from_str("")));
+        let empty = self.heap.alloc_string(JsString::from_str(""));
         let prototype = self
             .heap
             .alloc(Cell::Object(Self::empty_object(object_proto)));
@@ -368,7 +368,7 @@ impl<H: Host> Vm<H> {
             }
             receiver.units().extend_into(&mut units);
             units.extend(format!("</{}>", method.tag).encode_utf16());
-            Ok(self.heap.alloc(Cell::String(JsString::from_units(&units))))
+            Ok(self.heap.alloc_string(JsString::from_units(&units)))
         })())
     }
 
@@ -423,7 +423,7 @@ impl<H: Host> Vm<H> {
                         }
                     }
                 }
-                Ok(vm.heap.alloc(Cell::String(output)))
+                Ok(vm.heap.alloc_string(output))
             })
         })
     }
@@ -435,7 +435,7 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let Some(Cell::String(receiver)) = self.heap.get(this).cloned() else {
+        let Some(receiver) = self.heap.string(this).cloned() else {
             return Err(JsError("string method receiver is not a string".into()));
         };
         match native {
@@ -486,7 +486,7 @@ impl<H: Host> Vm<H> {
                     }
                     let bytes: Vec<u8> = bytes.iter().map(mapped).collect();
                     let text = std::str::from_utf8(&bytes).expect("ASCII units are UTF-8");
-                    return Ok(self.heap.alloc(Cell::String(JsString::from_str(text))));
+                    return Ok(self.heap.alloc_string(JsString::from_str(text)));
                 }
                 let text = if matches!(
                     native,
@@ -503,7 +503,7 @@ impl<H: Host> Vm<H> {
                 } else {
                     map_case(units, str::to_lowercase)
                 };
-                Ok(self.heap.alloc(Cell::String(text)))
+                Ok(self.heap.alloc_string(text))
             }
             Native::StringLocaleCompare => {
                 let other = self.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
@@ -520,7 +520,7 @@ impl<H: Host> Vm<H> {
                     let value = self.coerce_js_string(p, *value)?;
                     text.push_js_string(&value);
                 }
-                Ok(self.heap.alloc(Cell::String(text)))
+                Ok(self.heap.alloc_string(text))
             }
             Native::StringNormalize => {
                 use unicode_normalization::UnicodeNormalization;
@@ -532,7 +532,7 @@ impl<H: Host> Vm<H> {
                     "NFKD" => receiver.host_string().nfkd().collect(),
                     _ => return Err(self.range_error(p, "invalid normalization form".into())),
                 };
-                Ok(self.heap.alloc(Cell::String(text)))
+                Ok(self.heap.alloc_string(text))
             }
             _ => unreachable!(),
         }
@@ -545,10 +545,10 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         self.require_object_coercible(p, this)?;
         let source = match self.heap.get(this) {
-            Some(Cell::String(_)) => this,
+            _ if self.heap.is_string(this)  => this,
             _ => {
                 let text = self.to_string(p, this)?;
-                self.heap.alloc(Cell::String(text.into()))
+                self.heap.alloc_string(text.into())
             }
         };
         Ok(self.heap.alloc_iterator(IteratorRecord {
@@ -625,7 +625,7 @@ impl<H: Host> Vm<H> {
             let values = parts
                 .into_iter()
                 .take(limit)
-                .map(|part| vm.heap.alloc(Cell::String(part)))
+                .map(|part| vm.heap.alloc_string(part))
                 .collect();
             Ok(vm.heap.alloc(Cell::Array {
                 object: crate::heap::ArrayObject::new(
@@ -702,7 +702,7 @@ impl<H: Host> Vm<H> {
                     return vm.call_value(p, method, pattern, &[this]);
                 }
             }
-            let flags = vm.heap.alloc(Cell::String(MATCH_ALL_FLAGS.into()));
+            let flags = vm.heap.alloc_string(MATCH_ALL_FLAGS.into());
             vm.string_regexp_fallback(p, this, pattern, symbol, flags)
         })
     }
@@ -717,7 +717,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         self.with_call_roots([receiver, pattern, flags], |vm| {
             let input = vm.coerce_js_string(p, receiver)?;
-            let input = vm.heap.alloc(Cell::String(input));
+            let input = vm.heap.alloc_string(input);
             vm.with_call_roots([input], |vm| {
                 let matcher = vm.regexp_create(p, pattern, flags)?;
                 vm.with_call_roots([matcher], |vm| {
@@ -779,12 +779,12 @@ impl<H: Host> Vm<H> {
                 StringReplacement::Template(vm.coerce_js_string(p, replacement_value)?)
             };
             let Some(first) = input.find_units(search.units(), 0) else {
-                return Ok(vm.heap.alloc(Cell::String(input)));
+                return Ok(vm.heap.alloc_string(input));
             };
             let callback_inputs = match replacement {
                 StringReplacement::Callable(_) => Some([
-                    vm.heap.alloc(Cell::String(search.clone())),
-                    vm.heap.alloc(Cell::String(input.clone())),
+                    vm.heap.alloc_string(search.clone()),
+                    vm.heap.alloc_string(input.clone()),
                 ]),
                 StringReplacement::Template(_) => None,
             };
@@ -831,7 +831,7 @@ impl<H: Host> Vm<H> {
                 }
                 output.append_slice(&input, cursor..input.units().len());
                 let output = vm.string_build_result(p, output.finish())?;
-                Ok(vm.heap.alloc(Cell::String(output)))
+                Ok(vm.heap.alloc_string(output))
             })
         })
     }

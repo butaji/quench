@@ -141,7 +141,7 @@ impl<H: Host> Vm<H> {
             self.set_builtin_named(p, prototype, name, native)?;
         }
         if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::ToStringTag) {
-            let tag = self.heap.alloc(Cell::String("Temporal.PlainDate".into()));
+            let tag = self.heap.alloc_string("Temporal.PlainDate".into());
             self.set_symbol_property(prototype, symbol, tag)?;
             self.set_property_attributes(
                 prototype,
@@ -170,7 +170,7 @@ impl<H: Host> Vm<H> {
         let day = self.plain_date_integer(p, args.get(2).copied().unwrap_or(Value::UNDEFINED))?;
         let calendar = match args.get(3).copied().unwrap_or(Value::UNDEFINED) {
             value if value.is_undefined() => "iso8601".to_owned(),
-            value if matches!(self.heap.get(value), Some(Cell::String(_))) => {
+            value if self.heap.is_string(value) => {
                 self.to_string(p, value)?.to_string()
             }
             _ => return Err(self.type_error(p, "Invalid calendar".into())),
@@ -271,7 +271,7 @@ impl<H: Host> Vm<H> {
                     &calendar,
                     args.first().copied().unwrap_or(Value::UNDEFINED),
                 )?;
-                Ok(self.heap.alloc(Cell::String(text.into())))
+                Ok(self.heap.alloc_string(text.into()))
             }
             Native::TemporalPlainDateToLocaleString => {
                 self.temporal_to_locale_string(p, this, args)
@@ -280,7 +280,7 @@ impl<H: Host> Vm<H> {
                 let (year, month, day, _) = self.temporal_plain_date_slots(p, this)?;
                 Ok(self
                     .heap
-                    .alloc(Cell::String(format_iso_date(year, month, day).into())))
+                    .alloc_string(format_iso_date(year, month, day).into()))
             }
             Native::TemporalPlainDateToPlainDateTime => {
                 super::temporal_plain_date_time_conversion::convert(self, p, this, args)
@@ -315,7 +315,7 @@ impl<H: Host> Vm<H> {
                     quench_intl::calendar_fields_from_iso(year, month, day, &calendar);
                 Ok(match native {
                     Native::TemporalPlainDateCalendarIdGetter => {
-                        self.heap.alloc(Cell::String(calendar.into()))
+                        self.heap.alloc_string(calendar.into())
                     }
                     Native::TemporalPlainDateYearGetter => Value::number(f64::from(
                         calendar_fields.as_ref().map_or(year, |fields| fields.year),
@@ -325,21 +325,21 @@ impl<H: Host> Vm<H> {
                             .as_ref()
                             .map_or(month, |fields| fields.month),
                     )),
-                    Native::TemporalPlainDateMonthCodeGetter => self.heap.alloc(Cell::String(
+                    Native::TemporalPlainDateMonthCodeGetter => self.heap.alloc_string(
                         calendar_fields
                             .map_or_else(
                                 || format!("M{month:0width$}", width = ISO_MONTH_DAY_DIGITS),
                                 |fields| fields.month_code,
                             )
                             .into(),
-                    )),
+                    ),
                     Native::TemporalPlainDateDayGetter => Value::number(f64::from(
                         calendar_fields.as_ref().map_or(day, |fields| fields.day),
                     )),
                     Native::TemporalPlainDateEraGetter => calendar_fields
                         .and_then(|fields| fields.era)
                         .map_or(Value::UNDEFINED, |era| {
-                            self.heap.alloc(Cell::String(era.into()))
+                            self.heap.alloc_string(era.into())
                         }),
                     Native::TemporalPlainDateEraYearGetter => calendar_fields
                         .and_then(|fields| fields.era_year)
@@ -496,7 +496,7 @@ impl<H: Host> Vm<H> {
             return Err(self.range_error(p, "Invalid overflow".into()));
         }
         let month_code_value =
-            month_code_text.map(|value| self.heap.alloc(Cell::String(value.into())));
+            month_code_text.map(|value| self.heap.alloc_string(value.into()));
         let month_code = month_code_value
             .map(|value| {
                 self.plain_date_month_code(p, value, &calendar, year, overflow == "constrain")
@@ -544,7 +544,7 @@ impl<H: Host> Vm<H> {
         let (year, month, day, _) = self.temporal_plain_date_slots(p, this)?;
         let calendar = args.first().copied().unwrap_or(Value::UNDEFINED);
         let calendar = match self.heap.get(calendar) {
-            Some(Cell::String(value)) => {
+            _ if let Some(value) = self.heap.string(calendar)  => {
                 let text = value.host_string();
                 temporal_date_parse::calendar_identifier_from_string(text)
                     .ok_or_else(|| self.range_error(p, "Invalid calendar".into()))?
@@ -620,7 +620,7 @@ impl<H: Host> Vm<H> {
                 .ok_or_else(|| self.range_error(p, "Invalid PlainDate".into()))?;
             return self.make_temporal_plain_date(p, date, calendar, constructor);
         }
-        let (date, calendar) = if let Some(Cell::String(text)) = self.heap.get(value) {
+        let (date, calendar) = if let Some(text) = self.heap.string(value) {
             let text = text.host_string().to_owned();
             let (date, calendar) = temporal_date_parse::parse_plain_date_string(&text)
                 .ok_or_else(|| self.range_error(p, "Invalid calendar".into()))?;
@@ -711,7 +711,7 @@ impl<H: Host> Vm<H> {
         let calendar = self.get_property(p, value, calendar_atom)?;
         let calendar = match self.heap.get(calendar) {
             None if calendar.is_undefined() => "iso8601".to_owned(),
-            Some(Cell::String(value)) => {
+            _ if let Some(value) = self.heap.string(calendar)  => {
                 let value = value.host_string();
                 temporal_date_parse::calendar_identifier_from_string(value)
                     .ok_or_else(|| self.range_error(p, "Invalid calendar".into()))?

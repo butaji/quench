@@ -261,7 +261,6 @@ fn fallback_descriptor_edges_follow_their_owner_lifetime() {
 #[test]
 fn minor_collection_roots_external_edges_of_old_owners() {
     use super::{DEFAULT_PROPERTY_ATTRIBUTES, PropertyAttributes, property_key::PropertyKey};
-    use crate::heap::Cell;
 
     let program = Engine::specialize("", "minor-external-roots.js").unwrap();
     let mut vm = Vm::new(SilentHost);
@@ -269,7 +268,7 @@ fn minor_collection_roots_external_edges_of_old_owners() {
     let owner_root = vm.heap.root(owner);
     vm.collect_slow(&program, true);
 
-    let getter = vm.heap.alloc(Cell::String("young getter".into()));
+    let getter = vm.heap.alloc_string("young getter".into());
     let getter_weak = vm.heap.weak_handle(getter).unwrap();
     let key = PropertyKey::string(vm.intern_atom("field"));
     vm.set_property_attributes(
@@ -356,7 +355,7 @@ fn shape_roots_keep_symbols_and_active_accessors_alive() {
     let owner = vm
         .heap
         .alloc_object_with_properties(Value::NULL, data_shape, &[Value::UNDEFINED]);
-    let getter = vm.heap.alloc(Cell::String("getter".into()));
+    let getter = vm.heap.alloc_string("getter".into());
     let getter_weak = vm.heap.weak_handle(getter).unwrap();
     vm.set_property_attributes(
         owner,
@@ -478,9 +477,7 @@ fn closures_share_on_demand_function_source_and_program_roots_it() {
     // Creating a closure records no source; the text is made on first request.
     assert_eq!(vm.own_property(first, source_atom), None);
     let source = vm.function_source_value(first).unwrap();
-    assert!(matches!(
-        vm.heap.get(source),
-        Some(super::Cell::String(text)) if text.host_string() == "function inner() { return 1; }"
+    assert!(vm.heap.string(source).is_some_and(|text| text.host_string() == "function inner() { return 1; }"
     ));
     let source_weak = vm.heap.weak_handle(source).unwrap();
     let second = vm.closure(&program, inner, Value::NULL).unwrap();
@@ -2537,9 +2534,9 @@ fn json_revival_roots_release_after_each_completion() {
                 let atom = vm.intern_atom(name);
                 vm.own_property(vm.realm.globals, atom).unwrap()
             });
-            let text = vm.heap.alloc(super::Cell::String(
+            let text = vm.heap.alloc_string(
                 r#"{"first":0,"target":{"entry":1}}"#.into(),
-            ));
+            );
             let roots = vm.heap.root_count_for_test();
             let calls = vm.active_call_roots.len();
             let result = vm.json_parse(&program, &[text, values[0]]);
@@ -2669,7 +2666,7 @@ fn definition_record_stack_exhaustion_preserves_root_scopes() {
     vm.execute(&program).unwrap();
     let atom = vm.intern_atom("target");
     let target = vm.own_property(vm.realm.globals, atom).unwrap();
-    let key = vm.heap.alloc(super::Cell::String("entry".into()));
+    let key = vm.heap.alloc_string("entry".into());
     let record = super::object_descriptors::PropertyDescriptorRecord::data(Value::number(42.0));
     let roots = vm.heap.root_count_for_test();
     let calls = vm.active_call_roots.len();
@@ -2922,7 +2919,7 @@ fn error_stack_setter_roots_release_after_each_completion() {
                 Value::number(1.0)
             } else {
                 vm.heap
-                    .alloc(crate::heap::Cell::String("fresh-stack".into()))
+                    .alloc_string("fresh-stack".into())
             };
             let target = vm.heap.root_value(hold).unwrap();
             let target_weak = vm.heap.weak_handle(target);
@@ -3012,7 +3009,7 @@ fn module_namespace_operations_share_uninitialized_export_errors() {
                 u16::try_from(slot).unwrap(),
             )]);
             object.set_extensible(false);
-            let key = vm.heap.alloc(crate::heap::Cell::String("answer".into()));
+            let key = vm.heap.alloc_string("answer".into());
             let roots = vm.heap.root_count_for_test();
             let calls = vm.active_call_roots.len();
             let outcome = match operation {
@@ -3435,7 +3432,7 @@ fn dynamic_constructor_roots_release_after_prototype_completion() {
                 } else {
                     vm.own_property(vm.realm.globals, prototype_atom).unwrap()
                 };
-                let argument = vm.heap.alloc(super::Cell::String("return 42".into()));
+                let argument = vm.heap.alloc_string("return 42".into());
                 let weak_argument = vm.heap.weak_handle(argument).unwrap();
                 let roots = vm.heap.root_count_for_test();
                 let calls = vm.active_call_roots.len();
@@ -5147,7 +5144,7 @@ fn property_copy_roots_release_after_callback_completion() {
                     .map(|v| vm.heap.weak_handle(*v).unwrap())
                     .collect::<Vec<_>>();
                 let excluded = if phase == "excluded" {
-                    vec![vm.heap.alloc(super::Cell::String("first".into()))]
+                    vec![vm.heap.alloc_string("first".into())]
                 } else {
                     vec![]
                 };
@@ -5348,14 +5345,14 @@ fn for_in_roots_release_after_prototype_and_key_callbacks() {
                     .call_value(&program, factory, Value::UNDEFINED, &[])
                     .unwrap();
                 let source_handle = vm.heap.weak_handle(source).unwrap();
-                let key = vm.heap.alloc(super::Cell::String(
+                let key = vm.heap.alloc_string(
                     match phase {
                         "shadow" => "hidden",
                         "missing" => "absent",
                         _ => "inherited",
                     }
                     .into(),
-                ));
+                );
                 let key_handle = vm.heap.weak_handle(key).unwrap();
                 // Snapshot collection has no key input to keep alive.
                 let key_root = (!query).then(|| vm.heap.root(key));
@@ -5679,7 +5676,7 @@ fn proxy_reads_root_operands_and_results_through_nested_callbacks() {
                 let key = if symbol {
                     property.symbol_value().unwrap()
                 } else {
-                    vm.heap.alloc(super::Cell::String("entry".into()))
+                    vm.heap.alloc_string("entry".into())
                 };
                 let key_handle = vm.heap.weak_handle(key).unwrap();
                 if phase.starts_with("frozen-")
@@ -6141,7 +6138,7 @@ fn proxy_presence_and_delete_root_fresh_operands_and_restore_scopes() {
                         vm.call_value(&program, factory, Value::UNDEFINED, &[])
                             .unwrap()
                     } else {
-                        vm.heap.alloc(super::Cell::String("entry".into()))
+                        vm.heap.alloc_string("entry".into())
                     };
                     if symbol {
                         if phase == "nonext" {
@@ -6203,7 +6200,7 @@ fn proxy_presence_and_delete_root_fresh_operands_and_restore_scopes() {
                             assert!(if symbol {
                                 matches!(vm.heap.get(key),Some(super::Cell::Symbol(crate::heap::SymbolData { description: Some(name), .. })) if name.as_ref()=="entry")
                             } else {
-                                matches!(vm.heap.get(key),Some(super::Cell::String(name)) if name.host_string()=="entry")
+                                vm.heap.string(key).is_some_and(|name| name.host_string()=="entry")
                             });
                         }
                         Err(error) => {
@@ -6276,7 +6273,7 @@ fn proxy_revocation_consumes_captured_ownership_and_preserves_kind() {
                         _ => None,
                     };
                     if owner == "record" {
-                        let key = vm.heap.alloc(super::Cell::String("proxy".into()));
+                        let key = vm.heap.alloc_string("proxy".into());
                         assert_eq!(
                             vm.object_delete_property(&program, &[record, key]).unwrap(),
                             Value::TRUE
@@ -6623,11 +6620,11 @@ fn equality_roots_the_opposite_primitive_during_object_coercion() {
                     let object = vm
                         .call_value(&program, factory, Value::UNDEFINED, &[])
                         .unwrap();
-                    let primitive = vm.heap.alloc(if bigint {
-                        super::Cell::bigint(42.into())
+                    let primitive = if bigint {
+                        vm.heap.alloc(super::Cell::bigint(42.into()))
                     } else {
-                        super::Cell::String("ab".into())
-                    });
+                        vm.heap.alloc_string("ab".into())
+                    };
                     let handles =
                         [object, primitive].map(|value| vm.heap.weak_handle(value).unwrap());
                     let roots = vm.heap.root_count_for_test();
@@ -7465,7 +7462,7 @@ fn regexp_match_all_creation_roots_fresh_species_matcher_and_inputs() {
             let receiver = vm
                 .call_value(&program, factory, Value::UNDEFINED, &[])
                 .unwrap();
-            let input = vm.heap.alloc(super::Cell::String("a".into()));
+            let input = vm.heap.alloc_string("a".into());
             let handles = [receiver, input].map(|v| vm.heap.weak_handle(v).unwrap());
             let roots = vm.heap.root_count_for_test();
             let calls = vm.active_call_roots.len();
@@ -7679,7 +7676,7 @@ fn regexp_split_roots_inputs_matcher_results_and_accumulated_captures() {
                 let receiver = vm
                     .call_value(&program, factory, Value::UNDEFINED, &[])
                     .unwrap();
-                let input = vm.heap.alloc(super::Cell::String("a,b,c".into()));
+                let input = vm.heap.alloc_string("a,b,c".into());
                 let receiver_root = vm.heap.root(receiver);
                 let input_root = vm.heap.root(input);
                 let factory = vm.intern_atom("limit");
@@ -8031,7 +8028,7 @@ fn string_match_search_fallback_roots_converted_input_and_fresh_matcher() {
                             let atom = vm.intern_atom("input");
                             let input = vm.own_property(value, atom).unwrap();
                             assert!(
-                                matches!(vm.heap.get(input),Some(super::Cell::String(text))if text.units()==[0xd800,97])
+                                vm.heap.string(input).is_some_and(|text| text.units()==[0xd800,97])
                             );
                             vm.heap.release_root(owner);
                         }
@@ -8161,7 +8158,7 @@ fn string_match_all_fallback_roots_input_and_intrinsic_matcher() {
                         vm.call_value(&program, factory, Value::UNDEFINED, &[])
                             .unwrap()
                     } else {
-                        vm.heap.alloc(super::Cell::String("a".into()))
+                        vm.heap.alloc_string("a".into())
                     };
                     vm.heap.release_root(root);
                     let handles = [receiver, pattern].map(|v| vm.heap.weak_handle(v).unwrap());
@@ -8186,7 +8183,7 @@ fn string_match_all_fallback_roots_input_and_intrinsic_matcher() {
                             let atom = vm.intern_atom("input");
                             let input = vm.own_property(value, atom).unwrap();
                             assert!(
-                                matches!(vm.heap.get(input),Some(super::Cell::String(text))if text.units()==[0xd800,97])
+                                vm.heap.string(input).is_some_and(|text| text.units()==[0xd800,97])
                             );
                             vm.heap.release_root(root);
                         }
@@ -9126,7 +9123,6 @@ fn string_raw_roots_fresh_raw_views_and_original_substitutions() {
 
 #[test]
 fn collator_construction_roots_boxed_locale_and_option_views() {
-    use super::Cell;
     for compile in [
         Engine::specialize as fn(&str, &str) -> _,
         Engine::specialize_unspecialized,
@@ -9172,7 +9168,7 @@ fn collator_construction_roots_boxed_locale_and_option_views() {
                 let locales = if matches!(phase, "length" | "index" | "locale") {
                     Value::number(42.0)
                 } else {
-                    vm.heap.alloc(Cell::String("en".into()))
+                    vm.heap.alloc_string("en".into())
                 };
                 let result = vm.intl_collator_construct(
                     &program,
@@ -9186,8 +9182,8 @@ fn collator_construction_roots_boxed_locale_and_option_views() {
                     Ok(collator) => {
                         let owner = vm.heap.root(collator);
                         vm.collect_now(&program);
-                        let left = vm.heap.alloc(Cell::String("a".into()));
-                        let right = vm.heap.alloc(Cell::String("b".into()));
+                        let left = vm.heap.alloc_string("a".into());
+                        let right = vm.heap.alloc_string("b".into());
                         let result = vm
                             .intl_collator_native(
                                 &program,
@@ -9232,7 +9228,6 @@ fn collator_construction_roots_boxed_locale_and_option_views() {
 
 #[test]
 fn intl_coerced_option_views_survive_fresh_conversion_callbacks() {
-    use super::Cell;
     for compile in [
         Engine::specialize as fn(&str, &str) -> _,
         Engine::specialize_unspecialized,
@@ -9262,7 +9257,7 @@ fn intl_coerced_option_views_survive_fresh_conversion_callbacks() {
                     let intl = vm.own_property(vm.realm.globals, intl).unwrap();
                     let name = vm.intern_atom(kind);
                     let constructor = vm.own_property(intl, name).unwrap();
-                    let locale = vm.heap.alloc(Cell::String("en".into()));
+                    let locale = vm.heap.alloc_string("en".into());
                     let weak = vm.heap.weak_handle(locale).unwrap();
                     let locale_owner = vm.heap.root(locale);
                     let roots = vm.heap.root_count_for_test();
@@ -10071,14 +10066,14 @@ fn script_directive_completion_survives_declarations_and_preserves_string_units(
             vm.execute(&program).unwrap();
             let value = vm.eval_global_script_named(&program, source, false, "directive-completion.js").unwrap();
             match expected {
-                Some(expected) => assert!(matches!(vm.heap.get(value), Some(super::Cell::String(text)) if text.host_string() == expected), "{source}"),
+                Some(expected) => assert!(vm.heap.string(value).is_some_and(|text| text.host_string() == expected), "{source}"),
                 None => assert!(value.is_undefined(), "{source}"),
             }
         }
         let mut vm = Vm::new(SilentHost);
         vm.execute(&program).unwrap();
         let value = vm.eval_global_script_named(&program, r"'\ud800'; var x;", false, "directive-completion.js").unwrap();
-        assert!(matches!(vm.heap.get(value), Some(super::Cell::String(text)) if text.units().wide().as_ref() == [0xd800]));
+        assert!(vm.heap.string(value).is_some_and(|text| text.units().wide().as_ref() == [0xd800]));
     }
 }
 

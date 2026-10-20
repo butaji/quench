@@ -36,10 +36,7 @@ impl<H: Host> Vm<H> {
     /// The length of a string primitive, in UTF-16 code units: its own `length`, which no
     /// prototype can shadow.
     pub(super) fn string_length(&self, value: Value) -> Option<usize> {
-        match self.heap.get(value) {
-            Some(Cell::String(string)) => Some(string.len()),
-            _ => None,
-        }
+        self.heap.string(value).map(|string| string.len())
     }
 
     /// The own data `length` of an arguments object that keeps the layout it was made with

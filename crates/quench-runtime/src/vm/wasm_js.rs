@@ -582,7 +582,7 @@ impl<H: Host> Vm<H> {
         native: Native,
         text: String,
     ) -> JsError {
-        let message = self.heap.alloc(Cell::String(JsString::from_str(&text)));
+        let message = self.heap.alloc_string(JsString::from_str(&text));
         let object = self
             .construct_error_native(program, native, &[message])
             .unwrap_or(Value::UNDEFINED);
@@ -1302,7 +1302,7 @@ impl<H: Host> Vm<H> {
                 let exports = self.heap.root_value(exports_root).expect("rooted exports");
                 let key = self
                     .heap
-                    .alloc(Cell::String(JsString::from_str(&export.name)));
+                    .alloc_string(JsString::from_str(&export.name));
                 let key = self.to_property_key(p, key)?;
                 let record = super::object_descriptors::PropertyDescriptorRecord::data(value);
                 self.define_own_property_record(p, exports, key, record)?;
@@ -1840,7 +1840,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let descriptor = self.object();
         for &(name, text) in fields {
-            let value = self.heap.alloc(Cell::String(JsString::from_str(text)));
+            let value = self.heap.alloc_string(JsString::from_str(text));
             self.set_named(p, descriptor, name, value)?;
         }
         Ok(descriptor)

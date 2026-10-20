@@ -21,10 +21,10 @@ impl<H: Host> Vm<H> {
         };
         let mut keys = indices
             .into_iter()
-            .map(|index| self.heap.alloc(Cell::String(index.to_string().into())))
+            .map(|index| self.heap.alloc_string(index.to_string().into()))
             .collect::<Vec<_>>();
         if array_length {
-            keys.push(self.heap.alloc(Cell::String("length".into())));
+            keys.push(self.heap.alloc_string("length".into()));
         }
         Some(keys)
     }
@@ -66,7 +66,7 @@ impl<H: Host> Vm<H> {
         {
             let keys = keys
                 .into_iter()
-                .map(|atom| self.heap.alloc(Cell::String(self.atom_value(atom))))
+                .map(|atom| self.heap.alloc_string(self.atom_value(atom)))
                 .collect();
             return Ok(self.own_keys_array(keys));
         }
@@ -81,7 +81,7 @@ impl<H: Host> Vm<H> {
                 .collect();
             for key in &keys {
                 let property = self.heap.root_value(*key).unwrap();
-                if !matches!(self.heap.get(property), Some(Cell::String(_))) {
+                if !self.heap.is_string(property) {
                     continue;
                 }
                 let enumerable = self.own_property_enumerable(
@@ -138,7 +138,7 @@ impl<H: Host> Vm<H> {
         let values = self
             .object_own_key_values(p, object)?
             .into_iter()
-            .filter(|key| matches!(self.heap.get(*key), Some(Cell::String(_))))
+            .filter(|key| self.heap.is_string(*key))
             .collect();
         Ok(self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(

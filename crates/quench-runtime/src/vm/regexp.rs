@@ -547,7 +547,7 @@ impl<H: Host> Vm<H> {
                                     capture
                                 } else {
                                     let string = vm.coerce_js_string(p, capture)?;
-                                    vm.heap.alloc(Cell::String(string))
+                                    vm.heap.alloc_string(string)
                                 };
                                 captures.push(capture);
                                 vm.active_call_roots.push(capture);
@@ -556,7 +556,7 @@ impl<H: Host> Vm<H> {
                             let groups = vm.get_property(p, result, atom)?;
                             let text = vm.with_call_roots([groups], |vm| {
                                 if callable {
-                                    let matched = vm.heap.alloc(Cell::String(matched.clone()));
+                                    let matched = vm.heap.alloc_string(matched.clone());
                                     let mut args = Vec::new();
                                     args.push(matched);
                                     args.extend(captures.iter().copied());
@@ -605,7 +605,7 @@ impl<H: Host> Vm<H> {
                         output.append_slice(&input, next_source..input.units().len());
                     }
                     let output = vm.string_build_result(p, output.finish())?;
-                    Ok(vm.heap.alloc(Cell::String(output)))
+                    Ok(vm.heap.alloc_string(output))
                 })
             },
         )
@@ -1023,9 +1023,9 @@ impl<H: Host> Vm<H> {
                 .iter()
                 .map(|range| {
                     range.clone().map_or(Value::UNDEFINED, |range| {
-                        self.heap.alloc(Cell::String(JsString::from_unit_run(
+                        self.heap.alloc_string(JsString::from_unit_run(
                             input.units().slice(range),
-                        )))
+                        ))
                     })
                 })
                 .collect::<Vec<_>>();
@@ -1037,7 +1037,7 @@ impl<H: Host> Vm<H> {
                         p, template, input, position, &matched, &captures, groups,
                     ),
                     FastReplacement::Function(function) => {
-                        let matched = vm.heap.alloc(Cell::String(matched.clone()));
+                        let matched = vm.heap.alloc_string(matched.clone());
                         let mut args = Vec::with_capacity(captures.len() + 4);
                         args.push(matched);
                         args.extend(captures.iter().copied());
@@ -1057,7 +1057,7 @@ impl<H: Host> Vm<H> {
         }
         output.append_slice(input, next_source..input.units().len());
         let output = self.string_build_result(p, output.finish())?;
-        Ok(self.heap.alloc(Cell::String(output)))
+        Ok(self.heap.alloc_string(output))
     }
 
     /// Every match of a global builtin exec loop from index 0, as RegExpBuiltinExec leaves
@@ -1129,7 +1129,7 @@ impl<H: Host> Vm<H> {
             )
         };
         let Some(last) = last else {
-            return Ok(self.heap.alloc(Cell::String(input.clone())));
+            return Ok(self.heap.alloc_string(input.clone()));
         };
         self.record_regexp_legacy_match(receiver, input.clone(), last)?;
         let mut output = super::wtf16::JsStringBuilder::default();
@@ -1141,7 +1141,7 @@ impl<H: Host> Vm<H> {
         }
         output.append_slice(input, next_source..input.units().len());
         let output = self.string_build_result(p, output.finish())?;
-        Ok(self.heap.alloc(Cell::String(output)))
+        Ok(self.heap.alloc_string(output))
     }
 
     pub(super) fn replacement_substitution(
@@ -1202,7 +1202,7 @@ impl<H: Host> Vm<H> {
                         let value = captures[capture - 1];
                         if !value.is_undefined() {
                             // RegExp replacement has already converted every capture.
-                            let Some(Cell::String(value)) = self.heap.get(value) else {
+                            let Some(value) = self.heap.string(value) else {
                                 unreachable!("replacement captures are strings or undefined");
                             };
                             output.append(value);
@@ -1224,9 +1224,9 @@ impl<H: Host> Vm<H> {
                         cursor += 1;
                         continue;
                     };
-                    let name = self.heap.alloc(Cell::String(JsString::from_unit_run(
+                    let name = self.heap.alloc_string(JsString::from_unit_run(
                         units.slice(cursor + 2..end),
-                    )));
+                    ));
                     let value = self.get_index(p, groups, name)?;
                     if !value.is_undefined() {
                         let value = self.coerce_js_string(p, value)?;
@@ -1316,7 +1316,7 @@ impl<H: Host> Vm<H> {
                     if !flags.host_string().contains('y') {
                         flags.push_js_string(&JsString::from_str("y"));
                     }
-                    let flags = vm.heap.alloc(Cell::String(flags));
+                    let flags = vm.heap.alloc_string(flags);
                     let splitter = vm.construct_value(p, constructor, &[receiver, flags])?;
                     Ok::<_, JsError>((unicode, splitter))
                 })?;
@@ -1366,9 +1366,9 @@ impl<H: Host> Vm<H> {
                                     false,
                                 ));
                             }
-                            let piece = vm.heap.alloc(Cell::String(JsString::from_unit_run(
+                            let piece = vm.heap.alloc_string(JsString::from_unit_run(
                                 input.units().slice(p_index..q),
-                            )));
+                            ));
                             if vm.append_fresh_array_element(array, piece) >= limit {
                                 return Ok((end, true));
                             }
@@ -1389,9 +1389,9 @@ impl<H: Host> Vm<H> {
                         }
                         q = next;
                     }
-                    let tail = vm.heap.alloc(Cell::String(JsString::from_unit_run(
+                    let tail = vm.heap.alloc_string(JsString::from_unit_run(
                         input.units().slice(p_index..input.units().len()),
-                    )));
+                    ));
                     vm.append_fresh_array_element(array, tail);
                     Ok(array)
                 })
@@ -1462,18 +1462,18 @@ impl<H: Host> Vm<H> {
                 q = advance_string_index_units(input.units(), q, unicode);
                 continue;
             }
-            let piece = self.heap.alloc(Cell::String(JsString::from_unit_run(
+            let piece = self.heap.alloc_string(JsString::from_unit_run(
                 input.units().slice(p_index..q),
-            )));
+            ));
             if self.append_fresh_array_element(array, piece) >= limit {
                 return self.finish_regexp_split_builtin(splitter, input, last_match, array);
             }
             p_index = end;
             for capture in captures {
                 let value = capture.map_or(Value::UNDEFINED, |range| {
-                    self.heap.alloc(Cell::String(JsString::from_unit_run(
+                    self.heap.alloc_string(JsString::from_unit_run(
                         input.units().slice(range),
-                    )))
+                    ))
                 });
                 if self.append_fresh_array_element(array, value) >= limit {
                     return self.finish_regexp_split_builtin(splitter, input, last_match, array);
@@ -1481,9 +1481,9 @@ impl<H: Host> Vm<H> {
             }
             q = p_index;
         }
-        let tail = self.heap.alloc(Cell::String(JsString::from_unit_run(
+        let tail = self.heap.alloc_string(JsString::from_unit_run(
             input.units().slice(p_index..input.units().len()),
-        )));
+        ));
         self.append_fresh_array_element(array, tail);
         self.finish_regexp_split_builtin(splitter, input, last_match, array)
     }
@@ -1563,7 +1563,7 @@ impl<H: Host> Vm<H> {
                 let constructor = vm.regexp_species_constructor(p, receiver)?;
                 let (flags, matcher) = vm.with_call_roots([constructor], |vm| {
                     let flags = vm.regexp_flags_text(p, receiver)?;
-                    let value = vm.heap.alloc(Cell::String(flags.clone()));
+                    let value = vm.heap.alloc_string(flags.clone());
                     let matcher = vm.construct_value(p, constructor, &[receiver, value])?;
                     Ok::<_, JsError>((flags, matcher))
                 })?;
@@ -1697,7 +1697,7 @@ impl<H: Host> Vm<H> {
                             let value = vm.get_property(p, result, zero)?;
                             let matched = vm.coerce_js_string(p, value)?;
                             let empty = matched.units().is_empty();
-                            let matched = vm.heap.alloc(Cell::String(matched));
+                            let matched = vm.heap.alloc_string(matched);
                             vm.append_fresh_array_element(array, matched);
                             Ok::<_, JsError>(empty)
                         })?;
@@ -1752,7 +1752,7 @@ impl<H: Host> Vm<H> {
         self.record_regexp_legacy_match(receiver, input.clone(), last)?;
         let matched = ranges
             .into_iter()
-            .map(|range| self.heap.alloc(Cell::String(input.substring(range))))
+            .map(|range| self.heap.alloc_string(input.substring(range)))
             .collect();
         Ok(self.new_array(matched))
     }
@@ -1790,7 +1790,7 @@ impl<H: Host> Vm<H> {
         match (native, self.heap.get(this)) {
             (Native::RegExpSource, Some(Cell::RegExp { meta, .. })) => Ok(self
                 .heap
-                .alloc(Cell::String(escape_regexp_source(&meta.source)))),
+                .alloc_string(escape_regexp_source(&meta.source))),
             (Native::RegExpSource, _)
                 if self
                     .realm
@@ -1799,7 +1799,7 @@ impl<H: Host> Vm<H> {
                     .get(&self.realm.globals)
                     .is_some_and(|intrinsics| intrinsics.prototype == this) =>
             {
-                Ok(self.heap.alloc(Cell::String("(?:)".into())))
+                Ok(self.heap.alloc_string("(?:)".into()))
             }
             _ => Err(self.type_error(p, "RegExp accessor called on incompatible receiver".into())),
         }
@@ -1854,7 +1854,7 @@ impl<H: Host> Vm<H> {
                     flags.push(*flag);
                 }
             }
-            Ok(vm.heap.alloc(Cell::String(flags.into())))
+            Ok(vm.heap.alloc_string(flags.into()))
         })
     }
 
@@ -1904,7 +1904,7 @@ impl<H: Host> Vm<H> {
             }
         };
         match value {
-            Some(value) => Ok(self.heap.alloc(Cell::String(value))),
+            Some(value) => Ok(self.heap.alloc_string(value)),
             None => Err(self.type_error(p, "RegExp legacy match state is unavailable".into())),
         }
     }
@@ -2088,18 +2088,12 @@ impl<H: Host> Vm<H> {
         let source = self
             .programs
             .constant(program, site.pattern_constant as usize)
-            .and_then(|value| match self.heap.get(value) {
-                Some(Cell::String(source)) => Some(source.clone()),
-                _ => None,
-            })
+            .and_then(|value| self.heap.string(value).map(|source| source.clone()))
             .ok_or_else(|| JsError::validation("RegExp literal pattern is not a string".into()))?;
         let flags = self
             .programs
             .constant(program, site.flags_constant as usize)
-            .and_then(|value| match self.heap.get(value) {
-                Some(Cell::String(flags)) => Some(flags.host_string().to_owned()),
-                _ => None,
-            })
+            .and_then(|value| self.heap.string(value).map(|flags| flags.host_string().to_owned()))
             .ok_or_else(|| JsError::validation("RegExp literal flags are not a string".into()))?;
         let matcher = match self.programs.regexp_literal_matcher(program, site_index) {
             Some(matcher) => matcher,
@@ -2277,10 +2271,10 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let value = args.first().copied().unwrap_or(Value::UNDEFINED);
-        let Some(Cell::String(input)) = self.heap.get(value) else {
+        let Some(input) = self.heap.string(value) else {
             return Err(self.type_error(program, "RegExp.escape requires a string value".into()));
         };
-        Ok(self.heap.alloc(Cell::String(escape_regexp_string(&input))))
+        Ok(self.heap.alloc_string(escape_regexp_string(&input)))
     }
 
     pub(super) fn regexp_test(
@@ -2427,9 +2421,9 @@ impl<H: Host> Vm<H> {
                 .chain(matched.captures.iter().cloned())
                 .map(|range| {
                     range.map_or(Value::UNDEFINED, |range| {
-                        vm.heap.alloc(Cell::String(JsString::from_unit_run(
+                        vm.heap.alloc_string(JsString::from_unit_run(
                             input.units().slice(range),
-                        )))
+                        ))
                     })
                 })
                 .collect::<Vec<_>>();
@@ -2572,9 +2566,9 @@ impl<H: Host> Vm<H> {
         for (name, range) in named {
             let atom = self.intern_atom(name);
             let value = range.as_ref().map_or(Value::UNDEFINED, |range| {
-                self.heap.alloc(Cell::String(JsString::from_unit_run(
+                self.heap.alloc_string(JsString::from_unit_run(
                     input.slice(range.clone()),
-                )))
+                ))
             });
             self.set_property(groups, atom, value)?;
         }

@@ -867,7 +867,7 @@ impl<H: Host> Vm<H> {
         #[cfg(feature = "profile-aggregate")]
         self.retain_live_gc_method_snapshots();
         if let Some(strings) = &mut self.dynamic_strings {
-            strings.retain(|_, value| matches!(self.heap.get(*value), Some(Cell::String(_))));
+            strings.retain(|_, value| self.heap.is_string(*value));
         }
         if let Some(concats) = &mut self.string_concats {
             concats.fill(EMPTY_STRING_CONCAT_CACHE);

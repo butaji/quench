@@ -401,7 +401,7 @@ impl<H: Host> Vm<H> {
                     } else {
                         "fulfilled"
                     };
-                    let status_value = self.heap.alloc(Cell::String(status.into()));
+                    let status_value = self.heap.alloc_string(status.into());
                     self.set_property(result, status_atom, status_value)?;
                     let key_atom = self.intern_atom(if aggregate_job.rejected {
                         "reason"
