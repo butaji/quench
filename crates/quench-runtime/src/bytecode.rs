@@ -2686,9 +2686,44 @@ pub struct ResidualProgram {
     pub(crate) superinstructions: Vec<Superinstruction>,
     /// How its functions can be compiled again from source, when they can.
     pub(crate) replay: Option<std::rc::Rc<crate::compile::replay::ProgramReplay>>,
+    /// The records a decoded program keeps encoded until their functions' first read.
+    pub(crate) encoded_records: Option<std::rc::Rc<EncodedRecords>>,
     /// Whether the program is known to be valid (`ValidationProof`).
     pub(crate) validated: ValidationProof,
 }
+
+/// The encoded records of a decoded program's deferred functions (`binary::decode_program`):
+/// each decodes on its function's first read, as a released record compiles again. A program
+/// loaded from the compile cache runs a small part of its functions, and decoding every
+/// record had been most of its load.
+pub(crate) struct EncodedRecords {
+    /// The program's whole encoding, as the host handed it over: its records stay in place,
+    /// in pages that a mapped file keeps out of memory until a record is read.
+    pub(crate) bytes: KeptBytes,
+    /// A compact encoding's atom ids, by table position (`binary::BinaryReader`).
+    pub(crate) atoms: Option<std::rc::Rc<[u32]>>,
+    /// Per function, its record in `bytes`, when it is deferred.
+    pub(crate) ranges: Box<[Option<DeferredRecord>]>,
+}
+
+impl std::fmt::Debug for EncodedRecords {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("EncodedRecords").field("ranges", &self.ranges.len()).finish_non_exhaustive()
+    }
+}
+
+/// Where a deferred record lies in its program's encoding, and its checksum, which decoding
+/// it checks: the load checked only the encoding's body.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct DeferredRecord {
+    pub(crate) start: u32,
+    pub(crate) length: u32,
+    pub(crate) checksum: u64,
+}
+
+/// Bytes a host kept for a compiled program (`Host::kept_compiled_program`), which the program
+/// decoded from them keeps for as long as it lives.
+pub type KeptBytes = std::rc::Rc<dyn AsRef<[u8]>>;
 
 /// That a program is valid without validating it: this build's compiler output, compiled and
 /// validated or decoded from its checksummed form by `Runtime::compile_entry`, which hands it
@@ -2750,11 +2785,20 @@ impl ResidualProgram {
     #[inline(never)]
     fn recompile_function(&self, index: usize) -> &Function {
         self.functions[index].record.get_or_init(|| {
-            let function = crate::compile::replay::recompile(self, index as u32)
-                .unwrap_or_else(|error| {
-                    panic!("function {index} of {} does not compile again: {error}", self.source_name)
-                })
-                .function;
+            let deferred = self
+                .encoded_records
+                .as_deref()
+                .and_then(|records| binary::decode_deferred_function(records, index));
+            let function = match deferred {
+                Some(decoded) => decoded.unwrap_or_else(|error| {
+                    panic!("function {index} of {} does not decode: {error}", self.source_name)
+                }),
+                None => crate::compile::replay::recompile(self, index as u32)
+                    .unwrap_or_else(|error| {
+                        panic!("function {index} of {} does not compile again: {error}", self.source_name)
+                    })
+                    .function,
+            };
             // As `prime_loop_decoding` primes the functions of an installed program.
             function.decoded.prime_loop(&function.code, &function.wide);
             std::rc::Rc::new(function)
@@ -2895,7 +2939,7 @@ impl ResidualProgram {
 
     /// Decodes `encode_trusted`'s bytes into a program proven valid: this build's compiler
     /// output, which the host keys by build and whose checksum held.
-    pub(crate) fn decode_trusted(bytes: &[u8]) -> Result<Self, String> {
+    pub(crate) fn decode_trusted(bytes: KeptBytes) -> Result<Self, String> {
         let program = binary::decode_trusted_program(bytes)?;
         program.validated.establish();
         Ok(program)
@@ -2904,7 +2948,7 @@ impl ResidualProgram {
     /// Decodes `encode_compact`'s bytes with `intern`'s ids and `text` as the source; the
     /// caller sets the atom table and validates.
     pub(crate) fn decode_compact(
-        bytes: &[u8],
+        bytes: KeptBytes,
         intern: &mut dyn FnMut(&str) -> u32,
         text: SourceText,
     ) -> Result<Self, String> {

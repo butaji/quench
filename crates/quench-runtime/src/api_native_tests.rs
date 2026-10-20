@@ -2016,9 +2016,9 @@ impl Host for EntryCacheHost {
         self.lines.borrow_mut().push(line.to_owned());
     }
     fn clock_millis(&mut self) -> f64 { 0.0 }
-    fn kept_compiled_program(&mut self, name: &str, parts: &[&str]) -> Option<Vec<u8>> {
+    fn kept_compiled_program(&mut self, name: &str, parts: &[&str]) -> Option<crate::KeptBytes> {
         let key = (name.to_owned(), parts.iter().map(|part| (*part).to_owned()).collect());
-        self.kept.borrow().get(&key).cloned()
+        self.kept.borrow().get(&key).cloned().map(|bytes: Vec<u8>| Rc::new(bytes) as crate::KeptBytes)
     }
     fn keep_compiled_program(&mut self, name: &str, parts: &[&str], bytes: &[u8]) {
         let key = (name.to_owned(), parts.iter().map(|part| (*part).to_owned()).collect());

@@ -182,7 +182,8 @@ fn decoder_rejects_out_of_range_local_load() {
         literal_templates: Vec::new(),
         superinstructions: vec![],
         replay: None,
-        validated: Default::default(),
+        encoded_records: None,
+            validated: Default::default(),
     };
     let path = std::env::temp_dir().join(format!("quench-invalid-local-{}", std::process::id()));
     program.write_binary(&path).unwrap();
@@ -265,7 +266,8 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
         literal_templates: Vec::new(),
         superinstructions: vec![],
         replay: None,
-        validated: Default::default(),
+        encoded_records: None,
+            validated: Default::default(),
     };
     let path = std::env::temp_dir().join(format!("quench-invalid-abi-{}", std::process::id()));
     program.write_binary(&path).unwrap();
@@ -567,14 +569,45 @@ fn compact_encoding_names_every_atom_by_its_text() {
     }
     let text = super::SourceText::Shared(std::sync::Arc::from(source));
     let mut decoded =
-        ResidualProgram::decode_compact(&bytes, &mut |name| original[name] + SHIFT, text).unwrap();
+        ResidualProgram::decode_compact(std::rc::Rc::new(bytes.clone()), &mut |name| original[name] + SHIFT, text).unwrap();
     decoded.atoms = super::AtomTable::from_rcs(&table);
+    // Every record but the root's stays encoded until its first read; validation reads all.
+    assert!(decoded.functions[0].record().is_some());
+    assert!(decoded.functions[1..].iter().all(|slot| slot.record().is_none()));
     decoded.validate().unwrap();
     assert_eq!(decoded.encode_compact().0, bytes);
-    let mut corrupted = bytes.clone();
-    corrupted[bytes.len() / 2] ^= 1;
+    // Ids past a narrow immediate widen the instructions naming them, as compiling does.
+    const WIDE_SHIFT: u32 = 1 << 17;
     let text = super::SourceText::Shared(std::sync::Arc::from(source));
-    assert!(ResidualProgram::decode_compact(&corrupted, &mut |name| original[name], text).is_err());
+    let widened = ResidualProgram::decode_compact(std::rc::Rc::new(bytes.clone()), &mut |name| original[name] + WIDE_SHIFT, text).unwrap();
+    widened.compile_released();
+    let narrow: usize = decoded.functions.iter().map(|function| function.wide.len()).sum();
+    let wide: usize = widened.functions.iter().map(|function| function.wide.len()).sum();
+    assert!(wide > narrow, "atom ids past a narrow immediate are widened");
+    let names = |program: &ResidualProgram, shift: u32| {
+        program.functions.iter().flat_map(|function| {
+            function.code.iter().map(move |instruction| {
+                let instruction = super::control_flow::instruction_at(function, *instruction).unwrap();
+                (instruction.op(), instruction.op().immediate_names_atom(instruction.b()).then(|| instruction.imm() - shift))
+            })
+        }).collect::<Vec<_>>()
+    };
+    assert_eq!(names(&decoded, SHIFT), names(&widened, WIDE_SHIFT));
+    // The load checks the body; each deferred record is checked as it decodes.
+    let encoding = &bytes[..bytes.len() - size_of::<u64>()];
+    let region = super::binary::region_start(encoding).unwrap();
+    let mut corrupted = bytes.clone();
+    corrupted[region / 2] ^= 1;
+    let text = super::SourceText::Shared(std::sync::Arc::from(source));
+    assert!(ResidualProgram::decode_compact(std::rc::Rc::new(corrupted), &mut |name| original[name], text).is_err());
+    let mut corrupted = bytes.clone();
+    corrupted[region] ^= 1;
+    let text = super::SourceText::Shared(std::sync::Arc::from(source));
+    let lazy = ResidualProgram::decode_compact(std::rc::Rc::new(corrupted), &mut |name| original[name] + SHIFT, text)
+        .expect("a deferred record is not read at load");
+    let records = lazy.encoded_records.as_deref().unwrap();
+    let first_deferred = (0..lazy.functions.len()).find(|&index| records.ranges[index].is_some_and(|record| record.start as usize == region)).unwrap();
+    assert!(super::binary::decode_deferred_function(records, first_deferred).unwrap().is_err());
     let shifted = |program: &ResidualProgram| {
         program.functions.iter().filter_map(|function| function.name).collect::<Vec<_>>()
     };
@@ -583,3 +616,4 @@ fn compact_encoding_names_every_atom_by_its_text() {
         shifted(&program).iter().map(|atom| atom + SHIFT).collect::<Vec<_>>()
     );
 }
+

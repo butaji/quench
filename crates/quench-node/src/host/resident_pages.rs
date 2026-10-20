@@ -68,6 +68,42 @@ pub fn release_read_only_pages() {
             libc::madvise(start as *mut libc::c_void, end - start, libc::MADV_DONTNEED);
         }
     }
+    // Held while releasing, so no tracked mapping is unmapped meanwhile.
+    if let Ok(mappings) = TRACKED_MAPPINGS.lock() {
+        for &(start, length) in mappings.iter() {
+            // SAFETY: a tracked mapping is a live, read-only private file mapping.
+            unsafe {
+                libc::madvise(start as *mut libc::c_void, length, libc::MADV_DONTNEED);
+            }
+        }
+    }
+}
+
+/// Read-only file mappings the host made after start-up (compile-cache entries), as start
+/// and length, released with the segments above.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+static TRACKED_MAPPINGS: std::sync::Mutex<Vec<(usize, usize)>> = std::sync::Mutex::new(Vec::new());
+
+/// Treats the read-only private file mapping at `start` as the segments above: faults map
+/// only the touched page, and releases discard its pages. Call `untrack_read_only_mapping`
+/// before unmapping it.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+pub fn track_read_only_mapping(start: usize, length: usize) {
+    register_touched_pages_only(start, length);
+    if let Ok(mut mappings) = TRACKED_MAPPINGS.lock() {
+        mappings.push((start, length));
+    }
+}
+
+/// Unmaps a mapping `track_read_only_mapping` tracked, once no release can reach it.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+pub fn unmap_tracked_mapping(start: usize, length: usize) {
+    let mut mappings = TRACKED_MAPPINGS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    mappings.retain(|&mapping| mapping != (start, length));
+    // SAFETY: the caller owns the mapping, and the held lock keeps releases off it.
+    unsafe {
+        libc::munmap(start as *mut libc::c_void, length);
+    }
 }
 
 /// The page-aligned address ranges of the segments above, from the loader's own table: every
@@ -200,32 +236,21 @@ const DATA_MAPPING: &str = "r--p";
 /// without the feature the mappings keep fault-around.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub fn map_touched_pages_only() {
-    /// `struct uffdio_api` and `struct uffdio_register` from `<linux/userfaultfd.h>`.
+    /// The registration is per process; a second one would only open another descriptor.
+    static REGISTERED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if REGISTERED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    const UFFD_API: u64 = 0xaa;
+    const UFFD_USER_MODE_ONLY: libc::c_int = 1;
+    const UFFD_FEATURE_WP_ASYNC: u64 = 1 << 15;
+    /// `_IOWR(UFFDIO, _UFFDIO_API, struct uffdio_api)`.
+    const UFFDIO_API: libc::c_ulong = 0xc018_aa3f;
     #[repr(C)]
     struct UffdioApi {
         api: u64,
         features: u64,
         ioctls: u64,
-    }
-    #[repr(C)]
-    struct UffdioRegister {
-        start: u64,
-        len: u64,
-        mode: u64,
-        ioctls: u64,
-    }
-    const UFFD_API: u64 = 0xaa;
-    const UFFD_USER_MODE_ONLY: libc::c_int = 1;
-    const UFFD_FEATURE_WP_ASYNC: u64 = 1 << 15;
-    const UFFDIO_REGISTER_MODE_WP: u64 = 1 << 1;
-    /// `_IOWR(UFFDIO, _UFFDIO_API, struct uffdio_api)` and
-    /// `_IOWR(UFFDIO, _UFFDIO_REGISTER, struct uffdio_register)`.
-    const UFFDIO_API: libc::c_ulong = 0xc018_aa3f;
-    const UFFDIO_REGISTER: libc::c_ulong = 0xc020_aa00;
-    /// The registration is per process; a second one would only open another descriptor.
-    static REGISTERED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-    if REGISTERED.swap(true, std::sync::atomic::Ordering::Relaxed) {
-        return;
     }
     // SAFETY: the descriptor is fresh; both ioctls read and write only the structs passed.
     unsafe {
@@ -241,20 +266,61 @@ pub fn map_touched_pages_only() {
             libc::close(fd);
             return;
         }
-        for (start, end) in file_mappings(&[CODE_MAPPING, DATA_MAPPING]) {
-            let mut range = UffdioRegister {
-                start: start as u64,
-                len: (end - start) as u64,
-                mode: UFFDIO_REGISTER_MODE_WP,
-                ioctls: 0,
-            };
-            libc::ioctl(fd, UFFDIO_REGISTER, &mut range);
-        }
+        TOUCHED_PAGES_ONLY.store(fd, std::sync::atomic::Ordering::Relaxed);
+    }
+    for (start, end) in file_mappings(&[CODE_MAPPING, DATA_MAPPING]) {
+        register_touched_pages_only(start, end - start);
+    }
+}
+
+/// The userfaultfd descriptor `map_touched_pages_only` registers mappings with, or `NO_FD`.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+static TOUCHED_PAGES_ONLY: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(NO_FD);
+
+/// No userfaultfd descriptor: the kernel lacks it or start-up has not opened it.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const NO_FD: libc::c_int = -1;
+
+/// Registers the mapping at `start` for write protection, which turns off fault-around in it
+/// (`map_touched_pages_only`); nothing when no descriptor is open.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn register_touched_pages_only(start: usize, length: usize) {
+    /// `struct uffdio_register` from `<linux/userfaultfd.h>`.
+    #[repr(C)]
+    struct UffdioRegister {
+        start: u64,
+        len: u64,
+        mode: u64,
+        ioctls: u64,
+    }
+    const UFFDIO_REGISTER_MODE_WP: u64 = 1 << 1;
+    /// `_IOWR(UFFDIO, _UFFDIO_REGISTER, struct uffdio_register)`.
+    const UFFDIO_REGISTER: libc::c_ulong = 0xc020_aa00;
+    let fd = TOUCHED_PAGES_ONLY.load(std::sync::atomic::Ordering::Relaxed);
+    if fd == NO_FD {
+        return;
+    }
+    let mut range = UffdioRegister { start: start as u64, len: length as u64, mode: UFFDIO_REGISTER_MODE_WP, ioctls: 0 };
+    // SAFETY: the ioctl reads and writes only `range`; a failed registration leaves the
+    // mapping with fault-around.
+    unsafe {
+        libc::ioctl(fd, UFFDIO_REGISTER, &mut range);
     }
 }
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
 pub fn map_touched_pages_only() {}
+
+#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+pub fn track_read_only_mapping(_start: usize, _length: usize) {}
+
+#[cfg(all(unix, not(all(target_os = "linux", target_arch = "x86_64"))))]
+pub fn unmap_tracked_mapping(start: usize, length: usize) {
+    // SAFETY: the caller owns the mapping.
+    unsafe {
+        libc::munmap(start as *mut libc::c_void, length);
+    }
+}
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
 pub fn release_read_only_pages() {}

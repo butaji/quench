@@ -2689,6 +2689,7 @@ impl<'a> Compiler<'a> {
                     views: replay::ReplayViews::default(),
                 })
             }),
+            encoded_records: None,
             validated: Default::default(),
         };
         #[cfg(feature = "profile-aggregate")]
