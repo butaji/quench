@@ -761,7 +761,7 @@ impl<H: Host> Vm<H> {
         if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::ToStringTag) {
             let tag = self
                 .heap
-                .alloc(Cell::String(JsString::from_str("Generator")));
+                .alloc_string(JsString::from_str("Generator"));
             self.set_symbol_property(prototype, symbol, tag)?;
             self.set_property_attributes(
                 prototype,
@@ -938,7 +938,7 @@ impl<H: Host> Vm<H> {
                 IteratorKind::Array
             } else {
                 match self.heap.get(source) {
-                    Some(Cell::String(_)) => IteratorKind::String,
+                    _ if self.heap.is_string(source)  => IteratorKind::String,
                     Some(Cell::Map { .. }) => IteratorKind::MapEntries,
                     Some(Cell::Set { .. }) => IteratorKind::SetValues,
                     _ => return Err(self.type_error(p, "value is not iterable".into())),
@@ -1006,7 +1006,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         if !self.is_object_like(value)
             && !(matches!(primitives, IteratorPrimitiveHandling::IterateStrings)
-                && matches!(self.heap.get(value), Some(Cell::String(_))))
+                && self.heap.is_string(value))
         {
             return Err(self.type_error(
                 p,
@@ -1849,13 +1849,13 @@ impl<H: Host> Vm<H> {
         let mode_atom = self.intern_atom("mode");
         let mode_value = self.get_property(p, options, mode_atom)?;
         let mode = match self.heap.get(mode_value) {
-            Some(Cell::String(value)) if value.host_string() == "shortest" => {
+            _ if let Some(value) = self.heap.string(mode_value) && value.host_string() == "shortest" => {
                 IteratorZipMode::Shortest
             }
-            Some(Cell::String(value)) if value.host_string() == "longest" => {
+            _ if let Some(value) = self.heap.string(mode_value) && value.host_string() == "longest" => {
                 IteratorZipMode::Longest
             }
-            Some(Cell::String(value)) if value.host_string() == "strict" => IteratorZipMode::Strict,
+            _ if let Some(value) = self.heap.string(mode_value) && value.host_string() == "strict" => IteratorZipMode::Strict,
             _ if mode_value.is_undefined() => IteratorZipMode::Shortest,
             _ => return Err(self.type_error(p, "Iterator.zip mode is invalid".into())),
         };
@@ -2065,7 +2065,7 @@ impl<H: Host> Vm<H> {
             let mut values = Vec::with_capacity(keys.len());
             for key in keys.iter().copied() {
                 let value = match self.heap.get(key) {
-                    Some(Cell::String(name)) => {
+                    _ if let Some(name) = self.heap.string(key)  => {
                         let name = name.clone();
                         let atom = self.intern_js_atom(&name);
                         self.get_property(p, padding, atom)?
@@ -2629,7 +2629,7 @@ impl<H: Host> Vm<H> {
             .heap
             .root(args.first().copied().unwrap_or(Value::UNDEFINED));
         let key = if name == "constructor" {
-            self.heap.alloc(Cell::String(JsString::from_str(name)))
+            self.heap.alloc_string(JsString::from_str(name))
         } else {
             self.well_known_symbols.get(WellKnownSymbol::ToStringTag).unwrap()
         };
@@ -3003,7 +3003,7 @@ impl<H: Host> Vm<H> {
                     }
                     _ => return Err(vm.type_error(p, "invalid RegExp string iterator".into())),
                 };
-                let input_value = vm.heap.alloc(Cell::String(input.clone()));
+                let input_value = vm.heap.alloc_string(input.clone());
                 let result = vm.regexp_exec_value(p, source, input_value)?;
                 if result.is_null() {
                     if let Some(IteratorRecord { done, .. }) = vm.heap.iterator_mut(this) {
@@ -3067,7 +3067,7 @@ impl<H: Host> Vm<H> {
                     vm.array_iterator_item(p, this, source, kind, index)?
                 }
                 _ => match (kind, vm.heap.get(source)) {
-                    (IteratorKind::String, Some(Cell::String(text))) => {
+                    (IteratorKind::String, _) if let Some(text) = vm.heap.string(source) => {
                         let units = text.units();
                         {
                             let mut element = 0;
@@ -3083,11 +3083,11 @@ impl<H: Host> Vm<H> {
                                     offset + 1
                                 };
                                 if element == index {
-                                    let value = vm.heap.alloc(Cell::String(
+                                    let value = vm.heap.alloc_string(
                                         super::wtf16::JsString::from_unit_run(
                                             units.slice(offset..end),
                                         ),
-                                    ));
+                                    );
                                     selected = Some((value, None));
                                     break;
                                 }

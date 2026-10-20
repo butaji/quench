@@ -296,7 +296,7 @@ impl<H: Host> Vm<H> {
             _ => None,
         };
         if let Some(value) = property {
-            return Ok(self.heap.alloc(Cell::String(value.into())));
+            return Ok(self.heap.alloc_string(value.into()));
         }
         if matches!(
             native,
@@ -321,7 +321,7 @@ impl<H: Host> Vm<H> {
                     Value::FALSE
                 },
             ),
-            Native::IntlLocaleToString => Ok(self.heap.alloc(Cell::String(locale.into()))),
+            Native::IntlLocaleToString => Ok(self.heap.alloc_string(locale.into())),
             Native::IntlLocaleMaximize => {
                 let maximized = maximize_locale(&locale);
                 self.new_intl_locale_object(
@@ -580,7 +580,7 @@ impl<H: Host> Vm<H> {
     }
 
     fn locale_tag_string(&mut self, p: &ResidualProgram, value: Value) -> Result<String, JsError> {
-        if !matches!(self.heap.get(value), Some(Cell::String(_))) && !self.is_object_like(value) {
+        if !self.heap.is_string(value) && !self.is_object_like(value) {
             return Err(self.type_error(p, "locale tag must be a string or object".into()));
         }
         match self.hidden_string(value, INTL_LOCALE_SLOT) {
@@ -608,7 +608,7 @@ impl<H: Host> Vm<H> {
                     canonical_locale(&locale)
                         .ok_or_else(|| self_.range_error(p, "invalid locale identifier".into()))?,
                 );
-            } else if matches!(self_.heap.get(locales), Some(Cell::String(_))) {
+            } else if self_.heap.is_string(locales) {
                 let locale = self_.to_string(p, locales)?;
                 canonical.push(
                     canonical_locale(&locale)
@@ -673,7 +673,7 @@ impl<H: Host> Vm<H> {
     fn string_array(&mut self, values: Vec<String>) -> Value {
         let elements = values
             .into_iter()
-            .map(|value| self.heap.alloc(Cell::String(value.into())))
+            .map(|value| self.heap.alloc_string(value.into()))
             .collect::<Vec<_>>();
         self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(

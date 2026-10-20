@@ -6582,12 +6582,9 @@ impl<H: Host> Vm<H> {
             None => super::js_compiled::has_string_hash_loop_candidate(program, function),
         } && params == 1
             && self.js_jit_string_hash_guard()
-            && matches!(
-                first_argument.and_then(|value| self.heap.get(value)),
-                Some(Cell::String(_))
-            );
+            && first_argument.is_some_and(|value| self.heap.is_string(value));
         let string_hash_units = if string_hash_candidate {
-            let Some(Cell::String(string)) = first_argument.and_then(|value| self.heap.get(value))
+            let Some(string) = first_argument.and_then(|value| self.heap.string(value))
             else {
                 unreachable!("guarded JIT string argument changed")
             };
@@ -6602,13 +6599,10 @@ impl<H: Host> Vm<H> {
         let string_transform = string_transform_kind
             .filter(|kind| self.js_jit_string_transform_guard(*kind))
             .filter(|_| {
-                matches!(
-                    first_argument.and_then(|value| self.heap.get(value)),
-                    Some(Cell::String(_))
-                )
+                first_argument.is_some_and(|value| self.heap.is_string(value))
             });
         let string_transform_units = string_transform.and_then(|_| {
-            let Some(Cell::String(string)) = first_argument.and_then(|value| self.heap.get(value))
+            let Some(string) = first_argument.and_then(|value| self.heap.string(value))
             else {
                 return None;
             };
@@ -6805,8 +6799,8 @@ impl<H: Host> Vm<H> {
                 let value = if !matched {
                     first_argument?
                 } else {
-                    let Some(Cell::String(string)) = first_argument
-                        .and_then(|value| self.heap.get(value))
+                    let Some(string) = first_argument
+                        .and_then(|value| self.heap.string(value))
                         .cloned()
                     else {
                         return None;

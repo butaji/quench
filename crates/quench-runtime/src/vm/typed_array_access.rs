@@ -429,7 +429,7 @@ impl<H: Host> Vm<H> {
             .parse::<usize>()
             .ok()
             .filter(|index| index.to_string() == name && number == *index as f64);
-        let key = self.heap.alloc(Cell::String(name.into()));
+        let key = self.heap.alloc_string(name.into());
         let mut current = self
             .object_data(receiver)
             .map_or(Value::NULL, |data| data.proto());

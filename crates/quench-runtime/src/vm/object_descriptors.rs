@@ -461,15 +461,16 @@ impl<H: Host> Vm<H> {
         target: Value,
         key: Value,
     ) -> Result<Option<(Value, PropertyAttributes)>, JsError> {
-        match self.heap.get(key).cloned() {
-            Some(Cell::String(name)) => {
-                let atom = self.intern_js_atom(&name);
-                self.materialize_lazy_data_property(p, target, PropertyKey::string(atom))?;
-            }
+        if let Some(name) = self.heap.string(key).cloned() {
+            let atom = self.intern_js_atom(&name);
+            self.materialize_lazy_data_property(p, target, PropertyKey::string(atom))?;
+        } else {
+            match self.heap.get(key).cloned() {
             Some(Cell::Symbol(_)) => {
                 self.materialize_lazy_data_property(p, target, PropertyKey::symbol(key))?;
             }
             _ => {}
+            }
         }
         self.ordinary_own_property(p, target, key)
     }
@@ -491,7 +492,7 @@ impl<H: Host> Vm<H> {
                 .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
             return Ok(Some((value, attributes)));
         }
-        let Some(Cell::String(key)) = self.heap.get(key).cloned() else {
+        let Some(key) = self.heap.string(key).cloned() else {
             unreachable!("ToPropertyKey returns a string or symbol")
         };
         let atom = self.intern_js_atom(&key);

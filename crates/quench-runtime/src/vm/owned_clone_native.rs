@@ -168,9 +168,9 @@ impl<H: Host> Vm<H> {
                 self.box_primitive_object(value)?
             }
             Node::RegExp(source, flags) => {
-                let source = self.heap.alloc(Cell::String(JsString::from_units(source)));
+                let source = self.heap.alloc_string(JsString::from_units(source));
                 let source = self.heap.root(source);
-                let flags = self.heap.alloc(Cell::String(flags.clone().into()));
+                let flags = self.heap.alloc_string(flags.clone().into());
                 let source_value = self.heap.root_value(source).unwrap();
                 let result = self.regexp_create(&p, source_value, flags);
                 self.heap.release_root(source);

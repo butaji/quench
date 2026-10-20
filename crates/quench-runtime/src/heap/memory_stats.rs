@@ -189,10 +189,25 @@ impl Heap {
             } else if direct_iterator {
                 self.iterator(identity)
                     .map_or(0, |iterator| iterator.object.allocated_extra_bytes())
+            } else if let Some(string) = self.string(identity) {
+                string.capacity()
             } else {
                 cell.map_or(0, Self::cell_payload_bytes)
             };
-            if direct_array {
+            if let Some(value) = self.string(identity) {
+                other_cell_payload_bytes += payload_bytes.saturating_sub(value.capacity());
+                let (units, host) = value.memory_parts();
+                if string_identities.insert(units.0) {
+                    string_buffers_bytes += units.1;
+                    string_buffer_count += 1;
+                }
+                if let Some(host) = host
+                    && string_identities.insert(host.0)
+                {
+                    string_buffers_bytes += host.1;
+                    string_buffer_count += 1;
+                }
+            } else if direct_array {
                 let elements = self
                     .array_elements(identity)
                     .expect("live direct array record");
@@ -219,20 +234,6 @@ impl Heap {
                             dense_array_headers_bytes +=
                                 size_of::<Vec<Value>>() + RC_HEADER_WORDS * size_of::<usize>();
                             dense_array_backing_count += 1;
-                        }
-                    }
-                    Some(Cell::String(value)) => {
-                        other_cell_payload_bytes += payload_bytes.saturating_sub(value.capacity());
-                        let (units, host) = value.memory_parts();
-                        if string_identities.insert(units.0) {
-                            string_buffers_bytes += units.1;
-                            string_buffer_count += 1;
-                        }
-                        if let Some(host) = host {
-                            if string_identities.insert(host.0) {
-                                string_buffers_bytes += host.1;
-                                string_buffer_count += 1;
-                            }
                         }
                     }
                     Some(Cell::ArrayBuffer { bytes, .. }) => {

@@ -696,7 +696,6 @@ fn cell_bytes(cell: &Cell) -> usize {
                     + scope.boxed_bytes()
                     + scope.with_objects().len() * size_of::<Value>()
             }
-            Cell::String(value) => value.capacity(),
             Cell::BigInt(value) => crate::bigint::magnitude_bytes(value),
             Cell::Error(value) => value.capacity(),
             Cell::Promise(promise) => {

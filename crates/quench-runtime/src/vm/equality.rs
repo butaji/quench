@@ -24,14 +24,23 @@ impl<H: Host> Vm<H> {
         if a.is_null() || a.is_undefined() || b.is_null() || b.is_undefined() {
             return Ok(false);
         }
-        match (self.heap.get(a), self.heap.get(b)) {
-            (Some(Cell::String(a)), Some(Cell::String(b))) => return Ok(a == b),
-            (Some(Cell::BigInt(a)), Some(Cell::BigInt(b))) => return Ok(a == b),
-            (Some(Cell::BigInt(bigint)), Some(Cell::String(string)))
-            | (Some(Cell::String(string)), Some(Cell::BigInt(bigint))) => {
-                return Ok(crate::bigint::parse_string(string.host_string())
+        let (a_string, b_string) = (self.heap.is_string(a), self.heap.is_string(b));
+        if a_string || b_string {
+            if a_string && b_string {
+                return Ok(self.heap.string(a) == self.heap.string(b));
+            }
+            let (string, other) = if a_string { (a, b) } else { (b, a) };
+            if let Some(Cell::BigInt(bigint)) = self.heap.get(other) {
+                let text = self.heap.string(string).expect("a string operand");
+                return Ok(crate::bigint::parse_string(text.host_string())
                     .is_some_and(|value| value == **bigint));
             }
+            if let Some(number) = other.as_number() {
+                return Ok(self.to_number(p, string)? == number);
+            }
+        }
+        match (self.heap.get(a), self.heap.get(b)) {
+            (Some(Cell::BigInt(a)), Some(Cell::BigInt(b))) => return Ok(a == b),
             (Some(Cell::BigInt(bigint)), _) if b.as_number().is_some() => {
                 return Ok(crate::bigint::number_as_bigint(b.as_number().unwrap())
                     .is_some_and(|number| number == **bigint));
@@ -39,12 +48,6 @@ impl<H: Host> Vm<H> {
             (_, Some(Cell::BigInt(bigint))) if a.as_number().is_some() => {
                 return Ok(crate::bigint::number_as_bigint(a.as_number().unwrap())
                     .is_some_and(|number| number == **bigint));
-            }
-            (Some(Cell::String(_)), _) if b.as_number().is_some() => {
-                return Ok(self.to_number(p, a)? == b.as_number().unwrap());
-            }
-            (_, Some(Cell::String(_))) if a.as_number().is_some() => {
-                return Ok(a.as_number().unwrap() == self.to_number(p, b)?);
             }
             _ => {}
         }

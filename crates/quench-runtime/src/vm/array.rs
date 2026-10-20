@@ -801,7 +801,7 @@ impl<H: Host> Vm<H> {
                     output.append(&vm.coerce_js_string(p, value)?);
                 }
                 let output = vm.string_build_result(p, output.finish())?;
-                Ok(vm.heap.alloc(Cell::String(output)))
+                Ok(vm.heap.alloc_string(output))
             })
         })
     }
