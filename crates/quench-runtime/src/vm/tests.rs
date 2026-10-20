@@ -12136,3 +12136,23 @@ fn lane_activations_made_frames_by_a_native_call_read_their_own_registers() {
         ["function0|x|y0a1.5null,function0|x|y1a1.5null,function0|x|y2a1.5null"]
     );
 }
+
+#[test]
+fn lane_raised_errors_unwind_through_callees_of_other_programs() {
+    // A lane step that throws in a callee of another program, pushed in the loop, unwinds to
+    // its caller's handler, which the caller's own program locates.
+    let source = r#"
+      function a() {} function b() {} function c() {} function d() {} function e() {}
+      const other = new Function('xs', 'let n = 0; for (let i = 0; i < xs.length; i++) { n += [...xs[i]].length; } return n;');
+      function run(xs) {
+        try { return other(xs); } catch (error) { return error.constructor.name; }
+      }
+      const out = [];
+      for (let k = 0; k < 4; k++) out.push(run([[1], [2, 3], k & 1 ? [4] : 5]));
+      print(out.join());
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "lane-raised-other-program.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["TypeError,4,TypeError,4"]);
+}
