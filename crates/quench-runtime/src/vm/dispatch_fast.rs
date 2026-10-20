@@ -372,8 +372,9 @@ struct ScriptActivation {
     /// What its return yields to the call.
     completion: Completion,
     /// The `argc` values passed follow the registers in the window, for a forwarded
-    /// `arguments` (`ScriptCallTarget::forwards`), or for the construction a skipped
-    /// forwarding constructor passed on (`Completion::Forwarder`).
+    /// `arguments` (`ScriptCallTarget::forwards`), for the construction a skipped
+    /// forwarding constructor passed on (`Completion::Forwarder`), or for values passed past
+    /// the parameters.
     forwards: bool,
 }
 
@@ -6162,8 +6163,22 @@ fn lane_activate<H: Host>(
     if returns && !lane_returning_call_admitted(cx) {
         return Err(exit(ip));
     }
-    if argc > target.params || vm.with_scope_entered {
+    if vm.with_scope_entered {
         return Err(exit(ip));
+    }
+    // Values past the parameters stay observable (legacy `f.arguments`, a frame made of the
+    // activation): the keeping activation holds them after the registers.
+    if argc > target.params {
+        return lane_activate_keeping(
+            cx,
+            r,
+            ip,
+            *target,
+            ActivationArguments::Window(arguments),
+            this,
+            constructs,
+            None,
+        );
     }
     // Capacity, the guest-call budget and a due collection (`LaneStack::activation_limit`).
     if vm.lane_stack.activations.len() >= vm.lane_stack.activation_limit.get()
@@ -6382,8 +6397,9 @@ fn lane_activate_keeping<H: Host>(
     };
     let count = usize::from(target.registers);
     // A forwarding activation keeps every value passed after its registers, as does one for
-    // a skipped forwarding constructor, whose frame passed them on.
-    let keeps = target.forwards() || forwarder.is_some();
+    // a skipped forwarding constructor, whose frame passed them on, and one passed more values
+    // than it has parameters.
+    let keeps = target.forwards() || forwarder.is_some() || argc > usize::from(target.params);
     let window_size = if keeps { count + argc } else { count };
     // A call that returns its callee's completion completes its caller too, which only an
     // activation's return does in the lane. A host permitting proper tail calls
@@ -6392,8 +6408,7 @@ fn lane_activate_keeping<H: Host>(
     if returns && !lane_returning_call_admitted(cx) {
         return Err(exit(ip));
     }
-    if (argc > usize::from(target.params) && !keeps)
-        || argc > usize::from(u16::MAX)
+    if argc > usize::from(u16::MAX)
         || vm.with_scope_entered
     {
         return Err(exit(ip));
