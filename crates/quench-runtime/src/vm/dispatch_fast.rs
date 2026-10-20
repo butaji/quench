@@ -971,6 +971,70 @@ lane_handler! {
 }
 
 lane_handler! {
+    /// An instruction whose general step only continues or throws (`lane_steps_in_place`),
+    /// run in place by that step when the lane runs the frame's own code: the frame's
+    /// registers are the lane's, and its PC is published as the general loop publishes it.
+    /// A throw is stashed in `Vm::lane_raised` for the general path to raise at this
+    /// instruction. Within a frameless activation, which has no frame, the general path runs
+    /// it.
+    #[inline(never)]
+    fn lane_general_step<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        if !vm.lane_stack.activations.is_empty() {
+            return exit(ip);
+        }
+        // SAFETY: the context's program outlives the lane run, and `ip` is a record of the
+        // active view, which is the running frame's.
+        let (code, frame, pc) = unsafe {
+            (&*(*cx).code, (*cx).frame, ip.offset_from((*cx).base) as usize)
+        };
+        let function = &code.functions[vm.frames[frame].function as usize];
+        let instruction = decoded_instruction(function, function.code[pc]);
+        vm.frames[frame].pc = pc;
+        vm.frames[frame].pc_is_resume = false;
+        let mut next = pc + 1;
+        match vm.step(code, frame, instruction, &mut next, false) {
+            Ok(StepResult::Continue) if next == pc + 1 => {}
+            Ok(_) => unreachable!("an in-place step only continues"),
+            Err(error) => {
+                vm.lane_raised = Some(error);
+                return exit(ip);
+            }
+        }
+        // The step may allocate, which can make a collection due.
+        note_allocation(vm);
+        next!(cx, r, following(ip), Carried::SCRIPT)
+    }
+}
+
+/// Instructions whose general step reads and writes only the frame, its registers and heap
+/// values, runs guest code only through nested calls, and continues to the next instruction
+/// or throws: no jump, call, return, `this` binding or environment change the lane caches.
+const fn lane_steps_in_place(op: Op) -> bool {
+    matches!(
+        op,
+        Op::DefineField
+            | Op::DefineComputedField
+            | Op::DefinePrivateField
+            | Op::CheckPrivate
+            | Op::PrivateIn
+            | Op::MarkPrivateName
+            | Op::SetFunctionName
+            | Op::SetFunctionNameKey
+            | Op::SetFunctionDebugName
+            | Op::DefineArrayElement
+            | Op::AppendArray
+            | Op::ToPropertyKey
+            | Op::CopyDataProperties
+            | Op::GetIterator
+            | Op::RequireIteratorResult
+            | Op::IteratorClose
+            | Op::IteratorCleanupPush
+            | Op::IteratorCleanupPop
+    )
+}
+
+lane_handler! {
     /// `IncDec` of a Number; other values take the general path. The view derives the
     /// direction from the record (`specialize_updates`).
     fn lane_inc_dec<DECREMENT: bool>(cx, r, ip, i, view) {
@@ -5604,6 +5668,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::SetThisField | Op::SetThisFieldStrict => Some(lane_set_this_field_own::<H>),
         Op::ToNumeric => Some(lane_to_numeric::<H>),
         Op::RequireObjectCoercible => Some(lane_require_object_coercible::<H>),
+        op if lane_steps_in_place(op) => Some(lane_general_step::<H>),
         Op::IncDec => Some(lane_inc_dec::<H, false>),
         Op::Binary | Op::NumericAdd | Op::NumericMultiply => Some(lane_binary::<H>),
         Op::GetIndex => Some(lane_get_index::<H>),
