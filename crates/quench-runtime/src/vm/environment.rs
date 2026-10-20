@@ -1913,6 +1913,27 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// Whether `environment_admits_direct_store` admits a store to every slot of `env` in
+    /// the executing program: its function has no self binding and maps no parameter.
+    pub(super) fn admits_every_direct_store(
+        &self,
+        p: &ResidualProgram,
+        program: super::ProgramId,
+        env: Value,
+    ) -> bool {
+        let Some(Cell::Environment {
+            function, scope, ..
+        }) = self.heap.get(env)
+        else {
+            return false;
+        };
+        direct_store_owner(p, program, *function, scope).is_some_and(|owner| {
+            owner.self_binding_slot.is_none()
+                && (0..usize::from(owner.params))
+                    .all(|parameter| super::arguments::mapped_arguments_slot(owner, parameter).is_none())
+        })
+    }
+
     fn store_environment_binding(
         &mut self,
         p: &ResidualProgram,
@@ -2519,17 +2540,30 @@ fn environment_admits_direct_store(
     scope: &crate::heap::EnvironmentScopeRef,
     slot: u16,
 ) -> bool {
+    let slot = usize::from(slot);
+    direct_store_owner(p, program, function, scope).is_some_and(|owner| {
+        !owner.is_self_binding_slot(slot)
+            && super::arguments::mapped_arguments_slot(owner, slot).is_none()
+    })
+}
+
+/// The function owning an environment of `function` with `scope` whose slots
+/// `environment_admits_direct_store` may admit: not the root's, a function-less layer's or
+/// another program's.
+#[inline(always)]
+fn direct_store_owner<'p>(
+    p: &'p ResidualProgram,
+    program: super::ProgramId,
+    function: u32,
+    scope: &crate::heap::EnvironmentScopeRef,
+) -> Option<&'p crate::bytecode::FunctionSlot> {
     if function == super::ROOT_FUNCTION_ID
         || function == u32::MAX
         || scope.program().is_some_and(|owner| owner != program.raw())
     {
-        return false;
+        return None;
     }
-    let slot = usize::from(slot);
-    p.functions.get(function as usize).is_some_and(|owner| {
-        !owner.is_self_binding_slot(slot)
-            && super::arguments::mapped_arguments_slot(owner, slot).is_none()
-    })
+    p.functions.get(function as usize)
 }
 
 /// The `Vm::capture_walks` entry a walk from `env` to `depth` uses.

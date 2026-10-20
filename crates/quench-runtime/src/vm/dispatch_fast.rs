@@ -101,11 +101,6 @@ pub(super) struct LaneView {
     /// The window of an environment activation, when its local and closure records also run
     /// in one (`specialize_environment_window`).
     environment_window: Option<EnvironmentWindow>,
-    /// For an environment window, the environment's slots and the window's locals as an
-    /// activation starts them before its arguments (`lane_activate_environment`): a
-    /// captured slot `undefined` in the environment and owned by it among the locals, any
-    /// other slot owned elsewhere in the environment and `undefined` among the locals.
-    environment_templates: Box<[Value]>,
 }
 
 /// An environment activation's window past its registers (`lane_activate_environment`):
@@ -118,12 +113,18 @@ struct EnvironmentWindow {
     captured: u64,
 }
 
-/// An environment window's entries after its registers: the environment, then the address
-/// of its slot storage, which never moves while it lives, held in a `Value`'s bits; the
-/// locals follow.
+/// An environment window's entries after its registers: its environment, `DELETED` until
+/// one is made (`window_environment`); the address of the environment's slot storage, which
+/// never moves while it lives, held in a `Value`'s bits; the `EnvironmentWindow::captured`
+/// mask, likewise; the words of the slot storage the window holds in place
+/// (`EnvironmentSlots::lay_out_in_place`) over its locals, which follow. Until a closure or a
+/// frame needs the environment, every slot lives among the locals and the storage address
+/// names that in-place storage, so a captured slot reads the same way before and after.
 const WINDOW_ENVIRONMENT: u16 = 0;
 const WINDOW_SLOTS: u16 = 1;
-const WINDOW_LOCALS: u16 = 2;
+const WINDOW_CAPTURED: u16 = 2;
+const WINDOW_STORAGE: u16 = 3;
+const WINDOW_LOCALS: u16 = WINDOW_STORAGE + crate::heap::IN_PLACE_SLOTS_WORDS as u16;
 
 impl EnvironmentWindow {
     fn captured(self, slot: usize) -> bool {
@@ -670,6 +671,14 @@ fn script_target_set(callee: Value) -> Option<usize> {
     Some(index & (SCRIPT_CALL_TARGETS - SCRIPT_TARGET_WAYS))
 }
 
+/// Entries of the function target memo (`LaneStack::function_targets`), one per function
+/// id modulo the count: a closure first called finds its function's target derived when a
+/// closure of the same function was resolved before, as each call of a closure-making
+/// function makes a new one. A conflict overwrites the entry, which only costs the next
+/// closure of the displaced function a full resolution.
+const FUNCTION_TARGETS: usize = 64;
+const _: () = assert!(FUNCTION_TARGETS.is_power_of_two());
+
 /// What a constructor's initializer body (`ScriptCallTarget::initializes`) made of a receiver
 /// whose adds all hit: the callee's receiver template under `prototype`, which the callee and
 /// that prototype alone determine, ends at `shape`, its fields the arguments for
@@ -770,6 +779,10 @@ pub(super) struct LaneStack {
     activations: Vec<Activation>,
     /// Resolved targets of lane `Call` records (`Vm::script_call_target`).
     script_targets: Box<[ScriptCallTarget; SCRIPT_CALL_TARGETS]>,
+    /// The last target resolved for a closure of each function (`FUNCTION_TARGETS`), under
+    /// its generation and program: every field but the closure's own (`callee`, `env`,
+    /// `capture`, an arrow's `lexical_this`) depends on the function alone.
+    function_targets: Box<[ScriptCallTarget; FUNCTION_TARGETS]>,
     /// Constructors' plans (`lane_initialize_fields`, `lane_planned_receiver`).
     construct_plans: Box<[ConstructPlan; CONSTRUCT_PLANS]>,
     /// The forwarding constructors whose activations constructions skipped, one per
@@ -801,6 +814,7 @@ impl Default for LaneStack {
             values: Vec::new(),
             activations: Vec::new(),
             script_targets: Box::new([EMPTY_SCRIPT_CALL_TARGET; SCRIPT_CALL_TARGETS]),
+            function_targets: Box::new([EMPTY_SCRIPT_CALL_TARGET; FUNCTION_TARGETS]),
             construct_plans: Box::new([EMPTY_CONSTRUCT_PLAN; CONSTRUCT_PLANS]),
             forwarders: Vec::new(),
             forwarded_methods: Vec::new(),
@@ -824,6 +838,21 @@ impl LaneStack {
     /// Forget resolved call targets, as the general loop's call target cache is reset.
     pub(super) fn clear_script_targets(&mut self) {
         *self.script_targets = [EMPTY_SCRIPT_CALL_TARGET; SCRIPT_CALL_TARGETS];
+        *self.function_targets = [EMPTY_SCRIPT_CALL_TARGET; FUNCTION_TARGETS];
+    }
+
+    /// The target `function_targets` holds for a closure of `function` of `program` in this
+    /// generation, whose closure fields the caller rebinds.
+    fn function_target(&self, program: ProgramId, function: u32) -> Option<ScriptCallTarget> {
+        let known = self.function_targets[function as usize & (FUNCTION_TARGETS - 1)];
+        (known.generation == self.generation && known.program == program && known.function == function)
+            .then_some(known)
+    }
+
+    /// Record `target` in its set and as its function's (`function_targets`).
+    fn remember_function_target(&mut self, set: usize, target: ScriptCallTarget) {
+        self.function_targets[target.function as usize & (FUNCTION_TARGETS - 1)] = target;
+        self.remember_script_target(set, target);
     }
 
     /// The index of `method` in `forwarded_methods`, recording it when new, or
@@ -924,8 +953,28 @@ struct LaneContext<H: Host> {
     env: Value,
     /// The innermost capture slots of the running function, once a capture read found
     /// them dense (`EnvironmentSlots::dense`); null until then and for sparse storage, which
-    /// the walk reads. No collection runs in the lane, so they stay in place.
+    /// the walk reads. No collection runs in the lane, so they stay in place. Tagged with
+    /// `CAPTURE_STORES` where a store to any of them is the whole write (`capture_stores`).
     capture: *const crate::heap::EnvironmentSlots,
+}
+
+/// The tag of a `LaneContext::capture` whose every dense slot a store may write directly:
+/// its environment admits every direct store (`Vm::admits_every_direct_store`) and is in the
+/// remembered set already, so a write needs no barrier until the next collection, which
+/// retires the target that tagged it.
+const CAPTURE_STORES: usize = 1;
+const _: () = assert!(std::mem::align_of::<crate::heap::EnvironmentSlots>() > CAPTURE_STORES);
+
+/// The slots a `LaneContext::capture` reads, its tag cleared.
+#[inline(always)]
+fn capture_reads(capture: *const crate::heap::EnvironmentSlots) -> *const crate::heap::EnvironmentSlots {
+    capture.map_addr(|address| address & !CAPTURE_STORES)
+}
+
+/// The slots a `LaneContext::capture` tagged `CAPTURE_STORES` lets a store write.
+#[inline(always)]
+fn capture_stores(capture: *const crate::heap::EnvironmentSlots) -> Option<*mut crate::heap::EnvironmentSlots> {
+    (capture.addr() & CAPTURE_STORES != 0).then(|| capture_reads(capture).cast_mut())
 }
 
 /// A lane handler returns the next record for the lane loop, tagged with
@@ -1344,7 +1393,16 @@ lane_handler! {
             // SAFETY: the context's program outlives the lane run.
             vm.frame_binding_mut(unsafe { &*(*cx).code }, unsafe { (*cx).frame }, slot)
         } else if ENVIRONMENT {
-            vm.heap.environment_slot_mut(r.get(registers + WINDOW_ENVIRONMENT), slot)
+            // SAFETY: as `lane_load_window_local`'s read of the window's storage; a marker
+            // needs no barrier.
+            let storage = unsafe {
+                &mut *(std::mem::transmute::<Value, u64>(r.get(registers + WINDOW_SLOTS))
+                    as *mut crate::heap::EnvironmentSlots)
+            };
+            match storage.owned_mut(slot) {
+                Some(binding) => Some(binding),
+                None => vm.heap.environment_slot_mut(r.get(registers + WINDOW_ENVIRONMENT), slot),
+            }
         } else {
             // SAFETY: as `lane_store_window_local`.
             Some(unsafe { &mut *r.0.add(usize::from(registers + WINDOW_LOCALS) + slot) })
@@ -1366,10 +1424,16 @@ lane_handler! {
             lane_closure_value_of(cx, function as u32)
         } else {
             let vm = unsafe { vm(cx) };
+            let owner = vm.lane_stack.activations.last().map(|activation| activation.function);
+            // SAFETY: the running environment activation's window, whose function is the
+            // innermost activation's and whose environment's parent is the context's.
+            let environment = owner.map(|owner| unsafe {
+                window_environment(vm, r.0.add(usize::from(registers)), owner, (*cx).env, (*cx).program, (*cx).this)
+            });
             // SAFETY: the context's program outlives the lane run.
-            let value = vm
-                .closure(unsafe { &*(*cx).code }, function as u32, r.get(registers + WINDOW_ENVIRONMENT))
-                .ok();
+            let value = environment.and_then(|environment| {
+                vm.closure(unsafe { &*(*cx).code }, function as u32, environment).ok()
+            });
             note_allocation(vm);
             value
         };
@@ -2086,7 +2150,7 @@ script_handler! {
     /// other takes `lane_load_capture_walk`.
     fn lane_load_capture<>(cx, r, ip, i, view) {
         let imm = i.imm();
-        let slots = unsafe { (*cx).capture };
+        let slots = capture_reads(unsafe { (*cx).capture });
         let value = if ImmediateLayout::capture_depth(imm) == 0 && !slots.is_null() {
             // SAFETY: the running function's dense capture slots, found this run
             // (`LaneContext::capture`).
@@ -2245,6 +2309,15 @@ script_handler! {
     fn lane_store_capture<>(cx, r, ip, i, view) {
         let imm = i.imm();
         let depth = ImmediateLayout::capture_depth(imm);
+        if depth == 0
+            && let Some(slots) = capture_stores(unsafe { (*cx).capture })
+            // SAFETY: the running function's dense capture slots, which admit this write
+            // (`CAPTURE_STORES`); no collection runs in the lane.
+            && let Some(binding) = unsafe { &mut *slots }.dense_plain_mut(usize::from(ImmediateLayout::capture_slot(imm)))
+        {
+            *binding = r.get(i.a);
+            next!(cx, r, following(ip), view)
+        }
         let vm = unsafe { vm(cx) };
         let env = unsafe { (*cx).env };
         // SAFETY: the context's program outlives the lane run.
@@ -5077,7 +5150,7 @@ impl<H: Host> Vm<H> {
         let code = unsafe { &*(*cx).code };
         let pending = unsafe { &mut *(*cx).pending };
         let mut caller = unsafe { (*cx).frame };
-        let registers = std::mem::take(&mut self.lane_stack.values);
+        let mut registers = std::mem::take(&mut self.lane_stack.values);
         let mut forwarders = std::mem::take(&mut self.lane_stack.forwarders).into_iter();
         let states = ActivationState::of(&activations, cx);
         for (activation, state) in activations.drain(..).zip(states) {
@@ -5161,8 +5234,20 @@ impl<H: Host> Vm<H> {
                         // The frame its promotion would have made: the environment it holds,
                         // and its locals.
                         let held = activation.window + count;
+                        // SAFETY: the activation's window, intact in the taken registers.
+                        let environment = unsafe {
+                            window_environment(
+                                self,
+                                registers.as_mut_ptr().add(held),
+                                activation.function,
+                                state.env,
+                                // SAFETY: the context outlives the materialization.
+                                (*cx).program,
+                                state.this,
+                            )
+                        };
                         let frame = self.frames.last_mut().expect("the activation pushed a frame");
-                        frame.env = registers[held + usize::from(WINDOW_ENVIRONMENT)];
+                        frame.env = environment;
                         frame.captured = true;
                         let locals = held + usize::from(WINDOW_LOCALS);
                         let count = frame.locals.len();
@@ -5259,6 +5344,29 @@ impl<H: Host> Vm<H> {
         if function == super::ROOT_FUNCTION_ID || program != self.active_program {
             return None;
         }
+        // A numeric body's target differs from its plain closures' (below), so only plain
+        // closures share their function's.
+        if !numeric && let Some(known) = self.lane_stack.function_target(program, function) {
+            let capture = if known.entry == CallEntry::Frame {
+                std::ptr::null()
+            } else {
+                self.target_capture(code, env)
+            };
+            // An arrow's `this` is its own closure's environment's, like `capture`.
+            let lexical_this = match known.lexical_this {
+                Some(_) => {
+                    let this = self.captured_lexical_this(env);
+                    if this.is_some_and(Value::is_deleted) {
+                        return None;
+                    }
+                    Some(this)
+                }
+                None => None,
+            };
+            let target = ScriptCallTarget { callee, env, capture, lexical_this, ..known };
+            self.lane_stack.remember_script_target(set, target);
+            return Some(target);
+        }
         let body = code.function_get(function as usize)?;
         let plan = body.call_plan(code);
         // An arrow binds the `this` of its environment, found once here: one still
@@ -5307,7 +5415,7 @@ impl<H: Host> Vm<H> {
                 entry: CallEntry::Frame,
                 ..EMPTY_SCRIPT_CALL_TARGET
             };
-            self.lane_stack.remember_script_target(set, target);
+            self.remember_target(set, target, numeric);
             return Some(target);
         };
         // SAFETY: the program store keeps a derived view alive with its program.
@@ -5329,13 +5437,7 @@ impl<H: Host> Vm<H> {
                 initializes: constructs && body.only_initializes_this_fields(&code.constants),
             }
         });
-        // A frameless activation's function has no environment of its own.
-        let capture = match self.environment_capture_slots(env, false, 0) {
-            Some((slots, None)) => slots
-                .dense()
-                .map_or(std::ptr::null(), |slots| slots as *const crate::heap::EnvironmentSlots),
-            _ => std::ptr::null(),
-        };
+        let capture = self.target_capture(code, env);
         let target = ScriptCallTarget {
             callee,
             generation: self.lane_stack.generation,
@@ -5376,8 +5478,35 @@ impl<H: Host> Vm<H> {
                 None => NO_FORWARDED_METHOD,
             },
         };
-        self.lane_stack.remember_script_target(set, target);
+        self.remember_target(set, target, numeric);
         Some(target)
+    }
+
+    /// Record a resolved `target`, also as its function's unless its closure is numeric.
+    fn remember_target(&mut self, set: usize, target: ScriptCallTarget, numeric: bool) {
+        if numeric {
+            self.lane_stack.remember_script_target(set, target);
+        } else {
+            self.lane_stack.remember_function_target(set, target);
+        }
+    }
+
+    /// The capture slots a frameless target whose closure has environment `env` reads
+    /// (`ScriptCallTarget::capture`), tagged `CAPTURE_STORES` when they admit every store,
+    /// whose barrier this takes once.
+    fn target_capture(&mut self, code: &ResidualProgram, env: Value) -> *const crate::heap::EnvironmentSlots {
+        // A frameless activation's function has no environment of its own.
+        let capture = match self.environment_capture_slots(env, false, 0) {
+            Some((slots, None)) => slots
+                .dense()
+                .map_or(std::ptr::null(), |slots| slots as *const crate::heap::EnvironmentSlots),
+            _ => return std::ptr::null(),
+        };
+        if !capture.is_null() && self.admits_every_direct_store(code, self.active_program, env) {
+            self.heap.remember_cell(env);
+            return capture.map_addr(|address| address | CAPTURE_STORES);
+        }
+        capture
     }
 
     /// Whether `program` runs in the lane: Wasm always, JavaScript only where both it and the
@@ -6603,41 +6732,6 @@ fn lane_activate_environment<H: Host>(
     let layout = unsafe { (*target.view).environment_window.unwrap_unchecked() };
     let count = usize::from(target.registers);
     let locals = usize::from(layout.locals);
-    // SAFETY: as `layout`.
-    let templates = unsafe { &(*target.view).environment_templates };
-    let (slot_template, local_template) = templates.split_at(locals);
-    // Parameter `k` is local `k`: its argument where one was passed.
-    let passed = |slot: usize| r.get(arguments + slot as u16);
-    let mut slots = crate::heap::EnvironmentSlots::from_values(slot_template.iter().copied());
-    for slot in (0..usize::from(argc)).filter(|slot| layout.captured(*slot)) {
-        if let Some(binding) = slots.owned_mut(slot) {
-            *binding = passed(slot);
-        }
-    }
-    // A non-arrow binds its `this` where its closures' arrows find it
-    // (`Vm::captured_lexical_this`), as a frame's promotion carries its bindings.
-    let dynamic_bindings = if target.lexical_this.is_none() {
-        vec![(vm.runtime_atoms.lexical_this, this)]
-    } else {
-        Vec::new()
-    };
-    let environment = vm.heap.alloc(Cell::Environment {
-        parent: target.env,
-        function: target.function,
-        slots,
-        scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
-            program: Some(target.program.raw()),
-            root_eval_scope: false,
-            binding_site_pc: None,
-            dynamic_bindings: dynamic_bindings.into(),
-            with_objects: Box::default(),
-        }),
-    });
-    note_allocation(vm);
-    let storage = match vm.heap.get(environment) {
-        Some(Cell::Environment { slots, .. }) => slots as *const crate::heap::EnvironmentSlots,
-        _ => unreachable!("the activation's environment is an environment cell"),
-    };
     let stack = &mut vm.lane_stack;
     let window = stack.values.len();
     let held = count + usize::from(WINDOW_LOCALS);
@@ -6646,18 +6740,24 @@ fn lane_activate_environment<H: Host>(
     let callee_registers = unsafe {
         let registers = stack.values.as_mut_ptr().add(window);
         fill_window::<SCRIPT_FILL_BLOCK>(registers, count, Value::UNDEFINED);
-        registers.add(count + usize::from(WINDOW_ENVIRONMENT)).write(environment);
-        registers
-            .add(count + usize::from(WINDOW_SLOTS))
+        // Every slot starts `undefined` among the locals, parameter `k` local `k` with its
+        // argument where one was passed; the environment is made when one is needed.
+        let entries = registers.add(count);
+        entries.add(usize::from(WINDOW_ENVIRONMENT)).write(Value::DELETED);
+        entries
+            .add(usize::from(WINDOW_CAPTURED))
+            .write(std::mem::transmute::<u64, Value>(layout.captured));
+        let storage = crate::heap::EnvironmentSlots::lay_out_in_place(entries.add(usize::from(WINDOW_STORAGE)), locals);
+        entries
+            .add(usize::from(WINDOW_SLOTS))
             .write(std::mem::transmute::<u64, Value>(storage as u64));
-        std::ptr::copy_nonoverlapping(local_template.as_ptr(), registers.add(held), locals);
-        for slot in (0..usize::from(argc)).filter(|slot| !layout.captured(*slot)) {
-            registers.add(held + slot).write(passed(slot));
+        let local = registers.add(held);
+        std::ptr::copy_nonoverlapping(r.0.add(usize::from(arguments)), local, usize::from(argc));
+        for slot in usize::from(argc)..locals {
+            local.add(slot).write(Value::UNDEFINED);
         }
         // The values passed, as a frame keeps them for legacy reflection.
-        for slot in 0..usize::from(argc) {
-            registers.add(held + locals + slot).write(passed(slot));
-        }
+        std::ptr::copy_nonoverlapping(r.0.add(usize::from(arguments)), local.add(locals), usize::from(argc));
         stack.values.set_len(window + held + locals + usize::from(argc));
         Registers(registers)
     };
@@ -6690,6 +6790,65 @@ fn lane_activate_environment<H: Host>(
         (*cx).capture = target.capture;
     }
     Ok((callee_registers, base))
+}
+
+/// The environment of the environment window whose entries start at `entries`
+/// (`WINDOW_ENVIRONMENT`): the one already made, or a new environment of `function` of
+/// `program` under `parent` that takes over the slots the window held in place, its
+/// captured ones from the locals, which then hold `DELETED` for them as a frame's do. The
+/// window reaches the new storage from then on. The environment binds the activation's
+/// `this`, where its closures' arrows find it (`Vm::captured_lexical_this`), as a frame's
+/// promotion carries its bindings; an arrow's own `this` is that same lexical value.
+///
+/// # Safety
+/// `entries` starts the entries of a live environment window (`lane_activate_environment`).
+unsafe fn window_environment<H: Host>(
+    vm: &mut Vm<H>,
+    entries: *mut Value,
+    function: u32,
+    parent: Value,
+    program: ProgramId,
+    this: Value,
+) -> Value {
+    // SAFETY: as the caller guarantees.
+    unsafe {
+        let made = *entries.add(usize::from(WINDOW_ENVIRONMENT));
+        if !made.is_deleted() {
+            return made;
+        }
+        let captured = std::mem::transmute::<Value, u64>(*entries.add(usize::from(WINDOW_CAPTURED)));
+        let in_place = &*(std::mem::transmute::<Value, u64>(*entries.add(usize::from(WINDOW_SLOTS)))
+            as *const crate::heap::EnvironmentSlots);
+        let locals = entries.add(usize::from(WINDOW_LOCALS));
+        let window = EnvironmentWindow { locals: in_place.len() as u16, captured };
+        let slots = crate::heap::EnvironmentSlots::from_values((0..in_place.len()).map(|slot| {
+            if window.captured(slot) { *locals.add(slot) } else { Value::DELETED }
+        }));
+        for slot in (0..in_place.len()).filter(|slot| window.captured(*slot)) {
+            locals.add(slot).write(Value::DELETED);
+        }
+        let environment = vm.heap.alloc(Cell::Environment {
+            parent,
+            function,
+            slots,
+            scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
+                program: Some(program.raw()),
+                root_eval_scope: false,
+                binding_site_pc: None,
+                dynamic_bindings: vec![(vm.runtime_atoms.lexical_this, this)].into(),
+                with_objects: Box::default(),
+            }),
+        });
+        let storage = match vm.heap.get(environment) {
+            Some(Cell::Environment { slots, .. }) => slots as *const crate::heap::EnvironmentSlots,
+            _ => unreachable!("the window's environment is an environment cell"),
+        };
+        entries.add(usize::from(WINDOW_ENVIRONMENT)).write(environment);
+        entries
+            .add(usize::from(WINDOW_SLOTS))
+            .write(std::mem::transmute::<u64, Value>(storage as u64));
+        environment
+    }
 }
 
 /// The body of [[Construct]] for a constructor that only stores its parameters into fields
@@ -8759,14 +8918,6 @@ fn derive_lane_view<H: Host>(
         memory_register,
         activation,
         target_body: std::cell::OnceCell::new(),
-        environment_templates: environment_window.map_or_else(Box::default, |window| {
-            let captured = |slot: usize| window.captured(slot);
-            let locals = usize::from(window.locals);
-            (0..locals)
-                .map(|slot| if captured(slot) { Value::UNDEFINED } else { Value::DELETED })
-                .chain((0..locals).map(|slot| if captured(slot) { Value::DELETED } else { Value::UNDEFINED }))
-                .collect()
-        }),
         environment_window,
     }
 }
