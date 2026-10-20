@@ -168,7 +168,7 @@ impl<H: Host> Vm<H> {
         let fallback = self.display_names_slot(p, this, DISPLAY_NAMES_FALLBACK_SLOT)?;
         Ok(
             display_name_value(&code, &kind, locale, &fallback).map_or(Value::UNDEFINED, |name| {
-                self.heap.alloc(Cell::String(name.into()))
+                self.heap.alloc_string(name.into())
             }),
         )
     }
@@ -188,7 +188,7 @@ impl<H: Host> Vm<H> {
         ] {
             let value = self.display_names_slot(p, this, slot)?;
             let atom = self.intern_atom(key);
-            let value = self.heap.alloc(Cell::String(value.into()));
+            let value = self.heap.alloc_string(value.into());
             self.set_property(result, atom, value)?;
         }
         let _ = p;

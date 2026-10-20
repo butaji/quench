@@ -27,8 +27,10 @@ fn detach_array_elements(elements: &mut Rc<Vec<Value>>) -> &mut Vec<Value> {
 
 impl<H: Host> Vm<H> {
     pub(super) fn primitive_prototype(&self, value: Value) -> Option<Value> {
+        if self.heap.is_string(value) {
+            return Some(self.string_proto);
+        }
         let native = match self.heap.get(value) {
-            Some(Cell::String(_)) => return Some(self.string_proto),
             Some(Cell::Symbol(_)) => Native::Symbol,
             Some(Cell::BigInt(_)) => Native::BigInt,
             _ if value.as_bool().is_some() => Native::Boolean,
@@ -54,11 +56,11 @@ impl<H: Host> Vm<H> {
     /// one-unit string at `index`, or `None` past its end, where lookup continues on the
     /// prototype.
     pub(super) fn string_index_value(&mut self, string: Value, index: usize) -> Option<Value> {
-        let Some(Cell::String(text)) = self.heap.get(string) else {
+        let Some(text) = self.heap.string(string) else {
             return None;
         };
         let unit = text.units().get(index)?;
-        Some(self.heap.alloc(Cell::String(JsString::from_units(&[unit]))))
+        Some(self.heap.alloc_string(JsString::from_units(&[unit])))
     }
 
     /// `get_index` of a string at an integer key inside its length: the one-unit string
@@ -144,9 +146,10 @@ impl<H: Host> Vm<H> {
                 else { Some(self.to_string(p, key)?) };
             return Err(self.nullish_property_error(p, object, property.as_deref()));
         }
-        let key = match self.heap.get(key) {
-            Some(Cell::String(_) | Cell::Symbol(_)) => key,
-            _ => self.to_property_key(p, key)?,
+        let key = if self.heap.is_string(key) || matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
+            key
+        } else {
+            self.to_property_key(p, key)?
         };
         if matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
             return self.get_symbol_property_with_receiver(p, object, key, object);
@@ -458,9 +461,10 @@ impl<H: Host> Vm<H> {
         value: Value,
         strict: bool,
     ) -> Result<(), JsError> {
-        let key = match self.heap.get(key) {
-            Some(Cell::String(_) | Cell::Symbol(_)) => key,
-            _ => self.to_property_key(p, key)?,
+        let key = if self.heap.is_string(key) || matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
+            key
+        } else {
+            self.to_property_key(p, key)?
         };
         if matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
             let succeeded =
@@ -525,7 +529,7 @@ impl<H: Host> Vm<H> {
         if let Some(index) = key.as_int() {
             return u32::try_from(index).ok();
         }
-        let Some(Cell::String(key)) = self.heap.get(key) else {
+        let Some(key) = self.heap.string(key) else {
             return None;
         };
         super::object_static::array_index(key.host_string())

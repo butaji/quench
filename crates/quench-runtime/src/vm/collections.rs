@@ -1015,7 +1015,7 @@ impl<H: Host> Vm<H> {
             Native::IteratorPrototypeConstructorGetter => self.iterator_prototype_getter(p),
             Native::IteratorPrototypeToStringTagGetter => Ok(self
                 .heap
-                .alloc(Cell::String(JsString::from_str("Iterator")))),
+                .alloc_string(JsString::from_str("Iterator"))),
             Native::IteratorPrototypeConstructorSetter => {
                 self.iterator_prototype_setter(p, this, "constructor", args)
             }
@@ -1294,7 +1294,7 @@ impl<H: Host> Vm<H> {
             number.to_bits().hash(&mut hasher);
         } else {
             match self.heap.get(key) {
-                Some(Cell::String(text)) => text.hash(&mut hasher),
+                _ if let Some(text) = self.heap.string(key) => text.hash(&mut hasher),
                 Some(Cell::BigInt(value)) => value.hash(&mut hasher),
                 _ => key.hash(&mut hasher),
             }

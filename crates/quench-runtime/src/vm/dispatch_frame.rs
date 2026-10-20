@@ -1400,7 +1400,7 @@ impl<H: Host> Vm<H> {
                                 Some(v) if v.is_null() => "null",
                                 Some(v) if v.as_bool().is_some() => "bool",
                                 Some(v) => match self.heap.get(v) {
-                                    Some(Cell::String(_)) => "str",
+                                    _ if self.heap.is_string(v)  => "str",
                                     Some(Cell::BigInt(_)) => "bigint",
                                     _ => "obj",
                                 },

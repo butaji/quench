@@ -241,6 +241,20 @@ impl Heap {
         }
     }
 
+    /// The string `value` names, if it is one.
+    #[inline(always)]
+    pub(crate) fn string(&self, value: Value) -> Option<&crate::vm::wtf16::JsString> {
+        let record_id = value.direct_string_index()?;
+        // SAFETY: string Values come only from `alloc_string` and stay live while reachable.
+        Some(unsafe { self.string_records.get_live(record_id) })
+    }
+
+    /// Whether `value` is a string.
+    #[inline(always)]
+    pub(crate) fn is_string(&self, value: Value) -> bool {
+        value.direct_string_index().is_some()
+    }
+
     /// An await state (`AwaitState`), in its record or in a slot.
     pub(crate) fn await_state(&self, value: Value) -> Option<&AwaitState> {
         if let Some(record_id) = value.direct_await_index() {
@@ -427,7 +441,7 @@ impl Heap {
             HeapReference::IteratorRecord(record_id) => {
                 &mut unsafe { iterator_records.get_live_mut(record_id) }.object
             }
-            HeapReference::AwaitRecord(_) => return None,
+            HeapReference::AwaitRecord(_) | HeapReference::StringRecord(_) => return None,
             HeapReference::LegacySlot(index) => {
                 slots.get_mut(index as usize)?.cell.as_mut()?.object_mut()?
             }
@@ -534,6 +548,7 @@ impl Heap {
             HeapReference::FunctionRecord(_)
             | HeapReference::IteratorRecord(_)
             | HeapReference::AwaitRecord(_)
+            | HeapReference::StringRecord(_)
             | HeapReference::LegacySlot(_) => None,
         }
     }
@@ -578,6 +593,7 @@ impl Heap {
             Some(HeapReference::PromiseRecord(id)) => self.promise_records.is_live(id),
             Some(HeapReference::AwaitRecord(id)) => self.await_records.is_live(id),
             Some(HeapReference::IteratorRecord(id)) => self.iterator_records.is_live(id),
+            Some(HeapReference::StringRecord(id)) => self.string_records.is_live(id),
             None => false,
         }
     }
