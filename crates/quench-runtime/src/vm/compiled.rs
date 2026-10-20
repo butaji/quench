@@ -6503,8 +6503,8 @@ impl<H: Host> Vm<H> {
 
     /// Whether the JavaScript tier may still claim `function` of `program`: it runs, the
     /// function passes its candidate filter, and the tier has not declined it. The tier
-    /// observes and enters functions at frame entry (`js_jit_at_entry`), so such calls keep
-    /// their frames rather than running frameless in the lane.
+    /// observes and enters functions at frame entry (`js_tier_frame_entry`), so such calls
+    /// keep their frames rather than running frameless in the lane.
     pub(super) fn js_tier_may_claim(&self, program: &ResidualProgram, id: ProgramId, function: u32) -> bool {
         self.js_tier_runs()
             && program.kind != crate::bytecode::ProgramKind::Wasm
@@ -6512,6 +6512,35 @@ impl<H: Host> Vm<H> {
                 .function_get(function as usize)
                 .is_some_and(|body| super::js_compiled::function_candidate(body, program))
             && !self.programs.js_tier_declined(id, function)
+    }
+
+    /// The JavaScript tier at the entry of `frame`, an initialized frame at PC zero, made
+    /// wherever a frame is entered: the general loop, and the lane's in-place frame calls
+    /// (`lane_frame_call`). With the native result written to its return register, the PC
+    /// of the `Return` that completes the frame; else `None`, the entry counted as an
+    /// interpreter fallback, and the untouched frame runs from its entry.
+    pub(super) fn js_tier_frame_entry(
+        &mut self,
+        program: &ResidualProgram,
+        frame: usize,
+    ) -> Option<usize> {
+        if self.execution_mode != ExecutionMode::Compiled {
+            return None;
+        }
+        if let Some((return_pc, return_register, value)) = self.js_jit_at_entry(program, frame) {
+            self.write(frame, return_register, value);
+            return Some(return_pc);
+        }
+        let (program_id, function_id) = (self.frames[frame].program, self.frames[frame].function);
+        self.programs
+            .record_js_jit_fallback_entry(program_id, function_id);
+        if program.kind != crate::bytecode::ProgramKind::Wasm
+            && self.programs.js_jit_diagnostics_enabled()
+            && self.frames[frame].js_jit_interpreter_started.is_none()
+        {
+            self.frames[frame].js_jit_interpreter_started = Some(std::time::Instant::now());
+        }
+        None
     }
 
     /// Try the per-function JavaScript tier at an already-initialized frame's
@@ -6931,26 +6960,27 @@ impl<H: Host> Vm<H> {
             .is_some_and(|method| self.is_current_realm_native(method, Native::StringSubstr))
     }
 
-    /// Call an already-promoted JavaScript tier before the generic path pushes
-    /// a callee frame. The native subset is pure and has a guarded Number ABI;
-    /// misses stay on the ordinary frame path.
+    /// The JavaScript tier's direct entry of a plain call of a same-program user function,
+    /// before any callee frame is pushed: the general loop's in-loop and known calls and the
+    /// lane's frame calls (`lane_frame_call`) make it. Only an already-promoted function
+    /// enters; its native subset is pure and has a guarded Number ABI. A call that returns
+    /// its callee's completion (`returns`) completes its caller, so it and every guard miss
+    /// stay on the ordinary frame path.
     pub(super) fn js_jit_compiled_call(
-        programs: &mut ProgramStore,
-        program_id: ProgramId,
+        &mut self,
         program: &ResidualProgram,
-        function_id: u32,
+        (program_id, function_id): (ProgramId, u32),
+        returns: bool,
         arguments: &[Value],
-        interrupt: &std::sync::atomic::AtomicBool,
     ) -> Option<Value> {
-        if cfg!(any(
-            feature = "profile-aggregate",
-            feature = "profile-trace",
-            feature = "profile-memory",
-            feature = "profile-gc-time"
-        )) || program.kind == crate::bytecode::ProgramKind::Wasm
+        if returns
+            || !self.js_tier_runs()
+            || program_id != self.active_program
+            || program.kind == crate::bytecode::ProgramKind::Wasm
         {
             return None;
         }
+        let (programs, interrupt) = (&mut self.programs, self.execution_interrupt.atomic_flag());
         let function = program.function_get(function_id as usize)?;
         let compiled = match programs.js_tier(program_id, function_id)? {
             super::program_store::JsTierState::Compiled(compiled) => compiled,

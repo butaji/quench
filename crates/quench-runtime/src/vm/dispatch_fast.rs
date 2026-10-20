@@ -7863,13 +7863,24 @@ lane_handler! {
             requicken(ip, lane_script_call::<H>);
             return exit(ip);
         };
+        let window = ImmediateLayout::call_window_base(i.imm());
+        let argc = ImmediateLayout::argument_count(i.imm());
+        // A function the JavaScript tier promoted is entered directly, as the general loop's
+        // in-loop call enters it (`Vm::js_jit_compiled_call`); a guard miss pushes its frame.
+        // SAFETY: the call's window is registers of the running function, which the direct
+        // call only reads.
+        let arguments = unsafe {
+            std::slice::from_raw_parts(r.0.add(usize::from(window)), usize::from(argc))
+        };
+        if let Some(value) = vm.js_jit_compiled_call(code, (target.0, target.1), returns, arguments) {
+            r.set(i.a, value);
+            next!(cx, r, following(ip), Carried::script(cx))
+        }
         vm.materialize_lane_activations(cx);
         // The caller is now the innermost frame, its registers the frame's.
         let (frame, r) = unsafe { ((*cx).frame, (*cx).registers) };
         // SAFETY: the call record lies in the running view.
         let call_pc = unsafe { ip.offset_from((*cx).base) } as usize;
-        let window = ImmediateLayout::call_window_base(i.imm());
-        let argc = ImmediateLayout::argument_count(i.imm());
         // SAFETY: the call's window is registers of the caller frame, which the push neither
         // moves nor frees before it copies them.
         let arguments: *const [Value] = unsafe {
@@ -7905,7 +7916,13 @@ lane_handler! {
                 });
                 // The pushed frame's guard narrows the activations the thread admits.
                 vm.lane_stack.refresh_activation_limit();
-                lane_enter_script_frame(cx, frame + 1)
+                // The tier observes the frame's entry as the general loop's would, and a
+                // native result continues at the `Return` that completes the frame.
+                let callee_frame = frame + 1;
+                if let Some(return_pc) = vm.js_tier_frame_entry(code, callee_frame) {
+                    vm.frames[callee_frame].pc = return_pc;
+                }
+                lane_enter_script_frame(cx, callee_frame)
             }
             // A failed push (the guest call depth) throws at the call, as the general path's.
             Some(Err(error)) => {
