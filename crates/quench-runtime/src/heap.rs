@@ -1336,7 +1336,6 @@ impl Heap {
         }));
         owners.extend(direct_owners);
         owners.sort_unstable_by_key(|(offset, _)| *offset);
-        self.properties.begin_compaction();
         let mut target = 0;
         let Self {
             object_records,
