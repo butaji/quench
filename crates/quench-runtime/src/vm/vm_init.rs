@@ -97,6 +97,7 @@ impl<H: Host> Vm<H> {
             #[cfg(not(feature = "profile-aggregate"))]
             profile: Profile,
             shape_slot_memo: Default::default(),
+            function_name_shapes: Default::default(),
             symbol_write_proofs: Default::default(),
             shape_attribute_memo: Default::default(),
             name_atom_memo: Default::default(),
