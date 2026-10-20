@@ -2648,7 +2648,9 @@ lane_handler! {
     /// (`specialize_register_operands`).
     fn lane_jump_binary_false_small<BACKWARD: bool>(cx, r, ip, i, view) {
         let right = Value::integer(i32::from(i.c as i16));
+        // Past a comparison, the truth of a Number operator's result (`if (x & MASK)`).
         let Some(holds) = super::operations::number_relation(u32::from(i.a), r.get(i.b), right)
+            .or_else(|| lane_relation_other::<H>(u32::from(i.a), r.get(i.b), right))
         else {
             return exit(ip);
         };
