@@ -327,6 +327,9 @@ pub(crate) struct Program {
     starts: Option<Starts>,
     /// The literal bytes every match begins with, searched for directly in ASCII subjects.
     prefix: Option<LiteralFinder>,
+    /// The length of `prefix` when it is the whole pattern and the pattern has no captures:
+    /// an ASCII subject's match is then where the search finds it, with no run.
+    literal_length: Option<usize>,
 }
 
 thread_local! {
@@ -692,6 +695,8 @@ impl Program {
         };
         compiler.compile(expr, flags).ok()?;
         compiler.emit(Inst::Match);
+        let mut prefix = Vec::new();
+        let whole_literal = literal_prefix(expr, flags, &mut prefix);
         Some(Self {
             instructions: compiler.instructions.into_boxed_slice(),
             sets: compiler.sets.into_boxed_slice(),
@@ -699,11 +704,8 @@ impl Program {
             capture_count,
             register_count: compiler.registers as usize,
             starts: starts(expr, flags),
-            prefix: {
-                let mut prefix = Vec::new();
-                literal_prefix(expr, flags, &mut prefix);
-                (!prefix.is_empty()).then(|| literal_finder(&prefix))
-            },
+            prefix: (!prefix.is_empty()).then(|| literal_finder(&prefix)),
+            literal_length: (whole_literal && capture_count == 0 && !prefix.is_empty()).then_some(prefix.len()),
         })
     }
 
@@ -729,6 +731,14 @@ impl Program {
         sticky: bool,
         budget: Option<usize>,
     ) -> Result<Option<Found>, Exhausted> {
+        if let (Some(length), Some(_)) = (self.literal_length, text.bytes()) {
+            let last = if sticky { first } else { text.len() };
+            return Ok(self.next_start(text, first, last).map(|start| Found {
+                start,
+                end: start + length,
+                captures: Vec::new(),
+            }));
+        }
         WORKSPACE.with_borrow_mut(|workspace| {
             let Workspace { registers, stack } = &mut *workspace;
             // A failed run restores every register it set, so one reset serves every start.
@@ -743,9 +753,12 @@ impl Program {
             };
             stack.clear();
             stack.push(Frame::Barrier);
-            let Some((start, end)) =
-                self.run(text, 0, start, Some(search), registers, stack, &mut steps)?
-            else {
+            let found = if budget.is_some() {
+                self.run::<T, true>(text, 0, start, Some(search), registers, stack, &mut steps)?
+            } else {
+                self.run::<T, false>(text, 0, start, Some(search), registers, stack, &mut steps)?
+            };
+            let Some((start, end)) = found else {
                 return Ok(None);
             };
             let captures = registers[..2 * self.capture_count]
@@ -780,7 +793,8 @@ impl Program {
     /// Runs from `pc` at `position` until a `Match` or `LookSucceed`, whose position it
     /// returns, or until backtracking reaches the run's barrier.
     #[allow(clippy::too_many_lines)]
-    fn run<T: Text + ?Sized>(
+    /// `BUDGETED` runs count each step against `steps`; an unbudgeted search counts nothing.
+    fn run<T: Text + ?Sized, const BUDGETED: bool>(
         &self,
         text: &T,
         mut pc: u32,
@@ -792,6 +806,8 @@ impl Program {
     ) -> Result<Option<(usize, usize)>, Exhausted> {
         let mut start = position;
         let length = text.len();
+        // The steps left, held here and written back where the run returns or recurses.
+        let mut left = *steps;
         let set = |registers: &mut [usize], stack: &mut Vec<Frame>, register: u32, value| {
             let slot = &mut registers[register as usize];
             stack.push(Frame::Restore {
@@ -801,7 +817,9 @@ impl Program {
             *slot = value;
         };
         loop {
-            *steps = steps.checked_sub(1).ok_or(Exhausted)?;
+            if BUDGETED {
+                left = left.checked_sub(1).ok_or(Exhausted)?;
+            }
             let advanced = match self.instructions[pc as usize] {
                 Inst::Unit(test) => {
                     if position < length && self.test(test, text.unit(position)) {
@@ -1006,7 +1024,9 @@ impl Program {
                 Inst::Look { negative, end } => {
                     let base = stack.len();
                     stack.push(Frame::Barrier);
-                    let found = self.run(text, pc + 1, position, None, registers, stack, steps)?;
+                    *steps = left;
+                    let found = self.run::<T, BUDGETED>(text, pc + 1, position, None, registers, stack, steps)?;
+                    left = *steps;
                     match (found.is_some(), negative) {
                         (true, false) => {
                             // A lookahead is atomic: its choices go, the restores of its
@@ -1037,20 +1057,26 @@ impl Program {
                         }
                     }
                 }
-                Inst::LookSucceed | Inst::Match => return Ok(Some((start, position))),
+                Inst::LookSucceed | Inst::Match => {
+                    *steps = left;
+                    return Ok(Some((start, position)));
+                }
             };
             if advanced {
                 continue;
             }
             // Backtrack to the latest choice of this run.
             loop {
-                *steps = steps.checked_sub(1).ok_or(Exhausted)?;
+                if BUDGETED {
+                    left = left.checked_sub(1).ok_or(Exhausted)?;
+                }
                 match stack.pop() {
                     None | Some(Frame::Barrier) => {
                         // A search moves on to its next start; a run of a body fails.
                         let next =
                             search.and_then(|search| self.next_start(text, start + 1, search.last));
                         let Some(next) = next else {
+                            *steps = left;
                             return Ok(None);
                         };
                         stack.push(Frame::Barrier);
