@@ -2620,6 +2620,10 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         allow_evaluation: bool,
     ) -> Result<(), JsError> {
+        // Checked after every job: an empty queue has nothing to root or advance.
+        if self.realm.promise.dynamic_import_jobs.is_empty() {
+            return Ok(());
+        }
         let jobs = std::mem::take(&mut self.realm.promise.dynamic_import_jobs);
         // Taking the batch transfers its roots out of the persistent queue.
         // Keep every waiter alive, including jobs not yet evaluated, until it
