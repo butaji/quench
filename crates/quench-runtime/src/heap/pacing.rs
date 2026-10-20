@@ -201,21 +201,26 @@ impl GenerationalPacing {
     }
 }
 
-/// Production pacing, memory-first on the owner's direction of 2026-10-17 (TOD-123): young
-/// collections every sixty-fourth of a live set (at least 384 weight; from an eighth, with
-/// read-only pages released after every collection: V8-v7 max RSS RegExp 7244-7500 -> 6852
-/// KiB, EarleyBoyer 7792-8000 -> 9040-9160, the floor-bound fixtures unchanged, static
-/// x86_64 unbolted, 2026-10-18; RSS is this lane's only criterion), a full collection once the old
-/// generation has doubled or one live set of allocation has passed since the last one, and,
-/// when more than half of young allocations survive, full collections with one live set
-/// between them, probing survival with a minor collection every fourth one. The minimums are
-/// the pre-generational 384-cell headroom. The Score lane's table (eight live sets per young
-/// collection, four per full one, 2^15 and 2^18 minimums) raised npm peak RSS by up to 17 MiB
-/// per package (semver 27.6 -> 45.2, typescript-eslint 188 -> 226); the owner reaffirmed
-/// memory-first on 2026-10-18.
+/// Production pacing: young collections every eighth of a live set, at least
+/// `MINIMUM_YOUNG_ALLOCATION` weight; a full collection once the old generation has doubled or
+/// one live set of allocation has passed since the last one; and, when more than half of
+/// young allocations survive, full collections with one live set between them, probing
+/// survival with a minor collection every fourth one.
+///
+/// History: memory-first on 2026-10-17 (TOD-123) set a sixty-fourth of a live set and a
+/// 384-weight minimum; the Score lane's table (eight live sets per young collection, 2^15 and
+/// 2^18 minimums) had raised npm peak RSS by up to 17 MiB per package. On 2026-10-20 the
+/// owner set the npm lane to fastest and lowest memory together, and this table was chosen
+/// by both on the npm scenarios (x86_64 Linux VM, 4 cores, CPU ms / peak RSS MiB, three runs):
+/// ms 117/18.1 -> 72/16.1, semver 378/19.0 -> 266/18.3, color-convert 447/18.6 -> 366/18.1,
+/// ajv 323/19.6 -> 230/20.1, typescript-estree 765/106.0 -> 714/103.2, lodash 115/21.9 ->
+/// 103/19.6, date-fns 317/19.2 -> 343/21.6 (Bun 34 MiB). The 384 minimum collected every
+/// few hundred allocations while a program loads, when nearly all of them survive. V8-v7
+/// (ms, max RSS KiB): RayTrace 946/4256 -> 280/4560, RegExp 837/7764 -> 270/9292,
+/// EarleyBoyer 375/11564 -> 311/9856, the others within noise.
 pub(super) const PRODUCTION_PACING: GenerationalPacing = GenerationalPacing {
-    young: Ratio::new(1, 64),
-    minimum_young: MEMORY_FIRST_MINIMUM_ALLOCATION,
+    young: Ratio::new(1, 8),
+    minimum_young: MINIMUM_YOUNG_ALLOCATION,
     old_growth: Ratio::new(1, 1),
     minimum_old_growth: MEMORY_FIRST_MINIMUM_ALLOCATION,
     allocation_cap: Ratio::new(1, 1),
@@ -226,8 +231,11 @@ pub(super) const PRODUCTION_PACING: GenerationalPacing = GenerationalPacing {
 };
 
 /// The fewest allocations between collections, whatever survived: the pre-generational
-/// minimum headroom.
+/// minimum headroom, which bounds old growth and the allocation cap.
 const MEMORY_FIRST_MINIMUM_ALLOCATION: usize = 384;
+
+/// The fewest allocations between young collections (`PRODUCTION_PACING`).
+const MINIMUM_YOUNG_ALLOCATION: usize = 1 << 14;
 
 #[cfg(not(feature = "gc-tuning"))]
 pub(super) fn pacing() -> GenerationalPacing {
