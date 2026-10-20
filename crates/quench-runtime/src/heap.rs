@@ -1008,6 +1008,32 @@ impl Heap {
         self.alloc_in_slot(cell, track_young)
     }
 
+    /// `alloc(Cell::Environment { .. })` without the dispatch on the cell's kind, with the
+    /// address of the environment's slot storage, which stays put while it lives. An
+    /// environment's weight is one allocation: it has no prototype, payload or external bytes.
+    pub(crate) fn alloc_environment(
+        &mut self,
+        parent: Value,
+        function: u32,
+        slots: EnvironmentSlots,
+        scope: EnvironmentScopeRef,
+    ) -> (Value, *const EnvironmentSlots) {
+        let cell = Cell::Environment { parent, function, slots, scope };
+        let environment = if cfg!(feature = "profile-aggregate") {
+            self.alloc(cell)
+        } else {
+            self.allocations += 1;
+            self.allocations_since_full = self.allocations_since_full.saturating_add(1);
+            self.total_allocations += 1;
+            self.alloc_in_slot(cell, self.tracks_young_cells())
+        };
+        let storage = match self.get(environment) {
+            Some(Cell::Environment { slots, .. }) => slots as *const EnvironmentSlots,
+            _ => unreachable!("an environment is allocated in a slot"),
+        };
+        (environment, storage)
+    }
+
     /// `alloc(Cell::Object(object))` without the dispatch on the cell's kind, which an
     /// ordinary object's construction knows: a direct record while one is free.
     #[inline(always)]
