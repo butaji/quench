@@ -110,8 +110,16 @@ impl<H: Host> Vm<H> {
     }
 
     fn append_function_name(&mut self, function: Value, shape: u32, name: Atom) {
-        let shape = self.append_cached_shape_transition(shape, ShapeTransition::FunctionName { name });
-        self.object_data_mut(function).expect("function object").set_shape(shape);
+        let index = name as usize & (super::FUNCTION_NAME_SHAPES - 1);
+        let named = match self.function_name_shapes[index] {
+            Some((base, atom, named)) if base == shape && atom == name => named,
+            _ => {
+                let named = self.append_cached_shape_transition(shape, ShapeTransition::FunctionName { name });
+                self.function_name_shapes[index] = Some((shape, name, named));
+                named
+            }
+        };
+        self.object_data_mut(function).expect("function object").set_shape(named);
     }
 
     pub(super) fn set_function_debug_name(&mut self, function: Value, name: Atom) {

@@ -1201,62 +1201,6 @@ lane_handler! {
 }
 
 lane_handler! {
-    /// `lane_load_local` of a slot whose binding facts the view fixed
-    /// (`specialize_frame_locals`): no mapped `arguments` mirrors it, and it moves into the
-    /// frame's environment once that is captured exactly when `ENVIRONMENT`. A root body's
-    /// frame, an uninitialized binding or a numeric local takes the general path.
-    fn lane_load_frame_local<ENVIRONMENT: bool>(cx, r, ip, i, view) {
-        if !unsafe { (*cx).env }.is_deleted() || i.a & crate::bytecode::NUMERIC_LOCAL_TARGET != 0 {
-            return exit(ip);
-        }
-        let vm = unsafe { vm(cx) };
-        let frame = &vm.frames[unsafe { (*cx).frame }];
-        let slot = i.imm() as usize;
-        let value = if frame.function == super::ROOT_FUNCTION_ID {
-            None
-        } else if ENVIRONMENT && frame.captured {
-            vm.heap.environment_slot(frame.env, slot)
-        } else {
-            frame.locals.get(slot).copied()
-        };
-        let Some(value) = value.filter(|value| !value.is_deleted()) else {
-            return exit(ip);
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), view)
-    }
-}
-
-lane_handler! {
-    /// `lane_store_local` of a slot `lane_load_frame_local`'s facts hold for, which is no
-    /// self binding either: the store to an initialized (or initializing) binding.
-    fn lane_store_frame_local<ENVIRONMENT: bool>(cx, r, ip, i, view) {
-        if !unsafe { (*cx).env }.is_deleted() {
-            return exit(ip);
-        }
-        let value = r.get(i.a);
-        let vm = unsafe { vm(cx) };
-        let frame = &mut vm.frames[unsafe { (*cx).frame }];
-        let slot = i.imm() as usize;
-        let binding = if frame.function == super::ROOT_FUNCTION_ID {
-            None
-        } else if ENVIRONMENT && frame.captured {
-            vm.heap.environment_slot_mut(frame.env, slot)
-        } else {
-            frame.locals.get_mut(slot)
-        };
-        match binding {
-            Some(binding) if i.c != 0 || !binding.is_deleted() => *binding = value,
-            _ => return exit(ip),
-        }
-        if let Some(register) = i.b.checked_sub(crate::bytecode::OPTIONAL_REGISTER_BIAS) {
-            r.set(register, value);
-        }
-        next!(cx, r, following(ip), view)
-    }
-}
-
-lane_handler! {
     /// `StoreLocal` and `StoreEnvLocal` to a binding a VM frame owns that
     /// `Vm::store_initialized_frame_binding` completes; any other store takes the general
     /// path. A `StoreEnvLocal` of a function that resolves names at run time, which may
@@ -1484,6 +1428,99 @@ macro_rules! sibling {
         );
     }};
 }
+
+lane_handler! {
+    /// `lane_load_local` of a slot whose binding facts the view fixed
+    /// (`specialize_frame_locals`): no mapped `arguments` mirrors it, and it moves into the
+    /// frame's environment once that is captured exactly when `ENVIRONMENT`. A root body's
+    /// frame, an uninitialized binding or a numeric local takes the general path.
+    fn lane_load_frame_local<ENVIRONMENT: bool>(cx, r, ip, i, view) {
+        if !unsafe { (*cx).env }.is_deleted() || i.a & crate::bytecode::NUMERIC_LOCAL_TARGET != 0 {
+            return exit(ip);
+        }
+        let vm = unsafe { vm(cx) };
+        let frame = &vm.frames[unsafe { (*cx).frame }];
+        if ENVIRONMENT && frame.captured {
+            sibling!(lane_load_frame_environment_local::<H>, r, ip, view)
+        }
+        let value = (frame.function != super::ROOT_FUNCTION_ID)
+            .then(|| frame.locals.get(i.imm() as usize).copied())
+            .flatten();
+        let Some(value) = value.filter(|value| !value.is_deleted()) else {
+            return exit(ip);
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    /// `lane_load_frame_local` of a slot the frame's captured environment holds; out of line,
+    /// so the frame-local read saves no registers.
+    #[inline(never)]
+    fn lane_load_frame_environment_local<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let frame = &vm.frames[unsafe { (*cx).frame }];
+        let value = (frame.function != super::ROOT_FUNCTION_ID)
+            .then(|| vm.heap.environment_slot(frame.env, i.imm() as usize))
+            .flatten();
+        let Some(value) = value.filter(|value| !value.is_deleted()) else {
+            return exit(ip);
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    /// `lane_store_local` of a slot `lane_load_frame_local`'s facts hold for, which is no
+    /// self binding either: the store to an initialized (or initializing) binding.
+    fn lane_store_frame_local<ENVIRONMENT: bool>(cx, r, ip, i, view) {
+        if !unsafe { (*cx).env }.is_deleted() {
+            return exit(ip);
+        }
+        let value = r.get(i.a);
+        let vm = unsafe { vm(cx) };
+        let frame = &mut vm.frames[unsafe { (*cx).frame }];
+        if ENVIRONMENT && frame.captured {
+            sibling!(lane_store_frame_environment_local::<H>, r, ip, view)
+        }
+        let binding = (frame.function != super::ROOT_FUNCTION_ID)
+            .then(|| frame.locals.get_mut(i.imm() as usize))
+            .flatten();
+        match binding {
+            Some(binding) if i.c != 0 || !binding.is_deleted() => *binding = value,
+            _ => return exit(ip),
+        }
+        if let Some(register) = i.b.checked_sub(crate::bytecode::OPTIONAL_REGISTER_BIAS) {
+            r.set(register, value);
+        }
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    /// `lane_store_frame_local` to a slot the frame's captured environment holds; out of
+    /// line, as `lane_load_frame_environment_local`.
+    #[inline(never)]
+    fn lane_store_frame_environment_local<>(cx, r, ip, i, view) {
+        let value = r.get(i.a);
+        let vm = unsafe { vm(cx) };
+        let frame = &vm.frames[unsafe { (*cx).frame }];
+        let binding = (frame.function != super::ROOT_FUNCTION_ID)
+            .then(|| vm.heap.environment_slot_mut(frame.env, i.imm() as usize))
+            .flatten();
+        match binding {
+            Some(binding) if i.c != 0 || !binding.is_deleted() => *binding = value,
+            _ => return exit(ip),
+        }
+        if let Some(register) = i.b.checked_sub(crate::bytecode::OPTIONAL_REGISTER_BIAS) {
+            r.set(register, value);
+        }
+        next!(cx, r, following(ip), view)
+    }
+}
+
 
 script_handler! {
     /// `this` where the lane holds it; the frame's `this` takes `lane_load_frame_this`,
