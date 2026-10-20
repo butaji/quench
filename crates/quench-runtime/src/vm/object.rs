@@ -715,13 +715,28 @@ impl<H: Host> Vm<H> {
         self.heap.property_set(object, slot, value);
     }
     pub(super) fn invalidate_field_caches(&mut self) {
-        self.field_caches.fill(EMPTY_CACHE);
+        match &mut self.field_cache_writes {
+            Some(sites) => {
+                for &site in sites.iter() {
+                    let site = site as usize;
+                    self.field_caches[site] = EMPTY_CACHE;
+                    self.field_add_indices[site] = NO_FIELD_ADD_SET;
+                    self.megamorphic_field_indices[site] = NO_MEGAMORPHIC_FIELD;
+                    self.inherited_field_indices[site] = NO_INHERITED_FIELD;
+                }
+                sites.clear();
+            }
+            None => {
+                self.field_caches.fill(EMPTY_CACHE);
+                self.field_add_indices.fill(NO_FIELD_ADD_SET);
+                self.megamorphic_field_indices.fill(NO_MEGAMORPHIC_FIELD);
+                self.inherited_field_indices.fill(NO_INHERITED_FIELD);
+                self.field_cache_writes = Some(Vec::new());
+            }
+        }
         self.symbol_write_proofs.clear();
-        self.field_add_indices.fill(NO_FIELD_ADD_SET);
         self.field_add_sets.clear();
-        self.megamorphic_field_indices.fill(NO_MEGAMORPHIC_FIELD);
         self.megamorphic_fields.clear();
-        self.inherited_field_indices.fill(NO_INHERITED_FIELD);
         self.inherited_field_caches.clear();
         self.accessor_field_caches.clear();
         self.instanceof_constructor_layout = None;
@@ -731,6 +746,17 @@ impl<H: Host> Vm<H> {
         self.regexp_last_index_layout = None;
         self.regexp_builtin_layout = None;
         self.regexp_symbol_layouts.clear();
+    }
+    /// Notes that `site`'s per-site cache entries change (`field_cache_writes`).
+    fn note_field_cache_write(&mut self, site: usize) {
+        let limit = self.field_caches.len() / FIELD_CACHE_SPARSE_RESET_SHARE;
+        if let Some(sites) = &mut self.field_cache_writes {
+            if sites.len() < limit {
+                sites.push(site as u32);
+            } else {
+                self.field_cache_writes = None;
+            }
+        }
     }
     fn invalidate_method_caches_for_key(&mut self, key: PropertyKey) {
         match key {
@@ -1914,6 +1940,7 @@ impl<H: Host> Vm<H> {
         let ordinary = self.heap.ordinary_object(object).is_some();
         let (cache, value) = self.inherited_field(receiver, ordinary, atom)?;
         if self.field_cache_records(site) {
+            self.note_field_cache_write(site);
             self.record_inherited_field(site, cache);
         }
         Some(value)
@@ -2832,6 +2859,7 @@ impl<H: Host> Vm<H> {
         }
         let index = self.field_add_indices[site];
         if index == NO_FIELD_ADD_SET {
+            self.note_field_cache_write(site);
             self.field_add_indices[site] = self.field_add_sets.len() as u32;
             self.field_add_sets.push(FieldAddCacheSet::EMPTY);
         }
@@ -3212,6 +3240,7 @@ impl<H: Host> Vm<H> {
         if !self.field_cache_records(site) {
             return;
         }
+        self.note_field_cache_write(site);
         // SAFETY: compiler-produced sites index exactly-sized cache vectors.
         let table_index = unsafe { *self.megamorphic_field_indices.get_unchecked(site) };
         if table_index != NO_MEGAMORPHIC_FIELD {

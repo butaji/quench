@@ -1,19 +1,13 @@
 //! Read-only file pages are clean: bootstrap and compilation fault in code and constant data
 //! that a script's run never touches again. Releasing them from the process after compilation
 //! keeps only what the run touches resident; a released page that is used again refaults from
-//! the page cache. Two ranges qualify: the executable's own read-only segments (headers,
-//! `.rodata`, `.eh_frame` and `.text`, from `__executable_start` to `etext`, linked at a fixed
-//! address with nothing relocated in them) and every library's code mapping. A library's
-//! read-only data mappings do not: their RELRO pages hold relocations the loader wrote.
+//! the page cache. Two kinds of segment qualify: the executable's read-only segments (headers,
+//! `.rodata`, `.eh_frame` and `.text`, linked at a fixed address with nothing relocated in
+//! them) and every library's code segment. A library's read-only data does not: its RELRO
+//! pages hold relocations the loader wrote.
 //!
 //! Faults on these mappings map only the touched page (`map_touched_pages_only`), so what stays
 //! resident is what bootstrap, compilation and the run touch, without their cached neighbours.
-
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-unsafe extern "C" {
-    static __executable_start: u8;
-    static etext: u8;
-}
 
 /// Marks the point where the entry has compiled and its run begins. It does nothing: profiling
 /// splits there (`valgrind --tool=callgrind --dump-before=quench_entry_compiled`), so the trained
@@ -67,19 +61,9 @@ pub fn release_read_only_pages() {
     if let Ok(mut last) = LAST_RELEASE.lock() {
         *last = Some(std::time::Instant::now());
     }
-    // SAFETY: the linker defines both symbols at the bounds of the read-only segments, which
-    // are never written, so discarding their pages loses nothing.
-    unsafe {
-        let page = page_size();
-        let start = &raw const __executable_start as usize;
-        let end = &raw const etext as usize;
-        let start = start - start % page;
-        let length = (end - start) - (end - start) % page;
-        libc::madvise(start as *mut libc::c_void, length, libc::MADV_DONTNEED);
-    }
-    for (start, end) in library_code_segments() {
-        // SAFETY: a library's read-only, executable segment is a private file mapping that is
-        // never written.
+    for (start, end) in read_only_segments() {
+        // SAFETY: each segment is a private file mapping that is never written, so discarding
+        // its pages loses nothing.
         unsafe {
             libc::madvise(start as *mut libc::c_void, end - start, libc::MADV_DONTNEED);
         }
@@ -108,15 +92,15 @@ pub fn release_read_only_code_and_data() {
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
 pub fn release_read_only_code_and_data() {}
 
-/// The page-aligned address ranges of every loaded library's read-only, executable segments,
-/// from the loader's own table. Releases run at every collection, and reading `MAPS_PATH`
-/// for them made the kernel format, and the host parse, the whole mapping table each time
-/// (about 4% of a `require('util')` run's instructions). The executable itself is the entry
-/// with an empty name, and a static build's whole program, so it is kept; the kernel's vDSO,
-/// whose name is not a path, is left out, as `file_mappings` leaves out mappings without a
-/// file.
+/// The page-aligned address ranges of the segments above, from the loader's own table: every
+/// non-writable segment of the executable, which the table lists without a name, and every
+/// library's non-writable code segment. The kernel's vDSO, whose name is not a path, is left
+/// out. Each segment is released on its own: one range across the executable's segments spans
+/// the unmapped page between them, and the kernel then rejects it. Releases run at every
+/// collection, and reading `MAPS_PATH` for them made the kernel format, and the host parse,
+/// the whole mapping table each time (about 4% of a `require('util')` run).
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-fn library_code_segments() -> Vec<(usize, usize)> {
+fn read_only_segments() -> Vec<(usize, usize)> {
     unsafe extern "C" fn visit(
         info: *mut libc::dl_phdr_info,
         _size: libc::size_t,
@@ -127,9 +111,9 @@ fn library_code_segments() -> Vec<(usize, usize)> {
         let (info, segments) = unsafe { (&*info, &mut *segments.cast::<Vec<(usize, usize)>>()) };
         // SAFETY: a non-null name is a NUL-terminated string the loader owns.
         let first = (!info.dlpi_name.is_null()).then(|| unsafe { *info.dlpi_name });
-        let executable_or_file = matches!(first, None | Some(0))
-            || first == Some(b'/' as libc::c_char);
-        if !executable_or_file || info.dlpi_phdr.is_null() {
+        let executable = first == Some(0);
+        let library = first == Some(b'/' as libc::c_char);
+        if !(executable || library) || info.dlpi_phdr.is_null() {
             return 0;
         }
         // SAFETY: `dlpi_phdr` points at `dlpi_phnum` program headers.
@@ -140,8 +124,8 @@ fn library_code_segments() -> Vec<(usize, usize)> {
                 .iter()
                 .filter(|header| {
                     header.p_type == libc::PT_LOAD
-                        && header.p_flags & libc::PF_X != 0
                         && header.p_flags & libc::PF_W == 0
+                        && (executable || header.p_flags & libc::PF_X != 0)
                 })
                 .map(|header| {
                     let start = info.dlpi_addr as usize + header.p_vaddr as usize;
