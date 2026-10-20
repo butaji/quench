@@ -490,6 +490,21 @@ impl<H: Host> Vm<H> {
         true
     }
 
+    /// `define_array_literal_element` at a literal's length, the definition every element of
+    /// a literal without elisions makes: the element joins the dense storage. A literal is
+    /// unreachable from guest code until it is complete, so no prototype observes the index.
+    /// `false` leaves any other definition to `define_array_literal_element`.
+    pub(super) fn append_literal_element(&mut self, array: Value, index: usize, value: Value) -> bool {
+        if self.dense_array_length(array) != Some(index) || index >= MAX_ARRAY_LENGTH {
+            return false;
+        }
+        let Some(object) = self.heap.array_store_mut(array, value) else {
+            return false;
+        };
+        super::index::mutable_array_elements(object.elements_mut()).push(value);
+        true
+    }
+
     /// `this[index] = value` into a hole below a dense array's length (`dense_array_length`):
     /// OrdinarySet finds no own element there and, while no prototype claims the index
     /// (`inherited_index_unclaimed`), defines a writable, enumerable, configurable data
