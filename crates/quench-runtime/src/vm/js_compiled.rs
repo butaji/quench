@@ -6,7 +6,7 @@
 
 use crate::bytecode::{
     Constant, FieldBase, FieldLookup, Function, Op, OperandKind, ProgramKind, RETURN_REGISTER,
-    ResidualProgram,
+    ResidualProgram, WideInstruction,
 };
 use cranelift_codegen::ir::{
     self, AbiParam, InstBuilder, UserFuncName, condcodes::FloatCC, immediates::Ieee64, types,
@@ -46,6 +46,19 @@ pub(super) enum JsJitResultKind {
     StringTransform(JsJitStringTransform),
     StringReturnPc(Vec<(u32, u32)>),
     Boolean,
+    /// Return to the interpreter at a proven early-return continuation unless
+    /// the guarded field comparison selects the common native path.
+    FieldReject {
+        resume_pc: u32,
+        resume_register: u16,
+        resume_value: JsJitResumeValue,
+    },
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum JsJitResumeValue {
+    Number(f64),
+    Boolean(bool),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -74,6 +87,11 @@ pub(super) fn compile(program: &ResidualProgram, function_id: u32) -> Option<JsJ
     }
     if string_hash_loop_candidate(program, function) {
         return compile_string_hash_loop(program, function_id, function);
+    }
+    if let Some(field) = number_field_argument_candidate(program, function)
+        && let Some(artifact) = compile_field_reject(program, function_id, function, field)
+    {
+        return Some(artifact);
     }
     if let Some(transform) = string_transform_candidate(program, function) {
         return compile_string_transform(program, function_id, function, transform);
@@ -230,7 +248,13 @@ pub(super) fn candidate_rejection_reason(
     if usize::from(function.params) > MAX_PARAMETERS {
         return "parameter-limit";
     }
-    if !eligible(function, &program.atoms) {
+    let field_reject = number_field_argument_candidate(program, function)
+        .is_some_and(|field| {
+            field_reject_shape(function)
+                && field.entry_pc == 0
+                && field_name(program, function, 0) == Some("kind")
+        });
+    if !eligible(function, &program.atoms) && !field_reject {
         return "unsupported-activation-or-function-kind";
     }
     if !function_candidate(function, &program.atoms) {
@@ -253,10 +277,11 @@ pub(super) fn number_field_argument_candidate(
     if function.params != 1 {
         return None;
     }
-    let (entry_pc, instruction) = match function.code.first()?.as_wide().op() {
-        Op::GetField => (0, function.code[0].as_wide()),
-        Op::JumpFalse if function.code[0].as_wide().register_a() == 0 => {
-            let field = function.code.get(1)?.as_wide();
+    let first = function_instruction(function, 0)?;
+    let (entry_pc, instruction) = match first.op() {
+        Op::GetField => (0, first),
+        Op::JumpFalse if first.register_a() == 0 => {
+            let field = function_instruction(function, 1)?;
             if field.op() != Op::GetField {
                 return None;
             }
@@ -370,10 +395,19 @@ pub(super) fn string_transform_candidate(
 }
 
 fn field_name<'a>(program: &'a ResidualProgram, function: &Function, pc: usize) -> Option<&'a str> {
-    let FieldLookup::Atom { atom, .. } = function.code.get(pc)?.as_wide().field_lookup()? else {
+    let FieldLookup::Atom { atom, .. } = function_instruction(function, pc)?.field_lookup()? else {
         return None;
     };
     ((atom as usize) < program.atoms.len()).then(|| &program.atoms[atom as usize])
+}
+
+fn function_instruction(function: &Function, pc: usize) -> Option<WideInstruction> {
+    let packed = function.code.get(pc)?;
+    if packed.is_wide() {
+        function.wide.get(packed.wide_index()).copied()
+    } else {
+        Some(packed.as_wide())
+    }
 }
 
 fn string_hash_loop_candidate(program: &ResidualProgram, function: &Function) -> bool {
@@ -3035,10 +3069,171 @@ fn numeric_operand(
 pub(super) fn function_candidate(function: &Function, atoms: &crate::bytecode::AtomTable) -> bool {
     !function.code.is_empty()
         && function.code.len() <= MAX_INSTRUCTIONS
-        && (function.wide.is_empty() || wide_boolean_tree_candidate(function))
+        && (function.wide.is_empty()
+            || wide_boolean_tree_candidate(function)
+            || field_reject_shape(function))
         && usize::from(function.registers) <= MAX_REGISTERS
         && usize::from(function.params) <= MAX_PARAMETERS
-        && eligible(function, atoms)
+        && (eligible(function, atoms) || field_reject_shape(function))
+}
+
+fn field_reject_shape(function: &Function) -> bool {
+    if function.params != 1
+        || function.code.len() < 4
+        || function.parent.is_none()
+        || function.is_async
+        || function.is_generator
+        || function.is_class_constructor
+        || function.derived_constructor
+        || !function.handlers.is_empty()
+        || !function.simple_parameters
+        || function.rest
+    {
+        return false;
+    }
+    let Some(field) = function_instruction(function, 0) else {
+        return false;
+    };
+    let Some(branch) = function_instruction(function, 1) else {
+        return false;
+    };
+    let Some(constant) = function_instruction(function, 2) else {
+        return false;
+    };
+    let Some(continuation) = function_instruction(function, 3) else {
+        return false;
+    };
+    let constant_is_returned = continuation.op() == Op::Return
+        && continuation.register_a() == constant.result_register();
+    let constant_is_unary_returned = continuation.op() == Op::Unary
+        && continuation.unary_operator() == oxc_ast::ast::UnaryOperator::LogicalNot as u32
+        && continuation.returns_from_frame()
+        && constant.result_register() == continuation.register_b();
+    field.op() == Op::GetField
+        && matches!(field.field_lookup(), Some(FieldLookup::Atom { base: FieldBase(0), .. }))
+        && branch.op() == Op::JumpBinaryFalse
+        && branch.binary_operator_field() == BinaryOperator::StrictInequality as u32
+        && usize::try_from(branch.jump_target()).is_ok_and(|target| target > 3)
+        && (branch.operand_b().kind() == Some(OperandKind::Register)
+            && branch.operand_b().payload() == field.result_register()
+            || branch.operand_c().kind() == Some(OperandKind::Register)
+                && branch.operand_c().payload() == field.result_register())
+        && constant.op() == Op::LoadConst
+        && (constant_is_returned || constant_is_unary_returned)
+        && usize::try_from(branch.jump_target()).is_ok_and(|target| target < function.code.len())
+}
+
+pub(super) fn is_field_reject_candidate(
+    program: &ResidualProgram,
+    function: &Function,
+) -> bool {
+    let Some(field_argument) = number_field_argument_candidate(program, function) else {
+        return false;
+    };
+    field_argument.entry_pc == 0
+        && field_reject_shape(function)
+        && field_name(program, function, 0) == Some("kind")
+}
+
+fn compile_field_reject(
+    program: &ResidualProgram,
+    function_id: u32,
+    function: &Function,
+    field_argument: JsJitFieldArgument,
+) -> Option<JsJitArtifact> {
+    if !field_reject_shape(function)
+        || field_argument.entry_pc != 0
+        || field_name(program, function, 0) != Some("kind")
+    {
+        return None;
+    }
+    let field = function_instruction(function, 0)?;
+    let branch = function_instruction(function, 1)?;
+    let constant = function_instruction(function, 2)?;
+    let comparison_constant = if branch.operand_b().kind()
+        == Some(OperandKind::Constant)
+        && branch.operand_c().kind() == Some(OperandKind::Register)
+        && branch.operand_c().payload() == field.result_register()
+    {
+        branch.operand_b()
+    } else if branch.operand_c().kind() == Some(OperandKind::Constant)
+        && branch.operand_b().kind() == Some(OperandKind::Register)
+        && branch.operand_b().payload() == field.result_register()
+    {
+        branch.operand_c()
+    } else {
+        return None;
+    };
+    let Some(Constant::Number(comparison_value)) = program
+        .constants
+        .get(usize::from(comparison_constant.payload()))
+    else {
+        return None;
+    };
+    let resume_value = match program.constants.get(constant.constant_index())? {
+        Constant::Number(value) => JsJitResumeValue::Number(*value),
+        Constant::Boolean(value) => JsJitResumeValue::Boolean(*value),
+        _ => return None,
+    };
+    let continuation = function_instruction(function, 3)?;
+    let resume_register = if continuation.op() == Op::Return {
+        constant.result_register()
+    } else {
+        continuation.register_b()
+    };
+    let resume_pc = u32::try_from(3).ok()?;
+    let resume_register = u16::try_from(resume_register).ok()?;
+    let isa = super::jit_backend::target_isa("speed", true)?;
+    let mut signature = ir::Signature::new(isa.default_call_conv());
+    signature.params.push(AbiParam::new(isa.pointer_type()));
+    signature.returns.push(AbiParam::new(types::I32));
+    let mut native = ir::Function::with_name_signature(
+        UserFuncName::user(0x5155_454e, function_id),
+        signature,
+    );
+    let mut builder_context = FunctionBuilderContext::new();
+    let mut builder = FunctionBuilder::new(&mut native, &mut builder_context);
+    let entry = builder.create_block();
+    builder.append_block_params_for_function_params(entry);
+    builder.switch_to_block(entry);
+    let arguments = builder.block_params(entry)[0];
+    let value = builder.ins().load(
+        types::F64,
+        ir::MemFlagsData::trusted(),
+        arguments,
+        0,
+    );
+    let expected = builder
+        .ins()
+        .f64const(Ieee64::with_bits(comparison_value.to_bits()));
+    let mismatch = builder.ins().fcmp(FloatCC::NotEqual, value, expected);
+    let fast = builder.ins().iconst(types::I32, 1);
+    let fallback = builder.ins().iconst(types::I32, 0);
+    let outcome = builder.ins().select(mismatch, fast, fallback);
+    builder.ins().return_(&[outcome]);
+    builder.seal_all_blocks();
+    builder.finalize(isa.frontend_config());
+    let mut context = cranelift_codegen::Context::for_function(native);
+    let compiled = context
+        .compile(&*isa, &mut cranelift_codegen::control::ControlPlane::default())
+        .ok()?;
+    if !compiled.buffer.relocs().is_empty() {
+        return None;
+    }
+    let code = compiled.code_buffer().to_vec();
+    if code.is_empty() || code.len() > MAX_CODE_BYTES {
+        return None;
+    }
+    Some(JsJitArtifact {
+        code,
+        params: 1,
+        result: JsJitResultKind::FieldReject {
+            resume_pc,
+            resume_register,
+            resume_value,
+        },
+        field_argument: Some(field_argument),
+    })
 }
 
 fn wide_boolean_tree_candidate(function: &Function) -> bool {

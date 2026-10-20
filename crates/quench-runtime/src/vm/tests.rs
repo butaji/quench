@@ -10749,6 +10749,58 @@ fn js_jit_compiles_cached_numeric_kind_field_switches() {
     feature = "profile-memory",
     feature = "profile-gc-time"
 )))]
+fn js_jit_field_reject_resumes_interpreter_on_match_and_accessor() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function isFunctionBlock(node) { return node.isFunctionBlock === true; }
+          function isBlockStatement(node) {
+            if (242 !== node.kind) return !1;
+            return !isFunctionBlock(node);
+          }
+          for (let index = 0; index < 40; index++) {
+            const kind = index % 3 === 0 ? 242 : 241;
+            if (isBlockStatement({kind}) !== (kind === 242)) throw Error('field reject result');
+          }
+          let reads = 0;
+          const accessor = { get kind() { reads++; return 242; } };
+          if (isBlockStatement(accessor) !== true || reads !== 1) throw Error('accessor fallback');
+          if (isBlockStatement({kind: '242'}) !== false) throw Error('non-number field fallback');
+        "#,
+        "js-jit-field-reject.js",
+    ))
+    .unwrap();
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .name
+                .or(function.inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "isBlockStatement")
+        })
+        .unwrap() as u32;
+    assert!(
+        super::js_compiled::compile(&program, function_id).is_some(),
+        "direct field-reject compile failed\n{}",
+        program.disassemble()
+    );
+    let mut vm = Vm::new(SilentHost);
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+    assert!(matches!(
+        vm.programs
+            .js_tier(super::program_store::ProgramId::MAIN, function_id),
+        Some(super::program_store::JsTierState::Compiled(_))
+    ));
+}
+
+#[test]
+#[cfg(not(any(
+    feature = "profile-aggregate",
+    feature = "profile-trace",
+    feature = "profile-memory",
+    feature = "profile-gc-time"
+)))]
 fn js_jit_compiles_forward_numeric_branches_to_rooted_string_returns() {
     let source = r#"
       const rating = price => price < 100 ? '€' : price < 1000 ? '€€' : '€€€';

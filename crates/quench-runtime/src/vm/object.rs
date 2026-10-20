@@ -876,26 +876,10 @@ impl<H: Host> Vm<H> {
             return FieldCacheProbe::Ineligible;
         };
         let index = self.field_cache_index(site);
-        let shape = receiver.shape();
-        // SAFETY: the active program's layout reserves every compiler-emitted site.
-        let cache = unsafe { *self.field_caches.get_unchecked(index) };
-        let slot = if cache.receiver == shape && cache.holder == NO_FIELD_HOLDER {
-            self.profile.field_cache_hit(0, 0);
-            Some(cache.slot)
-        } else {
-            let slot = self.inline_megamorphic_field_slot(index, shape);
-            if slot.is_some() {
-                self.profile.field_cache_hit(2, 0);
-            }
-            slot
-        };
-        if let Some(slot) = slot {
-            // SAFETY: receiver shape and slot were recorded together for an own data
-            // property on the cache miss path. Entries record only non-dictionary shapes,
-            // which no module namespace has (`DictionaryTrigger::ModuleNamespace`).
-            return FieldCacheProbe::Hit(unsafe {
-                self.heap.property_get_unchecked(receiver, slot as usize)
-            });
+        if let Some(hit) = self.cached_field_value(index, receiver) {
+            self.profile
+                .field_cache_hit(usize::from(hit.tier), hit.depth);
+            return FieldCacheProbe::Hit(hit.value);
         }
         if receiver.is_module_namespace() {
             return FieldCacheProbe::Ineligible;
