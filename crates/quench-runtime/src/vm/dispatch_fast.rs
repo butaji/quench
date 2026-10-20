@@ -1288,6 +1288,70 @@ lane_handler! {
 }
 
 lane_handler! {
+    /// An instruction whose general step only continues or throws (`lane_steps_in_place`),
+    /// run in place by that step when the lane runs the frame's own code: the frame's
+    /// registers are the lane's, and its PC is published as the general loop publishes it.
+    /// A throw is stashed in `Vm::lane_raised` for the general path to raise at this
+    /// instruction. Within a frameless activation, which has no frame, the general path runs
+    /// it.
+    #[inline(never)]
+    fn lane_general_step<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        if !vm.lane_stack.activations.is_empty() {
+            return exit(ip);
+        }
+        // SAFETY: the context's program outlives the lane run, and `ip` is a record of the
+        // active view, which is the running frame's.
+        let (code, frame, pc) = unsafe {
+            (&*(*cx).code, (*cx).frame, ip.offset_from((*cx).base) as usize)
+        };
+        let function = code.function(vm.frames[frame].function as usize);
+        let instruction = decoded_instruction(function, function.code[pc]);
+        vm.frames[frame].pc = pc;
+        vm.frames[frame].pc_is_resume = false;
+        let mut next = pc + 1;
+        match vm.step(code, frame, instruction, &mut next, false) {
+            Ok(StepResult::Continue) if next == pc + 1 => {}
+            Ok(_) => unreachable!("an in-place step only continues"),
+            Err(error) => {
+                vm.lane_raised = Some(error);
+                return exit(ip);
+            }
+        }
+        // The step may allocate, which can make a collection due.
+        note_allocation(vm);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+/// Instructions whose general step reads and writes only the frame, its registers and heap
+/// values, runs guest code only through nested calls, and continues to the next instruction
+/// or throws: no jump, call, return, `this` binding or environment change the lane caches.
+const fn lane_steps_in_place(op: Op) -> bool {
+    matches!(
+        op,
+        Op::DefineField
+            | Op::DefineComputedField
+            | Op::DefinePrivateField
+            | Op::CheckPrivate
+            | Op::PrivateIn
+            | Op::MarkPrivateName
+            | Op::SetFunctionName
+            | Op::SetFunctionNameKey
+            | Op::SetFunctionDebugName
+            | Op::DefineArrayElement
+            | Op::AppendArray
+            | Op::ToPropertyKey
+            | Op::CopyDataProperties
+            | Op::GetIterator
+            | Op::RequireIteratorResult
+            | Op::IteratorClose
+            | Op::IteratorCleanupPush
+            | Op::IteratorCleanupPop
+    )
+}
+
+lane_handler! {
     /// `IncDec` of a Number; other values take the general path. The view derives the
     /// direction from the record (`specialize_updates`).
     fn lane_inc_dec<DECREMENT: bool>(cx, r, ip, i, view) {
@@ -1417,6 +1481,99 @@ macro_rules! sibling {
         );
     }};
 }
+
+lane_handler! {
+    /// `lane_load_local` of a slot whose binding facts the view fixed
+    /// (`specialize_frame_locals`): no mapped `arguments` mirrors it, and it moves into the
+    /// frame's environment once that is captured exactly when `ENVIRONMENT`. A root body's
+    /// frame, an uninitialized binding or a numeric local takes the general path.
+    fn lane_load_frame_local<ENVIRONMENT: bool>(cx, r, ip, i, view) {
+        if !unsafe { (*cx).env }.is_deleted() || i.a & crate::bytecode::NUMERIC_LOCAL_TARGET != 0 {
+            return exit(ip);
+        }
+        let vm = unsafe { vm(cx) };
+        let frame = &vm.frames[unsafe { (*cx).frame }];
+        if ENVIRONMENT && frame.captured {
+            sibling!(lane_load_frame_environment_local::<H>, r, ip, view)
+        }
+        let value = (frame.function != super::ROOT_FUNCTION_ID)
+            .then(|| frame.locals.get(i.imm() as usize).copied())
+            .flatten();
+        let Some(value) = value.filter(|value| !value.is_deleted()) else {
+            return exit(ip);
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    /// `lane_load_frame_local` of a slot the frame's captured environment holds; out of line,
+    /// so the frame-local read saves no registers.
+    #[inline(never)]
+    fn lane_load_frame_environment_local<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let frame = &vm.frames[unsafe { (*cx).frame }];
+        let value = (frame.function != super::ROOT_FUNCTION_ID)
+            .then(|| vm.heap.environment_slot(frame.env, i.imm() as usize))
+            .flatten();
+        let Some(value) = value.filter(|value| !value.is_deleted()) else {
+            return exit(ip);
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    /// `lane_store_local` of a slot `lane_load_frame_local`'s facts hold for, which is no
+    /// self binding either: the store to an initialized (or initializing) binding.
+    fn lane_store_frame_local<ENVIRONMENT: bool>(cx, r, ip, i, view) {
+        if !unsafe { (*cx).env }.is_deleted() {
+            return exit(ip);
+        }
+        let value = r.get(i.a);
+        let vm = unsafe { vm(cx) };
+        let frame = &mut vm.frames[unsafe { (*cx).frame }];
+        if ENVIRONMENT && frame.captured {
+            sibling!(lane_store_frame_environment_local::<H>, r, ip, view)
+        }
+        let binding = (frame.function != super::ROOT_FUNCTION_ID)
+            .then(|| frame.locals.get_mut(i.imm() as usize))
+            .flatten();
+        match binding {
+            Some(binding) if i.c != 0 || !binding.is_deleted() => *binding = value,
+            _ => return exit(ip),
+        }
+        if let Some(register) = i.b.checked_sub(crate::bytecode::OPTIONAL_REGISTER_BIAS) {
+            r.set(register, value);
+        }
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    /// `lane_store_frame_local` to a slot the frame's captured environment holds; out of
+    /// line, as `lane_load_frame_environment_local`.
+    #[inline(never)]
+    fn lane_store_frame_environment_local<>(cx, r, ip, i, view) {
+        let value = r.get(i.a);
+        let vm = unsafe { vm(cx) };
+        let frame = &vm.frames[unsafe { (*cx).frame }];
+        let binding = (frame.function != super::ROOT_FUNCTION_ID)
+            .then(|| vm.heap.environment_slot_mut(frame.env, i.imm() as usize))
+            .flatten();
+        match binding {
+            Some(binding) if i.c != 0 || !binding.is_deleted() => *binding = value,
+            _ => return exit(ip),
+        }
+        if let Some(register) = i.b.checked_sub(crate::bytecode::OPTIONAL_REGISTER_BIAS) {
+            r.set(register, value);
+        }
+        next!(cx, r, following(ip), view)
+    }
+}
+
 
 script_handler! {
     /// `this` where the lane holds it; the frame's `this` takes `lane_load_frame_this`,
@@ -1692,7 +1849,9 @@ script_handler! {
             value
         } else {
             // A frameless activation's function has no environment of its own.
-            vm.environment_capture_slots(env, false, depth).and_then(|(slots, root)| {
+            vm.walked_capture_slots(env, false, depth).and_then(|(slots, root)| {
+                // SAFETY: as `Vm::walked_capture_slots`; no collection runs in the lane.
+                let slots = unsafe { &*slots };
                 if depth == 0
                     && root.is_none()
                     && let Some(dense) = slots.dense()
@@ -7099,6 +7258,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::SetThisField | Op::SetThisFieldStrict => Some(lane_set_this_field_own::<H>),
         Op::ToNumeric => Some(lane_to_numeric::<H>),
         Op::RequireObjectCoercible => Some(lane_require_object_coercible::<H>),
+        op if lane_steps_in_place(op) => Some(lane_general_step::<H>),
         Op::IncDec => Some(lane_inc_dec::<H, false>),
         Op::Binary | Op::NumericAdd | Op::NumericMultiply => Some(lane_binary::<H>),
         Op::GetIndex => Some(lane_get_index::<H>),
@@ -8015,6 +8175,7 @@ fn derive_lane_view<H: Host>(
     specialize_register_operands::<H>(function, constants, &mut records);
     specialize_updates::<H>(&mut records);
     specialize_negated_instanceof::<H>(&mut records);
+    specialize_frame_locals::<H>(function, &mut records);
     let min_run = if closes_loop(function, &exits) {
         LANE_ENTRY_MIN_RUN
     } else {
@@ -8273,6 +8434,31 @@ fn specialize_updates<H: Host>(records: &mut [LaneInstruction]) {
             b: conversion.b,
             c: update.a,
         };
+    }
+}
+
+/// Gives each frame `LoadLocal` and `StoreLocal` record the handler of its slot's static
+/// binding facts (`lane_load_frame_local`): a slot a mapped `arguments` mirrors, or a self
+/// binding a store must leave, keeps the general handler.
+fn specialize_frame_locals<H: Host>(function: &Function, records: &mut [LaneInstruction]) {
+    let load = lane_load_local::<H> as Handler as *const ();
+    let store = lane_store_local::<H> as Handler as *const ();
+    for record in records.iter_mut() {
+        let slot = record.imm() as usize;
+        if (record.handler != load && record.handler != store)
+            || super::arguments::mapped_arguments_slot(function, slot).is_some()
+        {
+            continue;
+        }
+        let environment = function.local_slot_uses_environment(slot);
+        let handler: Handler = match (record.handler == load, environment) {
+            (true, true) => lane_load_frame_local::<H, true>,
+            (true, false) => lane_load_frame_local::<H, false>,
+            _ if function.is_self_binding_slot(slot) => continue,
+            (false, true) => lane_store_frame_local::<H, true>,
+            (false, false) => lane_store_frame_local::<H, false>,
+        };
+        record.handler = handler as *const ();
     }
 }
 

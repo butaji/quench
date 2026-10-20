@@ -95,8 +95,10 @@ pub trait Host {
 
     /// A compiled host program kept across runs: the bytes `keep_compiled_program` was given
     /// for compiling `parts` (the program's text, in order) under `name` in this build. The
-    /// runtime decodes them under its own atoms and compiles when they do not decode.
-    fn kept_compiled_program(&mut self, _name: &str, _parts: &[&str]) -> Option<Vec<u8>> {
+    /// runtime decodes them under its own atoms and compiles when they do not decode. A
+    /// decoded program keeps the bytes and reads each function's record on its first call,
+    /// so a host serving a mapped file keeps the records never called out of memory.
+    fn kept_compiled_program(&mut self, _name: &str, _parts: &[&str]) -> Option<crate::KeptBytes> {
         None
     }
 

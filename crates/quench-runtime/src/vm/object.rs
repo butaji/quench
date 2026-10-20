@@ -393,6 +393,18 @@ impl<H: Host> Vm<H> {
         self.heap.register_property_shape(next, storage_len);
         next
     }
+    /// Whether `to` is `from` extended by one appended property slot: the shape an add of
+    /// one new data property makes, which `Heap::property_add` can apply directly.
+    pub(super) fn shape_appends_one_slot(&self, from: u32, to: u32) -> bool {
+        let (Some(from_shape), Some(to_shape)) = (self.shapes.get(from as usize), self.shapes.get(to as usize)) else {
+            return false;
+        };
+        to_shape.parent == from
+            && to_shape.storage_len == from_shape.storage_len + 1
+            && !self.shape_is_dictionary(from)
+            && !self.shape_is_dictionary(to)
+    }
+
     pub(super) fn shape_is_dictionary(&self, shape: u32) -> bool {
         self.shapes[shape as usize].dictionary_trigger.is_some()
     }
@@ -741,6 +753,7 @@ impl<H: Host> Vm<H> {
         self.accessor_field_caches.clear();
         self.instanceof_constructor_layout = None;
         self.closure_shapes = [None; 2];
+        self.function_name_shapes.clear();
         self.iterator_result_shape = None;
         self.regexp_object_shapes = None;
         self.regexp_last_index_layout = None;
@@ -1069,26 +1082,10 @@ impl<H: Host> Vm<H> {
             return FieldCacheProbe::Ineligible;
         };
         let index = self.field_cache_index(site);
-        let shape = receiver.shape();
-        // SAFETY: the active program's layout reserves every compiler-emitted site.
-        let cache = unsafe { *self.field_caches.get_unchecked(index) };
-        let slot = if cache.receiver == shape && cache.holder == NO_FIELD_HOLDER {
-            self.profile.field_cache_hit(0, 0);
-            Some(cache.slot)
-        } else {
-            let slot = self.inline_megamorphic_field_slot(index, shape);
-            if slot.is_some() {
-                self.profile.field_cache_hit(2, 0);
-            }
-            slot
-        };
-        if let Some(slot) = slot {
-            // SAFETY: receiver shape and slot were recorded together for an own data
-            // property on the cache miss path. Entries record only non-dictionary shapes,
-            // which no module namespace has (`DictionaryTrigger::ModuleNamespace`).
-            return FieldCacheProbe::Hit(unsafe {
-                self.heap.property_get_unchecked(receiver, slot as usize)
-            });
+        if let Some(hit) = self.cached_field_value(index, receiver) {
+            self.profile
+                .field_cache_hit(usize::from(hit.tier), hit.depth);
+            return FieldCacheProbe::Hit(hit.value);
         }
         if receiver.is_module_namespace() {
             return FieldCacheProbe::Ineligible;
