@@ -12,6 +12,10 @@ struct JsJitCounters {
     function_name: Option<Box<str>>,
     parameter_count: u16,
     instruction_count: u32,
+    guard_conditional_branches: u32,
+    guard_typeof_ops: u32,
+    guard_strict_comparisons: u32,
+    guard_relational_comparisons: u32,
     entries: u64,
     numeric_entries: u64,
     promotions: u64,
@@ -1220,7 +1224,7 @@ impl ProgramStore {
         if diagnostics.len() >= JS_JIT_MAX_DIAGNOSTIC_FUNCTIONS {
             return;
         }
-        let (source_name, function_name, instruction_count, opcode_counts) = self
+        let (source_name, function_name, instruction_count, opcode_counts, guard_census) = self
             .entry(id)
             .map(|entry| {
                 let function_code = entry.residual.functions.get(function as usize);
@@ -1249,11 +1253,70 @@ impl ProgramStore {
                         (count != 0).then(|| (u16::try_from(opcode).unwrap_or(u16::MAX), count))
                     })
                     .collect();
+                // This is a bytecode-site census, not a claim that a site is
+                // pure, redundant, or safe to remove. Predicate purity and
+                // path implication need separate proofs before optimization.
+                let mut guard_census = (0_u32, 0_u32, 0_u32, 0_u32);
+                if let Some(function) = function_code {
+                    for instruction in &function.code {
+                        let instruction = instruction.as_wide();
+                        match instruction.op() {
+                            crate::bytecode::Op::JumpFalse
+                            | crate::bytecode::Op::JumpTrue
+                            | crate::bytecode::Op::JumpBinaryFalse => {
+                                guard_census.0 = guard_census.0.saturating_add(1);
+                                if instruction.op() == crate::bytecode::Op::JumpBinaryFalse {
+                                    match instruction.binary_operator_field() {
+                                        x if x
+                                            == oxc_ast::ast::BinaryOperator::StrictEquality as u32
+                                            || x == oxc_ast::ast::BinaryOperator::StrictInequality as u32 =>
+                                        {
+                                            guard_census.2 = guard_census.2.saturating_add(1);
+                                        }
+                                        x if x == oxc_ast::ast::BinaryOperator::LessThan as u32
+                                            || x == oxc_ast::ast::BinaryOperator::LessEqualThan as u32
+                                            || x == oxc_ast::ast::BinaryOperator::GreaterThan as u32
+                                            || x == oxc_ast::ast::BinaryOperator::GreaterEqualThan as u32 =>
+                                        {
+                                            guard_census.3 = guard_census.3.saturating_add(1);
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                            crate::bytecode::Op::Unary
+                                if instruction.unary_operator()
+                                    == oxc_ast::ast::UnaryOperator::Typeof as u32 =>
+                            {
+                                guard_census.1 = guard_census.1.saturating_add(1);
+                            }
+                            crate::bytecode::Op::Binary => {
+                                match instruction.binary_operator() {
+                                    x if x == oxc_ast::ast::BinaryOperator::StrictEquality as u32
+                                        || x == oxc_ast::ast::BinaryOperator::StrictInequality as u32 =>
+                                    {
+                                        guard_census.2 = guard_census.2.saturating_add(1);
+                                    }
+                                    x if x == oxc_ast::ast::BinaryOperator::LessThan as u32
+                                        || x == oxc_ast::ast::BinaryOperator::LessEqualThan as u32
+                                        || x == oxc_ast::ast::BinaryOperator::GreaterThan as u32
+                                        || x == oxc_ast::ast::BinaryOperator::GreaterEqualThan as u32 =>
+                                    {
+                                        guard_census.3 = guard_census.3.saturating_add(1);
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
                 (
                     entry.residual.source_name.clone(),
                     function_name,
                     instruction_count,
                     opcode_counts,
+                    guard_census,
                 )
             })
             .unwrap_or_default();
@@ -1264,6 +1327,10 @@ impl ProgramStore {
             counters.parameter_count = parameter_count;
             counters.instruction_count = instruction_count;
             counters.opcode_counts = opcode_counts;
+            counters.guard_conditional_branches = guard_census.0;
+            counters.guard_typeof_ops = guard_census.1;
+            counters.guard_strict_comparisons = guard_census.2;
+            counters.guard_relational_comparisons = guard_census.3;
             counters.entries = counters.entries.saturating_add(1);
             counters.numeric_entries = counters
                 .numeric_entries
@@ -1566,6 +1633,13 @@ impl Drop for ProgramStore {
                 .map(|entry| entry.residual.source_name.as_str())
                 .or_else(|| counters.source_name.as_deref())
                 .unwrap_or("");
+            let native_entry_coverage_ppm = if counters.entries == 0 {
+                0
+            } else {
+                (u128::from(counters.native_entries) * 1_000_000
+                    / u128::from(counters.entries))
+                    .min(1_000_000) as u64
+            };
             let _ = write!(
                 stderr,
                 "QUENCH_JS_JIT_STATS {{\"program\":{program},\"function\":{function},\"function_name\":"
@@ -1581,7 +1655,7 @@ impl Drop for ProgramStore {
             }
             let _ = write!(
                 stderr,
-                ",\"status\":\"{status}\",\"parameter_count\":{},\"instruction_count\":{},\"entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"compile_ns\":{},\"native_entries\":{},\"fallback_entries\":{},\"interpreter_completions\":{},\"interpreter_inclusive_ns\":{},\"opcodes\":[",
+                ",\"status\":\"{status}\",\"parameter_count\":{},\"instruction_count\":{},\"entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"compile_ns\":{},\"native_entries\":{},\"native_entry_coverage_ppm\":{},\"fallback_entries\":{},\"interpreter_completions\":{},\"interpreter_inclusive_ns\":{},\"guard_census\":{{\"conditional_branch_sites\":{},\"typeof_operations\":{},\"strict_comparison_sites\":{},\"relational_comparison_sites\":{}}},\"opcodes\":[",
                 counters.parameter_count,
                 counters.instruction_count,
                 counters.entries,
@@ -1591,9 +1665,14 @@ impl Drop for ProgramStore {
                 counters.compile_successes,
                 counters.compile_ns,
                 counters.native_entries,
+                native_entry_coverage_ppm,
                 counters.fallback_entries,
                 counters.interpreter_completions,
                 counters.interpreter_inclusive_ns,
+                counters.guard_conditional_branches,
+                counters.guard_typeof_ops,
+                counters.guard_strict_comparisons,
+                counters.guard_relational_comparisons,
             );
             for (index, (opcode, count)) in counters.opcode_counts.iter().enumerate() {
                 if index != 0 {
@@ -1607,7 +1686,11 @@ impl Drop for ProgramStore {
                 let _ = write_json_string(&mut stderr, name);
                 let _ = write!(stderr, ",{count}]");
             }
-            let _ = writeln!(stderr, "],\"code_bytes\":{}}}", counters.code_bytes);
+            let _ = writeln!(
+                stderr,
+                "],\"code_bytes\":{},\"guard_census_kind\":\"bytecode-sites-not-proven-redundancies\"}}",
+                counters.code_bytes
+            );
         }
     }
 }
