@@ -1434,8 +1434,11 @@ impl<H: Host> Vm<H> {
                         id: executing_program,
                         retained: current_program.take(),
                     };
+                    // The loop's entry program, as at every unwind: it names the program of
+                    // each frame that executes no retained one, which the executing residual
+                    // `p` does not once a pending call of another program unwinds.
                     let unwound = self.unwind_general_loop(
-                        p,
+                        entry_program,
                         frame,
                         pc + 1,
                         pc as u32,
