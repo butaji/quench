@@ -4,6 +4,11 @@ use super::*;
 
 use crate::compile::eval_context_source;
 
+
+/// Names a specialized script's parse goal in its compile-cache key, apart from a host
+/// script's and an application entry's (`Runtime::compile_entry`).
+const SPECIALIZED_SCRIPT_GOAL: &str = "specialized-script";
+
 impl<H: Host> Vm<H> {
     pub(super) fn eval_script_native(
         &mut self,
@@ -382,6 +387,26 @@ impl<H: Host> Vm<H> {
         keep_records: bool,
     ) -> Result<crate::PreparedScript, JsError> {
         let program = self.embedding_program()?;
+        // A script compiled from its own text (a package's module, an application's entry) goes
+        // through the host's compile cache, keyed by its name, its text and what else shapes
+        // its program: its origin and whether its functions keep their records.
+        let cache_key = retained.is_none().then(|| {
+            let (line, column) = origin.unwrap_or_default();
+            format!("{SPECIALIZED_SCRIPT_GOAL}:{line}:{column}:{keep_records}")
+        });
+        if let Some(goal) = &cache_key
+            && let Some(bytes) = self.host.kept_compiled_program(name, &[goal, source])
+        {
+            let text = crate::bytecode::SourceText::Shared(std::sync::Arc::from(source));
+            let specialized = self.specialized;
+            if let Ok(mut kept) = self.decode_cached_program(bytes, text, 0, name, specialized) {
+                if let (Some(source), Some((line_offset, column_offset))) = (&mut kept.source, origin) {
+                    source.line_offset = line_offset;
+                    source.column_offset = column_offset;
+                }
+                return Ok(crate::PreparedScript { program: Rc::new(kept) });
+            }
+        }
         // A program keeping only static text cannot compile its functions again from it.
         let compiled = if keep_records {
             crate::Engine::specialize_kept_script_with_atom_prefix(source, name, &*self)
@@ -411,6 +436,14 @@ impl<H: Host> Vm<H> {
             source.base = base;
         }
         let mut residual = self.intern_program_atoms(residual);
+        // Kept before its records are released: encoding reads every record. Every distinct
+        // text a user runs adds an entry; a store that fails (a full disk) keeps the cache
+        // as it was, and costs only the compilation it would have saved.
+        if let Some(goal) = &cache_key
+            && let Some(bytes) = self.encode_cached_program(&residual)
+        {
+            self.host.keep_compiled_program(name, &[goal, source], &bytes);
+        }
         // Its final source is settled, so a function compiles again from it on first call.
         residual.release_replayable_records();
         Ok(crate::PreparedScript { program: Rc::new(residual) })
