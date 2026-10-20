@@ -101,16 +101,29 @@ pub(super) struct LaneView {
     /// The window of an environment activation, when its local and closure records also run
     /// in one (`specialize_environment_window`).
     environment_window: Option<EnvironmentWindow>,
+    /// For an environment window, the environment's slots and the window's locals as an
+    /// activation starts them before its arguments (`lane_activate_environment`): a
+    /// captured slot `undefined` in the environment and owned by it among the locals, any
+    /// other slot owned elsewhere in the environment and `undefined` among the locals.
+    environment_templates: Box<[Value]>,
 }
 
 /// An environment activation's window past its registers (`lane_activate_environment`):
-/// its environment, then its `locals`; bit `k` of `captured` is set when local `k` lives in
-/// the environment (`Function::local_slot_uses_environment`).
+/// its environment, a pointer to the environment's slot storage (`WINDOW_SLOTS`), then its
+/// `locals`; bit `k` of `captured` is set when local `k` lives in the environment
+/// (`Function::local_slot_uses_environment`).
 #[derive(Clone, Copy)]
 struct EnvironmentWindow {
     locals: u16,
     captured: u64,
 }
+
+/// An environment window's entries after its registers: the environment, then the address
+/// of its slot storage, which never moves while it lives, held in a `Value`'s bits; the
+/// locals follow.
+const WINDOW_ENVIRONMENT: u16 = 0;
+const WINDOW_SLOTS: u16 = 1;
+const WINDOW_LOCALS: u16 = 2;
 
 impl EnvironmentWindow {
     fn captured(self, slot: usize) -> bool {
@@ -1267,9 +1280,18 @@ lane_handler! {
         } else if unsafe { (*cx).env }.is_deleted() {
             frame_window_local(unsafe { vm(cx) }, unsafe { (*cx).frame }, slot, ENVIRONMENT)
         } else if ENVIRONMENT {
-            unsafe { vm(cx) }.heap.environment_slot(r.get(registers), slot)
+            // SAFETY: an environment window holds its environment's slot storage, which
+            // never moves while the environment lives (`lane_activate_environment`).
+            let storage = unsafe {
+                &*(std::mem::transmute::<Value, u64>(r.get(registers + WINDOW_SLOTS))
+                    as *const crate::heap::EnvironmentSlots)
+            };
+            match storage.dense().and_then(|dense| dense.dense_plain(slot)) {
+                Some(value) => Some(value),
+                None => unsafe { vm(cx) }.heap.environment_slot(r.get(registers + WINDOW_ENVIRONMENT), slot),
+            }
         } else {
-            Some(r.get(registers + 1 + slot as u16))
+            Some(r.get(registers + WINDOW_LOCALS + slot as u16))
         };
         let Some(value) = value.filter(|value| !value.is_deleted()) else {
             return exit(ip);
@@ -1295,11 +1317,22 @@ lane_handler! {
                 frame.locals.get_mut(slot)
             }
         } else if ENVIRONMENT {
-            vm.heap.environment_slot_mut(r.get(registers), slot)
+            let environment = r.get(registers + WINDOW_ENVIRONMENT);
+            // A write to a slot through its storage takes the environment's barrier first.
+            vm.heap.remember_cell(environment);
+            // SAFETY: as `lane_load_window_local`'s read of the window's storage.
+            let storage = unsafe {
+                &mut *(std::mem::transmute::<Value, u64>(r.get(registers + WINDOW_SLOTS))
+                    as *mut crate::heap::EnvironmentSlots)
+            };
+            match storage.owned_mut(slot) {
+                Some(binding) => Some(binding),
+                None => vm.heap.environment_slot_mut(environment, slot),
+            }
         } else {
             // SAFETY: an environment activation's window holds its locals after its
             // environment (`lane_activate_environment`).
-            Some(unsafe { &mut *r.0.add(usize::from(registers) + 1 + slot) })
+            Some(unsafe { &mut *r.0.add(usize::from(registers + WINDOW_LOCALS) + slot) })
         };
         match binding {
             Some(binding) if i.c != 0 || !binding.is_deleted() => *binding = value,
@@ -1321,10 +1354,10 @@ lane_handler! {
             // SAFETY: the context's program outlives the lane run.
             vm.frame_binding_mut(unsafe { &*(*cx).code }, unsafe { (*cx).frame }, slot)
         } else if ENVIRONMENT {
-            vm.heap.environment_slot_mut(r.get(registers), slot)
+            vm.heap.environment_slot_mut(r.get(registers + WINDOW_ENVIRONMENT), slot)
         } else {
             // SAFETY: as `lane_store_window_local`.
-            Some(unsafe { &mut *r.0.add(usize::from(registers) + 1 + slot) })
+            Some(unsafe { &mut *r.0.add(usize::from(registers + WINDOW_LOCALS) + slot) })
         };
         let Some(binding) = binding else {
             return exit(ip);
@@ -1344,7 +1377,9 @@ lane_handler! {
         } else {
             let vm = unsafe { vm(cx) };
             // SAFETY: the context's program outlives the lane run.
-            let value = vm.closure(unsafe { &*(*cx).code }, function as u32, r.get(registers)).ok();
+            let value = vm
+                .closure(unsafe { &*(*cx).code }, function as u32, r.get(registers + WINDOW_ENVIRONMENT))
+                .ok();
             note_allocation(vm);
             value
         };
@@ -4884,7 +4919,7 @@ impl<H: Host> Vm<H> {
                         // After its environment and locals (`lane_activate_environment`).
                         let kept = activation.window
                             + count
-                            + 1
+                            + usize::from(WINDOW_LOCALS)
                             + usize::from(code.function(activation.function as usize).locals);
                         &registers[kept..kept + argc]
                     } else {
@@ -4944,10 +4979,11 @@ impl<H: Host> Vm<H> {
                         // and its locals.
                         let held = activation.window + count;
                         let frame = self.frames.last_mut().expect("the activation pushed a frame");
-                        frame.env = registers[held];
+                        frame.env = registers[held + usize::from(WINDOW_ENVIRONMENT)];
                         frame.captured = true;
-                        let locals = frame.locals.len();
-                        frame.locals.copy_from_slice(&registers[held + 1..held + 1 + locals]);
+                        let locals = held + usize::from(WINDOW_LOCALS);
+                        let count = frame.locals.len();
+                        frame.locals.copy_from_slice(&registers[locals..locals + count]);
                     }
                     // The activation counted within `LaneStack::activation_limit`; its frame
                     // takes the guest-call guard its push would have.
@@ -5142,7 +5178,11 @@ impl<H: Host> Vm<H> {
             // the values passed, at most one per parameter.
             room: u16::try_from(fill_room::<SCRIPT_FILL_BLOCK>(
                 usize::from(body.registers)
-                    + if environment { 1 + usize::from(body.locals) + usize::from(body.params) } else { 0 },
+                    + if environment {
+                        usize::from(WINDOW_LOCALS) + usize::from(body.locals) + usize::from(body.params)
+                    } else {
+                        0
+                    },
             ))
             .ok()?,
             params: body.params,
@@ -6330,14 +6370,17 @@ fn lane_activate_environment<H: Host>(
     let layout = unsafe { (*target.view).environment_window.unwrap_unchecked() };
     let count = usize::from(target.registers);
     let locals = usize::from(layout.locals);
-    // Parameter `k` is local `k`, its argument or `undefined`; every other local starts
-    // `undefined`.
-    let initial = |slot: usize| {
-        if slot < usize::from(argc) { r.get(arguments + slot as u16) } else { Value::UNDEFINED }
-    };
-    let slots = crate::heap::EnvironmentSlots::from_values((0..locals).map(|slot| {
-        if layout.captured(slot) { initial(slot) } else { Value::DELETED }
-    }));
+    // SAFETY: as `layout`.
+    let templates = unsafe { &(*target.view).environment_templates };
+    let (slot_template, local_template) = templates.split_at(locals);
+    // Parameter `k` is local `k`: its argument where one was passed.
+    let passed = |slot: usize| r.get(arguments + slot as u16);
+    let mut slots = crate::heap::EnvironmentSlots::from_values(slot_template.iter().copied());
+    for slot in (0..usize::from(argc)).filter(|slot| layout.captured(*slot)) {
+        if let Some(binding) = slots.owned_mut(slot) {
+            *binding = passed(slot);
+        }
+    }
     let environment = vm.heap.alloc(Cell::Environment {
         parent: target.env,
         function: target.function,
@@ -6351,23 +6394,31 @@ fn lane_activate_environment<H: Host>(
         }),
     });
     note_allocation(vm);
+    let storage = match vm.heap.get(environment) {
+        Some(Cell::Environment { slots, .. }) => slots as *const crate::heap::EnvironmentSlots,
+        _ => unreachable!("the activation's environment is an environment cell"),
+    };
     let stack = &mut vm.lane_stack;
     let window = stack.values.len();
+    let held = count + usize::from(WINDOW_LOCALS);
     // SAFETY: capacity holds the window (`ScriptCallTarget::room`); each slot is written
     // before the length covers it, and no activation's window moves.
     let callee_registers = unsafe {
         let registers = stack.values.as_mut_ptr().add(window);
         fill_window::<SCRIPT_FILL_BLOCK>(registers, count, Value::UNDEFINED);
-        registers.add(count).write(environment);
-        for slot in 0..locals {
-            let value = if layout.captured(slot) { Value::DELETED } else { initial(slot) };
-            registers.add(count + 1 + slot).write(value);
+        registers.add(count + usize::from(WINDOW_ENVIRONMENT)).write(environment);
+        registers
+            .add(count + usize::from(WINDOW_SLOTS))
+            .write(std::mem::transmute::<u64, Value>(storage as u64));
+        std::ptr::copy_nonoverlapping(local_template.as_ptr(), registers.add(held), locals);
+        for slot in (0..usize::from(argc)).filter(|slot| !layout.captured(*slot)) {
+            registers.add(held + slot).write(passed(slot));
         }
         // The values passed, as a frame keeps them for legacy reflection.
         for slot in 0..usize::from(argc) {
-            registers.add(count + 1 + locals + slot).write(initial(slot));
+            registers.add(held + locals + slot).write(passed(slot));
         }
-        stack.values.set_len(window + count + 1 + locals + usize::from(argc));
+        stack.values.set_len(window + held + locals + usize::from(argc));
         Registers(registers)
     };
     let activation = Activation {
@@ -8464,6 +8515,14 @@ fn derive_lane_view<H: Host>(
         memory_register,
         activation,
         target_body: std::cell::OnceCell::new(),
+        environment_templates: environment_window.map_or_else(Box::default, |window| {
+            let captured = |slot: usize| window.captured(slot);
+            let locals = usize::from(window.locals);
+            (0..locals)
+                .map(|slot| if captured(slot) { Value::UNDEFINED } else { Value::DELETED })
+                .chain((0..locals).map(|slot| if captured(slot) { Value::DELETED } else { Value::UNDEFINED }))
+                .collect()
+        }),
         environment_window,
     }
 }
