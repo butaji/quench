@@ -614,7 +614,7 @@ impl<H: Host> Vm<H> {
     fn regexp_builtin_receiver_matcher(
         &mut self,
         receiver: Value,
-    ) -> Option<(Rc<quench_regexp::Regex>, String)> {
+    ) -> Option<(Rc<quench_regexp::Regex>, InlineRegExpFlags)> {
         let Some(Cell::RegExp { meta, .. }) = self.heap.get(receiver) else {
             return None;
         };
@@ -641,7 +641,7 @@ impl<H: Host> Vm<H> {
         let Some(Cell::RegExp { matcher, meta, .. }) = self.heap.get(receiver) else {
             return None;
         };
-        Some((Rc::clone(matcher), meta.flags.clone()))
+        Some((Rc::clone(matcher), InlineRegExpFlags::of(&meta.flags)?))
     }
 
     /// `GetMethod(receiver, symbol)` for a RegExp `receiver` whose shape and prototype's
@@ -954,6 +954,8 @@ impl<H: Host> Vm<H> {
                 .is_some_and(|(text, range)| subject.is_ascii_text_of(text, &range)),
         });
         let subject = match cached {
+            // The most recent subject again: the cache keeps its order.
+            Some(0) => return Rc::clone(&self.regexp_subjects[0]),
             Some(position) => self.regexp_subjects.remove(position),
             None => Rc::new(match text {
                 FlatUnits::Wide(units) => quench_regexp::Subject::new(Rc::clone(units)),
@@ -2871,6 +2873,37 @@ fn regexp_escape_control(character: char) -> Option<&'static str> {
         '\u{000B}' => Some("\\v"),
         '\u{000C}' => Some("\\f"),
         _ => None,
+    }
+}
+
+/// A RegExp's flags held inline, so a matcher's caller copies them without allocating. A
+/// valid flags string names each letter of `REGEXP_FLAG_ACCESSORS` at most once, which
+/// bounds its length.
+#[derive(Clone, Copy)]
+pub(super) struct InlineRegExpFlags {
+    letters: [u8; REGEXP_FLAG_LETTERS],
+    length: u8,
+}
+
+/// The most letters a RegExp's flags hold: one per flag accessor.
+const REGEXP_FLAG_LETTERS: usize = 8;
+const _: () = assert!(REGEXP_FLAG_ACCESSORS.len() == REGEXP_FLAG_LETTERS);
+
+impl InlineRegExpFlags {
+    /// `flags` inline, or `None` when they are longer than any valid flags.
+    fn of(flags: &str) -> Option<Self> {
+        let bytes = flags.as_bytes();
+        let mut letters = [0; REGEXP_FLAG_LETTERS];
+        letters.get_mut(..bytes.len())?.copy_from_slice(bytes);
+        Some(Self { letters, length: bytes.len() as u8 })
+    }
+}
+
+impl std::ops::Deref for InlineRegExpFlags {
+    type Target = str;
+    fn deref(&self) -> &str {
+        // SAFETY: the letters are a prefix copied from a `str`, cut at its end.
+        unsafe { std::str::from_utf8_unchecked(&self.letters[..usize::from(self.length)]) }
     }
 }
 
