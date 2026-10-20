@@ -11389,3 +11389,43 @@ print(JSON.stringify(out));
     vm.execute(&Engine::specialize(source, "inherited-getters.js").unwrap()).unwrap();
     assert_eq!(output.borrow().as_slice(), [r#"["base:leaf","kbase:leaf",8,"boom","kboom","mid-data","kbase:leaf","base:leaf","kbase:leaf","new:leaf","knew:leaf","new:leaf","kown","[0,true]",1,"plain:true","deep"]"#]);
 }
+
+#[test]
+fn call_apply_and_reflect_apply_push_callees_of_other_programs() {
+    // `call`, `apply` and `Reflect.apply` of user functions compiled as other programs run
+    // as in-loop frames in their program; receivers, argument lists, holes, getters on the
+    // list, throws, bound targets and forwarded `arguments` keep the natives' results.
+    let source = r#"
+const out = [];
+const other = new Function('a', 'b', '"use strict"; return [this === undefined ? "u" : typeof this, a, b, arguments.length].join(":");');
+const sloppy = new Function('a', 'return [typeof this, a, arguments.length].join(":");');
+const thrower = new Function('x', 'throw new RangeError("r" + x);');
+const recur = new Function('n', 'return n <= 0 ? 0 : n + Reflect.apply(arguments.callee, null, [n - 1]);');
+function local(a, b) { return [this && this.tag, a, b].join(":"); }
+function run(i) {
+  const o = { tag: 't' + i };
+  out.push(other.call(o, i, 'x'), other.call(undefined, i), other.apply(o, [i, 'y']), other.apply(null),
+    Reflect.apply(other, o, [i, 'z', 'extra']), sloppy.call(null, i), sloppy.apply(5, [i]),
+    Reflect.apply(sloppy, 'str', []), local.call(o, i, 1), Reflect.apply(local, o, [i, 2]), recur(3));
+  try { Reflect.apply(thrower, null, [i]); } catch (e) { out.push(e.name + e.message); }
+  try { thrower.apply(null, [i]); } catch (e) { out.push(e.name + e.message); }
+  try { Reflect.apply(other, null, undefined); } catch (e) { out.push(e.constructor.name); }
+  try { Reflect.apply({}, null, []); } catch (e) { out.push(e.constructor.name); }
+  out.push(Reflect.apply(other, o, { length: 2, 0: 'al', 1: 'b' }), other.apply(o, [, 'hole']));
+  const getterList = [1, 2]; Object.defineProperty(getterList, 0, { get() { out.push('g'); return 'got'; } });
+  out.push(Reflect.apply(other, o, getterList));
+  const bound = other.bind(o, 'B'); out.push(bound(i), bound.call(null, 'c'), Reflect.apply(bound, null, ['d']));
+  const args = (function () { return Reflect.apply(other, o, arguments); })('A1', 'A2'); out.push(args);
+}
+for (let i = 0; i < 3; i++) run(i);
+// EventEmitter-like dispatch through ReflectApply from another program
+const emit = new Function('handler', 'self', 'args', 'return Reflect.apply(handler, self, args);');
+const seen = []; for (let i = 0; i < 3; i++) emit(function (a, b) { seen.push(this.n + a + b); }, { n: i }, ['-', i]);
+out.push(seen.join());
+print(JSON.stringify(out));
+"#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "cross-program-applies.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), [r#"["object:0:x:2","u:0::1","object:0:y:2","object:::0","object:0:z:3","object:0:1","object:0:1","object::0","t0:0:1","t0:0:2",6,"RangeErrorr0","RangeErrorr0","TypeError","TypeError","object:al:b:2","object::hole:2","g","object:got:2:2","object:B:0:2","object:B:c:2","object:B:d:2","object:A1:A2:2","object:1:x:2","u:1::1","object:1:y:2","object:::0","object:1:z:3","object:1:1","object:1:1","object::0","t1:1:1","t1:1:2",6,"RangeErrorr1","RangeErrorr1","TypeError","TypeError","object:al:b:2","object::hole:2","g","object:got:2:2","object:B:1:2","object:B:c:2","object:B:d:2","object:A1:A2:2","object:2:x:2","u:2::1","object:2:y:2","object:::0","object:2:z:3","object:2:1","object:2:1","object::0","t2:2:1","t2:2:2",6,"RangeErrorr2","RangeErrorr2","TypeError","TypeError","object:al:b:2","object::hole:2","g","object:got:2:2","object:B:2:2","object:B:c:2","object:B:d:2","object:A1:A2:2","0-0,1-1,2-2"]"#]);
+}
