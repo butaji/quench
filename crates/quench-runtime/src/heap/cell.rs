@@ -2517,6 +2517,11 @@ impl EnvironmentSlots {
         let value = self.0.get(slot)?.0;
         (!value.is_internal_marker()).then_some(value)
     }
+    /// `dense` for writing.
+    #[inline(always)]
+    pub(crate) fn dense_mut(&mut self) -> Option<&mut Self> {
+        (!self.0.marked()).then_some(self)
+    }
     /// `dense_plain`'s slot to write: an ordinary value's place, which a store replaces.
     #[inline(always)]
     pub(crate) fn dense_plain_mut(&mut self, slot: usize) -> Option<&mut Value> {
