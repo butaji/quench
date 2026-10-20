@@ -6960,7 +6960,6 @@ impl<H: Host> Vm<H> {
         // captures. Those artifacts must use the ordinary frame-entry path,
         // where the capture guards and ABI values are assembled together.
         if compiled.field_argument().is_some()
-            || compiled.is_int32_identity()
             || compiled.is_capture_number()
             || !compiled.capture_arguments().is_empty()
             || compiled.is_string_transform()
@@ -6977,13 +6976,20 @@ impl<H: Host> Vm<H> {
         for argument in arguments.iter().take(params) {
             numeric_arguments.push(argument.as_number()?);
         }
+        if compiled.is_int32_identity()
+            && !numeric_arguments
+                .first()
+                .is_some_and(|value| super::js_compiled::is_i32_number(*value))
+        {
+            return None;
+        }
         if programs.js_jit_diagnostics_enabled() {
             programs.record_js_jit_entry(program_id, function_id, true, function.params);
             programs.record_js_jit_native_entry(program_id, function_id);
         }
         match compiled.call(&numeric_arguments, interrupt)? {
             CompiledJsResult::Number(value) => Some(Value::number(value)),
-            CompiledJsResult::Int32Identity { .. } => return None,
+            CompiledJsResult::Int32Identity { value, .. } => Some(Value::number(value)),
             CompiledJsResult::Boolean(value) => {
                 Some(if value { Value::TRUE } else { Value::FALSE })
             }
