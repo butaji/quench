@@ -98,15 +98,19 @@ impl Heap {
             let direct_promise = identity.direct_promise_index().is_some();
             let direct_await = identity.direct_await_index().is_some();
             let direct_iterator = identity.direct_iterator_index().is_some();
+            let direct_string = identity.direct_string_index().is_some();
             direct_records += usize::from(
                 direct_object
                     || direct_array
                     || direct_function
                     || direct_promise
                     || direct_await
-                    || direct_iterator,
+                    || direct_iterator
+                    || direct_string,
             );
-            let kind = if direct_iterator {
+            let kind = if direct_string {
+                CellKind::String as usize
+            } else if direct_iterator {
                 CellKind::Iterator as usize
             } else if direct_await {
                 CellKind::AwaitState as usize
@@ -132,6 +136,8 @@ impl Heap {
                 "await_state"
             } else if direct_iterator {
                 "iterator"
+            } else if direct_string {
+                "string"
             } else {
                 cell.expect("live legacy value has a Cell")
                     .profile_variant_name()
