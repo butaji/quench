@@ -1456,6 +1456,25 @@ impl<H: Host> Vm<H> {
                 self.profile.call_source(1);
                 let window = i.call_window();
                 let function_index = i.known_function_index();
+                let argument_start = usize::from(window.base);
+                let argument_end = argument_start + usize::from(window.count);
+                let call_arguments = &self.frames[f].registers[argument_start..argument_end];
+                if !i.returns_from_frame()
+                    && p.kind != crate::bytecode::ProgramKind::Wasm
+                    && self.execution_mode == super::ExecutionMode::Compiled
+                    && let Some(value) = Vm::<H>::js_jit_compiled_call(
+                        &mut self.programs,
+                        self.active_program,
+                        p,
+                        u32::from(function_index),
+                        call_arguments,
+                        self.execution_interrupt.atomic_flag(),
+                    )
+                {
+                    self.profile.call_target(1, usize::from(window.count));
+                    self.write(f, i.result_register(), value);
+                    return Ok(StepResult::Continue);
+                }
                 let arguments = CallArguments::from_slice(self.register_window(f, window));
                 let args = arguments.as_slice();
                 let parent = self.capture_env(f, 0).unwrap_or(self.frames[f].env);

@@ -10354,6 +10354,50 @@ fn js_jit_compiles_hot_numeric_functions_and_guards_polymorphic_inputs() {
     feature = "profile-memory",
     feature = "profile-gc-time"
 )))]
+fn js_jit_enters_compiled_known_callees_without_pushing_a_frame() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function add(left, right) { return left + right; }
+          for (let index = 0; index < 40; index++) {
+            if (add(index, 2) !== index + 2) throw Error('known call result');
+          }
+        "#,
+        "js-jit-known-call.js",
+    ))
+    .unwrap();
+    let add = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .name
+                .or(function.inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "add")
+        })
+        .unwrap() as u32;
+    let mut vm = Vm::new(SilentHost);
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+
+    let Some(super::program_store::JsTierState::Compiled(compiled)) = vm
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, add)
+    else {
+        panic!("the numeric callee should be compiled");
+    };
+    assert!(
+        compiled.native_entries() >= 9,
+        "promotion plus the remaining statically-known calls should enter native code"
+    );
+}
+
+#[test]
+#[cfg(not(any(
+    feature = "profile-aggregate",
+    feature = "profile-trace",
+    feature = "profile-memory",
+    feature = "profile-gc-time"
+)))]
 fn js_jit_compiles_number_capture_returns_and_observes_mutation() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
