@@ -4400,8 +4400,11 @@ lane_handler! {
                 ..
             })
         ) {
-            // The general path makes this call; the record's next run resolves anew.
+            // The record's next run resolves anew.
             requicken(ip, lane_script_call::<H>);
+            if let Some(next) = lane_framed_call(cx, ip) {
+                return next;
+            }
             return exit(ip);
         }
         if matches!(
@@ -5550,6 +5553,89 @@ lane_handler! {
     }
 }
 
+/// A lane `Call` of a user function of the running program that needs a frame of its own,
+/// made as the general loop makes it (`Vm::try_inline_user_call`): the callee's frame is
+/// pushed with the pending call the loop would record, and the lane continues in it. Only a
+/// frame's own lane run calls this way, so the frame stack and the pending calls are the
+/// general loop's. `None` leaves the call to the general path; a failed push raises there.
+#[inline(never)]
+fn lane_framed_call<H: Host>(cx: *mut LaneContext<H>, ip: Ip) -> Option<Ip> {
+    let vm = unsafe { vm(cx) };
+    if !unsafe { (*cx).script_calls } || !vm.lane_stack.activations.is_empty() {
+        return None;
+    }
+    // SAFETY: the context's program outlives the lane run, and `ip` is a record of the
+    // active view, which is the running frame's.
+    let (code, program, frame, pc) = unsafe {
+        (&*(*cx).code, (*cx).program, (*cx).frame, ip.offset_from((*cx).base) as usize)
+    };
+    let function = &code.functions[vm.frames[frame].function as usize];
+    let instruction = decoded_instruction(function, function.code[pc]);
+    // A callee of another program switches the executing program, which the general loop owns.
+    if !matches!(
+        vm.heap.get(vm.read(frame, instruction.register_b())),
+        Some(Cell::Function { kind: FunctionKind::User(callee_program, _), .. })
+            if *callee_program == program
+    ) {
+        return None;
+    }
+    vm.frames[frame].pc = pc;
+    vm.frames[frame].pc_is_resume = false;
+    match vm.try_inline_user_call(code, frame, instruction, pc + 1)? {
+        Ok(StepResult::PushFrame { destination, call_guard, construct_this }) => {
+            unsafe { &mut *(*cx).pending }.push(PendingGeneralCall {
+                caller: frame,
+                caller_cursor: None,
+                call_pc: pc as u32,
+                destination,
+                construct_this,
+                returns: instruction.returns_from_frame(),
+                call_guard: Some(call_guard),
+                caller_program: None,
+            });
+            // Pushing the frame allocates its environment and arguments.
+            note_allocation(vm);
+            let callee_pc = vm.frames[frame + 1].pc;
+            Some(lane_enter_frame(cx, frame + 1, callee_pc))
+        }
+        Ok(_) => unreachable!("an in-loop call pushes a frame or fails"),
+        Err(error) => {
+            vm.lane_raised = Some(error);
+            Some(exit(ip))
+        }
+    }
+}
+
+/// The return of a JavaScript frame the lane or the general loop pushed for a call: the
+/// frame completes as the general loop completes it, and the lane continues in its caller.
+/// A construction's receiver substitution, a caller of another program and a call whose
+/// caller returns its result take the general path.
+fn lane_return_script_frame<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip) -> Ip {
+    let vm = unsafe { vm(cx) };
+    let pending = unsafe { &mut *(*cx).pending };
+    let frame = unsafe { (*cx).frame };
+    let completes = pending.last().is_some_and(|call| {
+        call.construct_this.is_none()
+            && call.caller_program.is_none()
+            && !call.returns
+            && call.caller + 1 == frame
+    });
+    if !unsafe { (*cx).script_calls } || !completes || frame + 1 != vm.frames.len() {
+        return exit(ip);
+    }
+    // SAFETY: called only from the return handler, whose record is `ip`.
+    let value = r.get(unsafe { &*ip }.a);
+    let call = pending.pop().expect("checked above");
+    let completed = vm.frames.pop().expect("the returning frame is on the stack");
+    vm.finish_frame_scopes(&completed);
+    vm.pool_frame(completed);
+    vm.active_registers = vm.frames[call.caller].registers.as_mut_ptr();
+    vm.write(call.caller, call.destination, value);
+    drop(call.call_guard);
+    let pc = vm.frames[call.caller].pc;
+    lane_enter_frame(cx, call.caller, pc)
+}
+
 /// Return from a frame the general loop or a frame push made. Out of line
 /// so the activation return saves no registers.
 #[cold]
@@ -5560,6 +5646,10 @@ fn lane_return_frame<H: Host>(r: Registers, ip: Ip) -> Ip {
     let i = unsafe { &*ip };
     let vm = unsafe { vm(cx) };
     let pending = unsafe { &mut *(*cx).pending };
+    // SAFETY: the context's program outlives the lane run.
+    if unsafe { &*(*cx).code }.kind != crate::bytecode::ProgramKind::Wasm {
+        return lane_return_script_frame(cx, r, ip);
+    }
     // An in-loop `new` substitutes its receiver for a non-object result;
     // the general path owns that [[Construct]] step.
     if !unsafe { (*cx).inline_calls }
