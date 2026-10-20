@@ -744,6 +744,11 @@ impl FieldAddCacheSet {
 }
 const NO_FIELD_ADD_SET: u32 = u32::MAX;
 const NO_MEGAMORPHIC_FIELD: u32 = u32::MAX;
+/// The share of all cache sites, as a divisor, up to which an invalidation resets the
+/// written sites one by one: each costs four scattered stores against a sequential fill of
+/// every site's entries (Node's library wires prototypes hundreds of times at load, each an
+/// invalidation that had refilled every table).
+const FIELD_CACHE_SPARSE_RESET_SHARE: usize = 8;
 const FIELD_MEGAMORPHIC_INLINE: usize = 4;
 // Bound each site's overflow to 256 recorded shapes; unseen shapes keep the generic fallback.
 const FIELD_MEGAMORPHIC_LIMIT: usize = 256;
@@ -1638,6 +1643,11 @@ pub(crate) struct Vm<H> {
     field_add_indices: Vec<u32>,
     field_add_sets: Vec<FieldAddCacheSet>,
     megamorphic_field_indices: Vec<u32>,
+    /// The cache sites whose per-site entries (`field_caches`, `megamorphic_field_indices`,
+    /// `field_add_indices`, `inherited_field_indices`) were written since the last
+    /// `invalidate_field_caches`, which then resets only those; `None` once they outnumber
+    /// `FIELD_CACHE_SPARSE_RESET_SHARE` of the sites, and every site resets.
+    field_cache_writes: Option<Vec<u32>>,
     megamorphic_fields: Vec<FieldCacheSet>,
     length_atom: Atom,
     // Cached `prototype` atom; `NO_CACHED_ATOM` until first use after a program reset.
@@ -2496,6 +2506,7 @@ impl<H: Host> Vm<H> {
             bound_args: self.intern_atom(BOUND_ARGS_KEY),
         };
         self.field_caches = vec![EMPTY_CACHE; program.cache_sites as usize];
+        self.field_cache_writes = Some(Vec::new());
         Self::prime_loop_decoding(program);
         self.inherited_field_caches.clear();
         self.inherited_field_indices = vec![NO_INHERITED_FIELD; program.cache_sites as usize];

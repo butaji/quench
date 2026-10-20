@@ -2078,3 +2078,47 @@ fn native_descriptor_fields_match_get_own_property_and_define_property() {
         Runtime::new(DescriptorFieldsHost).execute(&program).unwrap();
     }
 }
+
+/// Keeps compiled programs in memory, shared by the runtimes of one test.
+struct EntryCacheHost {
+    kept: Rc<RefCell<std::collections::HashMap<(String, Vec<String>), Vec<u8>>>>,
+    lines: Rc<RefCell<Vec<String>>>,
+}
+impl Host for EntryCacheHost {
+    fn write_line(&mut self, line: &str) {
+        self.lines.borrow_mut().push(line.to_owned());
+    }
+    fn clock_millis(&mut self) -> f64 { 0.0 }
+    fn kept_compiled_program(&mut self, name: &str, parts: &[&str]) -> Option<Vec<u8>> {
+        let key = (name.to_owned(), parts.iter().map(|part| (*part).to_owned()).collect());
+        self.kept.borrow().get(&key).cloned()
+    }
+    fn keep_compiled_program(&mut self, name: &str, parts: &[&str], bytes: &[u8]) {
+        let key = (name.to_owned(), parts.iter().map(|part| (*part).to_owned()).collect());
+        self.kept.borrow_mut().insert(key, bytes.to_vec());
+    }
+}
+#[test]
+fn compiled_entry_is_kept_and_decodes_to_the_same_program() {
+    let kept = Rc::new(RefCell::new(std::collections::HashMap::new()));
+    let source = "function outer(n){const inner=k=>k*n;return [1,2,3].map(inner).join()}\nprint(`${outer(2)} ${typeof outer} ${outer.toString().length}`);";
+    let mut outputs = Vec::new();
+    for _ in 0..2 {
+        let lines = Rc::new(RefCell::new(Vec::new()));
+        let mut runtime = Runtime::new(EntryCacheHost { kept: kept.clone(), lines: lines.clone() });
+        let program = runtime
+            .compile_entry(crate::ExecutionRequest { source, name: "entry.js", kind: crate::SourceKind::Script })
+            .unwrap();
+        assert!(program.validated.holds(), "an entry compiled or decoded here is proven valid");
+        runtime.execute(&program).unwrap();
+        outputs.push(lines.borrow().clone());
+    }
+    assert_eq!(kept.borrow().len(), 1, "the second runtime decodes the kept entry");
+    assert_eq!(outputs[0], outputs[1]);
+    assert_eq!(outputs[0], ["2,4,6 function 70"]);
+    // A different goal or text is a different entry.
+    let lines = Rc::new(RefCell::new(Vec::new()));
+    let mut runtime = Runtime::new(EntryCacheHost { kept: kept.clone(), lines });
+    runtime.compile_entry(crate::ExecutionRequest { source, name: "entry.js", kind: crate::SourceKind::Module }).unwrap();
+    assert_eq!(kept.borrow().len(), 2);
+}

@@ -1,7 +1,7 @@
 //! Shared-VM entry execution used by the development CLI and inventory worker.
 
 use crate::host::NodeHost;
-use quench_runtime::{Engine, ExecutionRequest, Runtime, SourceKind};
+use quench_runtime::{ExecutionRequest, Runtime, SourceKind};
 use std::{path::PathBuf, process::ExitCode};
 
 /// Initialize signal policy only at an executable's process boundary. Embedders
@@ -195,12 +195,13 @@ fn execute_shared_on_worker(
     }
     let mut runtime = Runtime::new(host);
     runtime.set_execution_mode(mode);
-    let program = Engine::compile(ExecutionRequest {
-        source: &source,
-        name: &name,
-        kind,
-    })
-    .map_err(|error| format!("{error:?}"))?;
+    let program = runtime
+        .compile_entry(ExecutionRequest {
+            source: &source,
+            name: &name,
+            kind,
+        })
+        .map_err(|error| format!("{error:?}"))?;
     if let Some(worker) = &shared_state.borrow().messaging.context {
         worker.control.set_online();
     }

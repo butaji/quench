@@ -987,6 +987,7 @@ impl Engine {
             literal_templates: Vec::new(),
             superinstructions: vec![],
             replay: None,
+            validated: Default::default(),
         };
         program
             .validate()
