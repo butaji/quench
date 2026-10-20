@@ -2246,12 +2246,24 @@ enum CompiledJsEntry {
     },
     StringReturnPc(unsafe extern "C" fn(*const f64) -> u32),
     Boolean(unsafe extern "C" fn(*const f64) -> u32),
+    FieldReject {
+        entry: unsafe extern "C" fn(*const f64) -> u32,
+        resume_pc: usize,
+        resume_register: crate::bytecode::Register,
+        resume_value: Value,
+    },
 }
 
 pub(super) enum CompiledJsResult {
     Number(f64),
     StringReturnPc(u32),
     Boolean(bool),
+    FieldReject {
+        fast_path: bool,
+        resume_pc: usize,
+        resume_register: crate::bytecode::Register,
+        resume_value: Value,
+    },
     StringTransform(super::js_compiled::JsJitStringTransform, bool),
 }
 
@@ -2352,6 +2364,37 @@ impl CompiledJsFunction {
                 };
                 (CompiledJsEntry::Boolean(entry), Vec::new(), None)
             }
+            super::js_compiled::JsJitResultKind::FieldReject {
+                resume_pc,
+                resume_register,
+                resume_value,
+            } => {
+                // SAFETY: the field-reject compiler emits
+                // `fn(*const f64) -> u32`, where zero resumes the interpreter.
+                let entry = unsafe {
+                    std::mem::transmute::<*mut u8, unsafe extern "C" fn(*const f64) -> u32>(
+                        code.pointer,
+                    )
+                };
+                (
+                    CompiledJsEntry::FieldReject {
+                        entry,
+                        resume_pc: usize::try_from(resume_pc).ok()?,
+                        resume_register: crate::bytecode::Register::try_from(resume_register)
+                            .ok()?,
+                        resume_value: match resume_value {
+                            super::js_compiled::JsJitResumeValue::Number(value) => {
+                                Value::number(value)
+                            }
+                            super::js_compiled::JsJitResumeValue::Boolean(value) => {
+                                if value { Value::TRUE } else { Value::FALSE }
+                            }
+                        },
+                    },
+                    Vec::new(),
+                    None,
+                )
+            }
         };
         Some(Self {
             _code: code,
@@ -2407,6 +2450,17 @@ impl CompiledJsFunction {
                 CompiledJsEntry::Boolean(entry) => {
                     Some(CompiledJsResult::Boolean(entry(arguments.as_ptr()) != 0))
                 }
+                CompiledJsEntry::FieldReject {
+                    entry,
+                    resume_pc,
+                    resume_register,
+                    resume_value,
+                } => Some(CompiledJsResult::FieldReject {
+                    fast_path: entry(arguments.as_ptr()) != 0,
+                    resume_pc,
+                    resume_register,
+                    resume_value,
+                }),
             }
         }
     }
@@ -2473,6 +2527,10 @@ impl CompiledJsFunction {
 
     fn is_string_transform(&self) -> bool {
         matches!(self.entry, CompiledJsEntry::StringTransform { .. })
+    }
+
+    fn is_field_reject(&self) -> bool {
+        matches!(self.entry, CompiledJsEntry::FieldReject { .. })
     }
 
     fn string_transform_kind(&self) -> Option<super::js_compiled::JsJitStringTransform> {
@@ -3616,7 +3674,14 @@ const UNROLL_PROGRAM_BYTECODES: usize = 16_384;
 
 /// Whether `program` is small enough to unroll its innermost loops (`UNROLL_PROGRAM_BYTECODES`).
 fn program_unrolls(program: &ResidualProgram) -> bool {
-    program.functions.iter().map(|function| function.code.len()).sum::<usize>()
+    // A function whose record has not been read yet (compiled again or decoded on first
+    // read) is not counted.
+    program
+        .functions
+        .iter()
+        .filter_map(crate::bytecode::FunctionSlot::record)
+        .map(|function| function.code.len())
+        .sum::<usize>()
         <= UNROLL_PROGRAM_BYTECODES
 }
 
@@ -6475,6 +6540,10 @@ impl<H: Host> Vm<H> {
             Some(compiled) => compiled.field_argument(),
             None => super::js_compiled::number_field_argument_candidate(program, function),
         };
+        let field_reject_candidate = match compiled_tier {
+            Some(compiled) => compiled.is_field_reject(),
+            None => super::js_compiled::is_field_reject_candidate(program, function),
+        };
         let mut arguments: smallvec::SmallVec<[f64; 8]> = smallvec::SmallVec::new();
         let mut numeric = true;
         for value in registers {
@@ -6492,10 +6561,15 @@ impl<H: Host> Vm<H> {
             numeric = false;
             if let super::object::FieldCacheProbe::Hit(value) =
                 self.cached_field_hit(program, receiver, field_argument.cache_site)
-                && let Some(number) = value.as_number()
             {
-                arguments.push(number);
-                numeric = true;
+                if let Some(number) = value.as_number() {
+                    arguments.push(number);
+                    numeric = true;
+                } else if field_reject_candidate {
+                    // Strict inequality against a Number is true for every non-Number
+                    // value. NaN therefore takes the guarded early-return path.
+                    arguments.push(f64::NAN);
+                }
             }
         }
         if numeric && int32_bitwise_candidate {
@@ -6569,7 +6643,11 @@ impl<H: Host> Vm<H> {
             }
             return None;
         }
-        if tier.is_none() && !function.wide.is_empty() && !numeric {
+        if tier.is_none()
+            && !function.wide.is_empty()
+            && !numeric
+            && !(field_reject_candidate && arguments.len() == 1)
+        {
             return None;
         }
         if self.programs.js_jit_diagnostics_enabled() {
@@ -6580,6 +6658,7 @@ impl<H: Host> Vm<H> {
         let compiled = match tier {
             Some(super::program_store::JsTierState::Compiled(compiled)) => {
                 if (!numeric && !compiled.is_string_hash_loop() && !compiled.is_string_transform())
+                    && !(compiled.is_field_reject() && arguments.len() == 1)
                     || (compiled.is_string_hash_loop() && string_hash_units.is_none())
                     || (compiled.is_string_transform() && string_transform_units.is_none())
                     || (compiled.is_capture_number() && capture_number.is_none())
@@ -6600,10 +6679,12 @@ impl<H: Host> Vm<H> {
                     function_id,
                     numeric,
                     (numeric && (numeric_loop_candidate || field_argument.is_some()))
+                        || (field_reject_candidate && arguments.len() == 1)
                         || capture_number.is_some()
                         || string_hash_units.is_some()
                         || string_transform_units.is_some(),
                 ) || (!numeric
+                    && !(field_reject_candidate && arguments.len() == 1)
                     && string_hash_units.is_none()
                     && string_transform_units.is_none())
                 {
@@ -6709,6 +6790,12 @@ impl<H: Host> Vm<H> {
                     if value { Value::TRUE } else { Value::FALSE },
                 ))
             }
+            CompiledJsResult::FieldReject {
+                fast_path,
+                resume_pc,
+                resume_register,
+                resume_value,
+            } => fast_path.then_some((resume_pc, resume_register, resume_value)),
             CompiledJsResult::StringTransform(transform, matched) => {
                 let last_pc = function.code.len().checked_sub(1)?;
                 let terminal = function.code.get(last_pc)?.as_wide();
@@ -6819,6 +6906,7 @@ impl<H: Host> Vm<H> {
                 programs.constant(program_id, constant as usize)
             }
             CompiledJsResult::StringTransform(_, _) => return None,
+            CompiledJsResult::FieldReject { .. } => return None,
         }
     }
 
