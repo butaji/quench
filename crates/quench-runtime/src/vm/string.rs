@@ -603,7 +603,7 @@ impl<H: Host> Vm<H> {
                     if !vm.is_function(method) {
                         return Err(vm.type_error(p, "String split method is not callable".into()));
                     }
-                    return vm.call_value(
+                    return vm.call_protocol_method(
                         p,
                         method,
                         separator,
@@ -661,7 +661,7 @@ impl<H: Host> Vm<H> {
                     if !vm.is_function(method) {
                         return Err(vm.type_error(p, "RegExp method is not callable".into()));
                     }
-                    return vm.call_value(p, method, pattern, &[this]);
+                    return vm.call_protocol_method(p, method, pattern, &[this]);
                 }
             }
             vm.string_regexp_fallback(p, this, pattern, symbol, Value::UNDEFINED)
@@ -699,7 +699,7 @@ impl<H: Host> Vm<H> {
                     if !vm.is_function(method) {
                         return Err(vm.type_error(p, "@@matchAll is not callable".into()));
                     }
-                    return vm.call_value(p, method, pattern, &[this]);
+                    return vm.call_protocol_method(p, method, pattern, &[this]);
                 }
             }
             let flags = vm.heap.alloc_string(MATCH_ALL_FLAGS.into());
@@ -768,7 +768,7 @@ impl<H: Host> Vm<H> {
                             vm.type_error(p, "String replace method is not callable".into())
                         );
                     }
-                    return vm.call_value(p, method, search_value, &[this, replacement_value]);
+                    return vm.call_protocol_method(p, method, search_value, &[this, replacement_value]);
                 }
             }
             let input = vm.coerce_js_string(p, this)?;
