@@ -1,0 +1,452 @@
+{
+  "schema": 16,
+  "suite": "jet-stream3",
+  "jit_mode": "jit",
+  "jit_diagnostics": true,
+  "jit_wasm_root": null,
+  "jit_wasm_root_only": false,
+  "jit_wasm_root_first": false,
+  "jit_wasm_selective": false,
+  "jit_wasm_memcpy_ab": false,
+  "jit_wasm_memcpy_raw_ab": false,
+  "jit_wasm_memcpy_early_ab": false,
+  "jit_wasm_compare_branch_ab": false,
+  "jit_wasm_affine_pair_ab": false,
+  "jit_wasm_reference_body_cache_ab": false,
+  "jit_wasm_memcpy_leaf_ab": false,
+  "jit_wasm_selective_ab": false,
+  "created_unix_ns": 1792517101018185686,
+  "rounds_requested": 1,
+  "timeout_ms": 600000,
+  "source_revision": "23ad6955e73ab466d1320859c30fdc9fa02ea657",
+  "source_dirty": true,
+  "corpus": {
+    "pinned_revision": "06785cf861ac44855f168cbbe829278c2802e6de",
+    "checkout_revision": "06785cf861ac44855f168cbbe829278c2802e6de",
+    "checkout_clean": true,
+    "fixture_set_matches": false
+  },
+  "host": {
+    "uname": "Linux a80aa33b4e64 6.18.55 #1 SMP Wed Oct 14 19:45:18 UTC 2026 x86_64 GNU/Linux",
+    "rustc": "",
+    "model": null,
+    "memory_bytes": 18882674688,
+    "memory_limit_bytes": 17179869184,
+    "cpu_quota": "400000 100000",
+    "logical_cpus": 4,
+    "process_metrics_backend": "Linux wait4 rusage"
+  },
+  "engines": [
+    {
+      "name": "quench",
+      "executable": "/workspace/quench/target/production/quench-node",
+      "executable_sha256": "9fbd14438c428758c55ec2142324a9eb9a87891fa0511db0f09127ae3864b53d",
+      "version": "Quench shared-VM JIT build; package 0.1.0",
+      "argv": [
+        "--jit"
+      ],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback",
+        "QUENCH_JS_JIT_STATS": "1",
+        "QUENCH_WASM_JIT_STATS": "1"
+      },
+      "inherits_environment": false,
+      "jit_mode": "enabled-by-cli-flag",
+      "jit_proof_command": [
+        "/workspace/quench/target/production/quench-node",
+        "--jit"
+      ],
+      "jit_proof": "the measured Quench process is launched with --jit and opt-in JavaScript/WebAssembly JIT counters; diagnostic-only, not for qualification",
+      "webassembly": true
+    },
+    {
+      "name": "bun",
+      "executable": "/workspace/quench/work/bench-runtimes/bun-1.4.3/bun-linux-x64/bun",
+      "executable_sha256": "7ce7d6b654eddeec20afddf2396317fba6dc19ab52788a27e894e1806bf8f24b",
+      "version": "1.4.3",
+      "argv": [],
+      "environment": {
+        "BUN_JSC_useJIT": "1",
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "enabled-and-probed",
+      "jit_proof_command": [
+        "BUN_JSC_useJIT=1",
+        "BUN_JSC_dumpOptions=1",
+        "/workspace/quench/work/bench-runtimes/bun-1.4.3/bun-linux-x64/bun",
+        "-e",
+        "console.log(Bun.version)"
+      ],
+      "jit_proof": "command succeeded and reported \"useJIT=true\": 1.4.3\n\nModified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=true (default: true)",
+      "webassembly": true
+    },
+    {
+      "name": "node",
+      "executable": "/workspace/quench/work/bench-runtimes/node-v26.12.0-linux-x64/bin/node",
+      "executable_sha256": "caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943",
+      "version": "v26.12.0",
+      "argv": [],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "enabled-and-probed",
+      "jit_proof_command": [
+        "/workspace/quench/work/bench-runtimes/node-v26.12.0-linux-x64/bin/node",
+        "--trace-opt",
+        "--no-concurrent-recompilation",
+        "-e",
+        "function hot(x) { return x + 1; } for (let i = 0; i < 100000; i++) hot(i);"
+      ],
+      "jit_proof": "command succeeded and reported \"completed compiling\": [marking 0x2a0602ef7a31 <JSFunction hot (sfi = 0x2a0602ef4211)> for optimization to MAGLEV, ConcurrencyMode::kConcurrent, reason: hot and stable]\n[compiling method 0x2a0602ef7a31 <JSFunction hot (sfi = 0x2a0602ef4211)> (target MAGLEV), mode: ConcurrencyMode::kSynchronous]\n[completed compiling 0x2a0602ef7a31 <JSFunction hot (sfi = 0x2a0602ef4211)> (target MAGLEV) - took 0.000, 0.223, 0.001 ms]\n[marking 0x2a0602ef79c1 <JSFunction (sfi = 0x2a0602ef4169)> for optimization to MAGLEV, ConcurrencyMode::kConcurrent, reason: hot and stable]\n[marking 0x2a0602ef7a31 <JSFunction hot (sfi = 0x2a0602ef4211)> for optimization to TURBOFAN_JS, ConcurrencyMode::kConcurrent, reason: hot and stable]\n[compiling method 0x2a0602ef7a31 <JSFunction hot (sfi = 0x2a0602ef4211)> (target TURBOFAN_JS), mode: ConcurrencyMode::kSynchronous]\n[completed compiling 0x2a0602ef7a31 <JSFunction hot (sfi = 0x2a0602ef4211)> (target TURBOFAN_JS) - took 0.009, 0.593, 0.007 ms]\n[compiling method 0x2a0602ef79c1 <JSFunction (sfi = 0x2a0602ef4169)> (target MAGLEV) OSR, mode: ConcurrencyMode::kSynchronous]\n[completed compiling 0x2a0602ef79c1 <JSFunction (sfi = 0x2a0602ef4169)> (target MAGLEV) OSR - took 0.000, 0.182, 0.003 ms]",
+      "webassembly": true
+    }
+  ],
+  "suite_inputs": [
+    {
+      "path": "quench-bench/jetstream/cli.js",
+      "size_bytes": 5600,
+      "modified_unix_ns": 1792513690519588234,
+      "sha256": "22ee4b987b07940dd7397ed7f88345c71acc415e2549b64bf45ba43f7572e5f0"
+    },
+    {
+      "path": "quench-bench/jetstream/JetStreamDriver.js",
+      "size_bytes": 110633,
+      "modified_unix_ns": 1792513689946126468,
+      "sha256": "f105bddfd402514b2325fe9ea6e1df5ce776a4ad4570a8006c7c8559159440fc"
+    },
+    {
+      "path": "quench-bench/jetstream/utils/params.js",
+      "size_bytes": 8047,
+      "modified_unix_ns": 1792513691274269500,
+      "sha256": "0e9d28c0fd2de5583c64678ffc61307b10d983bcb419fe2e3bb383c8b7ded647"
+    },
+    {
+      "path": "quench-bench/jetstream/utils/shell-config.js",
+      "size_bytes": 2352,
+      "modified_unix_ns": 1792513691274481750,
+      "sha256": "9a83000be5e6526a3c26a414fc3a23043e57ef8e4cd67aaff459066a2c347bca"
+    }
+  ],
+  "selected_fixtures": [
+    "quench-bench/jetstream/hash-map"
+  ],
+  "fixtures": {
+    "quench-bench/jetstream/hash-map": {
+      "source": {
+        "path": "quench-bench/jetstream/hash-map",
+        "size_bytes": 4096,
+        "modified_unix_ns": 1792513691817441022,
+        "sha256": "4311c39dd7f2d2e7dac6bcc09189098605edde278c3f6eb1849ae72cac716de0"
+      },
+      "valid": true,
+      "output_equal": true,
+      "summaries": {
+        "bun": {
+          "median_score": 493.71,
+          "median_max_rss_bytes": 94367744,
+          "valid_samples": 1
+        },
+        "node": {
+          "median_score": 443.67,
+          "median_max_rss_bytes": 181026816,
+          "valid_samples": 1
+        },
+        "quench": {
+          "median_score": 3.19,
+          "median_max_rss_bytes": 77496320,
+          "valid_samples": 1
+        }
+      },
+      "unsupported_engines": {},
+      "rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            "quench",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 626220210,
+              "peak_rss_bytes": 94367744,
+              "score": 493.71,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 17546,
+              "page_reclaims": 17546,
+              "involuntary_context_switches": 28,
+              "host_before": {
+                "captured_unix_ns": 1792517282550387871,
+                "load_average": {
+                  "one_minute": 1.19,
+                  "five_minutes": 1.31,
+                  "fifteen_minutes": 1.24
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 19858,
+                    "cpu_percent": 1.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792517283179408272,
+                "load_average": {
+                  "one_minute": 1.19,
+                  "five_minutes": 1.31,
+                  "fifteen_minutes": 1.24
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 19858,
+                    "cpu_percent": 1.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning hash-map:\nhash-map First-Score                           212.89 pts\nhash-map Worst-Score                           536.44 pts\nhash-map Average-Score                        1053.73 pts\nhash-map Score                                 493.71 pts\nhash-map First-Time                             23.49 ms \nhash-map Worst-Time                              9.32 ms \nhash-map Average-Time                            4.75 ms \nhash-map Total-Time                             37.55 ms \nhash-map Wall-Time                             597.11 ms \n\nOverall:\nOverall First-Score                            212.89 pts\nOverall Worst-Score                            536.44 pts\nOverall Average-Score                         1053.73 pts\nOverall First-Time                              23.49 ms \nOverall Worst-Time                               9.32 ms \nOverall Average-Time                             4.75 ms \n\nOverall Score                                  493.71 pts\nOverall Wall-Time                              598.64 ms \n\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 680295415,
+              "peak_rss_bytes": 181026816,
+              "score": 443.67,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 32409,
+              "page_reclaims": 32409,
+              "involuntary_context_switches": 49,
+              "host_before": {
+                "captured_unix_ns": 1792517283182550439,
+                "load_average": {
+                  "one_minute": 1.19,
+                  "five_minutes": 1.31,
+                  "fifteen_minutes": 1.24
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 19858,
+                    "cpu_percent": 1.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792517283865530320,
+                "load_average": {
+                  "one_minute": 1.19,
+                  "five_minutes": 1.31,
+                  "fifteen_minutes": 1.24
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 19858,
+                    "cpu_percent": 1.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning hash-map:\nhash-map First-Score                           197.34 pts\nhash-map Worst-Score                           445.06 pts\nhash-map Average-Score                         994.39 pts\nhash-map Score                                 443.67 pts\nhash-map First-Time                             25.34 ms \nhash-map Worst-Time                             11.23 ms \nhash-map Average-Time                            5.03 ms \nhash-map Total-Time                             41.60 ms \nhash-map Wall-Time                             629.16 ms \n\nOverall:\nOverall First-Score                            197.34 pts\nOverall Worst-Score                            445.06 pts\nOverall Average-Score                          994.39 pts\nOverall First-Time                              25.34 ms \nOverall Worst-Time                              11.23 ms \nOverall Average-Time                             5.03 ms \n\nOverall Score                                  443.67 pts\nOverall Wall-Time                              631.94 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 181442163998,
+              "peak_rss_bytes": 77496320,
+              "score": 3.19,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 378581,
+              "page_reclaims": 378581,
+              "involuntary_context_switches": 2012,
+              "host_before": {
+                "captured_unix_ns": 1792517101102760067,
+                "load_average": {
+                  "one_minute": 1.94,
+                  "five_minutes": 1.53,
+                  "fifteen_minutes": 1.28
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 19858,
+                    "cpu_percent": 0.7,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792517282547910787,
+                "load_average": {
+                  "one_minute": 1.19,
+                  "five_minutes": 1.31,
+                  "fifteen_minutes": 1.24
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 19858,
+                    "cpu_percent": 1.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning hash-map:\nhash-map First-Score                             3.26 pts\nhash-map Worst-Score                             3.00 pts\nhash-map Average-Score                           3.31 pts\nhash-map Score                                   3.19 pts\nhash-map First-Time                           1531.56 ms \nhash-map Worst-Time                           1666.28 ms \nhash-map Average-Time                         1508.70 ms \nhash-map Total-Time                           4706.54 ms \nhash-map Wall-Time                            181086.40 ms \n\nOverall:\nOverall First-Score                              3.26 pts\nOverall Worst-Score                              3.00 pts\nOverall Average-Score                            3.31 pts\nOverall First-Time                            1531.56 ms \nOverall Worst-Time                            1666.28 ms \nOverall Average-Time                          1508.70 ms \n\nOverall Score                                    3.19 pts\nOverall Wall-Time                             181091.11 ms \n\n",
+              "stderr": "QUENCH_JS_JIT_STATS {\"program\":15,\"function\":2,\"function_name\":\"get performance\",\"source_name\":\"node:bootstrap/performance-global.js\",\"rejection_reason\":null,\"status\":\"hot\",\"parameter_count\":0,\"instruction_count\":15,\"entries\":14,\"numeric_entries\":14,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":14,\"interpreter_completions\":14,\"interpreter_inclusive_ns\":7341680,\"opcodes\":[[\"LoadConst\",4],[\"LoadCapture\",2],[\"StoreCapture\",2],[\"LoadName\",1],[\"GetField\",1],[\"GetIndex\",1],[\"Call\",1],[\"Return\",2],[\"JumpTrue\",1]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":36,\"function\":2,\"function_name\":\"getNewKey\",\"source_name\":\"/workspace/quench/target/production/node/lib/internal/per_context/primordials.js\",\"rejection_reason\":\"unsupported-activation-or-function-kind\",\"status\":\"unsupported\",\"parameter_count\":1,\"instruction_count\":43,\"entries\":776,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":745,\"interpreter_completions\":745,\"interpreter_inclusive_ns\":1551865,\"opcodes\":[[\"Wide\",3],[\"LoadConst\",11],[\"LoadName\",4],[\"GetField\",6],[\"GetIndex\",2],[\"Binary\",8],[\"Unary\",1],[\"Move\",1],[\"Call\",5],[\"JumpBinaryFalse\",1],[\"Return\",1]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":36,\"function\":3,\"function_name\":\"copyAccessor\",\"source_name\":\"/workspace/quench/target/production/node/lib/internal/per_context/primordials.js\",\"rejection_reason\":\"unsupported-activation-or-function-kind\",\"status\":\"unsupported\",\"parameter_count\":4,\"instruction_count\":100,\"entries\":57,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":26,\"interpreter_completions\":26,\"interpreter_inclusive_ns\":258652,\"opcodes\":[[\"Wide\",4],[\"LoadConst\",16],[\"LoadLocal\",15],[\"StoreLocal\",6],[\"LoadCapture\",4],[\"LoadName\",9],[\"MakeObject\",2],[\"InitializeTdz\",6],[\"GetField\",3],[\"Binary\",8],[\"Move\",8],[\"Call\",6],[\"Construct\",2],[\"Jump\",1],[\"JumpBinaryFalse\",3],[\"Return\",1],[\"Throw\",2],[\"DefineField\",4]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":36,\"function\":4,\"function_name\":\"copyPropsRenamed\",\"source_name\":\"/workspace/quench/target/production/node/lib/internal/per_context/primordials.js\",\"rejection_reason\":\"unsupported-activation-or-function-kind\",\"status\":\"unsupported\",\"parameter_count\":3,\"instruction_count\":114,\"entries\":44,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":13,\"interpreter_completions\":13,\"interpreter_inclusive_ns\":1181593,\"opcodes\":[[\"Wide\",2],[\"LoadConst\",11],[\"LoadLocal\",5],[\"StoreLocal\",2],[\"LoadCapture\",8],[\"LoadName\",6],[\"MakeObject\",2],[\"GetIterator\",1],[\"IteratorClose\",1],[\"RequireIteratorResult\",1],[\"IteratorCleanupPush\",1],[\"IteratorCleanupPop\",3],[\"GetField\",5],[\"CopyDataProperties\",1],[\"Binary\",6],[\"Move\",21],[\"Call\",13],[\"Jump\",6],[\"JumpFalse\",1],[\"JumpBinaryFalse\",1],[\"Return\",1],[\"Throw\",1],[\"DefineField\",1],[\"LoadLocalPlain\",10],[\"StoreLocalPlain\",3],[\"JumpTrue\",1]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":36,\"function\":6,\"function_name\":\"copyPrototype\",\"source_name\":\"/workspace/quench/target/production/node/lib/internal/per_context/primordials.js\",\"rejection_reason\":\"unsupported-activation-or-function-kind\",\"status\":\"unsupported\",\"parameter_count\":3,\"instruction_count\":134,\"entries\":53,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":22,\"interpreter_completions\":22,\"interpreter_inclusive_ns\":2244924,\"opcodes\":[[\"Wide\",2],[\"LoadConst\",14],[\"LoadLocal\",5],[\"StoreLocal\",2],[\"LoadCapture\",9],[\"LoadName\",8],[\"MakeObject\",2],[\"GetIterator\",1],[\"IteratorClose\",1],[\"RequireIteratorResult\",1],[\"IteratorCleanupPush\",1],[\"IteratorCleanupPop\",3],[\"GetField\",5],[\"CopyDataProperties\",1],[\"Binary\",6],[\"Unary\",1],[\"Move\",20],[\"Call\",14],[\"Construct\",2],[\"Jump\",7],[\"JumpFalse\",1],[\"JumpBinaryFalse\",4],[\"Return\",1],[\"Throw\",3],[\"DefineField\",1],[\"SetFieldStrict\",1],[\"LoadLocalPlain\",13],[\"StoreLocalPlain\",4],[\"JumpTrue\",1]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":36,\"function\":21,\"function_name\":\"\",\"source_name\":\"/workspace/quench/target/production/node/lib/internal/per_context/primordials.js\",\"rejection_reason\":\"unsupported-activation-or-function-kind\",\"status\":\"unsupported\",\"parameter_count\":1,\"instruction_count\":25,\"entries\":39,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":8,\"interpreter_completions\":8,\"interpreter_inclusive_ns\":1173528,\"opcodes\":[[\"LoadConst\",3],[\"LoadCapture\",5],[\"LoadName\",2],[\"GetField\",1],[\"GetIndex\",1],[\"SetIndex\",1],[\"Binary\",2],[\"Move\",2],[\"Call\",3],[\"Return\",1],[\"LoadLocalPlain\",3],[\"StoreLocalPlain\",1]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":36,\"function\":34,\"function_name\":\"\",\"source_name\":\"/workspace/quench/target/production/node/lib/internal/per_context/primordials.js\",\"rejection_reason\":\"unsupported-activation-or-function-kind\",\"status\":\"unsupported\",\"parameter_count\":1,\"instruction_count\":25,\"entries\":60,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":29,\"interpreter_completions\":29,\"interpreter_inclusive_ns\":186138,\"opcodes\":[[\"LoadConst\",4],[\"LoadCapture\",6],[\"LoadName\",1],[\"MakeObject\",1],[\"CopyDataProperties\",1],[\"Move\",6],[\"Call\",4],[\"Return\",1],[\"JumpTrue\",1]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":36,\"function\":36,\"function_name\":\"\",\"source_name\":\"/workspace/quench/target/production/node/lib/internal/per_context/primordials.js\",\"rejection_reason\":\"unsupported-activation-or-function-kind\",\"status\":\"unsupported\",\"parameter_count\":1,\"instruction_count\":74,\"entries\":34,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":3,\"interpreter_completions\":3,\"interpreter_inclusive_ns\":20831,\"opcodes\":[[\"CloneEnv\",1],[\"LoadConst\",6],[\"StoreEnvLocal\",1],[\"LoadCapture\",12],[\"LoadName\",1],[\"MakeClosure\",1],[\"MakeObject\",1],[\"InitializeTdz\",1],[\"GetField\",9],[\"CopyDataProperties\",1],[\"Binary\",4],[\"Unary\",1],[\"Move\",6],[\"Call\",7],[\"Jump\",1],[\"JumpFalse\",3],[\"JumpBinaryFalse\",1],[\"Return\",1],[\"SetFieldStrict\",1],[\"LoadLocalPlain\",10],[\"StoreLocalPlain\",3],[\"JumpTrue\",2]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":37,\"function\":18,\"function_name\":\"makeNodeErrorWithCode\",\"source_name\":\"/workspace/quench/target/production/node/lib/internal/errors.js\",\"rejection_reason\":\"unsupported-activation-or-function-kind\",\"status\":\"unsupported\",\"parameter_count\":2,\"instruction_count\":203,\"entries\":312,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":281,\"interpreter_completions\":281,\"interpreter_inclusive_ns\":3248602,\"opcodes\":[[\"CloneEnv\",6],[\"LoadConst\",16],[\"LoadEnvLocal\",20],[\"StoreEnvLocal\",35],[\"LoadCapture\",5],[\"LoadName\",6],[\"MakeClosure\",15],[\"SetFunctionName\",3],[\"SetFunctionNameKey\",6],[\"InitializeTdz\",5],[\"GetField\",13],[\"ToPropertyKey\",6],[\"Binary\",5],[\"Unary\",3],[\"Move\",15],[\"Call\",8],[\"Jump\",5],[\"JumpFalse\",3],[\"JumpBinaryFalse\",1],[\"Return\",4],[\"ValidateClassHeritage\",3],[\"StoreLocalPlain\",3],[\"JumpTrue\",5],[\"DefinePropertyRecord\",12]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":37,\"function\":37,\"function_name\":\"hideStackFrames\",\"source_name\":\"/workspace/quench/target/production/node/lib/internal/errors.js\",\"rejection_reason\":\"unsupported-activation-or-function-kind\",\"status\":\"unsupported\",\"parameter_count\":1,\"instruction_count\":11,\"entries\":46,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":15,\"interpreter_completions\":15,\"interpreter_inclusive_ns\":13951,\"opcodes\":[[\"LoadConst\",1],[\"LoadEnvLocal\",4],[\"StoreEnvLocal\",2],[\"MakeClosure\",1],[\"Return\",2],[\"SetFieldStrict\",1]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":37,\"function\":38,\"function_name\":\"wrappedFn\",\"source_name\":\"/workspace/quench/target/production/node/lib/internal/errors.js\",\"rejection_reason\":\"unsupported-activation-or-function-kind\",\"status\":\"unsupported\",\"parameter_count\":1,\"instruction_count\":27,\"entries\":60,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":29,\"interpreter_completions\":29,\"interpreter_inclusive_ns\":133260,\"opcodes\":[[\"LoadConst\",1],[\"LoadLocal\",5],[\"StoreLocal\",2],[\"LoadCapture\",5],[\"LoadThis\",1],[\"InitializeTdz\",2],[\"GetField\",1],[\"Move\",4],[\"Call\",2],[\"Jump\",1],[\"JumpFalse\",1],[\"Return\",1],[\"Throw\",1]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":37,\"function\":39,\"function_name\":\"E\",\"source_name\":\"/workspace/quench/target/production/node/lib/internal/errors.js\",\"rejection_reason\":\"unsupported-activation-or-function-kind\",\"status\":\"unsupported\",\"parameter_count\":4,\"instruction_count\":69,\"entries\":317,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":286,\"interpreter_completions\":286,\"interpreter_inclusive_ns\":4608159,\"opcodes\":[[\"LoadConst\",1],[\"LoadEnvLocal\",21],[\"StoreEnvLocal\",5],[\"LoadCapture\",8],[\"MakeClosure\",2],[\"InitializeTdz\",5],[\"GetField\",7],[\"SetIndex\",1],[\"Move\",2],[\"Call\",8],[\"Jump\",2],[\"JumpFalse\",2],[\"JumpBinaryFalse\",3],[\"Return\",1],[\"SetFieldStrict\",1]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":37,\"function\":42,\"function_name\":\"getExpectedArgumentLength\",\"source_name\":\"/workspace/quench/target/production/node/lib/internal/errors.js\",\"rejection_reason\":null,\"status\":\"unsupported\",\"parameter_count\":1,\"instruction_count\":17,\"entries\":255,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":263,\"interpreter_completions\":263,\"interpreter_inclusive_ns\":498176,\"opcodes\":[[\"LoadConst\",2],[\"LoadCapture\",1],[\"CreateRegExpLiteral\",1],[\"IncDec\",1],[\"Move\",1],[\"Call\",1],[\"Jump\",1],[\"JumpBinaryFalse\",1],[\"Return\",2],[\"LoadLocalPlain\",3],[\"StoreLocalPlain\",3]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":38,\"function\":3,\"function_name\":\"assert\",\"source_name\":\"/workspace/quench/target/production/node/lib/internal/assert.js\",\"rejection_reason\":null,\"status\":\"hot\",\"parameter_count\":2,\"instruction_count\":9,\"entries\":9,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":9,\"interpreter_completions\":9,\"interpreter_inclusive_ns\":872,\"opcodes\":[[\"LoadConst\",1],[\"LoadCapture\",1],[\"Move\",1],[\"Call\",1],[\"Construct\",1],[\"Return\",1],[\"Throw\",1],[\"StoreLocalPlain\",1],[\"JumpTrue\",1]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":41,\"function\":4,\"function_name\":\"parseFileMode\",\"source_name\":\"/workspace/quench/target/production/node/lib/internal/validators.js\",\"rejection_reason\":null,\"status\":\"hot\",\"parameter_count\":3,\"instruction_count\":28,\"entries\":5,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":5,\"interpreter_completions\":5,\"interpreter_inclusive_ns\":33791,\"opcodes\":[[\"LoadConst\",2],[\"LoadCapture\",6],[\"Binary\",2],[\"Unary\",1],[\"Move\",7],[\"Call\",3],[\"Construct\",1],[\"JumpBinaryFalse\",3],[\"Return\",1],[\"Throw\",1],[\"JumpTrue\",1]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":43,\"function\":4,\"function_name\":\"isUint8Array\",\"source_name\":\"/workspace/quench/target/production/node/lib/internal/util/types.js\",\"rejection_reason\":null,\"status\":\"hot\",\"parameter_count\":1,\"instruction_count\":6,\"entries\":5,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":5,\"interpreter_completions\":5,\"interpreter_inclusive_ns\":15273,\"opcodes\":[[\"LoadConst\",1],[\"LoadCapture\",1],[\"Binary\",1],[\"Move\",1],[\"Call\",1],[\"Return\",1]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":76,\"function\":23,\"function_name\":\"ownMember\",\"source_name\":\"/workspace/quench/target/production/node/lib/internal/webidl.js\",\"rejection_reason\":null,\"status\":\"hot\",\"parameter_count\":2,\"instruction_count\":11,\"entries\":2,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":2,\"interpreter_completions\":2,\"interpreter_inclusive_ns\":4197,\"opcodes\":[[\"LoadConst\",1],[\"LoadCapture\",1],[\"LoadName\",1],[\"GetIndex\",1],[\"Move\",2],[\"Call\",1],[\"JumpFalse\",1],[\"Return\",3]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":80,\"function\":10,\"function_name\":\"allocate\",\"source_name\":\"/workspace/quench/target/production/node/lib/buffer.js\",\"rejection_reason\":null,\"status\":\"hot\",\"parameter_count\":1,\"instruction_count\":33,\"entries\":5,\"numeric_entries\":5,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":5,\"interpreter_completions\":4,\"interpreter_inclusive_ns\":59819,\"opcodes\":[[\"LoadConst\",1],[\"LoadCapture\",12],[\"StoreCapture\",1],[\"GetField\",1],[\"Binary\",4],[\"Move\",2],[\"Call\",3],[\"Construct\",2],[\"JumpBinaryFalse\",3],[\"Return\",2],[\"LoadLocalPlain\",1],[\"StoreLocalPlain\",1]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":80,\"function\":12,\"function_name\":\"fromStringFast\",\"source_name\":\"/workspace/quench/target/production/node/lib/buffer.js\",\"rejection_reason\":null,\"status\":\"hot\",\"parameter_count\":2,\"instruction_count\":57,\"entries\":1,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":1,\"interpreter_completions\":1,\"interpreter_inclusive_ns\":49144,\"opcodes\":[[\"LoadConst\",1],[\"LoadCapture\",14],[\"StoreCapture\",1],[\"GetField\",4],[\"Binary\",5],[\"Move\",6],[\"Call\",6],[\"Construct\",1],[\"JumpBinaryFalse\",4],[\"Return\",2],[\"LoadLocalPlain\",8],[\"StoreLocalPlain\",5]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":80,\"function\":14,\"function_name\":\"fromString\",\"source_name\":\"/workspace/quench/target/production/node/lib/buffer.js\",\"rejection_reason\":null,\"status\":\"hot\",\"parameter_count\":2,\"instruction_count\":35,\"entries\":1,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":1,\"interpreter_completions\":0,\"interpreter_inclusive_ns\":0,\"opcodes\":[[\"LoadConst\",2],[\"LoadCapture\",5],[\"LoadName\",1],[\"GetField\",2],[\"Binary\",2],[\"Unary\",2],[\"Move\",5],[\"Call\",2],[\"Construct\",2],[\"Jump\",1],[\"JumpFalse\",1],[\"JumpBinaryFalse\",2],[\"Return\",1],[\"Throw\",1],[\"LoadLocalPlain\",1],[\"StoreLocalPlain\",3],[\"JumpTrue\",2]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":80,\"function\":15,\"function_name\":\"fromArrayBuffer\",\"source_name\":\"/workspace/quench/target/production/node/lib/buffer.js\",\"rejection_reason\":null,\"status\":\"hot\",\"parameter_count\":3,\"instruction_count\":36,\"entries\":6,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":6,\"interpreter_completions\":6,\"interpreter_inclusive_ns\":28302,\"opcodes\":[[\"LoadConst\",6],[\"LoadCapture\",4],[\"LoadName\",2],[\"GetField\",1],[\"Binary\",1],[\"Unary\",2],[\"Move\",4],[\"Call\",1],[\"Construct\",3],[\"Jump\",2],[\"JumpFalse\",1],[\"JumpBinaryFalse\",5],[\"Return\",1],[\"Throw\",2],[\"StoreLocalPlain\",1]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":80,\"function\":19,\"function_name\":\"getEncodingOps\",\"source_name\":\"/workspace/quench/target/production/node/lib/buffer.js\",\"rejection_reason\":null,\"status\":\"hot\",\"parameter_count\":1,\"instruction_count\":140,\"entries\":5,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":5,\"interpreter_completions\":5,\"interpreter_inclusive_ns\":13780,\"opcodes\":[[\"LoadConst\",8],[\"LoadLocal\",7],[\"StoreLocal\",1],[\"LoadCapture\",25],[\"GetField\",19],[\"Binary\",20],[\"Move\",13],[\"Call\",7],[\"Jump\",8],[\"JumpFalse\",6],[\"JumpBinaryFalse\",12],[\"Return\",1],[\"JumpTrue\",13]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":80,\"function\":43,\"function_name\":\"get\",\"source_name\":\"/workspace/quench/target/production/node/lib/buffer.js\",\"rejection_reason\":null,\"status\":\"hot\",\"parameter_count\":0,\"instruction_count\":4,\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":1,\"interpreter_completions\":1,\"interpreter_inclusive_ns\":741,\"opcodes\":[[\"LoadConst\",1],[\"LoadCapture\",1],[\"Return\",2]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":81,\"function\":91,\"function_name\":\"\",\"source_name\":\"/workspace/quench/target/production/node/lib/internal/util/inspect.js\",\"rejection_reason\":\"unsupported-activation-or-function-kind\",\"status\":\"unsupported\",\"parameter_count\":1,\"instruction_count\":6,\"entries\":130,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":99,\"interpreter_completions\":99,\"interpreter_inclusive_ns\":91226,\"opcodes\":[[\"LoadCapture\",1],[\"CreateRegExpLiteral\",1],[\"Binary\",1],[\"Move\",2],[\"Call\",1]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":82,\"function\":3,\"function_name\":\"\",\"source_name\":\"internal/bootstrap/realm.js\",\"rejection_reason\":\"unsupported-activation-or-function-kind\",\"status\":\"unsupported\",\"parameter_count\":1,\"instruction_count\":10,\"entries\":72,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":41,\"interpreter_completions\":41,\"interpreter_inclusive_ns\":68094,\"opcodes\":[[\"LoadLocal\",3],[\"StoreLocal\",1],[\"LoadCapture\",1],[\"MakeArray\",1],[\"DefineArrayElement\",2],[\"Construct\",1],[\"Return\",1]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":82,\"function\":4,\"function_name\":\"\",\"source_name\":\"internal/bootstrap/realm.js\",\"rejection_reason\":\"unsupported-activation-or-function-kind\",\"status\":\"unsupported\",\"parameter_count\":1,\"instruction_count\":21,\"entries\":72,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":41,\"interpreter_completions\":41,\"interpreter_inclusive_ns\":39580,\"opcodes\":[[\"LoadConst\",5],[\"LoadLocal\",2],[\"StoreLocal\",1],[\"LoadCapture\",1],[\"LoadName\",1],[\"LoadThis\",1],[\"MakeObject\",1],[\"Binary\",2],[\"Call\",1],[\"Return\",1],[\"SetThisFieldStrict\",5]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":83,\"function\":102,\"function_name\":\"markAsUntransferable\",\"source_name\":\"/workspace/quench/target/production/node/lib/internal/buffer.js\",\"rejection_reason\":null,\"status\":\"hot\",\"parameter_count\":1,\"instruction_count\":25,\"entries\":1,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":1,\"interpreter_completions\":1,\"interpreter_inclusive_ns\":7622,\"opcodes\":[[\"LoadConst\",3],[\"LoadCapture\",4],[\"SetIndex\",1],[\"Binary\",3],[\"Unary\",2],[\"Move\",4],[\"Call\",2],[\"JumpFalse\",3],[\"Return\",2],[\"JumpTrue\",1]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":83,\"function\":104,\"function_name\":\"createUnsafeBuffer\",\"source_name\":\"/workspace/quench/target/production/node/lib/internal/buffer.js\",\"rejection_reason\":null,\"status\":\"hot\",\"parameter_count\":1,\"instruction_count\":11,\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":1,\"interpreter_completions\":1,\"interpreter_inclusive_ns\":43706,\"opcodes\":[[\"LoadConst\",1],[\"LoadCapture\",3],[\"Move\",2],[\"Call\",1],[\"Construct\",2],[\"JumpBinaryFalse\",1],[\"Return\",1]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":83,\"function\":106,\"function_name\":\"createUnsafeAlignedBuffer\",\"source_name\":\"/workspace/quench/target/production/node/lib/internal/buffer.js\",\"rejection_reason\":null,\"status\":\"hot\",\"parameter_count\":2,\"instruction_count\":20,\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":1,\"interpreter_completions\":1,\"interpreter_inclusive_ns\":52009,\"opcodes\":[[\"LoadConst\",1],[\"LoadCapture\",5],[\"Binary\",1],[\"Move\",3],[\"Call\",3],[\"Construct\",2],[\"JumpBinaryFalse\",1],[\"Return\",1],[\"LoadLocalPlain\",2],[\"StoreLocalPlain\",1]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":85,\"function\":2,\"function_name\":\"isBuildingSnapshot\",\"source_name\":\"/workspace/quench/target/production/node/lib/internal/v8/startup_snapshot.js\",\"rejection_reason\":null,\"status\":\"hot\",\"parameter_count\":0,\"instruction_count\":6,\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":1,\"interpreter_completions\":1,\"interpreter_inclusive_ns\":421,\"opcodes\":[[\"LoadConst\",2],[\"LoadCapture\",1],[\"GetIndex\",1],[\"Return\",2]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":144,\"function\":27,\"function_name\":\"toPathIfFileURL\",\"source_name\":\"/workspace/quench/target/production/node/lib/internal/url.js\",\"rejection_reason\":null,\"status\":\"hot\",\"parameter_count\":1,\"instruction_count\":10,\"entries\":15,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":15,\"interpreter_completions\":15,\"interpreter_inclusive_ns\":43167,\"opcodes\":[[\"LoadConst\",1],[\"LoadCapture\",2],[\"Move\",2],[\"Call\",2],[\"Return\",2],[\"JumpTrue\",1]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":157,\"function\":60,\"function_name\":\"\",\"source_name\":\"/workspace/quench/target/production/node/lib/zlib.js\",\"rejection_reason\":\"unsupported-activation-or-function-kind\",\"status\":\"unsupported\",\"parameter_count\":1,\"instruction_count\":31,\"entries\":170,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":139,\"interpreter_completions\":139,\"interpreter_inclusive_ns\":77905,\"opcodes\":[[\"LoadConst\",6],[\"LoadLocal\",3],[\"StoreLocal\",2],[\"LoadName\",2],[\"InitializeTdz\",2],[\"GetField\",1],[\"GetIndex\",2],[\"ToPropertyKey\",2],[\"Call\",1],[\"Construct\",2],[\"Jump\",2],[\"JumpFalse\",1],[\"JumpBinaryFalse\",2],[\"Return\",1],[\"Throw\",2]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":157,\"function\":63,\"function_name\":\"\",\"source_name\":\"/workspace/quench/target/production/node/lib/zlib.js\",\"rejection_reason\":\"unsupported-activation-or-function-kind\",\"status\":\"unsupported\",\"parameter_count\":1,\"instruction_count\":10,\"entries\":170,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":139,\"interpreter_completions\":139,\"interpreter_inclusive_ns\":45798,\"opcodes\":[[\"LoadConst\",2],[\"LoadCapture\",1],[\"GetField\",1],[\"GetIndex\",1],[\"Move\",1],[\"Call\",1],[\"Jump\",1],[\"JumpFalse\",1],[\"Return\",1]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":157,\"function\":65,\"function_name\":\"\",\"source_name\":\"/workspace/quench/target/production/node/lib/zlib.js\",\"rejection_reason\":\"unsupported-activation-or-function-kind\",\"status\":\"unsupported\",\"parameter_count\":1,\"instruction_count\":10,\"entries\":170,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":139,\"interpreter_completions\":139,\"interpreter_inclusive_ns\":72270,\"opcodes\":[[\"LoadConst\",2],[\"LoadCapture\",1],[\"GetField\",1],[\"GetIndex\",1],[\"Move\",1],[\"Call\",1],[\"Jump\",1],[\"JumpFalse\",1],[\"Return\",1]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":172,\"function\":12,\"function_name\":\"sameDescriptor\",\"source_name\":\"node:vm/shared.js\",\"rejection_reason\":\"unsupported-activation-or-function-kind\",\"status\":\"unsupported\",\"parameter_count\":2,\"instruction_count\":59,\"entries\":103,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":72,\"interpreter_completions\":72,\"interpreter_inclusive_ns\":34880,\"opcodes\":[[\"LoadConst\",1],[\"LoadName\",3],[\"GetField\",13],[\"Binary\",8],[\"Move\",5],[\"Call\",1],[\"JumpFalse\",6],[\"Return\",2],[\"LoadLocalPlain\",17],[\"StoreLocalPlain\",2],[\"JumpTrue\",1]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":24,\"function_name\":\"get\",\"source_name\":\"/workspace/quench/target/production/node/lib/internal/console/constructor.js\",\"rejection_reason\":\"unsupported-lowering-shape-or-codegen-failure\",\"status\":\"unsupported\",\"parameter_count\":0,\"instruction_count\":8,\"entries\":32,\"numeric_entries\":32,\"promotions\":1,\"compile_attempts\":1,\"compile_successes\":0,\"compile_ns\":2454,\"native_entries\":0,\"fallback_entries\":63,\"interpreter_completions\":63,\"interpreter_inclusive_ns\":7015,\"opcodes\":[[\"LoadConst\",1],[\"LoadCapture\",2],[\"StoreCapture\",1],[\"GetField\",1],[\"Return\",2],[\"JumpTrue\",1]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":30,\"function_name\":\"\",\"source_name\":\"/workspace/quench/target/production/node/lib/internal/console/constructor.js\",\"rejection_reason\":null,\"status\":\"hot\",\"parameter_count\":1,\"instruction_count\":42,\"entries\":17,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":17,\"interpreter_completions\":17,\"interpreter_inclusive_ns\":2402633,\"opcodes\":[[\"LoadConst\",1],[\"LoadCapture\",6],[\"LoadName\",2],[\"LoadThis\",2],[\"GetField\",3],[\"GetIndex\",1],[\"Move\",2],[\"Call\",4],[\"Jump\",1],[\"JumpFalse\",3],[\"JumpBinaryFalse\",2],[\"Return\",4],[\"SetFieldStrict\",1],[\"LoadLocalPlain\",6],[\"StoreLocalPlain\",4]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":45,\"function_name\":\"assert\",\"source_name\":\"/workspace/quench/target/production/node/lib/internal/console/constructor.js\",\"rejection_reason\":\"unsupported-activation-or-function-kind\",\"status\":\"unsupported\",\"parameter_count\":2,\"instruction_count\":44,\"entries\":384,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":353,\"interpreter_completions\":353,\"interpreter_inclusive_ns\":45416,\"opcodes\":[[\"Wide\",1],[\"LoadConst\",7],[\"LoadLocal\",9],[\"StoreLocal\",2],[\"LoadCapture\",2],[\"LoadName\",1],[\"LoadThis\",1],[\"InitializeTdz\",2],[\"GetField\",1],[\"GetIndex\",2],[\"SetIndex\",1],[\"Binary\",3],[\"Unary\",1],[\"Move\",3],[\"Call\",3],[\"Jump\",1],[\"JumpFalse\",2],[\"Return\",1],[\"JumpTrue\",1]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":178,\"function\":2,\"function_name\":\"\",\"source_name\":\"node:internal/console/adopt.js\",\"rejection_reason\":\"unsupported-activation-or-function-kind\",\"status\":\"reclaimed\",\"parameter_count\":1,\"instruction_count\":4,\"entries\":39,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":8,\"interpreter_completions\":8,\"interpreter_inclusive_ns\":751,\"opcodes\":[[\"Binary\",1],[\"Unary\",1],[\"LoadLocalPlain\",1],[\"StoreLocalPlain\",1]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":179,\"function\":2,\"function_name\":\"entry\",\"source_name\":\"node:perf_hooks.js\",\"rejection_reason\":\"unsupported-activation-or-function-kind\",\"status\":\"unsupported\",\"parameter_count\":5,\"instruction_count\":26,\"entries\":246,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":215,\"interpreter_completions\":215,\"interpreter_inclusive_ns\":2759428,\"opcodes\":[[\"CloneEnv\",1],[\"Wide\",2],[\"LoadEnvLocal\",10],[\"StoreEnvLocal\",6],[\"MakeClosure\",1],[\"MakeObject\",1],[\"Return\",1],[\"DefineField\",4]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":179,\"function\":4,\"function_name\":\"markTime\",\"source_name\":\"node:perf_hooks.js\",\"rejection_reason\":\"unsupported-activation-or-function-kind\",\"status\":\"unsupported\",\"parameter_count\":1,\"instruction_count\":46,\"entries\":123,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":92,\"interpreter_completions\":92,\"interpreter_inclusive_ns\":1219296,\"opcodes\":[[\"Wide\",1],[\"LoadConst\",5],[\"LoadCapture\",3],[\"LoadName\",2],[\"LoadNameCall\",1],[\"GetField\",2],[\"GetIndex\",2],[\"SetField\",1],[\"Binary\",3],[\"IncDec\",1],[\"Unary\",1],[\"Call\",2],[\"Construct\",1],[\"Jump\",1],[\"JumpBinaryFalse\",3],[\"Return\",3],[\"Throw\",1],[\"LoadLocalPlain\",9],[\"StoreLocalPlain\",4]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":179,\"function\":6,\"function_name\":\"mark\",\"source_name\":\"node:perf_hooks.js\",\"rejection_reason\":\"unsupported-activation-or-function-kind\",\"status\":\"unsupported\",\"parameter_count\":2,\"instruction_count\":61,\"entries\":123,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":92,\"interpreter_completions\":92,\"interpreter_inclusive_ns\":819063,\"opcodes\":[[\"Wide\",2],[\"LoadConst\",11],[\"LoadLocal\",7],[\"StoreLocal\",3],[\"LoadCapture\",3],[\"LoadNameCall\",1],[\"MakeObject\",1],[\"InitializeTdz\",3],[\"GetField\",2],[\"Binary\",4],[\"Move\",8],[\"Call\",3],[\"Jump\",2],[\"JumpBinaryFalse\",5],[\"Return\",2],[\"JumpTrue\",4]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":179,\"function\":7,\"function_name\":\"measure\",\"source_name\":\"node:perf_hooks.js\",\"rejection_reason\":\"unsupported-activation-or-function-kind\",\"status\":\"unsupported\",\"parameter_count\":3,\"instruction_count\":104,\"entries\":123,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":92,\"interpreter_completions\":92,\"interpreter_inclusive_ns\":5685081,\"opcodes\":[[\"LoadConst\",8],[\"LoadCapture\",7],[\"LoadName\",7],[\"LoadNameCall\",1],[\"GetField\",9],[\"Binary\",6],[\"Unary\",1],[\"Move\",2],[\"Call\",8],[\"Jump\",2],[\"JumpFalse\",2],[\"JumpBinaryFalse\",8],[\"Return\",2],[\"LoadLocalPlain\",27],[\"StoreLocalPlain\",13],[\"JumpTrue\",1]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":184,\"function\":14,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/utils/params.js\",\"rejection_reason\":null,\"status\":\"hot\",\"parameter_count\":0,\"instruction_count\":2,\"entries\":2,\"numeric_entries\":2,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":2,\"interpreter_completions\":2,\"interpreter_inclusive_ns\":360,\"opcodes\":[[\"LoadCapture\",1],[\"Return\",1]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":184,\"function\":15,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/utils/params.js\",\"rejection_reason\":null,\"status\":\"hot\",\"parameter_count\":0,\"instruction_count\":2,\"entries\":2,\"numeric_entries\":2,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":2,\"interpreter_completions\":2,\"interpreter_inclusive_ns\":211,\"opcodes\":[[\"LoadCapture\",1],[\"Return\",1]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":184,\"function\":23,\"function_name\":\"_parseStringParam\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/utils/params.js\",\"rejection_reason\":null,\"status\":\"hot\",\"parameter_count\":2,\"instruction_count\":18,\"entries\":2,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":2,\"interpreter_completions\":2,\"interpreter_inclusive_ns\":1812,\"opcodes\":[[\"LoadConst\",1],[\"LoadCapture\",1],[\"GetField\",3],[\"GetIndex\",1],[\"Move\",3],[\"Call\",3],[\"Return\",3],[\"LoadLocalPlain\",1],[\"StoreLocalPlain\",1],[\"JumpTrue\",1]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":184,\"function\":24,\"function_name\":\"_parseBooleanParam\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/utils/params.js\",\"rejection_reason\":null,\"status\":\"hot\",\"parameter_count\":2,\"instruction_count\":26,\"entries\":9,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":9,\"interpreter_completions\":9,\"interpreter_inclusive_ns\":20301,\"opcodes\":[[\"LoadConst\",1],[\"LoadCapture\",1],[\"GetField\",4],[\"GetIndex\",1],[\"Binary\",2],[\"Unary\",1],[\"Move\",4],[\"Call\",4],[\"Return\",2],[\"LoadLocalPlain\",2],[\"StoreLocalPlain\",2],[\"JumpTrue\",2]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":185,\"function\":3,\"function_name\":\"mean\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/JetStreamDriver.js\",\"rejection_reason\":null,\"status\":\"hot\",\"parameter_count\":1,\"instruction_count\":8,\"entries\":2,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":2,\"interpreter_completions\":2,\"interpreter_inclusive_ns\":56215,\"opcodes\":[[\"LoadConst\",1],[\"LoadCapture\",1],[\"GetField\",1],[\"Binary\",1],[\"Move\",1],[\"Call\",1],[\"Return\",1],[\"StoreLocalPlain\",1]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":185,\"function\":10,\"function_name\":\"uiFriendlyNumber\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/JetStreamDriver.js\",\"rejection_reason\":null,\"status\":\"hot\",\"parameter_count\":1,\"instruction_count\":11,\"entries\":8,\"numeric_entries\":8,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":8,\"interpreter_completions\":8,\"interpreter_inclusive_ns\":47762,\"opcodes\":[[\"LoadConst\",2],[\"LoadName\",1],[\"GetField\",2],[\"Move\",1],[\"Call\",2],[\"JumpFalse\",1],[\"Return\",2]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":185,\"function\":69,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/JetStreamDriver.js\",\"rejection_reason\":\"unsupported-activation-or-function-kind\",\"status\":\"unsupported\",\"parameter_count\":1,\"instruction_count\":109,\"entries\":111,\"numeric_entries\":2,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":80,\"interpreter_completions\":80,\"interpreter_inclusive_ns\":1336215,\"opcodes\":[[\"Wide\",21],[\"LoadConst\",17],[\"LoadLocal\",10],[\"StoreLocal\",9],[\"LoadCapture\",2],[\"LoadName\",3],[\"LoadThis\",3],[\"MakeArray\",2],[\"MakeObject\",2],[\"InitializeTdz\",9],[\"GetField\",4],[\"Unary\",2],[\"Move\",7],[\"Call\",3],[\"Construct\",2],[\"Jump\",1],[\"JumpBinaryFalse\",7],[\"Return\",1],[\"Throw\",2],[\"SetThisFieldStrict\",2]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":185,\"function\":72,\"function_name\":\"_processTags\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/JetStreamDriver.js\",\"rejection_reason\":\"unsupported-activation-or-function-kind\",\"status\":\"unsupported\",\"parameter_count\":1,\"instruction_count\":49,\"entries\":111,\"numeric_entries\":40,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":80,\"interpreter_completions\":80,\"interpreter_inclusive_ns\":504978,\"opcodes\":[[\"LoadConst\",7],[\"LoadName\",4],[\"MakeClosure\",1],[\"GetField\",8],[\"Binary\",4],[\"Move\",1],[\"Call\",7],[\"Construct\",2],[\"JumpBinaryFalse\",1],[\"Return\",2],[\"Throw\",1],[\"LoadLocalPlain\",8],[\"StoreLocalPlain\",2],[\"JumpTrue\",1]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":185,\"function\":73,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/JetStreamDriver.js\",\"rejection_reason\":\"unsupported-activation-or-function-kind\",\"status\":\"unsupported\",\"parameter_count\":1,\"instruction_count\":2,\"entries\":296,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":265,\"interpreter_completions\":265,\"interpreter_inclusive_ns\":113566,\"opcodes\":[[\"GetField\",1],[\"Call\",1]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":185,\"function\":90,\"function_name\":\"get prerunCode\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/JetStreamDriver.js\",\"rejection_reason\":null,\"status\":\"hot\",\"parameter_count\":0,\"instruction_count\":4,\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":1,\"interpreter_completions\":1,\"interpreter_inclusive_ns\":81,\"opcodes\":[[\"LoadConst\",2],[\"Return\",2]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":185,\"function\":92,\"function_name\":\"get prepareForNextIterationCode\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/JetStreamDriver.js\",\"rejection_reason\":null,\"status\":\"hot\",\"parameter_count\":0,\"instruction_count\":4,\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":1,\"interpreter_completions\":1,\"interpreter_inclusive_ns\":51,\"opcodes\":[[\"LoadConst\",2],[\"Return\",2]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":185,\"function\":138,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/JetStreamDriver.js\",\"rejection_reason\":\"unsupported-activation-or-function-kind\",\"status\":\"unsupported\",\"parameter_count\":1,\"instruction_count\":64,\"entries\":106,\"numeric_entries\":12,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":75,\"interpreter_completions\":75,\"interpreter_inclusive_ns\":2175749,\"opcodes\":[[\"Wide\",14],[\"LoadConst\",13],[\"LoadLocal\",3],[\"StoreLocal\",2],[\"LoadCapture\",1],[\"LoadName\",5],[\"LoadThis\",1],[\"MakeArray\",1],[\"MakeObject\",1],[\"SuperCallCheck\",1],[\"InitializeTdz\",2],[\"GetField\",2],[\"CopyDataProperties\",1],[\"SetIndex\",1],[\"Binary\",2],[\"Call\",4],[\"Construct\",2],[\"Jump\",1],[\"JumpFalse\",1],[\"JumpBinaryFalse\",2],[\"Return\",1],[\"Throw\",2],[\"InitializeThis\",1]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":185,\"function\":140,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/JetStreamDriver.js\",\"rejection_reason\":\"unsupported-lowering-shape-or-codegen-failure\",\"status\":\"unsupported\",\"parameter_count\":2,\"instruction_count\":6,\"entries\":32,\"numeric_entries\":32,\"promotions\":1,\"compile_attempts\":1,\"compile_successes\":0,\"compile_ns\":31718,\"native_entries\":0,\"fallback_entries\":668,\"interpreter_completions\":668,\"interpreter_inclusive_ns\":31142,\"opcodes\":[[\"LoadConst\",2],[\"Unary\",1],[\"Jump\",1],[\"JumpBinaryFalse\",1],[\"Return\",1]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":185,\"function\":143,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/JetStreamDriver.js\",\"rejection_reason\":\"unsupported-activation-or-function-kind\",\"status\":\"unsupported\",\"parameter_count\":1,\"instruction_count\":10,\"entries\":56,\"numeric_entries\":2,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":25,\"interpreter_completions\":25,\"interpreter_inclusive_ns\":844774,\"opcodes\":[[\"Wide\",1],[\"LoadConst\",2],[\"LoadLocal\",1],[\"LoadCapture\",1],[\"LoadName\",1],[\"Call\",1],[\"Return\",2],[\"InitializeThis\",1]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":191,\"function\":1,\"function_name\":\"run\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/simple/hash-map.js\",\"rejection_reason\":\"unsupported-opcode-or-control-flow\",\"status\":\"unsupported\",\"parameter_count\":0,\"instruction_count\":58,\"entries\":120,\"numeric_entries\":89,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":89,\"interpreter_completions\":89,\"interpreter_inclusive_ns\":134003573240,\"opcodes\":[[\"Wide\",4],[\"LoadConst\",9],[\"GetField\",5],[\"Binary\",13],[\"IncDec\",3],[\"Move\",2],[\"Call\",6],[\"Construct\",1],[\"Jump\",4],[\"JumpFalse\",1],[\"JumpBinaryFalse\",6],[\"Return\",1],[\"Throw\",3]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":191,\"function\":4,\"function_name\":\"computeHashCode\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/simple/hash-map.js\",\"rejection_reason\":null,\"status\":\"compiled\",\"parameter_count\":1,\"instruction_count\":59,\"entries\":64800000,\"numeric_entries\":64800000,\"promotions\":1,\"compile_attempts\":1,\"compile_successes\":1,\"compile_ns\":270638,\"native_entries\":64800000,\"fallback_entries\":0,\"interpreter_completions\":0,\"interpreter_inclusive_ns\":0,\"opcodes\":[[\"Wide\",1],[\"LoadConst\",12],[\"LoadLocal\",6],[\"StoreLocal\",1],[\"LoadName\",1],[\"GetField\",2],[\"Binary\",13],[\"IncDec\",1],[\"Unary\",1],[\"Move\",1],[\"Call\",2],[\"Construct\",1],[\"Jump\",2],[\"JumpBinaryFalse\",2],[\"Return\",5],[\"Throw\",1],[\"JumpTrue\",7]],\"code_bytes\":4096}\nQUENCH_JS_JIT_STATS {\"program\":191,\"function\":5,\"function_name\":\"equals\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/simple/hash-map.js\",\"rejection_reason\":null,\"status\":\"compiled\",\"parameter_count\":2,\"instruction_count\":37,\"entries\":54000000,\"numeric_entries\":54000000,\"promotions\":1,\"compile_attempts\":1,\"compile_successes\":1,\"compile_ns\":391310,\"native_entries\":53999969,\"fallback_entries\":31,\"interpreter_completions\":31,\"interpreter_inclusive_ns\":12565,\"opcodes\":[[\"LoadConst\",7],[\"LoadLocal\",4],[\"StoreLocal\",2],[\"GetField\",1],[\"Binary\",5],[\"Unary\",5],[\"Move\",1],[\"Call\",1],[\"Jump\",2],[\"JumpBinaryFalse\",1],[\"Return\",3],[\"JumpTrue\",5]],\"code_bytes\":4096}\nQUENCH_JS_JIT_STATS {\"program\":191,\"function\":6,\"function_name\":\"Entry\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/simple/hash-map.js\",\"rejection_reason\":\"unsupported-opcode-or-control-flow\",\"status\":\"unsupported\",\"parameter_count\":3,\"instruction_count\":7,\"entries\":47,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":16,\"interpreter_completions\":16,\"interpreter_inclusive_ns\":43127,\"opcodes\":[[\"Wide\",4],[\"LoadConst\",2],[\"Return\",1]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":191,\"function\":7,\"function_name\":\"AbstractMapIterator\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/simple/hash-map.js\",\"rejection_reason\":\"unsupported-opcode-or-control-flow\",\"status\":\"unsupported\",\"parameter_count\":1,\"instruction_count\":13,\"entries\":120,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":89,\"interpreter_completions\":89,\"interpreter_inclusive_ns\":437914,\"opcodes\":[[\"Wide\",7],[\"LoadConst\",5],[\"Return\",1]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":191,\"function\":8,\"function_name\":\"EntryIterator\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/simple/hash-map.js\",\"rejection_reason\":null,\"status\":\"hot\",\"parameter_count\":1,\"instruction_count\":7,\"entries\":120,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":120,\"interpreter_completions\":120,\"interpreter_inclusive_ns\":1349650,\"opcodes\":[[\"LoadConst\",1],[\"LoadCapture\",1],[\"LoadThis\",1],[\"GetField\",1],[\"Move\",1],[\"Call\",1],[\"Return\",1]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":191,\"function\":11,\"function_name\":\"EntrySet\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/simple/hash-map.js\",\"rejection_reason\":\"unsupported-opcode-or-control-flow\",\"status\":\"unsupported\",\"parameter_count\":1,\"instruction_count\":3,\"entries\":120,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":89,\"interpreter_completions\":89,\"interpreter_inclusive_ns\":346242,\"opcodes\":[[\"Wide\",1],[\"LoadConst\",1],[\"Return\",1]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":191,\"function\":17,\"function_name\":\"get key\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/simple/hash-map.js\",\"rejection_reason\":\"unsupported-opcode-or-control-flow\",\"status\":\"unsupported\",\"parameter_count\":0,\"instruction_count\":4,\"entries\":10800000,\"numeric_entries\":10799969,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":10799969,\"interpreter_completions\":10799969,\"interpreter_inclusive_ns\":481860609,\"opcodes\":[[\"Wide\",1],[\"LoadConst\",1],[\"Return\",2]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":191,\"function\":18,\"function_name\":\"get value\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/simple/hash-map.js\",\"rejection_reason\":\"unsupported-opcode-or-control-flow\",\"status\":\"unsupported\",\"parameter_count\":0,\"instruction_count\":4,\"entries\":10800000,\"numeric_entries\":10799969,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":10799969,\"interpreter_completions\":10799969,\"interpreter_inclusive_ns\":400436627,\"opcodes\":[[\"Wide\",1],[\"LoadConst\",1],[\"Return\",2]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":191,\"function\":48,\"function_name\":\"_findKeyEntry\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/simple/hash-map.js\",\"rejection_reason\":\"unsupported-opcode-or-control-flow\",\"status\":\"unsupported\",\"parameter_count\":3,\"instruction_count\":23,\"entries\":54000000,\"numeric_entries\":53999969,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"fallback_entries\":53999969,\"interpreter_completions\":53999969,\"interpreter_inclusive_ns\":26906795176,\"opcodes\":[[\"Wide\",4],[\"LoadConst\",1],[\"LoadCapture\",1],[\"GetIndex\",1],[\"Binary\",1],[\"Unary\",1],[\"Move\",7],[\"Call\",1],[\"Jump\",1],[\"JumpFalse\",2],[\"Return\",2],[\"JumpTrue\",1]],\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":191,\"function\":61,\"function_name\":\"runIteration\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/simple/hash-map.js\",\"rejection_reason\":\"unsupported-lowering-shape-or-codegen-failure\",\"status\":\"unsupported\",\"parameter_count\":0,\"instruction_count\":5,\"entries\":32,\"numeric_entries\":32,\"promotions\":1,\"compile_attempts\":1,\"compile_successes\":0,\"compile_ns\":12198,\"native_entries\":0,\"fallback_entries\":120,\"interpreter_completions\":120,\"interpreter_inclusive_ns\":181063646074,\"opcodes\":[[\"LoadConst\",2],[\"LoadNameCall\",1],[\"Call\",1],[\"Return\",1]],\"code_bytes\":0}\n"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "complete": true,
+  "qualification_ready": false
+}

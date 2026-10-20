@@ -2216,6 +2216,10 @@ pub(super) struct CompiledJsFunction {
 #[derive(Clone, Copy)]
 enum CompiledJsEntry {
     Number(unsafe extern "C" fn(*const f64) -> f64),
+    Int32Identity {
+        entry: unsafe extern "C" fn(*const f64) -> f64,
+        return_pc: u32,
+    },
     CaptureNumber(unsafe extern "C" fn(f64) -> f64),
     NumberInterruptible(
         unsafe extern "C" fn(*const f64, *const std::sync::atomic::AtomicBool, *mut u32) -> f64,
@@ -2245,6 +2249,10 @@ enum CompiledJsEntry {
 
 pub(super) enum CompiledJsResult {
     Number(f64),
+    Int32Identity {
+        value: f64,
+        return_pc: u32,
+    },
     StringReturnPc(u32),
     Boolean(bool),
     FieldReject {
@@ -2271,6 +2279,19 @@ impl CompiledJsFunction {
                     )
                 };
                 (CompiledJsEntry::Number(entry), Vec::new(), None)
+            }
+            super::js_compiled::JsJitResultKind::Int32Identity(return_pc) => {
+                // SAFETY: the guarded integer identity compiler emits the Number ABI.
+                let entry = unsafe {
+                    std::mem::transmute::<*mut u8, unsafe extern "C" fn(*const f64) -> f64>(
+                        code.pointer,
+                    )
+                };
+                (
+                    CompiledJsEntry::Int32Identity { entry, return_pc },
+                    Vec::new(),
+                    None,
+                )
             }
             super::js_compiled::JsJitResultKind::CaptureNumber(capture) => {
                 // SAFETY: the capture identity compiler emits `fn(f64) -> f64`.
@@ -2404,6 +2425,10 @@ impl CompiledJsFunction {
         self.params
     }
 
+    pub(super) fn is_int32_identity(&self) -> bool {
+        matches!(self.entry, CompiledJsEntry::Int32Identity { .. })
+    }
+
     pub(super) fn field_argument(&self) -> Option<super::js_compiled::JsJitFieldArgument> {
         self.field_argument
     }
@@ -2430,6 +2455,12 @@ impl CompiledJsFunction {
             match self.entry {
                 CompiledJsEntry::Number(entry) => {
                     Some(CompiledJsResult::Number(entry(arguments.as_ptr())))
+                }
+                CompiledJsEntry::Int32Identity { entry, return_pc } => {
+                    Some(CompiledJsResult::Int32Identity {
+                        value: entry(arguments.as_ptr()),
+                        return_pc,
+                    })
                 }
                 CompiledJsEntry::CaptureNumber(_) => None,
                 CompiledJsEntry::NumberInterruptible(entry) => {
@@ -6257,6 +6288,8 @@ impl<H: Host> Vm<H> {
             compiled_tier.is_none() && super::js_compiled::has_numeric_loop_candidate(function);
         let int32_bitwise_candidate =
             super::js_compiled::has_int32_bitwise_candidate(program, function);
+        let int32_identity_candidate =
+            super::js_compiled::int32_identity_return_candidate(program, function).is_some();
         let capture_argument = match compiled_tier {
             Some(compiled) => compiled.capture_argument(),
             None => super::js_compiled::number_capture_candidate(function),
@@ -6379,6 +6412,7 @@ impl<H: Host> Vm<H> {
         if tier.is_none()
             && capture_argument.is_none()
             && !super::js_compiled::function_candidate(function, &program.atoms)
+            && !int32_identity_candidate
         {
             let reason = super::js_compiled::candidate_rejection_reason(program, function_id);
             let report_entries = self
@@ -6434,6 +6468,7 @@ impl<H: Host> Vm<H> {
                     function_id,
                     numeric,
                     (numeric && (numeric_loop_candidate || field_argument.is_some()))
+                        || int32_identity_candidate
                         || (field_reject_candidate && arguments.len() == 1)
                         || capture_number.is_some()
                         || (!capture_arguments.is_empty() && captures_numeric)
@@ -6497,6 +6532,14 @@ impl<H: Host> Vm<H> {
             }
         };
 
+        if compiled.is_int32_identity()
+            && !arguments
+                .first()
+                .is_some_and(|value| super::js_compiled::is_i32_number(*value))
+        {
+            return None;
+        }
+
         if compiled.params() != params {
             return None;
         }
@@ -6523,6 +6566,14 @@ impl<H: Host> Vm<H> {
                     return None;
                 }
                 Some((last_pc, terminal.register_a(), Value::number(value)))
+            }
+            CompiledJsResult::Int32Identity { value, return_pc } => {
+                let return_pc = usize::try_from(return_pc).ok()?;
+                let instruction = function.code.get(return_pc)?.as_wide();
+                if instruction.op() != Op::Return {
+                    return None;
+                }
+                Some((return_pc, instruction.register_a(), Value::number(value)))
             }
             CompiledJsResult::StringReturnPc(return_pc) => {
                 let return_pc = usize::try_from(return_pc).ok()?;
@@ -6641,6 +6692,7 @@ impl<H: Host> Vm<H> {
         // captures. Those artifacts must use the ordinary frame-entry path,
         // where the capture guards and ABI values are assembled together.
         if compiled.field_argument().is_some()
+            || compiled.is_int32_identity()
             || compiled.is_capture_number()
             || !compiled.capture_arguments().is_empty()
             || compiled.is_string_transform()
@@ -6663,6 +6715,7 @@ impl<H: Host> Vm<H> {
         }
         match compiled.call(&numeric_arguments, interrupt)? {
             CompiledJsResult::Number(value) => Some(Value::number(value)),
+            CompiledJsResult::Int32Identity { .. } => return None,
             CompiledJsResult::Boolean(value) => {
                 Some(if value { Value::TRUE } else { Value::FALSE })
             }

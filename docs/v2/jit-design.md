@@ -750,3 +750,24 @@ validated and recorded Quench at 4.35 Score / 74.3 MiB, Bun at 467.12 / 95.9
 MiB and Node at 414.81 / 161.4 MiB. The RSS bar is below both peers, while
 Score remains far behind; this is diagnostic progress, not a benchmark win.
 Raw report: `evidence/jit-jetstream3-2026-10-20/known-call-fast-path/hash-map-jit-1round.json`.
+
+## Guarded Int32 identity return
+
+The JS tier now recognizes an effect-free Number path through a `typeof`
+switch when it checks `(arg | 0) == arg` and returns the original argument.
+The matcher follows only the Number dispatch path, rejecting effects on that
+path while allowing effects in skipped type arms. At runtime, an Int32 guard
+protects the native identity entry; fractions, strings, objects and values
+outside the Int32 range stay in the ordinary interpreter. A focused regression
+test covers both the native integer arm and those fallback cases.
+
+On a one-round diagnostic run of JetStream `hash-map`, `computeHashCode`
+compiled once and took 64.8 million native entries. `_findKeyEntry` still took
+54 million interpreter entries and about 26.9 seconds inclusive. In the
+separate clean one-round screen Quench scored 3.51 at 73.9 MiB, Bun scored
+471.06 at 111.5 MiB, and Node scored 456.95 at 172.6 MiB. These single rounds
+cannot establish a change against the prior independent screen, which scored
+Quench 4.35. This is not a score win; the remaining gap is concentrated in
+the linked-entry lookup loop and its heap and call work. The raw reports and
+limitations are documented in
+`evidence/jit-jetstream3-2026-10-20/int32-identity-arm/README.md`.

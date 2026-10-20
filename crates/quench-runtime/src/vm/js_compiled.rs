@@ -5,8 +5,8 @@
 //! can load its rooted constant and preserve ordinary frame unwinding.
 
 use crate::bytecode::{
-    Constant, FieldBase, FieldLookup, Function, Op, OperandKind, ProgramKind, RETURN_REGISTER,
-    ResidualProgram, WideInstruction,
+    Constant, FieldBase, FieldLookup, Function, Op, Operand, OperandKind, ProgramKind,
+    RETURN_REGISTER, ResidualProgram, WideInstruction,
 };
 use cranelift_codegen::ir::{
     self, AbiParam, InstBuilder, UserFuncName, condcodes::FloatCC, immediates::Ieee64, types,
@@ -42,6 +42,8 @@ pub(super) struct JsJitCaptureArgument {
 
 pub(super) enum JsJitResultKind {
     Number,
+    /// An Int32-guarded return path proven by the bytecode's `typeof` switch.
+    Int32Identity(u32),
     CaptureNumber(JsJitCaptureArgument),
     NumberInterruptible,
     StringHashLoop,
@@ -85,6 +87,9 @@ pub(super) fn compile(program: &ResidualProgram, function_id: u32) -> Option<JsJ
         return None;
     }
     let function = program.functions.get(function_id as usize)?;
+    if let Some(return_pc) = int32_identity_return_candidate(program, function) {
+        return compile_int32_identity(function_id, return_pc);
+    }
     if let Some(capture) = number_capture_candidate(function) {
         return compile_capture_number(function_id, capture);
     }
@@ -119,6 +124,339 @@ pub(super) fn compile(program: &ResidualProgram, function_id: u32) -> Option<JsJ
     } else {
         compile_numeric(program, function_id)
     }
+}
+
+/// Recognize a common integer fast arm without depending on source names or
+/// benchmark layout: `typeof arg === "number"` dispatches to
+/// `(arg | 0) == arg ? arg : ...`. The VM additionally guards the input as an
+/// Int32 before taking the native return. Instructions before the number arm
+/// must be side-effect free, and the number arm must return the original arg.
+pub(super) fn int32_identity_return_candidate(
+    program: &ResidualProgram,
+    function: &Function,
+) -> Option<u32> {
+    if function.params != 1
+        || function.code.len() > MAX_INSTRUCTIONS
+        || function.registers as usize > MAX_REGISTERS
+        || !eligible(function, &program.atoms)
+    {
+        return None;
+    }
+    let code = &function.code;
+    let first = code.first()?.as_wide();
+    if first.op() != Op::Unary
+        || first.unary_operator() != oxc_ast::ast::UnaryOperator::Typeof as u32
+        || first.register_b() != 0
+    {
+        return None;
+    }
+    let type_local_store = code.get(1)?.as_wide();
+    if !matches!(type_local_store.op(), Op::StoreLocal | Op::StoreLocalPlain)
+        || type_local_store.register_a() != first.result_register()
+    {
+        return None;
+    }
+    let type_local = type_local_store.local_slot();
+    let mut number_target = None;
+    for pc in 0..code.len().saturating_sub(1) {
+        let compare = code[pc].as_wide();
+        let branch = code[pc + 1].as_wide();
+        if compare.op() != Op::Binary
+            || !matches!(compare.binary_operator(), x if x == BinaryOperator::Equality as u32 || x == BinaryOperator::StrictEquality as u32)
+            || branch.op() != Op::JumpTrue
+            || branch.register_a() != compare.result_register()
+        {
+            continue;
+        }
+        let Some(type_load) = pc
+            .checked_sub(1)
+            .and_then(|index| code.get(index))
+            .map(|p| p.as_wide())
+        else {
+            continue;
+        };
+        if !matches!(type_load.op(), Op::LoadLocal | Op::LoadLocalPlain)
+            || type_load.local_slot() != type_local
+        {
+            continue;
+        }
+        let type_register = type_load.result_register();
+        let string_operand = if compare.operand_b().kind() == Some(OperandKind::Register)
+            && compare.operand_b().register_index() == Some(type_register)
+        {
+            compare.operand_c()
+        } else if compare.operand_c().kind() == Some(OperandKind::Register)
+            && compare.operand_c().register_index() == Some(type_register)
+        {
+            compare.operand_b()
+        } else {
+            continue;
+        };
+        if !string_operand_is_number_type(program, function, pc, string_operand) {
+            continue;
+        }
+        let target = usize::try_from(branch.jump_target()).ok()?;
+        let fast = code.get(target)?.as_wide();
+        if fast.op() != Op::Binary
+            || fast.binary_operator() != BinaryOperator::BitwiseOR as u32
+            || !operand_is_parameter(fast.operand_b(), 0)
+            || !operand_is_number(program, fast.operand_c(), 0.0)
+        {
+            continue;
+        }
+        let check = code.get(target + 1)?.as_wide();
+        let ret = code.get(target + 2)?.as_wide();
+        if check.op() != Op::JumpBinaryFalse
+            || check.binary_operator_field() != BinaryOperator::Equality as u32
+            || !operands_are(
+                check.operand_b(),
+                check.operand_c(),
+                fast.result_register(),
+                0,
+            )
+            || ret.op() != Op::Return
+            || ret.register_a() != 0
+            || usize::try_from(check.jump_target()).ok()? != target + 3
+        {
+            continue;
+        }
+        if number_type_dispatch_reaches(program, function, target) == Some(true) {
+            number_target = Some(u32::try_from(target + 2).ok()?);
+            break;
+        }
+    }
+    number_target
+}
+
+#[derive(Clone)]
+enum NumberDispatchValue {
+    TypeNumber,
+    String(String),
+    Boolean(bool),
+    Other,
+}
+
+/// Interpret only the pure prefix executed when `typeof arg` is `"number"`.
+/// Branches into other type arms may contain arbitrary effects; they are safe
+/// because this proof follows the Number path and rejects effects on that path.
+fn number_type_dispatch_reaches(
+    program: &ResidualProgram,
+    function: &Function,
+    target: usize,
+) -> Option<bool> {
+    let mut registers = vec![None; usize::from(function.registers)];
+    let mut locals = vec![None; usize::from(function.locals)];
+    let mut pc = 0_usize;
+    let mut fuel = function.code.len().saturating_mul(2);
+    while fuel > 0 {
+        if pc == target {
+            return Some(true);
+        }
+        fuel -= 1;
+        let Some(packed) = function.code.get(pc) else {
+            return Some(false);
+        };
+        let instruction = packed.as_wide();
+        let next = pc.saturating_add(1);
+        let read = |operand: Operand,
+                    registers: &[Option<NumberDispatchValue>]|
+         -> Option<NumberDispatchValue> {
+            match operand.kind()? {
+                OperandKind::Register => registers
+                    .get(usize::from(operand.register_index()?))?
+                    .clone(),
+                OperandKind::Constant => {
+                    match program.constants.get(usize::from(operand.payload()))? {
+                        Constant::String(value) => Some(NumberDispatchValue::String(value.clone())),
+                        _ => Some(NumberDispatchValue::Other),
+                    }
+                }
+                _ => None,
+            }
+        };
+        match instruction.op() {
+            Op::Unary
+                if pc == 0
+                    && instruction.unary_operator()
+                        == oxc_ast::ast::UnaryOperator::Typeof as u32
+                    && instruction.register_b() == 0 =>
+            {
+                *registers
+                    .get_mut(usize::from(instruction.result_register()))
+                    .unwrap() = Some(NumberDispatchValue::TypeNumber);
+            }
+            Op::LoadConst => {
+                let value = match program.constants.get(instruction.constant_index())? {
+                    Constant::String(value) => NumberDispatchValue::String(value.clone()),
+                    _ => NumberDispatchValue::Other,
+                };
+                *registers.get_mut(usize::from(instruction.result_register()))? = Some(value);
+            }
+            Op::Move => {
+                let value = registers
+                    .get(usize::from(instruction.register_b()))?
+                    .clone()?;
+                *registers.get_mut(usize::from(instruction.result_register()))? = Some(value);
+            }
+            Op::StoreLocal | Op::StoreLocalPlain => {
+                let value = registers
+                    .get(usize::from(instruction.register_a()))?
+                    .clone()?;
+                *locals.get_mut(usize::from(instruction.local_slot()))? = Some(value);
+            }
+            Op::LoadLocal | Op::LoadLocalPlain => {
+                let value = locals.get(usize::from(instruction.local_slot()))?.clone()?;
+                *registers.get_mut(usize::from(instruction.result_register()))? = Some(value);
+            }
+            Op::Binary
+                if instruction.binary_operator() == BinaryOperator::Equality as u32
+                    || instruction.binary_operator() == BinaryOperator::StrictEquality as u32
+                    || instruction.binary_operator() == BinaryOperator::Inequality as u32
+                    || instruction.binary_operator() == BinaryOperator::StrictInequality as u32 =>
+            {
+                let left = read(instruction.operand_b(), &registers)?;
+                let right = read(instruction.operand_c(), &registers)?;
+                let equal = match (left, right) {
+                    (NumberDispatchValue::TypeNumber, NumberDispatchValue::String(value))
+                    | (NumberDispatchValue::String(value), NumberDispatchValue::TypeNumber) => {
+                        value == "number"
+                    }
+                    (NumberDispatchValue::String(left), NumberDispatchValue::String(right)) => {
+                        left == right
+                    }
+                    (NumberDispatchValue::Boolean(left), NumberDispatchValue::Boolean(right)) => {
+                        left == right
+                    }
+                    (NumberDispatchValue::Other, NumberDispatchValue::Other) => return None,
+                    _ => false,
+                };
+                let value = match instruction.binary_operator() {
+                    x if x == BinaryOperator::Inequality as u32
+                        || x == BinaryOperator::StrictInequality as u32 =>
+                    {
+                        !equal
+                    }
+                    _ => equal,
+                };
+                *registers.get_mut(usize::from(instruction.result_register()))? =
+                    Some(NumberDispatchValue::Boolean(value));
+            }
+            Op::JumpTrue | Op::JumpFalse => {
+                let condition = match registers
+                    .get(usize::from(instruction.register_a()))?
+                    .as_ref()?
+                {
+                    NumberDispatchValue::Boolean(value) => *value,
+                    _ => return Some(false),
+                };
+                let take = if instruction.op() == Op::JumpTrue {
+                    condition
+                } else {
+                    !condition
+                };
+                pc = if take {
+                    usize::try_from(instruction.jump_target()).ok()?
+                } else {
+                    next
+                };
+                continue;
+            }
+            Op::Jump => {
+                pc = usize::try_from(instruction.jump_target()).ok()?;
+                continue;
+            }
+            _ => return Some(false),
+        }
+        pc = next;
+    }
+    Some(false)
+}
+
+fn operand_is_parameter(operand: Operand, register: u16) -> bool {
+    operand.kind() == Some(OperandKind::Register) && operand.register_index() == Some(register)
+}
+
+fn string_operand_is_number_type(
+    program: &ResidualProgram,
+    function: &Function,
+    before_pc: usize,
+    operand: Operand,
+) -> bool {
+    let constant = match operand.kind() {
+        Some(OperandKind::Constant) => Some(usize::from(operand.payload())),
+        Some(OperandKind::Register) => {
+            let Some(register) = operand.register_index() else {
+                return false;
+            };
+            function.code[..before_pc]
+                .iter()
+                .rev()
+                .map(|packed| packed.as_wide())
+                .find(|instruction| {
+                    instruction.op().has_result_register()
+                        && instruction.result_register() == register
+                })
+                .filter(|instruction| instruction.op() == Op::LoadConst)
+                .map(|instruction| instruction.constant_index())
+        }
+        _ => None,
+    };
+    let Some(constant) = constant else {
+        return false;
+    };
+    matches!(program.constants.get(constant), Some(Constant::String(value)) if value == "number")
+}
+
+fn operands_are(left: Operand, right: Operand, one: u16, two: u16) -> bool {
+    (operand_is_parameter(left, one) && operand_is_parameter(right, two))
+        || (operand_is_parameter(left, two) && operand_is_parameter(right, one))
+}
+
+fn operand_is_number(program: &ResidualProgram, operand: Operand, expected: f64) -> bool {
+    operand.kind() == Some(OperandKind::Constant)
+        && matches!(program.constants.get(usize::from(operand.payload())), Some(Constant::Number(value)) if *value == expected)
+}
+
+fn compile_int32_identity(function_id: u32, return_pc: u32) -> Option<JsJitArtifact> {
+    let isa = super::jit_backend::target_isa("speed", true)?;
+    let mut signature = ir::Signature::new(isa.default_call_conv());
+    signature.params.push(AbiParam::new(isa.pointer_type()));
+    signature.returns.push(AbiParam::new(types::F64));
+    let mut native =
+        ir::Function::with_name_signature(UserFuncName::user(0x5155_454e, function_id), signature);
+    let mut context = FunctionBuilderContext::new();
+    let mut builder = FunctionBuilder::new(&mut native, &mut context);
+    let entry = builder.create_block();
+    builder.append_block_params_for_function_params(entry);
+    builder.switch_to_block(entry);
+    let arguments = builder.block_params(entry)[0];
+    let value = builder
+        .ins()
+        .load(types::F64, ir::MemFlagsData::trusted(), arguments, 0);
+    builder.ins().return_(&[value]);
+    builder.seal_all_blocks();
+    builder.finalize(isa.frontend_config());
+    let mut context = cranelift_codegen::Context::for_function(native);
+    let compiled = context
+        .compile(
+            &*isa,
+            &mut cranelift_codegen::control::ControlPlane::default(),
+        )
+        .ok()?;
+    if !compiled.buffer.relocs().is_empty() {
+        return None;
+    }
+    let code = compiled.code_buffer().to_vec();
+    if code.is_empty() || code.len() > MAX_CODE_BYTES {
+        return None;
+    }
+    Some(JsJitArtifact {
+        code,
+        params: 1,
+        result: JsJitResultKind::Int32Identity(return_pc),
+        field_argument: None,
+        capture_arguments: Vec::new(),
+    })
 }
 
 /// Captured values are dynamic inputs: the VM reloads each one for every call,
@@ -156,19 +494,21 @@ pub(super) fn numeric_capture_candidate(
                     depth: instruction.capture_depth(),
                     slot: instruction.capture_slot(),
                 };
-                if !captures
-                    .iter()
-                    .any(|seen: &JsJitCaptureArgument| {
-                        seen.depth == capture.depth && seen.slot == capture.slot
-                    })
-                {
+                if !captures.iter().any(|seen: &JsJitCaptureArgument| {
+                    seen.depth == capture.depth && seen.slot == capture.slot
+                }) {
                     if captures.len() == MAX_CAPTURE_ARGUMENTS {
                         return None;
                     }
                     captures.push(capture);
                 }
             }
-            Op::LoadConst | Op::Move | Op::Binary | Op::NumericAdd | Op::NumericMultiply | Op::Return => {}
+            Op::LoadConst
+            | Op::Move
+            | Op::Binary
+            | Op::NumericAdd
+            | Op::NumericMultiply
+            | Op::Return => {}
             _ => return None,
         }
     }
@@ -303,6 +643,9 @@ pub(super) fn candidate_rejection_reason(
     }
     if function.code.len() > MAX_INSTRUCTIONS {
         return "bytecode-limit";
+    }
+    if int32_identity_return_candidate(program, function).is_some() {
+        return "int32-identity-return";
     }
     if usize::from(function.registers) > MAX_REGISTERS {
         return "register-limit";
@@ -1897,16 +2240,13 @@ fn compile_numeric_with_captures(
                         && capture.slot == instruction.capture_slot()
                 })?;
                 let argument_index = params.checked_add(capture)?;
-                let offset = i32::try_from(
-                    argument_index.checked_mul(std::mem::size_of::<f64>())?,
+                let offset =
+                    i32::try_from(argument_index.checked_mul(std::mem::size_of::<f64>())?).ok()?;
+                Some(
+                    builder
+                        .ins()
+                        .load(types::F64, ir::MemFlagsData::trusted(), arguments, offset),
                 )
-                .ok()?;
-                Some(builder.ins().load(
-                    types::F64,
-                    ir::MemFlagsData::trusted(),
-                    arguments,
-                    offset,
-                ))
             }
             Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
                 if instruction.numeric_local_target().is_some()
@@ -3318,22 +3658,17 @@ fn compile_field_reject(
     let mut signature = ir::Signature::new(isa.default_call_conv());
     signature.params.push(AbiParam::new(isa.pointer_type()));
     signature.returns.push(AbiParam::new(types::I32));
-    let mut native = ir::Function::with_name_signature(
-        UserFuncName::user(0x5155_454e, function_id),
-        signature,
-    );
+    let mut native =
+        ir::Function::with_name_signature(UserFuncName::user(0x5155_454e, function_id), signature);
     let mut builder_context = FunctionBuilderContext::new();
     let mut builder = FunctionBuilder::new(&mut native, &mut builder_context);
     let entry = builder.create_block();
     builder.append_block_params_for_function_params(entry);
     builder.switch_to_block(entry);
     let arguments = builder.block_params(entry)[0];
-    let value = builder.ins().load(
-        types::F64,
-        ir::MemFlagsData::trusted(),
-        arguments,
-        0,
-    );
+    let value = builder
+        .ins()
+        .load(types::F64, ir::MemFlagsData::trusted(), arguments, 0);
     let expected = builder
         .ins()
         .f64const(Ieee64::with_bits(comparison_value.to_bits()));
@@ -3346,7 +3681,10 @@ fn compile_field_reject(
     builder.finalize(isa.frontend_config());
     let mut context = cranelift_codegen::Context::for_function(native);
     let compiled = context
-        .compile(&*isa, &mut cranelift_codegen::control::ControlPlane::default())
+        .compile(
+            &*isa,
+            &mut cranelift_codegen::control::ControlPlane::default(),
+        )
         .ok()?;
     if !compiled.buffer.relocs().is_empty() {
         return None;
