@@ -62,6 +62,9 @@ pub(super) struct GenerationalPacing {
     pub(super) full_only_headroom: Ratio,
     /// Full collections between minor collections that probe survival again.
     pub(super) probe_interval: u32,
+    /// Growth of live weight (cells, records and payload) since the last full collection, as
+    /// a share of what it kept, that makes the next collection full; zero disables it.
+    pub(super) weight_growth: Ratio,
 }
 
 /// Fixed-point scale of the survival estimate.
@@ -107,6 +110,8 @@ pub(super) struct CollectionOutcome {
     pub(super) live_weight: usize,
     pub(super) previous_live_weight: usize,
     pub(super) live_after_full: usize,
+    /// Live weight after the last full collection.
+    pub(super) live_weight_after_full: usize,
     /// Weight allocated between the previous collection and this one.
     pub(super) allocated: usize,
     /// Allocation weight since the last full collection.
@@ -131,7 +136,8 @@ impl GenerationalPacing {
         }
         let young = NextCollection {
             threshold: self.young_budget(outcome.live),
-            full: self.full_due(outcome.live_after_full, outcome.live, outcome.since_full),
+            full: self.full_due(outcome.live_after_full, outcome.live, outcome.since_full)
+                || self.weight_growth_due(outcome.live_weight_after_full, outcome.live_weight),
         };
         match state.regime(self) {
             Regime::Generational => young,
@@ -171,6 +177,11 @@ impl GenerationalPacing {
             || self.allocation_cap_reached(live_after_full, since_full)
     }
 
+    pub(super) fn weight_growth_due(&self, after_full: usize, live_weight: usize) -> bool {
+        self.weight_growth.numerator > 0
+            && live_weight.saturating_sub(after_full) >= self.weight_growth.of(after_full)
+    }
+
     pub(super) fn allocation_cap_reached(&self, live_after_full: usize, since_full: usize) -> bool {
         since_full >= self.allocation_cap.of(live_after_full).max(self.minimum_allocation_cap)
     }
@@ -202,6 +213,7 @@ impl GenerationalPacing {
             survival_limit: read("QUENCH_GC_SURVIVAL_LIMIT", self.survival_limit as usize) as u32,
             full_only_headroom: ratio("QUENCH_GC_FULL_ONLY", self.full_only_headroom),
             probe_interval: read("QUENCH_GC_PROBE_INTERVAL", self.probe_interval as usize) as u32,
+            weight_growth: ratio("QUENCH_GC_WEIGHT_GROWTH", self.weight_growth),
         }
     }
 }
@@ -235,6 +247,7 @@ pub(super) const PRODUCTION_PACING: GenerationalPacing = GenerationalPacing {
     survival_limit: SURVIVAL_SCALE / 2,
     full_only_headroom: Ratio::new(1, 1),
     probe_interval: 4,
+    weight_growth: Ratio::new(0, 1),
 };
 
 /// The fewest allocations between collections, whatever survived: the pre-generational
@@ -298,6 +311,7 @@ mod tests {
             live_weight: live,
             previous_live_weight: previous_live,
             live_after_full: previous_live,
+            live_weight_after_full: previous_live,
             allocated,
             since_full: allocated,
         }
