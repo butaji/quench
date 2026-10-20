@@ -39,10 +39,12 @@ pub(crate) use root::{RootTable, WeakHandle};
 use slots::{FreeSlotBitmap, SLOTS_PER_SLAB, SlotArena};
 
 // Keep implicit holes in dense storage when their one-time allocation is
-// bounded. 256 KiB covers the measured 16,900-slot NavierStokes grids while
-// still sending genuinely large `new Array(length)` allocations to the sparse
-// representation. The slot limit is derived from Value's representation.
-const DENSE_ARRAY_HOLE_BUDGET_BYTES: usize = 256 * 1024;
+// bounded. 1 MiB covers the measured 16,900-slot NavierStokes grids and the
+// 131,072-bucket tables hash-map's rehash allocates with `new Array(capacity)`,
+// which at its load factor never fill enough to turn dense, while still sending
+// genuinely large `new Array(length)` allocations to the sparse representation.
+// The slot limit is derived from Value's representation.
+const DENSE_ARRAY_HOLE_BUDGET_BYTES: usize = 1024 * 1024;
 const MAX_DENSE_ARRAY_HOLE_LENGTH: usize = DENSE_ARRAY_HOLE_BUDGET_BYTES / size_of::<Value>();
 // A sparse element is an index and a value in a hash table, at least this many dense slots;
 // a sparse array whose elements fill as many slots as its length turns dense.
