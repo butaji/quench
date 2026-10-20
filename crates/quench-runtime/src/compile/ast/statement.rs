@@ -362,6 +362,12 @@ impl FunctionCompiler<'_, '_> {
             return;
         }
         for item in &declaration.declarations {
+            // The alias's reads read `arguments` itself (`arguments_alias`).
+            if let BindingPattern::BindingIdentifier(name) = &item.id
+                && self.arguments_alias.as_deref() == Some(name.name.as_str())
+            {
+                continue;
+            }
             if let Some(init) = &item.init {
                 let reference = (declaration.kind == VariableDeclarationKind::Var
                     && self.with_depth != self.inherited_with_depth)

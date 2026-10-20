@@ -666,6 +666,8 @@ struct ForwardedResolution {
 
 /// Fields a `ConstructPlan` names; an initializer storing more keeps running its adds.
 const CONSTRUCT_PLAN_FIELDS: usize = 4;
+// A plan's values fill a receiver's inline slots (`ConstructPlan::allocate`).
+const _: () = assert!(INLINE_PROPERTY_COUNT <= CONSTRUCT_PLAN_FIELDS);
 
 /// Entries of the construct plan cache, indexed by the callee's heap index.
 const CONSTRUCT_PLANS: usize = 64;
@@ -685,13 +687,14 @@ impl ConstructPlan {
         }
     }
 
-    /// The receiver this plan allocates for `values`, its fields in order.
+    /// The receiver this plan allocates for `values`, its fields in order and `undefined`
+    /// past them, which is how unused inline slots start.
     #[inline(always)]
     fn allocate(&self, heap: &mut crate::heap::Heap, values: [Value; CONSTRUCT_PLAN_FIELDS]) -> Value {
         let fields = usize::from(self.fields);
         if fields <= INLINE_PROPERTY_COUNT {
-            let mut inline = [Value::UNDEFINED; INLINE_PROPERTY_COUNT];
-            inline[..fields].copy_from_slice(&values[..fields]);
+            debug_assert!(values[fields..].iter().all(|value| *value == Value::UNDEFINED));
+            let inline = std::array::from_fn(|slot| values[slot]);
             return heap.alloc_object_from_header(self.header, self.prototype, inline);
         }
         heap.alloc_object_with_properties(self.prototype, self.shape, &values[..fields])
@@ -5777,6 +5780,61 @@ lane_handler! {
     }
 }
 
+/// The values the running function kept for its unmaterialized `arguments` binding, in the
+/// local slot `slot` (`lane_kept_arguments`): `None` where a frame's binding was
+/// materialized, which the general path then reads.
+///
+/// # Safety
+/// `cx` is the running lane's context, and `slot` its function's validated local slot.
+#[inline(always)]
+unsafe fn lane_unmaterialized_arguments<H: Host>(
+    cx: *mut LaneContext<H>,
+    slot: usize,
+) -> Option<(*const Value, usize)> {
+    if unsafe { (*cx).env }.is_deleted()
+        && unsafe { vm(cx).read_validated_local((*cx).frame, slot) }
+            != Value::UNMATERIALIZED_ARGUMENTS
+    {
+        return None;
+    }
+    match unsafe { lane_kept_arguments(cx) }? {
+        ActivationArguments::Kept(values, count) => Some((values, count)),
+        ActivationArguments::Window(_) => None,
+    }
+}
+
+lane_handler! {
+    /// `ArgumentsLength` of a binding only kept values answer (`Function::forwards_arguments_only`):
+    /// their count, as the object made on entry holds it.
+    fn lane_arguments_length<>(cx, r, ip, i, view) {
+        let Some((_, count)) = (unsafe { lane_unmaterialized_arguments(cx, i.imm() as usize) })
+        else {
+            return exit(ip);
+        };
+        r.set(i.a, Value::number(count as f64));
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    /// `ArgumentGet` of such a binding at an integer index it holds: the kept value, as the
+    /// object made on entry holds it. Any other key takes the general path, which
+    /// materializes the object (`Vm::read_arguments_binding`).
+    fn lane_argument_get<>(cx, r, ip, i, view) {
+        let Some((values, count)) = (unsafe { lane_unmaterialized_arguments(cx, i.imm() as usize) })
+        else {
+            return exit(ip);
+        };
+        let Some(index) = r.get(i.b).as_int().and_then(|index| usize::try_from(index).ok()).filter(|index| *index < count)
+        else {
+            return exit(ip);
+        };
+        // SAFETY: `values` holds `count` kept values, and the index is below it.
+        r.set(i.a, unsafe { *values.add(index) });
+        next!(cx, r, following(ip), view)
+    }
+}
+
 /// The frameless target of a lane call to `callee`, resolved on first use.
 /// Whether `callee` is the target of a `new` whose `new.target` the general path still
 /// holds (`Vm::construct_target`): a lane activation would not bind it.
@@ -7377,12 +7435,16 @@ fn derive_lane_view<H: Host>(
                             [usize::from(arith)][usize::from(acc)],
                     )
                 })
-            } else if matches!(op, Op::LoadLocal | Op::LoadLocalPlain)
+            } else if matches!(op, Op::LoadLocal | Op::LoadLocalPlain | Op::ArgumentsLength | Op::ArgumentGet)
                 && function.arguments_slot == u16::try_from(instruction.local_slot()).ok()
                 && *forwards_arguments.get_or_init(|| function.forwards_arguments_only())
             {
                 Some(LaneHandler {
-                    handler: lane_load_forwarded_arguments::<H> as Handler,
+                    handler: match op {
+                        Op::ArgumentsLength => lane_arguments_length::<H> as Handler,
+                        Op::ArgumentGet => lane_argument_get::<H> as Handler,
+                        _ => lane_load_forwarded_arguments::<H> as Handler,
+                    },
                     produces: false,
                 })
             } else if op == Op::StoreEnvLocal && resolves_names {
