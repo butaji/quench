@@ -2096,20 +2096,36 @@ script_handler! {
 script_handler! {
     /// `lane_load_capture` of a capture past the running function's own scope
     /// (`specialize_outer_captures`): a walk this lane run or an earlier one remembered
-    /// (`Vm::remembered_capture`), keyed as `lane_load_capture_walk` walks; any other read
-    /// takes the walk.
+    /// (`Vm::remembered_capture`), keyed as `lane_load_capture_walk` walks. An activation's
+    /// remembered read runs here, saving no registers; a frame's read takes
+    /// `lane_load_frame_outer_capture`, any other the walk.
     fn lane_load_outer_capture<>(cx, r, ip, i, view) {
         let imm = i.imm();
-        let vm = unsafe { vm(cx) };
         let env = unsafe { (*cx).env };
-        let (env, captured) = if env.is_deleted() {
-            let frame = &vm.frames[unsafe { (*cx).frame }];
-            (frame.env, frame.captured)
-        } else {
-            (env, false)
-        };
+        if env.is_deleted() {
+            sibling!(lane_load_frame_outer_capture::<H>, r, ip, view)
+        }
         let depth = ImmediateLayout::capture_depth(imm);
-        let Some(value) = vm.remembered_capture(env, captured, depth, ImmediateLayout::capture_slot(imm))
+        let Some(value) = unsafe { vm(cx) }.remembered_capture(env, false, depth, ImmediateLayout::capture_slot(imm))
+        else {
+            sibling!(lane_load_capture_walk::<H>, r, ip, view)
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+script_handler! {
+    /// `lane_load_outer_capture` in a frame's run: the walk remembered from the frame's
+    /// environment, or the walk.
+    #[inline(never)]
+    fn lane_load_frame_outer_capture<>(cx, r, ip, i, view) {
+        let imm = i.imm();
+        let vm = unsafe { vm(cx) };
+        let frame = &vm.frames[unsafe { (*cx).frame }];
+        let depth = ImmediateLayout::capture_depth(imm);
+        let Some(value) =
+            vm.remembered_capture(frame.env, frame.captured, depth, ImmediateLayout::capture_slot(imm))
         else {
             sibling!(lane_load_capture_walk::<H>, r, ip, view)
         };
