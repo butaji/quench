@@ -593,6 +593,14 @@ impl Heap {
         }
     }
 
+    /// `remember` of `value`'s cell, for a write made through a pointer to its storage.
+    #[inline(always)]
+    pub(crate) fn remember_cell(&mut self, value: Value) {
+        if let Some(HeapReference::LegacySlot(index)) = value.heap_reference() {
+            self.remember(index as usize);
+        }
+    }
+
     /// The write barrier: an old (marked) cell written to joins the remembered set once.
     #[inline(always)]
     pub(super) fn remember(&mut self, index: usize) {
