@@ -76,6 +76,17 @@ impl ShapeTransitionIndex {
         *self = Self::default();
     }
 
+    /// Every indexed child, for a snapshot (`crate::snapshot`).
+    pub(super) fn children(&self) -> impl Iterator<Item = u32> + '_ {
+        self.children.iter().copied()
+    }
+
+    /// Records `child`, already in `shapes`, under the parent and key its shape names.
+    pub(super) fn insert_child(&mut self, shapes: &[Shape], child: u32) {
+        self.children
+            .insert_unique(child_hash(shapes, child), child, |&child| child_hash(shapes, child));
+    }
+
     #[cfg(feature = "profile-memory")]
     pub(super) fn len(&self) -> usize {
         self.children.len()

@@ -171,6 +171,55 @@ impl Default for ValueArena {
 }
 
 impl ValueArena {
+    /// The arena as a snapshot keeps it (`crate::snapshot`): storage positions name places in
+    /// `values`, so the vector and its free ranges are written as they are.
+    pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
+        let Self { values, free, released_values, shape_lengths, dictionaries, free_dictionaries, next_dictionary } = self;
+        writer.values(values);
+        for bucket in free {
+            writer.u32s(bucket);
+        }
+        writer.len(*released_values);
+        writer.u32s(shape_lengths);
+        writer.len(dictionaries.len());
+        for (id, entries) in dictionaries {
+            writer.u32(*id);
+            writer.len(entries.len());
+            for (key, value) in entries {
+                writer.u32(*key);
+                writer.value(*value);
+            }
+        }
+        writer.u32s(free_dictionaries);
+        writer.u32(*next_dictionary);
+    }
+
+    pub(crate) fn read_snapshot(reader: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::SnapshotResult<Self> {
+        let values = reader.values()?;
+        let mut free: [Vec<u32>; BUCKETS] = Default::default();
+        for bucket in &mut free {
+            *bucket = reader.u32s()?;
+        }
+        let released_values = reader.len()?;
+        let shape_lengths = reader.u32s()?;
+        let dictionaries = crate::snapshot::read_list(reader, |reader| {
+            let id = reader.u32()?;
+            let entries = crate::snapshot::read_list(reader, |reader| Ok((reader.u32()?, reader.value()?)))?;
+            Ok((id, entries.into_iter().collect()))
+        })?
+        .into_iter()
+        .collect();
+        Ok(Self {
+            values,
+            free,
+            released_values,
+            shape_lengths,
+            dictionaries,
+            free_dictionaries: reader.u32s()?,
+            next_dictionary: reader.u32()?,
+        })
+    }
+
     pub(crate) fn reset(&mut self) {
         self.values.clear();
         for bucket in &mut self.free {

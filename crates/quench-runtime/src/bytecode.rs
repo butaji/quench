@@ -2605,6 +2605,77 @@ pub(crate) struct ProgramSource {
     pub(crate) column_offset: u32,
 }
 
+/// A static item at a fixed place in the executable image, from which a snapshot measures the
+/// embedded text a program retains (`SourceText::Static`): within one linked image the offset
+/// between two statics is fixed, and a snapshot is read only by the build that wrote it.
+static SNAPSHOT_TEXT_ANCHOR: u8 = 0;
+
+/// The bytes at each end of embedded text that a snapshot checks before using the text.
+const SNAPSHOT_TEXT_EDGE: usize = 32;
+
+impl SourceText {
+    pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
+        match self {
+            Self::Shared(text) => {
+                writer.u8(0);
+                writer.str(text);
+            }
+            Self::Static(text) => {
+                writer.u8(1);
+                let anchor = std::ptr::addr_of!(SNAPSHOT_TEXT_ANCHOR) as usize as i64;
+                writer.u64((text.as_ptr() as usize as i64).wrapping_sub(anchor) as u64);
+                writer.len(text.len());
+                let edge = SNAPSHOT_TEXT_EDGE.min(text.len());
+                writer.bytes(&text.as_bytes()[..edge]);
+                writer.bytes(&text.as_bytes()[text.len() - edge..]);
+            }
+        }
+    }
+
+    pub(crate) fn read_snapshot(reader: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::SnapshotResult<Self> {
+        Ok(match reader.u8()? {
+            0 => Self::Shared(std::sync::Arc::from(reader.str()?)),
+            1 => {
+                let offset = reader.u64()? as i64;
+                let len = reader.len()?;
+                let head = reader.bytes()?;
+                let tail = reader.bytes()?;
+                let anchor = std::ptr::addr_of!(SNAPSHOT_TEXT_ANCHOR) as usize as i64;
+                let address = anchor.wrapping_add(offset) as usize as *const u8;
+                // SAFETY: the snapshot was written by this build (its header names the runtime
+                // ABI and the host keys it by the executable's identity), whose image holds the
+                // embedded text at this offset from the anchor; its edges are checked below.
+                let bytes = unsafe { std::slice::from_raw_parts(address, len) };
+                if &bytes[..head.len()] != head || &bytes[len - tail.len()..] != tail {
+                    return Err(crate::snapshot::SnapshotError("snapshot embedded text moved".into()));
+                }
+                // SAFETY: the text was a `&'static str` of this image when written.
+                Self::Static(unsafe { std::str::from_utf8_unchecked(bytes) })
+            }
+            _ => return Err(crate::snapshot::SnapshotError("invalid snapshot source text".into())),
+        })
+    }
+}
+
+impl ProgramSource {
+    pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
+        let Self { text, base, line_offset, column_offset } = self;
+        text.write_snapshot(writer);
+        writer.u32(*base);
+        writer.u32(*line_offset);
+        writer.u32(*column_offset);
+    }
+
+    pub(crate) fn read_snapshot(reader: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::SnapshotResult<Self> {
+        Ok(Self {
+            text: SourceText::read_snapshot(reader)?,
+            base: reader.u32()?,
+            line_offset: reader.u32()?,
+            column_offset: reader.u32()?,
+        })
+    }
+}
+
 /// Starts of JavaScript source lines, including an empty line after a final terminator.
 pub(crate) fn source_line_starts(text: &str) -> impl Iterator<Item = usize> + '_ {
     const LINE_SEPARATOR: &[u8] = "\u{2028}".as_bytes();
@@ -2941,6 +3012,28 @@ impl ResidualProgram {
     /// output, which the host keys by build and whose checksum held.
     pub(crate) fn decode_trusted(bytes: KeptBytes) -> Result<Self, String> {
         let program = binary::decode_trusted_program(bytes)?;
+        program.validated.establish();
+        Ok(program)
+    }
+
+    /// This program as a snapshot keeps it (`crate::snapshot`): its own atom ids, which the
+    /// snapshot's atom table keeps, and its source written apart (`SourceText`).
+    pub(crate) fn encode_snapshot(&self) -> Vec<u8> {
+        binary::encode_snapshot_program(self)
+    }
+
+    /// `encode_snapshot`'s bytes, sharing `atoms` (the restored VM's) and with `text` as the
+    /// source; valid as the compiler output it was when written.
+    pub(crate) fn decode_snapshot(
+        bytes: KeptBytes,
+        text: Option<SourceText>,
+        atoms: &std::rc::Rc<AtomSequence>,
+    ) -> Result<Self, String> {
+        let (mut program, atom_count) = binary::decode_snapshot_program(bytes, text)?;
+        if atom_count > atoms.len() {
+            return Err("snapshot program names atoms its VM lacks".into());
+        }
+        program.atoms = AtomTable::shared(atoms.clone(), atom_count);
         program.validated.establish();
         Ok(program)
     }

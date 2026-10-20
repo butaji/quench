@@ -5461,3 +5461,45 @@ impl<H: Host> Vm<H> {
         outcome
     }
 }
+
+impl PromiseRuntime {
+    /// A snapshot (`crate::snapshot`) is taken between jobs, with no module loading and no
+    /// combinator or reaction in flight, so only the rejection numbering carries over.
+    pub(super) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) -> crate::snapshot::SnapshotResult<()> {
+        let Self {
+            rejection_notifications,
+            last_rejection_id,
+            thenable_jobs,
+            finally_handler_callbacks,
+            finally_continuation_callbacks,
+            aggregates,
+            aggregate_jobs,
+            reaction_capabilities,
+            modules,
+            dynamic_import_jobs,
+            async_module_order,
+            module_sources,
+            waiting_static_modules,
+            active_native,
+        } = self;
+        let pending = [
+            ("a rejection notification", rejection_notifications.is_empty()),
+            ("a thenable job", thenable_jobs.is_empty()),
+            ("a finally callback", finally_handler_callbacks.is_empty() && finally_continuation_callbacks.is_empty()),
+            ("a promise combinator", aggregates.is_empty() && aggregate_jobs.is_empty()),
+            ("a reaction capability", reaction_capabilities.is_empty()),
+            ("a module record", modules.is_empty() && async_module_order.is_empty() && module_sources.is_empty()),
+            ("a module load", dynamic_import_jobs.is_empty() && waiting_static_modules.is_empty()),
+            ("a native activation", active_native.is_empty()),
+        ];
+        if let Some((what, _)) = pending.iter().find(|(_, empty)| !empty) {
+            return Err(crate::snapshot::SnapshotError::unsupported(what));
+        }
+        writer.u64(*last_rejection_id);
+        Ok(())
+    }
+
+    pub(super) fn read_snapshot(reader: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::SnapshotResult<Self> {
+        Ok(Self { last_rejection_id: reader.u64()?, ..Self::default() })
+    }
+}
