@@ -290,6 +290,15 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
         }
         context.seal_startup_intrinsics();
     }
+    if context.host_mut().building_snapshot {
+        return crate::host::startup_snapshot::preload(context);
+    }
+    finish_initialize(context)
+}
+
+/// The part of `initialize` after the startup snapshot point (`startup_snapshot`): what
+/// this process's options, preloads and entry install.
+pub(super) fn finish_initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     context.scoped(crate::modules::process_shared_vm::initialize_warning_policy)?;
     context.scoped(crate::modules::report_configuration_shared_vm::initialize_signal)?;
     context.scoped(crate::modules::worker_threads_shared_vm::initialize_process_owner)?;

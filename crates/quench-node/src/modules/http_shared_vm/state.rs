@@ -202,3 +202,66 @@ impl Default for State {
         Self::new()
     }
 }
+
+impl State {
+    pub(crate) fn write_snapshot(&self, writer: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> {
+        use crate::host::startup_snapshot::{require_quiescent, HostSnap};
+        let Self {
+            next_server,
+            next_agent,
+            next_request,
+            next_response,
+            status_reasons,
+            response_factory,
+            incoming_factory,
+            servers,
+            connections,
+            responses,
+            drain_waiters,
+            requests,
+            clients,
+            agents,
+        } = self;
+        require_quiescent(
+            servers.is_empty()
+                && connections.is_empty()
+                && responses.is_empty()
+                && drain_waiters.is_empty()
+                && requests.is_empty()
+                && clients.is_empty()
+                && agents.values().all(|sockets| sockets.is_empty()),
+            "an HTTP connection",
+        )?;
+        for counter in [next_server, next_agent, next_request, next_response] {
+            counter.write(writer)?;
+        }
+        writer.len(status_reasons.len());
+        for (code, reason) in status_reasons {
+            writer.u32(u32::from(*code));
+            writer.bytes(reason);
+        }
+        response_factory.write(writer)?;
+        incoming_factory.write(writer)?;
+        // The agents the bootstrap made, which hold no socket yet.
+        writer.len(agents.len());
+        agents.keys().try_for_each(|agent| agent.write(writer))
+    }
+    pub(crate) fn read_snapshot(&mut self, reader: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<(), String> {
+        use crate::host::startup_snapshot::HostSnap;
+        for counter in [&mut self.next_server, &mut self.next_agent, &mut self.next_request, &mut self.next_response] {
+            *counter = HostSnap::read(reader)?;
+        }
+        self.status_reasons.clear();
+        for _ in 0..reader.len()? {
+            let code = u16::try_from(reader.u32()?).map_err(|_| "invalid snapshot status code")?;
+            self.status_reasons.insert(code, reader.bytes()?);
+        }
+        self.response_factory = HostSnap::read(reader)?;
+        self.incoming_factory = HostSnap::read(reader)?;
+        self.agents.clear();
+        for _ in 0..reader.len()? {
+            self.agents.insert(HostSnap::read(reader)?, HashSet::new());
+        }
+        Ok(())
+    }
+}

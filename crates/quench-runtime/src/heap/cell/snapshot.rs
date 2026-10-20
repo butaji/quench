@@ -2,7 +2,7 @@
 //! Values are written as their bits, every heap index being restored where it was.
 
 use super::*;
-use crate::snapshot::{read_list, snapshot_enum, Reader, SnapshotError, SnapshotResult, Writer};
+use crate::snapshot::{read_list, snap_struct, snapshot_enum, Reader, Snap, SnapshotError, SnapshotResult, Writer};
 
 /// What decoding a cell needs from the VM it is restored into.
 pub(crate) struct CellDecoder<'a> {
@@ -437,9 +437,6 @@ impl IteratorRecord {
     pub(crate) fn write_snapshot(&self, writer: &mut Writer) -> SnapshotResult<()> {
         let Self { object, source, kind, index, done, ext } = self;
         let IteratorExt { position_high, next_method, helper, helper_running, helper_started, generator } = ext;
-        if helper.is_some() || generator.is_some() {
-            return Err(SnapshotError::unsupported("a suspended iterator helper or generator"));
-        }
         write_object(writer, object)?;
         writer.value(*source);
         iterator_kind::write(writer, *kind);
@@ -449,7 +446,8 @@ impl IteratorRecord {
         writer.option_value(*next_method);
         writer.bool(*helper_running);
         writer.bool(*helper_started);
-        Ok(())
+        helper.snap(writer)?;
+        generator.snap(writer)
     }
 
     pub(crate) fn read_snapshot(reader: &mut Reader<'_>) -> SnapshotResult<Self> {
@@ -462,10 +460,10 @@ impl IteratorRecord {
             ext: IteratorExt {
                 position_high: reader.u32()?,
                 next_method: reader.option_value()?,
-                helper: None,
                 helper_running: reader.bool()?,
                 helper_started: reader.bool()?,
-                generator: None,
+                helper: Snap::unsnap(reader)?,
+                generator: Snap::unsnap(reader)?,
             },
         })
     }
@@ -532,12 +530,14 @@ impl Cell {
                 object.write_snapshot(writer)?;
             }
             Self::ArrayBuffer { object, bytes, shared, detached, max_byte_length, resizable, immutable } => {
-                let Some(contents) = bytes.snapshot_contents() else {
-                    return Err(SnapshotError::unsupported("a buffer over Wasm, shared or pinned memory"));
+                let Some((contents, pinned_residue)) = bytes.snapshot_contents() else {
+                    return Err(SnapshotError::unsupported("a buffer over Wasm or atomically shared memory"));
                 };
                 writer.u8(tag::ARRAY_BUFFER);
                 write_object(writer, object)?;
                 writer.bytes(contents);
+                writer.bool(pinned_residue.is_some());
+                writer.len(pinned_residue.unwrap_or_default());
                 writer.bool(*shared);
                 writer.bool(*detached);
                 writer.u64(*max_byte_length as u64);
@@ -730,7 +730,13 @@ impl Cell {
             tag::ARRAY => Self::Array { object: ArrayObject::read_snapshot(reader)? },
             tag::ARRAY_BUFFER => Self::ArrayBuffer {
                 object: boxed_object(reader)?,
-                bytes: crate::heap::BufferBytes::from(reader.bytes()?.to_vec()),
+                bytes: {
+                    let contents = reader.bytes()?.to_vec();
+                    let pinned = reader.bool()?;
+                    let residue = reader.len()?;
+                    crate::heap::BufferBytes::restored(contents, pinned.then_some(residue))
+                        .ok_or_else(|| SnapshotError("snapshot buffer lost its observed alignment".into()))?
+                },
                 shared: reader.bool()?,
                 detached: reader.bool()?,
                 max_byte_length: reader.u64()? as usize,
@@ -907,5 +913,212 @@ impl EnvironmentScopeRef {
             }
             _ => Err(SnapshotError("invalid snapshot scope".into())),
         }
+    }
+}
+
+// A suspended generator or iterator helper: its saved activation is plain data, whose program
+// counter names the same instruction of the same function record once restored.
+use crate::vm::activation::{AsyncGeneratorOperation, AsyncGeneratorRequest, CallContext, Completion, Continuation, GeneratorRecord};
+
+snapshot_enum!(async_generator_operation: AsyncGeneratorOperation { Next, Return, Throw });
+snapshot_enum!(iterator_zip_mode: IteratorZipMode { Shortest, Longest, Strict });
+
+macro_rules! snap_via_enum {
+    ($($ty:ty => $module:ident;)*) => {$(
+        impl Snap for $ty {
+            fn snap(&self, writer: &mut Writer) -> SnapshotResult<()> {
+                $module::write(writer, *self);
+                Ok(())
+            }
+            fn unsnap(reader: &mut Reader<'_>) -> SnapshotResult<Self> {
+                $module::read(reader)
+            }
+        }
+    )*};
+}
+snap_via_enum! {
+    AsyncGeneratorOperation => async_generator_operation;
+    IteratorZipMode => iterator_zip_mode;
+}
+
+snap_struct!(AsyncGeneratorRequest { operation, promise, value });
+snap_struct!(crate::vm::ActiveIterator { iterator, done });
+snap_struct!(GeneratorRecord { continuation, realm, done, running, requests });
+snap_struct!(Continuation {
+    context, reflected_parameters, original_arguments, program, function, pc, env, this, locals,
+    dynamic_bindings, registers, active_iterators, with_objects, completion, captured,
+    resume_register, promise,
+});
+
+/// `CallContext` tags, in declaration order.
+mod call_context_tag {
+    pub(super) const FUNCTION: u8 = 0;
+    pub(super) const DIRECT_EVAL: u8 = 1;
+    pub(super) const INDIRECT_EVAL: u8 = 2;
+    pub(super) const INTERNAL: u8 = 3;
+    pub(super) const CONSTRUCTOR: u8 = 4;
+}
+
+impl Snap for CallContext {
+    fn snap(&self, writer: &mut Writer) -> SnapshotResult<()> {
+        let (tag, value) = match *self {
+            Self::Function(value) => (call_context_tag::FUNCTION, value),
+            Self::DirectEval(value) => (call_context_tag::DIRECT_EVAL, value),
+            Self::IndirectEval(value) => (call_context_tag::INDIRECT_EVAL, value),
+            Self::Internal => (call_context_tag::INTERNAL, Value::UNDEFINED),
+            Self::Constructor(value) => (call_context_tag::CONSTRUCTOR, value),
+        };
+        writer.u8(tag);
+        writer.value(value);
+        Ok(())
+    }
+    fn unsnap(reader: &mut Reader<'_>) -> SnapshotResult<Self> {
+        let tag = reader.u8()?;
+        let value = reader.value()?;
+        Ok(match tag {
+            call_context_tag::FUNCTION => Self::Function(value),
+            call_context_tag::DIRECT_EVAL => Self::DirectEval(value),
+            call_context_tag::INDIRECT_EVAL => Self::IndirectEval(value),
+            call_context_tag::INTERNAL => Self::Internal,
+            call_context_tag::CONSTRUCTOR => Self::Constructor(value),
+            _ => return Err(SnapshotError("invalid snapshot call context".into())),
+        })
+    }
+}
+
+/// `Completion` tags, in declaration order.
+mod completion_tag {
+    pub(super) const GENERATOR_START: u8 = 0;
+    pub(super) const RETURN: u8 = 1;
+    pub(super) const THROW: u8 = 2;
+    pub(super) const YIELD: u8 = 3;
+    pub(super) const AWAIT: u8 = 4;
+}
+
+impl Snap for Completion {
+    fn snap(&self, writer: &mut Writer) -> SnapshotResult<()> {
+        let (tag, value) = match *self {
+            Self::GeneratorStart => (completion_tag::GENERATOR_START, Value::UNDEFINED),
+            Self::Return(value) => (completion_tag::RETURN, value),
+            Self::Throw(value) => (completion_tag::THROW, value),
+            Self::Yield(value) => (completion_tag::YIELD, value),
+            Self::Await(value) => (completion_tag::AWAIT, value),
+        };
+        writer.u8(tag);
+        writer.value(value);
+        Ok(())
+    }
+    fn unsnap(reader: &mut Reader<'_>) -> SnapshotResult<Self> {
+        let tag = reader.u8()?;
+        let value = reader.value()?;
+        Ok(match tag {
+            completion_tag::GENERATOR_START => Self::GeneratorStart,
+            completion_tag::RETURN => Self::Return(value),
+            completion_tag::THROW => Self::Throw(value),
+            completion_tag::YIELD => Self::Yield(value),
+            completion_tag::AWAIT => Self::Await(value),
+            _ => return Err(SnapshotError("invalid snapshot completion".into())),
+        })
+    }
+}
+
+/// `IteratorHelper` tags, in declaration order.
+mod helper_tag {
+    pub(super) const REGEXP_STRING_MATCH_ALL: u8 = 0;
+    pub(super) const MAP: u8 = 1;
+    pub(super) const FILTER: u8 = 2;
+    pub(super) const TAKE: u8 = 3;
+    pub(super) const DROP: u8 = 4;
+    pub(super) const FLAT_MAP: u8 = 5;
+    pub(super) const CONCAT: u8 = 6;
+    pub(super) const ZIP: u8 = 7;
+}
+
+impl Snap for IteratorHelper {
+    fn snap(&self, writer: &mut Writer) -> SnapshotResult<()> {
+        match self {
+            Self::RegExpStringMatchAll { input, global, unicode } => {
+                writer.u8(helper_tag::REGEXP_STRING_MATCH_ALL);
+                input.snap(writer)?;
+                writer.bool(*global);
+                writer.bool(*unicode);
+            }
+            Self::Map { callback, index } => {
+                writer.u8(helper_tag::MAP);
+                writer.value(*callback);
+                index.snap(writer)?;
+            }
+            Self::Filter { callback, index } => {
+                writer.u8(helper_tag::FILTER);
+                writer.value(*callback);
+                index.snap(writer)?;
+            }
+            Self::Take { remaining } => {
+                writer.u8(helper_tag::TAKE);
+                writer.f64(*remaining);
+            }
+            Self::Drop { remaining } => {
+                writer.u8(helper_tag::DROP);
+                writer.f64(*remaining);
+            }
+            Self::FlatMap { callback, index, inner } => {
+                writer.u8(helper_tag::FLAT_MAP);
+                writer.value(*callback);
+                index.snap(writer)?;
+                writer.option_value(*inner);
+            }
+            Self::Concat { items, methods, opened, next_item, active } => {
+                writer.u8(helper_tag::CONCAT);
+                writer.values(items);
+                writer.values(methods);
+                opened.snap(writer)?;
+                next_item.snap(writer)?;
+                writer.option_value(*active);
+            }
+            Self::Zip { iterators, padding, mode, keys, opened, done } => {
+                writer.u8(helper_tag::ZIP);
+                writer.values(iterators);
+                writer.values(padding);
+                mode.snap(writer)?;
+                keys.snap(writer)?;
+                opened.snap(writer)?;
+                writer.bool(*done);
+            }
+        }
+        Ok(())
+    }
+    fn unsnap(reader: &mut Reader<'_>) -> SnapshotResult<Self> {
+        Ok(match reader.u8()? {
+            helper_tag::REGEXP_STRING_MATCH_ALL => Self::RegExpStringMatchAll {
+                input: Snap::unsnap(reader)?,
+                global: reader.bool()?,
+                unicode: reader.bool()?,
+            },
+            helper_tag::MAP => Self::Map { callback: reader.value()?, index: Snap::unsnap(reader)? },
+            helper_tag::FILTER => Self::Filter { callback: reader.value()?, index: Snap::unsnap(reader)? },
+            helper_tag::TAKE => Self::Take { remaining: reader.f64()? },
+            helper_tag::DROP => Self::Drop { remaining: reader.f64()? },
+            helper_tag::FLAT_MAP => Self::FlatMap {
+                callback: reader.value()?,
+                index: Snap::unsnap(reader)?,
+                inner: reader.option_value()?,
+            },
+            helper_tag::CONCAT => Self::Concat {
+                items: reader.values()?,
+                methods: reader.values()?,
+                opened: Snap::unsnap(reader)?,
+                next_item: Snap::unsnap(reader)?,
+                active: reader.option_value()?,
+            },
+            helper_tag::ZIP => Self::Zip {
+                iterators: reader.values()?,
+                padding: reader.values()?,
+                mode: Snap::unsnap(reader)?,
+                keys: Snap::unsnap(reader)?,
+                opened: Snap::unsnap(reader)?,
+                done: reader.bool()?,
+            },
+            _ => return Err(SnapshotError("invalid snapshot iterator helper".into())),
+        })
     }
 }

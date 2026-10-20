@@ -159,7 +159,7 @@ impl<H: Host> Vm<H> {
             eval_script_context: false,
             deferred_dependency_batch: false,
             construct_target: None,
-            random_state: DEFAULT_RANDOM_SEED,
+            random_state: fresh_random_seed(),
         }
     }
 }

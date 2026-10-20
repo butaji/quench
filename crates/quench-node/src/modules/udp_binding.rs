@@ -957,3 +957,5 @@ pub(crate) fn from_owned_descriptor(
     }
     Ok(handle)
 }
+
+crate::host::startup_snapshot::host_snap_empty!(State { identities, send_brands, endpoints, closed } "a UDP socket");
