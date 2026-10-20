@@ -404,6 +404,7 @@ pub(crate) struct Heap {
     abandoned_job_contexts: Vec<crate::HostExecutionContext>,
     /// Live weight after the previous collection.
     live_weight_after_previous: usize,
+    live_weight_after_full: usize,
     /// Backing-store bytes allocated since the last collection, against its budget.
     external_since_collection: usize,
     external_collection_budget: usize,
@@ -1370,6 +1371,7 @@ impl Heap {
         self.full_due = false;
         self.pacing_state = pacing::PacingState::default();
         self.live_weight_after_previous = 0;
+        self.live_weight_after_full = 0;
         self.old_live = 0;
         self.threshold = pacing().minimum_young;
         self.total_allocations = 0;
@@ -1856,6 +1858,7 @@ impl Heap {
         }
         if full {
             self.live_after_full = live;
+            self.live_weight_after_full = live_weight;
         }
         let next = pacing().plan(
             &mut self.pacing_state,
@@ -1865,6 +1868,7 @@ impl Heap {
                 live_weight,
                 previous_live_weight: self.live_weight_after_previous,
                 live_after_full: self.live_after_full,
+                live_weight_after_full: self.live_weight_after_full,
                 allocated,
                 since_full: self.allocations_since_full,
             },
