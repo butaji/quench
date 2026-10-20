@@ -663,6 +663,14 @@ fn script_target_set(callee: Value) -> Option<usize> {
     Some(index & (SCRIPT_CALL_TARGETS - SCRIPT_TARGET_WAYS))
 }
 
+/// Entries of the function target memo (`LaneStack::function_targets`), one per function
+/// id modulo the count: a closure first called finds its function's target derived when a
+/// closure of the same function was resolved before, as each call of a closure-making
+/// function makes a new one. A conflict overwrites the entry, which only costs the next
+/// closure of the displaced function a full resolution.
+const FUNCTION_TARGETS: usize = 64;
+const _: () = assert!(FUNCTION_TARGETS.is_power_of_two());
+
 /// A callee that has no frameless target while `generation` and `program` hold: its calls
 /// take the general path without resolving it again.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -778,6 +786,10 @@ pub(super) struct LaneStack {
     /// Callees `Vm::resolve_script_call_target` found no frameless target for, by the same
     /// index, with the generation and program that answer held under.
     rejected_targets: Box<[RejectedCallTarget; SCRIPT_CALL_TARGETS]>,
+    /// The last target resolved for a closure of each function (`FUNCTION_TARGETS`), under
+    /// its generation and program: every field but the closure's own (`callee`, `env`,
+    /// `capture`) depends on the function alone.
+    function_targets: Box<[ScriptCallTarget; FUNCTION_TARGETS]>,
     /// Constructors' plans (`lane_initialize_fields`, `lane_planned_receiver`).
     construct_plans: Box<[ConstructPlan; CONSTRUCT_PLANS]>,
     /// The forwarding constructors whose activations constructions skipped, one per
@@ -810,6 +822,7 @@ impl Default for LaneStack {
             activations: Vec::new(),
             script_targets: Box::new([EMPTY_SCRIPT_CALL_TARGET; SCRIPT_CALL_TARGETS]),
             rejected_targets: Box::new([NO_REJECTED_CALL_TARGET; SCRIPT_CALL_TARGETS]),
+            function_targets: Box::new([EMPTY_SCRIPT_CALL_TARGET; FUNCTION_TARGETS]),
             construct_plans: Box::new([EMPTY_CONSTRUCT_PLAN; CONSTRUCT_PLANS]),
             forwarders: Vec::new(),
             forwarded_methods: Vec::new(),
@@ -834,6 +847,21 @@ impl LaneStack {
     pub(super) fn clear_script_targets(&mut self) {
         *self.script_targets = [EMPTY_SCRIPT_CALL_TARGET; SCRIPT_CALL_TARGETS];
         *self.rejected_targets = [NO_REJECTED_CALL_TARGET; SCRIPT_CALL_TARGETS];
+        *self.function_targets = [EMPTY_SCRIPT_CALL_TARGET; FUNCTION_TARGETS];
+    }
+
+    /// The target `function_targets` holds for a closure of `function` of `program` in this
+    /// generation, whose closure fields the caller rebinds.
+    fn function_target(&self, program: ProgramId, function: u32) -> Option<ScriptCallTarget> {
+        let known = self.function_targets[function as usize & (FUNCTION_TARGETS - 1)];
+        (known.generation == self.generation && known.program == program && known.function == function)
+            .then_some(known)
+    }
+
+    /// Record `target` in its set and as its function's (`function_targets`).
+    fn remember_function_target(&mut self, set: usize, target: ScriptCallTarget) {
+        self.function_targets[target.function as usize & (FUNCTION_TARGETS - 1)] = target;
+        self.remember_script_target(set, target);
     }
 
     /// The index of `method` in `forwarded_methods`, recording it when new, or
@@ -5129,6 +5157,18 @@ impl<H: Host> Vm<H> {
         if function == super::ROOT_FUNCTION_ID || program != self.active_program {
             return None;
         }
+        // A numeric body's target differs from its plain closures' (below), so only plain
+        // closures share their function's.
+        if !numeric && let Some(known) = self.lane_stack.function_target(program, function) {
+            let capture = if known.entry == CallEntry::Frame {
+                std::ptr::null()
+            } else {
+                self.target_capture(code, env)
+            };
+            let target = ScriptCallTarget { callee, env, capture, ..known };
+            self.lane_stack.remember_script_target(set, target);
+            return Some(target);
+        }
         let body = code.function_get(function as usize)?;
         let plan = body.call_plan(code);
         // A numeric body's own frame constructs nothing in place
@@ -5166,7 +5206,7 @@ impl<H: Host> Vm<H> {
                 entry: CallEntry::Frame,
                 ..EMPTY_SCRIPT_CALL_TARGET
             };
-            self.lane_stack.remember_script_target(set, target);
+            self.remember_target(set, target, numeric);
             return Some(target);
         };
         // SAFETY: the program store keeps a derived view alive with its program.
@@ -5188,19 +5228,7 @@ impl<H: Host> Vm<H> {
                 initializes: constructs && body.only_initializes_this_fields(&code.constants),
             }
         });
-        // A frameless activation's function has no environment of its own.
-        let capture = match self.environment_capture_slots(env, false, 0) {
-            Some((slots, None)) => slots
-                .dense()
-                .map_or(std::ptr::null(), |slots| slots as *const crate::heap::EnvironmentSlots),
-            _ => std::ptr::null(),
-        };
-        let capture = if !capture.is_null() && self.admits_every_direct_store(code, self.active_program, env) {
-            self.heap.remember_cell(env);
-            capture.map_addr(|address| address | CAPTURE_STORES)
-        } else {
-            capture
-        };
+        let capture = self.target_capture(code, env);
         let target = ScriptCallTarget {
             callee,
             generation: self.lane_stack.generation,
@@ -5240,8 +5268,35 @@ impl<H: Host> Vm<H> {
                 None => NO_FORWARDED_METHOD,
             },
         };
-        self.lane_stack.remember_script_target(set, target);
+        self.remember_target(set, target, numeric);
         Some(target)
+    }
+
+    /// Record a resolved `target`, also as its function's unless its closure is numeric.
+    fn remember_target(&mut self, set: usize, target: ScriptCallTarget, numeric: bool) {
+        if numeric {
+            self.lane_stack.remember_script_target(set, target);
+        } else {
+            self.lane_stack.remember_function_target(set, target);
+        }
+    }
+
+    /// The capture slots a frameless target whose closure has environment `env` reads
+    /// (`ScriptCallTarget::capture`), tagged `CAPTURE_STORES` when they admit every store,
+    /// whose barrier this takes once.
+    fn target_capture(&mut self, code: &ResidualProgram, env: Value) -> *const crate::heap::EnvironmentSlots {
+        // A frameless activation's function has no environment of its own.
+        let capture = match self.environment_capture_slots(env, false, 0) {
+            Some((slots, None)) => slots
+                .dense()
+                .map_or(std::ptr::null(), |slots| slots as *const crate::heap::EnvironmentSlots),
+            _ => return std::ptr::null(),
+        };
+        if !capture.is_null() && self.admits_every_direct_store(code, self.active_program, env) {
+            self.heap.remember_cell(env);
+            return capture.map_addr(|address| address | CAPTURE_STORES);
+        }
+        capture
     }
 
     /// Whether `program` runs in the lane: Wasm always, JavaScript only where both it and the
