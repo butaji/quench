@@ -126,6 +126,7 @@ impl<H: Host> Vm<H> {
             field_add_indices: vec![],
             field_add_sets: vec![],
             megamorphic_field_indices: vec![],
+            field_cache_writes: Some(Vec::new()),
             megamorphic_fields: vec![],
             length_atom: u32::MAX,
             prototype_atom: super::builtins::NO_CACHED_ATOM,
