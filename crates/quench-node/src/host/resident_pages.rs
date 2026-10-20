@@ -89,9 +89,38 @@ static TRACKED_MAPPINGS: std::sync::Mutex<Vec<(usize, usize)>> = std::sync::Mute
 /// before unmapping it.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub fn track_read_only_mapping(start: usize, length: usize) {
+    // A mapping aligned to a huge page maps a whole huge folio of a cached file on one fault
+    // (a 5 MB startup snapshot was 4 MB resident after its records were first read).
+    // SAFETY: advice on a live mapping the caller owns; it changes only how faults map.
+    unsafe {
+        libc::madvise(start as *mut libc::c_void, length, libc::MADV_NOHUGEPAGE);
+    }
     register_touched_pages_only(start, length);
     if let Ok(mut mappings) = TRACKED_MAPPINGS.lock() {
         mappings.push((start, length));
+    }
+}
+
+/// Releases the whole pages of `bytes` when they lie in a mapping `track_read_only_mapping`
+/// tracked; other bytes are left alone.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+pub fn release_tracked_bytes(bytes: &[u8]) {
+    let page = page_size();
+    let start = (bytes.as_ptr() as usize).next_multiple_of(page);
+    let end = (bytes.as_ptr() as usize + bytes.len()) / page * page;
+    if start >= end {
+        return;
+    }
+    // Held while releasing, so the mapping is not unmapped meanwhile.
+    let Ok(mappings) = TRACKED_MAPPINGS.lock() else {
+        return;
+    };
+    if mappings.iter().any(|&(mapping, length)| mapping <= start && end <= mapping + length) {
+        // SAFETY: the range lies in a live, read-only private file mapping, whose discarded
+        // pages fault back in from the file.
+        unsafe {
+            libc::madvise(start as *mut libc::c_void, end - start, libc::MADV_DONTNEED);
+        }
     }
 }
 
@@ -300,6 +329,9 @@ fn register_touched_pages_only(start: usize, length: usize) {
     if fd == NO_FD {
         return;
     }
+    // A mapping covers whole pages, and the kernel refuses a range that does not: a file whose
+    // length is no page multiple ends its mapping on a partial page.
+    let length = length.next_multiple_of(page_size());
     let mut range = UffdioRegister { start: start as u64, len: length as u64, mode: UFFDIO_REGISTER_MODE_WP, ioctls: 0 };
     // SAFETY: the ioctl reads and writes only `range`; a failed registration leaves the
     // mapping with fault-around.
@@ -324,6 +356,9 @@ pub fn unmap_tracked_mapping(start: usize, length: usize) {
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
 pub fn release_read_only_pages() {}
+
+#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+pub fn release_tracked_bytes(_bytes: &[u8]) {}
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
 pub fn release_read_only_pages_after_load() {}

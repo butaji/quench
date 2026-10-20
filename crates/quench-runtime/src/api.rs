@@ -168,6 +168,9 @@ impl<H: Host> Runtime<H> {
     ) -> Result<Vec<u8>, String> {
         program.validate_unless_proven().map_err(|error| error.to_string())?;
         self.vm.initialize_for_snapshot(program).map_err(|error| error.to_string())?;
+        // A restored heap starts as a full collection leaves it, every cell old: garbage the
+        // snapshot kept would stay until the next full collection.
+        self.vm.collect_now(program);
         self.vm.write_snapshot(write_host).map_err(|error| error.0)
     }
 

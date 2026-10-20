@@ -472,7 +472,7 @@ impl<H: Host> Vm<H> {
         entry: &ResidualProgram,
         read_host: impl FnOnce(&mut H, &mut crate::SnapshotReader<'_, '_>) -> Result<(), String>,
     ) -> SnapshotResult<ResidualProgram> {
-        let mut reader = Reader::new((*bytes).as_ref())?;
+        let mut reader = Reader::new((*bytes).as_ref(), Some(H::snapshot_bytes_read))?;
         self.specialized = reader.bool()?;
         self.read_atoms(&mut reader)?;
         let mut matchers: FxHashMap<(JsString, String), Rc<quench_regexp::Regex>> = FxHashMap::default();
