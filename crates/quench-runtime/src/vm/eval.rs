@@ -214,8 +214,9 @@ impl<H: Host> Vm<H> {
         // A host script compiles from its text alone: it is no direct eval, so it has no
         // caller context, private names or Annex B restrictions.
         let host_script = host_script && !self.direct_eval;
+        let mode = self.specialization_part();
         let kept = host_script
-            .then(|| self.host.kept_compiled_program(source_name, &[source]))
+            .then(|| self.host.kept_compiled_program(source_name, &[mode, source]))
             .flatten()
             .and_then(|bytes| {
                 let text = crate::bytecode::SourceText::Shared(std::sync::Arc::from(source));
@@ -259,7 +260,7 @@ impl<H: Host> Vm<H> {
             && let Some(program) = self.programs.get(program_id)
             && let Some(bytes) = self.encode_cached_program(&program)
         {
-            self.host.keep_compiled_program(source_name, &[source], &bytes);
+            self.host.keep_compiled_program(source_name, &[mode, source], &bytes);
         }
         let origin = self.capture_eval_origin(p)?;
         self.programs.set_origin(program_id, super::program_store::CompilationOrigin::Eval { caller: Some(origin) });
@@ -322,7 +323,7 @@ impl<H: Host> Vm<H> {
     pub(crate) fn prepare_embedding_library_body_kept(
         &mut self, prefix: &str, body: crate::bytecode::SourceText, suffix: &str, name: &str,
     ) -> Result<crate::PreparedScript, JsError> {
-        let parts = [prefix, &*body, suffix];
+        let parts = [self.specialization_part(), prefix, &*body, suffix];
         if let Some(bytes) = self.host.kept_compiled_program(name, &parts)
             && let Ok(program) = self.decode_cached_program(bytes, body.clone(), prefix.len(), name, self.specialized)
         {
@@ -337,6 +338,14 @@ impl<H: Host> Vm<H> {
 
     /// `program`'s compile-cache form, when every atom it names is found again by its text:
     /// a VM atom whose UTF-16 has no lossless host spelling cannot be cached by name.
+    /// Names this VM's specialization in a compile-cache key: a program compiled under the
+    /// other does not decode here (`decode_cached_program`). Without it, processes that run
+    /// a module under each specialization replaced each other's entry, and each compiled it
+    /// again (typescript.js, 9 MB of source, about 3 s per process).
+    fn specialization_part(&self) -> &'static str {
+        if self.specialized { "specialized" } else { "unspecialized" }
+    }
+
     pub(super) fn encode_cached_program(&self, program: &crate::ResidualProgram) -> Option<Vec<u8>> {
         let (bytes, atoms) = program.encode_compact();
         atoms
@@ -395,7 +404,7 @@ impl<H: Host> Vm<H> {
             format!("{SPECIALIZED_SCRIPT_GOAL}:{line}:{column}:{keep_records}")
         });
         if let Some(goal) = &cache_key
-            && let Some(bytes) = self.host.kept_compiled_program(name, &[goal, source])
+            && let Some(bytes) = self.host.kept_compiled_program(name, &[self.specialization_part(), goal, source])
         {
             let text = crate::bytecode::SourceText::Shared(std::sync::Arc::from(source));
             let specialized = self.specialized;
@@ -442,7 +451,8 @@ impl<H: Host> Vm<H> {
         if let Some(goal) = &cache_key
             && let Some(bytes) = self.encode_cached_program(&residual)
         {
-            self.host.keep_compiled_program(name, &[goal, source], &bytes);
+            let mode = self.specialization_part();
+            self.host.keep_compiled_program(name, &[mode, goal, source], &bytes);
         }
         // Its final source is settled, so a function compiles again from it on first call.
         residual.release_replayable_records();
