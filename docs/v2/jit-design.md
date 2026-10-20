@@ -728,3 +728,25 @@ diagnostics still show `runIteration` unsupported; compiling `equals` does not
 remove the interpreter loop around the 54 million calls. A controlled paired
 comparison is now the next step before keeping this fast path. Its diagnostic is
 `target/jit-hash-map-direct-call.json` in the working tree.
+
+## Statically-known JavaScript calls
+
+The interpreter's `CallKnown` opcode previously always created a callee
+activation, even when the same program already held a guarded native artifact.
+In compiled mode, non-tail JavaScript `CallKnown` now checks that artifact
+before creating the frame and enters it directly when its arguments satisfy the
+existing guard. Artifacts that need a callee frame, including lexical-capture
+and string-loop entries, continue through normal activation so capture values
+and specialized ABIs are never read from an incomplete argument buffer. Wasm,
+tail calls, unsupported arguments and interpreter mode keep their existing
+paths.
+
+The focused JIT tests pass 16/16, including a regression that confirms a hot
+`CallKnown` numeric callee reaches native code after promotion. The first clean
+three-round Web SSR screen after this change scored 14.65 with 132.1 MiB median
+RSS; a prior three-round screen scored 13.46 with 131.3 MiB. These are separate
+screens and do not establish a paired gain. A one-round stock `hash-map` screen
+validated and recorded Quench at 4.35 Score / 74.3 MiB, Bun at 467.12 / 95.9
+MiB and Node at 414.81 / 161.4 MiB. The RSS bar is below both peers, while
+Score remains far behind; this is diagnostic progress, not a benchmark win.
+Raw report: `evidence/jit-jetstream3-2026-10-20/known-call-fast-path/hash-map-jit-1round.json`.
