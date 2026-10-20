@@ -44,6 +44,9 @@ use slots::{FreeSlotBitmap, SLOTS_PER_SLAB, SlotArena};
 // representation. The slot limit is derived from Value's representation.
 const DENSE_ARRAY_HOLE_BUDGET_BYTES: usize = 256 * 1024;
 const MAX_DENSE_ARRAY_HOLE_LENGTH: usize = DENSE_ARRAY_HOLE_BUDGET_BYTES / size_of::<Value>();
+// A sparse element is an index and a value in a hash table, at least this many dense slots;
+// a sparse array whose elements fill as many slots as its length turns dense.
+const SPARSE_ENTRY_SLOTS: usize = size_of::<(usize, Value)>() / size_of::<Value>();
 use pacing::pacing;
 #[inline(always)]
 fn payload_unit() -> usize {
@@ -2636,9 +2639,12 @@ impl Heap {
         let elements = arrays.entry(array).or_default();
         elements.values.insert(index, value);
         elements.length = elements.length.max(index.saturating_add(1));
-        let length = elements.length;
-        if length <= MAX_DENSE_ARRAY_HOLE_LENGTH {
-            self.sparse_set_length(array, length);
+        let (length, sparse_count) = (elements.length, elements.values.len());
+        let dense_count = self.array_elements(array).map_or(0, |dense| dense.len());
+        // Dense storage of the whole length takes no more words than the sparse entries hold.
+        let dense_enough = (sparse_count + dense_count).saturating_mul(SPARSE_ENTRY_SLOTS) >= length;
+        if length <= MAX_DENSE_ARRAY_HOLE_LENGTH || dense_enough {
+            self.materialize_sparse_array(array, length);
         }
     }
     pub(crate) fn sparse_set_length(&mut self, array: Value, length: usize) {
