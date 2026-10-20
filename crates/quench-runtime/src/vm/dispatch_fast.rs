@@ -1006,8 +1006,30 @@ fn lane_operand_value<H: Host>(
         crate::bytecode::OperandKind::Constant => unsafe { &*(*cx).constants }
             .get(usize::from(operand.payload()))
             .copied(),
+        crate::bytecode::OperandKind::Local => lane_plain_local_operand(cx, operand.payload()),
         _ => None,
     }
+}
+
+/// A local operand of the running frame's function that is a plain slot, which the general
+/// loop reads as `LoadLocalPlain` does (`Vm::operand_value`): generators and other functions
+/// that keep frame locals compare and compute with them in place. A frameless activation has
+/// no locals; any other local is the general path's.
+#[inline(never)]
+fn lane_plain_local_operand<H: Host>(cx: *mut LaneContext<H>, slot: u16) -> Option<Value> {
+    let vm = unsafe { vm(cx) };
+    if !vm.lane_stack.activations.is_empty() {
+        return None;
+    }
+    // SAFETY: the context's program outlives the lane run, and its frame is the running one.
+    let (code, frame) = unsafe { (&*(*cx).code, (*cx).frame) };
+    let frame = vm.frames.get(frame)?;
+    let slot = usize::from(slot);
+    code.functions
+        .get(frame.function as usize)?
+        .plain_local(code, slot)
+        .then(|| frame.locals.get(slot).copied())
+        .flatten()
 }
 
 lane_handler! {
@@ -1125,10 +1147,28 @@ unsafe fn lane_binary_value<H: Host>(
     let operator = i.imm();
     match unsafe { vm(cx) }.number_binary(operator, left, right) {
         Some(value) => Some(value),
-        None if operator == super::operations::ADDITION => lane_concatenation(cx, left, right),
-        None => lane_relation::<H>(operator, left, right)
-            .map(|holds| if holds { Value::TRUE } else { Value::FALSE }),
+        None if operator == super::operations::ADDITION => lane_concatenation(cx, left, right)
+            .or_else(|| lane_bigint_value(cx, operator, left, right)),
+        None => lane_bigint_value(cx, operator, left, right).or_else(|| {
+            lane_relation::<H>(operator, left, right)
+                .map(|holds| if holds { Value::TRUE } else { Value::FALSE })
+        }),
     }
+}
+
+/// A BigInt operator of two BigInts that raises nothing (`Vm::bigint_binary_value`), which
+/// allocates the result; `None` leaves the operation, and any error, to the general path.
+#[inline(never)]
+fn lane_bigint_value<H: Host>(
+    cx: *mut LaneContext<H>,
+    operator: u32,
+    left: Value,
+    right: Value,
+) -> Option<Value> {
+    let vm = unsafe { vm(cx) };
+    let value = vm.bigint_binary_value(operator, left, right)?;
+    note_allocation(vm);
+    Some(value)
 }
 
 /// `+` of operands that become strings without guest code (`Vm::primitive_concatenation`),
@@ -1287,7 +1327,9 @@ lane_handler! {
     fn lane_operator_numbers<OP: u32>(cx, r, ip, i, view) {
         let (left, right) = (r.get(i.b), r.get(i.c));
         let Some(value) = (match super::operations::number_value_operator::<OP>(left, right) {
-            None if OP == super::operations::ADDITION => lane_concatenation(cx, left, right),
+            None if OP == super::operations::ADDITION => lane_concatenation(cx, left, right)
+                .or_else(|| lane_bigint_value(cx, OP, left, right)),
+            None => lane_bigint_value(cx, OP, left, right),
             value => value,
         }) else {
             return exit(ip);
@@ -2657,15 +2699,20 @@ lane_handler! {
     }
 }
 
-/// The relations the general loop decides past Number comparison without running guest
-/// code: identity equality and an ordinary `instanceof`. Out of line, so the comparison
-/// handlers keep their Number path's shape.
+/// The tests the general loop decides past Number comparison without running guest code:
+/// identity equality, an ordinary `instanceof`, BigInt order, and the truth of a Number
+/// operator's result.
+/// Out of line, so the comparison handlers keep their Number path's shape.
 #[cold]
 #[inline(never)]
 fn lane_relation_other<H: Host>(operator: u32, left: Value, right: Value) -> Option<bool> {
     let vm = unsafe { vm(lane_context::<H>()) };
     vm.instanceof_truthy(operator, left, right)
         .or_else(|| vm.identity_equality(operator, left, right))
+        // A test of an arithmetic or bitwise result (`if (flags & MASK)`): the Number
+        // operator's value, whose ToBoolean runs no guest code.
+        .or_else(|| vm.bigint_relation(operator, left, right))
+        .or_else(|| vm.number_binary(operator, left, right)?.truthiness())
 }
 
 /// A taken jump. Backward jumps, the only ones that close a loop, are

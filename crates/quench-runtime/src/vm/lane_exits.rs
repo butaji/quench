@@ -9,6 +9,15 @@ static REPORT: std::sync::Once = std::sync::Once::new();
 /// Opcodes the report lists, most frequent first.
 const REPORTED_OPCODES: usize = 30;
 
+static DETAILS: std::sync::Mutex<Option<std::collections::HashMap<String, u64>>> =
+    std::sync::Mutex::new(None);
+
+/// Counts one exit by a description of its operands (operator and value kinds).
+pub(super) fn record_detail(detail: String) {
+    let mut details = DETAILS.lock().expect("lane exit details");
+    *details.get_or_insert_with(Default::default).entry(detail).or_default() += 1;
+}
+
 pub(super) fn record(op: Op) {
     REPORT.call_once(|| {
         // SAFETY: `report` is a plain function that outlives the process.
@@ -29,5 +38,12 @@ extern "C" fn report() {
     eprintln!("lane exits: {total}");
     for (count, op) in counts.into_iter().take(REPORTED_OPCODES) {
         eprintln!("  {count:>12} {}", Op::NAMES[op]);
+    }
+    if let Some(details) = DETAILS.lock().expect("lane exit details").as_ref() {
+        let mut details: Vec<_> = details.iter().collect();
+        details.sort_unstable_by(|a, b| b.1.cmp(a.1));
+        for (detail, count) in details.into_iter().take(REPORTED_OPCODES) {
+            eprintln!("  {count:>12} {detail}");
+        }
     }
 }
