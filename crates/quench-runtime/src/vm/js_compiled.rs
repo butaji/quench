@@ -301,7 +301,7 @@ pub(super) fn candidate_rejection_reason(
     program: &ResidualProgram,
     function_id: u32,
 ) -> &'static str {
-    let Some(function) = program.functions.get(function_id as usize) else {
+    let Some(function) = program.function_get(function_id as usize) else {
         return "invalid-function-id";
     };
     if function.code.is_empty() {
