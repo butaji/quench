@@ -315,7 +315,7 @@ impl<'v, H: Host> JsonHeapBuilder<'v, H> {
             JsonValue::Bool(true) => self.literal(JsonLiteral::True),
             JsonValue::Bool(false) => self.literal(JsonLiteral::False),
             JsonValue::Number(value) => self.number(*value),
-            JsonValue::String(value) => self.vm.heap.alloc(Cell::String(value.clone())),
+            JsonValue::String(value) => self.vm.heap.alloc_string(value.clone()),
             JsonValue::Source(value, _) => self.materialize(value)?,
             JsonValue::Array(values) => {
                 let values = values
@@ -354,7 +354,7 @@ impl<H: Host> JsonBuilder for JsonHeapBuilder<'_, H> {
     fn string(&mut self, units: &[u16]) -> Value {
         self.vm
             .heap
-            .alloc(Cell::String(JsString::from_units(units)))
+            .alloc_string(JsString::from_units(units))
     }
     fn key(&mut self, units: &[u16]) -> Atom {
         self.vm.intern_unit_run_atom(Units::Wide(units))
@@ -711,12 +711,12 @@ impl<H: Host> Vm<H> {
             data.set_raw_json();
         }
         let raw_atom = self.intern_atom("rawJSON");
-        let raw_text_value = self.heap.alloc(Cell::String(text));
+        let raw_text_value = self.heap.alloc_string(text);
         let raw_text_root = self.heap.root(raw_text_value);
         let result = (|| {
             let key = self
                 .heap
-                .alloc(Cell::String(self.atom_name(raw_atom).into()));
+                .alloc_string(self.atom_name(raw_atom).into());
             let raw_text = self.heap.root_value(raw_text_root).unwrap();
             let descriptor = PropertyDescriptorRecord {
                 writable: Some(false),
@@ -801,7 +801,7 @@ impl<H: Host> Vm<H> {
             JsonValue::Bool(expected) => current.as_bool() == Some(*expected),
             JsonValue::Number(expected) => self.same_value(current, Value::number(*expected)),
             JsonValue::String(expected) => {
-                matches!(self.heap.get(current), Some(Cell::String(actual)) if actual == expected)
+                self.heap.string(current).is_some_and(|actual| actual == expected)
             }
             _ => false,
         };
@@ -869,7 +869,7 @@ impl<H: Host> Vm<H> {
                     self.json_update_property(p, value_handle, &child_key, child)?;
                 }
             }
-            let key_value = self.heap.alloc(Cell::String(key.clone()));
+            let key_value = self.heap.alloc_string(key.clone());
             let key_handle = self.heap.root(key_value);
             key_root = Some(key_handle);
             let context = self.json_object();
@@ -877,7 +877,7 @@ impl<H: Host> Vm<H> {
             context_root = Some(context_handle);
             if let Some(source) = source_text {
                 let source_atom = self.intern_atom("source");
-                let source_value = self.heap.alloc(Cell::String(source));
+                let source_value = self.heap.alloc_string(source);
                 let source_root = self.heap.root(source_value);
                 let context = self.heap.root_value(context_handle).unwrap();
                 let source_value = self.heap.root_value(source_root).unwrap();
@@ -916,7 +916,7 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> Result<(), JsError> {
         let value_root = self.heap.root(value);
-        let key = self.heap.alloc(Cell::String(key.clone()));
+        let key = self.heap.alloc_string(key.clone());
         let key_root = self.heap.root(key);
         let holder = self.heap.root_value(holder).unwrap();
         let key = self.heap.root_value(key_root).unwrap();
@@ -965,7 +965,7 @@ impl<H: Host> Vm<H> {
             return Ok(Value::UNDEFINED);
         }
         let text = String::from_utf8(state.output).expect("JSON text is written as UTF-8");
-        Ok(self.heap.alloc(Cell::String(text.into())))
+        Ok(self.heap.alloc_string(text.into()))
     }
 
     fn json_replacer(
@@ -990,7 +990,7 @@ impl<H: Host> Vm<H> {
                 let item_root = self.heap.root(item);
                 let item = self.heap.root_value(item_root).unwrap_or(item);
                 let accepted = item.as_number().is_some()
-                    || matches!(self.heap.get(item), Some(Cell::String(_)))
+                    || self.heap.is_string(item)
                     || self.json_boxed_string_or_number(item).is_some();
                 if accepted {
                     let name = match self.coerce_js_string(p, item) {
@@ -1027,7 +1027,7 @@ impl<H: Host> Vm<H> {
             Value::number(self.to_number(p, value)?)
         } else if string_box {
             let text = self.to_string(p, value)?;
-            self.heap.alloc(Cell::String(text.into()))
+            self.heap.alloc_string(text.into())
         } else {
             value
         };
@@ -1039,7 +1039,7 @@ impl<H: Host> Vm<H> {
             };
             return Ok(" ".repeat(count));
         }
-        if let Some(Cell::String(text)) = self.heap.get(value) {
+        if let Some(text) = self.heap.string(value) {
             return Ok(String::from_utf16_lossy(
                 &text.units().slice(0..text.units().len().min(10)).wide(),
             ));
@@ -1119,7 +1119,7 @@ impl<H: Host> Vm<H> {
             JsonKey::Index(index) => JsString::from(index.to_string()),
             JsonKey::Name(atom) => self.atom_value(atom),
         };
-        self.heap.alloc(Cell::String(text))
+        self.heap.alloc_string(text)
     }
 
     fn json_serialize_value(
@@ -1163,7 +1163,7 @@ impl<H: Host> Vm<H> {
             return self.json_serialize_array(p, value, state).map(|()| true);
         }
         match self.heap.get(value).cloned() {
-            Some(Cell::String(text)) => {
+            _ if let Some(text) = self.heap.string(value).cloned()  => {
                 write_json_string(&text, &mut state.output);
                 Ok(true)
             }
@@ -1230,7 +1230,7 @@ impl<H: Host> Vm<H> {
         match self.boxed_primitive_data(value) {
             Some((B::StringObject, _)) => {
                 let text = self.to_string(p, value)?;
-                Ok(self.heap.alloc(Cell::String(text.into())))
+                Ok(self.heap.alloc_string(text.into()))
             }
             Some((B::NumberObject, _)) => Ok(Value::number(self.to_number(p, value)?)),
             Some((B::BooleanObject | B::BigIntObject, payload)) => Ok(payload),
@@ -1243,10 +1243,7 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let raw = self.lookup_atom("rawJSON")?;
-        match self.heap.get(self.own_property(value, raw)?) {
-            Some(Cell::String(text)) => Some(text.host_string().to_owned()),
-            _ => None,
-        }
+        self.heap.string(self.own_property(value, raw)?).map(|text| text.host_string().to_owned())
     }
 
     fn json_serialize_array(
@@ -1369,7 +1366,7 @@ impl<H: Host> Vm<H> {
                     .array_elements(keys)
                     .map(|elements| elements[index])
                     .expect("rooted own-key projection");
-                if !matches!(self.heap.get(key), Some(Cell::String(_))) {
+                if !self.heap.is_string(key) {
                     continue;
                 }
                 let key_root = self.heap.root(key);
@@ -1379,7 +1376,7 @@ impl<H: Host> Vm<H> {
                     let descriptor = self.object_get_own_property_descriptor(p, &[object, key])?;
                     if self.descriptor_flag(descriptor, "enumerable") {
                         let key = self.heap.root_value(key_root).unwrap();
-                        if let Some(Cell::String(name)) = self.heap.get(key).cloned() {
+                        if let Some(name) = self.heap.string(key).cloned() {
                             names.push(self.intern_js_atom(&name));
                         }
                     }

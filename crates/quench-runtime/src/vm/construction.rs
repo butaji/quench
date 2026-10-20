@@ -59,7 +59,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn string_constructor_argument(&mut self, args: &[Value]) -> Value {
         args.first().copied().unwrap_or_else(|| {
             self.heap
-                .alloc(Cell::String(super::wtf16::JsString::from_str("")))
+                .alloc_string(super::wtf16::JsString::from_str(""))
         })
     }
 
@@ -70,7 +70,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let argument = self.string_constructor_argument(args);
         let text = self.coerce_js_string(p, argument)?;
-        Ok(self.heap.alloc(Cell::String(text)))
+        Ok(self.heap.alloc_string(text))
     }
 
     pub(super) fn set_function_name(
@@ -107,7 +107,7 @@ impl<H: Host> Vm<H> {
         if let Some(&value) = self.atom_strings.get(&atom) {
             return value;
         }
-        let value = self.heap.alloc(Cell::String(self.atom_value(atom)));
+        let value = self.heap.alloc_string(self.atom_value(atom));
         if keep {
             self.atom_strings.insert(atom, value);
         }
@@ -116,7 +116,7 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn set_function_name_key(&mut self, function: Value, key: Value, prefix: u32) {
         let name = match self.heap.get(key) {
-            Some(Cell::String(value)) => value.to_string(),
+            _ if let Some(value) = self.heap.string(key)  => value.to_string(),
             Some(Cell::Symbol(description)) => description
                 .as_ref()
                 .map_or_else(String::new, |description| format!("[{}]", description)),
@@ -134,7 +134,7 @@ impl<H: Host> Vm<H> {
         let Some(slot) = self.inferred_function_name_slot(function) else {
             return;
         };
-        let value = self.heap.alloc(Cell::String(text.into()));
+        let value = self.heap.alloc_string(text.into());
         self.heap.property_set(function, slot, value);
         self.capture_function_name(function, value);
     }
@@ -148,7 +148,7 @@ impl<H: Host> Vm<H> {
         }
         let name_atom = self.runtime_atoms.name;
         let current = self.own_property(function, name_atom).unwrap_or(Value::UNDEFINED);
-        if !matches!(self.heap.get(current), Some(Cell::String(value)) if value.units().is_empty()) {
+        if !self.heap.string(current).is_some_and(|value| value.units().is_empty()) {
             return None;
         }
         self.shape_slot(self.object_data(function)?.shape(), name_atom)

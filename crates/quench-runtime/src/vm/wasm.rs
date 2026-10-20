@@ -3901,7 +3901,7 @@ mod tests {
         let mut vm = Vm::new(crate::SystemHost);
         let script = crate::Engine::specialize("0;", "start-owner.js").unwrap();
         vm.execute(&script).unwrap();
-        let host_value = vm.heap.alloc(Cell::String("start-host-root".into()));
+        let host_value = vm.heap.alloc_string("start-host-root".into());
         let host_root = vm.root(host_value);
         let roots = vm.heap.root_count_for_test();
         // A module carrying an instantiation effect cannot bypass that effect
@@ -3925,7 +3925,7 @@ mod tests {
             assert_eq!(vm.heap.root_count_for_test(), roots);
             vm.collect_now(&script);
             assert_eq!(vm.root_value(host_root), Some(host_value));
-            assert!(matches!(vm.heap.get(host_value), Some(Cell::String(_))));
+            assert!(vm.heap.is_string(host_value));
         }
         vm.release_root(host_root);
     }
@@ -3935,7 +3935,7 @@ mod tests {
         let script = crate::Engine::specialize("0;", "shared-root.js").unwrap();
         let mut vm = Vm::new(crate::SystemHost);
         vm.execute(&script).unwrap();
-        let value = vm.heap.alloc(Cell::String("host-owned".into()));
+        let value = vm.heap.alloc_string("host-owned".into());
         let root = vm.root(value);
         let module = crate::Engine::lower_wasm_i32_module(
             "shared-entries",
@@ -3967,8 +3967,7 @@ mod tests {
             assert_eq!(vm.programs.len(), 2);
             vm.collect_now(&script);
             assert_eq!(vm.root_value(root), Some(value));
-            assert!(matches!(vm.heap.get(value), Some(Cell::String(text))
-                if text.host_string() == "host-owned"));
+            assert!(vm.heap.string(value).is_some_and(|text| text.host_string() == "host-owned"));
         }
         // A deliberate new JS execution retains its existing reset contract.
         vm.execute(&script).unwrap();

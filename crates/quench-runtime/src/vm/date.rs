@@ -271,7 +271,7 @@ impl<H: Host> Vm<H> {
         let milliseconds = HostContext::new(&mut self.host).invoke(CapabilityId::ClockMillis, None);
         Ok(self
             .heap
-            .alloc(Cell::String(format_date_string(milliseconds).into())))
+            .alloc_string(format_date_string(milliseconds).into()))
     }
 
     pub(super) fn date_static_native(
@@ -324,20 +324,20 @@ impl<H: Host> Vm<H> {
         }
         match native {
             Native::DateToString if !milliseconds.is_finite() => {
-                Ok(self.heap.alloc(Cell::String("Invalid Date".into())))
+                Ok(self.heap.alloc_string("Invalid Date".into()))
             }
             Native::DateToDateString => Ok(self
                 .heap
-                .alloc(Cell::String(format_date_date_string(milliseconds).into()))),
+                .alloc_string(format_date_date_string(milliseconds).into())),
             Native::DateToTimeString => Ok(self
                 .heap
-                .alloc(Cell::String(format_date_time_string(milliseconds).into()))),
+                .alloc_string(format_date_time_string(milliseconds).into())),
             Native::DateToLocaleDateString | Native::DateToLocaleTimeString => {
                 if !milliseconds.is_finite() {
-                    return Ok(self.heap.alloc(Cell::String("Invalid Date".into())));
+                    return Ok(self.heap.alloc_string("Invalid Date".into()));
                 }
                 let Some(date) = date_local(milliseconds) else {
-                    return Ok(self.heap.alloc(Cell::String("Invalid Date".into())));
+                    return Ok(self.heap.alloc_string("Invalid Date".into()));
                 };
                 let text = if native == Native::DateToLocaleDateString {
                     format!("{} {}, {}", date.month(), date.day(), date.year())
@@ -349,21 +349,21 @@ impl<H: Host> Vm<H> {
                         date.second()
                     )
                 };
-                Ok(self.heap.alloc(Cell::String(text.into())))
+                Ok(self.heap.alloc_string(text.into()))
             }
             Native::DateToUTCString if !milliseconds.is_finite() => {
-                Ok(self.heap.alloc(Cell::String("Invalid Date".into())))
+                Ok(self.heap.alloc_string("Invalid Date".into()))
             }
             Native::DateToUTCString => {
                 let Some(date) = date_utc(milliseconds) else {
                     return Err(JsError("Invalid time value".into()));
                 };
                 let text = date.format("%a, %d %b %Y %H:%M:%S GMT").to_string();
-                Ok(self.heap.alloc(Cell::String(text.into())))
+                Ok(self.heap.alloc_string(text.into()))
             }
             Native::DateToLocaleString => {
                 let Some(date) = date_local(milliseconds) else {
-                    return Ok(self.heap.alloc(Cell::String("Invalid Date".into())));
+                    return Ok(self.heap.alloc_string("Invalid Date".into()));
                 };
                 let text = format!(
                     "{} {}, {} {:02}:{:02}:{:02}",
@@ -374,18 +374,18 @@ impl<H: Host> Vm<H> {
                     date.minute(),
                     date.second(),
                 );
-                Ok(self.heap.alloc(Cell::String(text.into())))
+                Ok(self.heap.alloc_string(text.into()))
             }
             Native::DateToString => Ok(self
                 .heap
-                .alloc(Cell::String(format_date_string(milliseconds).into()))),
+                .alloc_string(format_date_string(milliseconds).into())),
             Native::DateToISOString | Native::DateToJSON => {
                 if !milliseconds.is_finite() {
                     return Err(self.range_error(p, "Invalid time value".into()));
                 }
                 let text = format_date_iso(milliseconds)
                     .ok_or_else(|| self.range_error(p, "Invalid time value".into()))?;
-                Ok(self.heap.alloc(Cell::String(text.into())))
+                Ok(self.heap.alloc_string(text.into()))
             }
             Native::DateToTemporalInstant => {
                 if !milliseconds.is_finite() {
@@ -426,13 +426,13 @@ impl<H: Host> Vm<H> {
                 "Date.prototype[Symbol.toPrimitive] requires an object".into(),
             ));
         }
-        let hint = match args.first().and_then(|value| self.heap.get(*value)) {
-            Some(Cell::String(hint))
+        let hint = match args.first().and_then(|value| self.heap.string(*value)) {
+            Some(hint)
                 if hint.host_string() == "string" || hint.host_string() == "default" =>
             {
                 "string"
             }
-            Some(Cell::String(hint)) if hint.host_string() == "number" => "number",
+            Some(hint) if hint.host_string() == "number" => "number",
             _ => return Err(self.type_error(p, "Invalid hint".into())),
         };
         self.ordinary_to_primitive(p, receiver, hint)
@@ -539,7 +539,7 @@ impl<H: Host> Vm<H> {
                 Some(value) => {
                     let primitive = self.to_primitive(p, value, "default")?;
                     match self.heap.get(primitive) {
-                        Some(Cell::String(text)) => parse_date_string(text.host_string()),
+                        _ if let Some(text) = self.heap.string(primitive)  => parse_date_string(text.host_string()),
                         _ => time_clip(self.to_number(p, primitive)?),
                     }
                 }

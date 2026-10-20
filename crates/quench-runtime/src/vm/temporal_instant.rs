@@ -141,7 +141,7 @@ impl<H: Host> Vm<H> {
         let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::ToStringTag) else {
             return Ok(());
         };
-        let tag = self.heap.alloc(Cell::String("Temporal.Instant".into()));
+        let tag = self.heap.alloc_string("Temporal.Instant".into());
         self.set_symbol_property(prototype, symbol, tag)?;
         self.set_property_attributes(
             prototype,
@@ -349,7 +349,7 @@ impl<H: Host> Vm<H> {
             super::temporal_instant_format::format_temporal_datetime(epoch, &options, None, "Z")
         }
         .ok_or_else(|| self.range_error(p, "Invalid epochNanoseconds".into()))?;
-        Ok(self.heap.alloc(Cell::String(text.into())))
+        Ok(self.heap.alloc_string(text.into()))
     }
 
     fn temporal_instant_value_of(&mut self, p: &ResidualProgram) -> Result<Value, JsError> {

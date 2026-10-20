@@ -727,7 +727,7 @@ impl<H: Host> Vm<H> {
             },
         );
         let to_string_tag = self.well_known_symbols[WellKnownSymbol::ToStringTag];
-        let symbol_tag = self.heap.alloc(Cell::String(JsString::from_str("Symbol")));
+        let symbol_tag = self.heap.alloc_string(JsString::from_str("Symbol"));
         self.set_symbol_property(symbol_prototype, to_string_tag, symbol_tag)?;
         self.set_property_attributes(
             symbol_prototype,
@@ -871,7 +871,7 @@ impl<H: Host> Vm<H> {
         // it, so it is a lazy data property built on first use.
         let initializer = self.native_with_env(Native::TemporalInitialize, Value::NULL);
         let atom = self.intern_atom("Temporal");
-        let key = self.heap.alloc(Cell::String(self.atom_value(atom)));
+        let key = self.heap.alloc_string(self.atom_value(atom));
         self.with_call_roots([initializer, key], |vm| {
             vm.define_lazy_data_properties(
                 program,
@@ -993,7 +993,7 @@ impl<H: Host> Vm<H> {
             .well_known_symbols
             .get(WellKnownSymbol::ToStringTag)
             .ok_or_else(|| JsError("Symbol.toStringTag is not initialized".into()))?;
-        let value = self.heap.alloc(Cell::String(tag.into()));
+        let value = self.heap.alloc_string(tag.into());
         self.set_symbol_property(object, symbol, value)?;
         self.set_property_attributes(
             object,
@@ -1234,7 +1234,7 @@ impl<H: Host> Vm<H> {
         let atom = self.intern_atom("name");
         let current = self.own_property(function, atom);
         if current.is_some_and(|value| {
-            !matches!(self.heap.get(value), Some(Cell::String(text)) if text.units().is_empty())
+            !self.heap.string(value).is_some_and(|text| text.units().is_empty())
         }) {
             return Ok(());
         }
@@ -1268,7 +1268,7 @@ impl<H: Host> Vm<H> {
         // A builtin's name usually spells the key it is installed under, whose interned
         // string the name then shares instead of copying the text for every function.
         let name_atom = self.intern_atom(name);
-        let value = self.heap.alloc(Cell::String(self.atom_value(name_atom)));
+        let value = self.heap.alloc_string(self.atom_value(name_atom));
         self.set_property(function, atom, value)?;
         self.set_property_attributes(
             function,

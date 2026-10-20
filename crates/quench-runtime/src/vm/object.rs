@@ -1539,6 +1539,21 @@ impl<H: Host> Vm<H> {
                 };
                 return self.finish_field_cache_read(p, object, atom, lookup);
             }
+            Some(HeapReference::StringRecord(_)) => {
+                let lookup = if self.specialized && p.specialized {
+                    match self.string_field_cache_read(atom, site) {
+                        Some(Some(hit)) => FieldCacheRead::Hit(hit),
+                        Some(None) => FieldCacheRead::StringMiss {
+                            prototype: self.string_proto,
+                            site: self.field_cache_index(site),
+                        },
+                        None => FieldCacheRead::StringGeneric,
+                    }
+                } else {
+                    FieldCacheRead::Generic
+                };
+                return self.finish_field_cache_read(p, object, atom, lookup);
+            }
             Some(
                 HeapReference::ObjectRecord(_)
                 | HeapReference::ArrayRecord(_)
@@ -1548,16 +1563,6 @@ impl<H: Host> Vm<H> {
             | None => None,
         };
         let lookup = match legacy_cell {
-            Some(Cell::String(_)) if self.specialized && p.specialized => {
-                match self.string_field_cache_read(atom, site) {
-                    Some(Some(hit)) => FieldCacheRead::Hit(hit),
-                    Some(None) => FieldCacheRead::StringMiss {
-                        prototype: self.string_proto,
-                        site: self.field_cache_index(site),
-                    },
-                    None => FieldCacheRead::StringGeneric,
-                }
-            }
             Some(Cell::Proxy { .. }) => FieldCacheRead::Proxy,
             Some(cell) if self.specialized && p.specialized => {
                 self.object_field_cache_read(cell, atom, site)
@@ -1620,7 +1625,7 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         site: u16,
     ) -> Option<Value> {
-        let Some(Cell::String(text)) = self.heap.get(object) else {
+        let Some(text) = self.heap.string(object) else {
             return None;
         };
         if atom == self.length_atom {
@@ -2336,7 +2341,7 @@ impl<H: Host> Vm<H> {
             .object_data(receiver)
             .is_some_and(Object::is_module_namespace)
         {
-            let key = self.heap.alloc(Cell::String(self.atom_value(atom)));
+            let key = self.heap.alloc_string(self.atom_value(atom));
             let descriptor = self.object_get_own_property_descriptor(p, &[receiver, key])?;
             if descriptor.is_undefined() {
                 return Ok(false);
@@ -2460,7 +2465,7 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> Result<bool, JsError> {
         let key = match property {
-            PropertyKey::String(atom) => self.heap.alloc(Cell::String(self.atom_value(atom))),
+            PropertyKey::String(atom) => self.heap.alloc_string(self.atom_value(atom)),
             PropertyKey::Symbol(key) => key,
             PropertyKey::Private(_) => {
                 unreachable!("private keys cannot reach Proxy DefineOwnProperty")
