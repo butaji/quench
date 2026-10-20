@@ -1257,6 +1257,33 @@ fn lane_plain_local_operand<H: Host>(cx: *mut LaneContext<H>, slot: u16) -> Opti
 }
 
 lane_handler! {
+    /// `IteratorCleanupPush` in the running VM frame, as the general loop runs it: the frame's
+    /// iterator to close if the loop exits abruptly. A frameless activation's takes the
+    /// general path, which makes the activation a frame.
+    fn lane_iterator_cleanup_push<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        if !vm.lane_stack.activations.is_empty() {
+            return exit(ip);
+        }
+        let frame = unsafe { (*cx).frame };
+        vm.frames[frame].active_iterators.push(super::ActiveIterator { iterator: i.a, done: i.b });
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    /// `IteratorCleanupPop` in the running VM frame (`lane_iterator_cleanup_push`).
+    fn lane_iterator_cleanup_pop<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let frame = unsafe { (*cx).frame };
+        if !vm.lane_stack.activations.is_empty() || vm.frames[frame].active_iterators.pop().is_none() {
+            return exit(ip);
+        }
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
     fn lane_store_local_plain<>(cx, r, ip, i, view) {
         let value = r.get(i.a);
         // SAFETY: validated bytecode bounds the slot by Function.locals.
@@ -7297,6 +7324,8 @@ const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool, const ACC: u8
 const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> Option<Handler> {
     match op {
         Op::StoreLocalPlain => Some(lane_store_local_plain::<H>),
+        Op::IteratorCleanupPush => Some(lane_iterator_cleanup_push::<H>),
+        Op::IteratorCleanupPop => Some(lane_iterator_cleanup_pop::<H>),
         Op::StoreLocal | Op::StoreEnvLocal => Some(lane_store_local::<H>),
         Op::LoadThis => Some(lane_load_this::<H>),
         Op::InitializeTdz => Some(lane_initialize_tdz::<H>),
