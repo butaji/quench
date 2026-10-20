@@ -919,6 +919,16 @@ impl Native {
                     | Self::SetAdd
                     | Self::SetHas
                     | Self::SetDelete
+                    | Self::WeakMapGet
+                    | Self::WeakMapSet
+                    | Self::WeakMapHas
+                    | Self::WeakSetAdd
+                    | Self::WeakSetHas
+                    | Self::ReflectGetPrototypeOf
+                    | Self::ForInKeyIsEnumerable
+                    | Self::PromiseThen
+                    | Self::PromiseCatch
+                    | Self::PromiseResolve
             )
             || self.is_data_view_element_method()
     }
