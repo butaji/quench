@@ -1012,15 +1012,20 @@ impl<H: Host> Vm<H> {
             .and_then(|program| program.function_get(state.function as usize))
             .and_then(|function| function.selective_capture_slots.as_deref());
         let slots = match selective {
-            Some(captured) => crate::heap::EnvironmentSlots::from_values(
-                state.locals.iter_mut().enumerate().map(|(slot, value)| {
-                    if u16::try_from(slot).is_ok_and(|slot| captured.binary_search(&slot).is_ok()) {
-                        std::mem::replace(value, Value::DELETED)
-                    } else {
-                        Value::DELETED
-                    }
-                }),
-            ),
+            // `captured` is sorted, so one merge pass over the locals finds its slots.
+            Some(captured) => {
+                let mut pending = captured.iter().copied().peekable();
+                crate::heap::EnvironmentSlots::from_values(state.locals.iter_mut().enumerate().map(
+                    |(slot, value)| {
+                        while pending.next_if(|captured| usize::from(*captured) < slot).is_some() {}
+                        if pending.next_if(|captured| usize::from(*captured) == slot).is_some() {
+                            std::mem::replace(value, Value::DELETED)
+                        } else {
+                            Value::DELETED
+                        }
+                    },
+                ))
+            }
             None => {
                 let slots = crate::heap::EnvironmentSlots::from_values(state.locals.iter().copied());
                 state.locals.clear();
