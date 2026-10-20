@@ -110,16 +110,22 @@ impl<H: Host> Vm<H> {
     }
 
     fn append_function_name(&mut self, function: Value, shape: u32, name: Atom) {
+        let named = self.function_name_shape(shape, name);
+        self.object_data_mut(function).expect("function object").set_shape(named);
+    }
+
+    /// `shape` with the original function name `name` recorded (`ShapeTransition::FunctionName`),
+    /// through the transitions it remembers (`function_name_shapes`).
+    pub(super) fn function_name_shape(&mut self, shape: u32, name: Atom) -> u32 {
         let index = name as usize & (super::FUNCTION_NAME_SHAPES - 1);
-        let named = match self.function_name_shapes[index] {
+        match self.function_name_shapes[index] {
             Some((base, atom, named)) if base == shape && atom == name => named,
             _ => {
                 let named = self.append_cached_shape_transition(shape, ShapeTransition::FunctionName { name });
                 self.function_name_shapes[index] = Some((shape, name, named));
                 named
             }
-        };
-        self.object_data_mut(function).expect("function object").set_shape(named);
+        }
     }
 
     pub(super) fn set_function_debug_name(&mut self, function: Value, name: Atom) {
