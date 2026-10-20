@@ -1305,7 +1305,7 @@ lane_handler! {
         let (code, frame, pc) = unsafe {
             (&*(*cx).code, (*cx).frame, ip.offset_from((*cx).base) as usize)
         };
-        let function = &code.functions[vm.frames[frame].function as usize];
+        let function = code.function(vm.frames[frame].function as usize);
         let instruction = decoded_instruction(function, function.code[pc]);
         vm.frames[frame].pc = pc;
         vm.frames[frame].pc_is_resume = false;
@@ -1320,7 +1320,7 @@ lane_handler! {
         }
         // The step may allocate, which can make a collection due.
         note_allocation(vm);
-        next!(cx, r, following(ip), Carried::SCRIPT)
+        next!(cx, r, following(ip), Carried::script(cx))
     }
 }
 
