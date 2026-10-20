@@ -262,7 +262,7 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding) -> (Vec
         out.u8(u8::from(deferred));
         write_function_header(&mut out, function.header());
         let body = std::mem::take(&mut out.bytes);
-        write_function(&mut out, function);
+        write_function(&mut out, function, &program.superinstructions);
         let record = std::mem::replace(&mut out.bytes, body);
         let length = u32::try_from(record.len()).expect("a function record fits u32 bytes");
         out.u32(length);
@@ -630,8 +630,10 @@ fn decode_program(
     Ok(program)
 }
 
-/// A function's record, which `read_function` decodes.
-fn write_function(out: &mut BinaryWriter, function: &Function) {
+/// A function's record, which `read_function` decodes, with the projection of its plain local
+/// slots (`Function::plain_local_slots`) that the interpreter memoizes on first call: a
+/// decoder sets the memo instead of running the analysis again in every process.
+fn write_function(out: &mut BinaryWriter, function: &Function, superinstructions: &[super::Superinstruction]) {
         out.option_u32(function.parent);
         out.option_atom(function.name);
         out.option_atom(function.inferred_name);
@@ -769,6 +771,13 @@ fn write_function(out: &mut BinaryWriter, function: &Function) {
             out.u32(position.pc);
             out.u32(position.line);
             out.u32(position.column);
+        }
+        let plain = match function.plain_locals.get() {
+            Some(plain) => plain.to_vec(),
+            None => function.plain_local_slots(superinstructions),
+        };
+        for byte in plain.chunks(u8::BITS as usize) {
+            out.u8(byte.iter().enumerate().fold(0, |bits, (bit, &plain)| bits | (u8::from(plain) << bit)));
         }
 }
 
@@ -1013,6 +1022,15 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
             })?
             .into_iter()
             .collect();
+        let plain_locals: Box<[bool]> = {
+            let mut plain = Vec::with_capacity(usize::from(locals));
+            for _ in 0..usize::from(locals).div_ceil(u8::BITS as usize) {
+                let bits = input.u8()?;
+                plain.extend((0..u8::BITS).map(|bit| bits & (1 << bit) != 0));
+            }
+            plain.truncate(usize::from(locals));
+            plain.into()
+        };
         Ok(Function {
             parent,
             name,
@@ -1061,7 +1079,7 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
             registers,
             dispatch,
             decoded: Default::default(),
-            plain_locals: Default::default(),
+            plain_locals: std::cell::OnceCell::from(plain_locals),
             declared_atom_sets: Default::default(),
             activation_bindings: Default::default(),
             live_parameter_reflection: Default::default(),
