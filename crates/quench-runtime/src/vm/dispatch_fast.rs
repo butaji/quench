@@ -1201,6 +1201,62 @@ lane_handler! {
 }
 
 lane_handler! {
+    /// `lane_load_local` of a slot whose binding facts the view fixed
+    /// (`specialize_frame_locals`): no mapped `arguments` mirrors it, and it moves into the
+    /// frame's environment once that is captured exactly when `ENVIRONMENT`. A root body's
+    /// frame, an uninitialized binding or a numeric local takes the general path.
+    fn lane_load_frame_local<ENVIRONMENT: bool>(cx, r, ip, i, view) {
+        if !unsafe { (*cx).env }.is_deleted() || i.a & crate::bytecode::NUMERIC_LOCAL_TARGET != 0 {
+            return exit(ip);
+        }
+        let vm = unsafe { vm(cx) };
+        let frame = &vm.frames[unsafe { (*cx).frame }];
+        let slot = i.imm() as usize;
+        let value = if frame.function == super::ROOT_FUNCTION_ID {
+            None
+        } else if ENVIRONMENT && frame.captured {
+            vm.heap.environment_slot(frame.env, slot)
+        } else {
+            frame.locals.get(slot).copied()
+        };
+        let Some(value) = value.filter(|value| !value.is_deleted()) else {
+            return exit(ip);
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    /// `lane_store_local` of a slot `lane_load_frame_local`'s facts hold for, which is no
+    /// self binding either: the store to an initialized (or initializing) binding.
+    fn lane_store_frame_local<ENVIRONMENT: bool>(cx, r, ip, i, view) {
+        if !unsafe { (*cx).env }.is_deleted() {
+            return exit(ip);
+        }
+        let value = r.get(i.a);
+        let vm = unsafe { vm(cx) };
+        let frame = &mut vm.frames[unsafe { (*cx).frame }];
+        let slot = i.imm() as usize;
+        let binding = if frame.function == super::ROOT_FUNCTION_ID {
+            None
+        } else if ENVIRONMENT && frame.captured {
+            vm.heap.environment_slot_mut(frame.env, slot)
+        } else {
+            frame.locals.get_mut(slot)
+        };
+        match binding {
+            Some(binding) if i.c != 0 || !binding.is_deleted() => *binding = value,
+            _ => return exit(ip),
+        }
+        if let Some(register) = i.b.checked_sub(crate::bytecode::OPTIONAL_REGISTER_BIAS) {
+            r.set(register, value);
+        }
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
     /// `StoreLocal` and `StoreEnvLocal` to a binding a VM frame owns that
     /// `Vm::store_initialized_frame_binding` completes; any other store takes the general
     /// path. A `StoreEnvLocal` of a function that resolves names at run time, which may
@@ -7966,6 +8022,7 @@ fn derive_lane_view<H: Host>(
     specialize_register_operands::<H>(function, constants, &mut records);
     specialize_updates::<H>(&mut records);
     specialize_negated_instanceof::<H>(&mut records);
+    specialize_frame_locals::<H>(function, &mut records);
     let min_run = if closes_loop(function, &exits) {
         LANE_ENTRY_MIN_RUN
     } else {
@@ -8206,6 +8263,31 @@ fn specialize_updates<H: Host>(records: &mut [LaneInstruction]) {
             b: conversion.b,
             c: update.a,
         };
+    }
+}
+
+/// Gives each frame `LoadLocal` and `StoreLocal` record the handler of its slot's static
+/// binding facts (`lane_load_frame_local`): a slot a mapped `arguments` mirrors, or a self
+/// binding a store must leave, keeps the general handler.
+fn specialize_frame_locals<H: Host>(function: &Function, records: &mut [LaneInstruction]) {
+    let load = lane_load_local::<H> as Handler as *const ();
+    let store = lane_store_local::<H> as Handler as *const ();
+    for record in records.iter_mut() {
+        let slot = record.imm() as usize;
+        if (record.handler != load && record.handler != store)
+            || super::arguments::mapped_arguments_slot(function, slot).is_some()
+        {
+            continue;
+        }
+        let environment = function.local_slot_uses_environment(slot);
+        let handler: Handler = match (record.handler == load, environment) {
+            (true, true) => lane_load_frame_local::<H, true>,
+            (true, false) => lane_load_frame_local::<H, false>,
+            _ if function.is_self_binding_slot(slot) => continue,
+            (false, true) => lane_store_frame_local::<H, true>,
+            (false, false) => lane_store_frame_local::<H, false>,
+        };
+        record.handler = handler as *const ();
     }
 }
 
