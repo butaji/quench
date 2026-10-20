@@ -6,7 +6,7 @@ impl<H: Host> Vm<H> {
         function: Value,
         source: &str,
     ) -> Result<(), JsError> {
-        let source_value = self.heap.alloc(Cell::String(source.into()));
+        let source_value = self.heap.alloc_string(source.into());
         self.set_function_source_value(function, source_value)
     }
 
@@ -27,17 +27,17 @@ impl<H: Host> Vm<H> {
         if let Some(source) = self.own_property(function, source_atom) {
             return Some(source);
         }
-        if let Some(Cell::Function { kind: FunctionKind::Native(native), .. }) = self.heap.get(function)
+        if let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = self.heap.function(function)
             && *native != Native::FunctionBoundCall
             && let Some(name) = self.original_function_name(function)
         {
             let source = native_function_source(self.atom_name(name));
-            return Some(self.heap.alloc(Cell::String(source.as_str().into())));
+            return Some(self.heap.alloc_string(source.as_str().into()));
         }
-        let Some(Cell::Function {
+        let Some(FunctionRecord {
             kind: FunctionKind::User(program, id),
             ..
-        }) = self.heap.get(function)
+        }) = self.heap.function(function)
         else {
             return None;
         };
@@ -48,24 +48,23 @@ impl<H: Host> Vm<H> {
         let residual = self.programs.residual(program)?;
         let span = residual.functions.get(id as usize)?.header().source_span?;
         let text = residual.source.as_ref()?.slice(span.start, span.end)?;
-        let source = self.heap.alloc(Cell::String(text.into()));
+        let source = self.heap.alloc_string(text.into());
         self.programs
             .cache_function_source(program, id, source)
             .or(Some(source))
     }
 
     pub(super) fn function_caller_is_restricted(&self, function: Value) -> bool {
-        match self.heap.get(function) {
-            Some(Cell::Function {
+        match self.heap.function(function) {
+            Some(FunctionRecord {
                 kind: FunctionKind::User(program_id, id),
                 ..
             }) => self.programs.get(*program_id).is_some_and(|program| {
                 program
-                    .functions
-                    .get(*id as usize)
+                    .function_get(*id as usize)
                     .is_some_and(|function| function.has_restricted_legacy_caller_access())
             }),
-            Some(Cell::Function {
+            Some(FunctionRecord {
                 kind: FunctionKind::Native(_),
                 ..
             }) => true,
@@ -96,18 +95,18 @@ impl<H: Host> Vm<H> {
                 CallContext::DirectEval(_) => continue,
                 CallContext::Internal | CallContext::IndirectEval(_) => return Value::NULL,
                 CallContext::Function(caller) | CallContext::Constructor(caller) => {
-                    let Some(Cell::Function {
+                    let Some(FunctionRecord {
                         kind:
                             FunctionKind::User(program_id, id),
-                        object,
+                        realm,
                         ..
-                    }) = self.heap.get(caller)
+                    }) = self.heap.function(caller)
                     else {
                         return Value::NULL;
                     };
-                    let visible = object.realm == self.realm.globals
+                    let visible = *realm == self.realm.globals
                         && self.programs.get(*program_id).is_some_and(|program| {
-                            program.functions.get(*id as usize).is_some_and(|metadata| {
+                            program.function_get(*id as usize).is_some_and(|metadata| {
                                 !metadata.strict && !metadata.is_async && !metadata.is_generator
                             })
                         });
@@ -128,7 +127,7 @@ impl<H: Host> Vm<H> {
         let program = self.programs.get(frame.program);
         let metadata = program
             .as_deref()
-            .and_then(|program| program.functions.get(frame.function as usize));
+            .and_then(|program| program.function_get(frame.function as usize));
         let expose_callee = metadata.is_some_and(|metadata| metadata.simple_parameters);
         let reflected = (0..frame.reflected_parameters).map(|parameter| {
             let metadata = metadata.expect("reflected parameters belong to a live function");
@@ -168,9 +167,9 @@ impl<H: Host> Vm<H> {
             return Err(JsError("value is not callable".into()));
         }
         let env = self.object();
-        let target_atom = self.intern_atom("\0quench:bound-target");
-        let this_atom = self.intern_atom("\0quench:bound-this");
-        let args_atom = self.intern_atom("\0quench:bound-args");
+        let target_atom = self.runtime_atoms.bound_target;
+        let this_atom = self.runtime_atoms.bound_this;
+        let args_atom = self.runtime_atoms.bound_args;
         self.set_property(env, target_atom, target)?;
         self.set_property(
             env,
@@ -222,9 +221,9 @@ impl<H: Host> Vm<H> {
             .root_value(target_root)
             .expect("bound target root remains live");
         let length_atom = self.length_atom;
-        let length_key = self.heap.alloc(Cell::String(self.atom_value(length_atom)));
-        let descriptor = self.object_get_own_property_descriptor(p, &[target, length_key])?;
-        let bound_length = if !descriptor.is_undefined() {
+        let length_key = self.heap.alloc_string(self.atom_value(length_atom));
+        // HasOwnProperty(Target, "length"): [[GetOwnProperty]], a Proxy's through its trap.
+        let bound_length = if self.own_property_enumerable(p, target, length_key)?.is_some() {
             let target = self
                 .heap
                 .root_value(target_root)
@@ -266,7 +265,7 @@ impl<H: Host> Vm<H> {
             .expect("bound target root remains live");
         let target_name = self.get_property(p, target, name_atom)?;
         let target_name = match self.heap.get(target_name) {
-            Some(Cell::String(name)) => name.to_string(),
+            _ if let Some(name) = self.heap.string(target_name)  => name.to_string(),
             _ => String::new(),
         };
         let function = self
@@ -288,26 +287,25 @@ impl<H: Host> Vm<H> {
         let env = self
             .active_native_env()
             .ok_or_else(|| JsError("invalid bound function".into()))?;
-        let target_atom = self.intern_atom("\0quench:bound-target");
-        let this_atom = self.intern_atom("\0quench:bound-this");
-        let args_atom = self.intern_atom("\0quench:bound-args");
-        let target = self
-            .own_property(env, target_atom)
+        let (target, receiver, bound_args) = self
+            .bound_function_parts(env)
             .ok_or_else(|| JsError("invalid bound function".into()))?;
-        let receiver = self
-            .own_property(env, this_atom)
-            .unwrap_or(Value::UNDEFINED);
-        let bound_args = self
-            .own_property(env, args_atom)
-            .and_then(|value| {
-                self.heap
-                    .array_elements(value)
-                    .map(|elements| elements.as_ref().clone())
-            })
-            .unwrap_or_default();
+        let bound_args = bound_args.to_vec();
         let mut combined = bound_args;
         combined.extend_from_slice(args);
         self.call_value(p, target, receiver, &combined)
+    }
+
+    /// A bound function's target, bound `this` and bound arguments, read from the
+    /// environment object `Function.prototype.bind` made (`env`); `None` for any other.
+    pub(super) fn bound_function_parts(&self, env: Value) -> Option<(Value, Value, &[Value])> {
+        let target = self.own_property(env, self.runtime_atoms.bound_target)?;
+        let receiver = self.own_property(env, self.runtime_atoms.bound_this).unwrap_or(Value::UNDEFINED);
+        let arguments = self
+            .own_property(env, self.runtime_atoms.bound_args)
+            .and_then(|list| self.heap.array_elements(list))
+            .map_or(&[][..], |elements| elements.as_slice());
+        Some((target, receiver, arguments))
     }
 }
 

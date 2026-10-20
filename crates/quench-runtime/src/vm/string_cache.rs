@@ -31,8 +31,7 @@ impl<H: Host> Vm<H> {
             return Some(result);
         }
         let text = {
-            let (Some(Cell::String(left)), Some(Cell::String(right))) =
-                (self.heap.get(left), self.heap.get(right))
+            let (Some(left), Some(right)) = (self.heap.string(left), self.heap.string(right))
             else {
                 return None;
             };
@@ -49,7 +48,7 @@ impl<H: Host> Vm<H> {
         // repeated `out += chunk` into quadratic work for a growing string.
         // Primitive string identity is not observable, so store this rope
         // directly in the heap.
-        let value = self.heap.alloc(Cell::String(text));
+        let value = self.heap.alloc_string(text);
         let cache = self.string_concats.get_or_insert_with(|| {
             vec![EMPTY_STRING_CONCAT_CACHE; STRING_CONCAT_CACHE_SIZE].into_boxed_slice()
         });

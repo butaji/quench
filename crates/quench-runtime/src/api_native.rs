@@ -229,6 +229,37 @@ pub enum BuiltinBrand {
     BoxedPrimitive,
 }
 
+/// A property descriptor's fields, as [[GetOwnProperty]] reports them or [[DefineOwnProperty]]
+/// reads them, without a descriptor object. An absent field is `None`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DescriptorFields<T = RootId> {
+    pub value: Option<T>,
+    pub writable: Option<bool>,
+    pub get: Option<T>,
+    pub set: Option<T>,
+    pub enumerable: Option<bool>,
+    pub configurable: Option<bool>,
+}
+
+impl<T> Default for DescriptorFields<T> {
+    fn default() -> Self {
+        Self { value: None, writable: None, get: None, set: None, enumerable: None, configurable: None }
+    }
+}
+
+impl<T> DescriptorFields<T> {
+    fn try_map_values<U, E>(self, mut map: impl FnMut(T) -> Result<U, E>) -> Result<DescriptorFields<U>, E> {
+        Ok(DescriptorFields {
+            value: self.value.map(&mut map).transpose()?,
+            writable: self.writable,
+            get: self.get.map(&mut map).transpose()?,
+            set: self.set.map(&mut map).transpose()?,
+            enumerable: self.enumerable,
+            configurable: self.configurable,
+        })
+    }
+}
+
 /// A real Promise's current settlement, without running reactions or guest hooks.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PromiseSnapshot<T = RootId> {
@@ -671,6 +702,34 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.completion(result)
     }
 
+    /// [[GetOwnProperty]]: the own property `key` of `object` as descriptor fields, with
+    /// no descriptor object; `None` when there is none.
+    pub fn own_property_fields_rooted(
+        &mut self,
+        object: RootId,
+        key: RootId,
+    ) -> Result<Option<DescriptorFields>, RootedError> {
+        let result = self.vm.embedding_own_property_fields(object, key);
+        let fields = result.map_err(|error| self.error(error))?;
+        fields
+            .map(|fields| fields.try_map_values(|value| Ok(self.scoped_value(value))))
+            .transpose()
+    }
+
+    /// `Reflect.defineProperty` with a descriptor given as its fields: whether the
+    /// definition succeeded.
+    pub fn define_property_fields_rooted(
+        &mut self,
+        object: RootId,
+        key: RootId,
+        fields: DescriptorFields,
+    ) -> Result<bool, RootedError> {
+        let result = fields
+            .try_map_values(|root| self.vm.embedding_value(root))
+            .and_then(|fields| self.vm.embedding_define_property_fields(object, key, fields));
+        result.map_err(|error| self.error(error))
+    }
+
     /// Own non-array-index keys without expanding a view's virtual element keys.
     pub fn own_non_index_keys_rooted(&mut self, root: RootId, enumerable_only: bool) -> Result<Vec<RootId>, RootedError> {
         let result = self.vm.embedding_non_index_own_keys(root, enumerable_only);
@@ -913,6 +972,23 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.completion(result)
     }
 
+    /// `evaluate_specialized_script_with_origin_rooted` for an application's entry, whose
+    /// functions keep their compiled records instead of compiling again on first call.
+    pub fn evaluate_entry_script_with_origin_rooted(
+        &mut self,
+        source: &str,
+        name: &str,
+        line_offset: u32,
+        column_offset: u32,
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.evaluate_embedding_entry_script_with_origin(
+            source,
+            name,
+            Some((line_offset, column_offset)),
+        );
+        self.completion(result)
+    }
+
     /// Compile host-wrapped source with an explicit original-source origin.
     /// The offsets remove wrapper lines and its first-line UTF-16 columns from
     /// compiler-owned locations and diagnostic excerpts, not executable code.
@@ -933,7 +1009,8 @@ impl<'a, H: Host> NativeContext<'a, H> {
 
     /// Compile and evaluate a host wrapper `prefix + body + suffix` whose body is static
     /// host text (an embedded library module): the program retains the body instead of a
-    /// copy of the wrapped source, and positions start at the wrapper origin.
+    /// copy of the wrapped source, and positions start at the wrapper origin. The compiled
+    /// program goes through the host's compile cache (`Host::kept_compiled_program`).
     pub fn evaluate_specialized_static_body_rooted(
         &mut self,
         prefix: &str,
@@ -941,9 +1018,32 @@ impl<'a, H: Host> NativeContext<'a, H> {
         suffix: &str,
         name: &str,
     ) -> Result<RootId, RootedError> {
+        self.evaluate_library_body(prefix, crate::bytecode::SourceText::Static(body), suffix, name)
+    }
+
+    /// `evaluate_specialized_static_body_rooted` for a library module text the host derived
+    /// from its embedded text (a projection), which the program retains instead.
+    pub fn evaluate_specialized_library_body_rooted(
+        &mut self,
+        prefix: &str,
+        body: String,
+        suffix: &str,
+        name: &str,
+    ) -> Result<RootId, RootedError> {
+        let body = crate::bytecode::SourceText::Shared(std::sync::Arc::from(body));
+        self.evaluate_library_body(prefix, body, suffix, name)
+    }
+
+    fn evaluate_library_body(
+        &mut self,
+        prefix: &str,
+        body: crate::bytecode::SourceText,
+        suffix: &str,
+        name: &str,
+    ) -> Result<RootId, RootedError> {
         let result = self
             .vm
-            .prepare_embedding_static_body(prefix, body, suffix, name)
+            .prepare_embedding_library_body_kept(prefix, body, suffix, name)
             .and_then(|prepared| self.vm.evaluate_embedding_prepared_script(&prepared));
         self.completion(result)
     }
@@ -1636,6 +1736,19 @@ impl<'a, H: Host> NativeContext<'a, H> {
             .map_err(|error| self.error(error))
     }
 
+    /// Whether `holder`'s own property `name` is still a lazy data property, observing nothing:
+    /// its group has not materialized and script has not replaced it, so it holds the value
+    /// its initializer will define.
+    pub fn is_pending_lazy_data_property_rooted(
+        &mut self,
+        holder: RootId,
+        name: &str,
+    ) -> Result<bool, RootedError> {
+        self.vm
+            .is_pending_lazy_data_property_rooted(holder, name)
+            .map_err(|error| self.error(error))
+    }
+
     /// Defines `names` on `holder` as one group of writable, configurable lazy data
     /// properties: the first time script observes any of them, `initializer` runs once, with
     /// the startup intrinsics in place, and defines them all.
@@ -1648,6 +1761,20 @@ impl<'a, H: Host> NativeContext<'a, H> {
     ) -> Result<(), RootedError> {
         self.vm
             .define_lazy_data_properties_rooted(holder, names, enumerable, initializer)
+            .map_err(|error| self.error(error))
+    }
+
+    /// Defines `members` (a name and whether it is enumerable) on `holder` as one group of
+    /// lazy data properties, like `define_lazy_data_properties_rooted` with each member's own
+    /// enumerability.
+    pub fn define_lazy_data_members_rooted(
+        &mut self,
+        holder: RootId,
+        members: &[(&str, bool)],
+        initializer: RootId,
+    ) -> Result<(), RootedError> {
+        self.vm
+            .define_lazy_group_rooted(holder, members, false, initializer)
             .map_err(|error| self.error(error))
     }
 

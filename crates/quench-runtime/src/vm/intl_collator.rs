@@ -310,7 +310,7 @@ impl<H: Host> Vm<H> {
             );
             self_.set_builtin_function_name(compare, "compare")?;
             let bound = self_.bind_function(p, compare, &[this])?;
-            let name = self_.heap.alloc(Cell::String("".into()));
+            let name = self_.heap.alloc_string("".into());
             let name_atom = self_.intern_atom("name");
             self_.set_property_attributes(
                 bound,
@@ -419,19 +419,19 @@ impl<H: Host> Vm<H> {
             .heap
             .alloc(Cell::Object(Self::empty_object(self.object_proto)));
         for (key, value) in [
-            ("locale", self.heap.alloc(Cell::String(locale.into()))),
+            ("locale", self.heap.alloc_string(locale.into())),
             (
                 "usage",
                 self.collator_string_slot(this, COLLATOR_USAGE_SLOT)
                     .map_or(Value::UNDEFINED, |v| {
-                        self.heap.alloc(Cell::String(v.into()))
+                        self.heap.alloc_string(v.into())
                     }),
             ),
             (
                 "sensitivity",
                 self.collator_string_slot(this, COLLATOR_SENSITIVITY_SLOT)
                     .map_or(Value::UNDEFINED, |v| {
-                        self.heap.alloc(Cell::String(v.into()))
+                        self.heap.alloc_string(v.into())
                     }),
             ),
             (
@@ -444,11 +444,11 @@ impl<H: Host> Vm<H> {
             ),
             (
                 "collation",
-                self.heap.alloc(Cell::String(
+                self.heap.alloc_string(
                     self.collator_string_slot(this, COLLATOR_COLLATION_SLOT)
                         .unwrap_or_else(|| "default".into())
                         .into(),
-                )),
+                ),
             ),
             (
                 "numeric",
@@ -462,7 +462,7 @@ impl<H: Host> Vm<H> {
                 "caseFirst",
                 self.collator_string_slot(this, COLLATOR_CASE_FIRST_SLOT)
                     .map_or(Value::UNDEFINED, |v| {
-                        self.heap.alloc(Cell::String(v.into()))
+                        self.heap.alloc_string(v.into())
                     }),
             ),
         ] {
@@ -478,7 +478,7 @@ impl<H: Host> Vm<H> {
         key: &str,
         value: &str,
     ) -> Result<(), JsError> {
-        let value = self.heap.alloc(Cell::String(value.into()));
+        let value = self.heap.alloc_string(value.into());
         self.set_collator_value(object, key, value)
     }
 
@@ -499,10 +499,7 @@ impl<H: Host> Vm<H> {
 
     fn collator_string_slot(&self, object: Value, key: &str) -> Option<String> {
         self.collator_value_slot(object, key)
-            .and_then(|value| match self.heap.get(value) {
-                Some(Cell::String(text)) => Some(text.to_string()),
-                _ => None,
-            })
+            .and_then(|value| self.heap.string(value).map(ToString::to_string))
     }
 
     fn collator_bool_slot(&self, object: Value, key: &str) -> bool {

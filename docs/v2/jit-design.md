@@ -12,6 +12,8 @@ At the `v2-merged` baseline, `quench-runtime` already used Cranelift to compile 
 
 The first memory risk is the granularity of code ownership: compiling all eligible functions when one Wasm function is first called makes cold code consume both compiler work and executable bytes. The JavaScript tier should compile a function only after it is hot, account for emitted bytes, and stop compiling when a named per-process budget is full. Keep no IR, AST or copied bytecode alongside native code unless a correctness invariant needs it. Code-cache exhaustion means interpreted execution.
 
+JavaScript and Wasm share one JIT runtime. Their semantic lowerers are necessarily different because JS values and effects differ from Wasm's fixed scalar types, traps, and linear memory; their target-ISA construction, executable-memory allocation, tier budgets, diagnostics, and entry/cache management must remain common. `vm/jit_backend.rs` now caches Cranelift target ISAs by optimization and verifier settings for both lowerers, and both publish through the same W^X `CodeMemory`. The remaining duplication is tier admission and accounting: JS function mappings and Wasm module mappings currently have separate counters and limits. Unifying those under one manager is part of the active design work; separate bytecode semantics do not justify separate JIT runtimes.
+
 ## Research and the design it supports
 
 Current engines use tiers because compilation speed, warm-up cost, code quality and code size pull in different directions. V8's Sparkplug emits a baseline from bytecode, Maglev is a faster mid-tier, and its top tier spends more work on hot code; V8 also scales interrupt budgets using invocation count and bytecode length. JavaScriptCore keeps bytecode as the source of truth and tracks execution counts, including loop backedges, before tier-up. These mechanisms support size-aware, workload-sensitive admission, but their numeric thresholds should not be copied into Quench. The inference for Quench is to add one small native tier first and measure its compile cost and code bytes before adding a second optimizing tier. [V8 Maglev](https://v8.dev/blog/maglev), [V8 tiering manager](https://chromium.googlesource.com/v8/v8/+/HEAD/src/execution/tiering-manager.cc), [JavaScriptCore speculation and tier-up](https://webkit.org/blog/10308/speculation-in-javascriptcore/), [JavaScriptCore bytecode format](https://webkit.org/blog/9329/a-new-bytecode-format-for-javascriptcore/), [SpiderMonkey optimization tiers](https://d2r03xnqvbcxrv.cloudfront.net/js/how-we-optimize.html)
@@ -689,3 +691,83 @@ supports it. An earlier screen compared different import paths and is retained
 as a confounded result, not evidence for the leaf. Corrected reports, the
 hit-count diagnostic, and reproduction commands are in
 `evidence/jit-jetstream3-wasm-2026-10-18/memcpy-native-leaf/`.
+
+## JavaScript `hash-map` guarded `equals` specialization
+
+The `equals(a, b)` helper is called 54 million times in JetStream 3's
+`hash-map` fixture. Under the existing Number-entry guard, its `typeof`
+decision tree can be partially evaluated: internal compiler-owned locals and
+static type-name comparisons are folded, while the final numeric equality is
+emitted as native code. Non-Number calls resume in the interpreter. The
+compiled Boolean result returns through the existing frame so shared-VM
+unwinding stays intact.
+
+The one-round JIT diagnostic passed stock fixture output validation. It
+compiled `equals` once (8.5 ms, 4,096 mapped code bytes) and recorded
+53,999,969 native entries. Quench scored 1.54 with 71.8 MiB peak RSS in
+270.6 s; Bun scored 364.13 at 93.8 MiB and Node 153.63 at 161.0 MiB. A prior
+one-round Quench screen scored 2.46 in 239.1 s. This is not a speed win and
+the two screens are not a paired comparison. The native body is tiny, but the
+per-call VM frame, entry guard, and return transition remain; compiling the
+callee alone does not remove those boundaries.
+
+The current entry tier remains an experiment until its performance value is
+established. Raw one-round data was captured at
+`target/jit-hash-map-after.json` in the working tree; that diagnostic includes
+source-dirty state and must not be treated as qualification evidence.
+
+The follow-up adds a same-program fast path for already-compiled callees. At a
+plain `Call`, the runtime checks the existing tier and Number arguments before
+activating a frame; cold calls, non-Number arguments, other programs, tail
+calls, and interpreter mode retain the normal VM path. On a second one-round
+screen, output validation passed and Quench scored 2.15 at 71.7 MiB in 253.3 s.
+That is directionally faster than the earlier 1.54 / 270.6 s frame-entry
+screen, but the screens were unpaired and Bun/Node timings also shifted. It
+does not establish a gain, and Quench remains far behind both runtimes. The
+diagnostics still show `runIteration` unsupported; compiling `equals` does not
+remove the interpreter loop around the 54 million calls. A controlled paired
+comparison is now the next step before keeping this fast path. Its diagnostic is
+`target/jit-hash-map-direct-call.json` in the working tree.
+
+## Statically-known JavaScript calls
+
+The interpreter's `CallKnown` opcode previously always created a callee
+activation, even when the same program already held a guarded native artifact.
+In compiled mode, non-tail JavaScript `CallKnown` now checks that artifact
+before creating the frame and enters it directly when its arguments satisfy the
+existing guard. Artifacts that need a callee frame, including lexical-capture
+and string-loop entries, continue through normal activation so capture values
+and specialized ABIs are never read from an incomplete argument buffer. Wasm,
+tail calls, unsupported arguments and interpreter mode keep their existing
+paths.
+
+The focused JIT tests pass 16/16, including a regression that confirms a hot
+`CallKnown` numeric callee reaches native code after promotion. The first clean
+three-round Web SSR screen after this change scored 14.65 with 132.1 MiB median
+RSS; a prior three-round screen scored 13.46 with 131.3 MiB. These are separate
+screens and do not establish a paired gain. A one-round stock `hash-map` screen
+validated and recorded Quench at 4.35 Score / 74.3 MiB, Bun at 467.12 / 95.9
+MiB and Node at 414.81 / 161.4 MiB. The RSS bar is below both peers, while
+Score remains far behind; this is diagnostic progress, not a benchmark win.
+Raw report: `evidence/jit-jetstream3-2026-10-20/known-call-fast-path/hash-map-jit-1round.json`.
+
+## Guarded Int32 identity return
+
+The JS tier now recognizes an effect-free Number path through a `typeof`
+switch when it checks `(arg | 0) == arg` and returns the original argument.
+The matcher follows only the Number dispatch path, rejecting effects on that
+path while allowing effects in skipped type arms. At runtime, an Int32 guard
+protects the native identity entry; fractions, strings, objects and values
+outside the Int32 range stay in the ordinary interpreter. A focused regression
+test covers both the native integer arm and those fallback cases.
+
+On a one-round diagnostic run of JetStream `hash-map`, `computeHashCode`
+compiled once and took 64.8 million native entries. `_findKeyEntry` still took
+54 million interpreter entries and about 26.9 seconds inclusive. In the
+separate clean one-round screen Quench scored 3.51 at 73.9 MiB, Bun scored
+471.06 at 111.5 MiB, and Node scored 456.95 at 172.6 MiB. These single rounds
+cannot establish a change against the prior independent screen, which scored
+Quench 4.35. This is not a score win; the remaining gap is concentrated in
+the linked-entry lookup loop and its heap and call work. The raw reports and
+limitations are documented in
+`evidence/jit-jetstream3-2026-10-20/int32-identity-arm/README.md`.

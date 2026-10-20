@@ -409,25 +409,6 @@ pub(super) fn function_may_reference(
     references.found
 }
 
-/// Whether an arrow function may read the `this` it inherits: its parameters or body name
-/// `this` or `super` anywhere, nested functions and classes included, so the answer only
-/// errs toward reading it.
-pub(super) fn arrow_may_read_lexical_this(arrow: &oxc_ast::ast::ArrowFunctionExpression<'_>) -> bool {
-    struct ThisReads(bool);
-    impl<'a> Visit<'a> for ThisReads {
-        fn visit_this_expression(&mut self, _: &oxc_ast::ast::ThisExpression) {
-            self.0 = true;
-        }
-        fn visit_super(&mut self, _: &oxc_ast::ast::Super) {
-            self.0 = true;
-        }
-    }
-    let mut reads = ThisReads(false);
-    reads.visit_formal_parameters(&arrow.params);
-    reads.visit_arrow_function_body(&arrow.body);
-    reads.0
-}
-
 pub(super) fn parameters_contain_direct_eval(params: &FormalParameters<'_>) -> bool {
     let mut finder = DirectEvalFinder(false);
     finder.visit_formal_parameters(params);
@@ -595,6 +576,52 @@ pub(super) fn is_direct_eval_call(call: &CallExpression<'_>) -> bool {
 }
 
 struct DirectEvalFinder(bool);
+
+/// Whether a body (not its nested functions) may give the functions nested in it binding
+/// sites to resolve through: a direct eval, a `with` statement, or `delete` of a name.
+pub(super) fn body_may_bind_dynamically(
+    body: &[Statement<'_>],
+    expression: Option<&Expression<'_>>,
+) -> bool {
+    let mut finder = DynamicBindingFinder(false);
+    for statement in body {
+        finder.visit_statement(statement);
+    }
+    if let Some(expression) = expression {
+        finder.visit_expression(expression);
+    }
+    finder.0
+}
+
+struct DynamicBindingFinder(bool);
+
+impl<'a> Visit<'a> for DynamicBindingFinder {
+    fn visit_call_expression(&mut self, call: &oxc_ast::ast::CallExpression<'a>) {
+        if is_direct_eval_call(call) {
+            self.0 = true;
+        } else {
+            walk::walk_call_expression(self, call);
+        }
+    }
+
+    fn visit_with_statement(&mut self, _: &oxc_ast::ast::WithStatement<'a>) {
+        self.0 = true;
+    }
+
+    fn visit_unary_expression(&mut self, expression: &oxc_ast::ast::UnaryExpression<'a>) {
+        if expression.operator == oxc_syntax::operator::UnaryOperator::Delete
+            && matches!(expression.argument.without_parentheses(), Expression::Identifier(_))
+        {
+            self.0 = true;
+        } else {
+            walk::walk_unary_expression(self, expression);
+        }
+    }
+
+    fn visit_function(&mut self, _: &Function<'a>, _: ScopeFlags) {}
+
+    fn visit_arrow_function_expression(&mut self, _: &ArrowFunctionExpression<'a>) {}
+}
 
 impl<'a> Visit<'a> for DirectEvalFinder {
     fn visit_call_expression(&mut self, call: &oxc_ast::ast::CallExpression<'a>) {
@@ -1478,5 +1505,134 @@ mod regexp_modifier_tests {
         assert!(validate_modifier_groups(r"[[a]](?-i)", true).is_err());
         assert!(validate_modifier_groups(r"[a](?-i)", false).is_err());
         assert!(validate_modifier_groups(r"(?ii:a)", false).is_err());
+    }
+}
+
+/// The name `x` of a function body's `var x = arguments;` alias whose every use reads
+/// `x.length` or `x[key]`, so each read may read the `arguments` binding itself: the
+/// declaration is a top-level statement before every use, it is `x`'s only binding, and
+/// nothing writes `x` or `arguments`. The body makes no closure, enters no `with` and calls
+/// no direct eval, which could reach either binding another way.
+pub(super) fn arguments_alias<'a>(
+    params: Option<&FormalParameters<'a>>,
+    body: &[Statement<'a>],
+) -> Option<String> {
+    let (declared_at, alias) = body.iter().find_map(|statement| {
+        let Statement::VariableDeclaration(declaration) = statement else {
+            return None;
+        };
+        let [declarator] = declaration.declarations.as_slice() else {
+            return None;
+        };
+        match (&declarator.id, &declarator.init) {
+            (BindingPattern::BindingIdentifier(name), Some(Expression::Identifier(init)))
+                if declaration.kind == VariableDeclarationKind::Var
+                    && init.name == ARGUMENTS
+                    && name.name != ARGUMENTS =>
+            {
+                Some((declarator.span.end, name.name.as_str()))
+            }
+            _ => None,
+        }
+    })?;
+    let mut uses = AliasUses { alias, declared_at, bindings: 0, references: 0, reads: 0, safe: true };
+    if let Some(params) = params {
+        uses.visit_formal_parameters(params);
+    }
+    for statement in body {
+        uses.visit_statement(statement);
+    }
+    (uses.safe && uses.bindings == 1 && uses.references == uses.reads).then(|| alias.to_owned())
+}
+
+const ARGUMENTS: &str = "arguments";
+
+struct AliasUses<'s> {
+    alias: &'s str,
+    declared_at: u32,
+    bindings: usize,
+    references: usize,
+    reads: usize,
+    safe: bool,
+}
+
+impl AliasUses<'_> {
+    /// Whether `expression` is `alias.length` or `alias[key]`, outside an optional chain.
+    fn alias_read(&self, expression: &Expression<'_>) -> bool {
+        let object = match expression {
+            Expression::StaticMemberExpression(member) if !member.optional => &member.object,
+            Expression::ComputedMemberExpression(member) if !member.optional => &member.object,
+            _ => return false,
+        };
+        matches!(object, Expression::Identifier(name) if name.name == self.alias)
+    }
+}
+
+impl<'a> Visit<'a> for AliasUses<'_> {
+    fn visit_expression(&mut self, expression: &Expression<'a>) {
+        if self.alias_read(expression) {
+            self.reads += 1;
+        }
+        walk::walk_expression(self, expression);
+    }
+
+    fn visit_identifier_reference(&mut self, identifier: &oxc_ast::ast::IdentifierReference<'a>) {
+        if identifier.name == self.alias {
+            self.references += 1;
+            self.safe &= identifier.span.start > self.declared_at;
+        }
+    }
+
+    fn visit_binding_identifier(&mut self, identifier: &oxc_ast::ast::BindingIdentifier<'a>) {
+        self.bindings += usize::from(identifier.name == self.alias);
+        self.safe &= identifier.name != ARGUMENTS;
+    }
+
+    fn visit_simple_assignment_target(&mut self, target: &SimpleAssignmentTarget<'a>) {
+        if let SimpleAssignmentTarget::AssignmentTargetIdentifier(name) = target {
+            self.safe &= name.name != self.alias && name.name != ARGUMENTS;
+        }
+        walk::walk_simple_assignment_target(self, target);
+    }
+
+    // A read as a callee binds `this` to the object, and `delete` writes it.
+    fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
+        self.safe &= !self.alias_read(&call.callee) && !is_direct_eval_call(call);
+        walk::walk_call_expression(self, call);
+    }
+
+    fn visit_new_expression(&mut self, new: &oxc_ast::ast::NewExpression<'a>) {
+        self.safe &= !self.alias_read(&new.callee);
+        walk::walk_new_expression(self, new);
+    }
+
+    fn visit_tagged_template_expression(
+        &mut self,
+        tagged: &oxc_ast::ast::TaggedTemplateExpression<'a>,
+    ) {
+        self.safe &= !self.alias_read(&tagged.tag);
+        walk::walk_tagged_template_expression(self, tagged);
+    }
+
+    fn visit_unary_expression(&mut self, unary: &UnaryExpression<'a>) {
+        self.safe &= unary.operator != oxc_syntax::operator::UnaryOperator::Delete
+            || !self.alias_read(&unary.argument);
+        walk::walk_unary_expression(self, unary);
+    }
+
+    fn visit_with_statement(&mut self, _: &oxc_ast::ast::WithStatement<'a>) {
+        self.safe = false;
+    }
+
+    fn visit_function(&mut self, _: &Function<'a>, _: ScopeFlags) {
+        self.safe = false;
+    }
+
+    fn visit_arrow_function_expression(&mut self, _: &ArrowFunctionExpression<'a>) {
+        self.safe = false;
+    }
+
+    fn visit_class(&mut self, _: &oxc_ast::ast::Class<'a>) {
+        self.safe = false;
     }
 }
