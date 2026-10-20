@@ -377,6 +377,38 @@ pub(super) fn parameter_early_error(
     validator.error
 }
 
+/// Whether a function with these parameters and body can observe a binding of `name` its
+/// own scope would hold: a reference anywhere in them, or a direct eval, which can name it
+/// at run time; nested functions included, which see the binding too.
+pub(super) fn function_may_reference(
+    params: &FormalParameters<'_>,
+    body: &[Statement<'_>],
+    name: &str,
+) -> bool {
+    struct References<'n> {
+        name: &'n str,
+        found: bool,
+    }
+    impl<'a> Visit<'a> for References<'_> {
+        fn visit_identifier_reference(
+            &mut self,
+            identifier: &oxc_ast::ast::IdentifierReference<'a>,
+        ) {
+            self.found |= identifier.name == self.name;
+        }
+        fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
+            self.found |= is_direct_eval_call(call);
+            walk::walk_call_expression(self, call);
+        }
+    }
+    let mut references = References { name, found: false };
+    references.visit_formal_parameters(params);
+    for statement in body {
+        references.visit_statement(statement);
+    }
+    references.found
+}
+
 pub(super) fn parameters_contain_direct_eval(params: &FormalParameters<'_>) -> bool {
     let mut finder = DirectEvalFinder(false);
     finder.visit_formal_parameters(params);

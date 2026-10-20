@@ -13,6 +13,7 @@ pub(crate) mod blob_binding_shared_vm;
 pub(crate) mod buffer_binding_shared_vm;
 pub(crate) mod buffer_codec;
 pub(crate) mod buffer_shared_vm;
+pub(crate) mod primordials_shared_vm;
 pub(crate) mod cares_binding;
 #[cfg(quench_node_cares)] pub(crate) mod cares_channel_shared_vm;
 pub(crate) mod child_process_env_shared_vm;
@@ -102,6 +103,7 @@ pub(crate) mod process_memory_shared_vm;
 #[cfg(target_os = "linux")]
 pub(crate) mod process_metrics_shared_vm;
 pub(crate) mod process_shared_vm;
+pub(crate) mod process_warning_shared_vm;
 mod process_exception_route;
 pub(crate) mod process_fatal_exception_route;
 pub(crate) mod process_signals_state;

@@ -76,7 +76,7 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
-        let iterator = self.well_known_symbols.get("iterator").copied()?;
+        let iterator = self.well_known_symbols.get(WellKnownSymbol::Iterator)?;
         let key = PropertyKey::symbol(iterator);
         if self.property_shape_slot(array.shape(), key).is_some() {
             return None;
@@ -389,7 +389,7 @@ impl<H: Host> Vm<H> {
         )?;
         self.install_builtin_to_string_tag(self.array_iterator_proto, "Array Iterator")?;
         self.install_collection_iterators(p)?;
-        let Some(iterator) = self.well_known_symbols.get("iterator").copied() else {
+        let Some(iterator) = self.well_known_symbols.get(WellKnownSymbol::Iterator) else {
             return Ok(());
         };
         self.set_index(
@@ -604,7 +604,7 @@ impl<H: Host> Vm<H> {
                 setter: Some(constructor_setter),
             },
         )?;
-        if let Some(symbol) = self.well_known_symbols.get("toStringTag").copied() {
+        if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::ToStringTag) {
             self.set_symbol_property(prototype, symbol, Value::UNDEFINED)?;
             let getter = self.iterator_native(Native::IteratorPrototypeToStringTagGetter, realm);
             let setter = self.iterator_native(Native::IteratorPrototypeToStringTagSetter, realm);
@@ -621,7 +621,7 @@ impl<H: Host> Vm<H> {
                 },
             );
         }
-        if let Some(symbol) = self.well_known_symbols.get("iterator").copied() {
+        if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::Iterator) {
             self.install_iterator_symbol_method(
                 prototype,
                 symbol,
@@ -630,7 +630,7 @@ impl<H: Host> Vm<H> {
                 realm,
             )?;
         }
-        if let Some(symbol) = self.well_known_symbols.get("dispose").copied() {
+        if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::Dispose) {
             self.install_iterator_symbol_method(
                 prototype,
                 symbol,
@@ -758,10 +758,10 @@ impl<H: Host> Vm<H> {
     }
 
     fn install_generator_to_string_tag(&mut self, prototype: Value) -> Result<(), JsError> {
-        if let Some(symbol) = self.well_known_symbols.get("toStringTag").copied() {
+        if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::ToStringTag) {
             let tag = self
                 .heap
-                .alloc(Cell::String(JsString::from_str("Generator")));
+                .alloc_string(JsString::from_str("Generator"));
             self.set_symbol_property(prototype, symbol, tag)?;
             self.set_property_attributes(
                 prototype,
@@ -800,7 +800,7 @@ impl<H: Host> Vm<H> {
                 "[Symbol.asyncDispose]",
             ),
         ] {
-            let Some(symbol) = self.well_known_symbols.get(symbol_name).copied() else {
+            let Some(symbol) = self.well_known_symbols.named(symbol_name) else {
                 continue;
             };
             let method = realm
@@ -915,7 +915,7 @@ impl<H: Host> Vm<H> {
         let root = self.heap.root(source);
         let outcome = (|| {
             let source = self.heap.root_value(root).unwrap();
-            if let Some(symbol) = self.well_known_symbols.get("iterator").copied() {
+            if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::Iterator) {
                 let method = self.get_index(p, source, symbol)?;
                 if method.is_undefined() || method.is_null() {
                     return Err(self.type_error(p, "value is not iterable".into()));
@@ -938,7 +938,7 @@ impl<H: Host> Vm<H> {
                 IteratorKind::Array
             } else {
                 match self.heap.get(source) {
-                    Some(Cell::String(_)) => IteratorKind::String,
+                    _ if self.heap.is_string(source)  => IteratorKind::String,
                     Some(Cell::Map { .. }) => IteratorKind::MapEntries,
                     Some(Cell::Set { .. }) => IteratorKind::SetValues,
                     _ => return Err(self.type_error(p, "value is not iterable".into())),
@@ -1006,7 +1006,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         if !self.is_object_like(value)
             && !(matches!(primitives, IteratorPrimitiveHandling::IterateStrings)
-                && matches!(self.heap.get(value), Some(Cell::String(_))))
+                && self.heap.is_string(value))
         {
             return Err(self.type_error(
                 p,
@@ -1016,7 +1016,7 @@ impl<H: Host> Vm<H> {
         let value_root = self.heap.root(value);
         let result = (|| {
             let value = self.heap.root_value(value_root).unwrap();
-            let Some(symbol) = self.well_known_symbols.get("iterator").copied() else {
+            let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::Iterator) else {
                 return self.get_iterator(p, value);
             };
             let method = self.get_index(p, value, symbol)?;
@@ -1725,8 +1725,7 @@ impl<H: Host> Vm<H> {
         }
         let iterator_symbol = self
             .well_known_symbols
-            .get("iterator")
-            .copied()
+            .get(WellKnownSymbol::Iterator)
             .ok_or_else(|| self.type_error(p, "Symbol.iterator is unavailable".into()))?;
         let mut items = Vec::with_capacity(args.len());
         let mut methods = Vec::with_capacity(args.len());
@@ -1850,13 +1849,13 @@ impl<H: Host> Vm<H> {
         let mode_atom = self.intern_atom("mode");
         let mode_value = self.get_property(p, options, mode_atom)?;
         let mode = match self.heap.get(mode_value) {
-            Some(Cell::String(value)) if value.host_string() == "shortest" => {
+            _ if let Some(value) = self.heap.string(mode_value) && value.host_string() == "shortest" => {
                 IteratorZipMode::Shortest
             }
-            Some(Cell::String(value)) if value.host_string() == "longest" => {
+            _ if let Some(value) = self.heap.string(mode_value) && value.host_string() == "longest" => {
                 IteratorZipMode::Longest
             }
-            Some(Cell::String(value)) if value.host_string() == "strict" => IteratorZipMode::Strict,
+            _ if let Some(value) = self.heap.string(mode_value) && value.host_string() == "strict" => IteratorZipMode::Strict,
             _ if mode_value.is_undefined() => IteratorZipMode::Shortest,
             _ => return Err(self.type_error(p, "Iterator.zip mode is invalid".into())),
         };
@@ -2066,7 +2065,7 @@ impl<H: Host> Vm<H> {
             let mut values = Vec::with_capacity(keys.len());
             for key in keys.iter().copied() {
                 let value = match self.heap.get(key) {
-                    Some(Cell::String(name)) => {
+                    _ if let Some(name) = self.heap.string(key)  => {
                         let name = name.clone();
                         let atom = self.intern_js_atom(&name);
                         self.get_property(p, padding, atom)?
@@ -2630,9 +2629,9 @@ impl<H: Host> Vm<H> {
             .heap
             .root(args.first().copied().unwrap_or(Value::UNDEFINED));
         let key = if name == "constructor" {
-            self.heap.alloc(Cell::String(JsString::from_str(name)))
+            self.heap.alloc_string(JsString::from_str(name))
         } else {
-            self.well_known_symbols.get("toStringTag").copied().unwrap()
+            self.well_known_symbols.get(WellKnownSymbol::ToStringTag).unwrap()
         };
         let receiver = self.heap.root_value(receiver_root).unwrap();
         let value = self.heap.root_value(value_root).unwrap();
@@ -2649,7 +2648,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         source: Value,
     ) -> Result<Value, JsError> {
-        if let Some(symbol) = self.well_known_symbols.get("asyncIterator").copied() {
+        if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::AsyncIterator) {
             let method = self.get_index(p, source, symbol)?;
             if !method.is_undefined() && !method.is_null() {
                 if !self.is_function(method) {
@@ -3004,7 +3003,7 @@ impl<H: Host> Vm<H> {
                     }
                     _ => return Err(vm.type_error(p, "invalid RegExp string iterator".into())),
                 };
-                let input_value = vm.heap.alloc(Cell::String(input.clone()));
+                let input_value = vm.heap.alloc_string(input.clone());
                 let result = vm.regexp_exec_value(p, source, input_value)?;
                 if result.is_null() {
                     if let Some(IteratorRecord { done, .. }) = vm.heap.iterator_mut(this) {
@@ -3068,7 +3067,7 @@ impl<H: Host> Vm<H> {
                     vm.array_iterator_item(p, this, source, kind, index)?
                 }
                 _ => match (kind, vm.heap.get(source)) {
-                    (IteratorKind::String, Some(Cell::String(text))) => {
+                    (IteratorKind::String, _) if let Some(text) = vm.heap.string(source) => {
                         let units = text.units();
                         {
                             let mut element = 0;
@@ -3084,11 +3083,11 @@ impl<H: Host> Vm<H> {
                                     offset + 1
                                 };
                                 if element == index {
-                                    let value = vm.heap.alloc(Cell::String(
+                                    let value = vm.heap.alloc_string(
                                         super::wtf16::JsString::from_unit_run(
                                             units.slice(offset..end),
                                         ),
-                                    ));
+                                    );
                                     selected = Some((value, None));
                                     break;
                                 }
@@ -3235,7 +3234,7 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
-        let iterator_key = PropertyKey::symbol(*self.well_known_symbols.get("iterator")?);
+        let iterator_key = PropertyKey::symbol(self.well_known_symbols.get(WellKnownSymbol::Iterator)?);
         let mut holder = source;
         let method = loop {
             if matches!(self.heap.get(holder), Some(Cell::Proxy { .. })) {

@@ -363,6 +363,20 @@ pub(crate) fn module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     let map_set = context.get_property_rooted(prototype, key)?;
     set(context, response_data, "responses", responses)?;
     set(context, response_data, "set", map_set)?;
+    // A finished response's host entry lives as long as its JavaScript object: a keep-alive
+    // connection serves many responses and must not keep every one of them.
+    let release =
+        context.host_function(crate::host::shared_vm::operation("httpResponseRelease"))?;
+    let key = context.string_rooted("FinalizationRegistry");
+    let registry_constructor = context.get_property_rooted(global, key)?;
+    let registry =
+        context.construct_rooted(registry_constructor, registry_constructor, &[release])?;
+    let key = context.string_rooted("prototype");
+    let registry_prototype = context.get_property_rooted(registry_constructor, key)?;
+    let key = context.string_rooted("register");
+    let register = context.get_property_rooted(registry_prototype, key)?;
+    set(context, response_data, "registry", registry)?;
+    set(context, response_data, "register", register)?;
     let initialize_response = context.host_function_with_data(
         crate::host::shared_vm::operation("httpResponseInitialize"),
         response_data,
@@ -1049,6 +1063,11 @@ pub(crate) fn response_initialize(
     let key = context.string_rooted("set");
     let map_set = context.get_property_rooted(data, key)?;
     context.call_rooted(map_set, responses, &[response, id])?;
+    let key = context.string_rooted("registry");
+    let registry = context.get_property_rooted(data, key)?;
+    let key = context.string_rooted("register");
+    let register = context.get_property_rooted(data, key)?;
+    context.call_rooted(register, registry, &[response, id])?;
     let yes = context.boolean(true);
     set(context, response, "sendDate", yes)?;
     let undefined = context.undefined();
@@ -1433,7 +1452,8 @@ pub(crate) fn response_finish(
                 status_message.clone(),
                 response.headers.clone(),
                 headers_sent,
-                response.body.bytes(),
+                // An ended response never writes again: its body leaves with this frame.
+                std::mem::take(&mut response.body).bytes(),
                 is_chunked(&response.headers),
                 response.send_date,
                 response.http10,
@@ -1542,6 +1562,28 @@ pub(crate) fn response_finish(
         }
         result?;
     }
+    Ok(context.undefined())
+}
+
+/// The finalization callback of a collected response object: a finished response's host
+/// entry goes with it. An unfinished one stays until its socket closes.
+pub(crate) fn response_release(
+    context: &mut Context<'_>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let id = argument_id(context, args.first().copied())?;
+    let state = context.host_mut().shared_state();
+    let mut host = state.borrow_mut();
+    if host
+        .http
+        .responses
+        .get(&id)
+        .is_some_and(|response| response.lifecycle.is_terminal())
+    {
+        host.http.responses.remove(&id);
+    }
+    drop(host);
     Ok(context.undefined())
 }
 

@@ -3553,7 +3553,7 @@ pub(crate) fn initialize_warning_policy(context: &mut NativeContext<'_, NodeHost
         // Node's listener, or, unless a script can reach Node's own to compare, a listener of
         // its name and length that loads Node's on the first warning: most runs never warn.
         let callback = if options.enabled("--expose-internals") {
-            warning_listener(context, process, &[])?
+            warning_export(context, "onWarning")?
         } else {
             let factory = context.evaluate_script_rooted(
                 "(load) => function onWarning(warning) { return load()(warning); }",
@@ -3688,17 +3688,17 @@ const ENV_PROXY_SOURCE: &str = r#"(target, setEnv, deleteEnv) => new Proxy(targe
   }
 })"#;
 
-/// Defines `process.emitWarning` as Node's.
+/// Defines `process.emitWarning` (`process_warning_shared_vm`).
 pub(crate) fn initialize_emit_warning(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     let process = context.host_mut().shared_state().borrow().process_module.ok_or_else(|| RootedError::host("process is not initialized"))?;
-    let emit_warning = warning_export(context, "emitWarning")?;
+    let emit_warning = crate::modules::process_warning_shared_vm::emit_warning(context)?;
     let key = context.string_rooted("emitWarning");
     context.define_data_property_rooted(process, key, emit_warning, true, true, true)?;
     Ok(context.undefined())
 }
 
-/// The Console module owns initialization; the SDK owns this public callback.
-/// Node's `onWarning`.
+/// The default `warning` listener's implementation: Node's `onWarning`
+/// (`process_warning_shared_vm`).
 pub(crate) fn warning_listener(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
-    warning_export(context, "onWarning")
+    crate::modules::process_warning_shared_vm::on_warning(context)
 }

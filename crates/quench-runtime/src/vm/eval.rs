@@ -4,6 +4,11 @@ use super::*;
 
 use crate::compile::eval_context_source;
 
+
+/// Names a specialized script's parse goal in its compile-cache key, apart from a host
+/// script's and an application entry's (`Runtime::compile_entry`).
+const SPECIALIZED_SCRIPT_GOAL: &str = "specialized-script";
+
 impl<H: Host> Vm<H> {
     pub(super) fn eval_script_native(
         &mut self,
@@ -97,7 +102,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let source = args.first().copied().unwrap_or(Value::UNDEFINED);
-        if let Some(Cell::String(source_text)) = self.heap.get(source).cloned()
+        if let Some(source_text) = self.heap.string(source).cloned()
             && let Some(literal) = crate::Engine::eval_single_regexp_literal(source_text.host_string())
         {
             let text = source_text.host_string();
@@ -116,14 +121,14 @@ impl<H: Host> Vm<H> {
             }
             let pattern = self
                 .heap
-                .alloc(Cell::String(JsString::from_units(pattern_units)));
+                .alloc_string(JsString::from_units(pattern_units));
             let flags = self
                 .heap
-                .alloc(Cell::String(JsString::from_units(&flag_units)));
+                .alloc_string(JsString::from_units(&flag_units));
             return self.construct_regexp_native(p, &[pattern, flags], None);
         }
         let source_text = match self.heap.get(source) {
-            Some(Cell::String(value)) => value.clone(),
+            _ if let Some(value) = self.heap.string(source)  => value.clone(),
             _ => return Ok(source),
         };
         let text = source_text.host_string().to_owned();
@@ -135,7 +140,7 @@ impl<H: Host> Vm<H> {
         self.validate_eval_arguments_context(p, &text)?;
         let source_name = format!("<Eval:{}>", self.programs.len());
         let cache_source = (!self.direct_eval).then_some(source_text);
-        self.eval_global_script_with_cache(p, &text, inherited_strict, &source_name, cache_source)
+        self.eval_global_script_with_cache(p, &text, inherited_strict, &source_name, cache_source, false)
     }
 
     pub(super) fn eval_global_script(
@@ -155,7 +160,18 @@ impl<H: Host> Vm<H> {
         strict: bool,
         source_name: &str,
     ) -> Result<Value, JsError> {
-        self.eval_global_script_with_cache(p, source, strict, source_name, None)
+        self.eval_global_script_with_cache(p, source, strict, source_name, None, false)
+    }
+
+    /// A host's script, which is sloppy global code no guest frame calls: its compilation goes
+    /// through the host's compile cache (`Host::kept_compiled_program`).
+    pub(super) fn eval_host_script(
+        &mut self,
+        p: &ResidualProgram,
+        source: &str,
+        source_name: &str,
+    ) -> Result<Value, JsError> {
+        self.eval_global_script_with_cache(p, source, false, source_name, None, true)
     }
 
     fn eval_global_script_with_cache(
@@ -165,6 +181,7 @@ impl<H: Host> Vm<H> {
         strict: bool,
         source_name: &str,
         cache_source: Option<JsString>,
+        host_script: bool,
     ) -> Result<Value, JsError> {
         if let Some(program) = cache_source.as_ref().and_then(|source| self.programs.cached_global_eval(source)) {
             return self.run_global_eval_program(p, program);
@@ -194,7 +211,22 @@ impl<H: Host> Vm<H> {
         } else {
             Vec::new()
         };
-        let residual = crate::Engine::specialize_eval_with_context(
+        // A host script compiles from its text alone: it is no direct eval, so it has no
+        // caller context, private names or Annex B restrictions.
+        let host_script = host_script && !self.direct_eval;
+        let mode = self.specialization_part();
+        let kept = host_script
+            .then(|| self.host.kept_compiled_program(source_name, &[mode, source]))
+            .flatten()
+            .and_then(|bytes| {
+                let text = crate::bytecode::SourceText::Shared(std::sync::Arc::from(source));
+                let specialized = self.specialized;
+                self.decode_cached_program(bytes, text, 0, source_name, specialized).ok()
+            });
+        let compiled = kept.is_none();
+        let residual = match kept {
+            Some(residual) => Ok(residual),
+            None => crate::Engine::specialize_eval_with_context(
             source,
             source_name,
             &*self,
@@ -202,7 +234,8 @@ impl<H: Host> Vm<H> {
             context,
             &private_names,
             &annex_b_forbidden_names,
-        )
+        ),
+        }
         .map_err(|diagnostics| {
             if diagnostics
                 .iter()
@@ -223,6 +256,12 @@ impl<H: Host> Vm<H> {
         let Some(program_id) = self.store_dynamic_program(residual) else {
             return Err(self.type_error(p, "dynamic program store is full".into()));
         };
+        if host_script && compiled
+            && let Some(program) = self.programs.get(program_id)
+            && let Some(bytes) = self.encode_cached_program(&program)
+        {
+            self.host.keep_compiled_program(source_name, &[mode, source], &bytes);
+        }
         let origin = self.capture_eval_origin(p)?;
         self.programs.set_origin(program_id, super::program_store::CompilationOrigin::Eval { caller: Some(origin) });
         // Eval code belongs to its caller's Script or Module (PerformEval).
@@ -264,17 +303,83 @@ impl<H: Host> Vm<H> {
         self.evaluate_embedding_prepared_script(&prepared)
     }
 
-    /// Compiles a host wrapper `prefix + body + suffix` whose body is static host text: the
-    /// program's positions start at the wrapper origin and it retains the body itself.
-    pub(crate) fn prepare_embedding_static_body(
-        &mut self, prefix: &str, body: &'static str, suffix: &str, name: &str,
+    /// Compiles a host wrapper `prefix + body + suffix` around a library module's text: the
+    /// program's positions start at the wrapper origin and it retains the body itself (static
+    /// embedded text, or text the host derived from it), not a wrapped copy.
+    fn prepare_embedding_library_body(
+        &mut self, prefix: &str, body: crate::bytecode::SourceText, suffix: &str, name: &str,
     ) -> Result<crate::PreparedScript, JsError> {
-        let wrapped = format!("{prefix}{body}{suffix}");
+        let wrapped = [prefix, &body, suffix].concat();
         let origin = crate::api::wrapper_origin(prefix)
             .ok_or_else(|| JsError("host wrapper origin exceeds compiler positions".into()))?;
         let base = u32::try_from(prefix.len())
             .map_err(|_| JsError("host wrapper prefix exceeds compiler positions".into()))?;
         self.prepare_embedding_specialized_script_retaining(&wrapped, name, Some(origin), Some((body, base)), true)
+    }
+
+    /// `prepare_embedding_library_body` through the host's compile cache
+    /// (`Host::kept_compiled_program`): a kept program that decodes for this VM is used as is;
+    /// otherwise the body compiles and its compact form is offered to the host.
+    pub(crate) fn prepare_embedding_library_body_kept(
+        &mut self, prefix: &str, body: crate::bytecode::SourceText, suffix: &str, name: &str,
+    ) -> Result<crate::PreparedScript, JsError> {
+        let parts = [self.specialization_part(), prefix, &*body, suffix];
+        if let Some(bytes) = self.host.kept_compiled_program(name, &parts)
+            && let Ok(program) = self.decode_cached_program(bytes, body.clone(), prefix.len(), name, self.specialized)
+        {
+            return Ok(crate::PreparedScript { program: Rc::new(program) });
+        }
+        let prepared = self.prepare_embedding_library_body(prefix, body.clone(), suffix, name)?;
+        if let Some(bytes) = self.encode_cached_program(&prepared.program) {
+            self.host.keep_compiled_program(name, &parts, &bytes);
+        }
+        Ok(prepared)
+    }
+
+    /// `program`'s compile-cache form, when every atom it names is found again by its text:
+    /// a VM atom whose UTF-16 has no lossless host spelling cannot be cached by name.
+    /// Names this VM's specialization in a compile-cache key: a program compiled under the
+    /// other does not decode here (`decode_cached_program`). Without it, processes that run
+    /// a module under each specialization replaced each other's entry, and each compiled it
+    /// again (typescript.js, 9 MB of source, about 3 s per process).
+    fn specialization_part(&self) -> &'static str {
+        if self.specialized { "specialized" } else { "unspecialized" }
+    }
+
+    pub(super) fn encode_cached_program(&self, program: &crate::ResidualProgram) -> Option<Vec<u8>> {
+        let (bytes, atoms) = program.encode_compact();
+        atoms
+            .iter()
+            .all(|&atom| {
+                let name = &program.atoms[atom as usize];
+                let hash = Self::atom_hash_str(name);
+                self.find_atom(hash, |found| self.atom_units_equal_str(found, name)) == Some(atom)
+            })
+            .then_some(bytes)
+    }
+
+    /// A program `encode_cached_program` encoded, with this VM's atom ids and `text` as its
+    /// source, which must be what it compiled from `name` after a `base`-byte prefix, with
+    /// `specialized` as its specialization.
+    pub(super) fn decode_cached_program(
+        &mut self, bytes: crate::KeptBytes, text: crate::bytecode::SourceText, base: usize, name: &str,
+        specialized: bool,
+    ) -> Result<crate::ResidualProgram, String> {
+        let mut program = crate::ResidualProgram::decode_compact(
+            bytes,
+            &mut |name| self.intern_atom(name),
+            text,
+        )?;
+        let source_matches = program.source.as_ref().is_some_and(|source| source.base as usize == base);
+        if program.source_name != name || !source_matches || program.specialized != specialized {
+            return Err("cached program does not match its body".into());
+        }
+        program.atoms =
+            crate::bytecode::AtomTable::shared(self.atom_sequence.clone(), self.atom_sequence.len());
+        // The bytes are this build's compiler output (the host keys them by build, and their
+        // checksum held), which runs unvalidated when compiled in place; the decoder checked
+        // their structure and every atom is now one of this VM's.
+        Ok(program)
     }
 
     pub(crate) fn prepare_embedding_specialized_script(
@@ -287,10 +392,30 @@ impl<H: Host> Vm<H> {
     /// the compiled byte offset where that text starts.
     fn prepare_embedding_specialized_script_retaining(
         &mut self, source: &str, name: &str, origin: Option<(u32, u32)>,
-        retained: Option<(&'static str, u32)>,
+        retained: Option<(crate::bytecode::SourceText, u32)>,
         keep_records: bool,
     ) -> Result<crate::PreparedScript, JsError> {
         let program = self.embedding_program()?;
+        // A script compiled from its own text (a package's module, an application's entry) goes
+        // through the host's compile cache, keyed by its name, its text and what else shapes
+        // its program: its origin and whether its functions keep their records.
+        let cache_key = retained.is_none().then(|| {
+            let (line, column) = origin.unwrap_or_default();
+            format!("{SPECIALIZED_SCRIPT_GOAL}:{line}:{column}:{keep_records}")
+        });
+        if let Some(goal) = &cache_key
+            && let Some(bytes) = self.host.kept_compiled_program(name, &[self.specialization_part(), goal, source])
+        {
+            let text = crate::bytecode::SourceText::Shared(std::sync::Arc::from(source));
+            let specialized = self.specialized;
+            if let Ok(mut kept) = self.decode_cached_program(bytes, text, 0, name, specialized) {
+                if let (Some(source), Some((line_offset, column_offset))) = (&mut kept.source, origin) {
+                    source.line_offset = line_offset;
+                    source.column_offset = column_offset;
+                }
+                return Ok(crate::PreparedScript { program: Rc::new(kept) });
+            }
+        }
         // A program keeping only static text cannot compile its functions again from it.
         let compiled = if keep_records {
             crate::Engine::specialize_kept_script_with_atom_prefix(source, name, &*self)
@@ -316,10 +441,19 @@ impl<H: Host> Vm<H> {
             source.column_offset = column_offset;
         }
         if let (Some(source), Some((text, base))) = (&mut residual.source, retained) {
-            source.text = crate::bytecode::SourceText::Static(text);
+            source.text = text;
             source.base = base;
         }
         let mut residual = self.intern_program_atoms(residual);
+        // Kept before its records are released: encoding reads every record. Every distinct
+        // text a user runs adds an entry; a store that fails (a full disk) keeps the cache
+        // as it was, and costs only the compilation it would have saved.
+        if let Some(goal) = &cache_key
+            && let Some(bytes) = self.encode_cached_program(&residual)
+        {
+            let mode = self.specialization_part();
+            self.host.keep_compiled_program(name, &[mode, goal, source], &bytes);
+        }
         // Its final source is settled, so a function compiles again from it on first call.
         residual.release_replayable_records();
         Ok(crate::PreparedScript { program: Rc::new(residual) })
@@ -891,7 +1025,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         message: &str,
     ) -> Result<Value, JsError> {
-        let text = self.heap.alloc(Cell::String(message.into()));
+        let text = self.heap.alloc_string(message.into());
         let error = self.construct_error_native(p, Native::SyntaxError, &[text])?;
         Err(JsError::thrown(error, format!("SyntaxError: {message}")))
     }
@@ -903,7 +1037,7 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> Result<(), JsError> {
         let value_root = self.heap.root(value);
-        let key = self.heap.alloc(Cell::String(self.atom_value(atom)));
+        let key = self.heap.alloc_string(self.atom_value(atom));
         let value = self.heap.root_value(value_root).unwrap();
         let result = self.define_property_or_throw(
             p,

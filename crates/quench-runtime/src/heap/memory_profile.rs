@@ -696,12 +696,11 @@ fn cell_bytes(cell: &Cell) -> usize {
                     + scope.boxed_bytes()
                     + scope.with_objects().len() * size_of::<Value>()
             }
-            Cell::String(value) => value.capacity(),
             Cell::BigInt(value) => crate::bigint::magnitude_bytes(value),
             Cell::Error(value) => value.capacity(),
             Cell::Promise(promise) => {
                 size_of::<super::PromiseCell>()
-                    + promise.record.reactions.capacity() * size_of::<super::PromiseReaction>()
+                    + promise.record.reaction_heap_bytes()
             }
             Cell::Symbol(value) => value.as_ref().map_or(0, |description| description.len()),
             Cell::Date { .. } => 0,

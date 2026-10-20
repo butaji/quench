@@ -729,11 +729,11 @@ impl<H: Host> Vm<H> {
             put_number(&output, number);
             return Ok(());
         }
+        if let Some(text) = self.heap.string(value) {
+            put_string(&output, text.units());
+            return Ok(());
+        }
         match self.heap.get(value) {
-            Some(Cell::String(text)) => {
-                put_string(&output, text.units());
-                Ok(())
-            }
             Some(Cell::BigInt(value)) => {
                 put_tag(&output, tag::BIGINT);
                 put_bigint_contents(&output, value);
@@ -912,7 +912,7 @@ impl<H: Host> Vm<H> {
                     put_tag(output, tag::BIGINT_OBJECT);
                     put_bigint_contents(output, value);
                 }
-                Some(Cell::String(text)) => {
+                _ if let Some(text) = self.heap.string(inner) => {
                     put_tag(output, tag::STRING_OBJECT);
                     put_string(output, text.units());
                 }
@@ -933,7 +933,7 @@ impl<H: Host> Vm<H> {
             let mut outcome = Ok(());
             for key_root in &keys {
                 let key = self.heap.root_value(*key_root).unwrap();
-                let Some(Cell::String(name)) = self.heap.get(key).cloned() else { continue };
+                let Some(name) = self.heap.string(key).cloned() else { continue };
                 let atom = self.intern_js_atom(&name);
                 if outcome.is_err() || self.is_private_name(atom) || (skip_indices && super::object_static::array_index(&name.to_string()).is_some()) {
                     continue;
@@ -1010,7 +1010,7 @@ impl<H: Host> Vm<H> {
         hooks: &mut D,
         key: Value,
     ) -> Result<(), JsError> {
-        if let Some(Cell::String(name)) = self.heap.get(key) {
+        if let Some(name) = self.heap.string(key) {
             if let Some(index) = super::object_static::array_index(&name.to_string()) {
                 put_number(&serializer.output, f64::from(index));
                 return Ok(());
@@ -1067,7 +1067,7 @@ impl<H: Host> Vm<H> {
                     Ok(())
                 }
                 None => {
-                    let key = self.heap.alloc(Cell::String(index.to_string().as_str().into()));
+                    let key = self.heap.alloc_string(index.to_string().as_str().into());
                     self.get_index(program, array, key)
                         .and_then(|element| self.wire_write(program, serializer, hooks, element))
                 }
@@ -1201,7 +1201,7 @@ impl<H: Host> Vm<H> {
         let error_root = self.heap.root(error);
         let mut fields = [None, None];
         for (index, name) in ["message", "cause"].into_iter().enumerate() {
-            let key = self.heap.alloc(Cell::String(name.into()));
+            let key = self.heap.alloc_string(name.into());
             let error = self.heap.root_value(error_root).unwrap();
             if let Some((value, attributes)) = self.ordinary_own_property(program, error, key)?
                 && !attributes.accessor
@@ -1227,7 +1227,7 @@ impl<H: Host> Vm<H> {
             let stack_atom = self.intern_atom("stack");
             let error = self.heap.root_value(error_root).unwrap();
             let stack = self.get_property(program, error, stack_atom)?;
-            if let Some(Cell::String(stack)) = self.heap.get(stack).cloned() {
+            if let Some(stack) = self.heap.string(stack).cloned() {
                 put_varint(&output, u64::from(error_tag::STACK));
                 put_string(&output, stack.units());
             }
@@ -1267,7 +1267,7 @@ impl<H: Host> Vm<H> {
     }
 
     fn plain_error(&mut self, program: &ResidualProgram, message: &str) -> JsError {
-        let text = self.heap.alloc(Cell::String(message.into()));
+        let text = self.heap.alloc_string(message.into());
         match self.construct_error_native(program, Native::Error, &[text]) {
             Ok(error) => JsError::thrown(error, message.into()),
             Err(error) => error,
@@ -1342,16 +1342,13 @@ impl<H: Host> Vm<H> {
             }
         };
         drop(input);
-        Ok(self.heap.alloc(Cell::String(text)))
+        Ok(self.heap.alloc_string(text))
     }
 
     /// `ReadString`: a string record.
     fn wire_read_tagged_string<D: ReadHooks<H> + ?Sized>(&mut self, program: &ResidualProgram, deserializer: &mut ValueDeserializer, hooks: &mut D) -> Read<JsString> {
         let value = self.wire_read(program, deserializer, hooks)?;
-        match self.heap.get(value) {
-            Some(Cell::String(text)) => Ok(text.clone()),
-            _ => Err(ReadFailure::Invalid),
-        }
+        self.heap.string(value).cloned().ok_or(ReadFailure::Invalid)
     }
 
     fn wire_read_bigint(&mut self, deserializer: &mut ValueDeserializer) -> Read<Value> {
@@ -1423,7 +1420,7 @@ impl<H: Host> Vm<H> {
                         continue;
                     }
                     let element = self.wire_read(program, deserializer, hooks)?;
-                    let key = self.heap.alloc(Cell::String(index.to_string().as_str().into()));
+                    let key = self.heap.alloc_string(index.to_string().as_str().into());
                     let array = self.heap.root_value(root).unwrap();
                     if !self.define_own_property_record(program, array, key, PropertyDescriptorRecord::data(element))? {
                         return Err(ReadFailure::Invalid);
@@ -1450,7 +1447,7 @@ impl<H: Host> Vm<H> {
                     tag::BIGINT_OBJECT => self.wire_read_bigint(deserializer)?,
                     _ => {
                         let text = self.wire_read_tagged_string(program, deserializer, hooks)?;
-                        self.heap.alloc(Cell::String(text))
+                        self.heap.alloc_string(text)
                     }
                 };
                 let wrapper = self.box_primitive_object(inner)?;
@@ -1605,7 +1602,7 @@ impl<H: Host> Vm<H> {
                 return Ok(count);
             }
             let key = self.wire_read(program, deserializer, hooks)?;
-            if key.as_number().is_none() && !matches!(self.heap.get(key), Some(Cell::String(_))) {
+            if key.as_number().is_none() && !self.heap.is_string(key) {
                 return Err(ReadFailure::Invalid);
             }
             let key = self.to_property_key(program, key)?;
@@ -1692,7 +1689,7 @@ impl<H: Host> Vm<H> {
         let mut stack = Value::UNDEFINED;
         if tag == error_tag::STACK {
             let text = self.wire_read_tagged_string(program, deserializer, hooks)?;
-            stack = self.heap.alloc(Cell::String(text));
+            stack = self.heap.alloc_string(text);
             tag = next(deserializer)?;
         }
         let prototype = self.intrinsic_builtin_prototype(native);
@@ -1700,7 +1697,7 @@ impl<H: Host> Vm<H> {
         let root = self.wire_add_object(deserializer, id, error);
         self.install_error_stack(program, error, StackData::Formatted(stack))?;
         if let Some(message) = message {
-            let message = self.heap.alloc(Cell::String(message));
+            let message = self.heap.alloc_string(message);
             let error = self.heap.root_value(root).unwrap();
             self.set_builtin_value_named(error, "message", message)?;
         }
@@ -1820,10 +1817,7 @@ impl<H: Host> Vm<H> {
             return format!("Symbol({})", description.unwrap_or_default());
         }
         if self.is_function(value) {
-            let source = self.function_source_value(value).and_then(|source| match self.heap.get(source) {
-                Some(Cell::String(text)) => Some(text.to_string()),
-                _ => None,
-            });
+            let source = self.function_source_value(value).and_then(|source| self.heap.string(source).map(ToString::to_string));
             let source = source.unwrap_or_else(|| {
                 let name = self.debug_function_name(value).map(|name| name.to_string()).unwrap_or_default();
                 format!("function {name}() {{ [native code] }}")
@@ -1837,10 +1831,7 @@ impl<H: Host> Vm<H> {
         };
         let to_string = self.data_property(value, "toString");
         if self.object_data(value).is_some_and(Object::has_error_data) || native_function(self, to_string, Native::ErrorToString) {
-            let text = |vm: &mut Self, name: &str| match vm.data_property(value, name).and_then(|value| vm.heap.get(value).cloned()) {
-                Some(Cell::String(text)) => Some(text.to_string()),
-                _ => None,
-            };
+            let text = |vm: &mut Self, name: &str| vm.data_property(value, name).and_then(|value| vm.heap.string(value).map(ToString::to_string));
             let name = text(self, "name").unwrap_or_else(|| "Error".to_owned());
             let message = text(self, "message").unwrap_or_default();
             return match (name.is_empty(), message.is_empty()) {
@@ -1862,13 +1853,9 @@ impl<H: Host> Vm<H> {
         }
         let tag = self
             .well_known_symbols
-            .get("toStringTag")
-            .copied()
+            .get(WellKnownSymbol::ToStringTag)
             .and_then(|symbol| self.diagnostic_data_property(value, PropertyKey::symbol(symbol)))
-            .and_then(|tag| match self.heap.get(tag) {
-                Some(Cell::String(text)) => Some(text.to_string()),
-                _ => None,
-            });
+            .and_then(|tag| self.heap.string(tag).map(ToString::to_string));
         format!("[object {}]", tag.unwrap_or_else(|| self.class_name(value).to_owned()))
     }
 
@@ -1941,11 +1928,11 @@ impl<H: Host> Vm<H> {
     /// The structured-clone DataCloneError: an Error named DataCloneError that hosts
     /// present as their DOMException.
     pub(super) fn data_clone_error(&mut self, program: &ResidualProgram, message: &str) -> JsError {
-        let message_value = self.heap.alloc(Cell::String(message.into()));
+        let message_value = self.heap.alloc_string(message.into());
         let error = self
             .construct_error_native(program, Native::Error, &[message_value])
             .unwrap_or_else(|_| self.heap.alloc(Cell::Object(Object::error(self.object_proto))));
-        let name = self.heap.alloc(Cell::String("DataCloneError".into()));
+        let name = self.heap.alloc_string("DataCloneError".into());
         let _ = self.set_builtin_value_named(error, "name", name);
         JsError::data_clone(error, message)
     }

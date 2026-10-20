@@ -16,7 +16,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         constructor: Value,
     ) -> Result<Value, JsError> {
-        let Some(species) = self.well_known_symbols.get("species").copied() else {
+        let Some(species) = self.well_known_symbols.get(WellKnownSymbol::Species) else {
             return Ok(Value::UNDEFINED);
         };
         let intrinsic_getter = self
@@ -118,7 +118,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         match property {
             PropertyKey::String(atom) if !self.is_private_name(atom) => {
-                Ok(self.heap.alloc(Cell::String(self.atom_value(atom))))
+                Ok(self.heap.alloc_string(self.atom_value(atom)))
             }
             PropertyKey::Symbol(key) => Ok(key),
             PropertyKey::String(_) | PropertyKey::Private(_) => {
@@ -429,7 +429,7 @@ impl<H: Host> Vm<H> {
     /// leaves accessors (lazy properties among them), exotic and namespace objects, Proxies
     /// and private, index, `length` or legacy function keys to the general path.
     #[inline]
-    fn plain_named_get(&self, object: Value, atom: Atom) -> Option<Value> {
+    pub(super) fn plain_named_get(&self, object: Value, atom: Atom) -> Option<Value> {
         if !self.plain_named_key(atom) {
             return None;
         }
@@ -470,7 +470,7 @@ impl<H: Host> Vm<H> {
             if !data.is_extensible()
                 || data.is_module_namespace()
                 || data.deferred_module().is_some()
-                || self.descriptors.contains_key(&(current, key))
+                || (data.has_side_descriptors() && self.descriptors.contains_key(&(current, key)))
             {
                 return None;
             }
@@ -490,18 +490,158 @@ impl<H: Host> Vm<H> {
         self.set_shape_property(object, key, value).ok()
     }
 
-    /// A keyed read of a public symbol, or of a string naming an existing non-index atom,
-    /// that the plain chain walk answers: what `get_index` returns for it before any lookup
-    /// that can run guest code. A host-private symbol names only an own property, so its
-    /// read is left to `get_index` with every other `None`.
-    pub(super) fn plain_keyed_get(&self, object: Value, key: Value) -> Option<Value> {
+    /// A keyed read of a symbol, or of a string naming an existing non-index atom, that the
+    /// plain chain walk answers: what `get_index` returns for it before any lookup that can
+    /// run guest code. `None` leaves the read to `get_index`.
+    pub(super) fn plain_keyed_get(&mut self, object: Value, key: Value) -> Option<Value> {
+        if let Some(text) = self.heap.string(key) {
+            return self.plain_named_get(object, self.lookup_js_atom(text)?);
+        }
         match self.heap.get(key)? {
             // A host-private symbol names only an own property, which the general path reads.
             Cell::Symbol(symbol) if symbol.kind != crate::heap::SymbolKind::HostPrivate => {
-                self.plain_property_get(object, PropertyKey::symbol(key))
+                self.plain_symbol_get(object, key)
             }
-            Cell::String(text) => self.plain_named_get(object, self.lookup_js_atom(text)?),
             _ => None,
+        }
+    }
+
+    /// `plain_property_get` of a symbol key, answered by the proof of where the walk from a
+    /// receiver of the same shape found it (`symbol_load_proofs`), or by `prove_symbol_load`.
+    #[inline]
+    fn plain_symbol_get(&mut self, object: Value, key: Value) -> Option<Value> {
+        use super::symbol_load_proof::SymbolLoadAnswer;
+        let data = self.heap.ordinary_object(object)?;
+        let epoch = crate::heap::prototype_layout_epoch();
+        let answer = self.symbol_load_proofs.answer(data.shape(), key, epoch);
+        // A proof's shape is an ordinary one, so the receiver is no namespace, deferred module
+        // or arguments object; side descriptors could name the key outside its shape.
+        let inherits = !data.has_side_descriptors();
+        match answer {
+            // SAFETY: the proof recorded this slot for an own data property of this shape.
+            Some(SymbolLoadAnswer::Own(slot)) => {
+                return Some(unsafe { self.heap.property_get_unchecked(data, slot as usize) });
+            }
+            Some(SymbolLoadAnswer::Inherited { prototype, holder, slot })
+                if inherits && data.proto() == prototype =>
+            {
+                let holder = self.heap.ordinary_object(holder)?;
+                // SAFETY: the proof keeps the holder and the shape its slot was recorded in.
+                return unsafe { self.heap.property_get_shaped(holder, slot as usize) };
+            }
+            Some(SymbolLoadAnswer::Absent { prototype }) if inherits && data.proto() == prototype => {
+                return Some(Value::UNDEFINED);
+            }
+            Some(SymbolLoadAnswer::Getter { prototype, .. }) if inherits && data.proto() == prototype => {
+                return None;
+            }
+            _ => {}
+        }
+        self.prove_symbol_load(object, key, epoch)
+    }
+
+    /// The getter a symbol-keyed read of `key` on `object` calls, where a proof records it
+    /// (`SymbolLoadAnswer::Getter`).
+    pub(super) fn proved_symbol_getter(&self, object: Value, key: Value) -> Option<Value> {
+        use super::symbol_load_proof::SymbolLoadAnswer;
+        let data = self.heap.ordinary_object(object)?;
+        let epoch = crate::heap::prototype_layout_epoch();
+        match self.symbol_load_proofs.answer(data.shape(), key, epoch)? {
+            SymbolLoadAnswer::Getter { prototype, holder, slot }
+                if !data.has_side_descriptors() && data.proto() == prototype =>
+            {
+                self.slot_attributes(self.heap.ordinary_object(holder)?, slot as usize)?
+                    .getter
+            }
+            _ => None,
+        }
+    }
+
+    /// `plain_symbol_get` past its proofs: the chain walk, recording where it found the key
+    /// when every object it passed is an ordinary, non-dictionary record whose shape alone
+    /// says what it holds. Every prototype passed becomes a prototype first, so a later change
+    /// to one advances the epoch and retires the proof.
+    #[cold]
+    #[inline(never)]
+    fn prove_symbol_load(&mut self, object: Value, key: Value, epoch: u64) -> Option<Value> {
+        use super::symbol_load_proof::SymbolLoadAnswer;
+        let symbol = PropertyKey::symbol(key);
+        let data = self.heap.ordinary_object(object)?;
+        let (shape, prototype) = (data.shape(), data.proto());
+        let mut current = object;
+        let mut depth = 0u8;
+        let (answer, value) = loop {
+            let link = if depth == 0 {
+                self.heap.ordinary_object(current)
+            } else {
+                self.heap.object_record(current)
+            };
+            let Some(link) = link else {
+                return self.plain_property_get(object, symbol);
+            };
+            let link_shape = link.shape();
+            if link.is_module_namespace()
+                || link.deferred_module().is_some()
+                || link.is_arguments_object()
+                || self.shape_is_dictionary(link_shape)
+            {
+                return self.plain_property_get(object, symbol);
+            }
+            if let Some(slot) = self.property_shape_slot(link_shape, symbol) {
+                let accessors = self.shape_may_have_accessors(link_shape);
+                if accessors && self.slot_attributes(link, slot)?.accessor {
+                    if depth > 0 && let Ok(slot) = u32::try_from(slot) {
+                        let getter = SymbolLoadAnswer::Getter { prototype, holder: current, slot };
+                        self.prove_symbol_chain(shape, key, epoch, prototype, depth, getter);
+                    }
+                    return None;
+                }
+                let value = self.heap.property_get(link, slot)?;
+                let slot = u32::try_from(slot).ok()?;
+                // An own slot's kind must follow from the shape the proof names; a holder's
+                // follows from the holder, which the proof names.
+                if depth == 0 && accessors {
+                    return Some(value);
+                }
+                let answer = if depth == 0 {
+                    SymbolLoadAnswer::Own(slot)
+                } else {
+                    SymbolLoadAnswer::Inherited { prototype, holder: current, slot }
+                };
+                break (answer, value);
+            }
+            if link.has_side_descriptors() {
+                return self.plain_property_get(object, symbol);
+            }
+            let next = link.proto();
+            if next.is_null() {
+                break (SymbolLoadAnswer::Absent { prototype }, Value::UNDEFINED);
+            }
+            let Some(deeper) = depth.checked_add(1) else {
+                return self.plain_property_get(object, symbol);
+            };
+            depth = deeper;
+            current = next;
+        };
+        self.prove_symbol_chain(shape, key, epoch, prototype, depth, answer);
+        Some(value)
+    }
+
+    /// Records `answer` for `key` on receivers of `shape` once the `depth` prototypes from
+    /// `prototype` the walk passed are marked prototypes.
+    fn prove_symbol_chain(
+        &mut self,
+        shape: u32,
+        key: Value,
+        epoch: u64,
+        prototype: Value,
+        depth: u8,
+        answer: super::symbol_load_proof::SymbolLoadAnswer,
+    ) {
+        self.mark_prototype_links(prototype, depth);
+        // Marking a link that was no prototype yet leaves the epoch where it was.
+        if crate::heap::prototype_layout_epoch() == epoch {
+            self.symbol_load_proofs.record(shape, key, epoch, answer);
         }
     }
 
@@ -530,12 +670,12 @@ impl<H: Host> Vm<H> {
             }
             let shape = data.shape();
             if let Some(slot) = self.property_shape_slot(shape, key) {
-                if self.slot_attributes(data, slot)?.accessor {
+                if self.shape_may_have_accessors(shape) && self.slot_attributes(data, slot)?.accessor {
                     return None;
                 }
                 return self.heap.property_get(data, slot).map(Some);
             }
-            if self.descriptors.contains_key(&(current, key)) {
+            if data.has_side_descriptors() && self.descriptors.contains_key(&(current, key)) {
                 return None;
             }
             let proto = data.proto();
@@ -712,7 +852,7 @@ impl<H: Host> Vm<H> {
                     Some(Cell::ArrayBuffer { object: x, .. }) => object = x.proto(),
                     Some(Cell::TypedArray { object: x, .. }) => object = x.proto(),
                     Some(Cell::DataView { object: x, .. }) => object = x.proto(),
-                    Some(Cell::String(v)) => {
+                    _ if let Some(v) = self.heap.string(object)  => {
                         let length = v.len();
                         if self.atom_class(atom).contains(AtomClass::ARRAY_INDEX)
                             && let Some(index) = super::object_static::array_index(self.atom_name(atom))
@@ -735,7 +875,7 @@ impl<H: Host> Vm<H> {
                                 return Ok(description
                                     .as_ref()
                                     .map(|value| {
-                                        self.heap.alloc(Cell::String(value.as_ref().into()))
+                                        self.heap.alloc_string(value.as_ref().into())
                                     })
                                     .unwrap_or(Value::UNDEFINED));
                             }

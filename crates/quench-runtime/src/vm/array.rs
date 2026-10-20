@@ -374,8 +374,7 @@ impl<H: Host> Vm<H> {
         self.with_call_roots([target], |vm| {
             let spreadable_atom = vm
                 .well_known_symbols
-                .get("isConcatSpreadable")
-                .copied()
+                .get(WellKnownSymbol::IsConcatSpreadable)
                 .ok_or_else(|| JsError("Symbol.isConcatSpreadable is not initialized".into()))?;
             let mut next = 0usize;
             for item in std::iter::once(source).chain(args.iter().copied()) {
@@ -488,6 +487,21 @@ impl<H: Host> Vm<H> {
         }
         let Some(object) = self.heap.array_mut(this) else {
             unreachable!("matched an array above");
+        };
+        super::index::mutable_array_elements(object.elements_mut()).push(value);
+        true
+    }
+
+    /// `define_array_literal_element` at a literal's length, the definition every element of
+    /// a literal without elisions makes: the element joins the dense storage. A literal is
+    /// unreachable from guest code until it is complete, so no prototype observes the index.
+    /// `false` leaves any other definition to `define_array_literal_element`.
+    pub(super) fn append_literal_element(&mut self, array: Value, index: usize, value: Value) -> bool {
+        if self.dense_array_length(array) != Some(index) || index >= MAX_ARRAY_LENGTH {
+            return false;
+        }
+        let Some(object) = self.heap.array_store_mut(array, value) else {
+            return false;
         };
         super::index::mutable_array_elements(object.elements_mut()).push(value);
         true
@@ -802,7 +816,7 @@ impl<H: Host> Vm<H> {
                     output.append(&vm.coerce_js_string(p, value)?);
                 }
                 let output = vm.string_build_result(p, output.finish())?;
-                Ok(vm.heap.alloc(Cell::String(output)))
+                Ok(vm.heap.alloc_string(output))
             })
         })
     }

@@ -6,7 +6,7 @@ impl<H: Host> Vm<H> {
         function: Value,
         source: &str,
     ) -> Result<(), JsError> {
-        let source_value = self.heap.alloc(Cell::String(source.into()));
+        let source_value = self.heap.alloc_string(source.into());
         self.set_function_source_value(function, source_value)
     }
 
@@ -32,7 +32,7 @@ impl<H: Host> Vm<H> {
             && let Some(name) = self.original_function_name(function)
         {
             let source = native_function_source(self.atom_name(name));
-            return Some(self.heap.alloc(Cell::String(source.as_str().into())));
+            return Some(self.heap.alloc_string(source.as_str().into()));
         }
         let Some(FunctionRecord {
             kind: FunctionKind::User(program, id) | FunctionKind::NumericUser(program, id),
@@ -48,7 +48,7 @@ impl<H: Host> Vm<H> {
         let residual = self.programs.residual(program)?;
         let span = residual.functions.get(id as usize)?.header().source_span?;
         let text = residual.source.as_ref()?.slice(span.start, span.end)?;
-        let source = self.heap.alloc(Cell::String(text.into()));
+        let source = self.heap.alloc_string(text.into());
         self.programs
             .cache_function_source(program, id, source)
             .or(Some(source))
@@ -222,9 +222,9 @@ impl<H: Host> Vm<H> {
             .root_value(target_root)
             .expect("bound target root remains live");
         let length_atom = self.intern_atom("length");
-        let length_key = self.heap.alloc(Cell::String(self.atom_value(length_atom)));
-        let descriptor = self.object_get_own_property_descriptor(p, &[target, length_key])?;
-        let bound_length = if !descriptor.is_undefined() {
+        let length_key = self.heap.alloc_string(self.atom_value(length_atom));
+        // HasOwnProperty(Target, "length"): [[GetOwnProperty]], a Proxy's through its trap.
+        let bound_length = if self.own_property_enumerable(p, target, length_key)?.is_some() {
             let target = self
                 .heap
                 .root_value(target_root)
@@ -266,7 +266,7 @@ impl<H: Host> Vm<H> {
             .expect("bound target root remains live");
         let target_name = self.get_property(p, target, name_atom)?;
         let target_name = match self.heap.get(target_name) {
-            Some(Cell::String(name)) => name.to_string(),
+            _ if let Some(name) = self.heap.string(target_name)  => name.to_string(),
             _ => String::new(),
         };
         let function = self

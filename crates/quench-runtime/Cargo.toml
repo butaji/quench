@@ -19,6 +19,8 @@ profile-aggregate = []
 profile-trace = ["profile-aggregate"]
 profile-memory = []
 profile-gc-time = []
+# Counts, by opcode, the instructions the lane leaves to the general loop; reported at exit.
+profile-lane-exits = []
 # Reads the collection pacing knobs from the environment (measurement builds only).
 gc-tuning = []
 reference = []

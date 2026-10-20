@@ -1,0 +1,16 @@
+babel-wtb       x0.923 wins 1/5 RSS 99.2->94.7
+doxbee-async    x0.948 wins 2/5 RSS 54.3->53.4
+json-parse-inspector x1.056 wins 4/5 RSS 98.7->97.7
+json-stringify-inspector x1.001 wins 3/5 RSS 89.1->88.1
+typescript-lib  x1.000 wins 0/5 RSS 215.1->186.8
+web-ssr         x0.953 wins 2/5 RSS 82.3->86.9
+crypto         x1.104 wins 2/3 RSS 4.7->5.0
+deltablue      x1.038 wins 2/3 RSS 4.1->4.4
+earley-boyer   x0.904 wins 1/3 RSS 10.0->10.0
+navier-stokes  x1.019 wins 2/3 RSS 5.1->5.1
+raytrace       x0.990 wins 1/3 RSS 4.2->4.5
+regexp         x1.053 wins 2/3 RSS 7.5->7.8
+richards       x1.016 wins 2/3 RSS 4.1->4.4
+splay          x1.113 wins 2/3 RSS 38.9->39.2
+v8 geomean 1.028
+300 geomean RSS ratio 0.8961 fails [('fs-extra', 'ok=False', 'ok=True'), ('graceful-fs', 'ok=False', 'ok=True'), ('@rollup/rollup-linux-x64-musl', 'ok=False', 'ok=False')] worse>5% []

@@ -1,0 +1,55 @@
+verdicts {"behavior-pass":286,"declarations-pass":13,"oracle-failed":1}
+passing 299  fastest wall 0  fastest cpu 0  lowest rss 281
+wall median (ms) quench 228.4 node 98.6 bun 66.8
+cpu median (ms) quench 218.5 node 118.8 bun 71.6
+rss median (MiB) quench 19.5 node 63.4 bun 38.3
+slowest relative to the faster of Node and Bun (wall ms):
+  jiti                                     q    1104 n    229 b     85  x13.0
+  color-convert                            q     885 n    160 b     86  x10.3
+  @typescript-eslint/project-service       q    2063 n    280 b    203  x10.2
+  undici                                   q     508 n    134 b     54  x9.4
+  semver                                   q     858 n    121 b     96  x8.9
+  playwright                               q    2783 n    368 b    364  x7.7
+  nanoid                                   q     368 n     95 b     48  x7.6
+  signal-exit                              q     406 n    112 b     55  x7.3
+  date-fns                                 q     521 n   1320 b     74  x7.1
+  tar-stream                               q     412 n     88 b     58  x7.0
+  schema-utils                             q    1116 n    178 b    168  x6.7
+  @typescript-eslint/type-utils            q    3025 n    594 b    472  x6.4
+  wrap-ansi                                q     390 n    175 b     61  x6.3
+  esbuild                                  q     740 n    167 b    118  x6.3
+  @typescript-eslint/tsconfig-utils        q    1979 n    345 b    323  x6.1
+  @typescript-eslint/typescript-estree     q    2105 n    439 b    360  x5.8
+  node-fetch                               q     301 n     94 b     52  x5.8
+  @typescript-eslint/parser                q    2062 n    417 b    363  x5.7
+  @babel/helper-compilation-targets        q     463 n    125 b     84  x5.5
+  ws                                       q     392 n    114 b     75  x5.2
+  rollup                                   q     514 n    129 b     98  x5.2
+  lucide-react                             q     664 n    198 b    128  x5.2
+  @typescript-eslint/eslint-plugin         q    3830 n    921 b    755  x5.1
+  deep-is                                  q     266 n    107 b     53  x5.0
+  vitest                                   q    2816 n    647 b    564  x5.0
+  baseline-browser-mapping                 q     420 n     95 b     84  x5.0
+  @babel/generator                         q     382 n    106 b     77  x5.0
+  typescript-eslint                        q    3726 n    830 b    748  x5.0
+  p-map                                    q     239 n     79 b     48  x5.0
+  ajv                                      q     740 n    197 b    149  x4.9
+not lowest rss: 18
+  @types/node                              q 72.3 n 72.2 b 72.2
+  undici-types                             q 74.8 n 74.5 b 74.4
+  typescript                               q 41.6 n 62.9 b 41.5
+  jiti                                     q 48.6 n 90.2 b 40.1
+  @typescript-eslint/typescript-estree     q 111.4 n 125.0 b 94.9
+  @typescript-eslint/scope-manager         q 116.9 n 130.8 b 92.1
+  @types/json-schema                       q 44.5 n 62.8 b 44.4
+  @types/react-dom                         q 53.7 n 62.8 b 53.5
+  @typescript-eslint/parser                q 110.3 n 129.6 b 95.2
+  @typescript-eslint/eslint-plugin         q 148.1 n 211.0 b 147.1
+  @typescript-eslint/type-utils            q 189.6 n 190.3 b 125.7
+  @typescript-eslint/project-service       q 111.4 n 108.8 b 78.3
+  @typescript-eslint/tsconfig-utils        q 116.8 n 126.0 b 81.0
+  jsdom                                    q 98.2 n 162.8 b 98.1
+  @types/chai                              q 45.9 n 62.8 b 44.9
+  @types/babel__traverse                   q 55.7 n 62.8 b 54.7
+  @types/babel__template                   q 53.9 n 62.6 b 52.7
+  @types/ws                                q 71.9 n 71.8 b 72.7

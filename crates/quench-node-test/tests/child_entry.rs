@@ -10467,3 +10467,138 @@ fn read_file_before_buffer_keeps_node_buffer_semantics() {
         assert_eq!(run_quench(&entry, &[case]), format!("{}\n", expected.replace("\\n", "\n")), "{case}");
     }
 }
+
+#[test]
+fn wasm_files_are_es_modules_as_in_node() {
+    // Node's `wasm` translator: a `.wasm` file is a module whose namespace holds its
+    // instance's exports (globals unwrapped), whose import modules are module specifiers,
+    // and which instantiates when it evaluates; an entry `.wasm` runs the same way.
+    let directory = tempfile::tempdir().unwrap();
+    let wat = |name: &str, text: &str| {
+        let buffer = wast::parser::ParseBuffer::new(text).unwrap();
+        let mut module: wast::Wat = wast::parser::parse(&buffer).unwrap();
+        std::fs::write(directory.path().join(name), module.encode().unwrap()).unwrap();
+    };
+    wat("lib.wasm", r#"(module (func (export "add") (param i32 i32) (result i32) local.get 0 local.get 1 i32.add)
+        (memory (export "mem") 1) (global (export "g") i32 (i32.const 42)) (global (export "m") (mut i32) (i32.const 7)))"#);
+    wat("main.wasm", r#"(module (import "./lib.wasm" "g" (global i32)) (import "./lib.wasm" "add" (func $add (param i32 i32) (result i32)))
+        (import "./host.mjs" "log" (func $log (param i32)))
+        (func (export "start") global.get 0 i32.const 1 call $add call $log) (start 2))"#);
+    wat("missing.wasm", r#"(module (import "./host.mjs" "nope" (func)))"#);
+    wat("reserved-import.wasm", r#"(module (import "wasm-js:x" "f" (func)))"#);
+    wat("reserved-export.wasm", r#"(module (func (export "wasm:f")))"#);
+    std::fs::write(directory.path().join("bad.wasm"), b"\0asm\x01\0\0\0\x01\x05").unwrap();
+    std::fs::write(directory.path().join("host.mjs"), "export function log(value) { console.log('log', value); }").unwrap();
+    std::fs::write(directory.path().join("namespace.mjs"), "import * as lib from './lib.wasm';
+        import { add, g, m } from './lib.wasm';
+        console.log(Object.keys(lib), g, m, typeof add, add(2, 3), lib.mem instanceof WebAssembly.Memory,
+          Object.prototype.toString.call(lib));
+        const main = await import('./main.wasm');
+        console.log(Object.keys(main), main === await import('./main.wasm'));
+        for (const name of ['bad', 'missing', 'reserved-import', 'reserved-export']) {
+          try { await import(`./${name}.wasm`); } catch (error) {
+            const path = new URL(`./${name}.wasm`, import.meta.url);
+            console.log(name, error.constructor.name, error.message.startsWith(`${path.pathname}: `),
+              error.message.replace(path.href, '<url>'));
+          }
+        }").unwrap();
+    // The warning goes through the public `process.emitWarning` as it is when it warns.
+    std::fs::write(directory.path().join("patched.mjs"), "process.emitWarning = (message, type) => console.log(type);
+        console.log((await import('./lib.wasm')).g);").unwrap();
+    let warning = "ExperimentalWarning: Importing WebAssembly module instances is an experimental feature and might change at any time";
+    for (entry, expected, warnings) in [
+        (
+            "namespace.mjs",
+            "[ 'add', 'g', 'm', 'mem' ] 42 7 function 5 true [object Module]\nlog 43\n[ 'start' ] true\n",
+            1,
+        ),
+        ("main.wasm", "log 43\n", 1),
+        ("patched.mjs", "ExperimentalWarning\n42\n", 0),
+    ] {
+        for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
+            let mut command = Command::new(executable);
+            command.arg(directory.path().join(entry));
+            if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
+            let result = quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap();
+            let stdout = String::from_utf8_lossy(&result.stdout);
+            let stderr = String::from_utf8_lossy(&result.stderr);
+            assert_eq!(result.exit_code, Some(0), "{entry} {executable}: {stderr}");
+            let errors: Vec<_> = stdout.lines().skip(expected.lines().count()).collect();
+            assert!(stdout.starts_with(expected), "{entry} {executable}: {stdout}");
+            assert_eq!(stderr.matches(warning).count(), warnings, "{entry} {executable}: {stderr}");
+            if entry == "namespace.mjs" {
+                assert_eq!(errors.len(), 4, "{executable}: {stdout}");
+                assert!(errors[0].starts_with("bad CompileError true "), "{executable}: {}", errors[0]);
+                assert!(errors[1].starts_with("missing LinkError false "), "{executable}: {}", errors[1]);
+                assert_eq!(errors[2], "reserved-import LinkError false Invalid Wasm import \"wasm-js:x\" in <url>", "{executable}");
+                assert_eq!(errors[3], "reserved-export LinkError false Invalid Wasm export name \"wasm:f\" in <url>", "{executable}");
+            }
+        }
+    }
+}
+
+#[test]
+fn process_warnings_match_node_without_loading_the_warning_module_graph() {
+    // `process.emitWarning` and the default listener are Node's own functions over supplied
+    // imports (`process_warning_shared_vm`): forms, validation errors, listener payloads,
+    // option handling and the console the listener writes with match Node.
+    let directory = tempfile::tempdir().unwrap();
+    let scripts = [
+        ("forms.mjs", r#"
+const seen = [];
+process.on('warning', (w) => seen.push([w.name, w.message, w.code, w.detail, w instanceof Error, w.stack.split('\n')[0]]));
+const source = process.emitWarning.toString();
+console.log(process.emitWarning.name, process.emitWarning.length, typeof process.emitWarning.prototype, source.slice(0, source.indexOf(')') + 1));
+process.emitWarning('one');
+process.emitWarning('two', 'CustomType', 'CODE1');
+process.emitWarning('three', { type: 'T', code: 'C', detail: 'more' });
+process.emitWarning(new Error('four'));
+process.emitWarning('five', 'DeprecationWarning', 'DEP0');
+function ctor() { process.emitWarning('six', 'X', undefined, ctor); }
+ctor();
+process.emitWarning('seven', '');
+for (const args of [['eight', 5], [5]]) {
+  try { process.emitWarning(...args); } catch (e) { console.log(e.code, e.message); }
+}
+setTimeout(() => console.log(JSON.stringify(seen)), 10);
+"#),
+        ("replaced.mjs", "console.error = (m) => console.log('replaced:', m); process.emitWarning('a');"),
+        ("grouped.mjs", "console.group('g'); process.emitWarning('a'); setTimeout(() => { console.groupEnd(); process.emitWarning('b'); }, 5);"),
+        ("late.mjs", "process.emitWarning('a'); setTimeout(() => { console.error = (m) => console.log('late:', m); process.emitWarning('b'); }, 5);"),
+        ("custom.mjs", "const w = new Error('custom'); w.name = 'Mine'; w.toString = () => 'TOSTRING'; process.emitWarning(w); const v = new Error('z'); v.toString = 1; process.emitWarning(v); process.emitWarning('x', 'Mine');"),
+    ];
+    for (name, source) in scripts {
+        std::fs::write(directory.path().join(name), source).unwrap();
+    }
+    let normalize = |text: &[u8]| {
+        let text = String::from_utf8_lossy(text);
+        let mut normalized = String::new();
+        for line in text.lines() {
+            // The process id, and the program name in the trace hint (`process.argv0`).
+            let line = match (line.find("(node:"), line.find(") ")) {
+                (Some(start), Some(end)) if start < end => format!("{}(node:PID{}", &line[..start], &line[end..]),
+                _ => line.to_owned(),
+            };
+            let line = match (line.find("(Use `"), line.find(" --trace")) {
+                (Some(start), Some(end)) if start < end => format!("(Use `PROGRAM{}", &line[end..]),
+                _ => line,
+            };
+            normalized.push_str(&line);
+            normalized.push('\n');
+        }
+        normalized
+    };
+    for flags in [&[][..], &["--no-warnings"], &["--disable-warning=CustomType", "--disable-warning=DeprecationWarning"], &["--no-deprecation"]] {
+        for (name, _) in scripts {
+            let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+                let mut command = Command::new(executable);
+                command.args(flags).arg(directory.path().join(name));
+                if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
+                quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
+            });
+            assert_eq!(observations[0].exit_code, observations[1].exit_code, "{name} {flags:?}");
+            assert_eq!(normalize(&observations[0].stdout), normalize(&observations[1].stdout), "{name} {flags:?}");
+            assert_eq!(normalize(&observations[0].stderr), normalize(&observations[1].stderr), "{name} {flags:?}");
+        }
+    }
+}

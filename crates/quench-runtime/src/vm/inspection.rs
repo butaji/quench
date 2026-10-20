@@ -22,7 +22,7 @@ impl<H: Host> Vm<H> {
                 return Some(name);
             }
         }
-        let tag = self.well_known_symbols.get("toStringTag").copied();
+        let tag = self.well_known_symbols.get(WellKnownSymbol::ToStringTag);
         let constructor = self.lookup_atom("constructor");
         let mut current = value;
         while let Some(data) = self.object_data(current) {
@@ -33,7 +33,7 @@ impl<H: Host> Vm<H> {
                 if let DiagnosticProperty::Data(tag) =
                     self.diagnostic_own_property(current, PropertyKey::symbol(tag))
                 {
-                    if let Some(Cell::String(name)) = self.heap.get(tag) {
+                    if let Some(name) = self.heap.string(tag) {
                         return Some(name.clone());
                     }
                 }

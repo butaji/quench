@@ -6,6 +6,7 @@ use quench_runtime::{HostFunction, HostFunctionId, NativeContext, RootedError, S
 pub(crate) mod commonjs;
 mod commonjs_exports;
 mod esm_errors;
+pub(crate) mod esm_wasm;
 pub(crate) mod policy_projection;
 pub(crate) use commonjs::source_kind;
 
@@ -30,6 +31,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "workerPoll" (0) => crate::modules::worker_threads_shared_vm::poll_native,
 
         method "nodeLibraryRequire" (1) => commonjs::require_node_library,
+        method "primordialsCopy" (7) => crate::modules::primordials_shared_vm::copy,
         method "nodeTestMock" (0) => crate::modules::test_shared_vm::mock,
         method "nodeTestNamespace" (0) => crate::modules::test_shared_vm::namespace,
         method "contextifyScript" (0) => crate::modules::contextify_shared_vm::script,
@@ -37,6 +39,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "contextifyCompileFunction" (0) => crate::modules::contextify_shared_vm::compile_function,
         method "nodePrintEvalScript" (1) => crate::shared_run::print_eval_script,
         method "builtinExportValues" (2) => commonjs::builtin_export_values,
+        method "esmWasmInstantiate" (6) => esm_wasm::instantiate,
         method "callbackify" (1) => crate::modules::util_callbackify_shared_vm::callbackify,
         method "gc" (0) => crate::modules::process_shared_vm::collect_garbage,
         method "utilCallbackified" (2) => crate::modules::util_callbackify_shared_vm::callbackified,
@@ -171,6 +174,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "webApisInitialize" (0) => commonjs::initialize_web_apis,
         method "webFetchInitialize" (0) => commonjs::initialize_fetch_apis,
         method "processSurfaceInitialize" (0) => commonjs::initialize_process_surface,
+        method "processReleaseInitialize" (0) => commonjs::initialize_process_release,
         method "processRawDebug" (0) => crate::modules::process_shared_vm::raw_debug,
         method "processReport" (0) => crate::modules::report_configuration_shared_vm::report,
         method "reportConfigGet" (0) => crate::modules::report_configuration_shared_vm::get,
@@ -212,6 +216,11 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "consoleLog" (0) => crate::modules::console_shared_vm::log,
         method "consoleLoad" (0) => crate::modules::console_shared_vm::load,
         method "processWarningListener" (0) => crate::modules::process_shared_vm::warning_listener,
+        method "processWarningLibrary" (1) => crate::modules::process_warning_shared_vm::library,
+        method "processWarningOption" (1) => crate::modules::process_warning_shared_vm::option,
+        method "processWarningBasename" (2) => crate::modules::process_warning_shared_vm::path_basename,
+        method "consoleWarningWriter" (0) => crate::modules::console_shared_vm::warning_writer,
+        method "consoleWarningWrite" (1) => crate::modules::console_shared_vm::warning_write,
         method "processMethodsInitialize" (0) => crate::modules::process_metrics_shared_vm::initialize_methods,
         method "processEmitWarningInitialize" (0) => crate::modules::process_shared_vm::initialize_emit_warning,
         method "processEnvInitialize" (0) => crate::modules::process_shared_vm::initialize_env,
@@ -561,6 +570,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "httpResponseFinish" (7) => crate::modules::http_shared_vm::response_finish,
         method "httpResponseWriteHead" (6) => crate::modules::http_shared_vm::response_write_head,
         method "httpResponseInitialize" (2) => crate::modules::http_shared_vm::response_initialize,
+        method "httpResponseRelease" (1) => crate::modules::http_shared_vm::response_release,
         method "httpResponseSend" (4) => crate::modules::http_shared_vm::response_send,
         method "assertStrictEqual" (2) => crate::modules::assert_shared_vm::strict_equal,
         method "assertNotStrictEqual" (2) => crate::modules::assert_shared_vm::not_strict_equal,
@@ -1022,6 +1032,30 @@ impl quench_runtime::Host for NodeHost {
         self.shared_state.borrow().async_hooks.tracks_promises()
     }
 
+    /// Counts the collection for the release before output (`resident_pages::note_collection`).
+    /// The pages themselves stay: releasing them after every collection refaulted the run's
+    /// hot code after each young one (EarleyBoyer, dynamic x86_64 production build,
+    /// 2026-10-20: ~63K minor faults and ~0.11 s of system time per run against ~15K and
+    /// ~0.035 s without).
+    fn at_collection_boundary(&mut self) {
+        crate::host::resident_pages::note_collection();
+    }
+
+    /// The pages loading, linking and instantiating the module touched leave the resident set
+    /// before the code generator's join it, as compiling the module's bytecode does
+    /// (`compile_wasm`).
+    fn before_wasm_native_compilation(&mut self) {
+        crate::host::resident_pages::release_read_only_pages();
+    }
+
+    fn kept_compiled_program(&mut self, name: &str, parts: &[&str]) -> Option<quench_runtime::KeptBytes> {
+        self.compile_cache.entry(name, parts)?.load()
+    }
+    fn keep_compiled_program(&mut self, name: &str, parts: &[&str], bytes: &[u8]) {
+        if let Some(entry) = self.compile_cache.entry(name, parts) {
+            entry.store(bytes);
+        }
+    }
     fn proper_tail_calls(&self) -> bool {
         false
     }
@@ -1064,8 +1098,9 @@ impl quench_runtime::Host for NodeHost {
         mode: quench_runtime::ExecutionMode,
     ) -> Result<quench_runtime::WasmModule, String> {
         // Decoding with validation, and lowering, each run once per module and touch code
-        // the other does not: each phase's pages leave the resident set before the next
-        // phase, and the module runs.
+        // the other does not, nor what ran before them: each phase's pages leave the
+        // resident set before the next phase, and the module runs.
+        crate::host::resident_pages::release_read_only_pages();
         let module = quench_wasm::Engine::new().compile(bytes);
         crate::host::resident_pages::release_read_only_pages();
         let module = module
@@ -1082,9 +1117,13 @@ impl quench_runtime::Host for NodeHost {
     ) -> Result<Option<quench_runtime::ModuleSource>, quench_runtime::ModuleLoadError> {
         use std::path::Path;
 
-        let builtin_exports: std::collections::BTreeMap<String, Vec<String>> =
+        // Parsed once: every import resolves through here, and the table is 21 KB of JSON.
+        static BUILTIN_EXPORTS: std::sync::OnceLock<std::collections::BTreeMap<String, Vec<String>>> =
+            std::sync::OnceLock::new();
+        let builtin_exports = BUILTIN_EXPORTS.get_or_init(|| {
             serde_json::from_str(include_str!("builtin_esm_exports.json"))
-                .expect("generated Node builtin export names are valid JSON");
+                .expect("generated Node builtin export names are valid JSON")
+        });
         let builtin_name = specifier.strip_prefix("node:").unwrap_or(specifier);
         let builtin = crate::host::shared_vm::commonjs::is_builtin_specifier(specifier);
         if !builtin && specifier.starts_with("node:") {
@@ -1243,6 +1282,11 @@ impl quench_runtime::Host for NodeHost {
         } else {
             path.to_string_lossy().into_owned()
         };
+        if extension == "wasm" {
+            // Node's `wasm` format: the module record is a facade over the instance.
+            let source = esm_wasm::facade(&name, &path, &bytes)?;
+            return Ok(Some(quench_runtime::ModuleSource::text(name, source)));
+        }
         let source = if extension == "json" {
             String::from_utf8_lossy(&bytes).into_owned()
         } else {

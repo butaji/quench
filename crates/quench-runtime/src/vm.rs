@@ -1,5 +1,6 @@
 mod compiled;
 mod js_compiled;
+mod jit_backend;
 mod shape_transitions;
 mod startup_intrinsics;
 mod wasm;
@@ -89,6 +90,8 @@ mod dispatch_fast;
 mod dispatch_frame;
 mod dispatch_wasm;
 mod dynamic_strings;
+#[cfg(feature = "profile-lane-exits")]
+mod lane_exits;
 mod embedding;
 mod provenance;
 mod inspection;
@@ -131,6 +134,7 @@ mod number;
 mod object;
 mod shape_memo;
 mod symbol_write_proof;
+mod symbol_load_proof;
 mod name_atom_memo;
 mod object_assignment;
 mod object_array;
@@ -232,6 +236,9 @@ pub(super) struct Frame {
     // Empty while active; owns the transferred scope stack while detached.
     with_objects: Vec<Value>,
     with_base: usize,
+    /// Opt-in interpreter time for a synchronous JIT-diagnostic activation.
+    /// Excludes compile work, native execution, suspended and exceptional exits.
+    js_jit_interpreter_started: Option<std::time::Instant>,
     /// The frame pushed its own `this` binding with a live value. Only `super()` rebinds
     /// `this`, and only in derived constructors, whose binding starts deleted; so for these
     /// frames `this` is authoritative and the binding lookup can be skipped.
@@ -269,8 +276,6 @@ impl Default for CaptureCache {
 const CAPTURE_WALKS: usize = 64;
 /// Named function shapes `Vm::append_function_name` remembers: the functions of a program
 /// region a closure-heavy loop creates.
-const FUNCTION_NAME_SHAPES: usize = 64;
-const _: () = assert!(FUNCTION_NAME_SHAPES.is_power_of_two());
 /// Closure templates `Vm::closure_in_realm` remembers, one per function id modulo the count:
 /// the nested functions a closure-heavy region makes again on each call of its parent. A
 /// conflict overwrites the entry, which only costs the displaced function's next closure
@@ -314,6 +319,7 @@ impl Frame {
             active_iterators: vec![],
             with_objects: Vec::new(),
             with_base,
+            js_jit_interpreter_started: None,
             fixed_this: false,
         }
     }
@@ -488,14 +494,18 @@ enum PendingJob {
 }
 
 impl PendingJob {
-    fn roots(&self) -> Vec<Value> {
+    /// Pushes the values the job holds onto `roots`, which keep them alive while it runs.
+    fn push_roots(&self, roots: &mut Vec<Value>) {
         match self {
             Self::Call {
                 callback,
                 this,
                 args,
-            } => [*callback, *this].into_iter().chain(args.iter().copied()).collect(),
-            Self::Reaction(job) => vec![job.realm, job.handler, job.next, job.value],
+            } => {
+                roots.extend([*callback, *this]);
+                roots.extend_from_slice(args);
+            }
+            Self::Reaction(job) => roots.extend([job.realm, job.handler, job.next, job.value]),
         }
     }
 }
@@ -599,6 +609,9 @@ struct ParkedRealm {
 }
 /// The natives whose prototypes VM fields follow from the active realm
 /// (`Vm::realm_prototype_field`).
+/// One `typeof` name per `crate::ValueType`, indexed by its discriminant; `Function` is the
+/// last type.
+const TYPEOF_NAMES: usize = crate::ValueType::Function as usize + 1;
 const REALM_FOLLOWING_PROTOTYPES: [Native; 4] =
     [Native::Object, Native::Function, Native::Array, Native::String];
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -612,20 +625,25 @@ const BOUND_TARGET_KEY: &str = "\0quench:bound-target";
 const BOUND_THIS_KEY: &str = "\0quench:bound-this";
 const BOUND_ARGS_KEY: &str = "\0quench:bound-args";
 const NO_FIELD_HOLDER: u32 = u32::MAX;
-/// A field site's read of an accessor on the immediate prototype of a shaped receiver: it
-/// holds while receiver and prototype keep these shapes, whose `slot` attributes carry the
-/// getter.
+/// A field site's read of an accessor on a prototype of a shaped receiver: it holds while
+/// the receiver keeps its shape and prototype and the chain to `holder` keeps the layout it
+/// was proved under, `holder`'s `slot` attributes carrying the getter.
 #[derive(Clone, Copy)]
 struct AccessorFieldCache {
     receiver: u32,
-    holder: u32,
+    /// The receiver's prototype, where the chain to `holder` starts.
+    prototype: Value,
+    holder: Value,
     slot: u16,
+    /// The `prototype_layout_epoch` the chain was proved under.
+    epoch: u64,
 }
 /// Prototypes an inherited field load may traverse to its holder, or to the end of the chain
 /// for an absent name. Node's stream objects (an `IncomingMessage` above `Readable`, `Stream`,
-/// `EventEmitter` and `Object.prototype`) sit five prototypes above their instances; deeper
-/// chains stay uncached.
-const INHERITED_FIELD_CACHE_MAX_DEPTH: usize = 6;
+/// `EventEmitter` and `Object.prototype`) sit five prototypes above their instances, and the
+/// Babel parser's methods up to a dozen (its parser classes and plugin mixins); deeper chains
+/// stay uncached.
+const INHERITED_FIELD_CACHE_MAX_DEPTH: usize = 16;
 /// A field load answered `depth` prototypes above a receiver of shape `receiver`: the chain
 /// still has exactly `prototype_shapes[..depth]`, and `answer` says what that chain holds.
 #[derive(Clone, Copy)]
@@ -755,6 +773,11 @@ impl FieldAddCacheSet {
 }
 const NO_FIELD_ADD_SET: u32 = u32::MAX;
 const NO_MEGAMORPHIC_FIELD: u32 = u32::MAX;
+/// The share of all cache sites, as a divisor, up to which an invalidation resets the
+/// written sites one by one: each costs four scattered stores against a sequential fill of
+/// every site's entries (Node's library wires prototypes hundreds of times at load, each an
+/// invalidation that had refilled every table).
+const FIELD_CACHE_SPARSE_RESET_SHARE: usize = 8;
 const FIELD_MEGAMORPHIC_INLINE: usize = 4;
 // Bound each site's overflow to 256 recorded shapes; unseen shapes keep the generic fallback.
 const FIELD_MEGAMORPHIC_LIMIT: usize = 256;
@@ -804,6 +827,113 @@ impl ProgramCacheLayout {
             .then(|| field_base + usize::from(crate::bytecode::SHARED_UNCACHED_SITE))
     }
 }
+/// The well-known symbols (ECMA-262 Table 1), in their installation order on `Symbol`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum WellKnownSymbol {
+    AsyncDispose,
+    AsyncIterator,
+    Dispose,
+    HasInstance,
+    IsConcatSpreadable,
+    Iterator,
+    Match,
+    MatchAll,
+    Metadata,
+    Replace,
+    Search,
+    Species,
+    Split,
+    ToPrimitive,
+    ToStringTag,
+    Unscopables,
+}
+
+impl WellKnownSymbol {
+    pub(crate) const ALL: [Self; 16] = [
+        Self::AsyncDispose,
+        Self::AsyncIterator,
+        Self::Dispose,
+        Self::HasInstance,
+        Self::IsConcatSpreadable,
+        Self::Iterator,
+        Self::Match,
+        Self::MatchAll,
+        Self::Metadata,
+        Self::Replace,
+        Self::Search,
+        Self::Species,
+        Self::Split,
+        Self::ToPrimitive,
+        Self::ToStringTag,
+        Self::Unscopables,
+    ];
+
+    /// The property name on `Symbol`; the description is `Symbol.` and this name.
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::AsyncDispose => "asyncDispose",
+            Self::AsyncIterator => "asyncIterator",
+            Self::Dispose => "dispose",
+            Self::HasInstance => "hasInstance",
+            Self::IsConcatSpreadable => "isConcatSpreadable",
+            Self::Iterator => "iterator",
+            Self::Match => "match",
+            Self::MatchAll => "matchAll",
+            Self::Metadata => "metadata",
+            Self::Replace => "replace",
+            Self::Search => "search",
+            Self::Species => "species",
+            Self::Split => "split",
+            Self::ToPrimitive => "toPrimitive",
+            Self::ToStringTag => "toStringTag",
+            Self::Unscopables => "unscopables",
+        }
+    }
+}
+
+/// The realm-independent well-known symbol values, one slot per `WellKnownSymbol`, empty
+/// until `Symbol` is installed.
+#[derive(Clone, Default)]
+pub(crate) struct WellKnownSymbols([Option<Value>; WellKnownSymbol::ALL.len()]);
+
+impl WellKnownSymbols {
+    #[inline(always)]
+    pub(crate) fn get(&self, symbol: WellKnownSymbol) -> Option<Value> {
+        self.0[symbol as usize]
+    }
+    pub(crate) fn insert(&mut self, symbol: WellKnownSymbol, value: Value) {
+        self.0[symbol as usize] = Some(value);
+    }
+    /// The symbol whose `Symbol` property name is `name`.
+    pub(crate) fn named(&self, name: &str) -> Option<Value> {
+        WellKnownSymbol::ALL
+            .into_iter()
+            .find(|symbol| symbol.name() == name)
+            .and_then(|symbol| self.get(symbol))
+    }
+    /// The installed symbols with their names, in `WellKnownSymbol::ALL` order.
+    pub(crate) fn entries(&self) -> impl Iterator<Item = (&'static str, Value)> + '_ {
+        WellKnownSymbol::ALL
+            .into_iter()
+            .filter_map(|symbol| self.get(symbol).map(|value| (symbol.name(), value)))
+    }
+    pub(crate) fn values(&self) -> impl Iterator<Item = Value> + '_ {
+        self.0.iter().flatten().copied()
+    }
+    pub(crate) fn clear(&mut self) {
+        self.0 = [None; WellKnownSymbol::ALL.len()];
+    }
+}
+
+impl std::ops::Index<WellKnownSymbol> for WellKnownSymbols {
+    type Output = Value;
+    fn index(&self, symbol: WellKnownSymbol) -> &Value {
+        self.0[symbol as usize]
+            .as_ref()
+            .expect("well-known symbols are installed with Symbol")
+    }
+}
+
 /// Entries of the in-loop call target cache, indexed by the callee's heap index.
 const CALL_TARGET_CACHE_SIZE: usize = 64;
 const _: () = assert!(CALL_TARGET_CACHE_SIZE.is_power_of_two());
@@ -1099,6 +1229,48 @@ impl ShapeLookupIndex {
             attributes,
         }
     }
+    /// The index of a child shape, from its parent's index and the transition between
+    /// them, as `derive_shape_lookup_index` would build it. A deletion moves entries, so it
+    /// leaves the child to derive its own index.
+    fn extended_by(mut self: Box<Self>, transition: ShapeTransition) -> Option<Box<Self>> {
+        match transition {
+            ShapeTransition::Add {
+                key,
+                slot,
+                attributes,
+            } => {
+                debug_assert!(self.slot(key).is_none(), "a shape adds only absent keys");
+                let position = u32::try_from(self.entries.len()).expect("shape width fits u32");
+                self.entries.push((key, slot));
+                let entries = &self.entries;
+                self.positions
+                    .insert_unique(Self::key_hash(key), position, |&position| {
+                        Self::key_hash(entries[position as usize].0)
+                    });
+                self.record_attributes(slot, attributes.shape());
+            }
+            ShapeTransition::Descriptor { slot, attributes } => {
+                self.record_attributes(slot, attributes);
+            }
+            ShapeTransition::Delete { .. } => return None,
+            ShapeTransition::FunctionName { .. }
+            | ShapeTransition::FunctionNameReconfigured
+            | ShapeTransition::FunctionLengthReconfigured
+            | ShapeTransition::Constructed { .. }
+            | ShapeTransition::Root
+            | ShapeTransition::Vacant
+            | ShapeTransition::Dictionary { .. } => {}
+        }
+        Some(self)
+    }
+    /// The slot's newest attributes; default ones are not stored.
+    fn record_attributes(&mut self, slot: u32, attributes: ShapeAttributes) {
+        if attributes == DEFAULT_SHAPE_ATTRIBUTES {
+            self.attributes.remove(&slot);
+        } else {
+            self.attributes.insert(slot, attributes);
+        }
+    }
     fn slot(&self, key: property_key::PropertyKey) -> Option<u32> {
         self.positions
             .find(Self::key_hash(key), |&position| {
@@ -1123,17 +1295,26 @@ impl ShapeFacts {
     /// Some property of the chain was a `SLOT_GETTER` accessor, so a raw slot read must check
     /// whether the slot holds a getter rather than a value.
     const SLOT_GETTERS: u8 = 1 << 1;
+    /// Some property of the chain was made an accessor. Only a descriptor transition makes
+    /// one, as an add carries data attributes, so a chain without this fact holds data
+    /// properties alone and a read of any slot is its value.
+    const ACCESSORS: u8 = 1 << 2;
 
     fn extended_by(self, transition: ShapeTransition) -> Self {
         let introduced = |fact: bool, bit: u8| if fact { bit } else { 0 };
+        let descriptor = |test: fn(ShapeAttributes) -> bool| {
+            matches!(transition, ShapeTransition::Descriptor { attributes, .. } if test(attributes))
+        };
         Self(
             self.0
                 | introduced(transition.introduces_gc_roots(), Self::MAY_HAVE_GC_ROOTS)
-                | introduced(
-                    matches!(transition, ShapeTransition::Descriptor { attributes, .. } if attributes.slot_getter()),
-                    Self::SLOT_GETTERS,
-                ),
+                | introduced(descriptor(ShapeAttributes::slot_getter), Self::SLOT_GETTERS)
+                | introduced(descriptor(|attributes| attributes.accessor), Self::ACCESSORS),
         )
+    }
+
+    fn accessors(self) -> bool {
+        self.0 & Self::ACCESSORS != 0
     }
 
     fn may_have_gc_roots(self) -> bool {
@@ -1262,13 +1443,15 @@ pub(super) enum FrameOutcome {
     Await {
         value: Value,
         destination: Register,
-        frame: Option<Frame>,
+        /// Boxed so every `FrameOutcome` stays a few words: the common completions move it
+        /// through each call return.
+        frame: Option<Box<Frame>>,
     },
     Yield {
         value: Value,
         destination: Register,
         delegated_result: Option<Value>,
-        frame: Option<Frame>,
+        frame: Option<Box<Frame>>,
     },
 }
 #[cfg(feature = "profile-aggregate")]
@@ -1440,11 +1623,17 @@ pub(crate) struct Vm<H> {
     active_program: ProgramId,
     profile: Profile,
     shapes: Vec<Shape>,
+    /// Each shape's constructor (`ShapeTransition::Constructed` on its chain), derived for
+    /// the shapes created since the last collection: a shape's parent precedes it, so a
+    /// collection extends this instead of walking every shape. Reset with the shape table.
+    shape_constructors: Vec<Value>,
     /// The getters and setters of shapes' accessor descriptors (`ShapeAttributes`).
     shape_accessors: Vec<ShapeAccessors>,
     transitions: shape_transitions::ShapeTransitionIndex,
     shape_slot_memo: shape_memo::ShapeSlotMemo,
+    function_name_shapes: provenance::FunctionNameShapes,
     symbol_write_proofs: symbol_write_proof::SymbolWriteProofs,
+    symbol_load_proofs: symbol_load_proof::SymbolLoadProofs,
     shape_attribute_memo: shape_memo::ShapeAttributeMemo,
     name_atom_memo: name_atom_memo::NameAtomMemo,
     atom_text: AtomTable,
@@ -1467,8 +1656,11 @@ pub(crate) struct Vm<H> {
     // One lazily derived class byte per atom; length tracks `atom_sequence`.
     atom_classes: Vec<std::cell::Cell<u8>>,
     dynamic_strings: Option<Box<FxHashMap<u64, Value>>>,
+    /// The `typeof` result string of each value type, made on first use; `undefined` until
+    /// then. Rooted, so `typeof` neither hashes nor allocates once warm.
+    typeof_names: [Value; TYPEOF_NAMES],
     symbol_registry: FxHashMap<String, Value>,
-    well_known_symbols: FxHashMap<String, Value>,
+    well_known_symbols: WellKnownSymbols,
     string_concats: Option<Box<[StringConcatCache]>>,
     call_targets: Box<[InLoopCallTarget; CALL_TARGET_CACHE_SIZE]>,
     field_caches: Vec<FieldCache>,
@@ -1484,6 +1676,11 @@ pub(crate) struct Vm<H> {
     field_add_indices: Vec<u32>,
     field_add_sets: Vec<FieldAddCacheSet>,
     megamorphic_field_indices: Vec<u32>,
+    /// The cache sites whose per-site entries (`field_caches`, `megamorphic_field_indices`,
+    /// `field_add_indices`, `inherited_field_indices`) were written since the last
+    /// `invalidate_field_caches`, which then resets only those; `None` once they outnumber
+    /// `FIELD_CACHE_SPARSE_RESET_SHARE` of the sites, and every site resets.
+    field_cache_writes: Option<Vec<u32>>,
     megamorphic_fields: Vec<FieldCacheSet>,
     length_atom: Atom,
     // Cached `prototype` atom; `NO_CACHED_ATOM` until first use after a program reset.
@@ -1496,10 +1693,6 @@ pub(crate) struct Vm<H> {
     /// `prototype` (`construction::ClosureShapes`); derived from shapes, so field-cache
     /// invalidation clears it.
     closure_shapes: [Option<construction::ClosureShapes>; 2],
-    /// Recent `FunctionName` transitions (`Vm::append_function_name`), direct-mapped by name:
-    /// closures share their base shape but differ in name, so the shape's last child rarely
-    /// answers. Derived from shapes, so field-cache invalidation clears it.
-    function_name_shapes: Box<[Option<(u32, Atom, u32)>; FUNCTION_NAME_SHAPES]>,
     /// The parts of a recorded closure that depend on its function and realm alone
     /// (`construction::ClosureTemplate`); derived from shapes, so field-cache invalidation
     /// clears it.
@@ -1572,6 +1765,38 @@ struct IteratorRealmPrototypes {
     async_generator: Value,
 }
 impl<H: Host> Vm<H> {
+    /// Diagnostic: general-loop dispatches by the register width of their function, since
+    /// register liveness (and with it promotion and move coalescing) covers only functions
+    /// whose registers fit a root mask.
+    #[cfg(feature = "profile-aggregate")]
+    fn report_dispatch_by_register_width(&self) {
+        let mut rows = Vec::new();
+        for (program, functions) in self.profile.site_counts.iter().enumerate() {
+            let Some(residual) = self.programs.residual(ProgramId::from_raw(program as u32)) else {
+                continue;
+            };
+            for (function, sites) in functions.iter().enumerate() {
+                let total: u64 = sites.iter().sum();
+                if total == 0 {
+                    continue;
+                }
+                let Some(code) = residual.functions.get(function) else { continue };
+                rows.push((total, code.registers, code.local_atoms.len(), program, function));
+            }
+        }
+        let all: u64 = rows.iter().map(|row| row.0).sum();
+        let wide: u64 = rows
+            .iter()
+            .filter(|row| row.1 > crate::compile::liveness::ROOT_MAP_REGISTERS)
+            .map(|row| row.0)
+            .sum();
+        rows.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+        eprintln!("register-width: dispatches {all}, in functions over the root mask {wide}");
+        for (total, registers, locals, program, function) in rows.iter().take(15) {
+            eprintln!("  {total:>12} registers={registers} locals={locals} program={program} function={function}");
+        }
+    }
+
     pub(crate) fn execution_interrupt_handle(&self)->crate::ExecutionInterrupt { self.execution_interrupt.clone() }
     pub(super) fn check_execution_interrupt(&self)->Result<(),JsError> {
         if self.execution_interrupt.is_termination_requested() { Err(JsError::execution_terminated()) } else { Ok(()) }
@@ -1962,6 +2187,9 @@ impl<H: Host> Vm<H> {
             .profile
             .report_dispatch_census_if_enabled(ProgramId::MAIN.raw())
         {
+            if std::env::var_os("QUENCH_OPCODE_CENSUS").is_some_and(|census| census == "all") {
+                self.report_dispatch_by_register_width();
+            }
             self.profile
                 .report_object_literal_sites(ProgramId::MAIN.raw(), program);
             #[cfg(feature = "profile-memory")]
@@ -2264,11 +2492,15 @@ impl<H: Host> Vm<H> {
         self.construct_target = None;
         self.realm.promise = Default::default();
         self.shapes.truncate(1);
+        self.shape_constructors.clear();
         // The kept root forgets its transitions along with the index.
         self.shapes[0].last_child.set(NO_LAST_CHILD);
         self.transitions.clear();
         self.shape_slot_memo.clear();
+        self.function_name_shapes.clear();
+        self.closure_templates.fill(None);
         self.symbol_write_proofs.clear();
+        self.symbol_load_proofs.clear();
         self.shape_attribute_memo.clear();
         self.atom_strings.clear();
         // The sealed holders and their shapes belong to the discarded heap.
@@ -2285,6 +2517,7 @@ impl<H: Host> Vm<H> {
         self.atom_classes
             .resize_with(self.atom_text.len(), Default::default);
         self.dynamic_strings = None;
+        self.typeof_names = [Value::UNDEFINED; TYPEOF_NAMES];
         self.symbol_registry.clear();
         self.well_known_symbols.clear();
         self.string_concats = None;
@@ -2316,6 +2549,7 @@ impl<H: Host> Vm<H> {
             bound_args: self.intern_atom(BOUND_ARGS_KEY),
         };
         self.field_caches = vec![EMPTY_CACHE; program.cache_sites as usize];
+        self.field_cache_writes = Some(Vec::new());
         Self::prime_loop_decoding(program);
         self.inherited_field_caches.clear();
         self.inherited_field_indices = vec![NO_INHERITED_FIELD; program.cache_sites as usize];
@@ -2338,7 +2572,7 @@ impl<H: Host> Vm<H> {
         self.programs.reset(program.clone());
         self.instanceof_constructor_layout = None;
         self.closure_shapes = [None; 2];
-        self.function_name_shapes.fill(None);
+        self.function_name_shapes.clear();
         self.closure_templates.fill(None);
         self.iterator_result_shape = None;
         self.regexp_object_shapes = None;
@@ -2380,8 +2614,8 @@ impl<H: Host> Vm<H> {
             Constant::Number(v) => Value::number(*v),
             Constant::WasmBits64(bits) => self.encode_bits64(*bits),
             Constant::WasmV128(bits) => self.heap.alloc(Cell::WasmV128(*bits)),
-            Constant::String(v) => self.heap.alloc(Cell::String(v.clone().into())),
-            Constant::StringUnits(v) => self.heap.alloc(Cell::String(JsString::from_units(v))),
+            Constant::String(v) => self.heap.alloc_string(v.clone().into()),
+            Constant::StringUnits(v) => self.heap.alloc_string(JsString::from_units(v)),
             Constant::BigInt(v) => self.heap.alloc(Cell::bigint(v.clone())),
             Constant::Boolean(true) => Value::TRUE,
             Constant::Boolean(false) => Value::FALSE,
@@ -2540,9 +2774,9 @@ impl<H: Host> Vm<H> {
     /// Interns the atoms `program` adds to the VM's; its atom ids are the VM's, so it then reads
     /// every name through the shared sequence instead of keeping its own copy.
     fn intern_program_atoms(&mut self, mut program: ResidualProgram) -> ResidualProgram {
-        let first_new_atom = self.atom_sequence.len();
-        for (index, name) in program.atoms.iter().enumerate().skip(first_new_atom) {
-            let atom = self.intern_atom(name);
+        // Only the names after the VM's sequence are new; the program shares the rest.
+        for index in self.atom_sequence.len()..program.atoms.len() {
+            let atom = self.intern_atom(&program.atoms[index]);
             debug_assert_eq!(atom as usize, index);
         }
         debug_assert!(

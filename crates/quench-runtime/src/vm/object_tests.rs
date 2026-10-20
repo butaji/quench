@@ -1171,3 +1171,34 @@ fn only_arrow_closures_keep_their_creator_s_implicit_bindings() {
     assert_eq!(environment_bindings(&mut vm, "made"), 0);
     assert_ne!(environment_bindings(&mut vm, "lexical"), 0);
 }
+
+#[test]
+fn field_cache_invalidation_resets_every_written_site() {
+    const SITES: usize = 64;
+    let mut vm = Vm::new(SilentHost);
+    vm.field_caches = vec![EMPTY_CACHE; SITES];
+    vm.megamorphic_field_indices = vec![NO_MEGAMORPHIC_FIELD; SITES];
+    vm.field_add_indices = vec![NO_FIELD_ADD_SET; SITES];
+    vm.inherited_field_indices = vec![NO_INHERITED_FIELD; SITES];
+    vm.field_cache_writes = Some(Vec::new());
+    let record = |vm: &mut Vm<SilentHost>, site: usize| {
+        for receiver in 1..=3 {
+            vm.record_field_cache(site, FieldCache { receiver, holder: NO_FIELD_HOLDER, slot: 0 });
+        }
+    };
+    let all_empty = |vm: &Vm<SilentHost>| {
+        vm.field_caches.iter().all(|cache| cache.receiver == EMPTY_CACHE.receiver)
+            && vm.megamorphic_field_indices.iter().all(|&index| index == NO_MEGAMORPHIC_FIELD)
+    };
+    // Few writes reset one by one; more than the sparse share overflow to a full reset.
+    for written in [vec![3, 40], (0..SITES).collect::<Vec<_>>()] {
+        for &site in &written {
+            record(&mut vm, site);
+        }
+        assert!(!all_empty(&vm));
+        assert_eq!(vm.field_cache_writes.is_none(), written.len() > SITES / super::FIELD_CACHE_SPARSE_RESET_SHARE);
+        vm.invalidate_field_caches();
+        assert!(all_empty(&vm), "{} written sites reset", written.len());
+        assert_eq!(vm.field_cache_writes.as_deref(), Some(&[][..]));
+    }
+}
