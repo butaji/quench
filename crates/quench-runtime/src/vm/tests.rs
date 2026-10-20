@@ -12156,3 +12156,24 @@ fn lane_raised_errors_unwind_through_callees_of_other_programs() {
     vm.execute(&Engine::specialize(source, "lane-raised-other-program.js").unwrap()).unwrap();
     assert_eq!(output.borrow().as_slice(), ["TypeError,4,TypeError,4"]);
 }
+
+#[test]
+fn promoted_move_coalescing_reads_liveness_of_the_code_it_rewrites() {
+    // Coalescing the copies frame-register promotion leaves runs in rounds that drop `Nop`s;
+    // a round after one must not judge producers by the earlier positions, or the callback
+    // copied into `filter`'s argument window is lost to an earlier call's result.
+    let source = r#"
+      function run(ex) {
+        var f = function (m) { return { d: m }; };
+        Object.defineProperty(ex, "e", { value: 1 });
+        const n = f({ SIGA: 1, b: 2, SIGC: 3 });
+        ex.x = Object.keys(n.d).filter(k => k.startsWith("SIG"));
+        return ex.x.join();
+      }
+      print(run({}));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "promoted-move-rounds.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["SIGA,SIGC"]);
+}
