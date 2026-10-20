@@ -627,9 +627,10 @@ struct AccessorFieldCache {
 }
 /// Prototypes an inherited field load may traverse to its holder, or to the end of the chain
 /// for an absent name. Node's stream objects (an `IncomingMessage` above `Readable`, `Stream`,
-/// `EventEmitter` and `Object.prototype`) sit five prototypes above their instances; deeper
-/// chains stay uncached.
-const INHERITED_FIELD_CACHE_MAX_DEPTH: usize = 6;
+/// `EventEmitter` and `Object.prototype`) sit five prototypes above their instances, and the
+/// Babel parser's methods up to a dozen (its parser classes and plugin mixins); deeper chains
+/// stay uncached.
+const INHERITED_FIELD_CACHE_MAX_DEPTH: usize = 16;
 /// A field load answered `depth` prototypes above a receiver of shape `receiver`: the chain
 /// still has exactly `prototype_shapes[..depth]`, and `answer` says what that chain holds.
 #[derive(Clone, Copy)]
