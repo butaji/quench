@@ -144,7 +144,7 @@ impl<H: Host> Runtime<H> {
         };
         let parts = [goal, request.source];
         if let Some(bytes) = self.vm.host.kept_compiled_program(request.name, &parts)
-            && let Ok(program) = ResidualProgram::decode_trusted(&bytes)
+            && let Ok(program) = ResidualProgram::decode_trusted(bytes)
             && program.source_name == request.name
         {
             return Ok(program);
