@@ -256,8 +256,8 @@ impl State {
 // branch. Memory is finite for a finite input/pattern (though the fallback can
 // still be exponentially large); it is no longer silently result-changing.
 const MAX_BACKTRACK_STATES: usize = usize::MAX;
-const ASCII_MAX: u16 = 0x7F;
-const BMP_MAX: u32 = u16::MAX as u32;
+mod canonical;
+use canonical::{ASCII_MAX, canonical};
 
 pub struct Regex {
     /// The complete matcher's program, lowered when it first runs. A pattern the byte
@@ -3019,23 +3019,18 @@ fn equal(left: u32, right: u32, ignore_case: bool, unicode: bool) -> bool {
 }
 /// For each canonicalization mode, the code points whose canonical form is another code point,
 /// as `(form, member)` pairs ordered by form: the inverse of `canonical`, which
-/// case-insensitive class ranges need. One flat table, not a map of lists, since it is held
-/// for the process's life.
+/// case-insensitive class ranges need. The build computes both from `canonical` itself
+/// (`build.rs`): scanning every code point had cost each process about 14M instructions at
+/// its first case-insensitive class.
 fn canonical_preimages(unicode: bool) -> &'static [(u32, u32)] {
-    static TABLES: [std::sync::OnceLock<Box<[(u32, u32)]>>; 2] =
-        [std::sync::OnceLock::new(), std::sync::OnceLock::new()];
-    TABLES[usize::from(unicode)].get_or_init(|| {
-        let last = if unicode { u32::from(char::MAX) } else { BMP_MAX };
-        let mut preimages: Vec<(u32, u32)> = (0..=last)
-            .filter_map(|member| {
-                let key = canonical(member, unicode);
-                (key != member).then_some((key, member))
-            })
-            .collect();
-        preimages.sort_unstable();
-        preimages.into_boxed_slice()
-    })
+    if unicode {
+        &CANONICAL_PREIMAGES_UNICODE
+    } else {
+        &CANONICAL_PREIMAGES_BMP
+    }
 }
+
+include!(concat!(env!("OUT_DIR"), "/canonical_preimages.rs"));
 
 /// The code points other than `key` itself whose canonical form is `key`.
 fn canonical_preimages_of(key: u32, unicode: bool) -> impl Iterator<Item = u32> {
@@ -3047,26 +3042,6 @@ fn canonical_preimages_of(key: u32, unicode: bool) -> impl Iterator<Item = u32> 
         .map(|(_, member)| *member)
 }
 
-fn canonical(value: u32, unicode: bool) -> u32 {
-    let Some(character) = char::from_u32(value) else {
-        return value;
-    };
-    if unicode {
-        return u32::from(icu_casemap::CaseMapper::new().simple_fold(character));
-    }
-    let mut uppercase = character.to_uppercase();
-    let Some(canonical) = uppercase.next() else {
-        return value;
-    };
-    if uppercase.next().is_some()
-        || u32::from(canonical) > BMP_MAX
-        || (value > u32::from(ASCII_MAX) && u32::from(canonical) <= u32::from(ASCII_MAX))
-    {
-        value
-    } else {
-        u32::from(canonical)
-    }
-}
 fn is_word(value: u32) -> bool {
     char::from_u32(value)
         .is_some_and(|character| character.is_ascii_alphanumeric() || character == '_')
@@ -3211,5 +3186,15 @@ mod tests {
         )
         .unwrap();
         assert!(regex.find_from("abc", 0).next().is_some());
+    }
+}
+
+#[cfg(test)]
+mod canonical_preimage_tests {
+    #[test]
+    fn built_tables_are_the_inverse_of_canonical() {
+        for unicode in [false, true] {
+            assert_eq!(super::canonical_preimages(unicode), &*super::canonical::preimages(unicode));
+        }
     }
 }
