@@ -294,7 +294,7 @@ impl<H: Host> Vm<H> {
     fn closure_of_template(&mut self, template: ClosureTemplate, env: Value) -> Value {
         let prototype = template
             .prototype
-            .map(|(parent, _)| self.heap.alloc(Cell::Object(Self::empty_object(parent))));
+            .map(|(parent, _)| self.heap.alloc_object(Self::empty_object(parent)));
         // A template is only made of a closure allocated finished, whose own properties fit
         // the inline slots.
         let own = [template.length, template.name, prototype.unwrap_or(Value::UNDEFINED)];
