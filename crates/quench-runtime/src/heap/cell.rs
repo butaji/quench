@@ -2499,7 +2499,12 @@ impl std::fmt::Debug for EnvironmentScopeRef {
 /// (environment_index(slot), slot)...]`. The listed slots are those that differ from sharing
 /// with the default owner, sorted by index; every other slot is shared with that owner. The
 /// slice header's mark tells the two apart, so a dense read tests one bit it loads anyway.
+#[repr(transparent)]
 pub(crate) struct EnvironmentSlots(pub(super) super::thin_slice::ThinBoxSlice<EnvironmentSlot>);
+
+/// Words an `EnvironmentSlots::lay_out_in_place` storage takes before its slots.
+pub(crate) const IN_PLACE_SLOTS_WORDS: usize =
+    super::thin_slice::ThinBoxSlice::<EnvironmentSlot>::IN_PLACE_WORDS;
 
 /// A per-iteration copy of an environment with at least this many slots stores only the
 /// slots it does not share with one owner. A module root with thousands of bindings would
@@ -2579,6 +2584,13 @@ impl EnvironmentSlots {
     pub(crate) fn dense_plain(&self, slot: usize) -> Option<Value> {
         debug_assert!(!self.0.marked());
         let value = self.0.get(slot)?.0;
+        (!value.is_internal_marker()).then_some(value)
+    }
+    /// `dense_plain`'s slot to write: an ordinary value's place, which a store replaces.
+    #[inline(always)]
+    pub(crate) fn dense_plain_mut(&mut self, slot: usize) -> Option<&mut Value> {
+        debug_assert!(!self.0.marked());
+        let value = &mut self.0.get_mut(slot)?.0;
         (!value.is_internal_marker()).then_some(value)
     }
     /// The value of a slot this environment owns; a shared slot lives in its owner.
@@ -2749,6 +2761,16 @@ impl EnvironmentSlots {
     }
 
     /// Slots that own `values`, in order.
+    /// Dense storage of the `len` owned slots that follow its `IN_PLACE_SLOTS_WORDS` words
+    /// at `words`, as `ThinBoxSlice::lay_out_in_place`: a view its caller never drops.
+    ///
+    /// # Safety
+    /// As `ThinBoxSlice::lay_out_in_place`; each slot is an owned value.
+    pub(crate) unsafe fn lay_out_in_place(words: *mut Value, len: usize) -> *const Self {
+        // SAFETY: as the caller guarantees; a slot is a `Value`, a word.
+        unsafe { super::thin_slice::ThinBoxSlice::<EnvironmentSlot>::lay_out_in_place(words.cast(), len).cast() }
+    }
+
     pub(crate) fn from_values(values: impl ExactSizeIterator<Item = Value>) -> Self {
         Self(super::thin_slice::ThinBoxSlice::from_exact_iter(
             values.map(EnvironmentSlot::owned),
