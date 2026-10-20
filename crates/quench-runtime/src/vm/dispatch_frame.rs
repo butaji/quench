@@ -1366,6 +1366,37 @@ impl<H: Host> Vm<H> {
                     .and_then(|function| function.instructions().nth(pc))
                 {
                     super::lane_exits::record(instruction.op());
+                    if matches!(instruction.op(), Op::JumpBinaryFalse | Op::Binary) {
+                        let constants = self.programs.constants(cursor.program);
+                        let registers = &self.frames[frame].registers;
+                        let kind = |operand: crate::bytecode::Operand| {
+                            let value = match operand.kind() {
+                                Some(crate::bytecode::OperandKind::Register) => registers.get(usize::from(operand.payload())).copied(),
+                                Some(crate::bytecode::OperandKind::Constant) => constants.get(usize::from(operand.payload())).copied(),
+                                _ => None,
+                            };
+                            match value {
+                                None => "?",
+                                Some(v) if v.as_int().is_some() => "int",
+                                Some(v) if v.as_number().is_some() => "num",
+                                Some(v) if v.is_undefined() => "undef",
+                                Some(v) if v.is_null() => "null",
+                                Some(v) if v.as_bool().is_some() => "bool",
+                                Some(v) => match self.heap.get(v) {
+                                    Some(Cell::String(_)) => "str",
+                                    Some(Cell::BigInt(_)) => "bigint",
+                                    _ => "obj",
+                                },
+                            }
+                        };
+                        let operator = if instruction.op() == Op::Binary { instruction.binary_operator() } else { u32::from(instruction.a()) };
+                        super::lane_exits::record_detail(format!(
+                            "{:?} op{operator} {} {}",
+                            instruction.op(),
+                            kind(instruction.operand_b()),
+                            kind(instruction.operand_c())
+                        ));
+                    }
                 }
                 // Lane calls and returns can leave a different activation, or a new one in the
                 // same frame slot; the active frame's PC slot and register file follow it.
