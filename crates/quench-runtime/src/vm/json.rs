@@ -110,15 +110,46 @@ fn write_json_string(value: &JsString, output: &mut JsonText) {
 fn write_json_utf8(text: &[u8], output: &mut JsonText) {
     output.push(b'"');
     let mut run = 0;
-    for (index, byte) in text.iter().enumerate() {
-        if json_escape_needed(*byte) {
-            output.extend_from_slice(&text[run..index]);
-            write_json_scalar(char::from(*byte), output);
-            run = index + 1;
+    let mut index = 0;
+    while index < text.len() {
+        // A word of bytes none of which needs an escape is skipped whole.
+        if let Some(word) = text.get(index..index + WORD_BYTES)
+            && !word_needs_json_escape(u64::from_le_bytes(word.try_into().expect("word bytes")))
+        {
+            index += WORD_BYTES;
+            continue;
         }
+        let end = (index + WORD_BYTES).min(text.len());
+        for (offset, byte) in text[index..end].iter().enumerate() {
+            if json_escape_needed(*byte) {
+                output.extend_from_slice(&text[run..index + offset]);
+                write_json_scalar(char::from(*byte), output);
+                run = index + offset + 1;
+            }
+        }
+        index = end;
     }
     output.extend_from_slice(&text[run..]);
     output.push(b'"');
+}
+
+/// Bytes scanned at once by `word_needs_json_escape`.
+const WORD_BYTES: usize = size_of::<u64>();
+/// One in each byte of a word, and each byte's high bit.
+const BYTE_ONES: u64 = u64::MAX / u8::MAX as u64;
+const BYTE_HIGHS: u64 = BYTE_ONES << (u8::BITS - 1);
+
+/// Whether any byte of `word` needs an escape (`json_escape_needed`): a byte below
+/// `LAST_CONTROL_CHARACTER + 1`, or equal to a quote or backslash. Each test borrows into
+/// a byte's high bit only from such a byte or from a lower one that already passed, so the
+/// word test is exact even though its per-byte bits are not.
+fn word_needs_json_escape(word: u64) -> bool {
+    let below = |bound: u8| word.wrapping_sub(BYTE_ONES * u64::from(bound)) & !word & BYTE_HIGHS;
+    let equal = |byte: u8| {
+        let difference = word ^ (BYTE_ONES * u64::from(byte));
+        difference.wrapping_sub(BYTE_ONES) & !difference & BYTE_HIGHS
+    };
+    below(LAST_CONTROL_CHARACTER + 1) | equal(b'"') | equal(b'\\') != 0
 }
 
 /// QuoteJSONString escapes every code point up to U+001F.
