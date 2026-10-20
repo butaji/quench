@@ -1208,17 +1208,19 @@ impl FunctionHeader {
 
 /// One entry of a program's function table: the header, always present, and the compiled
 /// record, written once. Reading the record through `Deref` requires that it was compiled.
+/// Clones of a program share its records (installing an entry clones it into the VM); a
+/// change through `DerefMut` copies a shared record first.
 #[derive(Clone, Debug)]
 pub struct FunctionSlot {
     header: FunctionHeader,
-    record: std::cell::OnceCell<Box<Function>>,
+    record: std::cell::OnceCell<std::rc::Rc<Function>>,
 }
 
 impl FunctionSlot {
     pub(crate) fn compiled(function: Function) -> Self {
         Self {
             header: FunctionHeader::of(&function),
-            record: std::cell::OnceCell::from(Box::new(function)),
+            record: std::cell::OnceCell::from(std::rc::Rc::new(function)),
         }
     }
 
@@ -1259,9 +1261,11 @@ impl std::ops::Deref for FunctionSlot {
 
 impl std::ops::DerefMut for FunctionSlot {
     fn deref_mut(&mut self) -> &mut Function {
-        self.record
-            .get_mut()
-            .expect("a function's record is changed only once it is compiled")
+        std::rc::Rc::make_mut(
+            self.record
+                .get_mut()
+                .expect("a function's record is changed only once it is compiled"),
+        )
     }
 }
 
@@ -2753,7 +2757,7 @@ impl ResidualProgram {
                 .function;
             // As `prime_loop_decoding` primes the functions of an installed program.
             function.decoded.prime_loop(&function.code, &function.wide);
-            Box::new(function)
+            std::rc::Rc::new(function)
         })
     }
 
