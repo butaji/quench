@@ -99,6 +99,7 @@ impl<H: Host> Vm<H> {
             shape_slot_memo: Default::default(),
             function_name_shapes: Default::default(),
             symbol_write_proofs: Default::default(),
+            symbol_load_proofs: Default::default(),
             shape_attribute_memo: Default::default(),
             name_atom_memo: Default::default(),
             shapes: Shape::table(),
