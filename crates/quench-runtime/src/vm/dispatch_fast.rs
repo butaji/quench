@@ -451,8 +451,9 @@ const EMPTY_SCRIPT_CALL_TARGET: ScriptCallTarget = ScriptCallTarget {
     forwarded_method: NO_FORWARDED_METHOD,
 };
 
-/// Entries of the script call cache, indexed by the callee's heap index.
-const SCRIPT_CALL_TARGETS: usize = 256;
+/// Entries of the script call cache, indexed by the callee's heap index. A parser's hot
+/// callees outnumber 256 entries: acorn-wtb re-resolved one call in five at that size.
+const SCRIPT_CALL_TARGETS: usize = 2048;
 
 /// What a constructor's initializer body (`ScriptCallTarget::initializes`) made of a receiver
 /// whose adds all hit: the callee's receiver template under `prototype`, which the callee and
