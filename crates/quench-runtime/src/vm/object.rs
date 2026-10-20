@@ -393,6 +393,18 @@ impl<H: Host> Vm<H> {
         self.heap.register_property_shape(next, storage_len);
         next
     }
+    /// Whether `to` is `from` extended by one appended property slot: the shape an add of
+    /// one new data property makes, which `Heap::property_add` can apply directly.
+    pub(super) fn shape_appends_one_slot(&self, from: u32, to: u32) -> bool {
+        let (Some(from_shape), Some(to_shape)) = (self.shapes.get(from as usize), self.shapes.get(to as usize)) else {
+            return false;
+        };
+        to_shape.parent == from
+            && to_shape.storage_len == from_shape.storage_len + 1
+            && !self.shape_is_dictionary(from)
+            && !self.shape_is_dictionary(to)
+    }
+
     pub(super) fn shape_is_dictionary(&self, shape: u32) -> bool {
         self.shapes[shape as usize].dictionary_trigger.is_some()
     }
