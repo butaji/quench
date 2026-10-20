@@ -24,6 +24,8 @@ pub(super) struct JsJitArtifact {
     pub(super) result: JsJitResultKind,
     /// A cached data property on parameter zero supplies the native numeric input.
     pub(super) field_argument: Option<JsJitFieldArgument>,
+    /// Numeric lexical captures are appended after formal parameters in the ABI.
+    pub(super) capture_arguments: Vec<JsJitCaptureArgument>,
 }
 
 #[derive(Clone, Copy)]
@@ -73,6 +75,7 @@ const MAX_INSTRUCTIONS: usize = 256;
 const MAX_REGISTERS: usize = 256;
 const MAX_CODE_BYTES: usize = 64 * 1024;
 const MAX_PARAMETERS: usize = 8;
+const MAX_CAPTURE_ARGUMENTS: usize = 4;
 
 /// Compile `function_id` when all reachable behavior is represented by the
 /// supported straight-line bytecode subset. Every unsupported shape is left
@@ -84,6 +87,10 @@ pub(super) fn compile(program: &ResidualProgram, function_id: u32) -> Option<JsJ
     let function = program.functions.get(function_id as usize)?;
     if let Some(capture) = number_capture_candidate(function) {
         return compile_capture_number(function_id, capture);
+    }
+    if let Some(captures) = numeric_capture_candidate(function) {
+        return compile_numeric_with_captures(program, function_id, &captures)
+            .or_else(|| compile_numeric(program, function_id));
     }
     if string_hash_loop_candidate(program, function) {
         return compile_string_hash_loop(program, function_id, function);
@@ -112,6 +119,60 @@ pub(super) fn compile(program: &ResidualProgram, function_id: u32) -> Option<JsJ
     } else {
         compile_numeric(program, function_id)
     }
+}
+
+/// Captured values are dynamic inputs: the VM reloads each one for every call,
+/// and native entry is used only while every capture is a Number.
+pub(super) fn numeric_capture_candidate(
+    function: &Function,
+) -> Option<smallvec::SmallVec<[JsJitCaptureArgument; MAX_CAPTURE_ARGUMENTS]>> {
+    if function.params == 0
+        || function.parent.is_none()
+        || function.is_async
+        || function.is_generator
+        || function.is_class_constructor
+        || function.derived_constructor
+        || function.class_initializer
+        || function.instance_initializer.is_some()
+        || function.rest
+        || !function.simple_parameters
+        || !function.handlers.is_empty()
+        || function.arguments_slot.is_some()
+        || function.inherited_with_scope
+        || !function.wide.is_empty()
+    {
+        return None;
+    }
+
+    let mut captures = smallvec::SmallVec::new();
+    for packed in &function.code {
+        let instruction = packed.as_wide();
+        match instruction.op() {
+            Op::LoadCapture => {
+                if instruction.returns_from_frame() || instruction.result_flags() != 0 {
+                    return None;
+                }
+                let capture = JsJitCaptureArgument {
+                    depth: instruction.capture_depth(),
+                    slot: instruction.capture_slot(),
+                };
+                if !captures
+                    .iter()
+                    .any(|seen: &JsJitCaptureArgument| {
+                        seen.depth == capture.depth && seen.slot == capture.slot
+                    })
+                {
+                    if captures.len() == MAX_CAPTURE_ARGUMENTS {
+                        return None;
+                    }
+                    captures.push(capture);
+                }
+            }
+            Op::LoadConst | Op::Move | Op::Binary | Op::NumericAdd | Op::NumericMultiply | Op::Return => {}
+            _ => return None,
+        }
+    }
+    (!captures.is_empty()).then_some(captures)
 }
 
 /// A pure captured numeric value can be specialized to a native identity entry.
@@ -223,6 +284,7 @@ fn compile_capture_number(
         params: 0,
         result: JsJitResultKind::CaptureNumber(capture),
         field_argument: None,
+        capture_arguments: Vec::new(),
     })
 }
 
@@ -747,6 +809,7 @@ fn compile_string_hash_loop(
         params: 1,
         result: JsJitResultKind::StringHashLoop,
         field_argument: None,
+        capture_arguments: Vec::new(),
     })
 }
 
@@ -858,6 +921,7 @@ fn compile_string_transform(
         params: 1,
         result: JsJitResultKind::StringTransform(transform),
         field_argument: None,
+        capture_arguments: Vec::new(),
     })
 }
 
@@ -1521,6 +1585,7 @@ fn compile_number_domain_boolean_tree(
         params,
         result: JsJitResultKind::Boolean,
         field_argument,
+        capture_arguments: Vec::new(),
     })
 }
 
@@ -1750,6 +1815,14 @@ fn branch_numeric_operand(
 }
 
 fn compile_numeric(program: &ResidualProgram, function_id: u32) -> Option<JsJitArtifact> {
+    compile_numeric_with_captures(program, function_id, &[])
+}
+
+fn compile_numeric_with_captures(
+    program: &ResidualProgram,
+    function_id: u32,
+    captures: &[JsJitCaptureArgument],
+) -> Option<JsJitArtifact> {
     let function = program.functions.get(function_id as usize)?;
     if !function_candidate(function, &program.atoms)
         || function
@@ -1814,6 +1887,26 @@ fn compile_numeric(program: &ResidualProgram, function_id: u32) -> Option<JsJitA
                 }
                 let source = usize::from(instruction.register_b());
                 Some(*registers.get(source)?.as_ref()?)
+            }
+            Op::LoadCapture => {
+                if instruction.returns_from_frame() || instruction.result_flags() != 0 {
+                    return None;
+                }
+                let capture = captures.iter().position(|capture| {
+                    capture.depth == instruction.capture_depth()
+                        && capture.slot == instruction.capture_slot()
+                })?;
+                let argument_index = params.checked_add(capture)?;
+                let offset = i32::try_from(
+                    argument_index.checked_mul(std::mem::size_of::<f64>())?,
+                )
+                .ok()?;
+                Some(builder.ins().load(
+                    types::F64,
+                    ir::MemFlagsData::trusted(),
+                    arguments,
+                    offset,
+                ))
             }
             Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
                 if instruction.numeric_local_target().is_some()
@@ -1919,6 +2012,7 @@ fn compile_numeric(program: &ResidualProgram, function_id: u32) -> Option<JsJitA
         params,
         result: JsJitResultKind::Number,
         field_argument: None,
+        capture_arguments: captures.to_vec(),
     })
 }
 
@@ -2553,6 +2647,7 @@ fn compile_numeric_loop(
         params,
         result: JsJitResultKind::NumberInterruptible,
         field_argument: None,
+        capture_arguments: Vec::new(),
     })
 }
 
@@ -2940,6 +3035,7 @@ fn compile_string_branches(
         params,
         result: JsJitResultKind::StringReturnPc(return_sites),
         field_argument: None,
+        capture_arguments: Vec::new(),
     })
 }
 
@@ -3268,6 +3364,7 @@ fn compile_field_reject(
             resume_value,
         },
         field_argument: Some(field_argument),
+        capture_arguments: Vec::new(),
     })
 }
 
@@ -3312,7 +3409,9 @@ fn eligible(function: &Function, atoms: &crate::bytecode::AtomTable) -> bool {
         || function.rest
         || !function.simple_parameters
         || !function.handlers.is_empty()
-        || (!function.plain_activation(atoms) && !activation_is_irrelevant(function))
+        || (!function.plain_activation(atoms)
+            && !activation_is_irrelevant(function)
+            && numeric_capture_candidate(function).is_none())
     {
         return false;
     }
