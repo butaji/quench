@@ -98,6 +98,37 @@ pub(super) struct LaneView {
     /// The facts of its body a frameless call target records (`TargetBody`), found on its
     /// first resolution: every closure of the function shares them.
     target_body: std::cell::OnceCell<TargetBody>,
+    /// The window of an environment activation, when its local and closure records also run
+    /// in one (`specialize_environment_window`).
+    environment_window: Option<EnvironmentWindow>,
+    /// For an environment window, the environment's slots and the window's locals as an
+    /// activation starts them before its arguments (`lane_activate_environment`): a
+    /// captured slot `undefined` in the environment and owned by it among the locals, any
+    /// other slot owned elsewhere in the environment and `undefined` among the locals.
+    environment_templates: Box<[Value]>,
+}
+
+/// An environment activation's window past its registers (`lane_activate_environment`):
+/// its environment, a pointer to the environment's slot storage (`WINDOW_SLOTS`), then its
+/// `locals`; bit `k` of `captured` is set when local `k` lives in the environment
+/// (`Function::local_slot_uses_environment`).
+#[derive(Clone, Copy)]
+struct EnvironmentWindow {
+    locals: u16,
+    captured: u64,
+}
+
+/// An environment window's entries after its registers: the environment, then the address
+/// of its slot storage, which never moves while it lives, held in a `Value`'s bits; the
+/// locals follow.
+const WINDOW_ENVIRONMENT: u16 = 0;
+const WINDOW_SLOTS: u16 = 1;
+const WINDOW_LOCALS: u16 = 2;
+
+impl EnvironmentWindow {
+    fn captured(self, slot: usize) -> bool {
+        self.captured & 1 << slot != 0
+    }
 }
 
 /// What a function's body fixes about a frameless call target of it
@@ -389,6 +420,8 @@ struct ScriptActivation {
     /// forwarding constructor passed on (`Completion::Forwarder`), or for values passed past
     /// the parameters.
     forwards: bool,
+    /// Its environment and frame locals follow its registers (`CallEntry::Environment`).
+    environment: bool,
 }
 
 /// A JavaScript activation's own receiver and environment, which it does not store
@@ -520,6 +553,10 @@ enum CallEntry {
     /// parameters in order (`forwarding_read_body`), which a call answers where that method
     /// is a `Reads` or `ReadsElement` target whose read hits.
     ForwardsRead,
+    /// It keeps frame locals and makes closures (`CallPlan::environment_activation`): its
+    /// activation's window holds its environment and locals after its registers
+    /// (`lane_activate_environment`). Only a plain call activates it.
+    Environment,
 }
 
 impl CallEntry {
@@ -1194,6 +1231,147 @@ lane_handler! {
             )
         } else {
             None
+        };
+        let Some(value) = value else {
+            return exit(ip);
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+/// The value a frame-backed run reads from `slot` of frame `frame`'s function: the frame's
+/// environment slot when `environment` and the environment is captured, else its local.
+/// `None` for a root body's frame or an uninitialized binding.
+#[inline(always)]
+fn frame_window_local<H: Host>(vm: &Vm<H>, frame: usize, slot: usize, environment: bool) -> Option<Value> {
+    let frame = &vm.frames[frame];
+    if frame.function == super::ROOT_FUNCTION_ID {
+        return None;
+    }
+    let value = if environment && frame.captured {
+        vm.heap.environment_slot(frame.env, slot)?
+    } else {
+        *frame.locals.get(slot)?
+    };
+    (!value.is_deleted()).then_some(value)
+}
+
+lane_handler! {
+    /// A local load of a function an environment activation may run
+    /// (`specialize_environment_window`): in a frame's run, the frame's binding, as
+    /// `lane_load_frame_local`; in an environment activation, its environment's slot
+    /// (`ENVIRONMENT`) or its window's local. An uninitialized binding or a numeric local
+    /// takes the general path.
+    fn lane_load_window_local<ENVIRONMENT: bool>(cx, r, ip, i, view) {
+        let (slot, registers) = environment_window_fields(i);
+        let value = if i.a & crate::bytecode::NUMERIC_LOCAL_TARGET != 0 {
+            None
+        } else if unsafe { (*cx).env }.is_deleted() {
+            frame_window_local(unsafe { vm(cx) }, unsafe { (*cx).frame }, slot, ENVIRONMENT)
+        } else if ENVIRONMENT {
+            // SAFETY: an environment window holds its environment's slot storage, which
+            // never moves while the environment lives (`lane_activate_environment`).
+            let storage = unsafe {
+                &*(std::mem::transmute::<Value, u64>(r.get(registers + WINDOW_SLOTS))
+                    as *const crate::heap::EnvironmentSlots)
+            };
+            match storage.dense().and_then(|dense| dense.dense_plain(slot)) {
+                Some(value) => Some(value),
+                None => unsafe { vm(cx) }.heap.environment_slot(r.get(registers + WINDOW_ENVIRONMENT), slot),
+            }
+        } else {
+            Some(r.get(registers + WINDOW_LOCALS + slot as u16))
+        };
+        let Some(value) = value.filter(|value| !value.is_deleted()) else {
+            return exit(ip);
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    /// `lane_load_window_local`'s store: to an initialized (or initializing) binding.
+    fn lane_store_window_local<ENVIRONMENT: bool>(cx, r, ip, i, view) {
+        let (slot, registers) = environment_window_fields(i);
+        let value = r.get(i.a);
+        let vm = unsafe { vm(cx) };
+        let binding = if unsafe { (*cx).env }.is_deleted() {
+            let frame = &mut vm.frames[unsafe { (*cx).frame }];
+            if frame.function == super::ROOT_FUNCTION_ID {
+                None
+            } else if ENVIRONMENT && frame.captured {
+                vm.heap.environment_slot_mut(frame.env, slot)
+            } else {
+                frame.locals.get_mut(slot)
+            }
+        } else if ENVIRONMENT {
+            let environment = r.get(registers + WINDOW_ENVIRONMENT);
+            // A write to a slot through its storage takes the environment's barrier first.
+            vm.heap.remember_cell(environment);
+            // SAFETY: as `lane_load_window_local`'s read of the window's storage.
+            let storage = unsafe {
+                &mut *(std::mem::transmute::<Value, u64>(r.get(registers + WINDOW_SLOTS))
+                    as *mut crate::heap::EnvironmentSlots)
+            };
+            match storage.owned_mut(slot) {
+                Some(binding) => Some(binding),
+                None => vm.heap.environment_slot_mut(environment, slot),
+            }
+        } else {
+            // SAFETY: an environment activation's window holds its locals after its
+            // environment (`lane_activate_environment`).
+            Some(unsafe { &mut *r.0.add(usize::from(registers + WINDOW_LOCALS) + slot) })
+        };
+        match binding {
+            Some(binding) if i.c != 0 || !binding.is_deleted() => *binding = value,
+            _ => return exit(ip),
+        }
+        if let Some(register) = i.b.checked_sub(crate::bytecode::OPTIONAL_REGISTER_BIAS) {
+            r.set(register, value);
+        }
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    /// `lane_load_window_local`'s `InitializeTdz`: opens the binding's dead zone.
+    fn lane_initialize_window_tdz<ENVIRONMENT: bool>(cx, r, ip, i, view) {
+        let (slot, registers) = environment_window_fields(i);
+        let vm = unsafe { vm(cx) };
+        let binding = if unsafe { (*cx).env }.is_deleted() {
+            // SAFETY: the context's program outlives the lane run.
+            vm.frame_binding_mut(unsafe { &*(*cx).code }, unsafe { (*cx).frame }, slot)
+        } else if ENVIRONMENT {
+            vm.heap.environment_slot_mut(r.get(registers + WINDOW_ENVIRONMENT), slot)
+        } else {
+            // SAFETY: as `lane_store_window_local`.
+            Some(unsafe { &mut *r.0.add(usize::from(registers + WINDOW_LOCALS) + slot) })
+        };
+        let Some(binding) = binding else {
+            return exit(ip);
+        };
+        *binding = Value::DELETED;
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    /// `MakeClosure` of a function an environment activation may run: in a frame's run, as
+    /// `lane_make_closure`; in an environment activation, over its environment.
+    fn lane_make_window_closure<>(cx, r, ip, i, view) {
+        let (function, registers) = environment_window_fields(i);
+        let value = if unsafe { (*cx).env }.is_deleted() {
+            lane_closure_value_of(cx, function as u32)
+        } else {
+            let vm = unsafe { vm(cx) };
+            // SAFETY: the context's program outlives the lane run.
+            let value = vm
+                .closure(unsafe { &*(*cx).code }, function as u32, r.get(registers + WINDOW_ENVIRONMENT))
+                .ok();
+            note_allocation(vm);
+            value
         };
         let Some(value) = value else {
             return exit(ip);
@@ -2109,6 +2287,12 @@ lane_handler! {
 /// closure takes the general path; a promotion made first is idempotent.
 #[inline(never)]
 fn lane_closure_value<H: Host>(cx: *mut LaneContext<H>, i: &LaneInstruction) -> Option<Value> {
+    lane_closure_value_of(cx, i.imm())
+}
+
+/// `lane_closure_value` of function `id`.
+#[inline(never)]
+fn lane_closure_value_of<H: Host>(cx: *mut LaneContext<H>, id: u32) -> Option<Value> {
     let vm = unsafe { vm(cx) };
     if !vm.lane_stack.activations.is_empty() {
         return None;
@@ -2125,7 +2309,7 @@ fn lane_closure_value<H: Host>(cx: *mut LaneContext<H>, i: &LaneInstruction) -> 
     // Promotion moves the frame's captured locals into the environment, so a capture
     // slot pointer found before it is not reused.
     unsafe { (*cx).capture = std::ptr::null() };
-    let value = vm.closure(code, i.imm(), env).ok();
+    let value = vm.closure(code, id, env).ok();
     note_allocation(vm);
     value
 }
@@ -4900,6 +5084,13 @@ impl<H: Host> Vm<H> {
                     // passed them all to parameter registers.
                     let passed = if script.forwards {
                         &registers[activation.window + count..activation.window + count + argc]
+                    } else if script.environment {
+                        // After its environment and locals (`lane_activate_environment`).
+                        let kept = activation.window
+                            + count
+                            + usize::from(WINDOW_LOCALS)
+                            + usize::from(code.function(activation.function as usize).locals);
+                        &registers[kept..kept + argc]
                     } else {
                         &window[..argc]
                     };
@@ -4952,6 +5143,17 @@ impl<H: Host> Vm<H> {
                         passed,
                         window,
                     );
+                    if script.environment {
+                        // The frame its promotion would have made: the environment it holds,
+                        // and its locals.
+                        let held = activation.window + count;
+                        let frame = self.frames.last_mut().expect("the activation pushed a frame");
+                        frame.env = registers[held + usize::from(WINDOW_ENVIRONMENT)];
+                        frame.captured = true;
+                        let locals = held + usize::from(WINDOW_LOCALS);
+                        let count = frame.locals.len();
+                        frame.locals.copy_from_slice(&registers[locals..locals + count]);
+                    }
                     // The activation counted within `LaneStack::activation_limit`; its frame
                     // takes the guest-call guard its push would have.
                     crate::stack::GuestCallGuard::enter().ok()
@@ -5060,7 +5262,15 @@ impl<H: Host> Vm<H> {
         // (`LaneContext::script_constructs`), which its activation would inherit from the
         // caller, so only one that constructs nothing runs frameless; its other records are
         // the lane's, with or without a frame.
-        let view = if !plan.registers_only
+        // An environment body runs in an environment activation where every local and
+        // closure record of its view reads one (`LaneView::environment_window`).
+        let environment = !plan.registers_only
+            && plan.environment_activation
+            && !numeric
+            && self
+                .lane_view_any(program, function)
+                .is_some_and(|view| unsafe { &*view }.environment_window.is_some());
+        let view = if !(plan.registers_only || environment)
             || numeric
                 && body
                     .code
@@ -5120,13 +5330,29 @@ impl<H: Host> Vm<H> {
             env,
             view,
             registers: body.registers,
-            room: u16::try_from(fill_room::<SCRIPT_FILL_BLOCK>(usize::from(body.registers))).ok()?,
+            // An environment activation's window also holds its environment, its locals and
+            // the values passed, at most one per parameter.
+            room: u16::try_from(fill_room::<SCRIPT_FILL_BLOCK>(
+                usize::from(body.registers)
+                    + if environment {
+                        usize::from(WINDOW_LOCALS) + usize::from(body.locals) + usize::from(body.params)
+                    } else {
+                        0
+                    },
+            ))
+            .ok()?,
             params: body.params,
             strict: body.strict,
             lexical_this,
-            constructs: shape.constructs,
-            initializes: shape.initializes,
-            entry: if plan.forwards_arguments { CallEntry::Keeps } else { shape.entry },
+            constructs: shape.constructs && !environment,
+            initializes: shape.initializes && !environment,
+            entry: if environment {
+                CallEntry::Environment
+            } else if plan.forwards_arguments {
+                CallEntry::Keeps
+            } else {
+                shape.entry
+            },
             capture,
             forwarded_method: match (plan.forwards_arguments && shape.constructs)
                 .then(|| body.forwarded_this_method(&code.constants))
@@ -5196,8 +5422,10 @@ script_handler! {
 /// primitives, which allocates, so `None` for a sloppy callee's primitive.
 #[inline(always)]
 fn lane_call_this<H: Host>(vm: &Vm<H>, target: &ScriptCallTarget, receiver: Value) -> Option<Value> {
-    lane_direct_call_this(vm, target, receiver)
-        .or_else(|| vm.is_object_like(receiver).then_some(receiver))
+    match lane_direct_call_this(vm, target, receiver) {
+        Some(this) => Some(this),
+        None => vm.is_object_like(receiver).then_some(receiver),
+    }
 }
 
 /// `lane_call_this` where the receiver's own bits decide it: a strict callee, an object in
@@ -5248,6 +5476,9 @@ script_handler! {
         if target.entry == CallEntry::Frame {
             sibling!(lane_frame_call::<H>, r, ip, Carried::script(cx))
         }
+        if target.entry == CallEntry::Environment {
+            sibling!(lane_script_call_environment::<H>, r, ip, Carried::script(cx))
+        }
         if target.forwards() {
             sibling!(lane_script_call_keeping::<H>, r, ip, Carried::script(cx))
         }
@@ -5276,6 +5507,31 @@ script_handler! {
             next!(cx, r, following(ip), Carried::script(cx))
         }
         lane_return_value!(cx, ip, value)
+    }
+}
+
+script_handler! {
+    /// `lane_script_call_full` of an environment target (`CallEntry::Environment`), out of
+    /// line so the other calls keep their registers: its activation holds its environment
+    /// and locals (`lane_activate_environment`). Any other callee takes the full form.
+    #[inline(never)]
+    fn lane_script_call_environment<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let callee = r.get(i.b);
+        let target = vm.script_call_entry(callee).filter(|_| !lane_constructing(vm, callee));
+        // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
+        let Some(target) = target.map(|target| unsafe { &*target }).filter(|target| target.entry == CallEntry::Environment)
+        else {
+            sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
+        };
+        let Some(this) = lane_call_this(vm, target, r.get(i.c)) else {
+            return exit(ip);
+        };
+        let arguments = ImmediateLayout::call_window_base(i.imm());
+        match lane_activate_environment(cx, r, ip, target, arguments, this) {
+            Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
+            Err(next) => next,
+        }
     }
 }
 
@@ -6195,7 +6451,7 @@ fn lane_script_target<H: Host>(cx: *mut LaneContext<H>, callee: Value) -> Option
     }
     vm.script_call_target(callee)
         .or_else(|| vm.resolve_script_call_target(unsafe { &*(*cx).code }, callee))
-        .filter(|target| target.entry != CallEntry::Frame)
+        .filter(|target| !matches!(target.entry, CallEntry::Frame | CallEntry::Environment))
 }
 
 /// Activate `target`, which keeps no passed values (callers route those to
@@ -6278,6 +6534,127 @@ fn lane_activate<H: Host>(
             caller_capture: unsafe { (*cx).capture },
             completion: Completion::of(constructs),
             forwards: false,
+            environment: false,
+        }),
+    };
+    // SAFETY: the capacity check above leaves room for the activation.
+    unsafe { stack.push_activation(activation) };
+    // SAFETY: the program store keeps a derived view alive with its program.
+    let base = unsafe { (*target.view).records() };
+    unsafe {
+        (*cx).registers = callee_registers;
+        (*cx).base = base;
+        (*cx).this = this;
+        (*cx).env = target.env;
+        (*cx).capture = target.capture;
+    }
+    Ok((callee_registers, base))
+}
+
+/// `lane_activate` of an environment target (`CallEntry::Environment`): its window holds
+/// its registers, then its environment, made now as the frame's promotion would make it
+/// (each captured slot its parameter's argument or `undefined`, every other slot owned
+/// elsewhere), then its frame locals (each parameter its argument, a captured slot owned
+/// by the environment, every other local `undefined`), then the values passed. The
+/// environment is reachable only from the window until the lane leaves, which makes the
+/// activation a frame holding it.
+#[inline(never)]
+fn lane_activate_environment<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    ip: Ip,
+    target: &ScriptCallTarget,
+    arguments: u16,
+    this: Value,
+) -> Result<(Registers, Ip), Ip> {
+    let vm = unsafe { vm(cx) };
+    // SAFETY: `ip` is a record of the running view.
+    let i = unsafe { &*ip };
+    let argc = ImmediateLayout::argument_count(i.imm());
+    let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
+    if returns && !lane_returning_call_admitted(cx) {
+        return Err(exit(ip));
+    }
+    if argc > target.params || vm.with_scope_entered {
+        return Err(exit(ip));
+    }
+    if vm.lane_stack.activations.len() >= vm.lane_stack.activation_limit.get()
+        || vm.lane_stack.values.capacity() - vm.lane_stack.values.len()
+            < usize::from(target.room)
+    {
+        return Err(lane_script_call_frame::<H>(ip));
+    }
+    // SAFETY: the program store keeps a derived view alive with its program, and an
+    // environment target's view has a window (`ScriptCallTarget::entry`).
+    let layout = unsafe { (*target.view).environment_window.unwrap_unchecked() };
+    let count = usize::from(target.registers);
+    let locals = usize::from(layout.locals);
+    // SAFETY: as `layout`.
+    let templates = unsafe { &(*target.view).environment_templates };
+    let (slot_template, local_template) = templates.split_at(locals);
+    // Parameter `k` is local `k`: its argument where one was passed.
+    let passed = |slot: usize| r.get(arguments + slot as u16);
+    let mut slots = crate::heap::EnvironmentSlots::from_values(slot_template.iter().copied());
+    for slot in (0..usize::from(argc)).filter(|slot| layout.captured(*slot)) {
+        if let Some(binding) = slots.owned_mut(slot) {
+            *binding = passed(slot);
+        }
+    }
+    let environment = vm.heap.alloc(Cell::Environment {
+        parent: target.env,
+        function: target.function,
+        slots,
+        scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
+            program: Some(target.program.raw()),
+            root_eval_scope: false,
+            binding_site_pc: None,
+            dynamic_bindings: Vec::new().into(),
+            with_objects: Box::default(),
+        }),
+    });
+    note_allocation(vm);
+    let storage = match vm.heap.get(environment) {
+        Some(Cell::Environment { slots, .. }) => slots as *const crate::heap::EnvironmentSlots,
+        _ => unreachable!("the activation's environment is an environment cell"),
+    };
+    let stack = &mut vm.lane_stack;
+    let window = stack.values.len();
+    let held = count + usize::from(WINDOW_LOCALS);
+    // SAFETY: capacity holds the window (`ScriptCallTarget::room`); each slot is written
+    // before the length covers it, and no activation's window moves.
+    let callee_registers = unsafe {
+        let registers = stack.values.as_mut_ptr().add(window);
+        fill_window::<SCRIPT_FILL_BLOCK>(registers, count, Value::UNDEFINED);
+        registers.add(count + usize::from(WINDOW_ENVIRONMENT)).write(environment);
+        registers
+            .add(count + usize::from(WINDOW_SLOTS))
+            .write(std::mem::transmute::<u64, Value>(storage as u64));
+        std::ptr::copy_nonoverlapping(local_template.as_ptr(), registers.add(held), locals);
+        for slot in (0..usize::from(argc)).filter(|slot| !layout.captured(*slot)) {
+            registers.add(held + slot).write(passed(slot));
+        }
+        // The values passed, as a frame keeps them for legacy reflection.
+        for slot in 0..usize::from(argc) {
+            registers.add(held + locals + slot).write(passed(slot));
+        }
+        stack.values.set_len(window + held + locals + usize::from(argc));
+        Registers(registers)
+    };
+    let activation = Activation {
+        function: target.function,
+        call: ip,
+        caller_base: unsafe { (*cx).base },
+        caller_registers: r,
+        window,
+        kind: ActivationKind::Script(ScriptActivation {
+            callee: target.callee,
+            argc,
+            caller_this: unsafe { (*cx).this },
+            caller_env: unsafe { (*cx).env },
+            caller_capture: unsafe { (*cx).capture },
+            completion: Completion::of(false),
+            forwards: false,
+            environment: true,
         }),
     };
     // SAFETY: the capacity check above leaves room for the activation.
@@ -6519,6 +6896,7 @@ fn lane_activate_keeping<H: Host>(
             caller_capture: unsafe { (*cx).capture },
             completion: if forwarder.is_some() { Completion::Forwarder } else { Completion::of(constructs) },
             forwards: keeps,
+            environment: false,
         }),
     };
     // SAFETY: the capacity check above leaves room for the activation.
@@ -8329,6 +8707,7 @@ fn derive_lane_view<H: Host>(
     specialize_negated_instanceof::<H>(&mut records);
     specialize_frame_locals::<H>(function, &mut records);
     specialize_outer_captures::<H>(&mut records);
+    let environment_window = specialize_environment_window::<H>(function, &mut records);
     let min_run = if closes_loop(function, &exits) {
         LANE_ENTRY_MIN_RUN
     } else {
@@ -8358,6 +8737,15 @@ fn derive_lane_view<H: Host>(
         memory_register,
         activation,
         target_body: std::cell::OnceCell::new(),
+        environment_templates: environment_window.map_or_else(Box::default, |window| {
+            let captured = |slot: usize| window.captured(slot);
+            let locals = usize::from(window.locals);
+            (0..locals)
+                .map(|slot| if captured(slot) { Value::UNDEFINED } else { Value::DELETED })
+                .chain((0..locals).map(|slot| if captured(slot) { Value::DELETED } else { Value::UNDEFINED }))
+                .collect()
+        }),
+        environment_window,
     }
 }
 
@@ -8589,6 +8977,91 @@ fn specialize_updates<H: Host>(records: &mut [LaneInstruction]) {
             c: update.a,
         };
     }
+}
+
+/// An environment-window record's immediate: its own (a local slot or closure function, at
+/// most `ENVIRONMENT_WINDOW_FIELD`) below, the function's register count above.
+const ENVIRONMENT_WINDOW_SHIFT: u32 = u16::BITS;
+const ENVIRONMENT_WINDOW_FIELD: u32 = (1 << ENVIRONMENT_WINDOW_SHIFT) - 1;
+
+/// An environment-window record's own immediate and the window's register count.
+#[inline(always)]
+fn environment_window_fields(i: &LaneInstruction) -> (usize, u16) {
+    let imm = i.imm();
+    ((imm & ENVIRONMENT_WINDOW_FIELD) as usize, (imm >> ENVIRONMENT_WINDOW_SHIFT) as u16)
+}
+
+/// Gives a function whose locals an environment activation could hold
+/// (`CallPlan::environment_activation`) the local and closure records that read either a
+/// frame or such an activation's window (`lane_load_window_local`), each record's
+/// immediate also carrying the register count (`environment_window_fields`); the count
+/// when every such record took one. Each other record keeps its handler, and a function
+/// any record of which cannot keeps all of them.
+fn specialize_environment_window<H: Host>(
+    function: &Function,
+    records: &mut [LaneInstruction],
+) -> Option<EnvironmentWindow> {
+    if function.locals == 0
+        || u32::from(function.locals) > u64::BITS
+        || function.arguments_slot.is_some()
+        || !function.local_registers.is_empty()
+        || function.selective_capture_slots.is_none()
+    {
+        return None;
+    }
+    let registers = function.registers;
+    // The handlers derivation gives these records alone: a record any other pass gave a
+    // handler, such as one carrying an accumulator to the next, keeps the function's.
+    let plain: [Handler; 11] = [
+        lane_load_local::<H>,
+        lane_load_local_plain::<H>,
+        lane_load_frame_local::<H, true>,
+        lane_load_frame_local::<H, false>,
+        lane_store_local::<H>,
+        lane_store_local_plain::<H>,
+        lane_store_frame_local::<H, true>,
+        lane_store_frame_local::<H, false>,
+        lane_initialize_tdz::<H>,
+        lane_make_closure::<H>,
+        lane_exit::<H>,
+    ];
+    let mut replacements = Vec::new();
+    for (pc, packed) in function.code.iter().enumerate() {
+        let instruction = decoded_instruction(function, *packed);
+        let op = instruction.op();
+        let own = match op {
+            Op::MakeClosure => instruction.imm(),
+            Op::LoadLocal | Op::LoadLocalPlain | Op::LoadEnvLocal | Op::StoreLocal | Op::StoreLocalPlain
+            | Op::StoreEnvLocal | Op::InitializeTdz => instruction.local_slot() as u32,
+            _ => continue,
+        };
+        if own > ENVIRONMENT_WINDOW_FIELD
+            || !plain.iter().any(|handler| *handler as *const () == records[pc].handler)
+        {
+            return None;
+        }
+        let environment = op != Op::MakeClosure && function.local_slot_uses_environment(own as usize);
+        let handler: Handler = match (op, environment) {
+            (Op::MakeClosure, _) => lane_make_window_closure::<H>,
+            (Op::LoadLocal | Op::LoadLocalPlain | Op::LoadEnvLocal, true) => lane_load_window_local::<H, true>,
+            (Op::LoadLocal | Op::LoadLocalPlain | Op::LoadEnvLocal, false) => lane_load_window_local::<H, false>,
+            (Op::InitializeTdz, true) => lane_initialize_window_tdz::<H, true>,
+            (Op::InitializeTdz, false) => lane_initialize_window_tdz::<H, false>,
+            (_, true) => lane_store_window_local::<H, true>,
+            (_, false) => lane_store_window_local::<H, false>,
+        };
+        replacements.push((pc, handler, own | u32::from(registers) << ENVIRONMENT_WINDOW_SHIFT));
+    }
+    for (pc, handler, imm) in replacements {
+        records[pc].handler = handler as *const ();
+        records[pc].operand = LaneOperand { imm };
+    }
+    Some(EnvironmentWindow {
+        locals: function.locals,
+        captured: (0..usize::from(function.locals))
+            .filter(|slot| function.local_slot_uses_environment(*slot))
+            .fold(0, |mask, slot| mask | 1 << slot),
+    })
 }
 
 /// Gives each `LoadCapture` record past the function's own scope the handler that reads
