@@ -1359,6 +1359,14 @@ impl<H: Host> Vm<H> {
                     &mut pending_calls,
                     allow_inline_calls,
                 );
+                #[cfg(feature = "profile-lane-exits")]
+                if let Some(instruction) = p
+                    .functions
+                    .get(self.frames[frame].function as usize)
+                    .and_then(|function| function.instructions().nth(pc))
+                {
+                    super::lane_exits::record(instruction.op());
+                }
                 // Lane calls and returns can leave a different activation, or a new one in the
                 // same frame slot; the active frame's PC slot and register file follow it.
                 published_pc = &mut self.frames[frame].pc;
