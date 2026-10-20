@@ -213,12 +213,12 @@ impl GenerationalPacing {
 /// raytrace-public-class-fields 3.15 / 18.0 MB -> 7.00 / 19.3, earley-boyer 15.9 / 25.4 ->
 /// 18.9 / 26.2, splay 29.3 / 52.8 -> 28.0 / 52.8 (within noise). The Score lane's table
 /// (eight and four live sets) reached 7.09 / 31.0 on raytrace and 30.9 / 185 MB on splay,
-/// where Bun without its JIT uses 26.8 and 67.9 MB. `MINIMUM_YOUNG` of 2^17 rather than 2^15
-/// (2026-10-20, same host): source-map-wtb 4.29 / 53.9 MB -> 5.41 / 65.3, web-ssr
-/// 14.0 / 101 -> 15.8 / 113, bigint-noble-ed25519 6.23 / 34.3 -> 7.28 / 47.5, babel-wtb
-/// 5.48 / 102 -> 5.82 / 105, others within noise. Bun's max RSS there is 79, 129, 48 and
-/// 101 MB: babel-wtb, already level with Bun, moves above it. Raising the full-collection
-/// minimums as well took web-ssr to 151 MB. Merges
+/// where Bun without its JIT uses 26.8 and 67.9 MB. `MINIMUM_YOUNG` is 2^16 (2026-10-20,
+/// same host, score / max RSS for 2^15, 2^16, 2^17): source-map-wtb 3.35 / 53.9 MB, 4.20 /
+/// 57.7, 4.39 / 65.1; stanford-crypto-aes 18.1 / 29.1, 17.5 / 38.9, 15.3 / 59.8 (Bun 47 MB);
+/// stanford-crypto-sha256, UniPoker and async-fs within noise in score while max RSS grows
+/// by a third at 2^17. 2^16 keeps every measured max RSS below Bun's. Raising the
+/// full-collection minimums as well took web-ssr to 151 MB. Merges
 /// from the trunk keep this table on this lane.
 pub(super) const PRODUCTION_PACING: GenerationalPacing = GenerationalPacing {
     young: Ratio::new(1, 8),
@@ -233,7 +233,7 @@ pub(super) const PRODUCTION_PACING: GenerationalPacing = GenerationalPacing {
 };
 
 /// The fewest allocations between collections, whatever survived.
-const MINIMUM_YOUNG: usize = 1 << 17;
+const MINIMUM_YOUNG: usize = 1 << 16;
 /// The fewest allocations, or old-generation growth, between full collections.
 const MINIMUM_FULL_INTERVAL: usize = 1 << 18;
 
