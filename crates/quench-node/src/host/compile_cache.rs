@@ -66,8 +66,18 @@ pub(crate) struct CacheEntry {
 }
 
 impl CacheEntry {
-    pub(crate) fn load(&self) -> Option<Vec<u8>> {
-        std::fs::read(&self.path).ok()
+    /// The entry's bytes, mapped from its file: a program decoded from them reads each
+    /// function's record on its first call, so the pages of records never called stay out of
+    /// memory. Entries are replaced by rename, never written in place, so the mapped file
+    /// keeps its contents.
+    #[cfg(unix)]
+    pub(crate) fn load(&self) -> Option<quench_runtime::KeptBytes> {
+        MappedFile::open(&self.path).map(|file| std::rc::Rc::new(file) as quench_runtime::KeptBytes)
+    }
+
+    #[cfg(not(unix))]
+    pub(crate) fn load(&self) -> Option<quench_runtime::KeptBytes> {
+        std::fs::read(&self.path).ok().map(|bytes| std::rc::Rc::new(bytes) as quench_runtime::KeptBytes)
     }
 
     /// Stores `bytes`; a failure (a read-only or full disk) leaves the cache as it was.
@@ -94,4 +104,46 @@ fn build_identity() -> Option<u64> {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     (executable, metadata.len(), modified, quench_runtime::ResidualProgram::RUNTIME_ABI_FINGERPRINT).hash(&mut hasher);
     Some(hasher.finish())
+}
+
+/// A whole file mapped read-only and private, unmapped when dropped.
+#[cfg(unix)]
+struct MappedFile {
+    address: std::ptr::NonNull<u8>,
+    length: usize,
+}
+
+#[cfg(unix)]
+impl MappedFile {
+    fn open(path: &std::path::Path) -> Option<Self> {
+        use std::os::fd::AsRawFd;
+        let file = std::fs::File::open(path).ok()?;
+        let length = usize::try_from(file.metadata().ok()?.len()).ok().filter(|length| *length > 0)?;
+        // SAFETY: a fresh read-only private mapping of an open file; the descriptor may close
+        // once the mapping exists.
+        let address = unsafe {
+            libc::mmap(std::ptr::null_mut(), length, libc::PROT_READ, libc::MAP_PRIVATE, file.as_raw_fd(), 0)
+        };
+        if address == libc::MAP_FAILED {
+            return None;
+        }
+        crate::host::resident_pages::track_read_only_mapping(address as usize, length);
+        Some(Self { address: std::ptr::NonNull::new(address.cast())?, length })
+    }
+}
+
+#[cfg(unix)]
+impl AsRef<[u8]> for MappedFile {
+    fn as_ref(&self) -> &[u8] {
+        // SAFETY: the mapping covers `length` readable bytes for as long as `self` lives.
+        unsafe { std::slice::from_raw_parts(self.address.as_ptr(), self.length) }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for MappedFile {
+    fn drop(&mut self) {
+        // Nothing borrows the mapping past `self`.
+        crate::host::resident_pages::unmap_tracked_mapping(self.address.as_ptr() as usize, self.length);
+    }
 }

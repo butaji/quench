@@ -218,9 +218,15 @@ impl GenerationalPacing {
 /// collection, four per full one, 2^15 and 2^18 minimums) raised npm peak RSS by up to 17 MiB
 /// per package (semver 27.6 -> 45.2, typescript-eslint 188 -> 226); the owner reaffirmed
 /// memory-first on 2026-10-18.
+///
+/// The young floor is `YOUNG_MINIMUM_ALLOCATION`, not the 384 headroom: at a sixty-fourth of a
+/// small live set the floor decides the interval, and 384 collected small programs every few
+/// hundred allocations without lowering their peak (TOD-161, quench-node scorecard, x86_64
+/// 4 vCPU, 2026-10-20: 768 against 384 gave V8-v7 Score x1.161 with RayTrace x1.54 and
+/// RegExp x1.60 in 7/7 pairs, frameworks x1.023, max RSS geomean x0.997 and x0.999).
 pub(super) const PRODUCTION_PACING: GenerationalPacing = GenerationalPacing {
     young: Ratio::new(1, 64),
-    minimum_young: MEMORY_FIRST_MINIMUM_ALLOCATION,
+    minimum_young: YOUNG_MINIMUM_ALLOCATION,
     maximum_young: MAXIMUM_YOUNG,
     old_growth: Ratio::new(1, 1),
     minimum_old_growth: MEMORY_FIRST_MINIMUM_ALLOCATION,
@@ -242,6 +248,10 @@ const MEMORY_FIRST_MINIMUM_ALLOCATION: usize = 384;
 /// 84 -> 53 MB, fastify 96 -> 72 MB, express 85 -> 53 MB; V8-v7 earley-boyer 46 -> 28 MB and
 /// splay 161 -> 92 MB, with Scores within the run-to-run band. 2^16 cut little more memory.
 const MAXIMUM_YOUNG: usize = 1 << 17;
+
+/// The fewest allocations between young collections: twice the headroom, which kept every
+/// scorecard workload's max RSS within 1 MB and 5% (1024 raised koa's by 1.1 MB; TOD-161).
+const YOUNG_MINIMUM_ALLOCATION: usize = 2 * MEMORY_FIRST_MINIMUM_ALLOCATION;
 
 #[cfg(not(feature = "gc-tuning"))]
 pub(super) fn pacing() -> GenerationalPacing {

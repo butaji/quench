@@ -1589,6 +1589,37 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// `environment_capture_slots` through the walks it remembers (`capture_walks`): a walk
+    /// from the same environment, equally its own or not, to the same depth in the same
+    /// collection ends at the same live cell, whose slot storage never moves.
+    #[inline(always)]
+    pub(super) fn walked_capture_slots(
+        &mut self,
+        env: Value,
+        captured: bool,
+        depth: u16,
+    ) -> Option<(*const crate::heap::EnvironmentSlots, Option<Option<u32>>)> {
+        let epoch = self.heap.collection_epoch();
+        let index = (env.heap_index()? as usize ^ usize::from(depth) * (CAPTURE_WALKS / 2 + 1))
+            & (CAPTURE_WALKS - 1);
+        let walk = &self.capture_walks[index];
+        if walk.depth == depth
+            && walk.cache.env == env
+            && walk.cache.captured == captured
+            && walk.cache.epoch == epoch
+            && !walk.cache.slots.is_null()
+        {
+            return Some((walk.cache.slots, walk.cache.root));
+        }
+        let (slots, root) = self.environment_capture_slots(env, captured, depth)?;
+        let slots: *const crate::heap::EnvironmentSlots = slots;
+        self.capture_walks[index] = CaptureWalk {
+            depth,
+            cache: CaptureCache { env, captured, epoch, slots, root },
+        };
+        Some((slots, root))
+    }
+
     /// The frame's cached innermost slots and root program while the cache is current
     /// (`cached_direct_capture`).
     #[inline(always)]
@@ -1618,7 +1649,10 @@ impl<H: Host> Vm<H> {
         slot: u16,
     ) -> Option<Value> {
         if depth != 0 {
-            return self.direct_capture(frame, depth, slot);
+            let (env, captured) = (self.frames[frame].env, self.frames[frame].captured);
+            let (slots, root) = self.walked_capture_slots(env, captured, depth)?;
+            // SAFETY: as `walked_capture_slots`: the walk ends at a live cell this collection.
+            return self.owned_capture(unsafe { &*slots }, root, slot);
         }
         let (slots, root) = if let Some(current) = self.current_capture_slots(frame) {
             current

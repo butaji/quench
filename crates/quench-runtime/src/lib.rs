@@ -27,7 +27,7 @@ pub use wasm::{
     WasmTag, WasmTrap, WasmType, WasmTypes, WasmValue,
 };
 
-pub use bytecode::ResidualProgram;
+pub use bytecode::{KeptBytes, ResidualProgram};
 pub use compile::{Diagnostic, Engine, set_compile_phase_boundary};
 pub use heap::{RootId, HeapMemoryComposition};
 pub use host::{
