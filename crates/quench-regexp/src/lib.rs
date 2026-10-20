@@ -3229,13 +3229,14 @@ mod tests {
     #[test]
     fn byte_backend_is_built_on_first_match_and_keeps_its_results() {
         // A pattern the byte backend serves builds no automaton until a match needs it, and
-        // matching through it, before and after, gives the same results.
+        // matching through it, before and after, gives the same results. The backend is
+        // opt-in (`QUENCH_COMPILED_REGEXP`), so without it no automaton is ever built.
         let host = r"^(?:[a-z][a-z0-9+\-.]*:)?\/\/(?:[a-z0-9\-._~]|%[0-9a-f]{2})+(?::\d{1,5})?$";
         let regex = Regex::with_flags(host, Flags::from("i")).unwrap();
         assert!(regex.compiled.get().is_none());
         let found = |text: &str| regex.find_from(text, 0).next().map(|m| m.range);
         assert_eq!(found("HTTP://Example.COM:8080"), Some(0..23));
-        assert!(regex.compiled.get().is_some());
+        assert_eq!(regex.compiled.get().is_some(), regex.compiled_serves_matches);
         assert_eq!(found("http://exa mple"), None);
         let captures = Regex::with_flags(r"(\w+)-(\d+)", Flags::from("")).unwrap();
         let matched = captures.find_from("id: abc-42", 0).next().unwrap();
