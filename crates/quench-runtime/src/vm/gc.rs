@@ -933,6 +933,7 @@ impl<H: Host> Vm<H> {
         self.shapes = shapes;
         self.transitions = transitions;
         self.shape_slot_memo.clear();
+        self.function_name_shapes.clear();
         self.shape_attribute_memo.clear();
         self.object_shapes.fill(u32::MAX);
         self.invalidate_field_caches();

@@ -1415,6 +1415,7 @@ pub(crate) struct Vm<H> {
     shape_accessors: Vec<ShapeAccessors>,
     transitions: shape_transitions::ShapeTransitionIndex,
     shape_slot_memo: shape_memo::ShapeSlotMemo,
+    function_name_shapes: provenance::FunctionNameShapes,
     symbol_write_proofs: symbol_write_proof::SymbolWriteProofs,
     shape_attribute_memo: shape_memo::ShapeAttributeMemo,
     name_atom_memo: name_atom_memo::NameAtomMemo,
@@ -2218,6 +2219,7 @@ impl<H: Host> Vm<H> {
         self.shapes[0].last_child.set(NO_LAST_CHILD);
         self.transitions.clear();
         self.shape_slot_memo.clear();
+        self.function_name_shapes.clear();
         self.symbol_write_proofs.clear();
         self.shape_attribute_memo.clear();
         self.atom_strings.clear();
