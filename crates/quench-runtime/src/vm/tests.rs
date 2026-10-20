@@ -11435,6 +11435,40 @@ fn ascii_string_building_keeps_text_across_the_inline_length() {
 }
 
 #[test]
+fn closure_names_keep_their_shapes_across_collections() {
+    // Closures of one site take their named shape from a memo, which collections that
+    // renumber shapes clear; names, descriptors and a later rename stay exact.
+    let source = r#"
+      const out = [];
+      function make(i) {
+        const named = () => i;
+        const other = function inner() {};
+        const method = { meth() {} }.meth;
+        const anon = [() => 0][0];
+        return [named, other, method, anon];
+      }
+      function churn() { let keep = null; for (let i = 0; i < 300000; i++) keep = { i, next: keep && i % 7 ? null : keep }; return keep; }
+      for (let round = 0; round < 3; round++) {
+        const fns = make(round);
+        out.push(fns.map((f) => f.name).join("/"), Object.getOwnPropertyNames(fns[0]).join(), JSON.stringify(Object.getOwnPropertyDescriptor(fns[1], "name")));
+        churn();
+        const again = make(round + 10);
+        out.push(again.map((f) => f.name).join("/"), again[0] !== fns[0]);
+        Object.defineProperty(again[0], "name", { value: "renamed" });
+        out.push(again[0].name, make(0)[0].name);
+      }
+      print(out.join("|"));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "closure-names.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["named/inner/meth/|length,name|{\"value\":\"inner\",\"writable\":false,\"enumerable\":false,\"configurable\":true}|named/inner/meth/|true|renamed|named|named/inner/meth/|length,name|{\"value\":\"inner\",\"writable\":false,\"enumerable\":false,\"configurable\":true}|named/inner/meth/|true|renamed|named|named/inner/meth/|length,name|{\"value\":\"inner\",\"writable\":false,\"enumerable\":false,\"configurable\":true}|named/inner/meth/|true|renamed|named"]
+    );
+}
+
+#[test]
 fn lane_arrows_take_this_from_their_environment() {
     // Arrows called as frameless activations read `this` from the environment they
     // closed over: call/apply/bind receivers are ignored, a derived constructor's
