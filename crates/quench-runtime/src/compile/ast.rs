@@ -151,6 +151,9 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     inherited_with_depth: u16,
     pub(super) strict: bool,
     pub(super) dynamic_eval: bool,
+    /// The `var x = arguments;` alias whose reads read the `arguments` binding
+    /// (`early::arguments_alias`); its declaration then stores nothing.
+    pub(super) arguments_alias: Option<String>,
     parameter_context: bool,
     pub(super) parameter_eval_arguments_error: bool,
     pub(super) parameter_arguments_slot: Option<u16>,
@@ -269,6 +272,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             inherited_with_depth: with_depth,
             strict: false,
             dynamic_eval: false,
+            arguments_alias: None,
             parameter_context: false,
             parameter_eval_arguments_error: false,
             parameter_arguments_slot,

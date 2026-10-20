@@ -3133,6 +3133,9 @@ impl<'a> Compiler<'a> {
             function.statement_completion = StatementCompletion::Track(completion);
         }
         function.dynamic_eval = dynamic_eval;
+        if arguments_slot.is_some() && parameter_arguments_slot.is_none() {
+            function.arguments_alias = early::arguments_alias(options.defaults, body);
+        }
         let mut lexical_slots: Vec<_> = lexical_atoms
             .iter()
             .filter_map(|atom| function.local_slots.get(atom).copied())
@@ -3190,16 +3193,16 @@ impl<'a> Compiler<'a> {
                 .wide
                 .iter()
                 .any(|instruction| instruction.op() == Op::MakeClosure);
+        let reads_binding =
+            |op: Op| matches!(op, Op::LoadLocal | Op::ArgumentsLength | Op::ArgumentGet);
         let arguments_slot = arguments_slot.filter(|slot| {
             (captures_locals && function.owner.arrows_reach_arguments(id, *slot))
                 || function.dynamic_eval
                 || function.code.iter().any(|instruction| {
-                    instruction.op() == Op::LoadLocal
-                        && instruction.local_slot() == usize::from(*slot)
+                    reads_binding(instruction.op()) && instruction.local_slot() == usize::from(*slot)
                 })
                 || function.wide.iter().any(|instruction| {
-                    instruction.op() == Op::LoadLocal
-                        && instruction.local_slot() == usize::from(*slot)
+                    reads_binding(instruction.op()) && instruction.local_slot() == usize::from(*slot)
                 })
         });
         let parameter_atoms = options.defaults.map_or_else(Vec::new, |formal| {

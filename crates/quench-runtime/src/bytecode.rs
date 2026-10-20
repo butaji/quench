@@ -857,6 +857,12 @@ opcodes!(
     WasmAtomicAccess => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmAtomicOperator, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
     WasmAtomicFence => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning Unused, @ Register, @ fields(Unused, Unused, Unused),
     SetFunctionDebugName => Effect::WRITES_HEAP; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Unused, Unused),
+    // `arguments.length` and `arguments[key]` of the `arguments` binding in the local slot:
+    // an unmaterialized binding answers from the values its activation kept
+    // (`Function::forwards_arguments_only`); any other value is read as `GetField` and
+    // `GetIndex` read it.
+    ArgumentsLength => READ_THROW; layout Scalar; meaning LocalSlot, @ Register, @ fields(ResultRegister, Unused, Unused),
+    ArgumentGet => READ_THROW; layout Scalar; meaning LocalSlot, @ Register, @ fields(ResultRegister, Register, Unused),
 
 );
 
@@ -1946,10 +1952,12 @@ impl Function {
     }
 
     /// Whether every read of the `arguments` binding loads it into the last argument of the
-    /// `CallForwardingArguments` right after, and nothing else can reach the binding: no
+    /// `CallForwardingArguments` right after, or reads its length or an element
+    /// (`ArgumentsLength`, `ArgumentGet`), and nothing else can reach the binding: no
     /// closure, environment clone, dynamic scope access or promoted register, and no
     /// suspension. An object it later materializes must equal one made on entry: unmapped,
-    /// or mapped onto no parameters.
+    /// or mapped onto no parameters. The activation then keeps the values it was passed, from
+    /// which those reads are answered.
     pub(crate) fn forwards_arguments_only(&self) -> bool {
         let Some(slot) = self.arguments_slot else {
             return false;
@@ -1980,7 +1988,9 @@ impl Function {
                         next.op() == Op::CallForwardingArguments
                             && next.call_window().last() == Some(instruction.result_register())
                     });
-            if !feeds_forwarding_call {
+            let reads_kept_values =
+                matches!(instruction.op(), Op::ArgumentsLength | Op::ArgumentGet);
+            if !feeds_forwarding_call && !reads_kept_values {
                 return false;
             }
             forwarded = true;
