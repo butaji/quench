@@ -997,10 +997,31 @@ impl Heap {
     /// ordinary object's construction knows: a direct record while one is free.
     #[inline(always)]
     pub(crate) fn alloc_object(&mut self, object: Object) -> Value {
+        let prototype = object.proto();
+        self.alloc_object_of(object, prototype)
+    }
+
+    /// `alloc_object_with_properties` of a planned object: `header`, derived once for
+    /// `prototype` and an inline shape (`InlineObjectHeader::of`), and its `inline` values.
+    #[inline(always)]
+    pub(crate) fn alloc_object_from_header(
+        &mut self,
+        header: InlineObjectHeader,
+        prototype: Value,
+        inline: [Value; INLINE_PROPERTY_COUNT],
+    ) -> Value {
+        let object = Object::from_inline_header(header, inline);
+        debug_assert!(object.proto() == prototype);
+        self.alloc_object_of(object, prototype)
+    }
+
+    /// `alloc_object` of `object`, whose prototype is `prototype`.
+    #[inline(always)]
+    fn alloc_object_of(&mut self, object: Object, prototype: Value) -> Value {
         if cfg!(feature = "profile-aggregate") {
             return self.alloc(Cell::Object(object));
         }
-        self.mark_prototype(object.proto());
+        self.mark_prototype(prototype);
         // An object's weight is one allocation, and it holds no external bytes.
         self.allocations += 1;
         self.allocations_since_full = self.allocations_since_full.saturating_add(1);
