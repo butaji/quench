@@ -6637,7 +6637,16 @@ impl<H: Host> Vm<H> {
             super::program_store::JsTierState::Compiled(compiled) => compiled,
             _ => return None,
         };
-        if compiled.field_argument().is_some() || compiled.is_string_transform() {
+        // Direct calls have no callee frame from which to reload lexical
+        // captures. Those artifacts must use the ordinary frame-entry path,
+        // where the capture guards and ABI values are assembled together.
+        if compiled.field_argument().is_some()
+            || compiled.is_capture_number()
+            || !compiled.capture_arguments().is_empty()
+            || compiled.is_string_transform()
+            || compiled.is_string_hash_loop()
+            || compiled.is_field_reject()
+        {
             return None;
         }
         let params = usize::from(function.params);
