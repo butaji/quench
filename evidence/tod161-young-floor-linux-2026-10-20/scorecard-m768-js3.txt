@@ -1,0 +1,9 @@
+js3/doxbee-async                 speed x1.101 wins 3/3  RSS    52.1 ->    51.5 MB  wall 4.4s
+js3/doxbee-promise               speed x0.962 wins 0/3  RSS    63.6 ->    63.6 MB  wall 9.2s
+js3/web-ssr                      speed x1.038 wins 2/3  RSS    53.8 ->    53.8 MB  wall 9.4s
+js3/json-parse-inspector         speed x1.046 wins 2/3  RSS    88.0 ->    88.1 MB  wall 3.0s
+js3/async-fs                     speed x1.201 wins 3/3  RSS    19.8 ->    19.8 MB  wall 25.5s
+js3/lazy-collections             speed x1.392 wins 3/3  RSS    15.0 ->    15.0 MB  wall 27.4s
+js3/babel-wtb                    speed x1.028 wins 2/3  RSS    94.7 ->    94.6 MB  wall 26.8s
+js3/hash-map                     speed x0.993 wins 1/3  RSS    29.6 ->    29.8 MB  wall 26.5s
+== js3       speed geomean x1.088  RSS ratio geomean x0.999  (8 workloads)
