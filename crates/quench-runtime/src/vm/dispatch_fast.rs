@@ -2756,7 +2756,7 @@ script_handler! {
         let code = unsafe { &*(*cx).code };
         let base = unsafe { lane_single_field_base(cx, r, i.b) };
         let string_base = base.is_some_and(|base| {
-            matches!((unsafe { vm(cx) }).heap.get(base), Some(Cell::String(_)))
+            (unsafe { vm(cx) }).heap.is_string(base)
         });
         let handler: Option<Handler> = match lane_field_site_tier(unsafe { vm(cx) }, code, i) {
             // A string primitive reads `String.prototype`, whatever tier its entries name.
@@ -5804,8 +5804,8 @@ lane_handler! {
                 // the string. Any other receiver or index takes the native's coercions.
                 let window = ImmediateLayout::call_window_base(i.imm());
                 let index = r.get(window).as_int();
-                match (vm.heap.get(receiver), index) {
-                    (Some(Cell::String(text)), Some(index)) => Some(
+                match (vm.heap.string(receiver), index) {
+                    (Some(text), Some(index)) => Some(
                         usize::try_from(index)
                             .ok()
                             .and_then(|index| text.units().get(index))

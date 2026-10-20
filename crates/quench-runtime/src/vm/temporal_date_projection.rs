@@ -147,7 +147,7 @@ impl<H: Host> Vm<H> {
             if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::ToStringTag) {
                 let tag = self
                     .heap
-                    .alloc(Cell::String(format!("Temporal.{name}").into()));
+                    .alloc_string(format!("Temporal.{name}").into());
                 self.set_symbol_property(prototype, symbol, tag)?;
                 self.set_property_attributes(
                     prototype,
@@ -274,7 +274,7 @@ impl<H: Host> Vm<H> {
         if value.is_undefined() {
             return Ok("iso8601".to_owned());
         }
-        if !matches!(self.heap.get(value), Some(Cell::String(_))) {
+        if !self.heap.is_string(value) {
             return Err(self.type_error(p, "Invalid calendar".into()));
         }
         let text = self.to_string(p, value)?.to_string();
@@ -432,19 +432,19 @@ impl<H: Host> Vm<H> {
             quench_intl::calendar_fields_from_iso(reference_year, month, day, &calendar);
         match native {
             Native::TemporalPlainMonthDayCalendarIdGetter => {
-                Ok(self.heap.alloc(Cell::String(calendar.into())))
+                Ok(self.heap.alloc_string(calendar.into()))
             }
             Native::TemporalPlainMonthDayDayGetter => Ok(Value::number(f64::from(
                 calendar_fields.as_ref().map_or(day, |fields| fields.day),
             ))),
-            Native::TemporalPlainMonthDayMonthCodeGetter => Ok(self.heap.alloc(Cell::String(
+            Native::TemporalPlainMonthDayMonthCodeGetter => Ok(self.heap.alloc_string(
                 calendar_fields
                     .map_or_else(
                         || format!("M{month:0width$}", width = ISO_MONTH_CODE_DIGITS),
                         |fields| fields.month_code,
                     )
                     .into(),
-            ))),
+            )),
             Native::TemporalPlainMonthDayEquals => {
                 let constructor = self.native_value(Native::TemporalPlainMonthDay);
                 let other = self.temporal_plain_month_day_from(p, constructor, args)?;
@@ -666,7 +666,7 @@ impl<H: Host> Vm<H> {
             day
         };
         let constructor = self.native_value(Native::TemporalPlainMonthDay);
-        let calendar = self.heap.alloc(Cell::String(calendar.into()));
+        let calendar = self.heap.alloc_string(calendar.into());
         let args = [
             Value::number(f64::from(month)),
             Value::number(f64::from(day)),
@@ -717,7 +717,7 @@ impl<H: Host> Vm<H> {
             quench_intl::calendar_fields_from_iso(year, month, reference_day, &calendar);
         match native {
             Native::TemporalPlainYearMonthCalendarIdGetter => {
-                Ok(self.heap.alloc(Cell::String(calendar.into())))
+                Ok(self.heap.alloc_string(calendar.into()))
             }
             Native::TemporalPlainYearMonthYearGetter => Ok(Value::number(f64::from(
                 calendar_fields.as_ref().map_or(year, |fields| fields.year),
@@ -727,18 +727,18 @@ impl<H: Host> Vm<H> {
                     .as_ref()
                     .map_or(month as u32, |fields| fields.month),
             ))),
-            Native::TemporalPlainYearMonthMonthCodeGetter => Ok(self.heap.alloc(Cell::String(
+            Native::TemporalPlainYearMonthMonthCodeGetter => Ok(self.heap.alloc_string(
                 calendar_fields
                     .map_or_else(
                         || format!("M{month:0width$}", width = ISO_MONTH_CODE_DIGITS),
                         |fields| fields.month_code,
                     )
                     .into(),
-            ))),
+            )),
             Native::TemporalPlainYearMonthEraGetter => Ok(calendar_fields
                 .and_then(|fields| fields.era)
                 .map_or(Value::UNDEFINED, |era| {
-                    self.heap.alloc(Cell::String(era.into()))
+                    self.heap.alloc_string(era.into())
                 })),
             Native::TemporalPlainYearMonthEraYearGetter => Ok(calendar_fields
                 .and_then(|fields| fields.era_year)
@@ -949,7 +949,7 @@ impl<H: Host> Vm<H> {
         let changed_code = changed_code
             .or_else(|| (changed_month.is_none() && year != original_year).then(|| month_code));
         let changed_code = changed_code
-            .map(|code| self.heap.alloc(Cell::String(code.into())))
+            .map(|code| self.heap.alloc_string(code.into()))
             .map(|code| {
                 self.plain_date_month_code(
                     p,
@@ -1123,7 +1123,7 @@ impl<H: Host> Vm<H> {
             let _ = self.plain_date_overflow(p, options)?;
             return self.make_plain_month_day(p, constructor, month, day, calendar, year);
         }
-        if let Some(Cell::String(text)) = self.heap.get(value) {
+        if let Some(text) = self.heap.string(value) {
             let text = text.host_string().to_owned();
             let (date, calendar) = parse_plain_month_day_string(self, p, &text)?;
             let constrain = self.plain_date_overflow(p, options)?;
@@ -1399,7 +1399,7 @@ impl<H: Host> Vm<H> {
             let _ = self.plain_date_overflow(p, options)?;
             return self.make_plain_year_month(p, constructor, year, month, calendar, day);
         }
-        if let Some(Cell::String(text)) = self.heap.get(value) {
+        if let Some(text) = self.heap.string(value) {
             let text = text.host_string().to_owned();
             let (date, calendar) = parse_plain_year_month_string(self, p, &text)?;
             let _ = self.plain_date_overflow(p, options)?;
@@ -1490,7 +1490,7 @@ impl<H: Host> Vm<H> {
         let args = [
             Value::number(f64::from(month)),
             Value::number(f64::from(day)),
-            self.heap.alloc(Cell::String(calendar.into())),
+            self.heap.alloc_string(calendar.into()),
             Value::number(f64::from(reference_year)),
         ];
         self.temporal_plain_month_day_construct(p, &args, constructor)
@@ -1544,7 +1544,7 @@ impl<H: Host> Vm<H> {
         let args = [
             Value::number(f64::from(year)),
             Value::number(f64::from(month)),
-            self.heap.alloc(Cell::String(calendar.into())),
+            self.heap.alloc_string(calendar.into()),
             reference,
         ];
         self.temporal_plain_year_month_construct(p, &args, constructor)
@@ -1557,7 +1557,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<String, JsError> {
         match self.heap.get(value) {
             None if value.is_undefined() => Ok("iso8601".into()),
-            Some(Cell::String(_)) => {
+            _ if self.heap.is_string(value)  => {
                 let text = self.to_string(p, value)?.to_string();
                 temporal_date_parse::calendar_identifier_from_string(&text)
                     .ok_or_else(|| self.range_error(p, "Invalid calendar".into()))
@@ -1960,7 +1960,7 @@ pub(super) fn native<H: Host>(
         } else {
             text
         };
-        return Ok(vm.heap.alloc(Cell::String(text.into())));
+        return Ok(vm.heap.alloc_string(text.into()));
     }
     if let Some(Cell::TemporalPlainYearMonth {
         year,
@@ -1985,7 +1985,7 @@ pub(super) fn native<H: Host>(
         } else {
             format!("{date}[{annotation}")
         };
-        return Ok(vm.heap.alloc(Cell::String(text.into())));
+        return Ok(vm.heap.alloc_string(text.into()));
     }
     Err(vm.type_error(p, "Invalid Temporal calendar object".into()))
 }

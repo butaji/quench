@@ -127,7 +127,7 @@ impl<H: Host> Vm<H> {
             let element = self.call_value(p, method, value, &invoke_arguments)?;
             result.push_str(&self.to_string(p, element)?);
         }
-        Ok(self.heap.alloc(Cell::String(result.into())))
+        Ok(self.heap.alloc_string(result.into()))
     }
 
     fn array_of_native(

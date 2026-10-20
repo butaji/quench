@@ -137,7 +137,7 @@ impl<H: Host> Vm<H> {
         )?;
         let name_key = PropertyKey::string(self.intern_atom("name"));
         let name_atom = self.intern_atom(name);
-        let name_value = self.heap.alloc(Cell::String(self.atom_value(name_atom)));
+        let name_value = self.heap.alloc_string(self.atom_value(name_atom));
         self.create_shape_data_property(function, name_key, name_value, FUNCTION_INFO_ATTRIBUTES)?;
         self.capture_function_name_for_atom(function, name_atom);
         if constructible {

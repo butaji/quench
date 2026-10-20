@@ -1118,7 +1118,7 @@ impl<H: Host> Vm<H> {
         {
             return Value::UNDEFINED;
         }
-        self.heap.alloc(Cell::String("ModuleSource".into()))
+        self.heap.alloc_string("ModuleSource".into())
     }
 
     pub(super) fn call_native_guarded(
@@ -1206,7 +1206,7 @@ impl<H: Host> Vm<H> {
         }
         if promise_resolver || anonymous_capability_executor || anonymous_proxy_revoke {
             let atom = self.intern_atom("name");
-            let empty_name = self.heap.alloc(Cell::String("".into()));
+            let empty_name = self.heap.alloc_string("".into());
             let _ = self.set_property_with_attributes(
                 function,
                 atom,
@@ -2120,11 +2120,11 @@ impl<H: Host> Vm<H> {
                 self.module_namespace_default(value)
             }
             "text" => {
-                let source = self.heap.alloc(Cell::String(module.source.clone().into()));
+                let source = self.heap.alloc_string(module.source.clone().into());
                 self.module_namespace_default(source)
             }
             "json" => {
-                let source = self.heap.alloc(Cell::String(module.source.clone().into()));
+                let source = self.heap.alloc_string(module.source.clone().into());
                 let value = self.json_parse(p, &[source])?;
                 self.module_namespace_default(value)
             }
@@ -4884,7 +4884,7 @@ impl<H: Host> Vm<H> {
         let mut module_type = None;
         for key in keys {
             let key_name = match self.heap.get(key) {
-                Some(Cell::String(value)) => Some(value.host_string().to_owned()),
+                _ if let Some(value) = self.heap.string(key)  => Some(value.host_string().to_owned()),
                 Some(Cell::Symbol(_)) => continue,
                 _ => return Err(JsError("invalid import attribute key".into())),
             };
@@ -4896,12 +4896,12 @@ impl<H: Host> Vm<H> {
             let enumerable = self.get_property(p, descriptor, enumerable_atom)?;
             if self.truthy(enumerable) {
                 let value = self.get_index(p, attributes, key)?;
-                if !matches!(self.heap.get(value), Some(Cell::String(_))) {
+                if !self.heap.is_string(value) {
                     return Err(self
                         .type_error(p, "dynamic import attribute values must be strings".into()));
                 }
                 if key_name.as_deref() == Some("type")
-                    && let Some(Cell::String(value)) = self.heap.get(value)
+                    && let Some(value) = self.heap.string(value)
                 {
                     module_type = Some(value.host_string().to_owned());
                 }
@@ -4951,7 +4951,7 @@ impl<H: Host> Vm<H> {
         if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::ToStringTag) {
             let module = self
                 .heap
-                .alloc(Cell::String(namespace_tag.to_string().into()));
+                .alloc_string(namespace_tag.to_string().into());
             self.set_symbol_property(namespace, symbol, module)?;
             self.set_property_attributes(
                 namespace,
@@ -4977,9 +4977,9 @@ impl<H: Host> Vm<H> {
             Constant::Number(value) => Value::number(value),
             Constant::WasmBits64(bits) => self.encode_bits64(bits),
             Constant::WasmV128(bits) => self.heap.alloc(Cell::WasmV128(bits)),
-            Constant::String(value) => self.heap.alloc(Cell::String(value.into())),
+            Constant::String(value) => self.heap.alloc_string(value.into()),
             Constant::StringUnits(value) => {
-                self.heap.alloc(Cell::String(JsString::from_units(&value)))
+                self.heap.alloc_string(JsString::from_units(&value))
             }
             Constant::BigInt(value) => self.heap.alloc(Cell::bigint(value)),
             Constant::Boolean(true) => Value::TRUE,

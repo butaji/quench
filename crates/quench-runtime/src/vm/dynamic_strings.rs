@@ -13,11 +13,9 @@ impl<H: Host> Vm<H> {
             .as_ref()
             .and_then(|strings| strings.get(&hash))
             .copied()
-            && matches!(
-                self.heap.get(value),
-                Some(Cell::String(candidate))
-                    if matches!(candidate.units(), super::wtf16::Units::Ascii(bytes) if bytes == text.as_bytes())
-            )
+            && self.heap.string(value).is_some_and(|candidate| {
+                matches!(candidate.units(), super::wtf16::Units::Ascii(bytes) if bytes == text.as_bytes())
+            })
         {
             return value;
         }
@@ -33,7 +31,7 @@ impl<H: Host> Vm<H> {
             .as_ref()
             .and_then(|strings| strings.get(&hash))
             .copied()
-            && matches!(self.heap.get(value), Some(Cell::String(candidate)) if candidate == &text)
+            && self.heap.string(value).is_some_and(|candidate| candidate == &text)
         {
             #[cfg(feature = "profile-aggregate")]
             self.profile.dynamic_string(true);
@@ -41,7 +39,7 @@ impl<H: Host> Vm<H> {
         }
         #[cfg(feature = "profile-aggregate")]
         self.profile.dynamic_string(false);
-        let value = self.heap.alloc(Cell::String(text));
+        let value = self.heap.alloc_string(text);
         self.dynamic_strings
             .get_or_insert_with(|| Box::new(FxHashMap::default()))
             .insert(hash, value);

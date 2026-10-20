@@ -81,7 +81,7 @@ impl<H: Host> Vm<H> {
         } else if self.heap.array(object).is_some() && self.own_array_length(object).is_some() {
             // Array length is a virtual own string key, not an array index.
             // Keep it before named properties without expanding element keys.
-            vec![self.heap.alloc(Cell::String("length".into()))]
+            vec![self.heap.alloc_string("length".into())]
         } else {
             Vec::new()
         };
@@ -106,7 +106,7 @@ impl<H: Host> Vm<H> {
         values.extend(
             strings
                 .into_iter()
-                .map(|atom| self.heap.alloc(Cell::String(self.atom_value(atom)))),
+                .map(|atom| self.heap.alloc_string(self.atom_value(atom))),
         );
         values.extend(symbols);
         values
@@ -230,15 +230,17 @@ impl<H: Host> Vm<H> {
                 .iter()
                 .copied()
                 .filter(|key| {
-                    !matches!(self.heap.get(*key), Some(Cell::String(name)) if name.host_string().starts_with("\0quench:"))
+                    !self.heap.string(*key).is_some_and(|name| name.host_string().starts_with("\0quench:"))
                 })
                 .collect()
         }))
     }
 
     pub(super) fn same_property_key(&self, left: Value, right: Value) -> bool {
+        if let (Some(l), Some(r)) = (self.heap.string(left), self.heap.string(right)) {
+            return l == r;
+        }
         match (self.heap.get(left), self.heap.get(right)) {
-            (Some(Cell::String(left)), Some(Cell::String(right))) => left == right,
             (Some(Cell::Symbol(_)), Some(Cell::Symbol(_))) => left == right,
             _ => false,
         }

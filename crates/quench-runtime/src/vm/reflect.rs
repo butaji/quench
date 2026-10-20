@@ -50,7 +50,7 @@ impl<H: Host> Vm<H> {
                 if matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
                     return self.get_symbol_property_with_receiver(p, target, key, receiver);
                 }
-                let Some(Cell::String(key)) = self.heap.get(key).cloned() else {
+                let Some(key) = self.heap.string(key).cloned() else {
                     unreachable!("ToPropertyKey returns a string or symbol")
                 };
                 let atom = self.intern_js_atom(&key);
@@ -85,7 +85,7 @@ impl<H: Host> Vm<H> {
                     }
                     return Ok(if succeeded { Value::TRUE } else { Value::FALSE });
                 }
-                let Some(Cell::String(key)) = self.heap.get(key).cloned() else {
+                let Some(key) = self.heap.string(key).cloned() else {
                     unreachable!("ToPropertyKey returns a string or symbol")
                 };
                 let atom = self.intern_js_atom(&key);

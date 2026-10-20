@@ -118,7 +118,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         match property {
             PropertyKey::String(atom) if !self.is_private_name(atom) => {
-                Ok(self.heap.alloc(Cell::String(self.atom_value(atom))))
+                Ok(self.heap.alloc_string(self.atom_value(atom)))
             }
             PropertyKey::Symbol(key) => Ok(key),
             PropertyKey::String(_) | PropertyKey::Private(_) => {
@@ -495,12 +495,14 @@ impl<H: Host> Vm<H> {
     /// that can run guest code. A host-private symbol names only an own property, so its
     /// read is left to `get_index` with every other `None`.
     pub(super) fn plain_keyed_get(&self, object: Value, key: Value) -> Option<Value> {
+        if let Some(text) = self.heap.string(key) {
+            return self.plain_named_get(object, self.lookup_js_atom(text)?);
+        }
         match self.heap.get(key)? {
             // A host-private symbol names only an own property, which the general path reads.
             Cell::Symbol(symbol) if symbol.kind != crate::heap::SymbolKind::HostPrivate => {
                 self.plain_property_get(object, PropertyKey::symbol(key))
             }
-            Cell::String(text) => self.plain_named_get(object, self.lookup_js_atom(text)?),
             _ => None,
         }
     }
@@ -712,7 +714,7 @@ impl<H: Host> Vm<H> {
                     Some(Cell::ArrayBuffer { object: x, .. }) => object = x.proto(),
                     Some(Cell::TypedArray { object: x, .. }) => object = x.proto(),
                     Some(Cell::DataView { object: x, .. }) => object = x.proto(),
-                    Some(Cell::String(v)) => {
+                    _ if let Some(v) = self.heap.string(object)  => {
                         let length = v.len();
                         if self.atom_class(atom).contains(AtomClass::ARRAY_INDEX)
                             && let Some(index) = super::object_static::array_index(self.atom_name(atom))
@@ -735,7 +737,7 @@ impl<H: Host> Vm<H> {
                                 return Ok(description
                                     .as_ref()
                                     .map(|value| {
-                                        self.heap.alloc(Cell::String(value.as_ref().into()))
+                                        self.heap.alloc_string(value.as_ref().into())
                                     })
                                     .unwrap_or(Value::UNDEFINED));
                             }
