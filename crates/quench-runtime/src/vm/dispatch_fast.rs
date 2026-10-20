@@ -1716,9 +1716,10 @@ script_handler! {
 script_handler! {
     /// `lane_store_window_local_general` in an environment activation writing an
     /// initialized binding its window or in-place storage holds densely, saving no
-    /// registers; any other store takes the general handler. A slot write through the
-    /// storage takes the environment's barrier first, which a window still holding its
-    /// slots in place has no environment for.
+    /// registers; any other store takes the general handler. The write needs no barrier:
+    /// an activation's environment is made during its lane run (`window_environment`), in a
+    /// slot no collection has marked since, and no collection runs in the lane, so it is
+    /// young.
     fn lane_store_window_local<ENVIRONMENT: bool>(cx, r, ip, i, view) {
         let (slot, registers) = environment_window_fields(i);
         if !unsafe { (*cx).env }.is_deleted() && i.c == 0 {
@@ -1728,9 +1729,7 @@ script_handler! {
                     &mut *(std::mem::transmute::<Value, u64>(r.get(registers + WINDOW_SLOTS))
                         as *mut crate::heap::EnvironmentSlots)
                 };
-                storage.dense_mut().and_then(|dense| dense.dense_plain_mut(slot)).inspect(|_| {
-                    unsafe { vm(cx) }.heap.remember_cell(r.get(registers + WINDOW_ENVIRONMENT));
-                })
+                storage.dense_mut().and_then(|dense| dense.dense_plain_mut(slot))
             } else {
                 // SAFETY: an environment activation's window holds its locals after its
                 // entries (`lane_activate_environment`).
@@ -1738,6 +1737,7 @@ script_handler! {
                     .filter(|binding| !binding.is_deleted())
             };
             if let Some(binding) = binding {
+                debug_assert!(!unsafe { vm(cx) }.heap.is_old(r.get(registers + WINDOW_ENVIRONMENT)));
                 let value = r.get(i.a);
                 *binding = value;
                 if let Some(register) = i.b.checked_sub(crate::bytecode::OPTIONAL_REGISTER_BIAS) {
