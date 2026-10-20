@@ -332,8 +332,47 @@ impl<H: Host> Vm<H> {
             (false, false) => Native::Function,
         };
         let function_object_prototype = self.realm.intrinsics.builtin_prototypes[&(realm, intrinsic)];
+        let plan_name = function_plan.name.or(function_plan.inferred_name);
+        // Names are the compiled functions' own, so keeping each one's string is bounded by
+        // the code loaded, while every closure of a module function would otherwise make one.
+        let name_value = self.atom_string_kept(plan_name.unwrap_or(self.runtime_atoms.empty), true);
+        let length_value = Value::number(function_plan.length as f64);
+        // An ordinary closure's own properties and its prototype's `constructor` take the
+        // shapes the first one recorded; every other closure defines them one by one.
+        let ordinary = !function_plan.is_async
+            && !function_plan.is_generator
+            && !function_plan.is_class_constructor;
+        let shapes_key = usize::from(prototype.is_some());
+        let recorded_shapes = self.closure_shapes[shapes_key].filter(|_| ordinary);
+        // A recorded closure whose own properties fit its inline slots is allocated finished:
+        // its `length`, `name` and `prototype` inline, as the adds would leave them, under the
+        // shape they and its original name would reach. A larger one takes the recorded shapes
+        // by adds after allocation.
+        let finished = recorded_shapes.and_then(|shapes| {
+            let (shape, own, count) = match (prototype, shapes.prototype) {
+                (Some(prototype), Some((with_prototype, _))) => {
+                    (with_prototype, [length_value, name_value, prototype], 3)
+                }
+                _ => (shapes.name, [length_value, name_value, Value::UNDEFINED], 2),
+            };
+            (count <= crate::value_vec::INLINE_PROPERTY_COUNT).then_some((shape, own, count))
+        });
+        let object = match finished {
+            Some((shape, own, count)) => {
+                let named =
+                    self.function_name_shape(shape, plan_name.unwrap_or(self.runtime_atoms.empty));
+                let mut inline = [Value::UNDEFINED; crate::value_vec::INLINE_PROPERTY_COUNT];
+                inline[..count].copy_from_slice(&own[..count]);
+                crate::heap::Object::with_property_storage(
+                    function_object_prototype,
+                    crate::value_vec::ValueVec::inline_property_storage(named),
+                    inline,
+                )
+            }
+            None => Self::empty_object(function_object_prototype),
+        };
         let function = self.heap.alloc_function(FunctionRecord {
-            object: Self::empty_object(function_object_prototype),
+            object,
             realm,
             kind: match function_plan.dispatch {
                 DispatchClass::General => FunctionKind::User(self.active_program, id),
@@ -355,27 +394,18 @@ impl<H: Host> Vm<H> {
                     .expect("new closure is live"),
             );
         }
-        let plan_name = function_plan.name.or(function_plan.inferred_name);
-        // Names are the compiled functions' own, so keeping each one's string is bounded by
-        // the code loaded, while every closure of a module function would otherwise make one.
-        let name_value = self.atom_string_kept(plan_name.unwrap_or(self.runtime_atoms.empty), true);
-        let length_value = Value::number(function_plan.length as f64);
-        // An ordinary closure's own properties and its prototype's `constructor` take the
-        // shapes the first one recorded; every other closure defines them one by one.
-        let ordinary = !function_plan.is_async
-            && !function_plan.is_generator
-            && !function_plan.is_class_constructor;
-        let shapes_key = usize::from(prototype.is_some());
-        if ordinary && let Some(shapes) = self.closure_shapes[shapes_key] {
-            self.heap.property_add(function, length_value, shapes.length);
-            self.heap.property_add(function, name_value, shapes.name);
-            if let (Some(prototype), Some((with_prototype, constructor))) =
-                (prototype, shapes.prototype)
-            {
-                self.heap.property_add(function, prototype, with_prototype);
+        if let Some(shapes) = recorded_shapes {
+            if finished.is_none() {
+                self.heap.property_add(function, length_value, shapes.length);
+                self.heap.property_add(function, name_value, shapes.name);
+                if let (Some(prototype), Some((with_prototype, _))) = (prototype, shapes.prototype) {
+                    self.heap.property_add(function, prototype, with_prototype);
+                }
+                self.capture_fresh_closure_name(function, plan_name);
+            }
+            if let (Some(prototype), Some((_, constructor))) = (prototype, shapes.prototype) {
                 self.heap.property_add(prototype, function, constructor);
             }
-            self.capture_fresh_closure_name(function, plan_name);
             return Ok(function);
         }
         let mut recorded = ClosureShapes {
