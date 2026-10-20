@@ -11922,3 +11922,154 @@ fn promoted_var_locals_read_undefined_before_their_first_store() {
     vm.execute(&Engine::specialize(source, "promoted-var-entry.js").unwrap()).unwrap();
     assert_eq!(output.borrow().as_slice(), ["config,again,true"]);
 }
+
+#[test]
+fn symbol_keyed_reads_follow_shapes_prototypes_and_redefinitions() {
+    // Symbol-keyed reads answered from proofs (`symbol_load_proofs`) see deletes, shadows,
+    // prototype changes, accessors, proxies, many shapes and collections as the walk does.
+    let source = r#"
+const k = Symbol('k'), m = Symbol('m');
+const out = [];
+function read(o, key) { let r; for (let i = 0; i < 4; i++) r = o[key]; return r; }
+// own data, then delete and re-add
+const a = { [k]: 1 };
+out.push(read(a, k)); delete a[k]; out.push(read(a, k)); a[k] = 2; out.push(read(a, k));
+// inherited through two prototypes, then a holder change, a shadow, a delete
+const base = { [k]: 'base' }; const mid = Object.create(base); const obj = Object.create(mid);
+out.push(read(obj, k)); base[k] = 'base2'; out.push(read(obj, k));
+mid[k] = 'mid'; out.push(read(obj, k)); delete mid[k]; out.push(read(obj, k));
+// absent, then added on a prototype
+const p2 = {}; const o2 = Object.create(p2);
+out.push(String(read(o2, m))); p2[m] = 'added'; out.push(read(o2, m));
+Object.prototype[m] = 'top'; const o3 = {}; out.push(read(o3, m)); delete Object.prototype[m]; out.push(String(read(o3, m)));
+// holder turned accessor
+const h = { [k]: 'data' }; const o4 = Object.create(h); out.push(read(o4, k));
+let calls = 0; Object.defineProperty(h, k, { get() { calls++; return this === o4 ? 'getter-this' : 'bad'; }, configurable: true });
+out.push(read(o4, k), calls);
+// receiver's prototype replaced
+const pa = { [k]: 'pa' }, pb = { [k]: 'pb' }; const o5 = Object.create(pa); out.push(read(o5, k));
+Object.setPrototypeOf(o5, pb); out.push(read(o5, k));
+// two receivers of one shape with different prototypes
+const q1 = Object.create(pa), q2 = Object.create(pb); out.push(read(q1, k), read(q2, k), read(q1, k));
+// own accessor and non-writable own
+const o6 = { get [k]() { return 'own-get'; } }; out.push(read(o6, k));
+const o7 = {}; Object.defineProperty(o7, k, { value: 'ro', writable: false }); out.push(read(o7, k));
+// class instance fields and prototype methods
+class C { [k] = 'field'; [m]() { return 'method'; } }
+class D extends C {}
+const d = new D(); out.push(read(d, k), read(d, m).call(d));
+C.prototype[m] = function () { return 'replaced'; }; out.push(read(d, m).call(d));
+// symbol on a function, an array and a primitive wrapper
+function f() {} f[k] = 'fn'; out.push(read(f, k));
+const arr = [1]; arr[k] = 'arr'; out.push(read(arr, k), typeof read(arr, Symbol.iterator));
+out.push(typeof read('s', Symbol.iterator), read(Object('s'), Symbol.toStringTag) === undefined);
+// Proxy on the chain
+const px = new Proxy({}, { get(t, key, r) { return key === k ? 'proxy' : undefined; } });
+const o8 = Object.create(px); out.push(read(o8, k));
+// many shapes through one site
+const many = []; for (let i = 0; i < 40; i++) { const o = { ['x' + i]: i, [k]: i }; many.push(o); }
+let sum = 0; for (let j = 0; j < 3; j++) for (const o of many) sum += o[k]; out.push(sum);
+// collection in between
+const keep = { [k]: 'kept' }; out.push(read(keep, k)); for (let i = 0; i < 200000; i++) ({ i }); out.push(read(keep, k));
+print(JSON.stringify(out));
+"#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "symbol-loads.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), [r#"[1,null,2,"base","base2","mid","base2","undefined","added","top","undefined","data","getter-this",4,"pa","pb","pa","pb","pa","own-get","ro","field","method","replaced","fn","arr","function","function",true,"proxy",2340,"kept","kept"]"#]);
+}
+
+#[test]
+fn inherited_getters_run_in_loop_and_follow_redefinitions() {
+    // Getters found prototypes above the receiver, by name or symbol, run as in-loop frames
+    // with the receiver as `this`; throws, shadowing, redefinition and deep chains keep the
+    // results of the ordinary [[Get]].
+    let source = r#"
+const k = Symbol('k');
+const out = [];
+function read(o) { let r; for (let i = 0; i < 4; i++) r = o.v; return r; }
+function readK(o) { let r; for (let i = 0; i < 4; i++) r = o[k]; return r; }
+let calls = 0;
+class Base { get v() { calls++; return 'base:' + this.tag; } get [k]() { calls++; return 'kbase:' + this.tag; } }
+class Mid extends Base {}
+class Leaf extends Mid { constructor() { super(); this.tag = 'leaf'; } }
+const l = new Leaf();
+out.push(read(l), readK(l), calls);
+// a getter that throws, observed by the caller
+class T { get v() { throw new Error('boom'); } get [k]() { throw new Error('kboom'); } }
+class T2 extends T {}
+const t = new T2();
+try { read(t); } catch (e) { out.push(e.message); }
+try { readK(t); } catch (e) { out.push(e.message); }
+// redefine on the middle of the chain: data shadows the getter
+Object.defineProperty(Mid.prototype, 'v', { value: 'mid-data', configurable: true, writable: true });
+Mid.prototype[k] = 'kmid-data';
+out.push(read(l), readK(l));
+delete Mid.prototype.v; delete Mid.prototype[k];
+out.push(read(l), readK(l));
+// replace the getter itself
+Object.defineProperty(Base.prototype, 'v', { get() { return 'new:' + this.tag; }, configurable: true });
+Object.defineProperty(Base.prototype, k, { get() { return 'knew:' + this.tag; }, configurable: true });
+out.push(read(l), readK(l));
+// own data on the receiver shadows
+l.v = 'own'; out.push(read(l));
+const l2 = new Leaf(); Object.defineProperty(l2, k, { value: 'kown' }); out.push(readK(l2));
+// getter returning arguments.length and this identity; native getters
+class A { get v() { return [arguments.length, this === a2]; } }
+class B extends A {}
+const a2 = new B(); out.push(JSON.stringify(read(a2)));
+const m = new (class extends Map {})([[1, 2]]); let s; for (let i = 0; i < 4; i++) s = m.size; out.push(s);
+// a bound getter and a generator-free async-free getter of another realm-like proto
+const bound = Object.create(Object.create({ get v() { return 'plain:' + (this === bound); } }));
+out.push(read(bound));
+// deep chain (six links)
+let proto = { get v() { return 'deep'; } };
+for (let i = 0; i < 6; i++) proto = Object.create(proto);
+out.push(read(proto));
+print(JSON.stringify(out));
+"#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "inherited-getters.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), [r#"["base:leaf","kbase:leaf",8,"boom","kboom","mid-data","kbase:leaf","base:leaf","kbase:leaf","new:leaf","knew:leaf","new:leaf","kown","[0,true]",1,"plain:true","deep"]"#]);
+}
+
+#[test]
+fn call_apply_and_reflect_apply_push_callees_of_other_programs() {
+    // `call`, `apply` and `Reflect.apply` of user functions compiled as other programs run
+    // as in-loop frames in their program; receivers, argument lists, holes, getters on the
+    // list, throws, bound targets and forwarded `arguments` keep the natives' results.
+    let source = r#"
+const out = [];
+const other = new Function('a', 'b', '"use strict"; return [this === undefined ? "u" : typeof this, a, b, arguments.length].join(":");');
+const sloppy = new Function('a', 'return [typeof this, a, arguments.length].join(":");');
+const thrower = new Function('x', 'throw new RangeError("r" + x);');
+const recur = new Function('n', 'return n <= 0 ? 0 : n + Reflect.apply(arguments.callee, null, [n - 1]);');
+function local(a, b) { return [this && this.tag, a, b].join(":"); }
+function run(i) {
+  const o = { tag: 't' + i };
+  out.push(other.call(o, i, 'x'), other.call(undefined, i), other.apply(o, [i, 'y']), other.apply(null),
+    Reflect.apply(other, o, [i, 'z', 'extra']), sloppy.call(null, i), sloppy.apply(5, [i]),
+    Reflect.apply(sloppy, 'str', []), local.call(o, i, 1), Reflect.apply(local, o, [i, 2]), recur(3));
+  try { Reflect.apply(thrower, null, [i]); } catch (e) { out.push(e.name + e.message); }
+  try { thrower.apply(null, [i]); } catch (e) { out.push(e.name + e.message); }
+  try { Reflect.apply(other, null, undefined); } catch (e) { out.push(e.constructor.name); }
+  try { Reflect.apply({}, null, []); } catch (e) { out.push(e.constructor.name); }
+  out.push(Reflect.apply(other, o, { length: 2, 0: 'al', 1: 'b' }), other.apply(o, [, 'hole']));
+  const getterList = [1, 2]; Object.defineProperty(getterList, 0, { get() { out.push('g'); return 'got'; } });
+  out.push(Reflect.apply(other, o, getterList));
+  const bound = other.bind(o, 'B'); out.push(bound(i), bound.call(null, 'c'), Reflect.apply(bound, null, ['d']));
+  const args = (function () { return Reflect.apply(other, o, arguments); })('A1', 'A2'); out.push(args);
+}
+for (let i = 0; i < 3; i++) run(i);
+// EventEmitter-like dispatch through ReflectApply from another program
+const emit = new Function('handler', 'self', 'args', 'return Reflect.apply(handler, self, args);');
+const seen = []; for (let i = 0; i < 3; i++) emit(function (a, b) { seen.push(this.n + a + b); }, { n: i }, ['-', i]);
+out.push(seen.join());
+print(JSON.stringify(out));
+"#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "cross-program-applies.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), [r#"["object:0:x:2","u:0::1","object:0:y:2","object:::0","object:0:z:3","object:0:1","object:0:1","object::0","t0:0:1","t0:0:2",6,"RangeErrorr0","RangeErrorr0","TypeError","TypeError","object:al:b:2","object::hole:2","g","object:got:2:2","object:B:0:2","object:B:c:2","object:B:d:2","object:A1:A2:2","object:1:x:2","u:1::1","object:1:y:2","object:::0","object:1:z:3","object:1:1","object:1:1","object::0","t1:1:1","t1:1:2",6,"RangeErrorr1","RangeErrorr1","TypeError","TypeError","object:al:b:2","object::hole:2","g","object:got:2:2","object:B:1:2","object:B:c:2","object:B:d:2","object:A1:A2:2","object:2:x:2","u:2::1","object:2:y:2","object:::0","object:2:z:3","object:2:1","object:2:1","object::0","t2:2:1","t2:2:2",6,"RangeErrorr2","RangeErrorr2","TypeError","TypeError","object:al:b:2","object::hole:2","g","object:got:2:2","object:B:2:2","object:B:c:2","object:B:d:2","object:A1:A2:2","0-0,1-1,2-2"]"#]);
+}
