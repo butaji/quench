@@ -5785,7 +5785,13 @@ fn proxy_reads_root_operands_and_results_through_nested_callbacks() {
                         "symbol={symbol} {phase}"
                     );
                 }
-                assert!(vm.heap.weak_value(key_handle).is_none());
+                // A raw handle names a record id, which a string allocated after the collection may
+                // reuse: the key is gone when its record no longer holds it.
+                assert!(
+                    vm.heap.weak_value(key_handle).is_none()
+                        || vm.heap.string(key).is_some_and(|text| text.host_string() != "entry"),
+                    "symbol={symbol} {phase}"
+                );
                 if let Some(handle) = result_handle {
                     assert!(vm.heap.weak_value(handle).is_none());
                 }
