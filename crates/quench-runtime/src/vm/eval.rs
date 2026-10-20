@@ -214,7 +214,7 @@ impl<H: Host> Vm<H> {
             .flatten()
             .and_then(|bytes| {
                 let text = crate::bytecode::SourceText::Shared(std::sync::Arc::from(source));
-                self.decode_cached_program(&bytes, text, 0, source_name).ok()
+                self.decode_cached_program(bytes, text, 0, source_name).ok()
             });
         let compiled = kept.is_none();
         let residual = match kept {
@@ -318,7 +318,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<crate::PreparedScript, JsError> {
         let parts = [prefix, &*body, suffix];
         if let Some(bytes) = self.host.kept_compiled_program(name, &parts)
-            && let Ok(program) = self.decode_cached_program(&bytes, body.clone(), prefix.len(), name)
+            && let Ok(program) = self.decode_cached_program(bytes, body.clone(), prefix.len(), name)
         {
             return Ok(crate::PreparedScript { program: Rc::new(program) });
         }
@@ -347,7 +347,7 @@ impl<H: Host> Vm<H> {
     /// source, which must be what it compiled from `name` after a `base`-byte prefix, under
     /// the specialization this VM runs.
     fn decode_cached_program(
-        &mut self, bytes: &[u8], text: crate::bytecode::SourceText, base: usize, name: &str,
+        &mut self, bytes: crate::KeptBytes, text: crate::bytecode::SourceText, base: usize, name: &str,
     ) -> Result<crate::ResidualProgram, String> {
         let mut program = crate::ResidualProgram::decode_compact(
             bytes,

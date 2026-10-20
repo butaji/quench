@@ -1269,6 +1269,7 @@ mod tests {
             literal_templates: Vec::new(),
             superinstructions: vec![],
             replay: None,
+            encoded_records: None,
             validated: Default::default(),
         }
     }

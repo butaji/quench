@@ -3674,7 +3674,14 @@ const UNROLL_PROGRAM_BYTECODES: usize = 16_384;
 
 /// Whether `program` is small enough to unroll its innermost loops (`UNROLL_PROGRAM_BYTECODES`).
 fn program_unrolls(program: &ResidualProgram) -> bool {
-    program.functions.iter().map(|function| function.code.len()).sum::<usize>()
+    // A function whose record has not been read yet (compiled again or decoded on first
+    // read) is not counted.
+    program
+        .functions
+        .iter()
+        .filter_map(crate::bytecode::FunctionSlot::record)
+        .map(|function| function.code.len())
+        .sum::<usize>()
         <= UNROLL_PROGRAM_BYTECODES
 }
 
