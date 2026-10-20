@@ -5281,9 +5281,13 @@ impl<H: Host> Vm<H> {
         self.lane_stack.activations = activations;
         // The frames now hold the guards the activations were counted against.
         self.lane_stack.refresh_activation_limit();
+        // The lane continues in the innermost frame, whose register file the general path's
+        // register access names from now on (`lane_enter_frame`).
+        let registers = Registers(self.frames[caller].registers.as_mut_ptr());
+        self.active_registers = registers.0;
         unsafe {
             (*cx).frame = caller;
-            (*cx).registers = Registers(self.frames[caller].registers.as_mut_ptr());
+            (*cx).registers = registers;
             (*cx).this = self.frame_lane_this(caller);
             (*cx).env = Value::DELETED;
             (*cx).capture = std::ptr::null();
