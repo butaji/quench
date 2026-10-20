@@ -271,6 +271,12 @@ const CAPTURE_WALKS: usize = 64;
 /// region a closure-heavy loop creates.
 const FUNCTION_NAME_SHAPES: usize = 64;
 const _: () = assert!(FUNCTION_NAME_SHAPES.is_power_of_two());
+/// Closure templates `Vm::closure_in_realm` remembers, one per function id modulo the count:
+/// the nested functions a closure-heavy region makes again on each call of its parent. A
+/// conflict overwrites the entry, which only costs the displaced function's next closure
+/// the lookups the template saves.
+const CLOSURE_TEMPLATES: usize = 64;
+const _: () = assert!(CLOSURE_TEMPLATES.is_power_of_two());
 const _: () = assert!(CAPTURE_WALKS.is_power_of_two());
 
 /// A remembered capture walk: `depth` layers out from `cache.env`, as `CaptureCache` holds
@@ -1494,6 +1500,10 @@ pub(crate) struct Vm<H> {
     /// closures share their base shape but differ in name, so the shape's last child rarely
     /// answers. Derived from shapes, so field-cache invalidation clears it.
     function_name_shapes: Box<[Option<(u32, Atom, u32)>; FUNCTION_NAME_SHAPES]>,
+    /// The parts of a recorded closure that depend on its function and realm alone
+    /// (`construction::ClosureTemplate`); derived from shapes, so field-cache invalidation
+    /// clears it.
+    closure_templates: Box<[Option<construction::ClosureTemplate>; CLOSURE_TEMPLATES]>,
     /// The shape of an iterator result `{ value, done }` (`Vm::iterator_result`); derived
     /// from shapes, so field-cache invalidation clears it.
     iterator_result_shape: Option<u32>,
@@ -2329,6 +2339,7 @@ impl<H: Host> Vm<H> {
         self.instanceof_constructor_layout = None;
         self.closure_shapes = [None; 2];
         self.function_name_shapes.fill(None);
+        self.closure_templates.fill(None);
         self.iterator_result_shape = None;
         self.regexp_object_shapes = None;
         self.regexp_last_index_layout = None;

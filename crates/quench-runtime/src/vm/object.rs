@@ -694,6 +694,7 @@ impl<H: Host> Vm<H> {
         self.instanceof_constructor_layout = None;
         self.closure_shapes = [None; 2];
         self.function_name_shapes.fill(None);
+        self.closure_templates.fill(None);
         self.iterator_result_shape = None;
         self.regexp_object_shapes = None;
         self.regexp_last_index_layout = None;
