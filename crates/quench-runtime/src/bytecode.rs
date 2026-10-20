@@ -2682,6 +2682,30 @@ pub struct ResidualProgram {
     pub(crate) superinstructions: Vec<Superinstruction>,
     /// How its functions can be compiled again from source, when they can.
     pub(crate) replay: Option<std::rc::Rc<crate::compile::replay::ProgramReplay>>,
+    /// Whether the program is known to be valid (`ValidationProof`).
+    pub(crate) validated: ValidationProof,
+}
+
+/// That a program is valid without validating it: this build's compiler output, compiled and
+/// validated or decoded from its checksummed form by `Runtime::compile_entry`, which hands it
+/// to its embedder unchanged. A clone, which its owner may change, starts unproven.
+#[derive(Debug, Default)]
+pub(crate) struct ValidationProof(std::cell::Cell<bool>);
+
+impl ValidationProof {
+    pub(crate) fn holds(&self) -> bool {
+        self.0.get()
+    }
+
+    pub(crate) fn establish(&self) {
+        self.0.set(true);
+    }
+}
+
+impl Clone for ValidationProof {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
 }
 
 #[cold]
@@ -2857,6 +2881,20 @@ impl ResidualProgram {
     /// ids its table names, in order.
     pub(crate) fn encode_compact(&self) -> (Vec<u8>, Vec<u32>) {
         binary::encode_compact_program(self)
+    }
+
+    /// This program as an application entry's cached form: its own atom ids, its source and a
+    /// checksum (`binary::encode_trusted_program`). Every released record compiles first.
+    pub(crate) fn encode_trusted(&self) -> Vec<u8> {
+        binary::encode_trusted_program(self)
+    }
+
+    /// Decodes `encode_trusted`'s bytes into a program proven valid: this build's compiler
+    /// output, which the host keys by build and whose checksum held.
+    pub(crate) fn decode_trusted(bytes: &[u8]) -> Result<Self, String> {
+        let program = binary::decode_trusted_program(bytes)?;
+        program.validated.establish();
+        Ok(program)
     }
 
     /// Decodes `encode_compact`'s bytes with `intern`'s ids and `text` as the source; the

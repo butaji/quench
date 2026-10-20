@@ -94,8 +94,33 @@ pub(super) fn encode_compact_program(program: &super::ResidualProgram) -> (Vec<u
     (bytes, order)
 }
 
-/// A compact encoding ends with this checksum of the bytes before it, which a decoder checks
-/// before trusting them as the compiler output they encode (`decode_compact_program`).
+/// An entry program's cached form (`ResidualProgram::encode_trusted`): the lossless encoding
+/// under the program's own atom ids, which seed the VM's, followed by its checksum.
+pub(super) fn encode_trusted_program(program: &super::ResidualProgram) -> Vec<u8> {
+    let (mut bytes, _) = encode_program(program, AtomEncoding::Program);
+    let checksum = compact_checksum(&bytes);
+    bytes.extend_from_slice(&checksum.to_le_bytes());
+    bytes
+}
+
+/// `encode_trusted_program`'s bytes, decoded once their checksum holds; the caller proves the
+/// program valid, as this build's compiler output.
+pub(super) fn decode_trusted_program(bytes: &[u8]) -> Result<super::ResidualProgram, String> {
+    decode_program(checksummed_body(bytes)?, None)
+}
+
+/// The bytes before a cached encoding's checksum, when the checksum holds.
+fn checksummed_body(bytes: &[u8]) -> Result<&[u8], String> {
+    let checksum_start = bytes.len().checked_sub(std::mem::size_of::<u64>()).ok_or("truncated residual")?;
+    let (body, checksum) = bytes.split_at(checksum_start);
+    if u64::from_le_bytes(checksum.try_into().unwrap()) != compact_checksum(body) {
+        return Err("residual checksum mismatch".into());
+    }
+    Ok(body)
+}
+
+/// A cached encoding ends with this checksum of the bytes before it, which a decoder checks
+/// before trusting them as the compiler output they encode (`checksummed_body`).
 fn compact_checksum(bytes: &[u8]) -> u64 {
     use std::hash::Hasher;
     let mut hasher = rustc_hash::FxHasher::default();
@@ -439,12 +464,7 @@ pub(super) fn decode_compact_program(
     intern: &mut dyn FnMut(&str) -> u32,
     text: super::SourceText,
 ) -> Result<super::ResidualProgram, String> {
-    let checksum_start = bytes.len().checked_sub(std::mem::size_of::<u64>()).ok_or("truncated residual")?;
-    let (body, checksum) = bytes.split_at(checksum_start);
-    if u64::from_le_bytes(checksum.try_into().unwrap()) != compact_checksum(body) {
-        return Err("residual checksum mismatch".into());
-    }
-    decode_program(body, Some((intern, text)))
+    decode_program(checksummed_body(bytes)?, Some((intern, text)))
 }
 
 fn decode_program(
@@ -935,6 +955,7 @@ fn decode_program(
         literal_templates,
         superinstructions,
         replay: None,
+        validated: Default::default(),
     };
     Ok(program)
 }
