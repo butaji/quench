@@ -1259,6 +1259,35 @@ pub(crate) enum IteratorConsumer {
     Find,
     Some,
 }
+/// The header words of an object with prototype `proto` and inline storage of `shape`, as
+/// `Object::with_property_storage` sets them: derived once by a construct plan, so each
+/// planned construction allocates without encoding the prototype or the storage again.
+#[derive(Clone, Copy)]
+pub(crate) struct InlineObjectHeader {
+    meta: u32,
+    auxiliary: u32,
+}
+
+impl InlineObjectHeader {
+    /// No receiver's header: an unplanned entry's, which no construction reads.
+    pub(crate) const EMPTY: Self = Self {
+        meta: 0,
+        auxiliary: 0,
+    };
+
+    pub(crate) fn of(proto: Value, shape: u32) -> Self {
+        let object = Object::with_property_storage(
+            proto,
+            ValueVec::inline_property_storage(shape),
+            [Value::UNDEFINED; INLINE_PROPERTY_COUNT],
+        );
+        Self {
+            meta: object.meta,
+            auxiliary: object.auxiliary,
+        }
+    }
+}
+
 pub(crate) struct Object {
     /// The prototype's heap index (`PROTO_INDEX_BITS`, with null and undefined sentinels) and
     /// the `OBJECT_*` flags: array, inline storage, and the integrity bits `ValueVec` keeps.
@@ -1884,6 +1913,20 @@ impl Object {
         };
         object.set_properties(properties);
         object
+    }
+
+    /// An object of `header`'s prototype and inline shape holding `inline`: what
+    /// `with_property_storage` makes, from header words derived once.
+    #[inline(always)]
+    pub(crate) fn from_inline_header(
+        header: InlineObjectHeader,
+        inline: [Value; INLINE_PROPERTY_COUNT],
+    ) -> Self {
+        Self {
+            meta: header.meta,
+            auxiliary: header.auxiliary,
+            payload: ObjectPayload { inline },
+        }
     }
 
     pub(crate) fn inline_properties(&self) -> Option<&[Value; INLINE_PROPERTY_COUNT]> {

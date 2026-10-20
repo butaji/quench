@@ -1668,6 +1668,9 @@ pub(crate) struct Vm<H> {
     /// non-writable, non-configurable data property, which it then holds for its lifetime;
     /// rooted so the identity stays meaningful. `Value::NULL` when none.
     instanceof_has_instance_holder: Value,
+    /// `instanceof_has_instance_holder` as a prototype link (`ProtoLink::of`), set with it,
+    /// so the steady `instanceof` compares a constructor's link undecoded.
+    instanceof_has_instance_link: ProtoLink,
     to_fixed_atom: Atom,
     to_precision_atom: Atom,
     runtime_atoms: RuntimeAtoms,
@@ -2520,7 +2523,7 @@ impl<H: Host> Vm<H> {
         self.regexp_last_index_layout = None;
         self.regexp_builtin_layout = None;
         self.regexp_symbol_layouts.clear();
-        self.instanceof_has_instance_holder = Value::NULL;
+        self.set_instanceof_has_instance_holder(Value::NULL);
         self.program_cache_layouts.clear();
         self.program_cache_layouts.push(ProgramCacheLayout {
             shared_uncached_field: ProgramCacheLayout::shared_uncached_field(0, program),
