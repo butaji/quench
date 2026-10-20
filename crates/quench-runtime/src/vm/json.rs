@@ -275,6 +275,11 @@ struct JsonHeapBuilder<'v, H: Host> {
     object_prototype: Value,
     /// The first property store that failed; the parse finishes and then reports it.
     error: Option<JsError>,
+    /// The shape each (shape, key) add made, so objects of one layout, which a JSON text
+    /// repeats, take their shapes without a transition search. Valid within one collection
+    /// epoch, since a full collection may renumber shapes.
+    transitions: rustc_hash::FxHashMap<(u32, Atom), u32>,
+    transitions_epoch: u64,
 }
 
 enum JsonBuildError {
@@ -288,8 +293,10 @@ impl<'v, H: Host> JsonHeapBuilder<'v, H> {
         Self {
             array_prototype: vm.array_prototype_for_realm(globals),
             object_prototype: vm.realm_object_prototype(globals),
+            transitions_epoch: vm.heap.collection_epoch(),
             vm,
             error: None,
+            transitions: Default::default(),
         }
     }
 
@@ -365,10 +372,32 @@ impl<H: Host> JsonBuilder for JsonHeapBuilder<'_, H> {
             .vm
             .heap
             .alloc(Cell::Object(Vm::<H>::empty_object(self.object_prototype)));
+        let shape_of = |vm: &Vm<H>| vm.object_data(object).map(|data| data.shape());
+        let mut shape = shape_of(self.vm);
         for (atom, value) in entries {
+            let epoch = self.vm.heap.collection_epoch();
+            if epoch != self.transitions_epoch {
+                self.transitions.clear();
+                self.transitions_epoch = epoch;
+            }
+            if let Some(from) = shape
+                && let Some(&to) = self.transitions.get(&(from, atom))
+            {
+                self.vm.heap.property_add(object, value, to);
+                shape = Some(to);
+                continue;
+            }
             if let Err(error) = self.vm.set_property(object, atom, value) {
                 self.error.get_or_insert(error);
             }
+            let after = shape_of(self.vm);
+            if let (Some(from), Some(to)) = (shape, after)
+                && self.vm.heap.collection_epoch() == self.transitions_epoch
+                && self.vm.shape_appends_one_slot(from, to)
+            {
+                self.transitions.insert((from, atom), to);
+            }
+            shape = after;
         }
         object
     }
