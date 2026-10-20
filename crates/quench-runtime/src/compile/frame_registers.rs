@@ -12,17 +12,18 @@ const ARGUMENTS_NAME: &str = "arguments";
 use crate::bytecode::initialization;
 use crate::bytecode::{
     WITH_ENTER_BINDING, EvalBindingLocation, FieldLayout, Function, ImmediateRole, Instr, InstructionField, Op,
-    Operand, OperandKind, REGISTER_MASK, Register, Superinstruction, WideInstruction,
+    Operand, OperandKind, REGISTER_MASK, Register, Superinstruction, ThrownValueSlot, WideInstruction,
 };
 
+/// `plain_slots` are `function`'s plain local slots (`Function::plain_local_slots`);
 /// `undefined_constant` is the program's constant index of `undefined`.
 pub(super) fn promote<'a>(
     function: &mut Function,
+    mut eligible: Vec<bool>,
     superinstructions: &[Superinstruction],
     undefined_constant: u32,
     atom_name: impl Fn(usize) -> Option<&'a str>,
 ) {
-    let mut eligible = function.plain_local_slots(superinstructions);
     // A by-name read inside `with` resolves a local through its frame slot.
     if !eligible.contains(&true)
         || function.contains_with_statement(|atom| atom_name(atom) == Some(WITH_ENTER_BINDING))
@@ -37,9 +38,10 @@ pub(super) fn promote<'a>(
         }
     }
     // Parameters arrive in their slots, and these slots are named outside the code: the
-    // `arguments` and self bindings, eval binding sites, handlers' completion slots and the
-    // environment clone plans a `CloneEnv` still runs (capture layout drops unobservable
-    // clones, leaving their plans unreferenced).
+    // `arguments` and self bindings, eval binding sites, handlers' return completion slots
+    // and the environment clone plans a `CloneEnv` still runs (capture layout drops
+    // unobservable clones, leaving their plans unreferenced). A handler's thrown value
+    // follows its slot into a register (`ThrownValueSlot::Register`).
     let parameters = usize::from(function.params).min(eligible.len());
     eligible[..parameters].fill(false);
     let cloned = function
@@ -68,7 +70,7 @@ pub(super) fn promote<'a>(
             function
                 .handlers
                 .iter()
-                .flat_map(|handler| handler.slot.into_iter().chain(handler.return_slot)),
+                .filter_map(|handler| handler.return_slot),
         )
         .chain(
             cloned
@@ -247,6 +249,13 @@ pub(super) fn promote<'a>(
         &mut function.source_positions,
         &old,
     );
+    for handler in function.handlers.iter_mut() {
+        if let Some(ThrownValueSlot::Local(slot)) = handler.slot
+            && let Some(target) = register(usize::from(slot))
+        {
+            handler.slot = Some(ThrownValueSlot::Register(target));
+        }
+    }
     function.code = code;
 }
 

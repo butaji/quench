@@ -20,10 +20,12 @@ impl<H: Host> Vm<H> {
             .heap
             .alloc(Cell::Object(Self::empty_object(Value::NULL)));
         for (key, value) in keys.into_iter().zip(values) {
-            let key = match self.heap.get(key).cloned() {
-                Some(Cell::String(name)) => PropertyKey::string(self.intern_js_atom(&name)),
-                Some(Cell::Symbol(_)) => PropertyKey::symbol(key),
-                _ => continue,
+            let key = if let Some(name) = self.heap.string(key).cloned() {
+                PropertyKey::string(self.intern_js_atom(&name))
+            } else if matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
+                PropertyKey::symbol(key)
+            } else {
+                continue;
             };
             self.set_shape_property(result, key, value)?;
         }
@@ -40,7 +42,7 @@ impl<H: Host> Vm<H> {
         });
         let errors = self.heap.root(errors);
         let result = (|| {
-            let message = self.heap.alloc(Cell::String("All promises were rejected".into()));
+            let message = self.heap.alloc_string("All promises were rejected".into());
             let error = self.construct_error_native(p, Native::AggregateError, &[message])?;
             self.with_call_roots([error], |vm| {
                 let errors = vm.heap.root_value(errors).unwrap_or(Value::UNDEFINED);

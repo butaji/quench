@@ -1603,8 +1603,8 @@ impl<H: Host> Vm<H> {
                 if value.is_null() {
                     return nullable;
                 }
-                match self.heap.get(value) {
-                    Some(Cell::Function {
+                match self.heap.function(value) {
+                    Some(FunctionRecord {
                         kind: FunctionKind::User(program, function),
                         ..
                     }) => self.programs.wasm_signatures(*program).is_some_and(|pool| {
@@ -1612,7 +1612,7 @@ impl<H: Host> Vm<H> {
                             pool.matches_declaration(actual, declarations, index, exact)
                         })
                     }),
-                    Some(Cell::Function {
+                    Some(FunctionRecord {
                         kind: FunctionKind::Native(Native::WasmHost),
                         ..
                     }) => self
@@ -1701,6 +1701,43 @@ mod tests {
             }];
             GLOBALS
         }
+    }
+
+    #[test]
+    fn javascript_and_wasm_jit_share_one_vm_and_backend() {
+        let script = crate::Engine::compile(crate::ExecutionRequest::script(
+            "function plusOne(value) { return value + 1; } for (let i = 0; i < 40; i++) plusOne(i);",
+            "shared-js-wasm-jit.js",
+        ))
+        .unwrap();
+        let wasm = crate::Engine::lower_wasm_module(
+            "shared-js-wasm-jit-wasm",
+            0,
+            [crate::WasmFunctionBody {
+                ty: crate::WasmCallableType::Embedded(crate::WasmSignature {
+                    params: vec![],
+                    results: vec![crate::WasmType::I32],
+                }),
+                locals: vec![],
+                operators: [Operator::I32Const { value: 42 }, Operator::End]
+                    .into_iter()
+                    .map(Ok),
+            }],
+        )
+        .unwrap();
+
+        let mut vm = Vm::new(crate::SystemHost);
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        vm.execute(&script).unwrap();
+        assert!(matches!(
+            vm.programs
+                .js_tier(super::super::program_store::ProgramId::MAIN, 1),
+            Some(super::super::program_store::JsTierState::Compiled(_))
+        ));
+        let js_mapped_bytes = vm.programs.jit_mapped_bytes();
+        assert!(js_mapped_bytes > 0);
+        assert_eq!(vm.execute_wasm_i32(&wasm, &[]).unwrap(), Some(42));
+        assert!(vm.programs.jit_mapped_bytes() > js_mapped_bytes);
     }
 
     #[test]
@@ -3341,7 +3378,75 @@ mod tests {
     }
 
     #[test]
+    fn compiled_wasm_unrolled_loop_runs_every_trip_count() {
+        // A small program's innermost loop runs as copies of its body; every trip count,
+        // a multiple of the copies or not, takes the same values as the loop once.
+        let signature = crate::WasmSignature {
+            params: vec![crate::WasmType::I32],
+            results: vec![crate::WasmType::I32],
+        };
+        let module = crate::Engine::lower_wasm_module_for(
+            crate::ExecutionMode::Compiled,
+            "compiled-wasm-unrolled-loop",
+            [crate::WasmFunctionBody {
+                ty: crate::WasmCallableType::Embedded(signature),
+                locals: vec![wasmparser::ValType::I32, wasmparser::ValType::I32],
+                operators: vec![
+                    Operator::Block { blockty: wasmparser::BlockType::Empty },
+                    Operator::LocalGet { local_index: 0 },
+                    Operator::I32Eqz,
+                    Operator::BrIf { relative_depth: 0 },
+                    Operator::Loop { blockty: wasmparser::BlockType::Empty },
+                    Operator::LocalGet { local_index: 2 },
+                    Operator::LocalGet { local_index: 1 },
+                    Operator::I32Add,
+                    Operator::LocalSet { local_index: 2 },
+                    Operator::LocalGet { local_index: 1 },
+                    Operator::I32Const { value: 1 },
+                    Operator::I32Add,
+                    Operator::LocalTee { local_index: 1 },
+                    Operator::LocalGet { local_index: 0 },
+                    Operator::I32LtU,
+                    Operator::BrIf { relative_depth: 0 },
+                    Operator::End,
+                    Operator::End,
+                    Operator::LocalGet { local_index: 2 },
+                    Operator::End,
+                ]
+                .into_iter()
+                .map(Ok),
+            }],
+            &crate::WasmTypes::default(),
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+        )
+        .unwrap();
+        let mut vm = Vm::new(crate::SystemHost);
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        let instance = vm.instantiate_wasm_module(&module).unwrap();
+        for trips in 0..13 {
+            assert_eq!(
+                vm.invoke_wasm(&instance, 0, &[crate::WasmValue::I32(trips)]).unwrap(),
+                Some(crate::WasmValue::I32(trips * (trips - 1) / 2)),
+                "{trips} trips"
+            );
+        }
+        let program = vm
+            .programs
+            .find_shared(&module.program)
+            .expect("registered Wasm program");
+        let compiled = vm.programs.compiled(program).flatten().expect("compiled loop");
+        assert_eq!(compiled.native_entries(0), Some(13));
+    }
+
+    #[test]
     fn compiled_wasm_fallback_caller_keeps_native_callee_entries() {
+        crate::wasm::COMPILED_CALLS_KEPT_FOR_TEST.with(|kept| kept.set(true));
         let caller_signature = crate::WasmSignature {
             params: vec![],
             results: vec![crate::WasmType::I32],
@@ -3467,6 +3572,7 @@ mod tests {
 
     #[test]
     fn compiled_wasm_known_fallback_offsets_defined_index_by_import_count() {
+        crate::wasm::COMPILED_CALLS_KEPT_FOR_TEST.with(|kept| kept.set(true));
         let signature = crate::WasmSignature {
             params: vec![],
             results: vec![crate::WasmType::I32],
@@ -3795,7 +3901,7 @@ mod tests {
         let mut vm = Vm::new(crate::SystemHost);
         let script = crate::Engine::specialize("0;", "start-owner.js").unwrap();
         vm.execute(&script).unwrap();
-        let host_value = vm.heap.alloc(Cell::String("start-host-root".into()));
+        let host_value = vm.heap.alloc_string("start-host-root".into());
         let host_root = vm.root(host_value);
         let roots = vm.heap.root_count_for_test();
         // A module carrying an instantiation effect cannot bypass that effect
@@ -3819,7 +3925,7 @@ mod tests {
             assert_eq!(vm.heap.root_count_for_test(), roots);
             vm.collect_now(&script);
             assert_eq!(vm.root_value(host_root), Some(host_value));
-            assert!(matches!(vm.heap.get(host_value), Some(Cell::String(_))));
+            assert!(vm.heap.is_string(host_value));
         }
         vm.release_root(host_root);
     }
@@ -3829,7 +3935,7 @@ mod tests {
         let script = crate::Engine::specialize("0;", "shared-root.js").unwrap();
         let mut vm = Vm::new(crate::SystemHost);
         vm.execute(&script).unwrap();
-        let value = vm.heap.alloc(Cell::String("host-owned".into()));
+        let value = vm.heap.alloc_string("host-owned".into());
         let root = vm.root(value);
         let module = crate::Engine::lower_wasm_i32_module(
             "shared-entries",
@@ -3861,8 +3967,7 @@ mod tests {
             assert_eq!(vm.programs.len(), 2);
             vm.collect_now(&script);
             assert_eq!(vm.root_value(root), Some(value));
-            assert!(matches!(vm.heap.get(value), Some(Cell::String(text))
-                if text.host_string() == "host-owned"));
+            assert!(vm.heap.string(value).is_some_and(|text| text.host_string() == "host-owned"));
         }
         // A deliberate new JS execution retains its existing reset contract.
         vm.execute(&script).unwrap();
@@ -4560,12 +4665,12 @@ mod tests {
         module.program = Rc::new(ResidualProgram::read_binary(&path).unwrap());
         std::fs::remove_file(path).unwrap();
         let mut invalid = (*module.program).clone();
-        let address = invalid.functions[0]
+        let address = invalid.function(0)
             .code
             .iter()
             .map(|packed| {
                 if packed.is_wide() {
-                    invalid.functions[0].wide[packed.wide_index()]
+                    invalid.function(0).wide[packed.wide_index()]
                 } else {
                     packed.as_wide()
                 }
@@ -5165,7 +5270,7 @@ mod tests {
         let module = root_first_hot_fallback_fixture();
         let function = module.select_function(0).unwrap();
         let program_code = &module.module.program;
-        let root_code = &program_code.functions[0];
+        let root_code = &program_code.function(0);
         let root_instructions = root_code
             .code
             .iter()
@@ -5323,7 +5428,7 @@ mod tests {
             .map(|(params, locals, result, ops)| (params, locals, result, ops.into_iter().map(Ok))),
         )
         .unwrap();
-        let root_code = &module.module.program.functions[0];
+        let root_code = &module.module.program.function(0);
         let root_instructions = root_code
             .code
             .iter()

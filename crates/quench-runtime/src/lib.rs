@@ -27,8 +27,8 @@ pub use wasm::{
     WasmTag, WasmTrap, WasmType, WasmTypes, WasmValue,
 };
 
-pub use bytecode::ResidualProgram;
-pub use compile::{Diagnostic, Engine};
+pub use bytecode::{KeptBytes, ResidualProgram};
+pub use compile::{Diagnostic, Engine, set_compile_phase_boundary};
 pub use heap::{RootId, HeapMemoryComposition};
 pub use host::{
     CapabilityId, Host, HostContext, HostExecutionContext, HostGlobal, ModuleLoadError, ModuleLoadErrorKind,
@@ -52,7 +52,7 @@ const _: fn() = || {
 
 mod api;
 pub use api::{
-    BufferStorage, BuiltinBrand, ValueType, BuiltinData, CollectionPreview, PromiseSnapshot, ExecutionRequest, HostFunction, HostFunctionId, HostWeakRoot,
+    BufferStorage, BuiltinBrand, DescriptorFields, ValueType, BuiltinData, CollectionPreview, PromiseSnapshot, ExecutionRequest, HostFunction, HostFunctionId, HostWeakRoot,
     PreparedScript, NativeArithmetic, NativeContext, PromiseRejectionEvent, RootedError, RootedIterator, Runtime,
     CompiledScript, RuntimeError, SourceKind, ErrorSourcePosition, SourceStackFrame, SynchronousModule,
     DeserializerDelegate, SerializerDelegate,

@@ -145,7 +145,7 @@ impl<H: Host> Vm<H> {
         }
         Ok(self
             .heap
-            .alloc(Cell::String(value.to_str_radix(radix as u32).into())))
+            .alloc_string(value.to_str_radix(radix as u32).into()))
     }
 
     fn bigint_as_n(

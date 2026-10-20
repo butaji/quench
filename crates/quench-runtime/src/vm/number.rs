@@ -277,7 +277,7 @@ impl<H: Host> Vm<H> {
             }
             return Ok(self
                 .heap
-                .alloc(Cell::String(number_to_decimal(number).into())));
+                .alloc_string(number_to_decimal(number).into()));
         }
         let digits = digits_value
             .map(|value| self.number_format_digits(p, value))
@@ -311,7 +311,7 @@ impl<H: Host> Vm<H> {
             },
             _ => unreachable!(),
         };
-        Ok(self.heap.alloc(Cell::String(text.into())))
+        Ok(self.heap.alloc_string(text.into()))
     }
 
     fn number_format_digits(
@@ -375,7 +375,7 @@ impl<H: Host> Vm<H> {
                 normalize_exponent_sign(&scientific)
             }
         };
-        Ok(self.heap.alloc(Cell::String(text.into())))
+        Ok(self.heap.alloc_string(text.into()))
     }
 
     pub(super) fn call_number_native(

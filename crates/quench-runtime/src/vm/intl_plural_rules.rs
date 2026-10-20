@@ -414,7 +414,7 @@ impl<H: Host> Vm<H> {
             quench_intl::plural_category_decimal(&locale, &rule_type, &number)
         }
         .unwrap_or("other");
-        Ok(self.heap.alloc(Cell::String(category.into())))
+        Ok(self.heap.alloc_string(category.into()))
     }
 
     fn plural_rules_select_range(
@@ -439,7 +439,7 @@ impl<H: Host> Vm<H> {
         let category =
             quench_intl::plural_category_range_decimal(&locale, &rule_type, &start, &end)
                 .unwrap_or("other");
-        Ok(self.heap.alloc(Cell::String(category.into())))
+        Ok(self.heap.alloc_string(category.into()))
     }
 
     fn round_plural_rules_number(&self, this: Value, number: f64) -> String {
@@ -546,7 +546,7 @@ impl<H: Host> Vm<H> {
             ("type", rule_type.clone()),
             ("notation", notation.clone()),
         ] {
-            let value = self.heap.alloc(Cell::String(value.into()));
+            let value = self.heap.alloc_string(value.into());
             self.set_plural_result_property(result, key, value)?;
         }
         for (key, value) in [
@@ -576,7 +576,7 @@ impl<H: Host> Vm<H> {
         let categories = quench_intl::plural_categories(&locale, &rule_type)
             .unwrap_or_else(|| vec!["other"])
             .into_iter()
-            .map(|category| self.heap.alloc(Cell::String(category.into())))
+            .map(|category| self.heap.alloc_string(category.into()))
             .collect::<Vec<_>>();
         let categories = self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
@@ -614,14 +614,14 @@ impl<H: Host> Vm<H> {
             let value = self
                 .hidden_string(this, slot)
                 .unwrap_or_else(|| default.into());
-            let value = self.heap.alloc(Cell::String(value.into()));
+            let value = self.heap.alloc_string(value.into());
             self.set_plural_result_property(result, key, value)?;
         }
         if notation == "compact" {
             let display = self
                 .hidden_string(this, PLURAL_RULES_COMPACT_DISPLAY_SLOT)
                 .unwrap_or_else(|| "short".into());
-            let display = self.heap.alloc(Cell::String(display.into()));
+            let display = self.heap.alloc_string(display.into());
             self.set_plural_result_property(result, "compactDisplay", display)?;
         }
         Ok(result)

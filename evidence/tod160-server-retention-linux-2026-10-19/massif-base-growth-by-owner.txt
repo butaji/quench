@@ -1,0 +1,25 @@
+   +1229 KB      1974 KB  quench_node::modules::buffer_codec::encode_units <- quench_node::modules::http_shared_vm::operations::response_chunk_bytes <- quench_node::modules::http_shared_vm::operations::response_write
+    +566 KB       909 KB  extend_trusted<(alloc::string::String, alloc::string::String), alloc::alloc::Global, core: <- spec_extend<(alloc::string::String, alloc::string::String), core::iter::adapters::map::Map <- extend<(alloc::string::String, alloc::string::String), alloc::alloc::Global, core::iter::a
+    +420 KB      1177 KB  ::reserve_rehash:: <- reserve <- find_or_find_insert_index
+    +272 KB       544 KB  quench_node::modules::async_hooks_shared_vm::create_context <- quench_node::modules::shared_event_loop::queue_next_tick <- quench_node::modules::process_shared_vm::next_tick
+    +128 KB       448 KB  quench_node::modules::fs_shared_vm::read_stream_read <- run_host_function <- ::call_host_function
+    +104 KB       186 KB  new <- {closure#0} <- {closure#0}
+    +104 KB       167 KB  ::spec_to_string <- embedding_to_string <- ::to_string
+     +76 KB       122 KB  fold<(alloc::string::String, alloc::string::String), alloc::vec::into_iter::IntoIter, quen <- for_each<core::iter::adapters::map::Map, alloc::vec::{impl#22}::extend_trusted::{closure_e <- extend_trusted<(alloc::string::String, alloc::string::String), alloc::alloc::Global, core:
+     +64 KB      1798 KB  reserve <- reserve <- extend_with
+     +57 KB       231 KB  shrink_to_fit <- shrink_to_fit <- quench_runtime::vm::object::derive_shape_lookup_index
+     +46 KB       849 KB  in 962 places, all below massif's threshold
+     +43 KB       105 KB  quench_runtime::vm::object::derive_shape_lookup_index <- {closure#0} <- {closure#0}
+     +22 KB        80 KB  new <- ::extras_mut
+     +16 KB        85 KB  push_mut <- push <- initialize_activation_bindings
+     +16 KB        91 KB  ::promote_frame_environment <- ::capture_binding_environment <- step
+      +9 KB        52 KB  ::grow_one
+      +8 KB        66 KB  in 18 places, all below massif's threshold
+      +8 KB       203 KB  ascii_with <- ::from_str <- ::string_rooted
+      +5 KB       212 KB  from_exact_iter<quench_runtime::heap::cell::EnvironmentSlot, core::iter::adapters::map::Ma <- from_values<core::iter::adapters::map::Map<core::iter::adapters::enumerate::Enumerate, que <- ::promote_frame_environment
+      +4 KB        20 KB  ascii_with <- ::from_str
+      +4 KB        23 KB  in 2 places, all below massif's threshold
+      +3 KB        79 KB  in 17 places, all below massif's threshold
+      +1 KB         6 KB  ::promote_frame_environment
+      +1 KB        33 KB  try_from_fn <- try_from_slots <- ::clone_environment_slots
+      +1 KB        38 KB  from_exact_iter<quench_runtime::heap::cell::EnvironmentSlot, core::iter::adapters::map::Ma <- from_values <- <quench_runtime::heap::cell::EnvironmentSlots as core::convert::From>::from

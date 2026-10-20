@@ -60,7 +60,7 @@ pub(super) const WASM_ACTIVATION_LIMIT: usize = crate::stack::MAX_GUEST_CALL_DEP
 
 impl GeneralCodeCursor {
     fn new(program_id: ProgramId, program: &ResidualProgram, function: u32) -> Self {
-        let function_code = &program.functions[function as usize];
+        let function_code = &program.function(function as usize);
         let decoded = function_code
             .decoded
             .on_entry(&function_code.code, &function_code.wide)
@@ -108,7 +108,7 @@ impl<H: Host> Vm<H> {
     ) -> GeneralCodeCursor {
         GeneralCodeCursor {
             lane: if lane && self.lane_admits(program) {
-                self.lane_view(program_id, function)
+                self.entry_lane_view(program_id, function)
             } else {
                 std::ptr::null()
             },
@@ -234,7 +234,7 @@ impl<H: Host> Vm<H> {
         // against the live guest-call budget.
         let call_guard = crate::stack::GuestCallGuard::enter()
             .map_err(|()| JsError::wasm_trap_error(crate::WasmTrap::CallStackExhausted))?;
-        let function = &p.functions[id as usize];
+        let function = &p.function(id as usize);
         let program = self.active_program;
         let with_base = self.with_stack.len();
         let mut frame = self
@@ -282,7 +282,7 @@ impl<H: Host> Vm<H> {
         id: u32,
         registers: &[Value],
     ) {
-        debug_assert_eq!(p.functions[id as usize].locals, 0);
+        debug_assert_eq!(p.function(id as usize).locals, 0);
         let program = self.active_program;
         let with_base = self.with_stack.len();
         let mut frame = self
@@ -385,7 +385,7 @@ impl<H: Host> Vm<H> {
             } => Ok(FrameOutcome::Await {
                 value,
                 destination,
-                frame: Some(*frame),
+                frame: Some(frame),
             }),
             FrameOutcome::Yield { .. } => {
                 Err(JsError("yield requires generator continuation".into()))
@@ -407,7 +407,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         context: CallContext,
     ) -> Result<usize, JsError> {
-        let function = &p.functions[id as usize];
+        let function = &p.function(id as usize);
         if id != super::ROOT_FUNCTION_ID && function.plain_activation(p) {
             self.activate_plain_frame(p, id, function, parent, this, args, context)
         } else {
@@ -417,10 +417,25 @@ impl<H: Host> Vm<H> {
 
     /// `activate_user_frame` for a function whose static layout describes its whole
     /// activation (`Function::plain_activation`): every local starts undefined because every
-    /// parameter lives in a register, `this` is the coerced receiver, and no implicit binding,
-    /// rest array or `arguments` object exists.
+    /// parameter lives in a register, `this` is the coerced receiver or an arrow's lexical
+    /// one, and no implicit binding, rest array or `arguments` object exists.
     #[inline(always)]
     #[allow(clippy::too_many_arguments)]
+    /// The `this` a plain activation of `function` binds: an arrow's from its environment
+    /// `parent` (the receiver where none is bound), uncoerced as every arrow frame's is, else
+    /// the coerced receiver.
+    pub(super) fn lexical_activation_this(
+        &mut self,
+        function: &crate::bytecode::Function,
+        parent: Value,
+        this: Value,
+    ) -> Result<Value, JsError> {
+        if function.is_arrow {
+            return Ok(self.captured_lexical_this(parent).unwrap_or(this));
+        }
+        self.call_this_value(this, function.strict)
+    }
+
     fn activate_plain_frame(
         &mut self,
         p: &ResidualProgram,
@@ -433,7 +448,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<usize, JsError> {
         self.profile
             .function(self.active_program.raw(), id as usize);
-        let this = self.call_this_value(this, function.strict)?;
+        let this = self.lexical_activation_this(function, parent, this)?;
         let mut frame = self.pooled_frame();
         let local_count = if function.call_plan(p).addresses_locals {
             usize::from(function.locals)
@@ -505,12 +520,12 @@ impl<H: Host> Vm<H> {
     ) -> Result<usize, JsError> {
         self.profile
             .function(self.active_program.raw(), id as usize);
-        if p.functions[id as usize].parameter_eval_arguments_error {
+        if p.function(id as usize).parameter_eval_arguments_error {
             return Err(self
                 .syntax_error_result(p, "arguments binding is not allowed in function parameters")
                 .expect_err("syntax_error_result must throw"));
         }
-        let function = &p.functions[id as usize];
+        let function = &p.function(id as usize);
         let mut frame = self.pooled_frame();
         self.bind_activation_arguments(p, &mut frame, function, context, args)?;
         frame.function = id;
@@ -588,12 +603,12 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         self.profile
             .function(self.active_program.raw(), id as usize);
-        if p.functions[id as usize].parameter_eval_arguments_error {
+        if p.function(id as usize).parameter_eval_arguments_error {
             return Err(self
                 .syntax_error_result(p, "arguments binding is not allowed in function parameters")
                 .expect_err("syntax_error_result must throw"));
         }
-        let function = &p.functions[id as usize];
+        let function = &p.function(id as usize);
         let placeholder = self.pooled_frame();
         let old = std::mem::replace(&mut self.frames[frame_index], placeholder);
         self.with_stack.truncate(old.with_base);
@@ -698,7 +713,7 @@ impl<H: Host> Vm<H> {
         f: usize,
     ) -> Result<Value, JsError> {
         let frame = &self.frames[f];
-        let function = &p.functions[frame.function as usize];
+        let function = &p.function(frame.function as usize);
         let slot = usize::from(
             function
                 .arguments_slot
@@ -709,6 +724,39 @@ impl<H: Host> Vm<H> {
         let arguments = self.activation_arguments_object(function, context, &args)?;
         self.frames[f].locals[slot] = arguments;
         Ok(arguments)
+    }
+
+    /// `ArgumentsLength` (no `key`) or `ArgumentGet` of `key` on `binding`, the value of
+    /// frame `f`'s `arguments` binding. An unmaterialized binding answers its length and the
+    /// indices it holds from the values the frame kept, as the object made on entry would;
+    /// any other key materializes it (`materialize_activation_arguments`). Any other value is
+    /// read as `GetField` of `length` and `GetIndex` read it.
+    pub(super) fn read_arguments_binding(
+        &mut self,
+        p: &ResidualProgram,
+        f: usize,
+        mut binding: Value,
+        key: Option<Value>,
+    ) -> Result<Value, JsError> {
+        if binding == Value::UNMATERIALIZED_ARGUMENTS {
+            let kept = &self.frames[f].original_arguments;
+            match key {
+                None => return Ok(Value::number(kept.len() as f64)),
+                Some(key) => {
+                    if let Some(value) = self
+                        .array_index_key(key)
+                        .and_then(|index| kept.get(index as usize))
+                    {
+                        return Ok(*value);
+                    }
+                }
+            }
+            binding = self.materialize_activation_arguments(p, f)?;
+        }
+        match key {
+            None => self.get_property(p, binding, self.length_atom),
+            Some(key) => self.get_index(p, binding, key),
+        }
     }
 
     /// Copies a program root activation's module import bindings into its locals or, for a
@@ -976,18 +1024,23 @@ impl<H: Host> Vm<H> {
         let state = &mut *self.frames[frame];
         let selective = program
             .as_ref()
-            .and_then(|program| program.functions.get(state.function as usize))
+            .and_then(|program| program.function_get(state.function as usize))
             .and_then(|function| function.selective_capture_slots.as_deref());
         let slots = match selective {
-            Some(captured) => crate::heap::EnvironmentSlots::from_values(
-                state.locals.iter_mut().enumerate().map(|(slot, value)| {
-                    if u16::try_from(slot).is_ok_and(|slot| captured.binary_search(&slot).is_ok()) {
-                        std::mem::replace(value, Value::DELETED)
-                    } else {
-                        Value::DELETED
-                    }
-                }),
-            ),
+            // `captured` is sorted, so one merge pass over the locals finds its slots.
+            Some(captured) => {
+                let mut pending = captured.iter().copied().peekable();
+                crate::heap::EnvironmentSlots::from_values(state.locals.iter_mut().enumerate().map(
+                    |(slot, value)| {
+                        while pending.next_if(|captured| usize::from(*captured) < slot).is_some() {}
+                        if pending.next_if(|captured| usize::from(*captured) == slot).is_some() {
+                            std::mem::replace(value, Value::DELETED)
+                        } else {
+                            Value::DELETED
+                        }
+                    },
+                ))
+            }
             None => {
                 let slots = crate::heap::EnvironmentSlots::from_values(state.locals.iter().copied());
                 state.locals.clear();
@@ -1035,7 +1088,7 @@ impl<H: Host> Vm<H> {
             .environment_bindings(source)
             .is_some_and(Vec::is_empty)
             && self.programs.residual(program).is_some_and(|p| {
-                p.functions.get(function as usize).is_some_and(|function| {
+                p.function_get(function as usize).is_some_and(|function| {
                     function.names_resolve_statically(&p.functions, &p.atoms)
                 })
             });
@@ -1139,6 +1192,7 @@ impl<H: Host> Vm<H> {
     /// `fixed_this` itself.
     pub(super) fn recycle_frame(frame: &mut Frame) {
         frame.context = CallContext::Internal;
+        frame.js_jit_interpreter_started = None;
         frame.original_arguments.clear();
         frame.with_objects.clear();
         frame.dynamic_bindings.clear();
@@ -1277,14 +1331,23 @@ impl<H: Host> Vm<H> {
             // A supported native function still returns through the ordinary
             // Return instruction, preserving the dispatch loop's frame and
             // constructor unwind path. Guard misses leave pc at zero.
-            if pc == 0
-                && self.execution_mode == ExecutionMode::Compiled
-                && let Some((return_pc, return_register, value)) =
-                    self.js_jit_at_entry(p, frame)
-            {
-                self.write(frame, return_register, value);
-                pc = return_pc;
-                continue;
+            if pc == 0 && self.execution_mode == ExecutionMode::Compiled {
+                if let Some((return_pc, return_register, value)) = self.js_jit_at_entry(p, frame) {
+                    self.write(frame, return_register, value);
+                    pc = return_pc;
+                    continue;
+                }
+                let (program_id, function_id) =
+                    (self.frames[frame].program, self.frames[frame].function);
+                self.programs
+                    .record_js_jit_fallback_entry(program_id, function_id);
+                if p.kind != crate::bytecode::ProgramKind::Wasm
+                    && self.programs.js_jit_diagnostics_enabled()
+                    && self.frames[frame].js_jit_interpreter_started.is_none()
+                {
+                    self.frames[frame].js_jit_interpreter_started =
+                        Some(std::time::Instant::now());
+                }
             }
             if Self::lane_runs(cursor.lane, pc) {
                 pc = self.run_fast_lane(
@@ -1337,7 +1400,7 @@ impl<H: Host> Vm<H> {
                                 Some(v) if v.is_null() => "null",
                                 Some(v) if v.as_bool().is_some() => "bool",
                                 Some(v) => match self.heap.get(v) {
-                                    Some(Cell::String(_)) => "str",
+                                    _ if self.heap.is_string(v)  => "str",
                                     Some(Cell::BigInt(_)) => "bigint",
                                     _ => "obj",
                                 },
@@ -1371,8 +1434,11 @@ impl<H: Host> Vm<H> {
                         id: executing_program,
                         retained: current_program.take(),
                     };
+                    // The loop's entry program, as at every unwind: it names the program of
+                    // each frame that executes no retained one, which the executing residual
+                    // `p` does not once a pending call of another program unwinds.
                     let unwound = self.unwind_general_loop(
-                        p,
+                        entry_program,
                         frame,
                         pc + 1,
                         pc as u32,
@@ -1670,7 +1736,22 @@ impl<H: Host> Vm<H> {
                 _ => self.step(p, frame, ins, &mut pc, allow_inline_calls),
             };
             match step {
-                Ok(StepResult::Return(mut value)) => loop {
+                Ok(StepResult::Return(mut value)) => {
+                    let completion = {
+                        let completed = &mut self.frames[frame];
+                        completed.js_jit_interpreter_started.take().map(|started| {
+                            (
+                                completed.program,
+                                completed.function,
+                                u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX),
+                            )
+                        })
+                    };
+                    if let Some((program, function, elapsed_ns)) = completion {
+                        self.programs
+                            .record_js_jit_interpreter_completion(program, function, elapsed_ns);
+                    }
+                    loop {
                     if let Some(mut pending) = pending_calls.pop() {
                         debug_assert_eq!(frame, pending.caller + 1);
                         let completed_frame = self.frames.pop().unwrap();
@@ -1723,6 +1804,7 @@ impl<H: Host> Vm<H> {
                     self.frames[frame].pc = pc;
                     self.frames[frame].pc_is_resume = true;
                     return Ok(FrameOutcome::Complete(value));
+                    }
                 },
                 Ok(StepResult::Continue) => {}
                 Ok(StepResult::PushFrame {
@@ -1921,7 +2003,7 @@ impl<H: Host> Vm<H> {
         if wasm && error.wasm_exception().is_none() && !error.is_javascript_exception() {
             return Err(error);
         }
-        let handler = program.functions[function].handler_at(throwing_pc);
+        let handler = program.function(function).handler_at(throwing_pc);
         let Some(handler) = handler else {
             let mut error = error;
             error.capture_source_location(program, function as u32, throwing_pc);
@@ -1929,12 +2011,20 @@ impl<H: Host> Vm<H> {
         };
         let with_depth = self.frames[frame].with_base + usize::from(handler.with_depth);
         self.with_stack.truncate(with_depth);
-        if let Some(slot) = handler.slot {
-            let value = self.thrown_value_for(program, error);
-            if wasm {
-                self.frames[frame].locals[usize::from(slot)] = value;
-            } else {
-                self.initialize_handler_binding(program, frame, slot, value)?;
+        match handler.slot {
+            None => {}
+            Some(crate::bytecode::ThrownValueSlot::Local(slot)) => {
+                let value = self.thrown_value_for(program, error);
+                if wasm {
+                    self.frames[frame].locals[usize::from(slot)] = value;
+                } else {
+                    self.initialize_handler_binding(program, frame, slot, value)?;
+                }
+            }
+            // A promoted binding is a plain local, which no environment captures.
+            Some(crate::bytecode::ThrownValueSlot::Register(register)) => {
+                let value = self.thrown_value_for(program, error);
+                self.frames[frame].registers[usize::from(register)] = value;
             }
         }
         Ok(handler.target as usize)

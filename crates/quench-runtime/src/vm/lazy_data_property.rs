@@ -157,10 +157,16 @@ impl<H: Host> Vm<H> {
         self.lazy_member(getter).map(|_| getter)
     }
 
+    /// Whether `holder`'s own property `key` is still a lazy data property: its group has not
+    /// materialized and script has not replaced it.
+    pub(super) fn is_pending_lazy_data_property(&self, holder: Value, key: PropertyKey) -> bool {
+        self.lazy_data_accessor(holder, key).is_some()
+    }
+
     /// The member environment of `value` when it is a lazy data property's accessor.
     fn lazy_member(&self, value: Value) -> Option<Value> {
-        match self.heap.get(value) {
-            Some(Cell::Function {
+        match self.heap.function(value) {
+            Some(FunctionRecord {
                 kind: FunctionKind::Native(Native::LazyDataProperty),
                 env,
                 ..
@@ -178,7 +184,7 @@ impl<H: Host> Vm<H> {
     /// A member's key as a property key: its string's atom, or the symbol itself.
     fn lazy_member_key(&mut self, key: Value) -> Result<PropertyKey, JsError> {
         match self.heap.get(key).cloned() {
-            Some(Cell::String(name)) => Ok(PropertyKey::string(self.intern_js_atom(&name))),
+            _ if let Some(name) = self.heap.string(key).cloned()  => Ok(PropertyKey::string(self.intern_js_atom(&name))),
             Some(Cell::Symbol(_)) => Ok(PropertyKey::symbol(key)),
             _ => Err(JsError(
                 "lazy data property key is a string or symbol".into(),

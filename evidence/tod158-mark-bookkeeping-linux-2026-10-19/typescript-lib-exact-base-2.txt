@@ -1,0 +1,2 @@
+js3/typescript-lib               speed x0.964 wins 0/2  RSS   254.2 ->   253.8 MB  wall 587.6s
+== js3       speed geomean x0.964  RSS ratio geomean x0.999  (1 workloads)

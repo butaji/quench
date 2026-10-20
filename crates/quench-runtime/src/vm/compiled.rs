@@ -39,7 +39,6 @@ use cranelift_codegen::ir::{
     immediates::{Ieee32, Ieee64},
     types,
 };
-use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use std::cell::UnsafeCell;
 use std::rc::{Rc, Weak};
@@ -1112,8 +1111,8 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
                         signature.results.first().copied(),
                     )
                 };
-                let same_program_function = match vm.heap.get(callee) {
-                    Some(Cell::Function {
+                let same_program_function = match vm.heap.function(callee) {
+                    Some(FunctionRecord {
                         kind: crate::heap::FunctionKind::User(target_program, function),
                         env,
                         ..
@@ -1654,8 +1653,8 @@ fn cached_direct_reference<H: Host>(
     if element != cache.target || vm.heap.weak_value(cache.target_weak) != Some(element) {
         return None;
     }
-    match vm.heap.get(element) {
-        Some(Cell::Function {
+    match vm.heap.function(element) {
+        Some(FunctionRecord {
             kind: crate::heap::FunctionKind::User(program, function),
             env,
             ..
@@ -1687,8 +1686,8 @@ fn reference_target_matches<H: Host>(
     env: Value,
 ) -> bool {
     matches!(
-        vm.heap.get(target),
-        Some(Cell::Function {
+        vm.heap.function(target),
+        Some(FunctionRecord {
             kind: crate::heap::FunctionKind::User(target_program, target_function),
             env: target_env,
             ..
@@ -2219,6 +2218,9 @@ pub(super) struct CompiledJsFunction {
     params: usize,
     mapped_bytes: usize,
     return_constants: Vec<(u32, u32)>,
+    field_argument: Option<super::js_compiled::JsJitFieldArgument>,
+    capture_argument: Option<super::js_compiled::JsJitCaptureArgument>,
+    capture_arguments: Vec<super::js_compiled::JsJitCaptureArgument>,
     #[cfg(test)]
     native_entries: std::cell::Cell<u64>,
 }
@@ -2226,19 +2228,61 @@ pub(super) struct CompiledJsFunction {
 #[derive(Clone, Copy)]
 enum CompiledJsEntry {
     Number(unsafe extern "C" fn(*const f64) -> f64),
+    Int32Identity {
+        entry: unsafe extern "C" fn(*const f64) -> f64,
+        return_pc: u32,
+    },
+    CaptureNumber(unsafe extern "C" fn(f64) -> f64),
+    NumberInterruptible(
+        unsafe extern "C" fn(*const f64, *const std::sync::atomic::AtomicBool, *mut u32) -> f64,
+    ),
+    StringHashLoop(
+        unsafe extern "C" fn(
+            *const u8,
+            *const usize,
+            u32,
+            *const std::sync::atomic::AtomicBool,
+            *mut u32,
+        ) -> f64,
+    ),
+    StringTransform {
+        entry: unsafe extern "C" fn(*const u8, usize, u32) -> u32,
+        transform: super::js_compiled::JsJitStringTransform,
+    },
     StringReturnPc(unsafe extern "C" fn(*const f64) -> u32),
+    Boolean(unsafe extern "C" fn(*const f64) -> u32),
+    FieldReject {
+        entry: unsafe extern "C" fn(*const f64) -> u32,
+        resume_pc: usize,
+        resume_register: crate::bytecode::Register,
+        resume_value: Value,
+    },
 }
 
 pub(super) enum CompiledJsResult {
     Number(f64),
+    Int32Identity {
+        value: f64,
+        return_pc: u32,
+    },
     StringReturnPc(u32),
+    Boolean(bool),
+    FieldReject {
+        fast_path: bool,
+        resume_pc: usize,
+        resume_register: crate::bytecode::Register,
+        resume_value: Value,
+    },
+    StringTransform(super::js_compiled::JsJitStringTransform, bool),
 }
 
 impl CompiledJsFunction {
     pub(super) fn from_artifact(artifact: super::js_compiled::JsJitArtifact) -> Option<Self> {
         let code = CodeMemory::new(&artifact.code)?;
         let mapped_bytes = code.length;
-        let (entry, return_constants) = match artifact.result {
+        let field_argument = artifact.field_argument;
+        let capture_arguments = artifact.capture_arguments;
+        let (entry, return_constants, capture_argument) = match artifact.result {
             super::js_compiled::JsJitResultKind::Number => {
                 // SAFETY: the numeric JS compiler emits `fn(*const f64) -> f64`.
                 let entry = unsafe {
@@ -2246,7 +2290,80 @@ impl CompiledJsFunction {
                         code.pointer,
                     )
                 };
-                (CompiledJsEntry::Number(entry), Vec::new())
+                (CompiledJsEntry::Number(entry), Vec::new(), None)
+            }
+            super::js_compiled::JsJitResultKind::Int32Identity(return_pc) => {
+                // SAFETY: the guarded integer identity compiler emits the Number ABI.
+                let entry = unsafe {
+                    std::mem::transmute::<*mut u8, unsafe extern "C" fn(*const f64) -> f64>(
+                        code.pointer,
+                    )
+                };
+                (
+                    CompiledJsEntry::Int32Identity { entry, return_pc },
+                    Vec::new(),
+                    None,
+                )
+            }
+            super::js_compiled::JsJitResultKind::CaptureNumber(capture) => {
+                // SAFETY: the capture identity compiler emits `fn(f64) -> f64`.
+                let entry = unsafe {
+                    std::mem::transmute::<*mut u8, unsafe extern "C" fn(f64) -> f64>(code.pointer)
+                };
+                (
+                    CompiledJsEntry::CaptureNumber(entry),
+                    Vec::new(),
+                    Some(capture),
+                )
+            }
+            super::js_compiled::JsJitResultKind::NumberInterruptible => {
+                // SAFETY: the loop compiler emits the matching guarded ABI and
+                // writes completion status before every return.
+                let entry = unsafe {
+                    std::mem::transmute::<
+                        *mut u8,
+                        unsafe extern "C" fn(
+                            *const f64,
+                            *const std::sync::atomic::AtomicBool,
+                            *mut u32,
+                        ) -> f64,
+                    >(code.pointer)
+                };
+                (
+                    CompiledJsEntry::NumberInterruptible(entry),
+                    Vec::new(),
+                    None,
+                )
+            }
+            super::js_compiled::JsJitResultKind::StringHashLoop => {
+                // SAFETY: the string hash loop compiler emits the matching
+                // code-unit pointer, length, interrupt, and status ABI.
+                let entry = unsafe {
+                    std::mem::transmute::<
+                        *mut u8,
+                        unsafe extern "C" fn(
+                            *const u8,
+                            *const usize,
+                            u32,
+                            *const std::sync::atomic::AtomicBool,
+                            *mut u32,
+                        ) -> f64,
+                    >(code.pointer)
+                };
+                (CompiledJsEntry::StringHashLoop(entry), Vec::new(), None)
+            }
+            super::js_compiled::JsJitResultKind::StringTransform(transform) => {
+                // SAFETY: the string transform compiler emits the matching code-unit ABI.
+                let entry = unsafe {
+                    std::mem::transmute::<*mut u8, unsafe extern "C" fn(*const u8, usize, u32) -> u32>(
+                        code.pointer,
+                    )
+                };
+                (
+                    CompiledJsEntry::StringTransform { entry, transform },
+                    Vec::new(),
+                    None,
+                )
             }
             super::js_compiled::JsJitResultKind::StringReturnPc(return_constants) => {
                 // SAFETY: the static-string compiler emits `fn(*const f64) -> u32`.
@@ -2255,7 +2372,51 @@ impl CompiledJsFunction {
                         code.pointer,
                     )
                 };
-                (CompiledJsEntry::StringReturnPc(entry), return_constants)
+                (
+                    CompiledJsEntry::StringReturnPc(entry),
+                    return_constants,
+                    None,
+                )
+            }
+            super::js_compiled::JsJitResultKind::Boolean => {
+                // SAFETY: the boolean compiler emits `fn(*const f64) -> u32`.
+                let entry = unsafe {
+                    std::mem::transmute::<*mut u8, unsafe extern "C" fn(*const f64) -> u32>(
+                        code.pointer,
+                    )
+                };
+                (CompiledJsEntry::Boolean(entry), Vec::new(), None)
+            }
+            super::js_compiled::JsJitResultKind::FieldReject {
+                resume_pc,
+                resume_register,
+                resume_value,
+            } => {
+                // SAFETY: the field-reject compiler emits
+                // `fn(*const f64) -> u32`, where zero resumes the interpreter.
+                let entry = unsafe {
+                    std::mem::transmute::<*mut u8, unsafe extern "C" fn(*const f64) -> u32>(
+                        code.pointer,
+                    )
+                };
+                (
+                    CompiledJsEntry::FieldReject {
+                        entry,
+                        resume_pc: usize::try_from(resume_pc).ok()?,
+                        resume_register: crate::bytecode::Register::try_from(resume_register)
+                            .ok()?,
+                        resume_value: match resume_value {
+                            super::js_compiled::JsJitResumeValue::Number(value) => {
+                                Value::number(value)
+                            }
+                            super::js_compiled::JsJitResumeValue::Boolean(value) => {
+                                if value { Value::TRUE } else { Value::FALSE }
+                            }
+                        },
+                    },
+                    Vec::new(),
+                    None,
+                )
             }
         };
         Some(Self {
@@ -2264,6 +2425,9 @@ impl CompiledJsFunction {
             params: artifact.params,
             mapped_bytes,
             return_constants,
+            field_argument,
+            capture_argument,
+            capture_arguments,
             #[cfg(test)]
             native_entries: std::cell::Cell::new(0),
         })
@@ -2273,7 +2437,27 @@ impl CompiledJsFunction {
         self.params
     }
 
-    pub(super) fn call(&self, arguments: &[f64]) -> CompiledJsResult {
+    pub(super) fn is_int32_identity(&self) -> bool {
+        matches!(self.entry, CompiledJsEntry::Int32Identity { .. })
+    }
+
+    pub(super) fn field_argument(&self) -> Option<super::js_compiled::JsJitFieldArgument> {
+        self.field_argument
+    }
+
+    fn capture_argument(&self) -> Option<super::js_compiled::JsJitCaptureArgument> {
+        self.capture_argument
+    }
+
+    fn capture_arguments(&self) -> &[super::js_compiled::JsJitCaptureArgument] {
+        &self.capture_arguments
+    }
+
+    pub(super) fn call(
+        &self,
+        arguments: &[f64],
+        interrupt: &std::sync::atomic::AtomicBool,
+    ) -> Option<CompiledJsResult> {
         #[cfg(test)]
         self.native_entries
             .set(self.native_entries.get().saturating_add(1));
@@ -2282,12 +2466,115 @@ impl CompiledJsFunction {
         unsafe {
             match self.entry {
                 CompiledJsEntry::Number(entry) => {
-                    CompiledJsResult::Number(entry(arguments.as_ptr()))
+                    Some(CompiledJsResult::Number(entry(arguments.as_ptr())))
                 }
+                CompiledJsEntry::Int32Identity { entry, return_pc } => {
+                    Some(CompiledJsResult::Int32Identity {
+                        value: entry(arguments.as_ptr()),
+                        return_pc,
+                    })
+                }
+                CompiledJsEntry::CaptureNumber(_) => None,
+                CompiledJsEntry::NumberInterruptible(entry) => {
+                    let mut completed = 0_u32;
+                    let result = entry(arguments.as_ptr(), interrupt, &mut completed);
+                    (completed != 0).then_some(CompiledJsResult::Number(result))
+                }
+                CompiledJsEntry::StringHashLoop(_) => None,
+                CompiledJsEntry::StringTransform { .. } => None,
                 CompiledJsEntry::StringReturnPc(entry) => {
-                    CompiledJsResult::StringReturnPc(entry(arguments.as_ptr()))
+                    Some(CompiledJsResult::StringReturnPc(entry(arguments.as_ptr())))
                 }
+                CompiledJsEntry::Boolean(entry) => {
+                    Some(CompiledJsResult::Boolean(entry(arguments.as_ptr()) != 0))
+                }
+                CompiledJsEntry::FieldReject {
+                    entry,
+                    resume_pc,
+                    resume_register,
+                    resume_value,
+                } => Some(CompiledJsResult::FieldReject {
+                    fast_path: entry(arguments.as_ptr()) != 0,
+                    resume_pc,
+                    resume_register,
+                    resume_value,
+                }),
             }
+        }
+    }
+
+    fn call_capture_number(&self, value: f64) -> Option<CompiledJsResult> {
+        #[cfg(test)]
+        self.native_entries
+            .set(self.native_entries.get().saturating_add(1));
+        let CompiledJsEntry::CaptureNumber(entry) = self.entry else {
+            return None;
+        };
+        // SAFETY: the capture identity compiler emits `fn(f64) -> f64`.
+        Some(CompiledJsResult::Number(unsafe { entry(value) }))
+    }
+
+    fn is_capture_number(&self) -> bool {
+        matches!(self.entry, CompiledJsEntry::CaptureNumber(_))
+    }
+
+    fn call_string_hash_loop(
+        &self,
+        units: crate::vm::wtf16::Units<'_>,
+        interrupt: &std::sync::atomic::AtomicBool,
+    ) -> Option<CompiledJsResult> {
+        #[cfg(test)]
+        self.native_entries
+            .set(self.native_entries.get().saturating_add(1));
+        let CompiledJsEntry::StringHashLoop(entry) = self.entry else {
+            return None;
+        };
+        let mut completed = 0_u32;
+        let (units_ptr, length, ascii) = match units {
+            crate::vm::wtf16::Units::Ascii(bytes) => (bytes.as_ptr(), bytes.len(), 1),
+            crate::vm::wtf16::Units::Wide(units) => (units.as_ptr().cast::<u8>(), units.len(), 0),
+        };
+        // SAFETY: `units` remains borrowed for the duration of the native call;
+        // the generated code selects the matching byte or UTF-16 load width.
+        let result = unsafe { entry(units_ptr, &length, ascii, interrupt, &mut completed) };
+        (completed != 0).then_some(CompiledJsResult::Number(result))
+    }
+
+    fn call_string_transform(
+        &self,
+        units: crate::vm::wtf16::Units<'_>,
+    ) -> Option<CompiledJsResult> {
+        #[cfg(test)]
+        self.native_entries
+            .set(self.native_entries.get().saturating_add(1));
+        let CompiledJsEntry::StringTransform { entry, transform } = self.entry else {
+            return None;
+        };
+        let (units_ptr, length, ascii) = match units {
+            crate::vm::wtf16::Units::Ascii(bytes) => (bytes.as_ptr(), bytes.len(), 1),
+            crate::vm::wtf16::Units::Wide(units) => (units.as_ptr().cast::<u8>(), units.len(), 0),
+        };
+        // SAFETY: `units` remains borrowed while native code reads its prefix.
+        let transformed = unsafe { entry(units_ptr, length, ascii) } != 0;
+        Some(CompiledJsResult::StringTransform(transform, transformed))
+    }
+
+    fn is_string_hash_loop(&self) -> bool {
+        matches!(self.entry, CompiledJsEntry::StringHashLoop(_))
+    }
+
+    fn is_string_transform(&self) -> bool {
+        matches!(self.entry, CompiledJsEntry::StringTransform { .. })
+    }
+
+    fn is_field_reject(&self) -> bool {
+        matches!(self.entry, CompiledJsEntry::FieldReject { .. })
+    }
+
+    fn string_transform_kind(&self) -> Option<super::js_compiled::JsJitStringTransform> {
+        match self.entry {
+            CompiledJsEntry::StringTransform { transform, .. } => Some(transform),
+            _ => None,
         }
     }
 
@@ -2822,7 +3109,7 @@ impl<H: Host> Analysis<'_, H> {
             .as_ref()
             .map(|_| std::time::Instant::now());
         let memory_before = plan_started.and_then(|_| jit_memory_snapshot());
-        let function = &self.code.functions[index];
+        let function = &self.code.function(index);
         let Some(signature) = self.signature(index as u32) else {
             self.reject(index, || "missing-signature".into());
             return None;
@@ -3408,6 +3695,118 @@ enum ThreadEnd {
     Dispatch,
 }
 
+/// Instructions all copies of an unrolled loop body may hold together, and the most copies.
+/// A body of up to a fourth of the budget runs as four copies: one interrupt check, one back
+/// edge and one set of loop-carried moves per four iterations (V8's optimizing tier unrolls
+/// small innermost Wasm loops for the same reasons); a body of more than half of it is not
+/// unrolled.
+const UNROLL_BUDGET: usize = 48;
+const MAX_UNROLL_FACTOR: usize = 4;
+
+/// Bytecodes up to which a compiled Wasm program unrolls its innermost loops. Every function
+/// compiles eagerly, and each copy is compiled whether its loop runs or not: in programs of
+/// 17K to 70K bytecodes the copies cost more compile time than they saved (TSF's first
+/// iteration +6%, gcc-loops +2.5%, HashSet +1.2% per iteration from spills), so only smaller
+/// programs pay for them.
+const UNROLL_PROGRAM_BYTECODES: usize = 16_384;
+
+/// Whether `program` is small enough to unroll its innermost loops (`UNROLL_PROGRAM_BYTECODES`).
+fn program_unrolls(program: &ResidualProgram) -> bool {
+    // A function whose record has not been read yet (compiled again or decoded on first
+    // read) is not counted.
+    program
+        .functions
+        .iter()
+        .filter_map(crate::bytecode::FunctionSlot::record)
+        .map(|function| function.code.len())
+        .sum::<usize>()
+        <= UNROLL_PROGRAM_BYTECODES
+}
+
+/// An innermost loop unrolled at its latch: the back edge enters the next of `factor - 1`
+/// copies of the body, and the last copy's back edge returns to `header` with the loop's
+/// interrupt check (`Emitter::backedge`).
+#[derive(Clone, Copy)]
+struct UnrolledLoop {
+    header: usize,
+    factor: usize,
+}
+
+/// Whether `op` may sit in an unrolled body: no call, and no operation that calls out to the
+/// VM or ends the body other than by a branch out of the loop.
+fn unrollable_op(op: Op) -> bool {
+    !matches!(
+        op,
+        Op::WasmMemoryGrow
+            | Op::WasmMemoryFill
+            | Op::WasmMemoryCopy
+            | Op::WasmMemoryInit
+            | Op::WasmTableGet
+            | Op::WasmTableSet
+            | Op::WasmTableGrow
+            | Op::WasmTableFill
+            | Op::WasmTableCopy
+            | Op::WasmTableInit
+            | Op::WasmTableSize
+            | Op::WasmIndirectTarget
+    )
+}
+
+/// The innermost loops to unroll, by latch: a back edge from `latch` to `header` whose body
+/// `header..=latch` runs straight through but for branches that leave the loop, has no other
+/// entry, and fits the budget at least twice.
+fn unrollable_loops(instructions: &[WideInstruction], plan: &Plan) -> Vec<Option<UnrolledLoop>> {
+    let mut entered = vec![false; instructions.len() + 1];
+    for (pc, instruction) in instructions.iter().enumerate() {
+        if !plan.reachable(pc) {
+            continue;
+        }
+        match instruction.op().control_flow_layout() {
+            ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump => {
+                entered[instruction.jump_target() as usize] = true;
+            }
+            ControlFlowLayout::BranchTable => {
+                for entry in crate::bytecode::branch_table_entries(pc, *instruction) {
+                    entered[instructions[entry].jump_target() as usize] = true;
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut loops = vec![None; instructions.len()];
+    for (latch, instruction) in instructions.iter().enumerate() {
+        let layout = instruction.op().control_flow_layout();
+        if !plan.reachable(latch)
+            || !matches!(layout, ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump)
+        {
+            continue;
+        }
+        let header = instruction.jump_target() as usize;
+        if header > latch {
+            continue;
+        }
+        let length = latch - header + 1;
+        let factor = (UNROLL_BUDGET / length).min(MAX_UNROLL_FACTOR);
+        if factor < 2 {
+            continue;
+        }
+        let straight = (header..latch).all(|pc| {
+            let body = instructions[pc];
+            plan.reachable(pc)
+                && unrollable_op(body.op())
+                && match body.op().control_flow_layout() {
+                    ControlFlowLayout::Fallthrough => true,
+                    ControlFlowLayout::ConditionalJump => body.jump_target() as usize > latch,
+                    _ => false,
+                }
+        });
+        if straight && !entered[header + 1..=latch].iter().any(|&entered| entered) {
+            loops[latch] = Some(UnrolledLoop { header, factor });
+        }
+    }
+    loops
+}
+
 /// A copy of the instructions from a jump target to a branch table, for a
 /// jump that leaves the table's selector holding a known constant: along
 /// the copy the selector cannot change, so branches on it are decided and
@@ -3688,6 +4087,15 @@ struct Emitter<'a, 'b, H: Host> {
     poll: Option<i64>,
     /// Each i32 read from a register's view, by the zero-extended value it was read from.
     zero_extended: std::collections::HashMap<ir::Value, ir::Value>,
+    /// The innermost loops to unroll, by latch (`unrollable_loops`).
+    unrolled: Vec<Option<UnrolledLoop>>,
+    /// While a latch of an unrolled loop is emitted: its header and the copy its back edge
+    /// enters instead, or `None` for the last copy, whose back edge returns to the header and
+    /// checks for an interrupt.
+    backedge: Option<(usize, Option<ir::Block>)>,
+    /// Copies of an unrolled body to emit right after its latch: the block, the loop, and the
+    /// copy its back edge enters.
+    pending_copies: Vec<(ir::Block, UnrolledLoop, usize, Option<ir::Block>)>,
 }
 
 impl<H: Host> Emitter<'_, '_, H> {
@@ -3760,7 +4168,9 @@ impl<H: Host> Emitter<'_, '_, H> {
         let (integer, float) = match kind {
             // The i32 view holds the constant zero-extended (`view_ir`).
             Kind::I32 => (
-                self.builder.ins().iconst(types::I64, i64::from(bits as u32)),
+                self.builder
+                    .ins()
+                    .iconst(types::I64, i64::from(bits as u32)),
                 self.builder.ins().f32const(Ieee32::with_bits(bits as u32)),
             ),
             Kind::I64 => (
@@ -4886,7 +5296,7 @@ impl<H: Host> Emitter<'_, '_, H> {
     /// only the exit passes (merge arguments) are computed after the loop,
     /// not on every iteration.
     fn branch(&mut self, pc: usize, condition: ir::Value, target: usize, fallthrough: usize) {
-        if target <= pc || fallthrough <= pc {
+        if self.polls(pc, target) || self.polls(pc, fallthrough) {
             self.interrupt_safepoint();
         }
         let taken = self.edge(target);
@@ -4901,6 +5311,12 @@ impl<H: Host> Emitter<'_, '_, H> {
         self.builder.ins().jump(next, &[]);
     }
 
+    /// Whether an edge from `pc` to `target` checks for an interrupt: a back edge does, except
+    /// one into a copy of an unrolled body, whose last copy's back edge checks for all.
+    fn polls(&self, pc: usize, target: usize) -> bool {
+        target <= pc && !matches!(self.backedge, Some((header, Some(_))) if header == target)
+    }
+
     /// The block a jump from here to `target` enters: a threaded copy when
     /// a known selector decides a branch table ahead, else the target's.
     fn edge(&mut self, target: usize) -> ir::Block {
@@ -4908,6 +5324,11 @@ impl<H: Host> Emitter<'_, '_, H> {
             && redirected == target
         {
             return block;
+        }
+        if let Some((header, Some(copy))) = self.backedge
+            && header == target
+        {
+            return copy;
         }
         if self.threading {
             for (selector, value) in self.known.clone() {
@@ -4935,6 +5356,56 @@ impl<H: Host> Emitter<'_, '_, H> {
     }
 
     /// Emit the threaded copy `thread` into `block`.
+    /// Emit the latch at `pc`; at an unrolled loop's latch the back edge enters the first copy
+    /// of the body, queued with the rest (`pending_copies`).
+    fn latch(&mut self, function: &Function, pc: usize, instruction: WideInstruction) -> bool {
+        let Some(unrolled) = self.unrolled[pc] else {
+            return self.instruction(function, pc, instruction);
+        };
+        let copies = (1..unrolled.factor)
+            .map(|_| self.builder.create_block())
+            .collect::<Vec<_>>();
+        for (index, &copy) in copies.iter().enumerate() {
+            let next = copies.get(index + 1).copied();
+            self.pending_copies.push((copy, unrolled, pc, next));
+        }
+        self.backedge = Some((unrolled.header, copies.first().copied()));
+        let open = self.instruction(function, pc, instruction);
+        self.backedge = None;
+        open
+    }
+
+    /// Emit a copy of the body of the unrolled loop with latch `latch` into `block`: branches
+    /// out of the loop leave through the original blocks, and the back edge enters `next`, or
+    /// the header from the last copy.
+    fn emit_unrolled_copy(
+        &mut self,
+        function: &Function,
+        block: ir::Block,
+        unrolled: UnrolledLoop,
+        latch: usize,
+        next: Option<ir::Block>,
+    ) {
+        self.builder.switch_to_block(block);
+        self.known.clear();
+        for pc in unrolled.header..latch {
+            let instruction = self.instructions[pc];
+            if instruction.op().control_flow_layout() == ControlFlowLayout::ConditionalJump {
+                let continuation = self.builder.create_block();
+                self.redirect = Some((pc + 1, continuation));
+                self.instruction(function, pc, instruction);
+                self.redirect = None;
+                self.builder.switch_to_block(continuation);
+                self.known.clear();
+            } else {
+                self.instruction(function, pc, instruction);
+            }
+        }
+        self.backedge = Some((unrolled.header, next));
+        self.instruction(function, latch, self.instructions[latch]);
+        self.backedge = None;
+    }
+
     fn emit_thread(&mut self, function: &Function, block: ir::Block, thread: &Thread) {
         self.builder.switch_to_block(block);
         self.interrupt_safepoint();
@@ -5205,7 +5676,7 @@ impl<H: Host> Emitter<'_, '_, H> {
             }
             Op::Jump => {
                 let target = instruction.jump_target() as usize;
-                self.jump(target, target <= pc);
+                self.jump(target, self.polls(pc, target));
                 return false;
             }
             Op::WasmBranchTable => {
@@ -5360,7 +5831,7 @@ impl<'a, H: Host> Analysis<'a, H> {
         reference_site_ids: &'a [(usize, usize)],
         diagnostics_enabled: bool,
     ) -> Option<(Vec<u8>, Vec<Call>)> {
-        let function = &self.code.functions[index];
+        let function = &self.code.function(index);
         let call_conv = isa.default_call_conv();
         let memory = MemoryArguments::of(fixed_base, guarded);
         let mut func = ir::Function::with_name_signature(
@@ -5480,6 +5951,13 @@ impl<'a, H: Host> Analysis<'a, H> {
                 .and_then(|_| self.vm.execution_interrupt.poll_page())
                 .map(|(start, _)| start as i64),
             zero_extended: std::collections::HashMap::new(),
+            unrolled: if program_unrolls(self.code) {
+                unrollable_loops(&instructions, plan)
+            } else {
+                vec![None; instructions.len()]
+            },
+            backedge: None,
+            pending_copies: Vec::new(),
         };
         // Registers start at i32 zero, as an activation's register file does.
         for register in 0..function.registers {
@@ -5553,7 +6031,12 @@ impl<'a, H: Host> Analysis<'a, H> {
                     emitter.affine_pair_gate();
                 }
             }
-            open = emitter.instruction(function, pc, instruction);
+            open = emitter.latch(function, pc, instruction);
+            // Copies of an unrolled body follow its latch in the layout, so a loop that runs a few
+            // iterations stays in one stretch of code.
+            for (block, unrolled, latch, next) in std::mem::take(&mut emitter.pending_copies) {
+                emitter.emit_unrolled_copy(function, block, unrolled, latch, next);
+            }
             // A later jump may target the next instruction; give it a block
             // now so falling into it stays explicit.
             if open && emitter.blocks.get(pc + 1).is_some_and(Option::is_some) {
@@ -5990,14 +6473,6 @@ fn link(bytes: &mut [u8], body: usize, call: &Call, callee: usize) -> Option<()>
 /// Code alignment for each compiled function.
 const FUNCTION_ALIGNMENT: usize = 64;
 
-fn target_isa(opt_level: &str) -> Option<std::sync::Arc<dyn cranelift_codegen::isa::TargetIsa>> {
-    let mut flags = settings::builder();
-    flags.set("opt_level", opt_level).ok()?;
-    flags.set("enable_verifier", "false").ok()?;
-    let builder = cranelift_native::builder().ok()?;
-    builder.finish(settings::Flags::new(flags)).ok()
-}
-
 impl<H: Host> Vm<H> {
     /// Invalidate artifact-local indirect-call certificates when VM state that
     /// native code cannot inspect directly changes: table contents or heap IDs.
@@ -6015,6 +6490,30 @@ impl<H: Host> Vm<H> {
         self.execution_mode
     }
 
+    /// Whether the per-function JavaScript tier runs: compiled execution, in a build whose
+    /// profiles do not count interpreted work exactly.
+    pub(super) fn js_tier_runs(&self) -> bool {
+        !cfg!(any(
+            feature = "profile-aggregate",
+            feature = "profile-trace",
+            feature = "profile-memory",
+            feature = "profile-gc-time"
+        )) && self.execution_mode == ExecutionMode::Compiled
+    }
+
+    /// Whether the JavaScript tier may still claim `function` of `program`: it runs, the
+    /// function passes its candidate filter, and the tier has not declined it. The tier
+    /// observes and enters functions at frame entry (`js_jit_at_entry`), so such calls keep
+    /// their frames rather than running frameless in the lane.
+    pub(super) fn js_tier_may_claim(&self, program: &ResidualProgram, id: ProgramId, function: u32) -> bool {
+        self.js_tier_runs()
+            && program.kind != crate::bytecode::ProgramKind::Wasm
+            && program
+                .function_get(function as usize)
+                .is_some_and(|body| super::js_compiled::function_candidate(body, program))
+            && !self.programs.js_tier_declined(id, function)
+    }
+
     /// Try the per-function JavaScript tier at an already-initialized frame's
     /// entry. A guard miss leaves the frame untouched so the interpreter can
     /// run from the same bytecode PC.
@@ -6023,34 +6522,76 @@ impl<H: Host> Vm<H> {
         program: &ResidualProgram,
         frame: usize,
     ) -> Option<(usize, crate::bytecode::Register, Value)> {
-        if cfg!(any(
-            feature = "profile-aggregate",
-            feature = "profile-trace",
-            feature = "profile-memory",
-            feature = "profile-gc-time"
-        )) || self.execution_mode != ExecutionMode::Compiled
-            || program.kind == crate::bytecode::ProgramKind::Wasm
+        if !self.js_tier_runs() || program.kind == crate::bytecode::ProgramKind::Wasm
             || self.frames.get(frame)?.pc != 0
         {
             return None;
         }
         let program_id = self.frames[frame].program;
         let function_id = self.frames[frame].function;
-        let function = program.functions.get(function_id as usize)?;
+        let function = program.function_get(function_id as usize)?;
         let tier = self.programs.js_tier(program_id, function_id);
+        let rejected_entry = if self.programs.js_jit_diagnostics_enabled()
+            && matches!(
+                tier.as_ref(),
+                Some(super::program_store::JsTierState::Rejected { .. })
+            ) {
+            self.programs
+                .note_js_rejected_entry(program_id, function_id)
+        } else {
+            None
+        };
         if matches!(
             tier.as_ref(),
-            Some(super::program_store::JsTierState::Unsupported)
-        ) && !self.programs.js_jit_diagnostics_enabled()
+            Some(
+                super::program_store::JsTierState::Unsupported
+                    | super::program_store::JsTierState::Rejected { .. }
+            )
+        ) && (!self.programs.js_jit_diagnostics_enabled() || rejected_entry.is_none())
         {
             return None;
         }
         if tier.is_none() && !super::js_compiled::function_candidate(function, program) {
             return None;
         }
+        let compiled_tier = match tier.as_ref() {
+            Some(super::program_store::JsTierState::Compiled(compiled)) => Some(compiled.as_ref()),
+            _ => None,
+        };
+        let numeric_loop_candidate =
+            compiled_tier.is_none() && super::js_compiled::has_numeric_loop_candidate(function);
+        let int32_bitwise_candidate =
+            super::js_compiled::has_int32_bitwise_candidate(program, function);
+        let int32_identity_candidate =
+            super::js_compiled::int32_identity_return_candidate(program, function).is_some();
+        let capture_argument = match compiled_tier {
+            Some(compiled) => compiled.capture_argument(),
+            None => super::js_compiled::number_capture_candidate(function),
+        };
+        let mut capture_arguments: smallvec::SmallVec<
+            [super::js_compiled::JsJitCaptureArgument; 4],
+        > = smallvec::SmallVec::new();
+        if let Some(compiled) = compiled_tier {
+            capture_arguments.extend_from_slice(compiled.capture_arguments());
+        } else if let Some(candidate) = super::js_compiled::numeric_capture_candidate(function) {
+            capture_arguments.extend(candidate);
+        }
+        let capture_number = capture_argument.and_then(|capture| {
+            self.cached_direct_capture(frame, capture.depth, capture.slot)
+                .and_then(Value::as_number)
+        });
 
         let params = usize::from(function.params);
         let registers = self.frames[frame].registers.get(..params)?;
+        let first_argument = registers.first().copied();
+        let field_argument = match compiled_tier {
+            Some(compiled) => compiled.field_argument(),
+            None => super::js_compiled::cached_field_argument_candidate(function),
+        };
+        let field_reject_candidate = match compiled_tier {
+            Some(compiled) => compiled.is_field_reject(),
+            None => super::js_compiled::is_field_reject_candidate(function),
+        };
         let mut arguments: smallvec::SmallVec<[f64; 8]> = smallvec::SmallVec::new();
         let mut numeric = true;
         for value in registers {
@@ -6062,26 +6603,149 @@ impl<H: Host> Vm<H> {
                 }
             }
         }
+        let mut capture_values: smallvec::SmallVec<[f64; 4]> = smallvec::SmallVec::new();
+        let captures_numeric = capture_arguments.iter().all(|capture| {
+            self.cached_direct_capture(frame, capture.depth, capture.slot)
+                .and_then(Value::as_number)
+                .is_some_and(|value| {
+                    capture_values.push(value);
+                    true
+                })
+        });
+        if captures_numeric {
+            arguments.extend(capture_values.iter().copied());
+        } else {
+            numeric = false;
+        }
+        if let Some(field_argument) = field_argument {
+            let receiver = first_argument?;
+            arguments.clear();
+            numeric = false;
+            if let super::object::FieldCacheProbe::Hit(value) =
+                self.cached_field_hit(program, receiver, field_argument.cache_site)
+            {
+                if let Some(number) = value.as_number() {
+                    arguments.push(number);
+                    numeric = true;
+                } else if field_reject_candidate {
+                    // Strict inequality against a Number is true for every non-Number
+                    // value. NaN therefore takes the guarded early-return path.
+                    arguments.push(f64::NAN);
+                }
+            }
+        }
+        if numeric && int32_bitwise_candidate {
+            numeric = arguments
+                .iter()
+                .all(|value| super::js_compiled::is_i32_number(*value));
+        }
+        let string_hash_candidate = match compiled_tier {
+            Some(compiled) => compiled.is_string_hash_loop(),
+            None => super::js_compiled::has_string_hash_loop_candidate(program, function),
+        } && params == 1
+            && self.js_jit_string_hash_guard()
+            && first_argument.is_some_and(|value| self.heap.is_string(value));
+        let string_hash_units = if string_hash_candidate {
+            let Some(string) = first_argument.and_then(|value| self.heap.string(value))
+            else {
+                unreachable!("guarded JIT string argument changed")
+            };
+            Some(string.units())
+        } else {
+            None
+        };
+        let string_transform_kind = match compiled_tier {
+            Some(compiled) => compiled.string_transform_kind(),
+            None => super::js_compiled::string_transform_candidate(program, function),
+        };
+        let string_transform = string_transform_kind
+            .filter(|kind| self.js_jit_string_transform_guard(*kind))
+            .filter(|_| {
+                first_argument.is_some_and(|value| self.heap.is_string(value))
+            });
+        let string_transform_units = string_transform.and_then(|_| {
+            let Some(string) = first_argument.and_then(|value| self.heap.string(value))
+            else {
+                return None;
+            };
+            Some(string.units())
+        });
+        if let Some((entries, reason)) = rejected_entry {
+            self.programs
+                .record_js_jit_entry(program_id, function_id, numeric, function.params);
+            self.programs
+                .record_js_jit_rejection(program_id, function_id, reason, entries);
+            return None;
+        }
+        if tier.is_none()
+            && capture_argument.is_none()
+            && !super::js_compiled::function_candidate(function, program)
+            && !int32_identity_candidate
+        {
+            let reason = super::js_compiled::candidate_rejection_reason(program, function_id);
+            let report_entries = self
+                .programs
+                .reject_js_function(program_id, function_id, reason);
+            if let Some(entries) = report_entries
+                && self.programs.js_jit_diagnostics_enabled()
+            {
+                self.programs.record_js_jit_entry(
+                    program_id,
+                    function_id,
+                    numeric,
+                    function.params,
+                );
+                self.programs
+                    .record_js_jit_rejection(program_id, function_id, reason, entries);
+            }
+            return None;
+        }
+        if tier.is_none()
+            && !function.wide.is_empty()
+            && !numeric
+            && !(field_reject_candidate && arguments.len() == 1)
+        {
+            return None;
+        }
         if self.programs.js_jit_diagnostics_enabled() {
             self.programs
-                .record_js_jit_entry(program_id, function_id, numeric);
+                .record_js_jit_entry(program_id, function_id, numeric, function.params);
         }
 
         let compiled = match tier {
             Some(super::program_store::JsTierState::Compiled(compiled)) => {
-                if !numeric {
+                if (!numeric && !compiled.is_string_hash_loop() && !compiled.is_string_transform())
+                    && !(compiled.is_field_reject() && arguments.len() == 1)
+                    || (compiled.is_string_hash_loop() && string_hash_units.is_none())
+                    || (compiled.is_string_transform() && string_transform_units.is_none())
+                    || (compiled.is_capture_number() && capture_number.is_none())
+                {
                     return None;
                 }
                 compiled
             }
-            Some(super::program_store::JsTierState::Unsupported) => return None,
+            Some(
+                super::program_store::JsTierState::Unsupported
+                | super::program_store::JsTierState::Rejected { .. },
+            ) => return None,
             Some(super::program_store::JsTierState::Hot { .. })
             | Some(super::program_store::JsTierState::PromotionPending)
             | None => {
-                if !self
-                    .programs
-                    .note_js_function_entry(program_id, function_id, numeric)
-                    || !numeric
+                if !self.programs.note_js_function_entry(
+                    program_id,
+                    function_id,
+                    numeric,
+                    (numeric && (numeric_loop_candidate || field_argument.is_some()))
+                        || int32_identity_candidate
+                        || (field_reject_candidate && arguments.len() == 1)
+                        || capture_number.is_some()
+                        || (!capture_arguments.is_empty() && captures_numeric)
+                        || string_hash_units.is_some()
+                        || string_transform_units.is_some(),
+                ) || (!numeric
+                    && !(field_reject_candidate && arguments.len() == 1)
+                    && string_hash_units.is_none()
+                    && string_transform_units.is_none())
                 {
                     return None;
                 }
@@ -6090,9 +6754,21 @@ impl<H: Host> Vm<H> {
                     .programs
                     .js_jit_diagnostics_enabled()
                     .then(std::time::Instant::now);
-                let compiled = super::js_compiled::compile(&residual, function_id)
+                let artifact = super::js_compiled::compile(&residual, function_id);
+                let artifact_failed = artifact.is_none();
+                let compile_rejection = artifact_failed.then(|| {
+                    super::js_compiled::candidate_rejection_reason(&residual, function_id)
+                });
+                let compiled = artifact
                     .and_then(CompiledJsFunction::from_artifact)
                     .map(Rc::new);
+                let compile_rejection = if artifact_failed {
+                    compile_rejection
+                } else if compiled.is_none() {
+                    Some("executable-memory-allocation-failed")
+                } else {
+                    None
+                };
                 let installed =
                     self.programs
                         .install_js_tier(program_id, function_id, compiled.clone());
@@ -6110,6 +6786,11 @@ impl<H: Host> Vm<H> {
                         u64::try_from(compile_started.elapsed().as_nanos()).unwrap_or(u64::MAX),
                         code_bytes,
                         installed,
+                        if !installed && compiled.is_some() {
+                            Some("shared-code-cache-budget-exhausted")
+                        } else {
+                            compile_rejection
+                        },
                     );
                 }
                 if !installed {
@@ -6119,6 +6800,14 @@ impl<H: Host> Vm<H> {
             }
         };
 
+        if compiled.is_int32_identity()
+            && !arguments
+                .first()
+                .is_some_and(|value| super::js_compiled::is_i32_number(*value))
+        {
+            return None;
+        }
+
         if compiled.params() != params {
             return None;
         }
@@ -6127,7 +6816,17 @@ impl<H: Host> Vm<H> {
             self.programs
                 .record_js_jit_native_entry(program_id, function_id);
         }
-        match compiled.call(&arguments) {
+        let result = if compiled.is_capture_number() {
+            compiled.call_capture_number(capture_number?)?
+        } else if compiled.is_string_hash_loop() {
+            compiled
+                .call_string_hash_loop(string_hash_units?, self.execution_interrupt.atomic_flag())?
+        } else if compiled.is_string_transform() {
+            compiled.call_string_transform(string_transform_units?)?
+        } else {
+            compiled.call(&arguments, self.execution_interrupt.atomic_flag())?
+        };
+        match result {
             CompiledJsResult::Number(value) => {
                 let last_pc = function.code.len().checked_sub(1)?;
                 let terminal = function.code.get(last_pc)?.as_wide();
@@ -6135,6 +6834,14 @@ impl<H: Host> Vm<H> {
                     return None;
                 }
                 Some((last_pc, terminal.register_a(), Value::number(value)))
+            }
+            CompiledJsResult::Int32Identity { value, return_pc } => {
+                let return_pc = usize::try_from(return_pc).ok()?;
+                let instruction = function.code.get(return_pc)?.as_wide();
+                if instruction.op() != Op::Return {
+                    return None;
+                }
+                Some((return_pc, instruction.register_a(), Value::number(value)))
             }
             CompiledJsResult::StringReturnPc(return_pc) => {
                 let return_pc = usize::try_from(return_pc).ok()?;
@@ -6146,6 +6853,146 @@ impl<H: Host> Vm<H> {
                 let value = self.programs.constant(program_id, constant as usize)?;
                 Some((return_pc, instruction.register_a(), value))
             }
+            CompiledJsResult::Boolean(value) => {
+                let last_pc = function.code.len().checked_sub(1)?;
+                let terminal = function.code.get(last_pc)?.as_wide();
+                if terminal.op() != Op::Return {
+                    return None;
+                }
+                Some((
+                    last_pc,
+                    terminal.register_a(),
+                    if value { Value::TRUE } else { Value::FALSE },
+                ))
+            }
+            CompiledJsResult::FieldReject {
+                fast_path,
+                resume_pc,
+                resume_register,
+                resume_value,
+            } => fast_path.then_some((resume_pc, resume_register, resume_value)),
+            CompiledJsResult::StringTransform(transform, matched) => {
+                let last_pc = function.code.len().checked_sub(1)?;
+                let terminal = function.code.get(last_pc)?.as_wide();
+                if terminal.op() != Op::Return {
+                    return None;
+                }
+                let value = if !matched {
+                    first_argument?
+                } else {
+                    let Some(string) = first_argument
+                        .and_then(|value| self.heap.string(value))
+                        .cloned()
+                    else {
+                        return None;
+                    };
+                    let units = string.units();
+                    match transform {
+                        super::js_compiled::JsJitStringTransform::PrefixUnderscore => {
+                            let mut output = Vec::with_capacity(units.len() + 1);
+                            output.push(u16::from(b'_'));
+                            output.extend(units.iter());
+                            self.string_from_units(&output).ok()?
+                        }
+                        super::js_compiled::JsJitStringTransform::RemoveLeadingUnderscore => self
+                            .string_substring(&string, 1..units.len())
+                            .ok()?,
+                    }
+                };
+                Some((last_pc, terminal.register_a(), value))
+            }
+        }
+    }
+
+    fn js_jit_string_hash_guard(&self) -> bool {
+        let Some(atom) = self.lookup_atom("charCodeAt") else {
+            return false;
+        };
+        let Some(method) = self.own_property(self.string_proto, atom) else {
+            return false;
+        };
+        self.is_current_realm_native(method, Native::StringCharCodeAt)
+    }
+
+    fn js_jit_string_transform_guard(
+        &self,
+        transform: super::js_compiled::JsJitStringTransform,
+    ) -> bool {
+        if !self.js_jit_string_hash_guard() {
+            return false;
+        }
+        if transform == super::js_compiled::JsJitStringTransform::PrefixUnderscore {
+            return true;
+        }
+        let Some(atom) = self.lookup_atom("substr") else {
+            return false;
+        };
+        self.own_property(self.string_proto, atom)
+            .is_some_and(|method| self.is_current_realm_native(method, Native::StringSubstr))
+    }
+
+    /// Call an already-promoted JavaScript tier before the generic path pushes
+    /// a callee frame. The native subset is pure and has a guarded Number ABI;
+    /// misses stay on the ordinary frame path.
+    pub(super) fn js_jit_compiled_call(
+        programs: &mut ProgramStore,
+        program_id: ProgramId,
+        program: &ResidualProgram,
+        function_id: u32,
+        arguments: &[Value],
+        interrupt: &std::sync::atomic::AtomicBool,
+    ) -> Option<Value> {
+        if cfg!(any(
+            feature = "profile-aggregate",
+            feature = "profile-trace",
+            feature = "profile-memory",
+            feature = "profile-gc-time"
+        )) || program.kind == crate::bytecode::ProgramKind::Wasm
+        {
+            return None;
+        }
+        let function = program.function_get(function_id as usize)?;
+        let compiled = match programs.js_tier(program_id, function_id)? {
+            super::program_store::JsTierState::Compiled(compiled) => compiled,
+            _ => return None,
+        };
+        // Direct calls have no callee frame from which to reload lexical
+        // captures. Those artifacts must use the ordinary frame-entry path,
+        // where the capture guards and ABI values are assembled together.
+        if compiled.field_argument().is_some()
+            || compiled.is_int32_identity()
+            || compiled.is_capture_number()
+            || !compiled.capture_arguments().is_empty()
+            || compiled.is_string_transform()
+            || compiled.is_string_hash_loop()
+            || compiled.is_field_reject()
+        {
+            return None;
+        }
+        let params = usize::from(function.params);
+        if compiled.params() != params || arguments.len() < params {
+            return None;
+        }
+        let mut numeric_arguments: smallvec::SmallVec<[f64; 8]> = smallvec::SmallVec::new();
+        for argument in arguments.iter().take(params) {
+            numeric_arguments.push(argument.as_number()?);
+        }
+        if programs.js_jit_diagnostics_enabled() {
+            programs.record_js_jit_entry(program_id, function_id, true, function.params);
+            programs.record_js_jit_native_entry(program_id, function_id);
+        }
+        match compiled.call(&numeric_arguments, interrupt)? {
+            CompiledJsResult::Number(value) => Some(Value::number(value)),
+            CompiledJsResult::Int32Identity { .. } => return None,
+            CompiledJsResult::Boolean(value) => {
+                Some(if value { Value::TRUE } else { Value::FALSE })
+            }
+            CompiledJsResult::StringReturnPc(return_pc) => {
+                let constant = compiled.string_constant_for_return(return_pc)?;
+                programs.constant(program_id, constant as usize)
+            }
+            CompiledJsResult::StringTransform(_, _) => return None,
+            CompiledJsResult::FieldReject { .. } => return None,
         }
     }
 
@@ -6206,7 +7053,7 @@ impl<H: Host> Vm<H> {
         let count = code.functions.len();
         let allowed = if let Some(root) = root.filter(|_| root_only) {
             let mut selected = vec![false; count];
-            let Some(function) = code.functions.get(root) else {
+            let Some(function) = code.function_get(root) else {
                 if diagnostics_enabled {
                     eprintln!("QUENCH_WASM_JIT_ROOT_REJECTION root={root} invalid-function={root}");
                 }
@@ -6238,7 +7085,7 @@ impl<H: Host> Vm<H> {
                 if *selected_function {
                     continue;
                 }
-                let function = code.functions.get(index)?;
+                let function = code.function_get(index)?;
                 if function.code.len() > MAX_JIT_ROOT_BYTECODES_PER_FUNCTION {
                     if diagnostics_enabled {
                         eprintln!(
@@ -6288,7 +7135,7 @@ impl<H: Host> Vm<H> {
                     if *selected_function {
                         continue;
                     }
-                    let function = code.functions.get(index)?;
+                    let function = code.function_get(index)?;
                     if function.code.len() > MAX_JIT_ROOT_BYTECODES_PER_FUNCTION {
                         if diagnostics_enabled {
                             eprintln!(
@@ -6389,7 +7236,7 @@ impl<H: Host> Vm<H> {
         if diagnostics_enabled {
             eprintln!("QUENCH_WASM_JIT_OPT_LEVEL {opt_level}");
         }
-        let isa = target_isa(opt_level)?;
+        let isa = super::jit_backend::target_isa(opt_level, false)?;
         // The full plan of a callable function, derived again where needed.
         let plan = |index: usize| analysis.plan(index, &callable, &mut memory_slot.clone());
         let mut reference_site_ids = vec![Vec::new(); count];
@@ -6401,7 +7248,7 @@ impl<H: Host> Vm<H> {
                 continue;
             }
             let full_plan = plan(index)?;
-            let function = &code.functions[index];
+            let function = &code.function(index);
             for (pc, packed) in function.code.iter().enumerate() {
                 let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
                 if instruction.op() == Op::Call
@@ -6429,7 +7276,7 @@ impl<H: Host> Vm<H> {
                 continue;
             }
             let plan = plan(index)?;
-            let function = &code.functions[index];
+            let function = &code.function(index);
             for (pc, packed) in function.code.iter().enumerate() {
                 let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
                 if !matches!(instruction.op(), Op::WasmGlobalGet | Op::WasmGlobalSet) {
@@ -6769,6 +7616,13 @@ impl<H: Host> Vm<H> {
         let baseline = match self.programs.compiled(program) {
             Some(compiled) => compiled,
             None => {
+                if self
+                    .programs
+                    .residual(program)
+                    .is_some_and(|code| code.kind == crate::bytecode::ProgramKind::Wasm)
+                {
+                    self.host.before_wasm_native_compilation();
+                }
                 if wasm_root_only || wasm_root_first {
                     // This explicit diagnostic mode compiles only the
                     // function named by QUENCH_WASM_JIT_ROOT. Root-only mode
@@ -6806,7 +7660,7 @@ impl<H: Host> Vm<H> {
                         );
                     }
                     self.programs.set_compiled(program, compiled.clone());
-                    compiled
+                    self.programs.compiled(program).flatten()
                 } else if jit_wasm_selective_enabled()
                     && self
                         .programs
@@ -6842,7 +7696,7 @@ impl<H: Host> Vm<H> {
                         );
                     }
                     self.programs.set_compiled(program, compiled.clone());
-                    compiled
+                    self.programs.compiled(program).flatten()
                 }
             }
         };
@@ -6858,7 +7712,7 @@ impl<H: Host> Vm<H> {
             && root_first_ready
             && self.programs.residual(program).is_some_and(|code| {
                 code.kind == crate::bytecode::ProgramKind::Wasm
-                    && code.functions.get(id as usize).is_some_and(|function| {
+                    && code.function_get(id as usize).is_some_and(|function| {
                         function.code.len() <= MAX_JIT_TIER_BYTECODES_PER_FUNCTION
                     })
             })
@@ -7209,11 +8063,11 @@ impl<H: Host> Vm<H> {
         let Some(wrapper) = self.heap.environment_slot(instance_env, import_slot) else {
             return false;
         };
-        let Some(Cell::Function {
+        let Some(FunctionRecord {
             kind: FunctionKind::Native(Native::WasmHost),
             env: wrapper_env,
             ..
-        }) = self.heap.get(wrapper)
+        }) = self.heap.function(wrapper)
         else {
             return false;
         };
@@ -7336,8 +8190,8 @@ impl<H: Host> Vm<H> {
             && imported_name_is_emscripten_memcpy
             && super::wasm_js::emscripten_memcpy_raw_i32_enabled()
         {
-            match self.heap.get(callee) {
-                Some(Cell::Function {
+            match self.heap.function(callee) {
+                Some(FunctionRecord {
                     kind: FunctionKind::Native(Native::WasmHost),
                     env,
                     ..
@@ -7429,8 +8283,8 @@ impl<H: Host> Vm<H> {
                     return Ok(());
                 }
             }
-            let js_import = match self.heap.get(callee) {
-                Some(Cell::Function {
+            let js_import = match self.heap.function(callee) {
+                Some(FunctionRecord {
                     kind: FunctionKind::Native(Native::WasmHost),
                     env,
                     ..

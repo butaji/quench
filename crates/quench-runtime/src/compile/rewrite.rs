@@ -117,7 +117,7 @@ fusion_recipes! {
 
 pub(super) fn apply(
     function: &mut BcFunction,
-    methods: &[MethodSiteSpec],
+    methods: &(impl liveness::MethodArguments + ?Sized),
     field_sites: &mut SiteTable<'_, FieldSite>,
     superinstructions: &mut SiteTable<'_, Superinstruction>,
 ) {
@@ -154,7 +154,7 @@ pub(super) fn apply(
 /// round leaves makes the next copies adjacent to their consumers, until none changes.
 pub(super) fn coalesce_promoted_moves(
     function: &mut BcFunction,
-    methods: &[MethodSiteSpec],
+    methods: &(impl liveness::MethodArguments + ?Sized),
     field_sites: &[FieldSite],
     superinstructions: &[Superinstruction],
 ) {
@@ -168,13 +168,14 @@ pub(super) fn coalesce_promoted_moves(
         if !changed {
             return;
         }
-        remove_nops(function);
+        remove_nops(function, &mut liveness);
     }
 }
 
 /// Drops every `Nop`, relocating jumps, handlers and source positions onto the instruction
-/// that followed it.
-fn remove_nops(function: &mut BcFunction) {
+/// that followed it. The code's liveness, indexed by the old positions, is dropped with them.
+fn remove_nops(function: &mut BcFunction, liveness: &mut Option<CodeLiveness>) {
+    *liveness = None;
     let old = std::mem::take(&mut function.code);
     let mut code = Vec::with_capacity(old.len());
     let mut map = vec![0usize; old.len() + 1];
@@ -210,7 +211,7 @@ impl CodeLiveness {
     fn of(
         current: &mut Option<Self>,
         function: &BcFunction,
-        methods: &[MethodSiteSpec],
+        methods: &(impl liveness::MethodArguments + ?Sized),
         field_sites: &[FieldSite],
         superinstructions: &[Superinstruction],
     ) -> Option<Self> {
@@ -296,7 +297,7 @@ fn invert_branches_over_jumps(function: &mut BcFunction) {
 /// candidate's liveness facts are unaffected by the others.
 fn coalesce_distant_producer_moves(
     function: &mut BcFunction,
-    methods: &[MethodSiteSpec],
+    methods: &(impl liveness::MethodArguments + ?Sized),
     field_sites: &[FieldSite],
     superinstructions: &[Superinstruction],
     current: &mut Option<CodeLiveness>,
@@ -400,7 +401,7 @@ fn coalesce_distant_producer_moves(
 /// rewrite trades `d` for `s` and changes nothing else it reads or writes.
 fn forward_move_sources(
     function: &mut BcFunction,
-    methods: &[MethodSiteSpec],
+    methods: &(impl liveness::MethodArguments + ?Sized),
     field_sites: &[FieldSite],
     superinstructions: &[Superinstruction],
     current: &mut Option<CodeLiveness>,
@@ -722,7 +723,7 @@ fn region_boundaries(
 
 fn rewrite_once(
     function: &mut BcFunction,
-    methods: &[MethodSiteSpec],
+    methods: &(impl liveness::MethodArguments + ?Sized),
     field_sites: &mut SiteTable<'_, FieldSite>,
     superinstructions: &[Superinstruction],
     current: &mut Option<CodeLiveness>,
@@ -997,7 +998,7 @@ mod tests {
             Instr::new(Op::Move, 5, 3, 0, 0),
             Instr::new(Op::Return, 5, 0, 0, 0),
         ];
-        assert!(!coalesce_distant_producer_moves(function, &[], &[], &[], &mut None));
+        assert!(!coalesce_distant_producer_moves(function, &[] as &[MethodSiteSpec], &[], &[], &mut None));
         assert_eq!(function.code[0].result_register(), 3);
         assert_eq!(function.code[2].op(), Op::Move);
     }
@@ -1115,7 +1116,7 @@ mod tests {
                 register,
             })
             .collect();
-        while coalesce_distant_producer_moves(function, &[], &[], &[], &mut None) {}
+        while coalesce_distant_producer_moves(function, &[] as &[MethodSiteSpec], &[], &[], &mut None) {}
         function
             .code
             .iter()
@@ -1221,7 +1222,7 @@ mod tests {
         let function = &mut program.functions[0];
         function.code = code;
         function.registers = registers;
-        rewrite_once(function, &[], &mut SiteTable::default(), &[], &mut None);
+        rewrite_once(function, &[] as &[MethodSiteSpec], &mut SiteTable::default(), &[], &mut None);
         std::mem::take(&mut function.code)
     }
 

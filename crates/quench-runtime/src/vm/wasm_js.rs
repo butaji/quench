@@ -582,7 +582,7 @@ impl<H: Host> Vm<H> {
         native: Native,
         text: String,
     ) -> JsError {
-        let message = self.heap.alloc(Cell::String(JsString::from_str(&text)));
+        let message = self.heap.alloc_string(JsString::from_str(&text));
         let object = self
             .construct_error_native(program, native, &[message])
             .unwrap_or(Value::UNDEFINED);
@@ -1118,16 +1118,16 @@ impl<H: Host> Vm<H> {
         if signature.params.as_slice() != [I32, I32, I32] {
             return None;
         }
-        let Cell::Function {
+        let FunctionRecord {
             kind: FunctionKind::User(program_id, function_id),
             env,
             ..
-        } = self.heap.get(function)?
+        } = self.heap.function(function)?
         else {
             return None;
         };
         let program = self.programs.get(*program_id)?;
-        let metadata = program.functions.get(*function_id as usize)?;
+        let metadata = program.function_get(*function_id as usize)?;
         if metadata.params != 3
             || metadata.inherited_with_scope
             || !metadata.binding_sites.is_empty()
@@ -1198,7 +1198,7 @@ impl<H: Host> Vm<H> {
             if environment == owner_environment {
                 let owner_program_id = super::program_store::ProgramId::from_raw(scope.program()?);
                 let owner_program = self.programs.get(owner_program_id)?;
-                let owner_metadata = owner_program.functions.get(*owner_function as usize)?;
+                let owner_metadata = owner_program.function_get(*owner_function as usize)?;
                 let owns_atom = if *owner_function == super::ROOT_FUNCTION_ID {
                     owner_metadata.declares_global_lexical(view_atom)
                         || (owner_program.root_variables_are_local()
@@ -1302,7 +1302,7 @@ impl<H: Host> Vm<H> {
                 let exports = self.heap.root_value(exports_root).expect("rooted exports");
                 let key = self
                     .heap
-                    .alloc(Cell::String(JsString::from_str(&export.name)));
+                    .alloc_string(JsString::from_str(&export.name));
                 let key = self.to_property_key(p, key)?;
                 let record = super::object_descriptors::PropertyDescriptorRecord::data(value);
                 self.define_own_property_record(p, exports, key, record)?;
@@ -1351,8 +1351,8 @@ impl<H: Host> Vm<H> {
 
     /// The Wasm closure behind an exported-function wrapper.
     fn wasm_exported_closure(&self, value: Value) -> Option<Value> {
-        match self.heap.get(value)? {
-            Cell::Function {
+        match self.heap.function(value)? {
+            FunctionRecord {
                 kind: FunctionKind::Native(Native::WasmExportedFunction),
                 env,
                 ..
@@ -1389,8 +1389,8 @@ impl<H: Host> Vm<H> {
             .into_iter()
             .map(|value| self.encode_wasm_value(value))
             .collect::<Vec<_>>();
-        let (result, declarations) = match self.heap.get(function) {
-            Some(Cell::Function {
+        let (result, declarations) = match self.heap.function(function) {
+            Some(FunctionRecord {
                 kind: FunctionKind::User(program, index),
                 env,
                 ..
@@ -1695,8 +1695,8 @@ impl<H: Host> Vm<H> {
         self.data_property_without_getter(view, copy_within_atom)
             .is_some_and(|method| {
                 matches!(
-                    self.heap.get(method),
-                    Some(Cell::Function {
+                    self.heap.function(method),
+                    Some(FunctionRecord {
                         kind: FunctionKind::Native(Native::Uint8ArrayCopyWithin),
                         ..
                     })
@@ -1840,7 +1840,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let descriptor = self.object();
         for &(name, text) in fields {
-            let value = self.heap.alloc(Cell::String(JsString::from_str(text)));
+            let value = self.heap.alloc_string(JsString::from_str(text));
             self.set_named(p, descriptor, name, value)?;
         }
         Ok(descriptor)

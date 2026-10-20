@@ -120,7 +120,7 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     shared_undefined: SharedUndefined,
     function_scope: FxHashSet<Atom>,
     annex_b_collisions: FxHashSet<u32>,
-    pub(super) scopes: Vec<Rc<super::capture_scope::CaptureScope>>,
+    pub(super) scopes: super::capture_scope::ScopeChain,
     pub(super) function_id: u32,
     /// `Compiler::private_name_references` when this function began, so a later count
     /// shows that it or a function it encloses names a private member.
@@ -151,6 +151,9 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     inherited_with_depth: u16,
     pub(super) strict: bool,
     pub(super) dynamic_eval: bool,
+    /// The `var x = arguments;` alias whose reads read the `arguments` binding
+    /// (`early::arguments_alias`); its declaration then stores nothing.
+    pub(super) arguments_alias: Option<String>,
     parameter_context: bool,
     pub(super) parameter_eval_arguments_error: bool,
     pub(super) parameter_arguments_slot: Option<u16>,
@@ -180,7 +183,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         locals: Vec<Atom>,
         function_scope: FxHashSet<Atom>,
         annex_b_collisions: FxHashSet<u32>,
-        scopes: Vec<Rc<super::capture_scope::CaptureScope>>,
+        scopes: super::capture_scope::ScopeChain,
         function_id: u32,
         super_flags: (bool, bool),
         async_function: bool,
@@ -269,6 +272,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             inherited_with_depth: with_depth,
             strict: false,
             dynamic_eval: false,
+            arguments_alias: None,
             parameter_context: false,
             parameter_eval_arguments_error: false,
             parameter_arguments_slot,
@@ -719,6 +723,11 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             }
         }
         for (index, item) in params.items.iter().enumerate() {
+            // A simple parameter's binding is the local its argument arrives in, already
+            // initialized: binding it again would store the value it holds.
+            if !non_simple {
+                continue;
+            }
             let atom = self.owner.atom(&parameter_names[index]);
             let current = self.load_atom(atom);
             if let Some(initializer) = &item.initializer {
@@ -800,7 +809,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         }
         let binding = self.resolve_lexical(atom);
         !self.local_slots.contains_key(&binding)
-            && !self.scopes.iter().any(|scope| scope.contains_key(&binding))
+            && !self.scopes.contains(binding)
             && !self.has_immutable_capture(binding)
     }
 
@@ -1085,7 +1094,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         }
     }
 
-    pub(super) fn capture_scopes(&mut self) -> Vec<Rc<super::capture_scope::CaptureScope>> {
+    pub(super) fn capture_scopes(&mut self) -> super::capture_scope::ScopeChain {
         let state = CaptureScopeState {
             local_count: self.local_slots.len(),
             lexical_depth: self.lexical_scopes.len(),
@@ -1104,11 +1113,11 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         // Eval can introduce vars that shadow inherited bindings. Current lexical
         // bindings cannot be replaced by those declarations and remain capturable.
         if !self.dynamic_eval {
-            scopes.extend(self.scopes.iter().cloned());
+            scopes.extend(self.scopes.levels().iter().cloned());
         } else {
             // Source eval cannot introduce compiler bindings. Keep their scope
             // depths while dropping source-name projections and capture markers.
-            scopes.extend(self.scopes.iter().map(|scope| {
+            scopes.extend(self.scopes.levels().iter().map(|scope| {
                 Rc::new(
                     scope
                         .iter()
@@ -1125,7 +1134,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 )
             }));
         }
-        scopes
+        super::capture_scope::ScopeChain::new(scopes)
     }
 
     /// The current function's bindings any closure created inside it sees before lexical

@@ -11,7 +11,7 @@ impl<H: Host> Vm<H> {
             return Ok(Value::TRUE);
         }
         let frame = self.frames.len().saturating_sub(1);
-        let key = self.heap.alloc(Cell::String(self.atom_name(atom).into()));
+        let key = self.heap.alloc_string(self.atom_name(atom).into());
         let with_objects = self.with_objects_before_binding(frame, atom);
         for object in with_objects.into_iter().rev() {
             if self.with_binding(p, object, key, atom)? {
@@ -80,7 +80,7 @@ impl<H: Host> Vm<H> {
                 vm.materialize_watched_lazy_member(p, target, PropertyKey::symbol(key))?;
                 PropertyKey::symbol(key)
             } else {
-                let Some(Cell::String(key)) = vm.heap.get(key).cloned() else {
+                let Some(key) = vm.heap.string(key).cloned() else {
                     unreachable!("ToPropertyKey returns a string or symbol")
                 };
                 let atom = vm.intern_js_atom(&key);
@@ -709,10 +709,12 @@ impl<H: Host> Vm<H> {
         freeze: bool,
     ) -> Result<Value, JsError> {
         let source = args.first().copied().unwrap_or(Value::UNDEFINED);
-        if matches!(
-            self.heap.get(source),
-            Some(Cell::Proxy { .. } | Cell::TypedArray { .. } | Cell::Function { .. })
-        ) || self
+        if self.heap.is_function_value(source)
+            || matches!(
+                self.heap.get(source),
+                Some(Cell::Proxy { .. } | Cell::TypedArray { .. })
+            )
+            || self
             .object_data(source)
             .is_some_and(Object::is_module_namespace)
             || self.has_lazy_data_properties(source)
