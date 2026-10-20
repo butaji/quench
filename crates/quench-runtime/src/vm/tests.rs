@@ -10581,15 +10581,16 @@ fn js_jit_compiles_guarded_int32_identity_arm_and_falls_back_for_other_types() {
         .iter()
         .position(|function| {
             function
+                .header()
                 .name
-                .or(function.inferred_name)
+                .or(function.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == "hashKey")
         })
         .unwrap() as u32;
     assert!(
         super::js_compiled::int32_identity_return_candidate(
             &program,
-            &program.functions[function_id as usize]
+            program.function_get(function_id as usize).unwrap()
         )
         .is_some(),
         "{}",
