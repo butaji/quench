@@ -90,6 +90,8 @@ mod dispatch_fast;
 mod dispatch_frame;
 mod dispatch_wasm;
 mod dynamic_strings;
+#[cfg(feature = "profile-lane-exits")]
+mod lane_exits;
 mod embedding;
 mod provenance;
 mod inspection;
