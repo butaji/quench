@@ -12081,3 +12081,25 @@ print(JSON.stringify(out));
     vm.execute(&Engine::specialize(source, "cross-program-applies.js").unwrap()).unwrap();
     assert_eq!(output.borrow().as_slice(), [r#"["object:0:x:2","u:0::1","object:0:y:2","object:::0","object:0:z:3","object:0:1","object:0:1","object::0","t0:0:1","t0:0:2",6,"RangeErrorr0","RangeErrorr0","TypeError","TypeError","object:al:b:2","object::hole:2","g","object:got:2:2","object:B:0:2","object:B:c:2","object:B:d:2","object:A1:A2:2","object:1:x:2","u:1::1","object:1:y:2","object:::0","object:1:z:3","object:1:1","object:1:1","object::0","t1:1:1","t1:1:2",6,"RangeErrorr1","RangeErrorr1","TypeError","TypeError","object:al:b:2","object::hole:2","g","object:got:2:2","object:B:1:2","object:B:c:2","object:B:d:2","object:A1:A2:2","object:2:x:2","u:2::1","object:2:y:2","object:::0","object:2:z:3","object:2:1","object:2:1","object::0","t2:2:1","t2:2:2",6,"RangeErrorr2","RangeErrorr2","TypeError","TypeError","object:al:b:2","object::hole:2","g","object:got:2:2","object:B:2:2","object:B:c:2","object:B:d:2","object:A1:A2:2","0-0,1-1,2-2"]"#]);
 }
+
+#[test]
+fn lane_closures_of_one_function_keep_their_own_lexical_this() {
+    // Arrows made by one function share its derived lane target; each keeps the `this` of
+    // the call that made it, and a closure-making method's arrows see that method's receiver.
+    let source = r#"
+      function make() { return () => this.tag; }
+      const a = { tag: 'a' }, b = { tag: 'b' };
+      const out = [];
+      for (let i = 0; i < 4; i++) {
+        const fa = make.call(a), fb = make.call(b);
+        out.push(fa() + fb());
+        const o = { tag: 'o' + i, m() { const x = () => this.tag; return x(); } };
+        out.push(o.m());
+      }
+      print(out.join(','));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "lane-closure-this.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["ab,o0,ab,o1,ab,o2,ab,o3"]);
+}
