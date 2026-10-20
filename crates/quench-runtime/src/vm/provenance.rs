@@ -4,6 +4,54 @@ use super::*;
 // V8 JSFunction::kNameDescriptorIndex: length precedes the native name accessor.
 const FUNCTION_NATIVE_NAME_DESCRIPTOR_INDEX: usize = 1;
 
+/// Direct-mapped entries of `FunctionNameShapes`: a power of two that holds the distinct
+/// closure names a request path makes.
+const FUNCTION_NAME_SHAPE_ENTRIES: usize = 1 << 8;
+
+/// Memoized `append_function_name` answers: the shape a closure's shape takes with a name.
+/// Closures of one site take the same name on the same shape, but that shape has a named
+/// child per site, which defeats `Shape::last_child`. Entries name shapes, so they are
+/// cleared with the transition index and whenever a collection renumbers shapes.
+pub(super) struct FunctionNameShapes {
+    entries: Box<[std::cell::Cell<Option<(u32, Atom, u32)>>]>,
+}
+
+impl Default for FunctionNameShapes {
+    fn default() -> Self {
+        Self {
+            entries: (0..FUNCTION_NAME_SHAPE_ENTRIES)
+                .map(|_| std::cell::Cell::new(None))
+                .collect(),
+        }
+    }
+}
+
+impl FunctionNameShapes {
+    fn entry(&self, shape: u32, name: Atom) -> &std::cell::Cell<Option<(u32, Atom, u32)>> {
+        let index = (name ^ shape.rotate_left(FUNCTION_NAME_SHAPE_ENTRIES.trailing_zeros()))
+            as usize
+            & (FUNCTION_NAME_SHAPE_ENTRIES - 1);
+        &self.entries[index]
+    }
+
+    fn get(&self, shape: u32, name: Atom) -> Option<u32> {
+        self.entry(shape, name)
+            .get()
+            .filter(|&(base, atom, _)| base == shape && atom == name)
+            .map(|(_, _, named)| named)
+    }
+
+    fn record(&self, shape: u32, name: Atom, named: u32) {
+        self.entry(shape, name).set(Some((shape, name, named)));
+    }
+
+    pub(super) fn clear(&self) {
+        for entry in self.entries.iter() {
+            entry.set(None);
+        }
+    }
+}
+
 /// A memo of `Vm::constructed_shape`: the shape an object of `shape` takes when
 /// `constructor` constructs it. The answer depends only on that key, the constructor's
 /// immutable original name and the shape tree, so it holds until a collection, which can
@@ -110,7 +158,15 @@ impl<H: Host> Vm<H> {
     }
 
     fn append_function_name(&mut self, function: Value, shape: u32, name: Atom) {
-        let shape = self.append_cached_shape_transition(shape, ShapeTransition::FunctionName { name });
+        let shape = match self.function_name_shapes.get(shape, name) {
+            Some(named) => named,
+            None => {
+                let named =
+                    self.append_cached_shape_transition(shape, ShapeTransition::FunctionName { name });
+                self.function_name_shapes.record(shape, name, named);
+                named
+            }
+        };
         self.object_data_mut(function).expect("function object").set_shape(shape);
     }
 
