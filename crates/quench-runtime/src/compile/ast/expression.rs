@@ -783,10 +783,10 @@ impl FunctionCompiler<'_, '_> {
         if lexical.is_none() && !compiler_binding && self.with_depth != self.inherited_with_depth {
             return None;
         }
+        // Only a local held in a register: the lane reads no frame-slot operand, so a
+        // slot's load runs as its own instruction (`LoadLocal`) instead.
         let atom = lexical.unwrap_or(source);
-        self.local_register(atom)
-            .map(Operand::register)
-            .or_else(|| self.local_slots.get(&atom).copied().map(Operand::local))
+        self.local_register(atom).map(Operand::register)
     }
 
     pub(super) fn condition(&mut self, value: &Expression<'_>) -> usize {
