@@ -1589,6 +1589,30 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// `slot` at the end of a capture walk `walked_capture_slots` remembers, when that end is
+    /// a function environment holding the slot densely; `None` leaves the read to the walk.
+    #[inline(always)]
+    pub(super) fn remembered_capture(
+        &self,
+        env: Value,
+        captured: bool,
+        depth: u16,
+        slot: u16,
+    ) -> Option<Value> {
+        let walk = &self.capture_walks[capture_walk_index(env, depth)?];
+        if walk.depth != depth
+            || walk.cache.env != env
+            || walk.cache.captured != captured
+            || walk.cache.epoch != self.heap.collection_epoch()
+            || walk.cache.slots.is_null()
+            || walk.cache.root.is_some()
+        {
+            return None;
+        }
+        // SAFETY: as `walked_capture_slots`: the walk ends at a live cell this collection.
+        unsafe { &*walk.cache.slots }.dense()?.dense_plain(usize::from(slot))
+    }
+
     /// `environment_capture_slots` through the walks it remembers (`capture_walks`): a walk
     /// from the same environment, equally its own or not, to the same depth in the same
     /// collection ends at the same live cell, whose slot storage never moves.
@@ -1600,8 +1624,7 @@ impl<H: Host> Vm<H> {
         depth: u16,
     ) -> Option<(*const crate::heap::EnvironmentSlots, Option<Option<u32>>)> {
         let epoch = self.heap.collection_epoch();
-        let index = (env.heap_index()? as usize ^ usize::from(depth) * (CAPTURE_WALKS / 2 + 1))
-            & (CAPTURE_WALKS - 1);
+        let index = capture_walk_index(env, depth)?;
         let walk = &self.capture_walks[index];
         if walk.depth == depth
             && walk.cache.env == env
@@ -2492,4 +2515,10 @@ fn environment_admits_direct_store(
         !owner.is_self_binding_slot(slot)
             && super::arguments::mapped_arguments_slot(owner, slot).is_none()
     })
+}
+
+/// The `Vm::capture_walks` entry a walk from `env` to `depth` uses.
+#[inline(always)]
+fn capture_walk_index(env: Value, depth: u16) -> Option<usize> {
+    Some((env.heap_index()? as usize ^ usize::from(depth) * (CAPTURE_WALKS / 2 + 1)) & (CAPTURE_WALKS - 1))
 }
