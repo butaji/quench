@@ -723,6 +723,11 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             }
         }
         for (index, item) in params.items.iter().enumerate() {
+            // A simple parameter's binding is the local its argument arrives in, already
+            // initialized: binding it again would store the value it holds.
+            if !non_simple {
+                continue;
+            }
             let atom = self.owner.atom(&parameter_names[index]);
             let current = self.load_atom(atom);
             if let Some(initializer) = &item.initializer {
