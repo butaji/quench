@@ -11026,6 +11026,77 @@ fn closure_names_keep_their_shapes_across_collections() {
 }
 
 #[test]
+fn lane_in_place_steps_keep_iterator_closing_and_throws() {
+    // Iterator steps run in place in a frame's lane run: break, return and throw close
+    // iterators, next() throws and non-object results raise, destructuring and spread stay exact.
+    let source = r#"
+      const out = [];
+      function userIter(n, log, opts = {}) {
+        return { [Symbol.iterator]() { let i = 0; return { next() { if (opts.badResult && i === 1) return 5; if (opts.throwAt === i) throw new Error("next" + i); return { value: i, done: i++ >= n }; }, return() { log.push("ret"); return {}; } }; } };
+      }
+      function run(k) {
+        const log = [];
+        for (const v of [1, 2, 3]) { if (v === 2) break; log.push(v); }
+        for (const v of userIter(3, log)) { if (v === 1) break; log.push("u" + v); }
+        try { for (const v of userIter(3, log)) { if (v === 1) throw new Error("x"); } } catch (e) { log.push(e.message); }
+        try { for (const v of userIter(3, log, { throwAt: 1 })) log.push("t" + v); } catch (e) { log.push(e.message); }
+        try { for (const v of userIter(3, log, { badResult: true })) log.push("b" + v); } catch (e) { log.push(e.constructor.name); }
+        const f = () => { for (const v of userIter(5, log)) { if (v === 2) return v; } };
+        log.push(f());
+        const [a, b, ...rest] = userIter(4, log); log.push(a, b, rest.join("+"));
+        const [x] = userIter(4, log); log.push(x);
+        log.push([...new Set([3, 1, 3])].join(), [..."héllo"].length, Array.from(new Map([[1, 2]])).join());
+        function* gen() { try { yield 1; yield 2; } finally { log.push("fin"); } }
+        for (const g of gen()) { log.push("g" + g); break; }
+        try { for (const z of 5) {} } catch (e) { log.push(e.constructor.name); }
+        class C { #p = k; static sum(list) { let s = 0; for (const c of list) s += #p in c ? c.#p : 0; return s; } }
+        log.push(C.sum([new C(), {}, new C()]));
+        out.push(log.join(","));
+      }
+      for (let k = 0; k < 3; k++) run(k);
+      print(out.join("|"));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "lane-iterators.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["1,u0,ret,ret,x,t0,next1,b0,TypeError,ret,2,0,1,2+3,ret,0,3,1,5,1,2,g1,fin,TypeError,0|1,u0,ret,ret,x,t0,next1,b0,TypeError,ret,2,0,1,2+3,ret,0,3,1,5,1,2,g1,fin,TypeError,2|1,u0,ret,ret,x,t0,next1,b0,TypeError,ret,2,0,1,2+3,ret,0,3,1,5,1,2,g1,fin,TypeError,4"]
+    );
+}
+
+#[test]
+fn lane_in_place_steps_keep_private_brands_and_field_definitions() {
+    // Private fields, brand checks and class field definitions run in place; Proxy and
+    // frozen receivers, double initialization and named field functions stay exact.
+    let source = r#"
+      const out = [];
+      class Base { constructor(o) { if (o) return o; } }
+      class Stamp extends Base { #s = 1; static has(o) { return #s in o; } static get(o) { return o.#s; } }
+      class P { #a = 1; #b; #m() { return this.#a; } constructor(x) { this.#b = x; } read() { return [this.#a, this.#b, this.#m()].join(":"); } static isP(o) { try { o.#a; return true; } catch (e) { return e.constructor.name; } } }
+      for (let i = 0; i < 3; i++) {
+        out.push(new P(i).read(), P.isP(new P(1)), P.isP({}));
+        const target = {}; new Stamp(target); out.push(Stamp.has(target), Stamp.get(target));
+        try { new Stamp(target); } catch (e) { out.push(e.constructor.name); }
+        const proxy = new Proxy({}, {}); new Stamp(proxy); out.push(Stamp.has(proxy));
+        class F extends Base { x = 1; y = 2; }
+        const frozen = Object.freeze({}); try { new F(frozen); } catch (e) { out.push(e.constructor.name); }
+        const seen = []; const prox = new Proxy({}, { defineProperty(t, k, d) { seen.push(k); return Reflect.defineProperty(t, k, d); } });
+        new F(prox); out.push(seen.join("+"), Object.keys(new F()).join());
+        class N { f = function () {}; g = () => {}; ["h"] = class {}; } const n = new N(); out.push(n.f.name, n.g.name, n.h.name);
+      }
+      print(out.join("|"));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "lane-private-fields.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["1:0:1|true|TypeError|true|1|TypeError|true|TypeError|x+y|x,y|f|g|h|1:1:1|true|TypeError|true|1|TypeError|true|TypeError|x+y|x,y|f|g|h|1:2:1|true|TypeError|true|1|TypeError|true|TypeError|x+y|x,y|f|g|h"]
+    );
+}
+
+#[test]
 fn lane_arrows_take_this_from_their_environment() {
     // Arrows called as frameless activations read `this` from the environment they
     // closed over: call/apply/bind receivers are ignored, a derived constructor's
