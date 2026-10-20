@@ -30,7 +30,7 @@ impl<H: Host> Vm<H> {
             let iterator = self.get_iterator(p, value)?;
             let iterator = self.heap.root(iterator);
             iterator_root = Some(iterator);
-            let next_atom = self.intern_atom("next");
+            let next_atom = self.runtime_atoms.next;
             let receiver = self.heap.root_value(iterator).unwrap();
             let next = self.get_property(p, receiver, next_atom)?;
             let next = self.heap.root(next);

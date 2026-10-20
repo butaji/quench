@@ -115,7 +115,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn set_function_debug_name(&mut self, function: Value, name: Atom) {
-        if matches!(self.heap.get(function), Some(Cell::Function { kind: FunctionKind::User(..) | FunctionKind::NumericUser(..), .. }))
+        if matches!(self.heap.get(function), Some(Cell::Function { kind: FunctionKind::User(..), .. }))
             && self.original_function_name(function).is_some_and(|original| self.atom_units_equal_str(original, ""))
         {
             self.capture_function_name_atom(function, name);
@@ -208,7 +208,7 @@ impl<H: Host> Vm<H> {
     /// The source/debug name can differ from the public creation name: dynamic
     /// Function constructors expose "anonymous" while their source name is empty.
     pub(super) fn original_debug_name(&self, function: Value) -> Option<JsString> {
-        if let Some(Cell::Function { kind: FunctionKind::User(program, id) | FunctionKind::NumericUser(program, id), .. }) = self.heap.get(function) {
+        if let Some(Cell::Function { kind: FunctionKind::User(program, id), .. }) = self.heap.get(function) {
             if self.programs.is_function_constructor_body(*program, *id) { return None; }
         }
         self.original_function_name(function).map(|name| self.atom_value(name))
@@ -312,7 +312,7 @@ impl<H: Host> Vm<H> {
             return None;
         };
         let intrinsic = match *kind {
-            FunctionKind::User(program, id) | FunctionKind::NumericUser(program, id) => {
+            FunctionKind::User(program, id) => {
                 let program = self.programs.get(program)?;
                 let function = program.functions.get(id as usize)?.header();
                 match (function.is_async, function.is_generator) {

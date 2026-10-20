@@ -148,7 +148,7 @@ impl<H: Host> Vm<H> {
                 self.realm_object_prototype(self.realm.globals),
             )));
             self.set_intl_string_property(object, "type", part.kind)?;
-            let atom = self.intern_atom("value");
+            let atom = self.runtime_atoms.value;
             let value = self.heap.alloc(Cell::String(part.value));
             self.set_property(object, atom, value)?;
             values.push(object);

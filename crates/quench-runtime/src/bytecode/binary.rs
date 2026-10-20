@@ -185,6 +185,7 @@ pub(super) fn write_program(
         out.option_u32(function.name);
         out.option_u32(function.inferred_name);
         out.u8(u8::from(function.is_arrow));
+        out.u8(u8::from(function.reads_lexical_this));
         out.u16(function.self_binding_slot.unwrap_or(u16::MAX));
         out.u8(u8::from(function.source_span.is_some()));
         if let Some(span) = function.source_span {
@@ -492,6 +493,11 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             1 => true,
             _ => return Err("invalid arrow function flag".into()),
         };
+        let reads_lexical_this = match input.u8()? {
+            0 => false,
+            1 => true,
+            _ => return Err("invalid lexical this flag".into()),
+        };
         let self_binding_slot = match input.u16()? {
             u16::MAX => None,
             slot => Some(slot),
@@ -690,6 +696,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             name,
             inferred_name,
             is_arrow,
+            reads_lexical_this,
             self_binding_slot,
             source_span,
             params,

@@ -49,6 +49,11 @@ struct RuntimeAtoms {
     /// Read by every promise resolution and species lookup.
     then: Atom,
     constructor: Atom,
+    /// The members of an iterator result (`Vm::iterator_result`).
+    value: Atom,
+    done: Atom,
+    /// The iterator protocol's step method.
+    next: Atom,
     /// Canonical key for named function-info lookup; paired with length_atom.
     name: Atom,
     /// The empty string, an anonymous function's initial name.
@@ -1300,7 +1305,6 @@ const EMPTY_STRING_CONCAT_CACHE: StringConcatCache = StringConcatCache {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CallTarget {
     User(ProgramId, u32, Value),
-    NumericUser(ProgramId, u32, Value),
     Native(Native),
 }
 pub(super) enum StepResult {
@@ -1574,6 +1578,9 @@ pub(crate) struct Vm<H> {
     /// (`Vm::regexp_from_matcher`), as the first one recorded; derived from shapes, so
     /// field-cache invalidation clears it.
     regexp_object_shapes: Option<(u32, u32)>,
+    /// The shape of an iterator result `{ value, done }` (`Vm::iterator_result`); derived
+    /// from shapes, so field-cache invalidation clears it.
+    iterator_result_shape: Option<u32>,
     /// A RegExp receiver shape verified to hold an own writable data `lastIndex` at the paired
     /// slot; derived from shapes, so field-cache invalidation clears it.
     regexp_last_index_layout: Option<(u32, u32)>,
@@ -2390,6 +2397,9 @@ impl<H: Host> Vm<H> {
             regexp_flag_accessors,
             then: self.intern_atom("then"),
             constructor: self.intern_atom("constructor"),
+            value: self.intern_atom("value"),
+            done: self.intern_atom("done"),
+            next: self.intern_atom("next"),
             name: self.intern_atom("name"),
             empty: self.intern_atom(""),
         };
@@ -2417,6 +2427,7 @@ impl<H: Host> Vm<H> {
         self.instanceof_constructor_layout = None;
         self.closure_shapes = [None; 2];
         self.regexp_object_shapes = None;
+        self.iterator_result_shape = None;
         self.regexp_last_index_layout = None;
         self.regexp_builtin_layout = None;
         self.regexp_symbol_layouts.clear();
@@ -2685,17 +2696,16 @@ impl<H: Host> Vm<H> {
                 self.profile.call_target(0, args.len());
                 self.call_native_guarded(p, native, this, args, callee)
             }
-            CallTarget::User(program_id, id, env)
-            | CallTarget::NumericUser(program_id, id, env) => {
-                let target_kind = if matches!(target, CallTarget::User(..)) {
-                    1
-                } else {
-                    2
-                };
-                self.profile.call_target(target_kind, args.len());
+            CallTarget::User(program_id, id, env) => {
                 let program = self.programs.get(program_id).ok_or_else(|| {
                     self.type_error(p, "function belongs to an unavailable program".into())
                 })?;
+                // The profile's user targets count general and numeric bodies apart.
+                let numeric = program
+                    .functions
+                    .get(id as usize)
+                    .is_some_and(|function| function.dispatch == DispatchClass::Numeric);
+                self.profile.call_target(1 + usize::from(numeric), args.len());
                 let active_program = self.replace_active_program(program_id);
                 let realm = match self.heap.get(callee) {
                     Some(Cell::Function { object, .. }) => object.realm,
@@ -2751,7 +2761,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<(Value, Value), JsError> {
         let (program_id, id, env, realm) = match self.heap.get(callee) {
             Some(Cell::Function {
-                kind: FunctionKind::User(program_id, id) | FunctionKind::NumericUser(program_id, id),
+                kind: FunctionKind::User(program_id, id),
                 env,
                 object,
                 ..

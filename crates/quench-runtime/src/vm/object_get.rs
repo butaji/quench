@@ -325,7 +325,7 @@ impl<H: Host> Vm<H> {
                 ],
             )?;
             if !descriptor.is_undefined() && !self.descriptor_flag(descriptor, "configurable") {
-                let value_atom = self.intern_atom("value");
+                let value_atom = self.runtime_atoms.value;
                 let writable_atom = self.intern_atom("writable");
                 let setter_atom = self.intern_atom("set");
                 let is_data = self.own_property(descriptor, value_atom).is_some()

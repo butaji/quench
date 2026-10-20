@@ -131,6 +131,7 @@ impl<H: Host> Vm<H> {
             instanceof_constructor_layout: None,
             closure_shapes: [None; 2],
             regexp_object_shapes: None,
+            iterator_result_shape: None,
             regexp_last_index_layout: None,
             regexp_builtin_layout: None,
             regexp_symbol_layouts: Vec::new(),
