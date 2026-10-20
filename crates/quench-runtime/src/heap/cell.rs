@@ -953,6 +953,11 @@ impl Native {
                     | Self::WeakSetAdd
                     | Self::WeakSetHas
                     | Self::WeakSetDelete
+                    | Self::ReflectGetPrototypeOf
+                    | Self::ForInKeyIsEnumerable
+                    | Self::PromiseThen
+                    | Self::PromiseCatch
+                    | Self::PromiseResolve
             )
             || self.is_data_view_element_method()
     }
