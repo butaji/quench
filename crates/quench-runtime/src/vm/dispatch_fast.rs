@@ -20,6 +20,8 @@
 //! safepoint jump leaves the lane.
 
 use super::dispatch_frame::PendingGeneralCall;
+use crate::heap::InlineObjectHeader;
+use crate::value_vec::INLINE_PROPERTY_COUNT;
 use super::*;
 use crate::bytecode::{
     FieldLayout, Function, ImmediateLayout, ImmediateRole, InstructionField, WideInstruction,
@@ -638,6 +640,9 @@ struct ConstructPlan {
     callee_layout: (u32, usize),
     prototype: Value,
     shape: u32,
+    /// The receiver's header (`InlineObjectHeader::of` of `prototype` and `shape`), which
+    /// `ConstructPlan::finish` derives; the receiver stores its fields inline when they fit.
+    header: InlineObjectHeader,
     fields: u8,
     parameters: [u16; CONSTRUCT_PLAN_FIELDS],
     /// For a forwarding constructor's plan of no fields, where its body's reads resolved
@@ -669,12 +674,37 @@ const _: () = assert!(CONSTRUCT_PLANS.is_power_of_two());
 /// A `ConstructPlan::epoch` no epoch reaches: the entry plans nothing.
 const NO_CONSTRUCT_PLAN_EPOCH: u64 = u64::MAX;
 
+impl ConstructPlan {
+    /// This plan, holding from the current prototype layout epoch, with its receiver
+    /// header derived from its prototype and shape.
+    fn finish(self) -> Self {
+        Self {
+            epoch: crate::heap::prototype_layout_epoch(),
+            header: InlineObjectHeader::of(self.prototype, self.shape),
+            ..self
+        }
+    }
+
+    /// The receiver this plan allocates for `values`, its fields in order.
+    #[inline(always)]
+    fn allocate(&self, heap: &mut crate::heap::Heap, values: [Value; CONSTRUCT_PLAN_FIELDS]) -> Value {
+        let fields = usize::from(self.fields);
+        if fields <= INLINE_PROPERTY_COUNT {
+            let mut inline = [Value::UNDEFINED; INLINE_PROPERTY_COUNT];
+            inline[..fields].copy_from_slice(&values[..fields]);
+            return heap.alloc_object_from_header(self.header, self.prototype, inline);
+        }
+        heap.alloc_object_with_properties(self.prototype, self.shape, &values[..fields])
+    }
+}
+
 const EMPTY_CONSTRUCT_PLAN: ConstructPlan = ConstructPlan {
     callee: Value::UNDEFINED,
     epoch: NO_CONSTRUCT_PLAN_EPOCH,
     callee_layout: (0, 0),
     prototype: Value::UNDEFINED,
     shape: 0,
+    header: InlineObjectHeader::EMPTY,
     fields: 0,
     parameters: [0; CONSTRUCT_PLAN_FIELDS],
     forwarded: None,
@@ -5886,9 +5916,7 @@ fn lane_initialize_fields<H: Host>(
         callee_layout: (0, 0),
         prototype,
         shape: source_shape,
-        fields: 0,
-        parameters: [0; CONSTRUCT_PLAN_FIELDS],
-        forwarded: None,
+        ..EMPTY_CONSTRUCT_PLAN
     };
     let mut plannable = true;
     for store in code.function(function as usize).this_field_stores() {
@@ -5913,8 +5941,7 @@ fn lane_initialize_fields<H: Host>(
     {
         plan.callee_layout = layout;
         plan.shape = vm.object_data(this).map_or(source_shape, |object| object.shape());
-        plan.epoch = crate::heap::prototype_layout_epoch();
-        vm.lane_stack.construct_plans[index] = plan;
+        vm.lane_stack.construct_plans[index] = plan.finish();
     }
     Some((this, true))
 }
@@ -5939,7 +5966,7 @@ fn lane_planned_construction<H: Host>(
             *value = r.get(i.c + parameter);
         }
     }
-    Some(vm.heap.alloc_object_with_properties(plan.prototype, plan.shape, &values[..usize::from(plan.fields)]))
+    Some(plan.allocate(&mut vm.heap, values))
 }
 
 /// The construct plan cache entry `callee` owns, when it names a heap cell.
@@ -5970,7 +5997,7 @@ fn lane_planned_receiver<H: Host>(
     plan: Option<&ConstructPlan>,
 ) -> Option<Value> {
     if let Some(plan) = plan.filter(|plan| plan.fields == 0) {
-        return Some(vm.heap.alloc_object_with_properties(plan.prototype, plan.shape, &[]));
+        return Some(plan.allocate(&mut vm.heap, [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS]));
     }
     let template = vm.inline_construct_template(callee)?;
     let (prototype, shape) = (template.proto(), template.shape());
@@ -5980,12 +6007,12 @@ fn lane_planned_receiver<H: Host>(
     {
         vm.lane_stack.construct_plans[index] = ConstructPlan {
             callee,
-            epoch: crate::heap::prototype_layout_epoch(),
             callee_layout,
             prototype,
             shape,
             ..EMPTY_CONSTRUCT_PLAN
-        };
+        }
+        .finish();
     }
     Some(this)
 }
