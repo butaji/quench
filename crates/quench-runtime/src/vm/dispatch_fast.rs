@@ -5216,6 +5216,19 @@ lane_handler! {
                     _ => lane_string_or_native_call(cx, r, ip, i, receiver),
                 }
             }
+            Some(FunctionRecord {
+                kind: FunctionKind::Native(native @ (Native::MapGet | Native::MapHas | Native::SetHas)),
+                ..
+            }) => {
+                let key = if ImmediateLayout::argument_count(i.imm()) == 0 {
+                    Value::UNDEFINED
+                } else {
+                    r.get(ImmediateLayout::call_window_base(i.imm()))
+                };
+                let native = *native;
+                vm.pure_collection_lookup(native, receiver, key)
+                    .or_else(|| lane_string_or_native_call(cx, r, ip, i, receiver))
+            }
             _ => lane_string_or_native_call(cx, r, ip, i, receiver),
         };
         let Some(value) = value else {

@@ -11366,6 +11366,65 @@ fn function_field_initializers_keep_their_scope_and_activation() {
 }
 
 #[test]
+fn lane_collection_methods_keep_receivers_keys_and_patched_methods() {
+    // Map and Set methods run in the lane; `get`/`has` look up in place. SameValueZero keys,
+    // subclasses, wrong receivers, mutation during a run and a replaced method stay exact.
+    let source = r#"
+      const out = [];
+      const m = new Map([["a", 1], [NaN, "nan"], [0, "zero"], [{}, "obj"]]);
+      const s = new Set(["x", -0, NaN]);
+      const ws = new WeakSet(); const wm = new WeakMap(); const key = {}; ws.add(key); wm.set(key, 5);
+      class M2 extends Map {}
+      const m2 = new M2([["k", "v"]]);
+      function run() {
+        for (let i = 0; i < 3; i++) {
+          out.push(m.get("a"), m.get(NaN), m.get(-0), m.get("missing"), m.get(), m.has("a"), m.has({}), s.has(0), s.has(NaN), s.has("y"), s.has());
+          out.push(m2.get("k"), m2.has("k"), ws.has(key), wm.get(key));
+          try { Map.prototype.get.call(s, "x"); } catch (e) { out.push(e.constructor.name); }
+          try { Set.prototype.has.call(m, "a"); } catch (e) { out.push(e.constructor.name); }
+          m.set("i" + i, i); out.push(m.get("i" + i), m.size); s.add(i); out.push(s.has(i), s.size);
+          m.forEach((v, k) => { if (k === "a") out.push("fe" + v); });
+          out.push([...m.keys()].length, [...s.values()].join("/"));
+          m.delete("i" + i); s.delete(i);
+        }
+      }
+      run();
+      const saved = Map.prototype.get; Map.prototype.get = function (k) { return "patched:" + k; }; out.push(m.get("a")); Map.prototype.get = saved;
+      print(out.join(","));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "lane-collections.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["1,nan,zero,,,true,false,true,true,false,false,v,true,true,5,TypeError,TypeError,0,5,true,3,fe1,5,x/0/NaN,1,nan,zero,,,true,false,false,true,false,false,v,true,true,5,TypeError,TypeError,1,5,true,3,fe1,5,x/NaN/1,1,nan,zero,,,true,false,false,true,false,false,v,true,true,5,TypeError,TypeError,2,5,true,3,fe1,5,x/NaN/2,patched:a"]
+    );
+}
+
+#[test]
+fn ascii_string_building_keeps_text_across_the_inline_length() {
+    // ASCII concatenation builds short results inline and longer ones in one buffer.
+    let source = r#"
+      const out = [];
+      for (let n = 18; n <= 26; n++) {
+        const a = "x".repeat(n - 4), s = `${a}${n}`;
+        out.push(s.length, s.slice(-3), s === "x".repeat(n - 4) + String(n), (a + "é").length, `${a}é${n}`.charCodeAt(n - 4));
+      }
+      const parts = ["ab", "", "cd", "efghijklmnopqrstuvwxyz0123"]; let joined = "";
+      for (const p of parts) joined = `${joined}${p}`;
+      out.push(joined, joined.length, `${1}${2}${3}`, `${""}`, `${"a".repeat(22)}`.length, `${"a".repeat(23)}`.length);
+      print(out.join("|"));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "string-building.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["16|x18|true|15|233|17|x19|true|16|233|18|x20|true|17|233|19|x21|true|18|233|20|x22|true|19|233|21|x23|true|20|233|22|x24|true|21|233|23|x25|true|22|233|24|x26|true|23|233|abcdefghijklmnopqrstuvwxyz0123|30|123||22|23"]
+    );
+}
+
+#[test]
 fn lane_arrows_take_this_from_their_environment() {
     // Arrows called as frameless activations read `this` from the environment they
     // closed over: call/apply/bind receivers are ignored, a derived constructor's

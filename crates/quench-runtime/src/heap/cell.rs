@@ -874,9 +874,9 @@ impl Native {
 
     /// Natives a lane `Call` makes in place from the running frame (`lane_call_native`):
     /// the string, RegExp and `Math` functions, the Array, Object, Reflect and JSON
-    /// functions, `String.fromCharCode` and `fromCodePoint`, the primitive conversions and
-    /// embedder host functions, which read no caller state beyond the frame's published PC
-    /// and run guest code only through ordinary nested calls.
+    /// functions, `String.fromCharCode` and `fromCodePoint`, the primitive conversions, the
+    /// keyed collection methods and embedder host functions, which read no caller state
+    /// beyond the frame's published PC and run guest code only through ordinary nested calls.
     pub(crate) fn runs_from_lane(self) -> bool {
         self.is_string_regexp_or_math()
             || matches!(
@@ -930,6 +930,29 @@ impl Native {
                     | Self::Number
                     | Self::Boolean
                     | Self::HostFunction
+                    | Self::MapGet
+                    | Self::MapSet
+                    | Self::MapHas
+                    | Self::MapDelete
+                    | Self::MapClear
+                    | Self::MapKeys
+                    | Self::MapValues
+                    | Self::MapEntries
+                    | Self::MapForEach
+                    | Self::SetAdd
+                    | Self::SetHas
+                    | Self::SetDelete
+                    | Self::SetClear
+                    | Self::SetValues
+                    | Self::SetEntries
+                    | Self::SetForEach
+                    | Self::WeakMapGet
+                    | Self::WeakMapSet
+                    | Self::WeakMapHas
+                    | Self::WeakMapDelete
+                    | Self::WeakSetAdd
+                    | Self::WeakSetHas
+                    | Self::WeakSetDelete
             )
     }
 
