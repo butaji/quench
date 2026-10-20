@@ -2512,6 +2512,13 @@ impl EnvironmentSlots {
         let value = self.0.get(slot)?.0;
         (!value.is_internal_marker()).then_some(value)
     }
+    /// `dense_plain`'s slot to write: an ordinary value's place, which a store replaces.
+    #[inline(always)]
+    pub(crate) fn dense_plain_mut(&mut self, slot: usize) -> Option<&mut Value> {
+        debug_assert!(!self.0.marked());
+        let value = &mut self.0.get_mut(slot)?.0;
+        (!value.is_internal_marker()).then_some(value)
+    }
     /// The value of a slot this environment owns; a shared slot lives in its owner.
     #[inline(always)]
     pub(crate) fn owned(&self, slot: usize) -> Option<Value> {

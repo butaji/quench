@@ -934,8 +934,28 @@ struct LaneContext<H: Host> {
     env: Value,
     /// The innermost capture slots of the running function, once a capture read found
     /// them dense (`EnvironmentSlots::dense`); null until then and for sparse storage, which
-    /// the walk reads. No collection runs in the lane, so they stay in place.
+    /// the walk reads. No collection runs in the lane, so they stay in place. Tagged with
+    /// `CAPTURE_STORES` where a store to any of them is the whole write (`capture_stores`).
     capture: *const crate::heap::EnvironmentSlots,
+}
+
+/// The tag of a `LaneContext::capture` whose every dense slot a store may write directly:
+/// its environment admits every direct store (`Vm::admits_every_direct_store`) and is in the
+/// remembered set already, so a write needs no barrier until the next collection, which
+/// retires the target that tagged it.
+const CAPTURE_STORES: usize = 1;
+const _: () = assert!(std::mem::align_of::<crate::heap::EnvironmentSlots>() > CAPTURE_STORES);
+
+/// The slots a `LaneContext::capture` reads, its tag cleared.
+#[inline(always)]
+fn capture_reads(capture: *const crate::heap::EnvironmentSlots) -> *const crate::heap::EnvironmentSlots {
+    capture.map_addr(|address| address & !CAPTURE_STORES)
+}
+
+/// The slots a `LaneContext::capture` tagged `CAPTURE_STORES` lets a store write.
+#[inline(always)]
+fn capture_stores(capture: *const crate::heap::EnvironmentSlots) -> Option<*mut crate::heap::EnvironmentSlots> {
+    (capture.addr() & CAPTURE_STORES != 0).then(|| capture_reads(capture).cast_mut())
 }
 
 /// A lane handler returns the next record for the lane loop, tagged with
@@ -1947,7 +1967,7 @@ script_handler! {
     /// other takes `lane_load_capture_walk`.
     fn lane_load_capture<>(cx, r, ip, i, view) {
         let imm = i.imm();
-        let slots = unsafe { (*cx).capture };
+        let slots = capture_reads(unsafe { (*cx).capture });
         let value = if ImmediateLayout::capture_depth(imm) == 0 && !slots.is_null() {
             // SAFETY: the running function's dense capture slots, found this run
             // (`LaneContext::capture`).
@@ -2091,6 +2111,15 @@ script_handler! {
     fn lane_store_capture<>(cx, r, ip, i, view) {
         let imm = i.imm();
         let depth = ImmediateLayout::capture_depth(imm);
+        if depth == 0
+            && let Some(slots) = capture_stores(unsafe { (*cx).capture })
+            // SAFETY: the running function's dense capture slots, which admit this write
+            // (`CAPTURE_STORES`); no collection runs in the lane.
+            && let Some(binding) = unsafe { &mut *slots }.dense_plain_mut(usize::from(ImmediateLayout::capture_slot(imm)))
+        {
+            *binding = r.get(i.a);
+            next!(cx, r, following(ip), view)
+        }
         let vm = unsafe { vm(cx) };
         let env = unsafe { (*cx).env };
         // SAFETY: the context's program outlives the lane run.
@@ -5165,6 +5194,12 @@ impl<H: Host> Vm<H> {
                 .dense()
                 .map_or(std::ptr::null(), |slots| slots as *const crate::heap::EnvironmentSlots),
             _ => std::ptr::null(),
+        };
+        let capture = if !capture.is_null() && self.admits_every_direct_store(code, self.active_program, env) {
+            self.heap.remember_cell(env);
+            capture.map_addr(|address| address | CAPTURE_STORES)
+        } else {
+            capture
         };
         let target = ScriptCallTarget {
             callee,
