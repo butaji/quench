@@ -2689,6 +2689,7 @@ impl<'a> Compiler<'a> {
                     views: replay::ReplayViews::default(),
                 })
             }),
+            validated: Default::default(),
         };
         #[cfg(feature = "profile-aggregate")]
         debug_assert!(crate::profile::instruction_word_domains_fit(&program));
