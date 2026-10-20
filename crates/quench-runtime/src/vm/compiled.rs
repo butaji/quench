@@ -6528,7 +6528,9 @@ impl<H: Host> Vm<H> {
             return None;
         }
         if let Some((return_pc, return_register, value)) = self.js_jit_at_entry(program, frame) {
-            self.write(frame, return_register, value);
+            // The frame's own register file: a lane frame call reaches here before
+            // `active_registers` names the frame (`lane_enter_script_frame`).
+            self.frames[frame].registers[usize::from(return_register)] = value;
             return Some(return_pc);
         }
         let (program_id, function_id) = (self.frames[frame].program, self.frames[frame].function);
