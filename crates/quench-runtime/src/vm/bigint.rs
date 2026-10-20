@@ -44,7 +44,7 @@ impl<H: Host> Vm<H> {
             Native::BigIntToLocaleString,
         )?;
         self.set_realm_bigint_method(global, prototype, "valueOf", Native::BigIntValueOf)?;
-        if self.well_known_symbols.contains_key("toStringTag") {
+        if self.well_known_symbols.get(WellKnownSymbol::ToStringTag).is_some() {
             self.install_builtin_to_string_tag(prototype, "BigInt")?;
         }
         if global == self.realm.globals {
@@ -145,7 +145,7 @@ impl<H: Host> Vm<H> {
         }
         Ok(self
             .heap
-            .alloc(Cell::String(value.to_str_radix(radix as u32).into())))
+            .alloc_string(value.to_str_radix(radix as u32).into()))
     }
 
     fn bigint_as_n(

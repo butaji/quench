@@ -127,7 +127,7 @@ impl<H: Host> Vm<H> {
             let element = self.call_value(p, method, value, &invoke_arguments)?;
             result.push_str(&self.to_string(p, element)?);
         }
-        Ok(self.heap.alloc(Cell::String(result.into())))
+        Ok(self.heap.alloc_string(result.into()))
     }
 
     fn array_of_native(
@@ -244,7 +244,7 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, "Array.from map function is not callable".into()));
         }
         let map_this = args.get(2).copied().unwrap_or(Value::UNDEFINED);
-        let iterator_symbol = self.well_known_symbols.get("iterator").copied();
+        let iterator_symbol = self.well_known_symbols.get(WellKnownSymbol::Iterator);
         let iterator_method = iterator_symbol
             .map(|symbol| self.get_index(p, source, symbol))
             .transpose()?

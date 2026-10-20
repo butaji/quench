@@ -103,6 +103,9 @@ static LIMIT_THREAD_CACHE: extern "C" fn(
 extern "C" fn fault_only_touched_pages() {
     quench_node::host::resident_pages::map_touched_pages_only();
     quench_node::host::resident_pages::release_read_only_pages();
+    quench_runtime::set_compile_phase_boundary(
+        quench_node::host::resident_pages::release_read_only_code_and_data,
+    );
 }
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]

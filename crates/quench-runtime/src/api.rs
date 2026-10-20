@@ -8,7 +8,7 @@ pub use embedding::RootedError;
 mod native;
 pub(crate) use native::CompiledScriptState;
 pub use native::{
-    BufferStorage, BuiltinBrand, ValueType, BuiltinData, CollectionPreview, PromiseSnapshot, HostFunction, HostFunctionId, HostWeakRoot, PreparedScript, NativeArithmetic,
+    BufferStorage, BuiltinBrand, DescriptorFields, ValueType, BuiltinData, CollectionPreview, PromiseSnapshot, HostFunction, HostFunctionId, HostWeakRoot, PreparedScript, NativeArithmetic,
     CompiledScript, NativeContext, RootedIterator, ErrorSourcePosition, SourceStackFrame, SynchronousModule,
     DeserializerDelegate, SerializerDelegate,
 };
@@ -105,7 +105,7 @@ impl<H: Host> Runtime<H> {
     }
 
     fn execute_value(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
-        program.validate().map_err(JsError::validation)?;
+        program.validate_unless_proven().map_err(JsError::validation)?;
         self.vm.execute(program)
     }
 
@@ -122,15 +122,44 @@ impl<H: Host> Runtime<H> {
         scripts: &[(&str, &str)],
         program: &ResidualProgram,
     ) -> Result<(), JsError> {
-        program.validate().map_err(JsError::validation)?;
+        program.validate_unless_proven().map_err(JsError::validation)?;
         self.vm.execute_after_scripts(scripts, program).map(drop)
     }
 
     /// Execute the entry while leaving VM jobs queued for the embedder's
     /// event-loop checkpoint. Call `run_host_jobs` after host nextTick work,
     /// then `finish_deferred_execution` once the host loop is complete.
+    /// Compiles an application's entry program, as `Engine::compile` does, through the host's
+    /// compile cache (`Host::kept_compiled_program`), keyed by the entry's name, parse goal and
+    /// text: a program this build kept for them decodes instead, valid as the compiler output
+    /// it is. A program compiled here is validated before it is kept.
+    pub fn compile_entry(
+        &mut self,
+        request: ExecutionRequest<'_>,
+    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        let goal = match request.kind {
+            SourceKind::Script => "script",
+            SourceKind::Module => "module",
+            SourceKind::Eval => return Engine::compile(request),
+        };
+        let parts = [goal, request.source];
+        if let Some(bytes) = self.vm.host.kept_compiled_program(request.name, &parts)
+            && let Ok(program) = ResidualProgram::decode_trusted(bytes)
+            && program.source_name == request.name
+        {
+            return Ok(program);
+        }
+        let program = Engine::compile(request)?;
+        if program.validate().is_ok() {
+            let bytes = program.encode_trusted();
+            self.vm.host.keep_compiled_program(&program.source_name, &parts, &bytes);
+            program.validated.establish();
+        }
+        Ok(program)
+    }
+
     pub fn execute_deferred_jobs(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
-        program.validate().map_err(JsError::validation)?;
+        program.validate_unless_proven().map_err(JsError::validation)?;
         self.vm.execute_deferred_jobs(program).map(drop)
     }
 
@@ -146,7 +175,7 @@ impl<H: Host> Runtime<H> {
 
     /// Drain VM jobs at a host-selected checkpoint, including module jobs.
     pub fn run_host_jobs(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
-        program.validate().map_err(JsError::validation)?;
+        program.validate_unless_proven().map_err(JsError::validation)?;
         self.vm.drain_host_jobs(program).map(drop)
     }
 
@@ -176,7 +205,7 @@ impl<H: Host> Runtime<H> {
 
     /// Finish profiling and execution reporting after deferred host work.
     pub fn finish_deferred_execution(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
-        program.validate().map_err(JsError::validation)?;
+        program.validate_unless_proven().map_err(JsError::validation)?;
         self.vm.finish_deferred_execution(program);
         Ok(())
     }
@@ -437,7 +466,7 @@ impl<H: Host> Runtime<H> {
     }
 
     fn run_jobs_value(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
-        program.validate().map_err(JsError::validation)?;
+        program.validate_unless_proven().map_err(JsError::validation)?;
         self.vm.drain_jobs(program)
     }
 
@@ -459,7 +488,7 @@ impl<H: Host> Runtime<H> {
     /// Force the VM's named GC safepoint. The residual program supplies the
     /// frame root maps used when a host asks for collection between calls.
     pub fn collect(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
-        program.validate().map_err(JsError::validation)?;
+        program.validate_unless_proven().map_err(JsError::validation)?;
         self.vm.collect_now(program);
         Ok(())
     }

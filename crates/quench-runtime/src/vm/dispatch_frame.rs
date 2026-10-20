@@ -108,7 +108,7 @@ impl<H: Host> Vm<H> {
     ) -> GeneralCodeCursor {
         GeneralCodeCursor {
             lane: if lane && self.lane_admits(program) {
-                self.lane_view(program_id, function)
+                self.entry_lane_view(program_id, function)
             } else {
                 std::ptr::null()
             },
@@ -385,7 +385,7 @@ impl<H: Host> Vm<H> {
             } => Ok(FrameOutcome::Await {
                 value,
                 destination,
-                frame: Some(*frame),
+                frame: Some(frame),
             }),
             FrameOutcome::Yield { .. } => {
                 Err(JsError("yield requires generator continuation".into()))
@@ -417,10 +417,25 @@ impl<H: Host> Vm<H> {
 
     /// `activate_user_frame` for a function whose static layout describes its whole
     /// activation (`Function::plain_activation`): every local starts undefined because every
-    /// parameter lives in a register, `this` is the coerced receiver, and no implicit binding,
-    /// rest array or `arguments` object exists.
+    /// parameter lives in a register, `this` is the coerced receiver or an arrow's lexical
+    /// one, and no implicit binding, rest array or `arguments` object exists.
     #[inline(always)]
     #[allow(clippy::too_many_arguments)]
+    /// The `this` a plain activation of `function` binds: an arrow's from its environment
+    /// `parent` (the receiver where none is bound), uncoerced as every arrow frame's is, else
+    /// the coerced receiver.
+    pub(super) fn lexical_activation_this(
+        &mut self,
+        function: &crate::bytecode::Function,
+        parent: Value,
+        this: Value,
+    ) -> Result<Value, JsError> {
+        if function.is_arrow {
+            return Ok(self.captured_lexical_this(parent).unwrap_or(this));
+        }
+        self.call_this_value(this, function.strict)
+    }
+
     fn activate_plain_frame(
         &mut self,
         p: &ResidualProgram,
@@ -433,7 +448,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<usize, JsError> {
         self.profile
             .function(self.active_program.raw(), id as usize);
-        let this = self.call_this_value(this, function.strict)?;
+        let this = self.lexical_activation_this(function, parent, this)?;
         let mut frame = self.pooled_frame();
         let local_count = if function.call_plan(p).addresses_locals {
             usize::from(function.locals)
@@ -928,7 +943,7 @@ impl<H: Host> Vm<H> {
                 },
             );
         }
-        if let Some(iterator) = self.well_known_symbols.get("iterator").copied() {
+        if let Some(iterator) = self.well_known_symbols.get(WellKnownSymbol::Iterator) {
             let iterator_method = self.native_value(Native::ArrayValues);
             self.set_symbol_property(arguments, iterator, iterator_method)?;
             self.set_property_attributes(
@@ -1063,10 +1078,29 @@ impl<H: Host> Vm<H> {
             .heap
             .clone_environment_slots(source, fresh, reset)
             .ok_or_else(|| JsError("invalid environment clone slots".into()))?;
-        let owner = self
+        // A copy shares the activation's dynamic bindings with it: its implicit `this` and
+        // `new.target` and any a direct eval declares. A function whose names all resolve
+        // statically has no direct eval, so an activation holding none now never will, and
+        // its copies keep an unboxed scope of their own.
+        let (program, function) = (self.frames[frame].program, self.frames[frame].function);
+        let never_binds_dynamically = self
             .heap
-            .environment_binding_owner(source)
-            .ok_or_else(|| JsError("invalid environment clone owner".into()))?;
+            .environment_bindings(source)
+            .is_some_and(Vec::is_empty)
+            && self.programs.residual(program).is_some_and(|p| {
+                p.function_get(function as usize).is_some_and(|function| {
+                    function.names_resolve_statically(&p.functions, &p.atoms)
+                })
+            });
+        let owner = if never_binds_dynamically {
+            None
+        } else {
+            Some(
+                self.heap
+                    .environment_binding_owner(source)
+                    .ok_or_else(|| JsError("invalid environment clone owner".into()))?,
+            )
+        };
         let Some(Cell::Environment {
             parent,
             function,
@@ -1084,7 +1118,10 @@ impl<H: Host> Vm<H> {
                 program: scope.program(),
                 root_eval_scope: scope.root_eval_scope(),
                 binding_site_pc: scope.binding_site_pc(),
-                dynamic_bindings: crate::heap::EnvironmentBindings::Shared(owner),
+                dynamic_bindings: owner.map_or_else(
+                    || crate::heap::EnvironmentBindings::Owned(Vec::new()),
+                    crate::heap::EnvironmentBindings::Shared,
+                ),
                 with_objects: scope.with_objects().into(),
             }),
         };
@@ -1155,6 +1192,7 @@ impl<H: Host> Vm<H> {
     /// `fixed_this` itself.
     pub(super) fn recycle_frame(frame: &mut Frame) {
         frame.context = CallContext::Internal;
+        frame.js_jit_interpreter_started = None;
         frame.original_arguments.clear();
         frame.with_objects.clear();
         frame.dynamic_bindings.clear();
@@ -1293,14 +1331,23 @@ impl<H: Host> Vm<H> {
             // A supported native function still returns through the ordinary
             // Return instruction, preserving the dispatch loop's frame and
             // constructor unwind path. Guard misses leave pc at zero.
-            if pc == 0
-                && self.execution_mode == ExecutionMode::Compiled
-                && let Some((return_pc, return_register, value)) =
-                    self.js_jit_at_entry(p, frame)
-            {
-                self.write(frame, return_register, value);
-                pc = return_pc;
-                continue;
+            if pc == 0 && self.execution_mode == ExecutionMode::Compiled {
+                if let Some((return_pc, return_register, value)) = self.js_jit_at_entry(p, frame) {
+                    self.write(frame, return_register, value);
+                    pc = return_pc;
+                    continue;
+                }
+                let (program_id, function_id) =
+                    (self.frames[frame].program, self.frames[frame].function);
+                self.programs
+                    .record_js_jit_fallback_entry(program_id, function_id);
+                if p.kind != crate::bytecode::ProgramKind::Wasm
+                    && self.programs.js_jit_diagnostics_enabled()
+                    && self.frames[frame].js_jit_interpreter_started.is_none()
+                {
+                    self.frames[frame].js_jit_interpreter_started =
+                        Some(std::time::Instant::now());
+                }
             }
             if Self::lane_runs(cursor.lane, pc) {
                 pc = self.run_fast_lane(
@@ -1312,6 +1359,62 @@ impl<H: Host> Vm<H> {
                     &mut pending_calls,
                     allow_inline_calls,
                 );
+                #[cfg(feature = "profile-lane-exits")]
+                if let Some(instruction) = p
+                    .functions
+                    .get(self.frames[frame].function as usize)
+                    .and_then(|function| function.instructions().nth(pc))
+                {
+                    super::lane_exits::record(instruction.op());
+                    if matches!(instruction.op(), Op::Call | Op::Construct) {
+                        let callee = self.frames[frame].registers.get(usize::from(instruction.register_b())).copied();
+                        let detail = match callee.and_then(|callee| self.heap.get(callee)) {
+                            Some(Cell::Function { kind: FunctionKind::Native(native), .. }) => format!("native {native:?}"),
+                            Some(Cell::Function { kind: FunctionKind::User(program, id), .. }) => {
+                                let plan = self.programs.residual(*program).and_then(|code| {
+                                    let body = code.functions.get(*id as usize)?;
+                                    Some(format!("user registers_only={} async={} gen={} class={} self={} args={:?}", body.call_plan(code).registers_only, body.is_async, body.is_generator, body.is_class_constructor, body.self_binding_slot.is_some(), body.arguments_slot.is_some()))
+                                });
+                                plan.unwrap_or_else(|| "user ?".into())
+                            }
+                            Some(Cell::Function { kind, .. }) => format!("function {}", std::any::type_name_of_val(kind)),
+                            Some(_) => "other cell".into(),
+                            None => "not a cell".into(),
+                        };
+                        super::lane_exits::record_detail(format!("{:?} {detail}", instruction.op()));
+                    }
+                    if matches!(instruction.op(), Op::JumpBinaryFalse | Op::Binary) {
+                        let constants = self.programs.constants(cursor.program);
+                        let registers = &self.frames[frame].registers;
+                        let kind = |operand: crate::bytecode::Operand| {
+                            let value = match operand.kind() {
+                                Some(crate::bytecode::OperandKind::Register) => registers.get(usize::from(operand.payload())).copied(),
+                                Some(crate::bytecode::OperandKind::Constant) => constants.get(usize::from(operand.payload())).copied(),
+                                _ => None,
+                            };
+                            match value {
+                                None => "?",
+                                Some(v) if v.as_int().is_some() => "int",
+                                Some(v) if v.as_number().is_some() => "num",
+                                Some(v) if v.is_undefined() => "undef",
+                                Some(v) if v.is_null() => "null",
+                                Some(v) if v.as_bool().is_some() => "bool",
+                                Some(v) => match self.heap.get(v) {
+                                    _ if self.heap.is_string(v)  => "str",
+                                    Some(Cell::BigInt(_)) => "bigint",
+                                    _ => "obj",
+                                },
+                            }
+                        };
+                        let operator = if instruction.op() == Op::Binary { instruction.binary_operator() } else { u32::from(instruction.a()) };
+                        super::lane_exits::record_detail(format!(
+                            "{:?} op{operator} {} {}",
+                            instruction.op(),
+                            kind(instruction.operand_b()),
+                            kind(instruction.operand_c())
+                        ));
+                    }
+                }
                 // Lane calls and returns can leave a different activation, or a new one in the
                 // same frame slot; the active frame's PC slot and register file follow it.
                 published_pc = &mut self.frames[frame].pc;
@@ -1630,7 +1733,22 @@ impl<H: Host> Vm<H> {
                 _ => self.step(p, frame, ins, &mut pc, allow_inline_calls),
             };
             match step {
-                Ok(StepResult::Return(mut value)) => loop {
+                Ok(StepResult::Return(mut value)) => {
+                    let completion = {
+                        let completed = &mut self.frames[frame];
+                        completed.js_jit_interpreter_started.take().map(|started| {
+                            (
+                                completed.program,
+                                completed.function,
+                                u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX),
+                            )
+                        })
+                    };
+                    if let Some((program, function, elapsed_ns)) = completion {
+                        self.programs
+                            .record_js_jit_interpreter_completion(program, function, elapsed_ns);
+                    }
+                    loop {
                     if let Some(mut pending) = pending_calls.pop() {
                         debug_assert_eq!(frame, pending.caller + 1);
                         let completed_frame = self.frames.pop().unwrap();
@@ -1683,6 +1801,7 @@ impl<H: Host> Vm<H> {
                     self.frames[frame].pc = pc;
                     self.frames[frame].pc_is_resume = true;
                     return Ok(FrameOutcome::Complete(value));
+                    }
                 },
                 Ok(StepResult::Continue) => {}
                 Ok(StepResult::PushFrame {
@@ -1876,7 +1995,9 @@ impl<H: Host> Vm<H> {
     ) -> Result<usize, JsError> {
         if error.is_execution_terminated() { return Err(error); }
         let wasm = program.kind == crate::bytecode::ProgramKind::Wasm;
-        if wasm && error.wasm_exception().is_none() {
+        // Wasm catches Wasm exceptions and JavaScript ones (`catch_all`, or
+        // `WebAssembly.JSTag`), never a trap or a link failure.
+        if wasm && error.wasm_exception().is_none() && !error.is_javascript_exception() {
             return Err(error);
         }
         let handler = program.function(function).handler_at(throwing_pc);

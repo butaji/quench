@@ -306,6 +306,33 @@ pub struct WasmSignature {
     pub results: Vec<WasmType>,
 }
 
+/// A host function's signature and, when its types name declarations, the signature pool of
+/// the module whose import it satisfies, which owns them.
+pub struct WasmHostSignature {
+    pub signature: WasmSignature,
+    pub(crate) owner: Option<std::rc::Rc<WasmSignatures>>,
+}
+
+impl std::fmt::Debug for WasmHostSignature {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.signature.fmt(formatter)
+    }
+}
+
+impl std::ops::Deref for WasmHostSignature {
+    type Target = WasmSignature;
+    fn deref(&self) -> &WasmSignature {
+        &self.signature
+    }
+}
+
+impl WasmHostSignature {
+    /// The declarations the signature's declared types resolve in.
+    pub(crate) fn declarations(&self) -> Option<&super::WasmTypes> {
+        self.owner.as_deref().map(|owner| &owner.declarations)
+    }
+}
+
 /// Binary callables retain their declaration identity. Embedding callables
 /// declare an implicit final singleton function type from their signature.
 #[derive(Clone, Debug)]

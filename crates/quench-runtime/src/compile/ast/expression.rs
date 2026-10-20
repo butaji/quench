@@ -767,7 +767,7 @@ impl FunctionCompiler<'_, '_> {
         };
         self.emit_binary(value.operator as u32, left, right)
     }
-    fn constant_operand(&mut self, constant: Constant) -> Operand {
+    pub(super) fn constant_operand(&mut self, constant: Constant) -> Operand {
         let index = self.owner.constant(constant);
         Operand::constant(index).unwrap_or_else(|| {
             let register = self.reg();

@@ -31,7 +31,7 @@ impl<H: Host> Vm<H> {
             T::Number
         } else {
             match self.heap.get(value) {
-                Some(Cell::String(_)) => T::String,
+                _ if self.heap.is_string(value)  => T::String,
                 Some(Cell::BigInt(_)) => T::BigInt,
                 Some(Cell::Symbol(_)) => T::Symbol,
                 _ if self.is_function(value) => T::Function,
@@ -42,21 +42,24 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn typeof_value(&mut self, value: Value) -> Value {
         use crate::ValueType as T;
-        let text = if self.is_html_dda(value) {
-            "undefined"
-        } else {
-            match self.value_type(value) {
-                T::Undefined => "undefined",
-                T::Null | T::Object => "object",
-                T::Boolean => "boolean",
-                T::Number => "number",
-                T::String => "string",
-                T::BigInt => "bigint",
-                T::Symbol => "symbol",
-                T::Function => "function",
-            }
+        let kind = if self.is_html_dda(value) { T::Undefined } else { self.value_type(value) };
+        let cached = self.typeof_names[kind as usize];
+        if !cached.is_undefined() {
+            return cached;
+        }
+        let text = match kind {
+            T::Undefined => "undefined",
+            T::Null | T::Object => "object",
+            T::Boolean => "boolean",
+            T::Number => "number",
+            T::String => "string",
+            T::BigInt => "bigint",
+            T::Symbol => "symbol",
+            T::Function => "function",
         };
-        self.intern_dynamic_ascii(text)
+        let name = self.intern_dynamic_ascii(text);
+        self.typeof_names[kind as usize] = name;
+        name
     }
 
     pub(super) fn to_numeric(
@@ -92,7 +95,7 @@ impl<H: Host> Vm<H> {
         };
         match self.heap.get(primitive) {
             Some(Cell::BigInt(value)) => Ok(value.as_ref().clone()),
-            Some(Cell::String(value)) => {
+            _ if let Some(value) = self.heap.string(primitive)  => {
                 let Some(value) = crate::bigint::parse_string(&value.host_string()) else {
                     return self
                         .syntax_error_result(p, "invalid BigInt value")
@@ -117,20 +120,20 @@ impl<H: Host> Vm<H> {
         } else {
             value
         };
-        if matches!(self.heap.get(primitive), Some(Cell::Symbol(_) | Cell::String(_))) {
+        if self.heap.is_string(primitive) || matches!(self.heap.get(primitive), Some(Cell::Symbol(_))) {
             return Ok(primitive);
         }
         let text = self.coerce_js_string(program, primitive)?;
-        Ok(self.heap.alloc(Cell::String(text)))
+        Ok(self.heap.alloc_string(text))
     }
 
     /// The string value of `text`, which ToString produced from `argument`. ToString is the
     /// identity on strings, so a string argument is reused rather than copied into a new cell.
     pub(super) fn string_value_from(&mut self, argument: Value, text: &JsString) -> Value {
-        if matches!(self.heap.get(argument), Some(Cell::String(_))) {
+        if self.heap.is_string(argument) {
             argument
         } else {
-            self.heap.alloc(Cell::String(text.clone()))
+            self.heap.alloc_string(text.clone())
         }
     }
 
@@ -144,7 +147,7 @@ impl<H: Host> Vm<H> {
         } else {
             value
         };
-        if let Some(Cell::String(text)) = self.heap.get(primitive) {
+        if let Some(text) = self.heap.string(primitive) {
             return Ok(text.clone());
         }
         self.to_string(program, primitive).map(JsString::from)
@@ -231,7 +234,7 @@ impl<H: Host> Vm<H> {
                     self.type_error(program, "Cannot convert a Symbol value to a number".into())
                 );
             }
-            Some(Cell::String(value)) => {
+            _ if let Some(value) = self.heap.string(value)  => {
                 return Ok(super::number::parse_number_string(&value.host_string()));
             }
             Some(Cell::BigInt(_)) => {
@@ -275,7 +278,7 @@ impl<H: Host> Vm<H> {
         }
         match self.heap.get(value) {
             Some(Cell::Function(_)) => return Ok("function () { [native code] }".into()),
-            Some(Cell::String(value)) => return Ok(value.to_string()),
+            _ if let Some(value) = self.heap.string(value)  => return Ok(value.to_string()),
             Some(Cell::Error(value)) => return Ok(value.clone()),
             Some(Cell::BigInt(value)) => return Ok(value.to_string()),
             Some(Cell::Symbol(_)) => {
@@ -297,7 +300,7 @@ impl<H: Host> Vm<H> {
             let function = self.get_property(program, value, atom)?;
             if self.is_function(function) {
                 let result = self.call_value(program, function, value, &[])?;
-                if !result.is_heap() || matches!(self.heap.get(result), Some(Cell::String(_))) {
+                if !result.is_heap() || self.heap.is_string(result) {
                     return self.to_string(program, result);
                 }
             }
@@ -315,7 +318,7 @@ impl<H: Host> Vm<H> {
         if !self.is_object_like(value) {
             return Ok(value);
         }
-        if let Some(symbol) = self.well_known_symbols.get("toPrimitive").copied() {
+        if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::ToPrimitive) {
             let method = self.get_index(program, value, symbol)?;
             if !method.is_undefined() && !method.is_null() {
                 if !self.is_function(method) {
@@ -323,7 +326,7 @@ impl<H: Host> Vm<H> {
                         self.type_error(program, "Symbol.toPrimitive is not callable".into())
                     );
                 }
-                let hint = self.heap.alloc(Cell::String(hint.into()));
+                let hint = self.heap.alloc_string(hint.into());
                 let result = self.call_value(program, method, value, &[hint])?;
                 if !self.is_object_like(result) {
                     return Ok(result);
@@ -367,8 +370,10 @@ impl<H: Host> Vm<H> {
         if a == b {
             return true;
         }
+        if let (Some(a), Some(b)) = (self.heap.string(a), self.heap.string(b)) {
+            return a == b;
+        }
         match (self.heap.get(a), self.heap.get(b)) {
-            (Some(Cell::String(a)), Some(Cell::String(b))) => a == b,
             (Some(Cell::BigInt(a)), Some(Cell::BigInt(b))) => a == b,
             _ => false,
         }
@@ -384,7 +389,7 @@ impl<H: Host> Vm<H> {
     #[inline(never)]
     pub(super) fn heap_cell_truthy(&self, v: Value) -> bool {
         match self.heap.get(v) {
-            Some(Cell::String(text)) => !text.units().is_empty(),
+            _ if let Some(text) = self.heap.string(v)  => !text.units().is_empty(),
             Some(Cell::BigInt(value)) => value.sign() != num_bigint::Sign::NoSign,
             _ => !self.is_html_dda(v),
         }

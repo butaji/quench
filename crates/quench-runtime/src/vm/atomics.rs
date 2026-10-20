@@ -471,12 +471,12 @@ impl<H: Host> Vm<H> {
                 if equal && timeout.is_none_or(|value| !value.is_finite()) {
                     return Err(self.type_error(p, "Atomics.wait cannot block indefinitely".into()));
                 }
-                return Ok(self.heap.alloc(Cell::String(state.into())));
+                return Ok(self.heap.alloc_string(state.into()));
             }
             if !equal
                 || timeout.is_some_and(|value| value.is_finite() && value <= AGENT_YIELD_TIMEOUT_MS)
             {
-                return Ok(self.heap.alloc(Cell::String(state.into())));
+                return Ok(self.heap.alloc_string(state.into()));
             }
             let buffer = self.typed_array_buffer(view).unwrap_or(Value::UNDEFINED);
             let id = self.test262_agent.next_waiter;
@@ -498,13 +498,13 @@ impl<H: Host> Vm<H> {
                 async_promise: None,
             });
             self.test262_agent.current_waiter = Some(id);
-            return Ok(self.heap.alloc(Cell::String("ok".into())));
+            return Ok(self.heap.alloc_string("ok".into()));
         }
         let is_async = equal && timeout.is_none_or(|value| value.is_nan() || value > 0.0);
         let value = if is_async {
             let promise = self.promise_object()?;
             if timeout.is_some_and(|value| value.is_finite() && value <= AGENT_YIELD_TIMEOUT_MS) {
-                let timeout_result = self.heap.alloc(Cell::String("timed-out".into()));
+                let timeout_result = self.heap.alloc_string("timed-out".into());
                 self.promise_settle(p, promise, PromiseState::Fulfilled, timeout_result)?;
             } else {
                 let buffer = self.typed_array_buffer(view).unwrap_or(Value::UNDEFINED);
@@ -529,7 +529,7 @@ impl<H: Host> Vm<H> {
             }
             promise
         } else {
-            self.heap.alloc(Cell::String(state.into()))
+            self.heap.alloc_string(state.into())
         };
         let result = self.object();
         self.set_named(
@@ -583,7 +583,7 @@ impl<H: Host> Vm<H> {
                 }
             }
         }
-        let ok = self.heap.alloc(Cell::String("ok".into()));
+        let ok = self.heap.alloc_string("ok".into());
         for promise in promises {
             self.promise_settle(p, promise, PromiseState::Fulfilled, ok)?;
         }
@@ -767,7 +767,7 @@ impl<H: Host> Vm<H> {
                     "Cancelled wait without interrupt".into(),
                 ));
             }
-            return Ok(self.heap.alloc(Cell::String(
+            return Ok(self.heap.alloc_string(
                 match result {
                     WaitResult::Cancelled => unreachable!("checked above"),
                     WaitResult::Ok => "ok",
@@ -775,7 +775,7 @@ impl<H: Host> Vm<H> {
                     WaitResult::TimedOut => "timed-out",
                 }
                 .into(),
-            )));
+            ));
         } else {
             match native {
                 Native::AtomicsLoad => None,
@@ -839,13 +839,13 @@ impl<H: Host> Vm<H> {
         let (is_async, value) = match start {
             AsyncStart::Ready(result) => (
                 false,
-                self.heap.alloc(Cell::String(
+                self.heap.alloc_string(
                     match result {
                         WaitResult::NotEqual => "not-equal",
                         _ => "timed-out",
                     }
                     .into(),
-                )),
+                ),
             ),
             AsyncStart::Pending(token) => {
                 let promise = self.promise_object()?;
@@ -862,7 +862,7 @@ impl<H: Host> Vm<H> {
                 ("async", if is_async { Value::TRUE } else { Value::FALSE }),
                 ("value", self.heap.root_value(value_root).unwrap()),
             ] {
-                let key = self.heap.alloc(Cell::String(name.into()));
+                let key = self.heap.alloc_string(name.into());
                 let target = self.heap.root_value(result_root).unwrap();
                 if !self.define_own_property_record(
                     p,
@@ -902,7 +902,7 @@ impl<H: Host> Vm<H> {
                         return Err(JsError::validation("Unexpected async cancellation".into()));
                     }
                 };
-                let value = self.heap.alloc(Cell::String(text.into()));
+                let value = self.heap.alloc_string(text.into());
                 let promise = self.heap.root_value(*promise).unwrap();
                 self.promise_settle(p, promise, PromiseState::Fulfilled, value)?
             }

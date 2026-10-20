@@ -233,8 +233,25 @@ impl Profile {
 
     #[cfg(feature = "profile-aggregate")]
     pub fn report_dispatch_census_if_enabled(&self, program: u32) -> bool {
-        if std::env::var_os("QUENCH_OPCODE_CENSUS").is_none() {
+        let Some(census) = std::env::var_os("QUENCH_OPCODE_CENSUS") else {
             return false;
+        };
+        // `all` sums the dispatches of every program, whose code a benchmark harness loads
+        // apart from the main program.
+        if census == "all" {
+            let mut counts = vec![0u64; crate::bytecode::Op::COUNT];
+            for program in &self.dispatched_opcodes {
+                for (count, dispatched) in counts.iter_mut().zip(program) {
+                    *count += dispatched;
+                }
+            }
+            eprint!("{{\"kind\":\"quench-dispatch-opcode-census-all\",\"counts\":{{");
+            for (opcode, count) in counts.iter().enumerate() {
+                let separator = if opcode == 0 { "" } else { "," };
+                eprint!("{separator}\"{}\":{count}", crate::bytecode::Op::NAMES[opcode]);
+            }
+            eprintln!("}}}}");
+            return true;
         }
         let dispatched = self
             .dispatched_opcodes

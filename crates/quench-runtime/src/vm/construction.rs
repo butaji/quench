@@ -76,7 +76,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn string_constructor_argument(&mut self, args: &[Value]) -> Value {
         args.first().copied().unwrap_or_else(|| {
             self.heap
-                .alloc(Cell::String(super::wtf16::JsString::from_str("")))
+                .alloc_string(super::wtf16::JsString::from_str(""))
         })
     }
 
@@ -87,7 +87,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let argument = self.string_constructor_argument(args);
         let text = self.coerce_js_string(p, argument)?;
-        Ok(self.heap.alloc(Cell::String(text)))
+        Ok(self.heap.alloc_string(text))
     }
 
     pub(super) fn set_function_name(
@@ -124,7 +124,7 @@ impl<H: Host> Vm<H> {
         if let Some(&value) = self.atom_strings.get(&atom) {
             return value;
         }
-        let value = self.heap.alloc(Cell::String(self.atom_value(atom)));
+        let value = self.heap.alloc_string(self.atom_value(atom));
         if keep {
             self.atom_strings.insert(atom, value);
         }
@@ -133,7 +133,7 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn set_function_name_key(&mut self, function: Value, key: Value, prefix: u32) {
         let name = match self.heap.get(key) {
-            Some(Cell::String(value)) => value.to_string(),
+            _ if let Some(value) = self.heap.string(key)  => value.to_string(),
             Some(Cell::Symbol(description)) => description
                 .as_ref()
                 .map_or_else(String::new, |description| format!("[{}]", description)),
@@ -151,7 +151,7 @@ impl<H: Host> Vm<H> {
         let Some(slot) = self.inferred_function_name_slot(function) else {
             return;
         };
-        let value = self.heap.alloc(Cell::String(text.into()));
+        let value = self.heap.alloc_string(text.into());
         self.heap.property_set(function, slot, value);
         self.capture_function_name(function, value);
     }
@@ -165,7 +165,7 @@ impl<H: Host> Vm<H> {
         }
         let name_atom = self.runtime_atoms.name;
         let current = self.own_property(function, name_atom).unwrap_or(Value::UNDEFINED);
-        if !matches!(self.heap.get(current), Some(Cell::String(value)) if value.units().is_empty()) {
+        if !self.heap.string(current).is_some_and(|value| value.units().is_empty()) {
             return None;
         }
         self.shape_slot(self.object_data(function)?.shape(), name_atom)
@@ -295,10 +295,16 @@ impl<H: Host> Vm<H> {
         let prototype = template
             .prototype
             .map(|(parent, _)| self.heap.alloc(Cell::Object(Self::empty_object(parent))));
+        // A template is only made of a closure allocated finished, whose own properties fit
+        // the inline slots.
+        let own = [template.length, template.name, prototype.unwrap_or(Value::UNDEFINED)];
+        let mut inline = [Value::UNDEFINED; crate::value_vec::INLINE_PROPERTY_COUNT];
+        let count = inline.len().min(own.len());
+        inline[..count].copy_from_slice(&own[..count]);
         let object = crate::heap::Object::with_property_storage(
             template.function_prototype,
             crate::value_vec::ValueVec::inline_property_storage(template.shape),
-            [template.length, template.name, prototype.unwrap_or(Value::UNDEFINED)],
+            inline,
         );
         let function = self.heap.alloc_function(FunctionRecord {
             object,
@@ -393,23 +399,31 @@ impl<H: Host> Vm<H> {
             && !function_plan.is_class_constructor;
         let shapes_key = usize::from(prototype.is_some());
         let recorded_shapes = self.closure_shapes[shapes_key].filter(|_| ordinary);
-        // A recorded closure is allocated finished: its `length`, `name` and `prototype` in its
-        // inline slots, as the adds would leave them, under the shape they and its original
-        // name would reach.
+        // A recorded closure whose own properties fit its inline slots is allocated finished:
+        // its `length`, `name` and `prototype` inline, as the adds would leave them, under the
+        // shape they and its original name would reach. A larger one takes the recorded shapes
+        // by adds after allocation.
+        let finished = recorded_shapes.and_then(|shapes| {
+            let (shape, own, count) = match (prototype, shapes.prototype) {
+                (Some(prototype), Some((with_prototype, _))) => {
+                    (with_prototype, [length_value, name_value, prototype], 3)
+                }
+                _ => (shapes.name, [length_value, name_value, Value::UNDEFINED], 2),
+            };
+            (count <= crate::value_vec::INLINE_PROPERTY_COUNT).then_some((shape, own, count))
+        });
         let mut named_shape = None;
-        let object = match recorded_shapes {
-            Some(shapes) => {
-                let (shape, third) = match (prototype, shapes.prototype) {
-                    (Some(prototype), Some((with_prototype, _))) => (with_prototype, prototype),
-                    _ => (shapes.name, Value::UNDEFINED),
-                };
+        let object = match finished {
+            Some((shape, own, count)) => {
                 let named =
                     self.function_name_shape(shape, plan_name.unwrap_or(self.runtime_atoms.empty));
                 named_shape = Some(named);
+                let mut inline = [Value::UNDEFINED; crate::value_vec::INLINE_PROPERTY_COUNT];
+                inline[..count].copy_from_slice(&own[..count]);
                 crate::heap::Object::with_property_storage(
                     function_object_prototype,
                     crate::value_vec::ValueVec::inline_property_storage(named),
-                    [length_value, name_value, third],
+                    inline,
                 )
             }
             None => Self::empty_object(function_object_prototype),
@@ -440,14 +454,22 @@ impl<H: Host> Vm<H> {
         }
         if let Some(shapes) = recorded_shapes {
             let constructor = match (prototype, shapes.prototype) {
-                (Some(prototype), Some((_, constructor))) => {
-                    self.heap.property_add(prototype, function, constructor);
-                    Some(constructor)
-                }
+                (Some(prototype), Some((_, constructor))) => Some((prototype, constructor)),
                 _ => None,
             };
+            if finished.is_none() {
+                self.heap.property_add(function, length_value, shapes.length);
+                self.heap.property_add(function, name_value, shapes.name);
+                if let (Some(prototype), Some((with_prototype, _))) = (prototype, shapes.prototype) {
+                    self.heap.property_add(function, prototype, with_prototype);
+                }
+                self.capture_fresh_closure_name(function, plan_name);
+            }
+            if let Some((prototype, constructor)) = constructor {
+                self.heap.property_add(prototype, function, constructor);
+            }
             // A nested function's closures are found by none of its plans, so a template
-            // makes the next ones the same way; a top-level one is recorded above. A
+            // makes the next finished ones the same way; a top-level one is recorded above. A
             // prototype the recorded shapes do not hold leaves the template unmade.
             if plain_scope
                 && function_plan.parent.is_some_and(|parent| parent != super::ROOT_FUNCTION_ID)
@@ -463,7 +485,7 @@ impl<H: Host> Vm<H> {
                     length: length_value,
                     name: name_value,
                     kind,
-                    prototype: constructor.map(|constructor| (self.realm_object_prototype(realm), constructor)),
+                    prototype: constructor.map(|(_, constructor)| (self.realm_object_prototype(realm), constructor)),
                 });
             }
             return Ok(function);

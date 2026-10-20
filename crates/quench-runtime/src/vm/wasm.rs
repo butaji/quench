@@ -1704,6 +1704,43 @@ mod tests {
     }
 
     #[test]
+    fn javascript_and_wasm_jit_share_one_vm_and_backend() {
+        let script = crate::Engine::compile(crate::ExecutionRequest::script(
+            "function plusOne(value) { return value + 1; } for (let i = 0; i < 40; i++) plusOne(i);",
+            "shared-js-wasm-jit.js",
+        ))
+        .unwrap();
+        let wasm = crate::Engine::lower_wasm_module(
+            "shared-js-wasm-jit-wasm",
+            0,
+            [crate::WasmFunctionBody {
+                ty: crate::WasmCallableType::Embedded(crate::WasmSignature {
+                    params: vec![],
+                    results: vec![crate::WasmType::I32],
+                }),
+                locals: vec![],
+                operators: [Operator::I32Const { value: 42 }, Operator::End]
+                    .into_iter()
+                    .map(Ok),
+            }],
+        )
+        .unwrap();
+
+        let mut vm = Vm::new(crate::SystemHost);
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        vm.execute(&script).unwrap();
+        assert!(matches!(
+            vm.programs
+                .js_tier(super::super::program_store::ProgramId::MAIN, 1),
+            Some(super::super::program_store::JsTierState::Compiled(_))
+        ));
+        let js_mapped_bytes = vm.programs.jit_mapped_bytes();
+        assert!(js_mapped_bytes > 0);
+        assert_eq!(vm.execute_wasm_i32(&wasm, &[]).unwrap(), Some(42));
+        assert!(vm.programs.jit_mapped_bytes() > js_mapped_bytes);
+    }
+
+    #[test]
     fn compiled_wasm_first_call_compiles_and_enters_its_root() {
         let function = crate::Engine::lower_wasm_module(
             "compiled-wasm-first-root",
@@ -3864,7 +3901,7 @@ mod tests {
         let mut vm = Vm::new(crate::SystemHost);
         let script = crate::Engine::specialize("0;", "start-owner.js").unwrap();
         vm.execute(&script).unwrap();
-        let host_value = vm.heap.alloc(Cell::String("start-host-root".into()));
+        let host_value = vm.heap.alloc_string("start-host-root".into());
         let host_root = vm.root(host_value);
         let roots = vm.heap.root_count_for_test();
         // A module carrying an instantiation effect cannot bypass that effect
@@ -3888,7 +3925,7 @@ mod tests {
             assert_eq!(vm.heap.root_count_for_test(), roots);
             vm.collect_now(&script);
             assert_eq!(vm.root_value(host_root), Some(host_value));
-            assert!(matches!(vm.heap.get(host_value), Some(Cell::String(_))));
+            assert!(vm.heap.is_string(host_value));
         }
         vm.release_root(host_root);
     }
@@ -3898,7 +3935,7 @@ mod tests {
         let script = crate::Engine::specialize("0;", "shared-root.js").unwrap();
         let mut vm = Vm::new(crate::SystemHost);
         vm.execute(&script).unwrap();
-        let value = vm.heap.alloc(Cell::String("host-owned".into()));
+        let value = vm.heap.alloc_string("host-owned".into());
         let root = vm.root(value);
         let module = crate::Engine::lower_wasm_i32_module(
             "shared-entries",
@@ -3930,8 +3967,7 @@ mod tests {
             assert_eq!(vm.programs.len(), 2);
             vm.collect_now(&script);
             assert_eq!(vm.root_value(root), Some(value));
-            assert!(matches!(vm.heap.get(value), Some(Cell::String(text))
-                if text.host_string() == "host-owned"));
+            assert!(vm.heap.string(value).is_some_and(|text| text.host_string() == "host-owned"));
         }
         // A deliberate new JS execution retains its existing reset contract.
         vm.execute(&script).unwrap();

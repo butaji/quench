@@ -69,8 +69,12 @@ For diagnostic runs, add `--jit-diagnostics`. This enables opt-in per-function
 JavaScript and Wasm tier counters in Quench's captured stderr; it adds overhead
 and is excluded from score qualification. JavaScript records the source and
 function names, candidate entries, numeric entries, promotion, compile attempts
-and time, mapped code bytes, and native entries. Wasm diagnostics retain their
-existing callout and mapped-code counters.
+and time, instruction count, mapped code bytes, and native entries. Wasm
+diagnostics retain their existing callout and mapped-code counters. JavaScript rows also report
+interpreter completions and inclusive interpreter nanoseconds. The time excludes
+compilation and native execution, includes called functions, and covers only
+synchronous returns; exceptions and suspensions are omitted. Use it to rank
+diagnostic candidates, not as a standalone score or exclusive CPU profile.
 
 A fixture is a JetStream test name. `--all` selects the lane's full test list;
 `--fixtures NAME,NAME,...` selects a pinned subset for paired measurement and
@@ -90,11 +94,11 @@ a fresh realm for each benchmark exactly as JetStream does in shells. Dynamic
 `import()` in benchmark code goes through the main context's loader
 (`vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER`), resolved relative to the
 corpus root. The driver runs with `--no-prefetch`, so each benchmark realm
-loads its resources on demand. Engines therefore need no WebAssembly to
-decompress prefetched resources; Node `--jitless` has none. Instead, each `.z`
-resource must already be inflated next to itself (JetStream's
-`npm run decompress`, or a zlib inflate of each file). Iteration counts, validation and scoring
-are JetStream's and are never altered.
+loads its resources on demand. The prelude reads an uncompressed resource when present,
+and otherwise inflates its sibling `.z` file with the host's zlib module. This
+matches JetStream's `npm run decompress` preparation without modifying the
+pinned corpus or requiring its npm dependencies. Iteration counts, validation
+and scoring are JetStream's and are never altered.
 
 In the default no-JIT mode, the bars are Node `--jitless` and Bun with
 `BUN_JSC_useJIT=0`, with the same proofs as V8-v7. In JIT mode, Node runs

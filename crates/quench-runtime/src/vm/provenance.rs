@@ -4,6 +4,54 @@ use super::*;
 // V8 JSFunction::kNameDescriptorIndex: length precedes the native name accessor.
 const FUNCTION_NATIVE_NAME_DESCRIPTOR_INDEX: usize = 1;
 
+/// Direct-mapped entries of `FunctionNameShapes`: a power of two that holds the distinct
+/// closure names a request path makes.
+const FUNCTION_NAME_SHAPE_ENTRIES: usize = 1 << 8;
+
+/// Memoized `append_function_name` answers: the shape a closure's shape takes with a name.
+/// Closures of one site take the same name on the same shape, but that shape has a named
+/// child per site, which defeats `Shape::last_child`. Entries name shapes, so they are
+/// cleared with the transition index and whenever a collection renumbers shapes.
+pub(super) struct FunctionNameShapes {
+    entries: Box<[std::cell::Cell<Option<(u32, Atom, u32)>>]>,
+}
+
+impl Default for FunctionNameShapes {
+    fn default() -> Self {
+        Self {
+            entries: (0..FUNCTION_NAME_SHAPE_ENTRIES)
+                .map(|_| std::cell::Cell::new(None))
+                .collect(),
+        }
+    }
+}
+
+impl FunctionNameShapes {
+    fn entry(&self, shape: u32, name: Atom) -> &std::cell::Cell<Option<(u32, Atom, u32)>> {
+        let index = (name ^ shape.rotate_left(FUNCTION_NAME_SHAPE_ENTRIES.trailing_zeros()))
+            as usize
+            & (FUNCTION_NAME_SHAPE_ENTRIES - 1);
+        &self.entries[index]
+    }
+
+    fn get(&self, shape: u32, name: Atom) -> Option<u32> {
+        self.entry(shape, name)
+            .get()
+            .filter(|&(base, atom, _)| base == shape && atom == name)
+            .map(|(_, _, named)| named)
+    }
+
+    fn record(&self, shape: u32, name: Atom, named: u32) {
+        self.entry(shape, name).set(Some((shape, name, named)));
+    }
+
+    pub(super) fn clear(&self) {
+        for entry in self.entries.iter() {
+            entry.set(None);
+        }
+    }
+}
+
 /// A memo of `Vm::constructed_shape`: the shape an object of `shape` takes when
 /// `constructor` constructs it. The answer depends only on that key, the constructor's
 /// immutable original name and the shape tree, so it holds until a collection, which can
@@ -73,7 +121,7 @@ pub(super) fn shape_function_length_reconfigured(shapes: &[Shape], shape: u32) -
 
 impl<H: Host> Vm<H> {
     pub(super) fn capture_function_name(&mut self, function: Value, name: Value) {
-        let Some(Cell::String(name)) = self.heap.get(name) else {
+        let Some(name) = self.heap.string(name) else {
             return;
         };
         let name = name.clone();
@@ -117,15 +165,12 @@ impl<H: Host> Vm<H> {
     /// `shape` with the original function name `name` recorded (`ShapeTransition::FunctionName`),
     /// through the transitions it remembers (`function_name_shapes`).
     pub(super) fn function_name_shape(&mut self, shape: u32, name: Atom) -> u32 {
-        let index = name as usize & (super::FUNCTION_NAME_SHAPES - 1);
-        match self.function_name_shapes[index] {
-            Some((base, atom, named)) if base == shape && atom == name => named,
-            _ => {
-                let named = self.append_cached_shape_transition(shape, ShapeTransition::FunctionName { name });
-                self.function_name_shapes[index] = Some((shape, name, named));
-                named
-            }
+        if let Some(named) = self.function_name_shapes.get(shape, name) {
+            return named;
         }
+        let named = self.append_cached_shape_transition(shape, ShapeTransition::FunctionName { name });
+        self.function_name_shapes.record(shape, name, named);
+        named
     }
 
     pub(super) fn set_function_debug_name(&mut self, function: Value, name: Atom) {
@@ -234,9 +279,9 @@ impl<H: Host> Vm<H> {
             self.atom_units_equal_str(atom, "name")
         });
         if let Some(name_key) = name_key {
-            if let Some(Cell::String(name)) = self
+            if let Some(name) = self
                 .diagnostic_data_property(function, PropertyKey::string(name_key))
-                .and_then(|value| self.heap.get(value))
+                .and_then(|value| self.heap.string(value))
             {
                 return Some(name.clone());
             }

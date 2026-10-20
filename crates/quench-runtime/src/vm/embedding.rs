@@ -41,7 +41,7 @@ impl<H: Host> Vm<H> {
         let payload = self.boxed_primitive_value(value)?;
         use crate::BuiltinBrand as B;
         let brand = match self.heap.get(payload) {
-            Some(Cell::String(_)) => B::StringObject,
+            _ if self.heap.is_string(payload) => B::StringObject,
             Some(Cell::Symbol(_)) => B::SymbolObject,
             Some(Cell::BigInt(_)) => B::BigIntObject,
             _ if payload.as_bool().is_some() => B::BooleanObject,
@@ -139,6 +139,93 @@ impl<H: Host> Vm<H> {
         self.object_define_property(&program, &args)
     }
 
+    /// [[GetOwnProperty]] of ToObject(`root`) for ToPropertyKey(`key`), as descriptor fields
+    /// rather than a descriptor object. The values are unrooted; the caller roots them before
+    /// anything else allocates.
+    pub(crate) fn embedding_own_property_fields(
+        &mut self,
+        root: RootId,
+        key: RootId,
+    ) -> Result<Option<crate::api::DescriptorFields<Value>>, JsError> {
+        let program = self.embedding_program()?;
+        let target = self.embedding_value(root)?;
+        let target = self.box_object_or_type_error(&program, target)?;
+        let target_root = self.heap.root(target);
+        let mut key_root = None;
+        let outcome = (|| {
+            let key = self.embedding_value(key)?;
+            let key = self.to_property_key(&program, key)?;
+            key_root = Some(self.heap.root(key));
+            let record = if matches!(self.heap.get(target), Some(Cell::Proxy { .. })) {
+                let descriptor = self.object_get_own_property_descriptor(&program, &[target, key])?;
+                if descriptor.is_undefined() {
+                    None
+                } else {
+                    Some(self.to_property_descriptor(&program, descriptor)?)
+                }
+            } else {
+                self.ordinary_get_own_property(&program, target, key)?
+                    .map(|(value, attributes)| {
+                        super::object_descriptors::PropertyDescriptorRecord::from_attributes(
+                            value, attributes,
+                        )
+                    })
+            };
+            Ok(record.map(|record| crate::api::DescriptorFields {
+                value: record.value,
+                writable: record.writable,
+                get: record.getter,
+                set: record.setter,
+                enumerable: record.enumerable,
+                configurable: record.configurable,
+            }))
+        })();
+        for root in [Some(target_root), key_root].into_iter().flatten() {
+            self.heap.release_root(root);
+        }
+        outcome
+    }
+
+    /// `Reflect.defineProperty(object, key, descriptor)` for a descriptor given as its fields:
+    /// whether [[DefineOwnProperty]] succeeded. The fields' values stay rooted by the caller.
+    pub(crate) fn embedding_define_property_fields(
+        &mut self,
+        object: RootId,
+        key: RootId,
+        fields: crate::api::DescriptorFields<Value>,
+    ) -> Result<bool, JsError> {
+        let program = self.embedding_program()?;
+        let target = self.embedding_value(object)?;
+        if !self.is_object_like(target) {
+            return Err(self.type_error(&program, "Reflect.defineProperty called on non-object".into()));
+        }
+        let record = super::object_descriptors::PropertyDescriptorRecord {
+            value: fields.value,
+            writable: fields.writable,
+            enumerable: fields.enumerable,
+            configurable: fields.configurable,
+            getter: fields.get,
+            setter: fields.set,
+        };
+        // ToPropertyDescriptor's checks, which a descriptor object would have passed.
+        if [record.getter, record.setter]
+            .into_iter()
+            .flatten()
+            .any(|accessor| !accessor.is_undefined() && !self.is_function(accessor))
+        {
+            return Err(self.type_error(&program, "Accessor descriptor must be callable".into()));
+        }
+        if record.has_accessor_fields() && record.has_data_fields() {
+            return Err(self.type_error(
+                &program,
+                "Property descriptor cannot mix accessor and data fields".into(),
+            ));
+        }
+        let key = self.embedding_value(key)?;
+        let key = self.to_property_key(&program, key)?;
+        self.define_own_property_record(&program, target, key, record)
+    }
+
     pub(crate) fn embedding_own_descriptor(
         &mut self,
         root: RootId,
@@ -181,7 +268,7 @@ impl<H: Host> Vm<H> {
             for (index, key) in keys.iter().enumerate() {
                 let property = self.root_value(*key).expect("own key root is live");
                 if !include_indices {
-                    if let Some(Cell::String(text)) = self.heap.get(property) {
+                    if let Some(text) = self.heap.string(property) {
                         if super::object_static::array_index(text.host_string()).is_some() {
                             continue;
                         }
@@ -551,18 +638,12 @@ impl<H: Host> Vm<H> {
 
     pub(crate) fn embedding_string_units(&self, root: RootId) -> Result<Option<Vec<u16>>, JsError> {
         let value = self.embedding_value(root)?;
-        Ok(match self.heap.get(value) {
-            Some(Cell::String(text)) => Some(text.units().to_vec()),
-            _ => None,
-        })
+        Ok(self.heap.string(value).map(|text| text.units().to_vec()))
     }
 
     pub(crate) fn embedding_string_text(&self, root: RootId) -> Result<Option<String>, JsError> {
         let value = self.embedding_value(root)?;
-        Ok(match self.heap.get(value) {
-            Some(Cell::String(text)) => Some(text.host_string().to_owned()),
-            _ => None,
-        })
+        Ok(self.heap.string(value).map(|text| text.host_string().to_owned()))
     }
 
     pub(crate) fn embedding_detail_string(&self, root: RootId) -> Result<String, JsError> {
@@ -653,8 +734,10 @@ impl<H: Host> Vm<H> {
             return "[object Array]".into();
         }
 
+        if let Some(text) = self.heap.string(value) {
+            return text.host_string().to_owned();
+        }
         match self.heap.get(value) {
-            Some(Cell::String(text)) => text.host_string().to_owned(),
             Some(Cell::BigInt(integer)) => {
                 if Self::detail_bigint_is_too_large(integer) {
                     "<a very large BigInt>".into()
@@ -704,10 +787,7 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let value = self.heap.property_get(data, index)?;
-        match self.heap.get(value) {
-            Some(Cell::String(text)) => Some(text.host_string().to_owned()),
-            _ => None,
-        }
+        self.heap.string(value).map(|text| text.host_string().to_owned())
     }
 
     fn diagnostic_class_name(cell: &Cell) -> &'static str {
@@ -975,14 +1055,14 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let program = self.embedding_program()?;
         let previous = std::mem::replace(&mut self.direct_eval, false);
-        let result = self.eval_global_script_named(&program, source, false, name);
+        let result = self.eval_host_script(&program, source, name);
         self.direct_eval = previous;
         result
     }
 
     pub(crate) fn parse_embedding_json(&mut self, source: &str) -> Result<Value, JsError> {
         let program = self.embedding_program()?;
-        let source = self.heap.alloc(Cell::String(source.into()));
+        let source = self.heap.alloc_string(source.into());
         self.json_parse(&program, &[source])
     }
 
@@ -1009,7 +1089,7 @@ impl<H: Host> Vm<H> {
         message: &str,
     ) -> Result<Value, JsError> {
         let program = self.embedding_program()?;
-        let message = self.heap.alloc(Cell::String(message.into()));
+        let message = self.heap.alloc_string(message.into());
         self.construct_error_native(&program, kind, &[message])
     }
 
@@ -1023,7 +1103,7 @@ impl<H: Host> Vm<H> {
         // atom's shared string value (strings have no identity), else a fresh copy.
         let value = match self.lookup_atom(text) {
             Some(atom) => self.atom_string(atom),
-            None => self.heap.alloc(Cell::String(JsString::from_str(text))),
+            None => self.heap.alloc_string(JsString::from_str(text)),
         };
         self.root(value)
     }
@@ -1034,7 +1114,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(crate) fn string_units_rooted(&mut self, units: &[u16]) -> RootId {
-        let value = self.heap.alloc(Cell::String(JsString::from_units(units)));
+        let value = self.heap.alloc_string(JsString::from_units(units));
         self.root(value)
     }
 
@@ -1106,7 +1186,7 @@ impl<H: Host> Vm<H> {
         let object = self.embedding_value(object)?;
         let program = self.embedding_program()?;
         if super::object_static::array_index(name).is_some() {
-            let key = self.heap.alloc(Cell::String(JsString::from_str(name)));
+            let key = self.heap.alloc_string(JsString::from_str(name));
             return self.get_index(&program, object, key);
         }
         let atom = self.intern_atom(name);
@@ -1246,7 +1326,7 @@ impl<H: Host> Vm<H> {
         let value = self.embedding_value(value)?;
         let program = self.embedding_program()?;
         if super::object_static::array_index(name).is_some() {
-            let key = self.heap.alloc(Cell::String(JsString::from_str(name)));
+            let key = self.heap.alloc_string(JsString::from_str(name));
             return self.set_index_mode(&program, object, key, value, true);
         }
         let atom = self.intern_atom(name);
@@ -1366,7 +1446,7 @@ impl<H: Host> Vm<H> {
         let key = self.embedding_value(key)?;
         let listener = self.embedding_value(listener)?;
         // Lazy data properties have string keys.
-        let Some(Cell::String(name)) = self.heap.get(key).cloned() else {
+        let Some(name) = self.heap.string(key).cloned() else {
             return Ok(None);
         };
         let key = PropertyKey::string(self.intern_js_atom(&name));
@@ -1474,7 +1554,7 @@ impl<H: Host> Vm<H> {
             .map(|(name, _)| {
                 // The key shares the atom table's text.
                 let atom = self.intern_atom(name);
-                let name = self.heap.alloc(Cell::String(self.atom_value(atom)));
+                let name = self.heap.alloc_string(self.atom_value(atom));
                 self.heap.root(name)
             })
             .collect::<Vec<_>>();
