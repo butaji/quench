@@ -10754,17 +10754,17 @@ fn js_jit_field_reject_resumes_interpreter_on_match_and_accessor() {
         r#"
           function isFunctionBlock(node) { return node.isFunctionBlock === true; }
           function isBlockStatement(node) {
-            if (242 !== node.kind) return !1;
+            if (242 !== node.tag) return !1;
             return !isFunctionBlock(node);
           }
           for (let index = 0; index < 40; index++) {
             const kind = index % 3 === 0 ? 242 : 241;
-            if (isBlockStatement({kind}) !== (kind === 242)) throw Error('field reject result');
+            if (isBlockStatement({tag: kind}) !== (kind === 242)) throw Error('field reject result');
           }
           let reads = 0;
-          const accessor = { get kind() { reads++; return 242; } };
+          const accessor = { get tag() { reads++; return 242; } };
           if (isBlockStatement(accessor) !== true || reads !== 1) throw Error('accessor fallback');
-          if (isBlockStatement({kind: '242'}) !== false) throw Error('non-number field fallback');
+          if (isBlockStatement({tag: '242'}) !== false) throw Error('non-number field fallback');
         "#,
         "js-jit-field-reject.js",
     ))
