@@ -13,6 +13,7 @@ pub(crate) mod blob_binding_shared_vm;
 pub(crate) mod buffer_binding_shared_vm;
 pub(crate) mod buffer_codec;
 pub(crate) mod buffer_shared_vm;
+pub(crate) mod primordials_shared_vm;
 pub(crate) mod cares_binding;
 #[cfg(quench_node_cares)] pub(crate) mod cares_channel_shared_vm;
 pub(crate) mod child_process_env_shared_vm;

@@ -66,7 +66,7 @@ enum FieldCacheRead {
     Hit(FieldCacheHit),
 }
 
-fn derive_shape_lookup_index(shapes: &[Shape], shape: u32) -> ShapeLookupIndex {
+pub(super) fn derive_shape_lookup_index(shapes: &[Shape], shape: u32) -> ShapeLookupIndex {
     let mut entries = Vec::new();
     let mut seen_keys = FxHashSet::default();
     let mut seen_slots = FxHashSet::default();
@@ -368,18 +368,28 @@ impl<H: Host> Vm<H> {
             _ => self.shapes[parent as usize].dictionary_trigger,
         };
         let parent_facts = self.shapes[parent as usize].facts;
-        // The object that grew has moved to the child, so the parent's lookup index usually
-        // serves nobody; an object left on the parent rebuilds it after
-        // `SHAPE_INDEX_LONG_WALKS` long walks. Otherwise every intermediate shape of a growing
-        // wide object (the global object during bootstrap) kept a full index.
-        self.shapes[parent as usize].lookup_index.take();
-        self.shapes.push(Shape::child(
+        // The object that grew has moved to the child, so the parent's lookup index moves
+        // with it, extended by the transition, and so do the long walks it has spent toward
+        // one; an object left on the parent rebuilds it after `SHAPE_INDEX_LONG_WALKS` long
+        // walks. Otherwise every intermediate shape of a growing wide object (the global
+        // object during bootstrap) kept a full index, or each one walked its whole chain anew.
+        let long_walks = self.shapes[parent as usize].long_walks.get();
+        let lookup_index = self.shapes[parent as usize]
+            .lookup_index
+            .take()
+            .and_then(|index| index.extended_by(transition));
+        let mut child = Shape::child(
             Some(parent),
             transition,
             storage_len,
             dictionary_trigger,
             parent_facts,
-        ));
+        );
+        child.long_walks.set(long_walks);
+        if let Some(index) = lookup_index {
+            child.lookup_index = OnceCell::from(index);
+        }
+        self.shapes.push(child);
         self.heap.register_property_shape(next, storage_len);
         next
     }
@@ -627,6 +637,9 @@ impl<H: Host> Vm<H> {
             })
             .collect::<Vec<_>>();
         let mut shape = original;
+        // Field caches read descriptors held outside shapes; one invalidation after the
+        // loop covers every key it records, since nothing reads the caches meanwhile.
+        let mut recorded_descriptors = false;
         for (key, slot, current) in resolved {
             let attributes = update(current);
             match slot {
@@ -645,10 +658,13 @@ impl<H: Host> Vm<H> {
                 }
                 None => {
                     self.insert_descriptor(object, key, attributes);
-                    self.invalidate_field_caches();
+                    recorded_descriptors = true;
                     self.invalidate_method_caches_for_key(key);
                 }
             }
+        }
+        if recorded_descriptors {
+            self.invalidate_field_caches();
         }
         if shape != original {
             self.object_data_mut(object)

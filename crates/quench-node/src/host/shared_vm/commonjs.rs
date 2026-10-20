@@ -1048,6 +1048,9 @@ pub(super) fn require_node_library(
             Some(crate::modules::buffer_shared_vm::BUFFER_POOL_REQUEST) => {
                 return crate::modules::buffer_shared_vm::buffer_pool_request(context);
             }
+            Some(crate::modules::primordials_shared_vm::COPY_REQUEST) => {
+                return crate::modules::primordials_shared_vm::copy_request(context);
+            }
             _ => {}
         }
     }
@@ -2658,6 +2661,8 @@ fn load_with_resolution(
                 crate::modules::buffer_shared_vm::project_internal_buffer(&file_text)?.into(),
             Some(path) if path == Path::new("lib/buffer.js") =>
                 crate::modules::buffer_shared_vm::project_buffer(&file_text)?.into(),
+            Some(_) if is_primordials =>
+                crate::modules::primordials_shared_vm::project_primordials(&file_text)?.into(),
             _ => file_text,
         };
         // An embedded library file is static text the compiled program can retain as is;
