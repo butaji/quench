@@ -264,6 +264,19 @@ impl Default for CaptureCache {
     }
 }
 
+/// Capture walks `Vm::walked_capture_slots` remembers, by start environment and depth: enough
+/// for the closures of a few nested scopes reading their outer bindings in turn.
+const CAPTURE_WALKS: usize = 64;
+const _: () = assert!(CAPTURE_WALKS.is_power_of_two());
+
+/// A remembered capture walk: `depth` layers out from `cache.env`, as `CaptureCache` holds
+/// the innermost one.
+#[derive(Clone, Copy, Default)]
+pub(super) struct CaptureWalk {
+    depth: u16,
+    cache: CaptureCache,
+}
+
 impl Frame {
     fn source_instruction_pc(&self) -> usize {
         if self.pc_is_resume { self.pc.saturating_sub(1) } else { self.pc }
@@ -1494,6 +1507,9 @@ pub(crate) struct Vm<H> {
     /// `instanceof_has_instance_holder` as a prototype link (`ProtoLink::of`), set with it,
     /// so the steady `instanceof` compares a constructor's link undecoded.
     instanceof_has_instance_link: ProtoLink,
+    /// Recent capture walks (`Vm::walked_capture_slots`), direct-mapped by start environment
+    /// and depth.
+    capture_walks: Box<[CaptureWalk; CAPTURE_WALKS]>,
     to_fixed_atom: Atom,
     to_precision_atom: Atom,
     runtime_atoms: RuntimeAtoms,
