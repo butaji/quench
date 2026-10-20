@@ -87,6 +87,12 @@ pub(super) fn compile(program: &ResidualProgram, function_id: u32) -> Option<JsJ
             || (packed.as_wide().op() == Op::Unary
                 && packed.as_wide().unary_operator()
                     == oxc_ast::ast::UnaryOperator::LogicalNot as u32)
+            // A boolean literal, as compile-time folding leaves `!0`, needs the boolean tree.
+            || (packed.as_wide().op() == Op::LoadConst
+                && matches!(
+                    program.constants.get(packed.as_wide().constant_index()),
+                    Some(Constant::Boolean(_))
+                ))
     }) {
         compile_numeric_loop(program, function_id, function)
             .or_else(|| compile_number_domain_boolean_tree(program, function_id, function))
@@ -320,43 +326,7 @@ pub(super) fn string_transform_candidate(
         {
             Some(JsJitStringTransform::PrefixUnderscore)
         }
-        "unescapeLeadingUnderscores"
-            if function.code.len() == 33
-                && function.code.iter().map(|i| i.as_wide().op()).eq([
-                    Op::StoreLocalPlain,
-                    Op::GetField,
-                    Op::Binary,
-                    Op::Move,
-                    Op::JumpFalse,
-                    Op::LoadLocalPlain,
-                    Op::GetField,
-                    Op::LoadConst,
-                    Op::Call,
-                    Op::Binary,
-                    Op::Move,
-                    Op::JumpFalse,
-                    Op::LoadLocalPlain,
-                    Op::GetField,
-                    Op::LoadConst,
-                    Op::Call,
-                    Op::Binary,
-                    Op::Move,
-                    Op::JumpFalse,
-                    Op::LoadLocalPlain,
-                    Op::GetField,
-                    Op::LoadConst,
-                    Op::Call,
-                    Op::Binary,
-                    Op::JumpFalse,
-                    Op::LoadLocalPlain,
-                    Op::GetField,
-                    Op::LoadConst,
-                    Op::Call,
-                    Op::LoadLocalPlain,
-                    Op::Return,
-                    Op::LoadConst,
-                    Op::Return,
-                ])
+        "unescapeLeadingUnderscores" if unescape_leading_underscores_shape(function)
                 && field_name(program, function, 1) == Some("length")
                 && field_name(program, function, 6) == Some("charCodeAt")
                 && field_name(program, function, 13) == Some("charCodeAt")
@@ -369,6 +339,27 @@ pub(super) fn string_transform_candidate(
     }
 }
 
+/// `unescapeLeadingUnderscores`'s instructions, with its parameter read and written either
+/// through a frame slot or through the register frame-register promotion gave it (`Move`s),
+/// and its final `return id` either reloading the parameter or naming its register.
+fn unescape_leading_underscores_shape(function: &Function) -> bool {
+    use Op::{Binary, Call, GetField, JumpFalse, LoadConst, Move, Return};
+    const BODY: [Op; 29] = [
+        Move, GetField, Binary, Move, JumpFalse,
+        Move, GetField, LoadConst, Call, Binary, Move, JumpFalse,
+        Move, GetField, LoadConst, Call, Binary, Move, JumpFalse,
+        Move, GetField, LoadConst, Call, Binary, JumpFalse,
+        Move, GetField, LoadConst, Call,
+    ];
+    let ops = function.code.iter().map(|instruction| match instruction.as_wide().op() {
+        Op::StoreLocalPlain | Op::LoadLocalPlain => Move,
+        op => op,
+    });
+    let reloaded = BODY.iter().copied().chain([Move, Return, LoadConst, Return]);
+    let named = BODY.iter().copied().chain([Return, LoadConst, Return]);
+    ops.clone().eq(reloaded) || ops.eq(named)
+}
+
 fn field_name<'a>(program: &'a ResidualProgram, function: &Function, pc: usize) -> Option<&'a str> {
     let FieldLookup::Atom { atom, .. } = function.code.get(pc)?.as_wide().field_lookup()? else {
         return None;
@@ -377,7 +368,9 @@ fn field_name<'a>(program: &'a ResidualProgram, function: &Function, pc: usize) 
 }
 
 /// Where a hash-loop local lives: its frame slot, or the register frame-register promotion
-/// moved it into (`compile::frame_registers`), where loads and stores are `Move`s.
+/// moved it into (`compile::frame_registers`). A register local is read and written either
+/// through `Move`s or, once copy coalescing removed them, by instructions naming the
+/// register itself.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum LoopLocal {
     Slot(u16),
@@ -385,15 +378,19 @@ enum LoopLocal {
 }
 
 /// Reads a function's instructions in order for `string_hash_loop_candidate`, matching each
-/// local access in either of its forms.
+/// local access in any of its forms.
 struct LoopReader<'a> {
     function: &'a Function,
     pc: usize,
 }
 
 impl LoopReader<'_> {
+    fn peek(&self) -> Option<crate::bytecode::WideInstruction> {
+        Some(self.function.code.get(self.pc)?.as_wide())
+    }
+
     fn next(&mut self) -> Option<crate::bytecode::WideInstruction> {
-        let instruction = self.function.code.get(self.pc)?.as_wide();
+        let instruction = self.peek()?;
         self.pc += 1;
         Some(instruction)
     }
@@ -403,10 +400,10 @@ impl LoopReader<'_> {
         (instruction.op() == op).then_some(instruction)
     }
 
-    /// A store of `source` into a local, which it names.
-    fn store(&mut self, source: crate::bytecode::Register) -> Option<LoopLocal> {
-        let instruction = self.next()?;
-        match instruction.op() {
+    /// The local `source` initializes: a slot or register it is stored into, else `source`
+    /// itself, which then holds the local.
+    fn store(&mut self, source: crate::bytecode::Register) -> LoopLocal {
+        let stored = self.peek().and_then(|instruction| match instruction.op() {
             Op::StoreLocalPlain if instruction.register_a() == source => {
                 Some(LoopLocal::Slot(instruction.local_slot() as u16))
             }
@@ -414,36 +411,42 @@ impl LoopReader<'_> {
                 Some(LoopLocal::Register(instruction.result_register()))
             }
             _ => None,
+        });
+        if stored.is_some() {
+            self.pc += 1;
         }
+        stored.unwrap_or(LoopLocal::Register(source))
     }
 
-    fn store_into(&mut self, local: LoopLocal, source: crate::bytecode::Register) -> Option<()> {
-        (self.store(source)? == local).then_some(())
-    }
-
-    /// A load of `local` into a register, which it names.
+    /// The register holding `local`'s value: a load's result, or a register local itself
+    /// when no copy precedes its use.
     fn load(&mut self, local: LoopLocal) -> Option<crate::bytecode::Register> {
-        let instruction = self.next()?;
+        let instruction = self.peek()?;
         match (instruction.op(), local) {
             (Op::LoadLocalPlain, LoopLocal::Slot(slot)) if instruction.local_slot() as u16 == slot => {
+                self.pc += 1;
                 Some(instruction.result_register())
             }
             (Op::Move, LoopLocal::Register(register)) if instruction.register_b() == register => {
+                self.pc += 1;
                 Some(instruction.result_register())
             }
+            (_, LoopLocal::Register(register)) => Some(register),
             _ => None,
         }
     }
 
-    /// A `Binary` whose result goes to `local`: fused into its numeric local target, or
-    /// followed by a store of its result.
+    /// A `Binary` whose result goes to `local`: fused into its numeric local target, written
+    /// to the local's register, or followed by a store of its result.
     fn binary_into(&mut self, local: LoopLocal) -> Option<crate::bytecode::WideInstruction> {
         let binary = self.next_op(Op::Binary)?;
         match (binary.numeric_local_target(), local) {
             (Some(target), LoopLocal::Slot(slot)) if target == slot => Some(binary),
-            (None, LoopLocal::Register(_)) => {
-                self.store_into(local, binary.result_register())?;
+            (None, LoopLocal::Register(register)) if binary.result_register() == register => {
                 Some(binary)
+            }
+            (None, LoopLocal::Register(_)) => {
+                (self.store(binary.result_register()) == local).then_some(binary)
             }
             _ => None,
         }
@@ -487,10 +490,10 @@ fn string_hash_loop_shape(program: &ResidualProgram, function: &Function) -> Opt
     // let hash = 5381; let index = str.length;
     let seed = code.next_op(Op::LoadConst)?;
     check(number(seed.constant_index()) == Some(5381.0))?;
-    let hash = code.store(seed.result_register())?;
+    let hash = code.store(seed.result_register());
     let length = code.next()?;
     check(field_is(length, "length"))?;
-    let index = code.store(length.result_register())?;
+    let index = code.store(length.result_register());
     check(hash != index)?;
 
     // while (index > 0)

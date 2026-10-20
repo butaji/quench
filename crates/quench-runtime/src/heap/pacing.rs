@@ -274,8 +274,9 @@ mod tests {
         assert!(pacing.full_due(live, live + growth, 0));
         assert!(pacing.full_due(live, live, pacing.allocation_cap.of(live)));
         assert_eq!(pacing.young_budget(0), pacing.minimum_young);
-        let small = pacing.minimum_young / 4;
-        assert_eq!(pacing.young_budget(small), pacing.young.of(small));
+        // A live set whose young share lies between the minimum and the maximum budget.
+        let between = pacing.minimum_young * 2 * pacing.young.denominator / pacing.young.numerator;
+        assert_eq!(pacing.young_budget(between), pacing.young.of(between));
         let huge = pacing.maximum_young * 1024;
         assert_eq!(pacing.young_budget(huge), pacing.maximum_young);
     }
