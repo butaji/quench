@@ -12103,3 +12103,36 @@ fn lane_closures_of_one_function_keep_their_own_lexical_this() {
     vm.execute(&Engine::specialize(source, "lane-closure-this.js").unwrap()).unwrap();
     assert_eq!(output.borrow().as_slice(), ["ab,o0,ab,o1,ab,o2,ab,o3"]);
 }
+
+#[test]
+fn lane_activations_made_frames_by_a_native_call_read_their_own_registers() {
+    // A frameless activation that calls a native becomes a VM frame, in which the lane goes
+    // on: the general steps it then runs in place (computed keys, spreads, object literals)
+    // read and write that frame's registers, not its caller's.
+    let source = r#"
+      function ensure(obj, tag) {
+        for (var i = 0, keys = Object.keys(obj); i < keys.length; i++) {
+          var key = keys[i];
+          var fns = obj[key];
+          if (typeof fns === 'function') obj[key] = { enter: fns, [tag + i]: [i, ...keys] };
+        }
+        return obj;
+      }
+      function visit(n) {
+        var out = [], a = 'a', b = 1.5, c = null;
+        for (var j = 0; j < n; j++) {
+          var visitor = ensure({ x() {}, y: { enter: j } }, 'k');
+          out.push(typeof visitor.x.enter + visitor.x.k0.join('|') + visitor.y.enter + a + b + c);
+        }
+        return out.join(',');
+      }
+      print(visit(3));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "lane-materialized-registers.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["function0|x|y0a1.5null,function0|x|y1a1.5null,function0|x|y2a1.5null"]
+    );
+}
