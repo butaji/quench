@@ -157,8 +157,13 @@ impl Default for ValueVec {
 pub(crate) struct ValueArena {
     values: Vec<Value>,
     free: [Vec<u32>; BUCKETS],
-    /// Values held by the ranges on `free`.
+    /// Values held by the ranges on `free`, and by released exact ranges, which wait for
+    /// compaction.
     released_values: usize,
+    /// One bit per arena offset: a vector starting there holds exactly its length, as
+    /// compaction left it, instead of its length's power-of-two class. Such a range is
+    /// never on `free`; its next growth moves the vector back to a class.
+    exact_starts: Vec<u64>,
     shape_lengths: Vec<u32>,
     dictionaries: FxHashMap<u32, FxHashMap<u32, Value>>,
     free_dictionaries: Vec<u32>,
@@ -171,6 +176,7 @@ impl Default for ValueArena {
             values: vec![],
             free: Default::default(),
             released_values: 0,
+            exact_starts: Vec::new(),
             shape_lengths: vec![0],
             dictionaries: FxHashMap::default(),
             free_dictionaries: Vec::new(),
@@ -408,11 +414,12 @@ impl ValueArena {
             copy.use_dictionary(self.insert_dictionary(slots));
             return copy;
         }
-        let capacity = self.capacity(vector);
-        if capacity == 0 {
+        if self.capacity(vector) == 0 {
             return copy;
         }
         let len = self.len(vector);
+        // A copy takes its length's class, whatever the original's exactness.
+        let capacity = if len == 0 { MIN_CAPACITY } else { Self::class_capacity(len) };
         match self.allocate(capacity, MAX_ARENA_START) {
             Some(start) => {
                 self.values.copy_within(vector.start()..vector.start() + len, start);
@@ -438,9 +445,41 @@ impl ValueArena {
         }
         let capacity = self.capacity(vector);
         if capacity != 0 {
-            self.free[Self::bucket(capacity)].push(vector.start & START_MASK);
+            if self.take_exact(vector.start()) {
+                // An exact range fits no size class; compaction reclaims it.
+            } else {
+                self.free[Self::bucket(capacity)].push(vector.start & START_MASK);
+            }
             self.released_values += capacity;
         }
+    }
+
+    fn is_exact(&self, start: usize) -> bool {
+        self.exact_starts
+            .get(start / u64::BITS as usize)
+            .is_some_and(|word| word & (1 << (start % u64::BITS as usize)) != 0)
+    }
+
+    fn set_exact(&mut self, start: usize) {
+        let word = start / u64::BITS as usize;
+        if word >= self.exact_starts.len() {
+            self.exact_starts.resize(word + 1, 0);
+        }
+        self.exact_starts[word] |= 1 << (start % u64::BITS as usize);
+    }
+
+    /// Clears `start`'s exact bit, reporting whether it was set.
+    fn take_exact(&mut self, start: usize) -> bool {
+        let was = self.is_exact(start);
+        if was {
+            self.exact_starts[start / u64::BITS as usize] &= !(1 << (start % u64::BITS as usize));
+        }
+        was
+    }
+
+    /// The size class of a vector of `length` values.
+    fn class_capacity(length: usize) -> usize {
+        length.next_power_of_two().max(MIN_CAPACITY)
     }
 
     /// Whether released ranges have grown enough that compaction is worth rewriting every
@@ -460,16 +499,29 @@ impl ValueArena {
             "dictionary storage is not arena-backed"
         );
         let length = self.len(*vector);
-        let capacity = self.capacity(*vector);
         let source = vector.start();
         assert!(
             target <= source,
             "property ranges must compact in source order"
         );
         self.values.copy_within(source..source + length, target);
-        self.values[target + length..target + capacity].fill(Value::UNDEFINED);
         vector.relocate(target);
-        capacity
+        if length == 0 {
+            // An empty range keeps the smallest class for its first property.
+            self.values[target..target + MIN_CAPACITY].fill(Value::UNDEFINED);
+            return MIN_CAPACITY;
+        }
+        // A live vector keeps exactly its values: the slack of its class goes, and its next
+        // growth moves it back to a class.
+        if length != Self::class_capacity(length) {
+            self.set_exact(target);
+        }
+        length
+    }
+
+    /// Starts a compaction: every range is about to move, so no start is exact yet.
+    pub(crate) fn begin_compaction(&mut self) {
+        self.exact_starts.clear();
     }
 
     pub(crate) fn finish_compaction(&mut self, length: usize) {
@@ -514,6 +566,8 @@ impl ValueArena {
         let capacity = self.capacity(*vector);
         let next = if capacity == 0 {
             MIN_CAPACITY
+        } else if self.is_exact(vector.start()) {
+            Self::class_capacity(len + 1)
         } else {
             capacity
                 .checked_mul(2)
@@ -567,7 +621,8 @@ impl ValueArena {
         match (len, vector.start() != EMPTY_START as usize) {
             (0, false) => 0,
             (0, true) => MIN_CAPACITY,
-            (length, _) => length.next_power_of_two().max(MIN_CAPACITY),
+            (length, _) if self.is_exact(vector.start()) => length,
+            (length, _) => Self::class_capacity(length),
         }
     }
 
@@ -644,6 +699,35 @@ mod tests {
         }
         assert_eq!(arena.get(values, 8).unwrap().as_number(), Some(8.0));
         assert_eq!(arena.vector_stats(values), (9, 16));
+    }
+
+    #[test]
+    fn compaction_trims_class_slack_and_growth_restores_a_class() {
+        let mut arena = ValueArena::default();
+        let mut values = ValueVec::new();
+        for value in 0..9 {
+            arena.register_shape(value + 1, value as usize + 1);
+            arena.push(&mut values, Value::number(f64::from(value)));
+            values.set_auxiliary(value + 1);
+        }
+        assert_eq!(arena.vector_stats(values), (9, 16));
+        arena.begin_compaction();
+        let kept = arena.compact_vector(&mut values, 0);
+        arena.finish_compaction(kept);
+        assert_eq!(kept, 9, "a compacted vector holds exactly its values");
+        assert_eq!(arena.vector_stats(values), (9, 9));
+        assert_eq!(arena.get(values, 8).unwrap().as_number(), Some(8.0));
+        arena.register_shape(10, 10);
+        arena.push(&mut values, Value::number(9.0));
+        values.set_auxiliary(10);
+        assert_eq!(arena.vector_stats(values), (10, 16), "growth returns to a class");
+        for index in 0..10 {
+            assert_eq!(arena.get(values, index).unwrap().as_number(), Some(index as f64));
+        }
+        assert!(
+            arena.free.iter().all(Vec::is_empty),
+            "a released exact range stays off the size-class lists"
+        );
     }
 
     #[test]
