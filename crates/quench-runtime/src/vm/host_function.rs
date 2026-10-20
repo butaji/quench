@@ -209,6 +209,12 @@ impl<H: Host> Vm<H> {
         H::initialize(&mut context).map_err(|error| context.finish_error(error))
     }
 
+    /// The rest of the host's installation in a restored VM (`Host::resume`).
+    pub(super) fn resume_host(&mut self) -> Result<(), JsError> {
+        let mut context = NativeContext::new(self);
+        H::resume(&mut context).map_err(|error| context.finish_error(error))
+    }
+
     pub(super) fn initialize_host_shadow_realm(
         &mut self,
         global: crate::RootId,

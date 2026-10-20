@@ -66,6 +66,17 @@ impl From<Rc<Vec<u8>>> for BufferBytes {
 }
 
 impl BufferBytes {
+    /// The bytes a snapshot copies (`crate::snapshot`): an owned or host-shared store's. A
+    /// Wasm memory's view, atomically shared memory and bytes whose address an embedder
+    /// observed have identities a later process cannot restore.
+    pub(crate) fn snapshot_contents(&self) -> Option<&[u8]> {
+        match &*self.0 {
+            BufferStore::Owned(bytes) => Some(bytes),
+            BufferStore::Shared(bytes) => Some(bytes),
+            BufferStore::AddressPinned(_) | BufferStore::Wasm(_) | BufferStore::AtomicShared(_) => None,
+        }
+    }
+
     /// A view of an unshared memory's current bytes; `None` for a shared memory.
     pub(crate) fn wasm_view(memory: &Rc<MemoryStorage>) -> Option<Self> {
         let MemoryStorage::Unshared(state) = &**memory else {

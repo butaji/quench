@@ -22,6 +22,7 @@ pub(crate) use promise_record::{PromiseCell, PromiseReaction, PromiseRecord, Pro
 mod records;
 mod root;
 mod slots;
+mod snapshot;
 mod thin_slice;
 pub(crate) use thin_slice::ThinBoxSlice;
 mod weak;

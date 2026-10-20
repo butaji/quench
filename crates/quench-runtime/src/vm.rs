@@ -1,6 +1,7 @@
 mod compiled;
 mod js_compiled;
 mod shape_transitions;
+mod snapshot;
 mod startup_intrinsics;
 mod wasm;
 pub use compiled::ExecutionMode;
@@ -1918,6 +1919,30 @@ impl<H: Host> Vm<H> {
         for (source, name) in scripts {
             self.eval_script_source(program, source, name)?;
         }
+        self.run_main(program, drain_jobs)
+    }
+
+    /// Installs the realm and the host as `execute_deferred_jobs` does, without running the
+    /// program: the state a startup snapshot is taken from (`write_snapshot`).
+    pub(crate) fn initialize_for_snapshot(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
+        if program.functions.is_empty() {
+            return Err(JsError::validation("program has no entry function".into()));
+        }
+        self.check_execution_interrupt()?;
+        self.initialize(program)
+    }
+
+    /// `execute_deferred_jobs` in a VM `restore_snapshot` restored, whose main program is
+    /// `program`: the host resumes its installation where the snapshot left it.
+    pub(crate) fn execute_restored(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
+        self.check_execution_interrupt()?;
+        self.resume_host()?;
+        self.run_main(program, false)
+    }
+
+    /// Runs the main program of an installed realm: its module graph, its declarations and
+    /// its body, then optionally its jobs.
+    fn run_main(&mut self, program: &ResidualProgram, drain_jobs: bool) -> Result<Value, JsError> {
         if program.is_module() {
             self.instantiate_main_module(program)?;
             self.evaluate_program_module_requests(program)?;

@@ -206,6 +206,17 @@ impl Value {
         (!value.is_tagged()).then_some(value)
     }
 
+    /// The value's encoding, which a snapshot writes as is: it restores every heap index the
+    /// value names at the same index (`crate::snapshot`).
+    pub(crate) fn to_bits(self) -> u64 {
+        self.0
+    }
+
+    /// A value `to_bits` gave, read back from a snapshot of the same heap layout.
+    pub(crate) fn from_bits(bits: u64) -> Self {
+        Self(bits)
+    }
+
     /// The 64-bit Wasm payload a value holds in place.
     #[inline(always)]
     pub(crate) fn bits64(self) -> Option<u64> {
