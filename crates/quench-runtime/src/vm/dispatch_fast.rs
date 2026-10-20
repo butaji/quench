@@ -966,7 +966,23 @@ struct LaneContext<H: Host> {
     /// the walk reads. No collection runs in the lane, so they stay in place. Tagged with
     /// `CAPTURE_STORES` where a store to any of them is the whole write (`capture_stores`).
     capture: *const crate::heap::EnvironmentSlots,
+    /// The last outer capture walk an activation read through (`lane_load_outer_capture`).
+    /// One walk measured better than one per depth parity on closure-heavy code.
+    outer: OuterWalk,
 }
+
+/// A walk from environment `env`, `DELETED` for none, `depth` layers out to the dense slots
+/// `slots`. An environment's chain is fixed and its storage stays put while no collection
+/// runs, so the walk holds while the running activation's environment is `env`; a re-entry
+/// after the general path, which may collect, forgets it.
+#[derive(Clone, Copy)]
+struct OuterWalk {
+    env: Value,
+    depth: u16,
+    slots: *const crate::heap::EnvironmentSlots,
+}
+
+const NO_OUTER_WALK: OuterWalk = OuterWalk { env: Value::DELETED, depth: 0, slots: std::ptr::null() };
 
 /// The tag of a `LaneContext::capture` whose every dense slot a store may write directly:
 /// its environment admits every direct store (`Vm::admits_every_direct_store`) and is in the
@@ -2095,10 +2111,9 @@ script_handler! {
 
 script_handler! {
     /// `lane_load_capture` of a capture past the running function's own scope
-    /// (`specialize_outer_captures`): a walk this lane run or an earlier one remembered
-    /// (`Vm::remembered_capture`), keyed as `lane_load_capture_walk` walks. An activation's
-    /// remembered read runs here, saving no registers; a frame's read takes
-    /// `lane_load_frame_outer_capture`, any other the walk.
+    /// (`specialize_outer_captures`). An activation's read through the walk it read last
+    /// (`LaneContext::outer`) runs here, saving no registers; a frame's read takes
+    /// `lane_load_frame_outer_capture`, any other `lane_load_outer_capture_walk`.
     fn lane_load_outer_capture<>(cx, r, ip, i, view) {
         let imm = i.imm();
         let env = unsafe { (*cx).env };
@@ -2106,8 +2121,43 @@ script_handler! {
             sibling!(lane_load_frame_outer_capture::<H>, r, ip, view)
         }
         let depth = ImmediateLayout::capture_depth(imm);
-        let Some(value) = unsafe { vm(cx) }.remembered_capture(env, false, depth, ImmediateLayout::capture_slot(imm))
-        else {
+        let walk = unsafe { (*cx).outer };
+        let value = if walk.env == env && walk.depth == depth {
+            // SAFETY: as `OuterWalk`.
+            unsafe { &*walk.slots }.dense().and_then(|slots| slots.dense_plain(usize::from(ImmediateLayout::capture_slot(imm))))
+        } else {
+            None
+        };
+        let Some(value) = value else {
+            sibling!(lane_load_outer_capture_walk::<H>, r, ip, view)
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+script_handler! {
+    /// `lane_load_outer_capture` in an activation through another walk: the walk from its
+    /// environment this lane run or an earlier one remembered, or walked now and remembered
+    /// (`Vm::walked_capture_slots`), ending at a function's dense slot, which the context
+    /// then reads through (`LaneContext::outer`); any other read takes
+    /// `lane_load_capture_walk`.
+    #[inline(never)]
+    fn lane_load_outer_capture_walk<>(cx, r, ip, i, view) {
+        let imm = i.imm();
+        let vm = unsafe { vm(cx) };
+        let (env, depth) = (unsafe { (*cx).env }, ImmediateLayout::capture_depth(imm));
+        let walked = vm.walked_capture_slots(env, false, depth);
+        // SAFETY: as `Vm::walked_capture_slots`; no collection runs in the lane.
+        let value = walked.and_then(|(slots, root)| {
+            let value = root
+                .is_none()
+                .then(|| unsafe { &*slots }.dense()?.dense_plain(usize::from(ImmediateLayout::capture_slot(imm))))
+                .flatten()?;
+            unsafe { (*cx).outer = OuterWalk { env, depth, slots } };
+            Some(value)
+        });
+        let Some(value) = value else {
             sibling!(lane_load_capture_walk::<H>, r, ip, view)
         };
         r.set(i.a, value);
@@ -5027,6 +5077,7 @@ fn lane_frame_state<H: Host>(
         (*cx).this = vm.frame_lane_this(frame);
         (*cx).env = Value::DELETED;
         (*cx).capture = std::ptr::null();
+        (*cx).outer = NO_OUTER_WALK;
     }
     let view = Carried {
         memory: view,
@@ -5185,6 +5236,7 @@ impl<H: Host> Vm<H> {
             (*cx).this = self.frame_lane_this(caller);
             (*cx).env = Value::DELETED;
             (*cx).capture = std::ptr::null();
+            (*cx).outer = NO_OUTER_WALK;
         }
     }
 
@@ -9276,6 +9328,7 @@ impl<H: Host> Vm<H> {
             this: self.frame_lane_this(*frame),
             env: Value::DELETED,
             capture: std::ptr::null(),
+            outer: NO_OUTER_WALK,
         };
         let cx: *mut LaneContext<H> = &mut context;
         let outer = LANE_CONTEXT.with(|current| current.replace(cx.cast()));
