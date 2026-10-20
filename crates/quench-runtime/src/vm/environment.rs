@@ -1745,6 +1745,21 @@ impl<H: Host> Vm<H> {
         )
     }
 
+    /// `load_projected_environment_binding` of a global var where reading it runs no guest
+    /// code: a data property the global object or its prototypes hold
+    /// (`Vm::plain_named_get`). `None` for any other projection or read.
+    pub(super) fn plain_projected_global_var(&self, env: Value, slot: u16) -> Option<Value> {
+        let Cell::Environment { function, scope, .. } = self.heap.get(env)? else {
+            return None;
+        };
+        let owner_id = scope
+            .program()
+            .map_or(self.active_program, super::ProgramId::from_raw);
+        let owner = self.programs.residual(owner_id)?;
+        let atom = self.root_global_var_atom(owner, owner_id, *function, usize::from(slot))?;
+        self.plain_named_get(self.realm.globals, atom)
+    }
+
     /// Reads a root-function projection (global var, global lexical or module import) or
     /// reports an uninitialized binding.
     #[inline(never)]
