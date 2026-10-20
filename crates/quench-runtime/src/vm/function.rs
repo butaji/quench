@@ -223,8 +223,8 @@ impl<H: Host> Vm<H> {
             .expect("bound target root remains live");
         let length_atom = self.intern_atom("length");
         let length_key = self.heap.alloc(Cell::String(self.atom_value(length_atom)));
-        let descriptor = self.object_get_own_property_descriptor(p, &[target, length_key])?;
-        let bound_length = if !descriptor.is_undefined() {
+        // HasOwnProperty(Target, "length"): [[GetOwnProperty]], a Proxy's through its trap.
+        let bound_length = if self.own_property_enumerable(p, target, length_key)?.is_some() {
             let target = self
                 .heap
                 .root_value(target_root)

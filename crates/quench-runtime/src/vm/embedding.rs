@@ -139,6 +139,93 @@ impl<H: Host> Vm<H> {
         self.object_define_property(&program, &args)
     }
 
+    /// [[GetOwnProperty]] of ToObject(`root`) for ToPropertyKey(`key`), as descriptor fields
+    /// rather than a descriptor object. The values are unrooted; the caller roots them before
+    /// anything else allocates.
+    pub(crate) fn embedding_own_property_fields(
+        &mut self,
+        root: RootId,
+        key: RootId,
+    ) -> Result<Option<crate::api::DescriptorFields<Value>>, JsError> {
+        let program = self.embedding_program()?;
+        let target = self.embedding_value(root)?;
+        let target = self.box_object_or_type_error(&program, target)?;
+        let target_root = self.heap.root(target);
+        let mut key_root = None;
+        let outcome = (|| {
+            let key = self.embedding_value(key)?;
+            let key = self.to_property_key(&program, key)?;
+            key_root = Some(self.heap.root(key));
+            let record = if matches!(self.heap.get(target), Some(Cell::Proxy { .. })) {
+                let descriptor = self.object_get_own_property_descriptor(&program, &[target, key])?;
+                if descriptor.is_undefined() {
+                    None
+                } else {
+                    Some(self.to_property_descriptor(&program, descriptor)?)
+                }
+            } else {
+                self.ordinary_get_own_property(&program, target, key)?
+                    .map(|(value, attributes)| {
+                        super::object_descriptors::PropertyDescriptorRecord::from_attributes(
+                            value, attributes,
+                        )
+                    })
+            };
+            Ok(record.map(|record| crate::api::DescriptorFields {
+                value: record.value,
+                writable: record.writable,
+                get: record.getter,
+                set: record.setter,
+                enumerable: record.enumerable,
+                configurable: record.configurable,
+            }))
+        })();
+        for root in [Some(target_root), key_root].into_iter().flatten() {
+            self.heap.release_root(root);
+        }
+        outcome
+    }
+
+    /// `Reflect.defineProperty(object, key, descriptor)` for a descriptor given as its fields:
+    /// whether [[DefineOwnProperty]] succeeded. The fields' values stay rooted by the caller.
+    pub(crate) fn embedding_define_property_fields(
+        &mut self,
+        object: RootId,
+        key: RootId,
+        fields: crate::api::DescriptorFields<Value>,
+    ) -> Result<bool, JsError> {
+        let program = self.embedding_program()?;
+        let target = self.embedding_value(object)?;
+        if !self.is_object_like(target) {
+            return Err(self.type_error(&program, "Reflect.defineProperty called on non-object".into()));
+        }
+        let record = super::object_descriptors::PropertyDescriptorRecord {
+            value: fields.value,
+            writable: fields.writable,
+            enumerable: fields.enumerable,
+            configurable: fields.configurable,
+            getter: fields.get,
+            setter: fields.set,
+        };
+        // ToPropertyDescriptor's checks, which a descriptor object would have passed.
+        if [record.getter, record.setter]
+            .into_iter()
+            .flatten()
+            .any(|accessor| !accessor.is_undefined() && !self.is_function(accessor))
+        {
+            return Err(self.type_error(&program, "Accessor descriptor must be callable".into()));
+        }
+        if record.has_accessor_fields() && record.has_data_fields() {
+            return Err(self.type_error(
+                &program,
+                "Property descriptor cannot mix accessor and data fields".into(),
+            ));
+        }
+        let key = self.embedding_value(key)?;
+        let key = self.to_property_key(&program, key)?;
+        self.define_own_property_record(&program, target, key, record)
+    }
+
     pub(crate) fn embedding_own_descriptor(
         &mut self,
         root: RootId,

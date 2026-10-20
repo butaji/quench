@@ -8236,6 +8236,17 @@ fn operator_handler<H: Host, const CONSTANT: bool>(operator: u32) -> Option<Hand
 
 /// Whether some loop of `function`, from a backward jump's target through the jump, has no
 /// instruction the lane exits at.
+/// Whether one activation of `function` may run an instruction more than once: it has a
+/// backward jump, or a branch table, whose entries may jump back.
+fn may_loop(function: &Function) -> bool {
+    function.code.iter().enumerate().any(|(pc, packed)| {
+        let instruction = decoded_instruction(function, *packed);
+        instruction.op() == Op::WasmBranchTable
+            || (instruction.op().immediate_role() == ImmediateRole::JumpTarget
+                && instruction.imm() as usize <= pc)
+    })
+}
+
 fn closes_loop(function: &Function, exits: &[bool]) -> bool {
     function.code.iter().enumerate().any(|(pc, packed)| {
         let instruction = decoded_instruction(function, *packed);
@@ -8292,9 +8303,11 @@ pub(super) fn decoded_instruction(
 }
 
 impl<H: Host> Vm<H> {
-    /// The lane view of `function`, or null when its program has none.
-    pub(super) fn lane_view(&self, program: ProgramId, function: u32) -> *const LaneView {
-        self.lane_view_any(program, function)
+    /// The lane view a general-loop entry of `function` runs with, or null when it runs
+    /// without one (`ProgramStore::entry_lane_view`).
+    pub(super) fn entry_lane_view(&self, program: ProgramId, function: u32) -> *const LaneView {
+        self.programs
+            .entry_lane_view(program, function, may_loop, derive_lane_view::<H>)
             .unwrap_or(std::ptr::null())
     }
 

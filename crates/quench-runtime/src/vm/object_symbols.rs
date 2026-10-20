@@ -298,14 +298,12 @@ impl<H: Host> Vm<H> {
                 }) {
                     continue;
                 }
-                let descriptor = self.object_get_own_property_descriptor(
+                let enumerable = self.own_property_enumerable(
                     p,
-                    &[
-                        self.heap.root_value(source).unwrap(),
-                        self.heap.root_value(*key).unwrap(),
-                    ],
+                    self.heap.root_value(source).unwrap(),
+                    self.heap.root_value(*key).unwrap(),
                 )?;
-                if descriptor.is_undefined() || !self.descriptor_flag(descriptor, "enumerable") {
+                if enumerable != Some(true) {
                     continue;
                 }
                 let value = self.get_index(
