@@ -1757,7 +1757,9 @@ script_handler! {
             value
         } else {
             // A frameless activation's function has no environment of its own.
-            vm.environment_capture_slots(env, false, depth).and_then(|(slots, root)| {
+            vm.walked_capture_slots(env, false, depth).and_then(|(slots, root)| {
+                // SAFETY: as `Vm::walked_capture_slots`; no collection runs in the lane.
+                let slots = unsafe { &*slots };
                 if depth == 0
                     && root.is_none()
                     && let Some(dense) = slots.dense()
