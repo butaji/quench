@@ -1282,3 +1282,17 @@ pub(crate) fn report_fatal_error(ctx: &mut Context<'_>, error: RootId) -> Result
 pub(crate) fn runtime_is_child(runtime: &mut Runtime<NodeHost>) -> bool {
     runtime.host_mut().shared_state().borrow().workers.child.is_some()
 }
+
+impl State {
+    pub(crate) fn write_snapshot(&self, writer: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> {
+        use crate::host::startup_snapshot::{require_quiescent, HostSnap};
+        let Self { thread_id: _, eval_script: _, serialized_failure, child, workers, pending, port } = self;
+        require_quiescent(serialized_failure.is_none() && child.is_none(), "a worker thread")?;
+        require_quiescent(workers.is_empty() && pending.is_empty(), "a Worker")?;
+        port.write(writer)
+    }
+    pub(crate) fn read_snapshot(&mut self, reader: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<(), String> {
+        self.port = crate::host::startup_snapshot::HostSnap::read(reader)?;
+        Ok(())
+    }
+}

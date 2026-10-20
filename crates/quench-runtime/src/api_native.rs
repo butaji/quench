@@ -147,7 +147,7 @@ pub struct ErrorSourcePosition {
 /// Private weak host reference, pruned by the core collector before slot reuse.
 /// Its persistent root must be released when the host resource is discarded.
 #[derive(Clone, Copy, Debug)]
-pub struct HostWeakRoot(pub(super) RootId);
+pub struct HostWeakRoot(pub(crate) RootId);
 
 /// Iterator and cached next method, owned by its NativeContext's live roots.
 pub struct RootedIterator {

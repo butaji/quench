@@ -737,3 +737,16 @@ pub(crate) fn constructor(c:&mut Context<'_>)->Result<RootId,RootedError>{
  binding(c)?;
  crate::host::shared_vm::commonjs::cached_native_binding(c,"\0native:PipeConstructor", |_|Err(RootedError::host("native Pipe constructor authority missing")))
 }
+
+impl State {
+    pub(crate) fn write_snapshot(&self, writer: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> {
+        use crate::host::startup_snapshot::{require_quiescent, HostSnap};
+        let Self { identities, entries, reads, next_read } = self;
+        require_quiescent(identities.is_empty() && entries.is_empty() && reads.is_empty(), "a pipe")?;
+        next_read.write(writer)
+    }
+    pub(crate) fn read_snapshot(&mut self, reader: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<(), String> {
+        self.next_read = crate::host::startup_snapshot::HostSnap::read(reader)?;
+        Ok(())
+    }
+}

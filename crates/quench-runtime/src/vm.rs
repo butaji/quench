@@ -32,7 +32,13 @@ use std::cell::OnceCell;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
-const DEFAULT_RANDOM_SEED: u64 = 0x4d59_5df4_d0f3_3173;
+/// A fresh seed for `Math.random`'s xorshift state, from the process's random hash keys (which
+/// the standard library draws from the OS): each VM, like each Node process, has its own
+/// sequence. The state must not be zero, which xorshift never leaves.
+fn fresh_random_seed() -> u64 {
+    use std::hash::BuildHasher as _;
+    std::collections::hash_map::RandomState::new().hash_one(std::time::SystemTime::now()) | 1
+}
 pub(super) const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
 pub(super) const MAX_ARRAY_LENGTH: usize = u32::MAX as usize;
 pub(super) const ROOT_FUNCTION_ID: u32 = 0;
@@ -2391,7 +2397,7 @@ impl<H: Host> Vm<H> {
         self.temporal_plain_time_proto = Value::NULL;
         self.temporal_plain_month_day_proto = Value::NULL;
         self.temporal_plain_year_month_proto = Value::NULL;
-        self.random_state = DEFAULT_RANDOM_SEED;
+        self.random_state = fresh_random_seed();
         self.realm.globals = self
             .heap
             .alloc(Cell::Object(Self::empty_object(Value::NULL)));

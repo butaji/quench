@@ -17,6 +17,20 @@ mod platform {
         pending: Option<std::io::Result<Vec<u8>>>,
     }
 
+    impl State {
+        /// A snapshot is taken before anything reads stdin, which is the process's own.
+        pub(crate) fn write_snapshot(&self, _: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> {
+            let Self { stream, pump, requested, ended, referenced, pending } = self;
+            crate::host::startup_snapshot::require_quiescent(
+                stream.is_none() && pump.is_none() && !requested && !ended && !referenced && pending.is_none(),
+                "stdin",
+            )
+        }
+        pub(crate) fn read_snapshot(&mut self, _: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
     pub(crate) fn install(
         context: &mut NativeContext<'_, NodeHost>,
         process: RootId,
@@ -340,6 +354,14 @@ mod platform {
     use quench_runtime::{NativeContext, RootId, RootedError, Runtime};
     #[derive(Default)]
     pub(crate) struct State;
+    impl State {
+        pub(crate) fn write_snapshot(&self, _: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> {
+            Ok(())
+        }
+        pub(crate) fn read_snapshot(&mut self, _: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<(), String> {
+            Ok(())
+        }
+    }
     pub(crate) fn install(
         _: &mut NativeContext<'_, NodeHost>,
         _: RootId,

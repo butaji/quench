@@ -15,6 +15,10 @@ use std::sync::{Arc, MutexGuard};
 #[derive(Debug, Default)]
 pub(crate) struct BufferBytes(Rc<BufferStore>);
 
+/// The largest alignment an embedder observes of a pinned store: the widest typed array
+/// element, which the offsets it computes align views to.
+const OBSERVED_ALIGNMENT_BOUND: usize = size_of::<f64>();
+
 #[derive(Clone, Debug)]
 enum BufferStore {
     Owned(Vec<u8>),
@@ -69,11 +73,26 @@ impl BufferBytes {
     /// The bytes a snapshot copies (`crate::snapshot`): an owned or host-shared store's. A
     /// Wasm memory's view, atomically shared memory and bytes whose address an embedder
     /// observed have identities a later process cannot restore.
-    pub(crate) fn snapshot_contents(&self) -> Option<&[u8]> {
+    /// What a snapshot keeps of this store (`crate::snapshot`): its bytes and, for a store
+    /// whose address an embedder observed, that address's residue modulo
+    /// `OBSERVED_ALIGNMENT_BOUND`, which the restored store must share. `None` for a store
+    /// over memory the snapshot cannot hold (Wasm or atomically shared).
+    pub(crate) fn snapshot_contents(&self) -> Option<(&[u8], Option<usize>)> {
         match &*self.0 {
-            BufferStore::Owned(bytes) => Some(bytes),
-            BufferStore::Shared(bytes) => Some(bytes),
-            BufferStore::AddressPinned(_) | BufferStore::Wasm(_) | BufferStore::AtomicShared(_) => None,
+            BufferStore::Owned(bytes) => Some((bytes, None)),
+            BufferStore::Shared(bytes) => Some((bytes, None)),
+            BufferStore::AddressPinned(bytes) => Some((bytes, Some(bytes.as_ptr() as usize % OBSERVED_ALIGNMENT_BOUND))),
+            BufferStore::Wasm(_) | BufferStore::AtomicShared(_) => None,
+        }
+    }
+
+    /// The store `snapshot_contents` described; `None` when a pinned store's new address does
+    /// not keep the residue its embedder observed.
+    pub(crate) fn restored(bytes: Vec<u8>, pinned_residue: Option<usize>) -> Option<Self> {
+        match pinned_residue {
+            None => Some(Self::from(bytes)),
+            Some(residue) => (bytes.as_ptr() as usize % OBSERVED_ALIGNMENT_BOUND == residue)
+                .then(|| Self(Rc::new(BufferStore::AddressPinned(bytes)))),
         }
     }
 

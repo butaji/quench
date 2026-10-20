@@ -4787,7 +4787,7 @@ lane_handler! {
             && vm.programs.runs_in_global_scope(unsafe { (*cx).program })
             && !vm.atom_class(i.imm()).contains(AtomClass::INTERNAL)
             && code.function_get(function as usize).is_some_and(|function| {
-                function.names_resolve_statically(&code.functions, &code.atoms)
+                function.names_resolve_statically(code)
             });
         if global {
             requicken(ip, lane_load_global_name::<H>);
