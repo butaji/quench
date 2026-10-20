@@ -1935,6 +1935,21 @@ script_handler! {
     }
 }
 
+/// A capture of a root environment's global var (`Vm::plain_projected_global_var`), which a
+/// script's functions read for its top-level `var`s: the capture's environment as the general
+/// path finds it, from the frame or from the activation's environment.
+#[inline(never)]
+fn lane_projected_capture<H: Host>(cx: *mut LaneContext<H>, depth: u16, slot: u16) -> Option<Value> {
+    let vm = unsafe { vm(cx) };
+    let env = unsafe { (*cx).env };
+    let env = if env.is_deleted() {
+        vm.capture_env(unsafe { (*cx).frame }, depth)?
+    } else {
+        vm.environment_capture_env(env, false, depth)?
+    };
+    vm.plain_projected_global_var(env, slot)
+}
+
 script_handler! {
     /// `lane_load_capture` before the running function's slots are known: the walk from
     /// the frame's cache, or from the activation's environment, which keeps them.
@@ -1969,7 +1984,7 @@ script_handler! {
                 vm.owned_capture(slots, root, slot)
             })
         };
-        let Some(value) = value else {
+        let Some(value) = value.or_else(|| lane_projected_capture(cx, depth, slot)) else {
             return exit(ip);
         };
         r.set(i.a, value);
@@ -3178,7 +3193,9 @@ lane_handler! {
     /// (`specialize_register_operands`).
     fn lane_jump_binary_false_small<BACKWARD: bool>(cx, r, ip, i, view) {
         let right = Value::integer(i32::from(i.c as i16));
+        // Past a comparison, the truth of a Number operator's result (`if (x & MASK)`).
         let Some(holds) = super::operations::number_relation(u32::from(i.a), r.get(i.b), right)
+            .or_else(|| lane_relation_other::<H>(u32::from(i.a), r.get(i.b), right))
         else {
             return exit(ip);
         };
