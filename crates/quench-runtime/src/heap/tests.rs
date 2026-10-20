@@ -540,6 +540,21 @@ fn finalization_registry_clears_dead_tokens_before_slot_reuse() {
 }
 
 #[test]
+fn far_sparse_writes_over_a_holey_dense_prefix_stay_sparse() {
+    let mut heap = Heap::new();
+    let mut prefix = vec![Value::DELETED; MAX_DENSE_ARRAY_HOLE_LENGTH];
+    prefix[0] = Value::number(1.0);
+    let array = heap.alloc(Cell::Array {
+        object: ArrayObject::new(plain_object(), Rc::new(prefix)),
+    });
+    let index = 2 * MAX_DENSE_ARRAY_HOLE_LENGTH;
+    heap.sparse_set(array, index, Value::number(2.0));
+    assert_eq!(heap.sparse_length(array), Some(index + 1));
+    assert_eq!(heap.array_elements(array).map(|dense| dense.len()), Some(MAX_DENSE_ARRAY_HOLE_LENGTH));
+    assert_eq!(heap.sparse_get(array, index), Some(Value::number(2.0)));
+}
+
+#[test]
 fn sparse_array_metadata_is_removed_before_a_slot_is_reused() {
     let mut heap = Heap::new();
     let array = heap.alloc(Cell::Array {
