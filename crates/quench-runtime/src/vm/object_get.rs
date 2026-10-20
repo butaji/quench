@@ -429,7 +429,7 @@ impl<H: Host> Vm<H> {
     /// leaves accessors (lazy properties among them), exotic and namespace objects, Proxies
     /// and private, index, `length` or legacy function keys to the general path.
     #[inline]
-    fn plain_named_get(&self, object: Value, atom: Atom) -> Option<Value> {
+    pub(super) fn plain_named_get(&self, object: Value, atom: Atom) -> Option<Value> {
         if !self.plain_named_key(atom) {
             return None;
         }
