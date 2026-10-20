@@ -912,7 +912,44 @@ impl Native {
                     | Self::String
                     | Self::Number
                     | Self::Boolean
+                    | Self::MapGet
+                    | Self::MapSet
+                    | Self::MapHas
+                    | Self::MapDelete
+                    | Self::SetAdd
+                    | Self::SetHas
+                    | Self::SetDelete
             )
+            || self.is_data_view_element_method()
+    }
+
+    /// `DataView.prototype`'s element reads and writes (`getUint8` through `setBigUint64`).
+    pub(crate) fn is_data_view_element_method(self) -> bool {
+        matches!(
+            self,
+            Self::DataViewGetUint8
+                | Self::DataViewSetUint8
+                | Self::DataViewGetInt8
+                | Self::DataViewSetInt8
+                | Self::DataViewGetUint16
+                | Self::DataViewSetUint16
+                | Self::DataViewGetInt16
+                | Self::DataViewSetInt16
+                | Self::DataViewGetUint32
+                | Self::DataViewSetUint32
+                | Self::DataViewGetInt32
+                | Self::DataViewSetInt32
+                | Self::DataViewGetFloat32
+                | Self::DataViewSetFloat32
+                | Self::DataViewGetFloat64
+                | Self::DataViewSetFloat64
+                | Self::DataViewGetFloat16
+                | Self::DataViewSetFloat16
+                | Self::DataViewGetBigInt64
+                | Self::DataViewSetBigInt64
+                | Self::DataViewGetBigUint64
+                | Self::DataViewSetBigUint64
+        )
     }
 
     pub(crate) fn is_host_control_native(self) -> bool {
