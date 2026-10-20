@@ -1293,6 +1293,13 @@ pub(crate) struct CallPlan {
     /// reflection, if any, reads its parameter registers or the forwarded values. A lane
     /// may run such a body without a frame.
     pub(crate) registers_only: bool,
+    /// The activation's state is its registers, its frame locals and the environment its
+    /// closures capture, which it may make on entry: an ordinary body but for the closures
+    /// it makes, with no `arguments`, self binding, handler, binding site, environment clone,
+    /// dynamic scope access or superinstruction, whose every local access is a plain or
+    /// environment load, store or dead-zone opening of a selectively captured layout. A lane
+    /// may run such a body without a frame (`CallEntry::Environment`).
+    pub(crate) environment_activation: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1837,7 +1844,40 @@ impl Function {
                         .addressed_local_slots()
                         .all(|slot| Some(slot) == self.arguments_slot)
                 });
+            let environment_activation = in_loop
+                && self.parent.is_some()
+                && !self.is_arrow
+                && !self.is_class_constructor
+                && !self.rest
+                && self.simple_parameters
+                && self.self_binding_slot.is_none()
+                && !self.inherited_with_scope
+                && self.local_registers.is_empty()
+                && self.arguments_slot.is_none()
+                && self.handlers.is_empty()
+                && self.binding_sites.is_empty()
+                && self.selective_capture_slots.is_some()
+                && self.initial_register == InitialRegister::Undefined
+                && !self.has_dynamic_scope_access()
+                && !self.activation_binding_reads(atoms)
+                && self.instructions().all(|instruction| {
+                    let op = instruction.op();
+                    op.immediate_role() != ImmediateRole::SuperinstructionIndex
+                        && op != Op::CloneEnv
+                        && (instruction.addressed_local_slots().next().is_none()
+                            || matches!(
+                                op,
+                                Op::LoadLocal
+                                    | Op::LoadLocalPlain
+                                    | Op::LoadEnvLocal
+                                    | Op::StoreLocal
+                                    | Op::StoreLocalPlain
+                                    | Op::StoreEnvLocal
+                                    | Op::InitializeTdz
+                            ))
+                });
             CallPlan {
+                environment_activation,
                 plain: ordinary && self.arguments_slot.is_none(),
                 in_loop,
                 legacy_reflection,
