@@ -88,7 +88,7 @@ pub(super) fn compile(program: &ResidualProgram, function_id: u32) -> Option<JsJ
     if string_hash_loop_candidate(program, function) {
         return compile_string_hash_loop(program, function_id, function);
     }
-    if let Some(field) = number_field_argument_candidate(program, function)
+    if let Some(field) = cached_field_argument_candidate(function)
         && let Some(artifact) = compile_field_reject(program, function_id, function, field)
     {
         return Some(artifact);
@@ -248,12 +248,8 @@ pub(super) fn candidate_rejection_reason(
     if usize::from(function.params) > MAX_PARAMETERS {
         return "parameter-limit";
     }
-    let field_reject = number_field_argument_candidate(program, function)
-        .is_some_and(|field| {
-            field_reject_shape(function)
-                && field.entry_pc == 0
-                && field_name(program, function, 0) == Some("kind")
-        });
+    let field_reject = cached_field_argument_candidate(function)
+        .is_some_and(|field| field_reject_layout(function).is_some() && field.entry_pc == 0);
     if !eligible(function, &program.atoms) && !field_reject {
         return "unsupported-activation-or-function-kind";
     }
@@ -270,10 +266,7 @@ pub(super) fn has_string_hash_loop_candidate(
     string_hash_loop_candidate(program, function)
 }
 
-pub(super) fn number_field_argument_candidate(
-    program: &ResidualProgram,
-    function: &Function,
-) -> Option<JsJitFieldArgument> {
+pub(super) fn cached_field_argument_candidate(function: &Function) -> Option<JsJitFieldArgument> {
     if function.params != 1 {
         return None;
     }
@@ -290,19 +283,17 @@ pub(super) fn number_field_argument_candidate(
         _ => return None,
     };
     let FieldLookup::Atom {
-        atom,
         base: FieldBase(0),
         cache_site,
+        ..
     } = instruction.field_lookup()?
     else {
         return None;
     };
-    ((atom as usize) < program.atoms.len() && &program.atoms[atom as usize] == "kind").then_some(
-        JsJitFieldArgument {
-            cache_site,
-            entry_pc,
-        },
-    )
+    Some(JsJitFieldArgument {
+        cache_site,
+        entry_pc,
+    })
 }
 
 pub(super) fn string_transform_candidate(
@@ -900,7 +891,7 @@ fn compile_number_domain_boolean_tree(
     {
         *value = BranchValue::Number;
     }
-    let field_argument = number_field_argument_candidate(program, function);
+    let field_argument = cached_field_argument_candidate(function);
     let entry_pc = field_argument.map_or(0, |field| field.entry_pc);
     if field_argument.is_some() {
         entry.registers[0] = BranchValue::Unknown;
@@ -3071,13 +3062,21 @@ pub(super) fn function_candidate(function: &Function, atoms: &crate::bytecode::A
         && function.code.len() <= MAX_INSTRUCTIONS
         && (function.wide.is_empty()
             || wide_boolean_tree_candidate(function)
-            || field_reject_shape(function))
+            || field_reject_layout(function).is_some())
         && usize::from(function.registers) <= MAX_REGISTERS
         && usize::from(function.params) <= MAX_PARAMETERS
-        && (eligible(function, atoms) || field_reject_shape(function))
+        && (eligible(function, atoms) || field_reject_layout(function).is_some())
 }
 
-fn field_reject_shape(function: &Function) -> bool {
+#[derive(Clone, Copy)]
+struct FieldRejectLayout {
+    branch_pc: usize,
+    constant_pc: usize,
+    continuation_pc: usize,
+    resume_register: usize,
+}
+
+fn field_reject_layout(function: &Function) -> Option<FieldRejectLayout> {
     if function.params != 1
         || function.code.len() < 4
         || function.parent.is_none()
@@ -3089,50 +3088,106 @@ fn field_reject_shape(function: &Function) -> bool {
         || !function.simple_parameters
         || function.rest
     {
-        return false;
+        return None;
     }
     let Some(field) = function_instruction(function, 0) else {
-        return false;
+        return None;
     };
-    let Some(branch) = function_instruction(function, 1) else {
-        return false;
-    };
-    let Some(constant) = function_instruction(function, 2) else {
-        return false;
-    };
-    let Some(continuation) = function_instruction(function, 3) else {
-        return false;
-    };
-    let constant_is_returned = continuation.op() == Op::Return
-        && continuation.register_a() == constant.result_register();
-    let constant_is_unary_returned = continuation.op() == Op::Unary
+    if field.op() != Op::GetField
+        || field.returns_from_frame()
+        || !matches!(
+            field.field_lookup(),
+            Some(FieldLookup::Atom {
+                base: FieldBase(0),
+                ..
+            })
+        )
+    {
+        return None;
+    }
+
+    // Follow the field value through register copies to a strict-inequality
+    // branch. Recognition is based on data flow rather than a property name
+    // or fixed branch PC, while the fast region stays effect-free.
+    let mut field_values = [false; MAX_REGISTERS];
+    *field_values.get_mut(usize::from(field.result_register()))? = true;
+    let mut branch_pc = None;
+    for pc in 1..function.code.len() {
+        let instruction = function_instruction(function, pc)?;
+        match instruction.op() {
+            Op::Move => {
+                if instruction.returns_from_frame() {
+                    return None;
+                }
+                let source = usize::from(instruction.register_b());
+                let destination = usize::from(instruction.register_a());
+                if !field_values.get(source).copied().unwrap_or(false) {
+                    return None;
+                }
+                let destination = field_values.get_mut(destination)?;
+                *destination = true;
+            }
+            Op::JumpBinaryFalse => {
+                branch_pc = Some(pc);
+                break;
+            }
+            _ => return None,
+        }
+    }
+    let branch_pc = branch_pc?;
+    let branch = function_instruction(function, branch_pc)?;
+    let operands = [branch.operand_b(), branch.operand_c()];
+    let field_is_compared = operands.iter().any(|operand| {
+        operand.kind() == Some(OperandKind::Register)
+            && field_values
+                .get(usize::from(operand.payload()))
+                .copied()
+                .unwrap_or(false)
+    });
+    let has_constant = operands
+        .iter()
+        .any(|operand| operand.kind() == Some(OperandKind::Constant));
+    let constant_pc = branch_pc.checked_add(1)?;
+    let continuation_pc = constant_pc.checked_add(1)?;
+    let constant = function_instruction(function, constant_pc)?;
+    let continuation = function_instruction(function, continuation_pc)?;
+    let resume_register = if continuation.op() == Op::Return
+        && continuation.register_a() == constant.result_register()
+    {
+        constant.result_register()
+    } else if continuation.op() == Op::Unary
         && continuation.unary_operator() == oxc_ast::ast::UnaryOperator::LogicalNot as u32
         && continuation.returns_from_frame()
-        && constant.result_register() == continuation.register_b();
-    field.op() == Op::GetField
-        && matches!(field.field_lookup(), Some(FieldLookup::Atom { base: FieldBase(0), .. }))
-        && branch.op() == Op::JumpBinaryFalse
-        && branch.binary_operator_field() == BinaryOperator::StrictInequality as u32
-        && usize::try_from(branch.jump_target()).is_ok_and(|target| target > 3)
-        && (branch.operand_b().kind() == Some(OperandKind::Register)
-            && branch.operand_b().payload() == field.result_register()
-            || branch.operand_c().kind() == Some(OperandKind::Register)
-                && branch.operand_c().payload() == field.result_register())
-        && constant.op() == Op::LoadConst
-        && (constant_is_returned || constant_is_unary_returned)
-        && usize::try_from(branch.jump_target()).is_ok_and(|target| target < function.code.len())
+        && constant.result_register() == continuation.register_b()
+    {
+        continuation.register_b()
+    } else {
+        return None;
+    };
+    let target = usize::try_from(branch.jump_target()).ok()?;
+    if branch.binary_operator_field() != BinaryOperator::StrictInequality as u32
+        || !field_is_compared
+        || !has_constant
+        || constant.op() != Op::LoadConst
+        || constant.returns_from_frame()
+        || target <= continuation_pc
+        || target >= function.code.len()
+    {
+        return None;
+    }
+    Some(FieldRejectLayout {
+        branch_pc,
+        constant_pc,
+        continuation_pc,
+        resume_register: usize::from(resume_register),
+    })
 }
 
-pub(super) fn is_field_reject_candidate(
-    program: &ResidualProgram,
-    function: &Function,
-) -> bool {
-    let Some(field_argument) = number_field_argument_candidate(program, function) else {
+pub(super) fn is_field_reject_candidate(function: &Function) -> bool {
+    let Some(field_argument) = cached_field_argument_candidate(function) else {
         return false;
     };
-    field_argument.entry_pc == 0
-        && field_reject_shape(function)
-        && field_name(program, function, 0) == Some("kind")
+    field_argument.entry_pc == 0 && field_reject_layout(function).is_some()
 }
 
 fn compile_field_reject(
@@ -3141,29 +3196,15 @@ fn compile_field_reject(
     function: &Function,
     field_argument: JsJitFieldArgument,
 ) -> Option<JsJitArtifact> {
-    if !field_reject_shape(function)
-        || field_argument.entry_pc != 0
-        || field_name(program, function, 0) != Some("kind")
-    {
+    let layout = field_reject_layout(function)?;
+    if field_argument.entry_pc != 0 {
         return None;
     }
-    let field = function_instruction(function, 0)?;
-    let branch = function_instruction(function, 1)?;
-    let constant = function_instruction(function, 2)?;
-    let comparison_constant = if branch.operand_b().kind()
-        == Some(OperandKind::Constant)
-        && branch.operand_c().kind() == Some(OperandKind::Register)
-        && branch.operand_c().payload() == field.result_register()
-    {
-        branch.operand_b()
-    } else if branch.operand_c().kind() == Some(OperandKind::Constant)
-        && branch.operand_b().kind() == Some(OperandKind::Register)
-        && branch.operand_b().payload() == field.result_register()
-    {
-        branch.operand_c()
-    } else {
-        return None;
-    };
+    let branch = function_instruction(function, layout.branch_pc)?;
+    let constant = function_instruction(function, layout.constant_pc)?;
+    let comparison_constant = [branch.operand_b(), branch.operand_c()]
+        .into_iter()
+        .find(|operand| operand.kind() == Some(OperandKind::Constant))?;
     let Some(Constant::Number(comparison_value)) = program
         .constants
         .get(usize::from(comparison_constant.payload()))
@@ -3175,14 +3216,8 @@ fn compile_field_reject(
         Constant::Boolean(value) => JsJitResumeValue::Boolean(*value),
         _ => return None,
     };
-    let continuation = function_instruction(function, 3)?;
-    let resume_register = if continuation.op() == Op::Return {
-        constant.result_register()
-    } else {
-        continuation.register_b()
-    };
-    let resume_pc = u32::try_from(3).ok()?;
-    let resume_register = u16::try_from(resume_register).ok()?;
+    let resume_pc = u32::try_from(layout.continuation_pc).ok()?;
+    let resume_register = u16::try_from(layout.resume_register).ok()?;
     let isa = super::jit_backend::target_isa("speed", true)?;
     let mut signature = ir::Signature::new(isa.default_call_conv());
     signature.params.push(AbiParam::new(isa.pointer_type()));

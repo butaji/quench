@@ -6264,11 +6264,11 @@ impl<H: Host> Vm<H> {
         let first_argument = registers.first().copied();
         let field_argument = match compiled_tier {
             Some(compiled) => compiled.field_argument(),
-            None => super::js_compiled::number_field_argument_candidate(program, function),
+            None => super::js_compiled::cached_field_argument_candidate(function),
         };
         let field_reject_candidate = match compiled_tier {
             Some(compiled) => compiled.is_field_reject(),
-            None => super::js_compiled::is_field_reject_candidate(program, function),
+            None => super::js_compiled::is_field_reject_candidate(function),
         };
         let mut arguments: smallvec::SmallVec<[f64; 8]> = smallvec::SmallVec::new();
         let mut numeric = true;
