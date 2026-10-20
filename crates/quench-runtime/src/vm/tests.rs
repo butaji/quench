@@ -10552,12 +10552,15 @@ fn js_jit_compiles_guarded_int32_identity_arm_and_falls_back_for_other_types() {
               default: return 'other';
             }
           }
-          for (let index = 0; index < 40; index++) {
-            if (hashKey(index) !== index) throw Error('integer fast arm');
+          function exercise() {
+            for (let index = 0; index < 40; index++) {
+              if (hashKey(index) !== index) throw Error('integer fast arm');
+            }
+            if (hashKey(2.5) !== 'fraction') throw Error('fraction fallback');
+            if (hashKey('2') !== 'other') throw Error('type fallback');
+            if (hashKey({ hashCode() { return 7; } }) !== 7) throw Error('object path');
           }
-          if (hashKey(2.5) !== 'fraction') throw Error('fraction fallback');
-          if (hashKey('2') !== 'other') throw Error('type fallback');
-          if (hashKey({ hashCode() { return 7; } }) !== 7) throw Error('object path');
+          exercise();
         "#,
         "js-jit-int32-identity.js",
     ))
@@ -10589,6 +10592,13 @@ fn js_jit_compiles_guarded_int32_identity_arm_and_falls_back_for_other_types() {
             .js_tier(super::program_store::ProgramId::MAIN, function_id),
         Some(super::program_store::JsTierState::Compiled(_))
     ));
+    let Some(super::program_store::JsTierState::Compiled(compiled)) = vm
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, function_id)
+    else {
+        unreachable!("the guarded identity function was compiled above")
+    };
+    assert!(compiled.native_entries() >= 9);
 }
 
 #[test]
