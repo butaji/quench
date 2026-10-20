@@ -771,3 +771,31 @@ Quench 4.35. This is not a score win; the remaining gap is concentrated in
 the linked-entry lookup loop and its heap and call work. The raw reports and
 limitations are documented in
 `evidence/jit-jetstream3-2026-10-20/int32-identity-arm/README.md`.
+
+## Direct Int32 identity calls
+
+The compiled same-program call path now accepts an already-promoted Int32
+identity artifact. It checks the single numeric argument against the artifact's
+existing Int32 domain guard; a miss goes through the ordinary activation path.
+This removes the callee frame only for the effect-free identity arm.
+
+On the cloud Linux x86_64 host, separate single-round `hash-map` screens
+validated at 1.94 Score / 75.3 MiB for the changed binary and 0.91 / 75.2 MiB
+for its parent binary. Quench wall time was 277.44 s and 432.29 s respectively.
+The Bun and Node screens varied substantially between rounds, and the samples
+were not paired, so this is directional evidence only. Quench still loses the
+fixture's Score bar by over two orders of magnitude. The focused runtime test
+type-checks but its test executable build was stopped after 29 minutes without
+finishing. Full details are in
+`evidence/jit-jetstream3-2026-10-20/int32-direct-call/README.md`.
+
+## Web-SSR native coverage gap
+
+The one-round Web-SSR screen on the same host scored 6.06 in JIT mode and 5.77
+in interpreter mode, with peak RSS of 135.5 MiB and 133.1 MiB. Node scored
+92.42 / 203.6 MiB and Bun 81.45 / 227.8 MiB. The diagnostic run compiled only
+the benchmark driver's `quickHash`; the hot generated React functions `Ru` and
+`Eu` stayed interpreted. `Ru` has 831 bytecodes, beyond the current 256-bytecode
+candidate limit, while `Eu` uses captures and calls the current JS tier does not
+lower. These screens have one round each and do not qualify a win. See
+`evidence/jit-jetstream3-2026-10-20/web-ssr-baseline/README.md`.
