@@ -10800,8 +10800,9 @@ fn js_jit_field_reject_resumes_interpreter_on_match_and_accessor() {
         .iter()
         .position(|function| {
             function
+                .header()
                 .name
-                .or(function.inferred_name)
+                .or(function.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == "isBlockStatement")
         })
         .unwrap() as u32;
