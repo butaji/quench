@@ -726,6 +726,39 @@ impl<H: Host> Vm<H> {
         Ok(arguments)
     }
 
+    /// `ArgumentsLength` (no `key`) or `ArgumentGet` of `key` on `binding`, the value of
+    /// frame `f`'s `arguments` binding. An unmaterialized binding answers its length and the
+    /// indices it holds from the values the frame kept, as the object made on entry would;
+    /// any other key materializes it (`materialize_activation_arguments`). Any other value is
+    /// read as `GetField` of `length` and `GetIndex` read it.
+    pub(super) fn read_arguments_binding(
+        &mut self,
+        p: &ResidualProgram,
+        f: usize,
+        mut binding: Value,
+        key: Option<Value>,
+    ) -> Result<Value, JsError> {
+        if binding == Value::UNMATERIALIZED_ARGUMENTS {
+            let kept = &self.frames[f].original_arguments;
+            match key {
+                None => return Ok(Value::number(kept.len() as f64)),
+                Some(key) => {
+                    if let Some(value) = self
+                        .array_index_key(key)
+                        .and_then(|index| kept.get(index as usize))
+                    {
+                        return Ok(*value);
+                    }
+                }
+            }
+            binding = self.materialize_activation_arguments(p, f)?;
+        }
+        match key {
+            None => self.get_property(p, binding, self.length_atom),
+            Some(key) => self.get_index(p, binding, key),
+        }
+    }
+
     /// Copies a program root activation's module import bindings into its locals or, for a
     /// module environment, its environment slots.
     #[inline(never)]

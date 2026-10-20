@@ -226,7 +226,7 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let (shape, slot) = self.instanceof_constructor_layout?;
-        if shape != object.shape() || object.proto() != self.instanceof_has_instance_holder {
+        if shape != object.shape() || object.proto_link() != self.instanceof_has_instance_link {
             return None;
         }
         // SAFETY: the memo names the slot of `prototype` in the shape it holds, which is
@@ -390,9 +390,14 @@ impl<H: Host> Vm<H> {
                 )
             });
         if native && !attributes.writable && !attributes.configurable {
-            self.instanceof_has_instance_holder = holder;
+            self.set_instanceof_has_instance_holder(holder);
         }
         native
+    }
+
+    pub(super) fn set_instanceof_has_instance_holder(&mut self, holder: Value) {
+        self.instanceof_has_instance_holder = holder;
+        self.instanceof_has_instance_link = ProtoLink::of(holder);
     }
 
     pub(super) fn ordinary_has_instance(

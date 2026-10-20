@@ -20,6 +20,8 @@
 //! safepoint jump leaves the lane.
 
 use super::dispatch_frame::PendingGeneralCall;
+use crate::heap::InlineObjectHeader;
+use crate::value_vec::INLINE_PROPERTY_COUNT;
 use super::*;
 use crate::bytecode::{
     FieldLayout, Function, ImmediateLayout, ImmediateRole, InstructionField, WideInstruction,
@@ -632,6 +634,9 @@ struct ConstructPlan {
     callee_layout: (u32, usize),
     prototype: Value,
     shape: u32,
+    /// The receiver's header (`InlineObjectHeader::of` of `prototype` and `shape`), which
+    /// `ConstructPlan::finish` derives; the receiver stores its fields inline when they fit.
+    header: InlineObjectHeader,
     fields: u8,
     parameters: [u16; CONSTRUCT_PLAN_FIELDS],
     /// For a forwarding constructor's plan of no fields, where its body's reads resolved
@@ -655,6 +660,8 @@ struct ForwardedResolution {
 
 /// Fields a `ConstructPlan` names; an initializer storing more keeps running its adds.
 const CONSTRUCT_PLAN_FIELDS: usize = 4;
+// A plan's values fill a receiver's inline slots (`ConstructPlan::allocate`).
+const _: () = assert!(INLINE_PROPERTY_COUNT <= CONSTRUCT_PLAN_FIELDS);
 
 /// Entries of the construct plan cache, indexed by the callee's heap index.
 const CONSTRUCT_PLANS: usize = 64;
@@ -663,12 +670,38 @@ const _: () = assert!(CONSTRUCT_PLANS.is_power_of_two());
 /// A `ConstructPlan::epoch` no epoch reaches: the entry plans nothing.
 const NO_CONSTRUCT_PLAN_EPOCH: u64 = u64::MAX;
 
+impl ConstructPlan {
+    /// This plan, holding from the current prototype layout epoch, with its receiver
+    /// header derived from its prototype and shape.
+    fn finish(self) -> Self {
+        Self {
+            epoch: crate::heap::prototype_layout_epoch(),
+            header: InlineObjectHeader::of(self.prototype, self.shape),
+            ..self
+        }
+    }
+
+    /// The receiver this plan allocates for `values`, its fields in order and `undefined`
+    /// past them, which is how unused inline slots start.
+    #[inline(always)]
+    fn allocate(&self, heap: &mut crate::heap::Heap, values: [Value; CONSTRUCT_PLAN_FIELDS]) -> Value {
+        let fields = usize::from(self.fields);
+        if fields <= INLINE_PROPERTY_COUNT {
+            debug_assert!(values[fields..].iter().all(|value| *value == Value::UNDEFINED));
+            let inline = std::array::from_fn(|slot| values[slot]);
+            return heap.alloc_object_from_header(self.header, self.prototype, inline);
+        }
+        heap.alloc_object_with_properties(self.prototype, self.shape, &values[..fields])
+    }
+}
+
 const EMPTY_CONSTRUCT_PLAN: ConstructPlan = ConstructPlan {
     callee: Value::UNDEFINED,
     epoch: NO_CONSTRUCT_PLAN_EPOCH,
     callee_layout: (0, 0),
     prototype: Value::UNDEFINED,
     shape: 0,
+    header: InlineObjectHeader::EMPTY,
     fields: 0,
     parameters: [0; CONSTRUCT_PLAN_FIELDS],
     forwarded: None,
@@ -5796,6 +5829,61 @@ lane_handler! {
     }
 }
 
+/// The values the running function kept for its unmaterialized `arguments` binding, in the
+/// local slot `slot` (`lane_kept_arguments`): `None` where a frame's binding was
+/// materialized, which the general path then reads.
+///
+/// # Safety
+/// `cx` is the running lane's context, and `slot` its function's validated local slot.
+#[inline(always)]
+unsafe fn lane_unmaterialized_arguments<H: Host>(
+    cx: *mut LaneContext<H>,
+    slot: usize,
+) -> Option<(*const Value, usize)> {
+    if unsafe { (*cx).env }.is_deleted()
+        && unsafe { vm(cx).read_validated_local((*cx).frame, slot) }
+            != Value::UNMATERIALIZED_ARGUMENTS
+    {
+        return None;
+    }
+    match unsafe { lane_kept_arguments(cx) }? {
+        ActivationArguments::Kept(values, count) => Some((values, count)),
+        ActivationArguments::Window(_) => None,
+    }
+}
+
+lane_handler! {
+    /// `ArgumentsLength` of a binding only kept values answer (`Function::forwards_arguments_only`):
+    /// their count, as the object made on entry holds it.
+    fn lane_arguments_length<>(cx, r, ip, i, view) {
+        let Some((_, count)) = (unsafe { lane_unmaterialized_arguments(cx, i.imm() as usize) })
+        else {
+            return exit(ip);
+        };
+        r.set(i.a, Value::number(count as f64));
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    /// `ArgumentGet` of such a binding at an integer index it holds: the kept value, as the
+    /// object made on entry holds it. Any other key takes the general path, which
+    /// materializes the object (`Vm::read_arguments_binding`).
+    fn lane_argument_get<>(cx, r, ip, i, view) {
+        let Some((values, count)) = (unsafe { lane_unmaterialized_arguments(cx, i.imm() as usize) })
+        else {
+            return exit(ip);
+        };
+        let Some(index) = r.get(i.b).as_int().and_then(|index| usize::try_from(index).ok()).filter(|index| *index < count)
+        else {
+            return exit(ip);
+        };
+        // SAFETY: `values` holds `count` kept values, and the index is below it.
+        r.set(i.a, unsafe { *values.add(index) });
+        next!(cx, r, following(ip), view)
+    }
+}
+
 /// The frameless target of a lane call to `callee`, resolved on first use.
 /// Whether `callee` is the target of a `new` whose `new.target` the general path still
 /// holds (`Vm::construct_target`): a lane activation would not bind it.
@@ -5935,9 +6023,7 @@ fn lane_initialize_fields<H: Host>(
         callee_layout: (0, 0),
         prototype,
         shape: source_shape,
-        fields: 0,
-        parameters: [0; CONSTRUCT_PLAN_FIELDS],
-        forwarded: None,
+        ..EMPTY_CONSTRUCT_PLAN
     };
     let mut plannable = true;
     for store in code.function(function as usize).this_field_stores() {
@@ -5962,8 +6048,7 @@ fn lane_initialize_fields<H: Host>(
     {
         plan.callee_layout = layout;
         plan.shape = vm.object_data(this).map_or(source_shape, |object| object.shape());
-        plan.epoch = crate::heap::prototype_layout_epoch();
-        vm.lane_stack.construct_plans[index] = plan;
+        vm.lane_stack.construct_plans[index] = plan.finish();
     }
     Some((this, true))
 }
@@ -5988,7 +6073,7 @@ fn lane_planned_construction<H: Host>(
             *value = r.get(i.c + parameter);
         }
     }
-    Some(vm.heap.alloc_object_with_properties(plan.prototype, plan.shape, &values[..usize::from(plan.fields)]))
+    Some(plan.allocate(&mut vm.heap, values))
 }
 
 /// The construct plan cache entry `callee` owns, when it names a heap cell.
@@ -6019,7 +6104,7 @@ fn lane_planned_receiver<H: Host>(
     plan: Option<&ConstructPlan>,
 ) -> Option<Value> {
     if let Some(plan) = plan.filter(|plan| plan.fields == 0) {
-        return Some(vm.heap.alloc_object_with_properties(plan.prototype, plan.shape, &[]));
+        return Some(plan.allocate(&mut vm.heap, [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS]));
     }
     let template = vm.inline_construct_template(callee)?;
     let (prototype, shape) = (template.proto(), template.shape());
@@ -6029,12 +6114,12 @@ fn lane_planned_receiver<H: Host>(
     {
         vm.lane_stack.construct_plans[index] = ConstructPlan {
             callee,
-            epoch: crate::heap::prototype_layout_epoch(),
             callee_layout,
             prototype,
             shape,
             ..EMPTY_CONSTRUCT_PLAN
-        };
+        }
+        .finish();
     }
     Some(this)
 }
@@ -7399,12 +7484,16 @@ fn derive_lane_view<H: Host>(
                             [usize::from(arith)][usize::from(acc)],
                     )
                 })
-            } else if matches!(op, Op::LoadLocal | Op::LoadLocalPlain)
+            } else if matches!(op, Op::LoadLocal | Op::LoadLocalPlain | Op::ArgumentsLength | Op::ArgumentGet)
                 && function.arguments_slot == u16::try_from(instruction.local_slot()).ok()
                 && *forwards_arguments.get_or_init(|| function.forwards_arguments_only())
             {
                 Some(LaneHandler {
-                    handler: lane_load_forwarded_arguments::<H> as Handler,
+                    handler: match op {
+                        Op::ArgumentsLength => lane_arguments_length::<H> as Handler,
+                        Op::ArgumentGet => lane_argument_get::<H> as Handler,
+                        _ => lane_load_forwarded_arguments::<H> as Handler,
+                    },
                     produces: false,
                 })
             } else if op == Op::StoreEnvLocal && resolves_names {
