@@ -132,6 +132,7 @@ mod number;
 mod object;
 mod shape_memo;
 mod symbol_write_proof;
+mod symbol_load_proof;
 mod name_atom_memo;
 mod object_assignment;
 mod object_array;
@@ -591,14 +592,18 @@ const BOUND_TARGET_KEY: &str = "\0quench:bound-target";
 const BOUND_THIS_KEY: &str = "\0quench:bound-this";
 const BOUND_ARGS_KEY: &str = "\0quench:bound-args";
 const NO_FIELD_HOLDER: u32 = u32::MAX;
-/// A field site's read of an accessor on the immediate prototype of a shaped receiver: it
-/// holds while receiver and prototype keep these shapes, whose `slot` attributes carry the
-/// getter.
+/// A field site's read of an accessor on a prototype of a shaped receiver: it holds while
+/// the receiver keeps its shape and prototype and the chain to `holder` keeps the layout it
+/// was proved under, `holder`'s `slot` attributes carrying the getter.
 #[derive(Clone, Copy)]
 struct AccessorFieldCache {
     receiver: u32,
-    holder: u32,
+    /// The receiver's prototype, where the chain to `holder` starts.
+    prototype: Value,
+    holder: Value,
     slot: u16,
+    /// The `prototype_layout_epoch` the chain was proved under.
+    epoch: u64,
 }
 /// Prototypes an inherited field load may traverse to its holder, or to the end of the chain
 /// for an absent name. Node's stream objects (an `IncomingMessage` above `Readable`, `Stream`,
@@ -1236,13 +1241,15 @@ pub(super) enum FrameOutcome {
     Await {
         value: Value,
         destination: Register,
-        frame: Option<Frame>,
+        /// Boxed so every `FrameOutcome` stays a few words: the common completions move it
+        /// through each call return.
+        frame: Option<Box<Frame>>,
     },
     Yield {
         value: Value,
         destination: Register,
         delegated_result: Option<Value>,
-        frame: Option<Frame>,
+        frame: Option<Box<Frame>>,
     },
 }
 #[cfg(feature = "profile-aggregate")]
@@ -1417,6 +1424,7 @@ pub(crate) struct Vm<H> {
     shape_slot_memo: shape_memo::ShapeSlotMemo,
     function_name_shapes: provenance::FunctionNameShapes,
     symbol_write_proofs: symbol_write_proof::SymbolWriteProofs,
+    symbol_load_proofs: symbol_load_proof::SymbolLoadProofs,
     shape_attribute_memo: shape_memo::ShapeAttributeMemo,
     name_atom_memo: name_atom_memo::NameAtomMemo,
     atom_text: AtomTable,
@@ -2221,6 +2229,7 @@ impl<H: Host> Vm<H> {
         self.shape_slot_memo.clear();
         self.function_name_shapes.clear();
         self.symbol_write_proofs.clear();
+        self.symbol_load_proofs.clear();
         self.shape_attribute_memo.clear();
         self.atom_strings.clear();
         // The sealed holders and their shapes belong to the discarded heap.

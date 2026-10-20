@@ -772,6 +772,13 @@ impl<H: Host> Vm<H> {
                 self.profile.index_dispatch(false, false);
                 let base = self.resolve_operand(p, f, i.operand_b())?;
                 let key = self.resolve_operand(p, f, i.operand_c())?;
+                if allow_inline_calls
+                    && let Some(getter) = self.proved_symbol_getter(base, key)
+                    && let Some(result) =
+                        self.try_inline_getter(p, f, *pc, getter, base, i.result_register())
+                {
+                    return result;
+                }
                 let v = self.get_index(p, base, key)?;
                 self.write(f, i.result_register(), v);
             }
