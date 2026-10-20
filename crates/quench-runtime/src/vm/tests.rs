@@ -10396,8 +10396,9 @@ fn js_jit_compiles_number_capture_returns_and_observes_mutation() {
         .iter()
         .position(|function| {
             function
+                .header()
                 .name
-                .or(function.inferred_name)
+                .or(function.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == "read")
         })
         .unwrap() as u32;
@@ -10443,8 +10444,9 @@ fn js_jit_compiles_int32_bitwise_helpers_and_guards_the_domain() {
         .iter()
         .position(|function| {
             function
+                .header()
                 .name
-                .or(function.inferred_name)
+                .or(function.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == "mask")
         })
         .unwrap() as u32;
@@ -10565,11 +10567,15 @@ fn js_jit_compiles_guarded_string_hash_loop_and_falls_back_after_intrinsic_chang
     let mut vm = Vm::new(SilentHost);
     vm.set_execution_mode(crate::ExecutionMode::Compiled);
     vm.execute(&program).unwrap();
-    assert!(matches!(
-        vm.programs
-            .js_tier(super::program_store::ProgramId::MAIN, 1),
-        Some(super::program_store::JsTierState::Compiled(_))
-    ));
+    assert!(
+        matches!(
+            vm.programs
+                .js_tier(super::program_store::ProgramId::MAIN, 1),
+            Some(super::program_store::JsTierState::Compiled(_))
+        ),
+        "string hash loop should compile\n{}",
+        program.disassemble()
+    );
 }
 
 #[test]
@@ -10615,11 +10621,15 @@ fn js_jit_compiles_leading_underscore_string_helpers_and_guards_intrinsic_change
             .js_tier(super::program_store::ProgramId::MAIN, 1),
         Some(super::program_store::JsTierState::Compiled(_))
     ));
-    assert!(matches!(
-        vm.programs
-            .js_tier(super::program_store::ProgramId::MAIN, 2),
-        Some(super::program_store::JsTierState::Compiled(_))
-    ));
+    assert!(
+        matches!(
+            vm.programs
+                .js_tier(super::program_store::ProgramId::MAIN, 2),
+            Some(super::program_store::JsTierState::Compiled(_))
+        ),
+        "unescape helper should compile\n{}",
+        program.disassemble()
+    );
 }
 
 #[test]
