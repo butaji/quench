@@ -350,3 +350,29 @@ impl<H: Host> Vm<H> {
         }
     }
 }
+
+impl StartupIntrinsics {
+    /// The sealed holders for a snapshot (`crate::snapshot`); a snapshot is taken outside every
+    /// `enter_startup_intrinsics`, so nothing is swapped.
+    pub(super) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) -> crate::snapshot::SnapshotResult<()> {
+        let Self { holders, sealed_roots, depth, swapped, regexp } = self;
+        if *depth != 0 || !swapped.is_empty() || regexp.is_some() {
+            return Err(crate::snapshot::SnapshotError::unsupported("a startup intrinsics scope"));
+        }
+        writer.len(holders.len());
+        for SealedHolder { holder, shape, values } in holders {
+            writer.value(*holder);
+            writer.u32(*shape);
+            writer.values(values);
+        }
+        writer.values(sealed_roots);
+        Ok(())
+    }
+
+    pub(super) fn read_snapshot(reader: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::SnapshotResult<Self> {
+        let holders = crate::snapshot::read_list(reader, |reader| {
+            Ok(SealedHolder { holder: reader.value()?, shape: reader.u32()?, values: reader.values()?.into() })
+        })?;
+        Ok(Self { holders, sealed_roots: reader.values()?.into(), depth: 0, swapped: Vec::new(), regexp: None })
+    }
+}

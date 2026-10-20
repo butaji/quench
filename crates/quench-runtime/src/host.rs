@@ -144,6 +144,16 @@ pub trait Host {
         Ok(())
     }
 
+    /// Continue installation in a VM restored from a startup snapshot this host's state was
+    /// written into (`Runtime::write_snapshot`): what `initialize` does after the point the
+    /// snapshot was taken at.
+    fn resume(_context: &mut crate::NativeContext<'_, Self>) -> Result<(), crate::RootedError>
+    where
+        Self: Sized,
+    {
+        Ok(())
+    }
+
     /// Initialize host policy in a fresh ShadowRealm before guest execution.
     /// An optional callback owns this realm's Error formatting as
     /// (global, error, callSites). The VM traces it with the realm intrinsics;
