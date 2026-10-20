@@ -1061,6 +1061,17 @@ lane_handler! {
 }
 
 lane_handler! {
+    /// `DefineArrayElement` at the literal's length (`Vm::append_literal_element`); any other
+    /// definition takes the general path.
+    fn lane_define_array_element<>(cx, r, ip, i, view) {
+        if !(unsafe { vm(cx) }).append_literal_element(r.get(i.b), i.imm() as usize, r.get(i.a)) {
+            return exit(ip);
+        }
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
     fn lane_store_local_plain<>(cx, r, ip, i, view) {
         let value = r.get(i.a);
         // SAFETY: validated bytecode bounds the slot by Function.locals.
@@ -6540,6 +6551,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
     match op {
         Op::StoreLocalPlain => Some(lane_store_local_plain::<H>),
         Op::IteratorCleanupPush => Some(lane_iterator_cleanup_push::<H>),
+        Op::DefineArrayElement => Some(lane_define_array_element::<H>),
         Op::IteratorCleanupPop => Some(lane_iterator_cleanup_pop::<H>),
         Op::StoreLocal | Op::StoreEnvLocal => Some(lane_store_local::<H>),
         Op::LoadThis => Some(lane_load_this::<H>),
