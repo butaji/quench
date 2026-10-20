@@ -1750,9 +1750,9 @@ unsafe fn lane_binary_value<H: Host>(
         Some(value) => Some(value),
         None if operator == super::operations::ADDITION => lane_concatenation(cx, left, right)
             .or_else(|| lane_bigint_value(cx, operator, left, right)),
-        // A comparison decides from the operands; any other operator past Numbers may be a
-        // BigInt's.
-        None if operator <= super::operations::LAST_COMPARISON_OPERATOR => {
+        // A comparison, or `instanceof` (`lane_relation_other`), decides from the operands;
+        // any other operator past Numbers may be a BigInt's.
+        None if operator <= super::operations::LAST_COMPARISON_OPERATOR || operator == INSTANCEOF_OPERATOR => {
             lane_relation::<H>(operator, left, right)
                 .map(|holds| if holds { Value::TRUE } else { Value::FALSE })
         }
