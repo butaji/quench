@@ -148,61 +148,12 @@ pub(super) fn int32_identity_return_candidate(
     {
         return None;
     }
+    // The integer arm: `(param | 0) == param` returning the parameter, found anywhere and
+    // proven to be what a Number argument reaches (`number_type_dispatch_reaches`), however
+    // the `typeof` dispatch before it was compiled.
     let code = &function.code;
-    let first = code.first()?.as_wide();
-    if first.op() != Op::Unary
-        || first.unary_operator() != oxc_ast::ast::UnaryOperator::Typeof as u32
-        || first.register_b() != 0
-    {
-        return None;
-    }
-    let type_local_store = code.get(1)?.as_wide();
-    if !matches!(type_local_store.op(), Op::StoreLocal | Op::StoreLocalPlain)
-        || type_local_store.register_a() != first.result_register()
-    {
-        return None;
-    }
-    let type_local = type_local_store.local_slot();
-    let mut number_target = None;
-    for pc in 0..code.len().saturating_sub(1) {
-        let compare = code[pc].as_wide();
-        let branch = code[pc + 1].as_wide();
-        if compare.op() != Op::Binary
-            || !matches!(compare.binary_operator(), x if x == BinaryOperator::Equality as u32 || x == BinaryOperator::StrictEquality as u32)
-            || branch.op() != Op::JumpTrue
-            || branch.register_a() != compare.result_register()
-        {
-            continue;
-        }
-        let Some(type_load) = pc
-            .checked_sub(1)
-            .and_then(|index| code.get(index))
-            .map(|p| p.as_wide())
-        else {
-            continue;
-        };
-        if !matches!(type_load.op(), Op::LoadLocal | Op::LoadLocalPlain)
-            || type_load.local_slot() != type_local
-        {
-            continue;
-        }
-        let type_register = type_load.result_register();
-        let string_operand = if compare.operand_b().kind() == Some(OperandKind::Register)
-            && compare.operand_b().register_index() == Some(type_register)
-        {
-            compare.operand_c()
-        } else if compare.operand_c().kind() == Some(OperandKind::Register)
-            && compare.operand_c().register_index() == Some(type_register)
-        {
-            compare.operand_b()
-        } else {
-            continue;
-        };
-        if !string_operand_is_number_type(program, function, pc, string_operand) {
-            continue;
-        }
-        let target = usize::try_from(branch.jump_target()).ok()?;
-        let fast = code.get(target)?.as_wide();
+    for target in 0..code.len() {
+        let fast = code[target].as_wide();
         if fast.op() != Op::Binary
             || fast.binary_operator() != BinaryOperator::BitwiseOR as u32
             || !operand_is_parameter(fast.operand_b(), 0)
@@ -210,28 +161,24 @@ pub(super) fn int32_identity_return_candidate(
         {
             continue;
         }
-        let check = code.get(target + 1)?.as_wide();
-        let ret = code.get(target + 2)?.as_wide();
+        let (Some(check), Some(ret)) = (code.get(target + 1), code.get(target + 2)) else {
+            continue;
+        };
+        let (check, ret) = (check.as_wide(), ret.as_wide());
         if check.op() != Op::JumpBinaryFalse
             || check.binary_operator_field() != BinaryOperator::Equality as u32
-            || !operands_are(
-                check.operand_b(),
-                check.operand_c(),
-                fast.result_register(),
-                0,
-            )
+            || !operands_are(check.operand_b(), check.operand_c(), fast.result_register(), 0)
             || ret.op() != Op::Return
             || ret.register_a() != 0
-            || usize::try_from(check.jump_target()).ok()? != target + 3
+            || usize::try_from(check.jump_target()).ok() != Some(target + 3)
         {
             continue;
         }
         if number_type_dispatch_reaches(program, function, target) == Some(true) {
-            number_target = Some(u32::try_from(target + 2).ok()?);
-            break;
+            return u32::try_from(target + 2).ok();
         }
     }
-    number_target
+    None
 }
 
 #[derive(Clone)]
@@ -240,6 +187,19 @@ enum NumberDispatchValue {
     String(String),
     Boolean(bool),
     Other,
+}
+
+/// Whether two values of the Number arm's abstract interpretation are equal, as `==` and
+/// `===` agree on them; `None` where the interpretation does not know.
+fn number_dispatch_equal(left: NumberDispatchValue, right: NumberDispatchValue) -> Option<bool> {
+    Some(match (left, right) {
+        (NumberDispatchValue::TypeNumber, NumberDispatchValue::String(value))
+        | (NumberDispatchValue::String(value), NumberDispatchValue::TypeNumber) => value == "number",
+        (NumberDispatchValue::String(left), NumberDispatchValue::String(right)) => left == right,
+        (NumberDispatchValue::Boolean(left), NumberDispatchValue::Boolean(right)) => left == right,
+        (NumberDispatchValue::Other, NumberDispatchValue::Other) => return None,
+        _ => false,
+    })
 }
 
 /// Interpret only the pure prefix executed when `typeof arg` is `"number"`.
@@ -322,20 +282,7 @@ fn number_type_dispatch_reaches(
             {
                 let left = read(instruction.operand_b(), &registers)?;
                 let right = read(instruction.operand_c(), &registers)?;
-                let equal = match (left, right) {
-                    (NumberDispatchValue::TypeNumber, NumberDispatchValue::String(value))
-                    | (NumberDispatchValue::String(value), NumberDispatchValue::TypeNumber) => {
-                        value == "number"
-                    }
-                    (NumberDispatchValue::String(left), NumberDispatchValue::String(right)) => {
-                        left == right
-                    }
-                    (NumberDispatchValue::Boolean(left), NumberDispatchValue::Boolean(right)) => {
-                        left == right
-                    }
-                    (NumberDispatchValue::Other, NumberDispatchValue::Other) => return None,
-                    _ => false,
-                };
+                let equal = number_dispatch_equal(left, right)?;
                 let value = match instruction.binary_operator() {
                     x if x == BinaryOperator::Inequality as u32
                         || x == BinaryOperator::StrictInequality as u32 =>
@@ -346,6 +293,32 @@ fn number_type_dispatch_reaches(
                 };
                 *registers.get_mut(usize::from(instruction.result_register()))? =
                     Some(NumberDispatchValue::Boolean(value));
+            }
+            Op::JumpBinaryFalse
+                if [
+                    BinaryOperator::Equality,
+                    BinaryOperator::StrictEquality,
+                    BinaryOperator::Inequality,
+                    BinaryOperator::StrictInequality,
+                ]
+                .iter()
+                .any(|operator| instruction.binary_operator_field() == *operator as u32) =>
+            {
+                let left = read(instruction.operand_b(), &registers)?;
+                let right = read(instruction.operand_c(), &registers)?;
+                let Some(equal) = number_dispatch_equal(left, right) else {
+                    return None;
+                };
+                let operator = instruction.binary_operator_field();
+                let holds = if operator == BinaryOperator::Inequality as u32
+                    || operator == BinaryOperator::StrictInequality as u32
+                {
+                    !equal
+                } else {
+                    equal
+                };
+                pc = if holds { next } else { usize::try_from(instruction.jump_target()).ok()? };
+                continue;
             }
             Op::JumpTrue | Op::JumpFalse => {
                 let condition = match registers
@@ -380,37 +353,6 @@ fn number_type_dispatch_reaches(
 
 fn operand_is_parameter(operand: Operand, register: u16) -> bool {
     operand.kind() == Some(OperandKind::Register) && operand.register_index() == Some(register)
-}
-
-fn string_operand_is_number_type(
-    program: &ResidualProgram,
-    function: &Function,
-    before_pc: usize,
-    operand: Operand,
-) -> bool {
-    let constant = match operand.kind() {
-        Some(OperandKind::Constant) => Some(usize::from(operand.payload())),
-        Some(OperandKind::Register) => {
-            let Some(register) = operand.register_index() else {
-                return false;
-            };
-            function.code[..before_pc]
-                .iter()
-                .rev()
-                .map(|packed| packed.as_wide())
-                .find(|instruction| {
-                    instruction.op().has_result_register()
-                        && instruction.result_register() == register
-                })
-                .filter(|instruction| instruction.op() == Op::LoadConst)
-                .map(|instruction| instruction.constant_index())
-        }
-        _ => None,
-    };
-    let Some(constant) = constant else {
-        return false;
-    };
-    matches!(program.constants.get(constant), Some(Constant::String(value)) if value == "number")
 }
 
 fn operands_are(left: Operand, right: Operand, one: u16, two: u16) -> bool {
