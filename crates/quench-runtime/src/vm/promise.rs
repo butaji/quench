@@ -1106,6 +1106,11 @@ impl PromiseRuntime {
     }
 }
 
+
+/// Names a static module's parse goal in its compile-cache key, apart from an application
+/// entry's (`Runtime::compile_entry`), whose cached form differs.
+const STATIC_MODULE_GOAL: &str = "static-module";
+
 impl<H: Host> Vm<H> {
     pub(super) fn abstract_module_source_to_string_tag(&mut self, receiver: Value) -> Value {
         if !self.is_object_like(receiver)
@@ -1118,7 +1123,7 @@ impl<H: Host> Vm<H> {
         {
             return Value::UNDEFINED;
         }
-        self.heap.alloc(Cell::String("ModuleSource".into()))
+        self.heap.alloc_string("ModuleSource".into())
     }
 
     pub(super) fn call_native_guarded(
@@ -1131,11 +1136,11 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         // A realm's own natives run in that realm; a native shared by every realm runs in
         // its caller's, which is the realm whose objects it builds.
-        let realm = match self.heap.get(callee) {
-            Some(Cell::Function { object, .. })
-                if object.realm == self.realm.globals || !self.shared_natives.contains(&callee) =>
+        let realm = match self.heap.function(callee) {
+            Some(FunctionRecord { realm, .. })
+                if *realm == self.realm.globals || !self.shared_natives.contains(&callee) =>
             {
-                object.realm
+                *realm
             }
             _ => self.realm.globals,
         };
@@ -1171,11 +1176,9 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn native_with_realm(&mut self, kind: Native, env: Value, realm: Value) -> Value {
-        let function = self.heap.alloc(Cell::Function {
-            object: Box::new(crate::heap::FunctionObject {
-                object: Self::empty_object(self.realm_function_prototype(realm)),
-                realm: realm,
-            }),
+        let function = self.heap.alloc_function(FunctionRecord {
+            object: Self::empty_object(self.realm_function_prototype(realm)),
+            realm,
             kind: FunctionKind::Native(kind),
             env,
         });
@@ -1208,7 +1211,7 @@ impl<H: Host> Vm<H> {
         }
         if promise_resolver || anonymous_capability_executor || anonymous_proxy_revoke {
             let atom = self.intern_atom("name");
-            let empty_name = self.heap.alloc(Cell::String("".into()));
+            let empty_name = self.heap.alloc_string("".into());
             let _ = self.set_property_with_attributes(
                 function,
                 atom,
@@ -1329,7 +1332,7 @@ impl<H: Host> Vm<H> {
         } else {
             None
         };
-        let promise = self.heap.alloc(Cell::Promise(Box::new(crate::heap::PromiseCell {
+        let promise = self.heap.alloc_promise(crate::heap::PromiseCell {
             object: Self::empty_object(prototype),
             record: PromiseRecord {
                 state: PromiseState::Pending,
@@ -1339,7 +1342,7 @@ impl<H: Host> Vm<H> {
                 rejection_id: None,
                 host_context,
             },
-        })));
+        });
         if let Some(identity) = host_context {
             let mut context = crate::NativeContext::new(self);
             let resource = context.scoped_value(promise);
@@ -1948,11 +1951,10 @@ impl<H: Host> Vm<H> {
         locals
             .into_iter()
             .map(|(local, exported)| {
-                let local_atom = residual.atoms.iter().position(|name| name == local)?;
-                let slot = root
-                    .local_atoms
-                    .iter()
-                    .position(|atom| *atom as usize == local_atom)?;
+                // A stored module shares the VM's atom ids, so the VM finds its local's atom
+                // without scanning the program's (and so the VM's) whole table.
+                let local_atom = self.lookup_atom(&local)?;
+                let slot = root.local_atoms.iter().position(|atom| *atom == local_atom)?;
                 Some((
                     exported,
                     StaticModuleValue::Binding {
@@ -2123,11 +2125,11 @@ impl<H: Host> Vm<H> {
                 self.module_namespace_default(value)
             }
             "text" => {
-                let source = self.heap.alloc(Cell::String(module.source.clone().into()));
+                let source = self.heap.alloc_string(module.source.clone().into());
                 self.module_namespace_default(source)
             }
             "json" => {
-                let source = self.heap.alloc(Cell::String(module.source.clone().into()));
+                let source = self.heap.alloc_string(module.source.clone().into());
                 let value = self.json_parse(p, &[source])?;
                 self.module_namespace_default(value)
             }
@@ -2755,8 +2757,9 @@ impl<H: Host> Vm<H> {
                     .enumerate()
                     .skip(1)
                     .find(|(_, function)| {
-                        function.parent == Some(super::ROOT_FUNCTION_ID)
-                            && function
+                        let header = function.header();
+                        header.parent == Some(super::ROOT_FUNCTION_ID)
+                            && header
                                 .name
                                 .is_some_and(|atom| self.atom_name(atom) == function_name)
                     })
@@ -2800,12 +2803,20 @@ impl<H: Host> Vm<H> {
             return Ok(Vec::new());
         };
         let mut values = Vec::with_capacity(imports.len());
+        // One import statement's bindings come together and name one module: it is resolved
+        // (and its source read) once for them, and only the latest is kept, so the sources of
+        // a long import list are never all held at once.
+        let mut resolved: Option<(&str, crate::ModuleSource)> = None;
         for import in imports {
-            let module = self
-                .host
-                .resolve_dynamic_import(referrer, &import.source)
-                .map_err(|error| self.module_load_error(p, error))?
-                .ok_or_else(|| self.type_error(p, "module import was not resolved".into()))?;
+            let module = match resolved.take() {
+                Some((source, module)) if source == import.source => module,
+                _ => self
+                    .host
+                    .resolve_dynamic_import(referrer, &import.source)
+                    .map_err(|error| self.module_load_error(p, error))?
+                    .ok_or_else(|| self.type_error(p, "module import was not resolved".into()))?,
+            };
+            let module = &resolved.insert((&import.source, module)).1;
             let local = self
                 .lookup_atom(&import.local)
                 .and_then(|atom| {
@@ -3406,6 +3417,27 @@ impl<H: Host> Vm<H> {
         Ok(graph)
     }
 
+    /// A static module's program kept by the host's compile cache
+    /// (`Host::kept_compiled_program`) for its exact text: compiled unspecialized, after its
+    /// early errors were ruled out, so neither repeats.
+    fn kept_static_module_program(&mut self, module: &ModuleSource) -> Option<ResidualProgram> {
+        let bytes = self
+            .host
+            .kept_compiled_program(&module.name, &[STATIC_MODULE_GOAL, &module.source])?;
+        let text = crate::bytecode::SourceText::Shared(std::sync::Arc::from(module.source.as_str()));
+        self.decode_cached_program(bytes, text, 0, &module.name, false).ok()
+    }
+
+    /// Offers the host the compiled program of a static module (`kept_static_module_program`).
+    fn keep_static_module_program(&mut self, module: &ModuleSource, program: ProgramId) {
+        if let Some(residual) = self.programs.get(program)
+            && let Some(bytes) = self.encode_cached_program(&residual)
+        {
+            self.host
+                .keep_compiled_program(&module.name, &[STATIC_MODULE_GOAL, &module.source], &bytes);
+        }
+    }
+
     fn collect_static_module_programs(
         &mut self,
         p: &ResidualProgram,
@@ -3433,6 +3465,9 @@ impl<H: Host> Vm<H> {
             quench_stack::StackGuard::enter().map_err(|()| self.stack_exhaustion_error())?;
         let program = match precompiled {
             Some(program) => program,
+            None if let Some(program) = self.kept_static_module_program(module) => self
+                .store_module_program(program)
+                .ok_or_else(|| self.type_error(p, "module program store is full".into()))?,
             None => {
                 if let Some(message) = crate::Engine::static_module_early_error(&module.source) {
                     return self
@@ -3457,8 +3492,11 @@ impl<H: Host> Vm<H> {
                         )
                     }
                 })?;
-                self.store_module_program(residual)
-                    .ok_or_else(|| self.type_error(p, "module program store is full".into()))?
+                let program = self
+                    .store_module_program(residual)
+                    .ok_or_else(|| self.type_error(p, "module program store is full".into()))?;
+                self.keep_static_module_program(module, program);
+                program
             }
         };
         let residual = self
@@ -4014,7 +4052,7 @@ impl<H: Host> Vm<H> {
                 .position(|name| name == &import.local)
                 .ok_or_else(|| self.type_error(p, "source import binding is unavailable".into()))?
                 as u32;
-            let slot = residual.functions[0]
+            let slot = residual.function(0)
                 .local_atoms
                 .iter()
                 .position(|candidate| *candidate == atom)
@@ -4096,13 +4134,14 @@ impl<H: Host> Vm<H> {
                     .iter()
                     .enumerate()
                     .find(|(_, function)| {
-                        function.parent == Some(0)
-                            && function
+                        let header = function.header();
+                        header.parent == Some(0)
+                            && header
                                 .name
                                 .is_some_and(|name| residual.atoms[name as usize] == local)
                     })
                     .and_then(|(id, _)| self.cached_functions(program_id, id as u32).next_back());
-                let slot = residual.functions[0]
+                let slot = residual.function(0)
                     .local_atoms
                     .iter()
                     .position(|candidate| *candidate == atom)
@@ -4877,7 +4916,7 @@ impl<H: Host> Vm<H> {
         let mut module_type = None;
         for key in keys {
             let key_name = match self.heap.get(key) {
-                Some(Cell::String(value)) => Some(value.host_string().to_owned()),
+                _ if let Some(value) = self.heap.string(key)  => Some(value.host_string().to_owned()),
                 Some(Cell::Symbol(_)) => continue,
                 _ => return Err(JsError("invalid import attribute key".into())),
             };
@@ -4889,12 +4928,12 @@ impl<H: Host> Vm<H> {
             let enumerable = self.get_property(p, descriptor, enumerable_atom)?;
             if self.truthy(enumerable) {
                 let value = self.get_index(p, attributes, key)?;
-                if !matches!(self.heap.get(value), Some(Cell::String(_))) {
+                if !self.heap.is_string(value) {
                     return Err(self
                         .type_error(p, "dynamic import attribute values must be strings".into()));
                 }
                 if key_name.as_deref() == Some("type")
-                    && let Some(Cell::String(value)) = self.heap.get(value)
+                    && let Some(value) = self.heap.string(value)
                 {
                     module_type = Some(value.host_string().to_owned());
                 }
@@ -4944,7 +4983,7 @@ impl<H: Host> Vm<H> {
         if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::ToStringTag) {
             let module = self
                 .heap
-                .alloc(Cell::String(namespace_tag.to_string().into()));
+                .alloc_string(namespace_tag.to_string().into());
             self.set_symbol_property(namespace, symbol, module)?;
             self.set_property_attributes(
                 namespace,
@@ -4970,9 +5009,9 @@ impl<H: Host> Vm<H> {
             Constant::Number(value) => Value::number(value),
             Constant::WasmBits64(bits) => self.encode_bits64(bits),
             Constant::WasmV128(bits) => self.heap.alloc(Cell::WasmV128(bits)),
-            Constant::String(value) => self.heap.alloc(Cell::String(value.into())),
+            Constant::String(value) => self.heap.alloc_string(value.into()),
             Constant::StringUnits(value) => {
-                self.heap.alloc(Cell::String(JsString::from_units(&value)))
+                self.heap.alloc_string(JsString::from_units(&value))
             }
             Constant::BigInt(value) => self.heap.alloc(Cell::bigint(value)),
             Constant::Boolean(true) => Value::TRUE,
@@ -4992,8 +5031,8 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn active_native_env(&self) -> Option<Value> {
         let callee = self.active_native_callable()?;
-        match self.heap.get(callee) {
-            Some(Cell::Function { env, .. }) if !env.is_null() => Some(*env),
+        match self.heap.function(callee) {
+            Some(FunctionRecord { env, .. }) if !env.is_null() => Some(*env),
             _ => None,
         }
     }

@@ -443,6 +443,8 @@ pub(crate) fn clear_context(
     shared_state: &Rc<RefCell<crate::host::SharedNodeState>>,
     async_id: u64,
 ) {
+    // A finished context is never entered again, so its trigger goes with its stores.
+    shared_state.borrow_mut().async_hooks.context_triggers.remove(&async_id);
     for root in take_context_stores(shared_state, async_id) {
         runtime.release_root(root);
     }

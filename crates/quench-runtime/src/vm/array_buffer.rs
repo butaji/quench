@@ -264,7 +264,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         let function = self.native_value(native);
         let name_atom = self.intern_atom("name");
-        let name_value = self.heap.alloc(Cell::String(name.into()));
+        let name_value = self.heap.alloc_string(name.into());
         self.set_named(program, function, "name", name_value)?;
         self.set_property_attributes(
             function,

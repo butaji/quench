@@ -266,10 +266,10 @@ impl<H: Host> Vm<H> {
         let prototype = if self.object_data(candidate).is_some() {
             candidate
         } else {
-            let realm = match self.heap.get(new_target) {
-                Some(Cell::Function { object, .. }) => object.realm,
-                _ => self.realm.globals,
-            };
+            let realm = self
+                .heap
+                .function(new_target)
+                .map_or(self.realm.globals, |function| function.realm);
             let constructor_atom = self.intern_atom(if async_stack {
                 "AsyncDisposableStack"
             } else {

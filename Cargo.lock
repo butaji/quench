@@ -1583,6 +1583,7 @@ dependencies = [
  "chrono",
  "crc32fast",
  "encoding_rs",
+ "foldhash",
  "foreign-types",
  "hex",
  "idna",
@@ -1629,6 +1630,7 @@ dependencies = [
  "tempfile",
  "url",
  "wait-timeout",
+ "wast",
 ]
 
 [[package]]

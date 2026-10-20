@@ -134,7 +134,7 @@ impl<H: Host> Vm<H> {
             .well_known_symbols
             .get(WellKnownSymbol::ToStringTag)
             .ok_or_else(|| JsError("Symbol.toStringTag is not initialized".into()))?;
-        let value = self.heap.alloc(Cell::String(tag.into()));
+        let value = self.heap.alloc_string(tag.into());
         self.set_symbol_property(object, symbol, value)?;
         self.set_property_attributes(
             object,
@@ -185,7 +185,7 @@ impl<H: Host> Vm<H> {
             self.set_builtin_named(p, now, name, native)?;
         }
         if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::ToStringTag) {
-            let tag = self.heap.alloc(Cell::String("Temporal.Now".into()));
+            let tag = self.heap.alloc_string("Temporal.Now".into());
             self.set_symbol_property(now, symbol, tag)?;
             self.set_property_attributes(
                 now,
@@ -210,7 +210,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         if native == Native::TemporalNowTimeZoneId {
-            return Ok(self.heap.alloc(Cell::String("UTC".into())));
+            return Ok(self.heap.alloc_string("UTC".into()));
         }
         let milliseconds = HostContext::new(&mut self.host).invoke(CapabilityId::ClockMillis, None);
         if !milliseconds.is_finite() {
@@ -269,7 +269,7 @@ impl<H: Host> Vm<H> {
                 let args = [
                     self.heap
                         .alloc(Cell::bigint(epoch_nanoseconds.into())),
-                    self.heap.alloc(Cell::String(timezone.into())),
+                    self.heap.alloc_string(timezone.into()),
                 ];
                 self.temporal_zoned_date_time_construct(p, &args, constructor)
             }
@@ -486,7 +486,7 @@ impl<H: Host> Vm<H> {
                 } else {
                     format_duration(&fields)
                 };
-                Ok(self.heap.alloc(Cell::String(JsString::from_str(&text))))
+                Ok(self.heap.alloc_string(JsString::from_str(&text)))
             }
             Native::TemporalDurationValueOf => Err(self.type_error(
                 p,
@@ -546,7 +546,7 @@ impl<H: Host> Vm<H> {
         if let Some(Cell::TemporalDuration { fields, .. }) = self.heap.get(value) {
             return Ok(**fields);
         }
-        if let Some(Cell::String(text)) = self.heap.get(value) {
+        if let Some(text) = self.heap.string(value) {
             return quench_temporal::parse_duration(text.host_string())
                 .ok_or_else(|| self.range_error(p, "Invalid duration string".into()));
         }
@@ -845,7 +845,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         value: Value,
     ) -> Result<TemporalRelativeDate, JsError> {
-        if let Some(Cell::String(text)) = self.heap.get(value) {
+        if let Some(text) = self.heap.string(value) {
             let text = text.host_string().to_owned();
             let (date, zoned) = if text.contains(['T', 't']) {
                 super::temporal_zoned_date_time::parse_relative_date_details(&text)
@@ -916,7 +916,7 @@ impl<H: Host> Vm<H> {
             == super::temporal_plain_date_time_conversion::MIN_PLAIN_DATE_TIME_DATE;
         let timezone = timezone
             .map(|timezone| {
-                let timezone = self.heap.alloc(Cell::String(timezone.into()));
+                let timezone = self.heap.alloc_string(timezone.into());
                 self.temporal_timezone_id(p, timezone)
             })
             .transpose()?;
@@ -965,7 +965,7 @@ impl<H: Host> Vm<H> {
         let fields = self.duration_fields(p, this)?;
         let options = args.first().copied().unwrap_or(Value::UNDEFINED);
         let (unit, relative_date) = match self.heap.get(options) {
-            Some(Cell::String(text)) => (text.to_string(), None),
+            _ if let Some(text) = self.heap.string(options)  => (text.to_string(), None),
             _ if self.is_object_like(options) => {
                 let relative_to_atom = self.intern_atom("relativeTo");
                 let relative_to = self.get_property(p, options, relative_to_atom)?;
@@ -1634,7 +1634,7 @@ impl<H: Host> Vm<H> {
             ("roundingMode", "trunc"),
         ] {
             let atom = self.intern_atom(name);
-            let value = self.heap.alloc(Cell::String(value.into()));
+            let value = self.heap.alloc_string(value.into());
             self.set_property(internal_options, atom, value)?;
         }
         let date_difference = self.temporal_plain_date_difference(
@@ -1732,7 +1732,7 @@ impl<H: Host> Vm<H> {
         ),
         JsError,
     > {
-        let is_string = matches!(self.heap.get(options), Some(Cell::String(_)));
+        let is_string = self.heap.is_string(options);
         if !is_string && !self.is_object_like(options) {
             return Err(self.type_error(p, "Options must be an object or string".into()));
         }

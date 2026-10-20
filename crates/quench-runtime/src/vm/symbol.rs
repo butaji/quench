@@ -52,7 +52,7 @@ impl<H: Host> Vm<H> {
         let description = self.native_with_realm(Native::SymbolDescriptionGetter, global, global);
         self.install_symbol_description(prototype, description)?;
         if let Some(to_string_tag) = self.well_known_symbols.get(WellKnownSymbol::ToStringTag) {
-            let tag = self.heap.alloc(Cell::String(JsString::from_str("Symbol")));
+            let tag = self.heap.alloc_string(JsString::from_str("Symbol"));
             self.set_symbol_property(prototype, to_string_tag, tag)?;
             self.set_property_attributes(
                 prototype,
@@ -127,7 +127,7 @@ impl<H: Host> Vm<H> {
                     unreachable!("symbol value was checked above")
                 };
                 let text = format!("Symbol({})", description.as_deref().unwrap_or(""));
-                Ok(self.heap.alloc(Cell::String(text.into())))
+                Ok(self.heap.alloc_string(text.into()))
             }
             Native::SymbolValueOf | Native::SymbolToPrimitive => {
                 if matches!(self.heap.get(this), Some(Cell::Symbol(_))) {
@@ -158,7 +158,7 @@ impl<H: Host> Vm<H> {
                 match self.heap.get(symbol) {
                     Some(Cell::Symbol(crate::heap::SymbolData { description: Some(description), .. })) => Ok(self
                         .heap
-                        .alloc(Cell::String(JsString::from_str(description)))),
+                        .alloc_string(JsString::from_str(description))),
                     Some(Cell::Symbol(crate::heap::SymbolData { description: None, .. })) => Ok(Value::UNDEFINED),
                     _ => unreachable!("symbol receiver was validated"),
                 }
@@ -193,7 +193,7 @@ impl<H: Host> Vm<H> {
                     .iter()
                     .find_map(|(key, candidate)| {
                         (*candidate == value)
-                            .then(|| self.heap.alloc(Cell::String(key.clone().into())))
+                            .then(|| self.heap.alloc_string(key.clone().into()))
                     })
                     .unwrap_or(Value::UNDEFINED))
             }

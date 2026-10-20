@@ -4,10 +4,13 @@ impl FunctionCompiler<'_, '_> {
     pub(crate) fn statements(&mut self, body: &[Statement<'_>]) {
         for statement in body {
             self.statement(statement);
-            self.release_temporaries();
         }
     }
 
+    /// Compiles `statement`, then frees its temporaries: nothing after a statement reads a
+    /// register it allocated, wherever it stands (a list, an `if` branch, a loop body), and a
+    /// construct reading registers across its body holds them (`with_registers_held`). So
+    /// the branches of an `if` chain share one run of registers.
     pub(super) fn statement(&mut self, statement: &Statement<'_>) {
         let position = self.owner.source_position(statement.span().start);
         let previous = self
@@ -15,6 +18,7 @@ impl FunctionCompiler<'_, '_> {
             .replace((position.line, position.column));
         self.statement_at_current_position(statement);
         self.current_source_position = previous;
+        self.release_temporaries();
     }
 
     fn statement_at_current_position(&mut self, statement: &Statement<'_>) {
@@ -103,6 +107,13 @@ impl FunctionCompiler<'_, '_> {
                 self.class_declaration(item);
             }
             Statement::ExpressionStatement(item) => {
+                // A host wrapper is a script of one function expression, which the host
+                // calls as soon as the script runs.
+                if self.function_id == crate::vm::ROOT_FUNCTION_ID
+                    && matches!(item.expression.without_parentheses(), Expression::FunctionExpression(_))
+                {
+                    self.owner.note_invoked_callee(&item.expression);
+                }
                 let value = if matches!(
                     self.statement_completion,
                     StatementCompletion::Ignored | StatementCompletion::Suppress(_)
@@ -349,6 +360,12 @@ impl FunctionCompiler<'_, '_> {
             return;
         }
         for item in &declaration.declarations {
+            // The alias's reads read `arguments` itself (`arguments_alias`).
+            if let BindingPattern::BindingIdentifier(name) = &item.id
+                && self.arguments_alias.as_deref() == Some(name.name.as_str())
+            {
+                continue;
+            }
             if let Some(init) = &item.init {
                 let reference = (declaration.kind == VariableDeclarationKind::Var
                     && self.with_depth != self.inherited_with_depth)

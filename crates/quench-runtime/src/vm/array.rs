@@ -443,9 +443,11 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let length = object.elements().len();
-        if self
-            .property_attributes(this, PropertyKey::string(self.length_atom))
-            .is_some_and(|attributes| !attributes.writable)
+        // An array's `length` keeps non-default attributes only as a recorded descriptor.
+        if object.has_length_descriptor()
+            && self
+                .property_attributes(this, PropertyKey::string(self.length_atom))
+                .is_some_and(|attributes| !attributes.writable)
         {
             return None;
         }
@@ -729,12 +731,12 @@ impl<H: Host> Vm<H> {
             Value::UNDEFINED
         };
         let constructor_is_foreign_intrinsic_array = matches!(
-            self.heap.get(constructor),
-            Some(Cell::Function {
+            self.heap.function(constructor),
+            Some(FunctionRecord {
                 kind: FunctionKind::Native(Native::Array),
-                object,
+                realm,
                 ..
-            }) if object.realm != self.realm.globals
+            }) if *realm != self.realm.globals
         );
         if constructor_is_foreign_intrinsic_array {
             constructor = Value::UNDEFINED;
@@ -747,12 +749,12 @@ impl<H: Host> Vm<H> {
         }
         // `new Array(length)` of this realm is ArrayCreate: Array.prototype is fixed.
         let constructor_is_intrinsic_array = matches!(
-            self.heap.get(constructor),
-            Some(Cell::Function {
+            self.heap.function(constructor),
+            Some(FunctionRecord {
                 kind: FunctionKind::Native(Native::Array),
-                object,
+                realm,
                 ..
-            }) if object.realm == self.realm.globals
+            }) if *realm == self.realm.globals
         );
         if constructor.is_undefined() || constructor_is_intrinsic_array {
             return self.array_create(p, length);
@@ -862,7 +864,7 @@ impl<H: Host> Vm<H> {
                     output.append(&vm.coerce_js_string(p, value)?);
                 }
                 let output = vm.string_build_result(p, output.finish())?;
-                Ok(vm.heap.alloc(Cell::String(output)))
+                Ok(vm.heap.alloc_string(output))
             })
         })
     }

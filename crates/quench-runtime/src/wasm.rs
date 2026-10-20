@@ -26,6 +26,8 @@ pub(crate) const INDEX_GROW_FAILURE: i64 = -1;
 pub use memory::{WasmData, WasmDataMode, WasmMemory};
 mod control;
 mod inline;
+#[cfg(test)]
+pub(crate) use inline::COMPILED_CALLS_KEPT_FOR_TEST;
 mod scalar;
 mod types;
 pub use types::WasmTypes;
@@ -800,7 +802,9 @@ impl Engine {
                 globals: globals.len(),
             },
             &signature_pool,
-            inline::leaf_budget(mode),
+            inline::leaf_budget(mode, || {
+                sources.iter().map(|source| source.operators.clone().into_iter().count()).sum()
+            }),
         )?;
         for position in 0..sources.len() {
             // The body is streamed, inlined, from its source.
@@ -907,7 +911,6 @@ impl Engine {
                 name: None,
                 inferred_name: None,
                 is_arrow: false,
-                reads_lexical_this: false,
                 self_binding_slot: None,
                 source_span: None,
                 params,
@@ -984,6 +987,8 @@ impl Engine {
             literal_templates: Vec::new(),
             superinstructions: vec![],
             replay: None,
+            encoded_records: None,
+            validated: Default::default(),
         };
         program
             .validate()

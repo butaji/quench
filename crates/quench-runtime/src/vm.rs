@@ -1,5 +1,6 @@
 mod compiled;
 mod js_compiled;
+mod jit_backend;
 mod shape_transitions;
 mod startup_intrinsics;
 mod wasm;
@@ -17,8 +18,8 @@ use crate::bytecode::{
 #[cfg(feature = "profile-memory")]
 use crate::heap::CellKind;
 use crate::heap::{
-    CallSiteLocation, CallSiteName, CallSiteRecord, Cell, FunctionKind, GcTraceKind, Heap, IteratorConsumer,
-    IteratorHelper, IteratorKind, Native, Object, ProxyKind, RootId, StackData, TypedArrayKind,
+    CallSiteLocation, CallSiteName, CallSiteRecord, Cell, FunctionKind, FunctionRecord, GcTraceKind, IteratorRecord, Heap, IteratorConsumer,
+    IteratorHelper, IteratorKind, Native, Object, ProtoLink, ProxyKind, RootId, StackData, TypedArrayKind,
     WeakHandle,
 };
 use crate::host::{CapabilityId, Host, HostContext};
@@ -49,15 +50,20 @@ struct RuntimeAtoms {
     /// Read by every promise resolution and species lookup.
     then: Atom,
     constructor: Atom,
-    /// The members of an iterator result (`Vm::iterator_result`).
-    value: Atom,
-    done: Atom,
     /// The iterator protocol's step method.
     next: Atom,
     /// Canonical key for named function-info lookup; paired with length_atom.
     name: Atom,
     /// The empty string, an anonymous function's initial name.
     empty: Atom,
+    /// An iterator result's keys, in its literal order.
+    value: Atom,
+    done: Atom,
+    /// The internal keys a bound function's environment holds its parts under
+    /// (`Vm::bound_function_parts`).
+    bound_target: Atom,
+    bound_this: Atom,
+    bound_args: Atom,
 }
 pub(crate) mod activation;
 mod agent;
@@ -130,6 +136,7 @@ mod number;
 mod object;
 mod shape_memo;
 mod symbol_write_proof;
+mod symbol_load_proof;
 mod name_atom_memo;
 mod object_assignment;
 mod object_array;
@@ -231,6 +238,9 @@ pub(super) struct Frame {
     // Empty while active; owns the transferred scope stack while detached.
     with_objects: Vec<Value>,
     with_base: usize,
+    /// Opt-in interpreter time for a synchronous JIT-diagnostic activation.
+    /// Excludes compile work, native execution, suspended and exceptional exits.
+    js_jit_interpreter_started: Option<std::time::Instant>,
     /// The frame pushed its own `this` binding with a live value. Only `super()` rebinds
     /// `this`, and only in derived constructors, whose binding starts deleted; so for these
     /// frames `this` is authoritative and the binding lookup can be skipped.
@@ -263,6 +273,21 @@ impl Default for CaptureCache {
     }
 }
 
+/// Capture walks `Vm::walked_capture_slots` remembers, by start environment and depth: enough
+/// for the closures of a few nested scopes reading their outer bindings in turn.
+const CAPTURE_WALKS: usize = 64;
+/// Named function shapes `Vm::append_function_name` remembers: the functions of a program
+/// region a closure-heavy loop creates.
+const _: () = assert!(CAPTURE_WALKS.is_power_of_two());
+
+/// A remembered capture walk: `depth` layers out from `cache.env`, as `CaptureCache` holds
+/// the innermost one.
+#[derive(Clone, Copy, Default)]
+pub(super) struct CaptureWalk {
+    depth: u16,
+    cache: CaptureCache,
+}
+
 impl Frame {
     fn source_instruction_pc(&self) -> usize {
         if self.pc_is_resume { self.pc.saturating_sub(1) } else { self.pc }
@@ -290,6 +315,7 @@ impl Frame {
             active_iterators: vec![],
             with_objects: Vec::new(),
             with_base,
+            js_jit_interpreter_started: None,
             fixed_this: false,
         }
     }
@@ -590,15 +616,23 @@ struct FieldCache {
     holder: u32,
     slot: u16,
 }
+/// The internal keys of a bound function's environment object.
+const BOUND_TARGET_KEY: &str = "\0quench:bound-target";
+const BOUND_THIS_KEY: &str = "\0quench:bound-this";
+const BOUND_ARGS_KEY: &str = "\0quench:bound-args";
 const NO_FIELD_HOLDER: u32 = u32::MAX;
-/// A field site's read of an accessor on the immediate prototype of a shaped receiver: it
-/// holds while receiver and prototype keep these shapes, whose `slot` attributes carry the
-/// getter.
+/// A field site's read of an accessor on a prototype of a shaped receiver: it holds while
+/// the receiver keeps its shape and prototype and the chain to `holder` keeps the layout it
+/// was proved under, `holder`'s `slot` attributes carrying the getter.
 #[derive(Clone, Copy)]
 struct AccessorFieldCache {
     receiver: u32,
-    holder: u32,
+    /// The receiver's prototype, where the chain to `holder` starts.
+    prototype: Value,
+    holder: Value,
     slot: u16,
+    /// The `prototype_layout_epoch` the chain was proved under.
+    epoch: u64,
 }
 /// Prototypes an inherited field load may traverse to its holder, or to the end of the chain
 /// for an absent name. Node's stream objects (an `IncomingMessage` above `Readable`, `Stream`,
@@ -618,9 +652,20 @@ struct InheritedFieldCache {
     /// `proved_prototype` up to `proved_holder`, its last recorded prototype, or
     /// `NO_PROVED_EPOCH`; while both hold the chain needs no walk.
     proved_epoch: u64,
-    proved_prototype: Value,
+    /// The receiver's prototype link the proof holds for, compared undecoded; a
+    /// collection advances the epoch, so it never outlives the record it names.
+    proved_prototype: ProtoLink,
     proved_holder: Value,
+    /// The site's next older entry, or `NO_INHERITED_FIELD`: a site keeps up to
+    /// `INHERITED_FIELD_CACHE_WAYS` receiver shapes, newest first.
+    next: u32,
 }
+/// Receiver shapes one site's inherited entries remember: a method inherited from beyond the
+/// immediate prototype read on instances of several subclasses (DeltaBlue's constraints)
+/// reaches one site with a shape per class. A further shape reuses the oldest entry.
+const INHERITED_FIELD_CACHE_WAYS: usize = 4;
+// Reusing the oldest entry unlinks it from an older-than-head predecessor.
+const _: () = assert!(INHERITED_FIELD_CACHE_WAYS > 1);
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum InheritedFieldAnswer {
     /// The last recorded prototype holds the data property at this slot.
@@ -724,6 +769,11 @@ impl FieldAddCacheSet {
 }
 const NO_FIELD_ADD_SET: u32 = u32::MAX;
 const NO_MEGAMORPHIC_FIELD: u32 = u32::MAX;
+/// The share of all cache sites, as a divisor, up to which an invalidation resets the
+/// written sites one by one: each costs four scattered stores against a sequential fill of
+/// every site's entries (Node's library wires prototypes hundreds of times at load, each an
+/// invalidation that had refilled every table).
+const FIELD_CACHE_SPARSE_RESET_SHARE: usize = 8;
 const FIELD_MEGAMORPHIC_INLINE: usize = 4;
 // Bound each site's overflow to 256 recorded shapes; unseen shapes keep the generic fallback.
 const FIELD_MEGAMORPHIC_LIMIT: usize = 256;
@@ -1175,6 +1225,48 @@ impl ShapeLookupIndex {
             attributes,
         }
     }
+    /// The index of a child shape, from its parent's index and the transition between
+    /// them, as `derive_shape_lookup_index` would build it. A deletion moves entries, so it
+    /// leaves the child to derive its own index.
+    fn extended_by(mut self: Box<Self>, transition: ShapeTransition) -> Option<Box<Self>> {
+        match transition {
+            ShapeTransition::Add {
+                key,
+                slot,
+                attributes,
+            } => {
+                debug_assert!(self.slot(key).is_none(), "a shape adds only absent keys");
+                let position = u32::try_from(self.entries.len()).expect("shape width fits u32");
+                self.entries.push((key, slot));
+                let entries = &self.entries;
+                self.positions
+                    .insert_unique(Self::key_hash(key), position, |&position| {
+                        Self::key_hash(entries[position as usize].0)
+                    });
+                self.record_attributes(slot, attributes.shape());
+            }
+            ShapeTransition::Descriptor { slot, attributes } => {
+                self.record_attributes(slot, attributes);
+            }
+            ShapeTransition::Delete { .. } => return None,
+            ShapeTransition::FunctionName { .. }
+            | ShapeTransition::FunctionNameReconfigured
+            | ShapeTransition::FunctionLengthReconfigured
+            | ShapeTransition::Constructed { .. }
+            | ShapeTransition::Root
+            | ShapeTransition::Vacant
+            | ShapeTransition::Dictionary { .. } => {}
+        }
+        Some(self)
+    }
+    /// The slot's newest attributes; default ones are not stored.
+    fn record_attributes(&mut self, slot: u32, attributes: ShapeAttributes) {
+        if attributes == DEFAULT_SHAPE_ATTRIBUTES {
+            self.attributes.remove(&slot);
+        } else {
+            self.attributes.insert(slot, attributes);
+        }
+    }
     fn slot(&self, key: property_key::PropertyKey) -> Option<u32> {
         self.positions
             .find(Self::key_hash(key), |&position| {
@@ -1199,17 +1291,26 @@ impl ShapeFacts {
     /// Some property of the chain was a `SLOT_GETTER` accessor, so a raw slot read must check
     /// whether the slot holds a getter rather than a value.
     const SLOT_GETTERS: u8 = 1 << 1;
+    /// Some property of the chain was made an accessor. Only a descriptor transition makes
+    /// one, as an add carries data attributes, so a chain without this fact holds data
+    /// properties alone and a read of any slot is its value.
+    const ACCESSORS: u8 = 1 << 2;
 
     fn extended_by(self, transition: ShapeTransition) -> Self {
         let introduced = |fact: bool, bit: u8| if fact { bit } else { 0 };
+        let descriptor = |test: fn(ShapeAttributes) -> bool| {
+            matches!(transition, ShapeTransition::Descriptor { attributes, .. } if test(attributes))
+        };
         Self(
             self.0
                 | introduced(transition.introduces_gc_roots(), Self::MAY_HAVE_GC_ROOTS)
-                | introduced(
-                    matches!(transition, ShapeTransition::Descriptor { attributes, .. } if attributes.slot_getter()),
-                    Self::SLOT_GETTERS,
-                ),
+                | introduced(descriptor(ShapeAttributes::slot_getter), Self::SLOT_GETTERS)
+                | introduced(descriptor(|attributes| attributes.accessor), Self::ACCESSORS),
         )
+    }
+
+    fn accessors(self) -> bool {
+        self.0 & Self::ACCESSORS != 0
     }
 
     fn may_have_gc_roots(self) -> bool {
@@ -1337,13 +1438,15 @@ pub(super) enum FrameOutcome {
     Await {
         value: Value,
         destination: Register,
-        frame: Option<Frame>,
+        /// Boxed so every `FrameOutcome` stays a few words: the common completions move it
+        /// through each call return.
+        frame: Option<Box<Frame>>,
     },
     Yield {
         value: Value,
         destination: Register,
         delegated_result: Option<Value>,
-        frame: Option<Frame>,
+        frame: Option<Box<Frame>>,
     },
 }
 #[cfg(feature = "profile-aggregate")]
@@ -1515,11 +1618,17 @@ pub(crate) struct Vm<H> {
     active_program: ProgramId,
     profile: Profile,
     shapes: Vec<Shape>,
+    /// Each shape's constructor (`ShapeTransition::Constructed` on its chain), derived for
+    /// the shapes created since the last collection: a shape's parent precedes it, so a
+    /// collection extends this instead of walking every shape. Reset with the shape table.
+    shape_constructors: Vec<Value>,
     /// The getters and setters of shapes' accessor descriptors (`ShapeAttributes`).
     shape_accessors: Vec<ShapeAccessors>,
     transitions: shape_transitions::ShapeTransitionIndex,
     shape_slot_memo: shape_memo::ShapeSlotMemo,
+    function_name_shapes: provenance::FunctionNameShapes,
     symbol_write_proofs: symbol_write_proof::SymbolWriteProofs,
+    symbol_load_proofs: symbol_load_proof::SymbolLoadProofs,
     shape_attribute_memo: shape_memo::ShapeAttributeMemo,
     name_atom_memo: name_atom_memo::NameAtomMemo,
     atom_text: AtomTable,
@@ -1562,6 +1671,11 @@ pub(crate) struct Vm<H> {
     field_add_indices: Vec<u32>,
     field_add_sets: Vec<FieldAddCacheSet>,
     megamorphic_field_indices: Vec<u32>,
+    /// The cache sites whose per-site entries (`field_caches`, `megamorphic_field_indices`,
+    /// `field_add_indices`, `inherited_field_indices`) were written since the last
+    /// `invalidate_field_caches`, which then resets only those; `None` once they outnumber
+    /// `FIELD_CACHE_SPARSE_RESET_SHARE` of the sites, and every site resets.
+    field_cache_writes: Option<Vec<u32>>,
     megamorphic_fields: Vec<FieldCacheSet>,
     length_atom: Atom,
     // Cached `prototype` atom; `NO_CACHED_ATOM` until first use after a program reset.
@@ -1574,13 +1688,13 @@ pub(crate) struct Vm<H> {
     /// `prototype` (`construction::ClosureShapes`); derived from shapes, so field-cache
     /// invalidation clears it.
     closure_shapes: [Option<construction::ClosureShapes>; 2],
+    /// The shape of an iterator result `{ value, done }` (`Vm::iterator_result`); derived
+    /// from shapes, so field-cache invalidation clears it.
+    iterator_result_shape: Option<u32>,
     /// The shape a new RegExp object starts in and the one its own `lastIndex` moves it to
     /// (`Vm::regexp_from_matcher`), as the first one recorded; derived from shapes, so
     /// field-cache invalidation clears it.
     regexp_object_shapes: Option<(u32, u32)>,
-    /// The shape of an iterator result `{ value, done }` (`Vm::iterator_result`); derived
-    /// from shapes, so field-cache invalidation clears it.
-    iterator_result_shape: Option<u32>,
     /// A RegExp receiver shape verified to hold an own writable data `lastIndex` at the paired
     /// slot; derived from shapes, so field-cache invalidation clears it.
     regexp_last_index_layout: Option<(u32, u32)>,
@@ -1592,6 +1706,12 @@ pub(crate) struct Vm<H> {
     /// non-writable, non-configurable data property, which it then holds for its lifetime;
     /// rooted so the identity stays meaningful. `Value::NULL` when none.
     instanceof_has_instance_holder: Value,
+    /// `instanceof_has_instance_holder` as a prototype link (`ProtoLink::of`), set with it,
+    /// so the steady `instanceof` compares a constructor's link undecoded.
+    instanceof_has_instance_link: ProtoLink,
+    /// Recent capture walks (`Vm::walked_capture_slots`), direct-mapped by start environment
+    /// and depth.
+    capture_walks: Box<[CaptureWalk; CAPTURE_WALKS]>,
     to_fixed_atom: Atom,
     to_precision_atom: Atom,
     runtime_atoms: RuntimeAtoms,
@@ -1912,14 +2032,14 @@ impl<H: Host> Vm<H> {
         if current.function != ROOT_FUNCTION_ID {
             return;
         }
-        let Some(atom) = program.functions[ROOT_FUNCTION_ID as usize]
+        let Some(atom) = program.function(ROOT_FUNCTION_ID as usize)
             .local_atoms
             .get(slot)
             .copied()
         else {
             return;
         };
-        if program.functions[ROOT_FUNCTION_ID as usize]
+        if program.function(ROOT_FUNCTION_ID as usize)
             .global_lexical_atoms()
             .contains(&atom)
         {
@@ -1941,7 +2061,7 @@ impl<H: Host> Vm<H> {
 
     #[inline(never)]
     fn persist_root_global_lexical_bindings(&mut self, program: &ResidualProgram, frame: &Frame) {
-        let metadata = &program.functions[ROOT_FUNCTION_ID as usize];
+        let metadata = &program.function(ROOT_FUNCTION_ID as usize);
         let bindings = metadata
             .global_lexical_atoms()
             .iter()
@@ -2116,7 +2236,7 @@ impl<H: Host> Vm<H> {
     pub(crate) fn report_function_use(&self) {
         let (mut functions, mut called, mut uncalled_bytes) = (0usize, 0usize, 0usize);
         for program in self.programs.residuals() {
-            for function in &program.functions {
+            for function in program.functions.iter().filter_map(crate::bytecode::FunctionSlot::record) {
                 functions += 1;
                 if function.call_plan.get().is_some() {
                     called += 1;
@@ -2255,6 +2375,10 @@ impl<H: Host> Vm<H> {
         let accounted_runtime_bytes = heap.slot_arena_reserved_bytes
             + heap.object_record_reserved_bytes
             + heap.array_record_reserved_bytes
+            + heap.function_record_reserved_bytes
+            + heap.promise_record_reserved_bytes
+            + heap.await_record_reserved_bytes
+            + heap.iterator_record_reserved_bytes
             + heap.legacy_cell_record_reserved_bytes
             + heap.free_slot_metadata_bytes
             + property_arena_bytes
@@ -2264,7 +2388,7 @@ impl<H: Host> Vm<H> {
             + heap.sparse_array_sidecar_bytes
             + vm_metadata_bytes;
         eprintln!(
-            "{{\"kind\":\"quench-memory-composition\",\"phase\":\"{phase}\",\"collection\":{},\"cell_kind_names\":{:?},\"cell_counts\":{:?},\"cell_variant_names\":{:?},\"cell_variant_counts\":{:?},\"occupied_slots\":{},\"complete_slot_slabs\":{},\"fully_free_slot_slabs\":{},\"partial_slot_slabs\":{},\"fully_empty_slot_pages\":{fully_empty_slot_pages},\"slot_arena_reserved_bytes\":{},\"object_record_reserved_bytes\":{},\"object_record_reusable_ids\":{},\"object_record_allocation_scan_cursor\":{},\"array_record_reserved_bytes\":{},\"array_record_reusable_ids\":{},\"array_record_allocation_scan_cursor\":{},\"legacy_cell_record_reserved_bytes\":{},\"free_slot_metadata_bytes\":{},\"object_headers\":{},\"embedded_object_headers\":{},\"boxed_object_headers\":{},\"boxed_object_header_bytes\":{},\"object_property_counts_by_width\":{:?},\"inline_property_attribution_bytes_overlapping_slots\":{},\"object_header_size_bytes\":{},\"cell_size_bytes\":{},\"slot_size_bytes\":{},\"property_arena_values_bytes\":{},\"property_arena_metadata_bytes\":{},\"property_arena_used_values\":{},\"property_arena_capacity_values\":{},\"live_property_used_values\":{},\"live_property_capacity_values\":{},\"live_property_used_values_by_width\":{:?},\"live_property_capacity_values_by_width\":{:?},\"dense_array_elements_bytes\":{},\"dense_array_headers_bytes\":{},\"dense_array_backing_count\":{},\"sparse_array_sidecar_bytes\":{},\"string_buffers_bytes\":{},\"string_buffer_count\":{},\"other_cell_payload_bytes\":{},\"cell_payload_total_bytes\":{},\"shape_table_bytes\":{},\"shape_count\":{},\"dictionary_shape_count\":{},\"shape_lookup_bytes\":{},\"transition_table_bytes\":{},\"descriptor_side_table_bytes\":{},\"cache_side_table_bytes\":{},\"atom_side_table_bytes\":{},\"frame_bytes\":{},\"profile_instrumentation_bytes\":{},\"accounted_runtime_bytes\":{},\"accounted_with_profile_bytes\":{}}}",
+            "{{\"kind\":\"quench-memory-composition\",\"phase\":\"{phase}\",\"collection\":{},\"cell_kind_names\":{:?},\"cell_counts\":{:?},\"cell_variant_names\":{:?},\"cell_variant_counts\":{:?},\"occupied_slots\":{},\"complete_slot_slabs\":{},\"fully_free_slot_slabs\":{},\"partial_slot_slabs\":{},\"fully_empty_slot_pages\":{fully_empty_slot_pages},\"slot_arena_reserved_bytes\":{},\"object_record_reserved_bytes\":{},\"object_record_reusable_ids\":{},\"object_record_allocation_scan_cursor\":{},\"array_record_reserved_bytes\":{},\"array_record_reusable_ids\":{},\"array_record_allocation_scan_cursor\":{},\"function_record_reserved_bytes\":{},\"promise_record_reserved_bytes\":{},\"await_record_reserved_bytes\":{},\"iterator_record_reserved_bytes\":{},\"legacy_cell_record_reserved_bytes\":{},\"free_slot_metadata_bytes\":{},\"object_headers\":{},\"embedded_object_headers\":{},\"boxed_object_headers\":{},\"boxed_object_header_bytes\":{},\"object_property_counts_by_width\":{:?},\"inline_property_attribution_bytes_overlapping_slots\":{},\"object_header_size_bytes\":{},\"cell_size_bytes\":{},\"slot_size_bytes\":{},\"property_arena_values_bytes\":{},\"property_arena_metadata_bytes\":{},\"property_arena_used_values\":{},\"property_arena_capacity_values\":{},\"live_property_used_values\":{},\"live_property_capacity_values\":{},\"live_property_used_values_by_width\":{:?},\"live_property_capacity_values_by_width\":{:?},\"dense_array_elements_bytes\":{},\"dense_array_headers_bytes\":{},\"dense_array_backing_count\":{},\"sparse_array_sidecar_bytes\":{},\"string_buffers_bytes\":{},\"string_buffer_count\":{},\"other_cell_payload_bytes\":{},\"cell_payload_total_bytes\":{},\"shape_table_bytes\":{},\"shape_count\":{},\"dictionary_shape_count\":{},\"shape_lookup_bytes\":{},\"transition_table_bytes\":{},\"descriptor_side_table_bytes\":{},\"cache_side_table_bytes\":{},\"atom_side_table_bytes\":{},\"frame_bytes\":{},\"profile_instrumentation_bytes\":{},\"accounted_runtime_bytes\":{},\"accounted_with_profile_bytes\":{}}}",
             self.heap.collection_count(),
             CellKind::NAMES,
             heap.cell_counts,
@@ -2281,6 +2405,10 @@ impl<H: Host> Vm<H> {
             heap.array_record_reserved_bytes,
             heap.array_record_reusable_ids,
             heap.array_record_allocation_scan_cursor,
+            heap.function_record_reserved_bytes,
+            heap.promise_record_reserved_bytes,
+            heap.await_record_reserved_bytes,
+            heap.iterator_record_reserved_bytes,
             heap.legacy_cell_record_reserved_bytes,
             heap.free_slot_metadata_bytes,
             heap.object_headers,
@@ -2332,7 +2460,9 @@ impl<H: Host> Vm<H> {
         scope: builtins::RealmScope,
     ) -> Result<(), JsError> {
         self.specialized = program.specialized;
-        self.realm.intrinsics.arguments_objects.clear();
+        // Every intrinsic names a value of the heap the reset discards; a new realm can reuse
+        // a discarded realm's identity, which must not find the old one's intrinsics.
+        self.realm.intrinsics = Default::default();
         // The snapshot contains heap values, shapes and atom ids from one realm.
         // A host may build a builtin before sealing the replacement realm.
         self.startup_intrinsics = Default::default();
@@ -2353,11 +2483,14 @@ impl<H: Host> Vm<H> {
         self.construct_target = None;
         self.realm.promise = Default::default();
         self.shapes.truncate(1);
+        self.shape_constructors.clear();
         // The kept root forgets its transitions along with the index.
         self.shapes[0].last_child.set(NO_LAST_CHILD);
         self.transitions.clear();
         self.shape_slot_memo.clear();
+        self.function_name_shapes.clear();
         self.symbol_write_proofs.clear();
+        self.symbol_load_proofs.clear();
         self.shape_attribute_memo.clear();
         self.atom_strings.clear();
         // The sealed holders and their shapes belong to the discarded heap.
@@ -2397,13 +2530,17 @@ impl<H: Host> Vm<H> {
             regexp_flag_accessors,
             then: self.intern_atom("then"),
             constructor: self.intern_atom("constructor"),
-            value: self.intern_atom("value"),
-            done: self.intern_atom("done"),
             next: self.intern_atom("next"),
             name: self.intern_atom("name"),
             empty: self.intern_atom(""),
+            value: self.intern_atom("value"),
+            done: self.intern_atom("done"),
+            bound_target: self.intern_atom(BOUND_TARGET_KEY),
+            bound_this: self.intern_atom(BOUND_THIS_KEY),
+            bound_args: self.intern_atom(BOUND_ARGS_KEY),
         };
         self.field_caches = vec![EMPTY_CACHE; program.cache_sites as usize];
+        self.field_cache_writes = Some(Vec::new());
         Self::prime_loop_decoding(program);
         self.inherited_field_caches.clear();
         self.inherited_field_indices = vec![NO_INHERITED_FIELD; program.cache_sites as usize];
@@ -2426,12 +2563,13 @@ impl<H: Host> Vm<H> {
         self.programs.reset(program.clone());
         self.instanceof_constructor_layout = None;
         self.closure_shapes = [None; 2];
-        self.regexp_object_shapes = None;
+        self.function_name_shapes.clear();
         self.iterator_result_shape = None;
+        self.regexp_object_shapes = None;
         self.regexp_last_index_layout = None;
         self.regexp_builtin_layout = None;
         self.regexp_symbol_layouts.clear();
-        self.instanceof_has_instance_holder = Value::NULL;
+        self.set_instanceof_has_instance_holder(Value::NULL);
         self.program_cache_layouts.clear();
         self.program_cache_layouts.push(ProgramCacheLayout {
             shared_uncached_field: ProgramCacheLayout::shared_uncached_field(0, program),
@@ -2466,8 +2604,8 @@ impl<H: Host> Vm<H> {
             Constant::Number(v) => Value::number(*v),
             Constant::WasmBits64(bits) => self.encode_bits64(*bits),
             Constant::WasmV128(bits) => self.heap.alloc(Cell::WasmV128(*bits)),
-            Constant::String(v) => self.heap.alloc(Cell::String(v.clone().into())),
-            Constant::StringUnits(v) => self.heap.alloc(Cell::String(JsString::from_units(v))),
+            Constant::String(v) => self.heap.alloc_string(v.clone().into()),
+            Constant::StringUnits(v) => self.heap.alloc_string(JsString::from_units(v)),
             Constant::BigInt(v) => self.heap.alloc(Cell::bigint(v.clone())),
             Constant::Boolean(true) => Value::TRUE,
             Constant::Boolean(false) => Value::FALSE,
@@ -2477,11 +2615,31 @@ impl<H: Host> Vm<H> {
     }
     fn materialize_program_constants(&mut self, id: ProgramId, program: &ResidualProgram) {
         let mut constants = Vec::with_capacity(program.constants.len());
+        // Equal string constants share one cell, as engines intern literals: a string is an
+        // immutable primitive, so which cell holds it is unobservable, and `===` between
+        // literals from different sites then decides by identity before comparing text.
+        let mut strings: std::collections::HashMap<StringConstantKey<'_>, Value> =
+            std::collections::HashMap::new();
         for constant in &program.constants {
-            let value = self.materialize_constant(constant);
+            let key = match constant {
+                Constant::String(text) => Some(StringConstantKey::Text(text)),
+                Constant::StringUnits(units) => Some(StringConstantKey::Units(units)),
+                _ => None,
+            };
+            let value = match key.and_then(|key| strings.get(&key).copied().map(Ok).or(Some(Err(key)))) {
+                Some(Ok(shared)) => shared,
+                Some(Err(key)) => {
+                    let value = self.materialize_constant(constant);
+                    strings.insert(key, value);
+                    value
+                }
+                None => self.materialize_constant(constant),
+            };
             constants.push(value);
         }
         self.programs.set_constants(id, constants);
+        // Lane views carry constants, so call targets naming the old views are stale.
+        self.lane_stack.clear_script_targets();
         if id == self.active_program {
             self.set_active_program(id);
         }
@@ -2508,7 +2666,8 @@ impl<H: Host> Vm<H> {
     }
     /// Primes every looping function of an installed `program` to expand on first entry.
     fn prime_loop_decoding(program: &ResidualProgram) {
-        for function in &program.functions {
+        // A released function primes as it compiles again (`ResidualProgram::function`).
+        for function in program.functions.iter().filter_map(crate::bytecode::FunctionSlot::record) {
             function.decoded.prime_loop(&function.code, &function.wide);
         }
     }
@@ -2605,9 +2764,9 @@ impl<H: Host> Vm<H> {
     /// Interns the atoms `program` adds to the VM's; its atom ids are the VM's, so it then reads
     /// every name through the shared sequence instead of keeping its own copy.
     fn intern_program_atoms(&mut self, mut program: ResidualProgram) -> ResidualProgram {
-        let first_new_atom = self.atom_sequence.len();
-        for (index, name) in program.atoms.iter().enumerate().skip(first_new_atom) {
-            let atom = self.intern_atom(name);
+        // Only the names after the VM's sequence are new; the program shares the rest.
+        for index in self.atom_sequence.len()..program.atoms.len() {
+            let atom = self.intern_atom(&program.atoms[index]);
             debug_assert_eq!(atom as usize, index);
         }
         debug_assert!(
@@ -2702,19 +2861,17 @@ impl<H: Host> Vm<H> {
                 })?;
                 // The profile's user targets count general and numeric bodies apart.
                 let numeric = program
-                    .functions
-                    .get(id as usize)
+                    .function_get(id as usize)
                     .is_some_and(|function| function.dispatch == DispatchClass::Numeric);
                 self.profile.call_target(1 + usize::from(numeric), args.len());
                 let active_program = self.replace_active_program(program_id);
-                let realm = match self.heap.get(callee) {
-                    Some(Cell::Function { object, .. }) => object.realm,
-                    _ => self.realm.globals,
-                };
+                let realm = self
+                    .heap
+                    .function(callee)
+                    .map_or(self.realm.globals, |function| function.realm);
                 let current_global = self.switch_realm_global(realm);
                 let result = if program
-                    .functions
-                    .get(id as usize)
+                    .function_get(id as usize)
                     .is_some_and(|function| function.is_class_constructor)
                     && !self.construct_target.is_some_and(|target| target.callee == callee)
                 {
@@ -2759,13 +2916,13 @@ impl<H: Host> Vm<H> {
         callee: Value,
         args: &[Value],
     ) -> Result<(Value, Value), JsError> {
-        let (program_id, id, env, realm) = match self.heap.get(callee) {
-            Some(Cell::Function {
+        let (program_id, id, env, realm) = match self.heap.function(callee) {
+            Some(FunctionRecord {
                 kind: FunctionKind::User(program_id, id),
                 env,
-                object,
+                realm,
                 ..
-            }) => (*program_id, *id, *env, object.realm),
+            }) => (*program_id, *id, *env, *realm),
             _ => return Err(self.type_error(p, "constructor is not a user function".into())),
         };
         let program = self.programs.get(program_id).ok_or_else(|| {
@@ -2789,4 +2946,12 @@ impl<H: Host> Vm<H> {
             )),
         }
     }
+}
+
+/// A program string constant's text as written, the key under which equal constants share a
+/// cell (`Vm::materialize_program_constants`).
+#[derive(PartialEq, Eq, Hash)]
+enum StringConstantKey<'a> {
+    Text(&'a str),
+    Units(&'a [u16]),
 }

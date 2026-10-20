@@ -82,12 +82,12 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, "iterator next result is not an object".into()));
         }
         self.with_call_roots([step], |vm| {
-            let done_atom = vm.intern_atom("done");
+            let done_atom = vm.runtime_atoms.done;
             let done = vm.get_property(p, step, done_atom)?;
             if vm.truthy(done) {
                 return Ok(None);
             }
-            let value_atom = vm.intern_atom("value");
+            let value_atom = vm.runtime_atoms.value;
             vm.get_property(p, step, value_atom).map(Some)
         })
     }

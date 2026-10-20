@@ -399,12 +399,15 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         self.check_execution_interrupt()?;
-        self.with_call_roots(std::iter::once(this).chain(args.iter().copied()), |vm| {
+        let result = self.with_call_roots(std::iter::once(this).chain(args.iter().copied()), |vm| {
             let receiver = vm.string_method_receiver(p, native, this)?;
             vm.with_call_roots([receiver], |vm| {
                 vm.call_native_dispatch(p, native, receiver, args)
             })
-        })
+        });
+        // String natives make text on demand; charge it before the caller's next safepoint.
+        self.heap.charge_materialized_text();
+        result
     }
 
     fn call_native_dispatch(
@@ -999,7 +1002,7 @@ impl<H: Host> Vm<H> {
                 }
                 Ok(self
                     .heap
-                    .alloc(Cell::String("function () { [native code] }".into())))
+                    .alloc_string("function () { [native code] }".into()))
             }
             Native::Number
             | Native::NumberIsNaN
@@ -1015,7 +1018,7 @@ impl<H: Host> Vm<H> {
                 } else {
                     self.coerce_js_string(p, argument)?
                 };
-                Ok(self.heap.alloc(Cell::String(text)))
+                Ok(self.heap.alloc_string(text))
             }
             Native::Symbol => self.call_symbol_constructor(p, args),
             Native::SymbolToString
@@ -1419,8 +1422,8 @@ impl<H: Host> Vm<H> {
                 );
                 // ToPrimitive of a string is the string itself and concatenation never
                 // collects, so string + string needs neither coercion nor extra roots.
-                if matches!(self.heap.get(left), Some(Cell::String(_)))
-                    && matches!(self.heap.get(right), Some(Cell::String(_)))
+                if self.heap.is_string(left)
+                    && self.heap.is_string(right)
                 {
                     return self.concatenate(p, left, right);
                 }
@@ -1859,7 +1862,7 @@ impl<H: Host> Vm<H> {
                 (false, true) => self.is_html_dda(left),
                 (false, false) => match (self.heap.get(left), self.heap.get(right)) {
                     // Operands of one type compare as `===` does.
-                    (Some(Cell::String(left)), Some(Cell::String(right))) => left == right,
+                    _ if let (Some(l), Some(r)) = (self.heap.string(left), self.heap.string(right)) => l == r,
                     (Some(Cell::BigInt(left)), Some(Cell::BigInt(right))) => left == right,
                     _ if self.is_object_like(left) && self.is_object_like(right) => false,
                     _ => return None,
@@ -1926,10 +1929,8 @@ impl<H: Host> Vm<H> {
                 let atom = self.intern_atom(&index.to_string());
                 let element = self.get_property(p, self.heap.root_value(object).unwrap(), atom)?;
                 if matches!(element_kind, ArrayLikeElementKind::PropertyKey)
-                    && !matches!(
-                        self.heap.get(element),
-                        Some(Cell::String(_) | Cell::Symbol(_))
-                    )
+                    && !self.heap.is_string(element)
+                    && !matches!(self.heap.get(element), Some(Cell::Symbol(_)))
                 {
                     return Err(self
                         .type_error(p, "array-like list contains an invalid property key".into()));

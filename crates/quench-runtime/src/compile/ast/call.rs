@@ -46,9 +46,20 @@ impl FunctionCompiler<'_, '_> {
         self.literal(Constant::Undefined)
     }
 
+    /// Whether this function binds `atom` in its own scope or an active block, so a reference
+    /// to it does not reach an outer scope.
+    pub(in crate::compile) fn binds_name(&self, atom: Atom) -> bool {
+        self.function_scope.contains(&atom)
+            || self.active_lexical_binding(atom).is_some()
+            || self.scopes.contains(atom)
+    }
+
     pub(super) fn unary(&mut self, value: &UnaryExpression<'_>) -> Register {
         if value.operator == UnaryOperator::Delete {
             return self.delete_expression(&value.argument);
+        }
+        if let Some(constant) = binding_time::unary(value).static_value() {
+            return self.literal(constant);
         }
         let input = if value.operator == UnaryOperator::Typeof {
             let mut operand = &value.argument;
@@ -57,10 +68,7 @@ impl FunctionCompiler<'_, '_> {
             }
             if let Expression::Identifier(identifier) = operand {
                 let atom = self.owner.atom(identifier.name.as_str());
-                let bound = self.function_scope.contains(&atom)
-                    || self.active_lexical_binding(atom).is_some()
-                    || self.scopes.iter().any(|scope| scope.contains_key(&atom));
-                if bound {
+                if self.binds_name(atom) {
                     self.expression(operand)
                 } else {
                     let input = self.reg();
@@ -176,6 +184,7 @@ impl FunctionCompiler<'_, '_> {
     }
 
     pub(super) fn call(&mut self, value: &CallExpression<'_>) -> Register {
+        self.owner.note_invoked_callee(&value.callee);
         if Self::has_spread(&value.arguments) {
             if super::super::early::is_direct_eval_call(value) {
                 return self.direct_eval_spread_call(value);
@@ -369,11 +378,11 @@ impl FunctionCompiler<'_, '_> {
         if self.dynamic_eval && let Some(atom) = self.super_home_atom {
             let location = self.local_slots.get(&atom).copied()
                 .map(crate::bytecode::EvalBindingLocation::Local)
-                .or_else(|| self.scopes.iter().enumerate().find_map(|(depth, scope)| {
-                    let slot = *scope.get(&atom)?;
+                .or_else(|| {
+                    let (depth, slot) = self.scopes.find(atom)?;
                     let depth = u16::try_from(depth).ok()?;
                     Some(crate::bytecode::EvalBindingLocation::Capture { depth, slot })
-                }));
+                });
             if let Some(location) = location
                 && !direct.iter().any(|binding| binding.atom == atom)
             {

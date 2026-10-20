@@ -5,6 +5,23 @@ use std::hash::{Hash, Hasher};
 use std::ops::Range;
 use std::rc::Rc;
 
+thread_local! {
+    /// Bytes of text made on demand (a rope's flat units, a wide string's host text) since
+    /// the collector last took them. A string is charged its flat bytes when allocated; text
+    /// made later is charged here, so collections follow the memory programs materialize.
+    static MATERIALIZED_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+fn charge_materialized(bytes: usize) {
+    MATERIALIZED_BYTES.with(|total| total.set(total.get().saturating_add(bytes)));
+}
+
+/// Text bytes made on demand and not yet charged, which the caller now charges.
+#[inline(always)]
+pub(crate) fn take_materialized_bytes() -> usize {
+    MATERIALIZED_BYTES.with(|total| total.replace(0))
+}
+
 /// Heap-owned JavaScript string. Its code units are authoritative: one byte each when every
 /// unit is ASCII, UTF-16 otherwise. `host` is the explicit lossy Rust-text view used at
 /// host/API boundaries; an ASCII string is its own host text.
@@ -446,7 +463,9 @@ impl JsStringInner {
         unsafe {
             let slot = self.aside.get();
             if (*slot).is_none() {
-                *slot = Some(Rc::new(Aside::Host(make())));
+                let host = make();
+                charge_materialized(host.len());
+                *slot = Some(Rc::new(Aside::Host(host)));
             }
             match (*slot).as_deref() {
                 Some(Aside::Host(host)) => host,
@@ -710,22 +729,47 @@ impl JsString {
             Repr::Shared(inner) => inner,
         };
         inner.flat.get_or_init(|| {
-            let units = if inner.ascii {
-                let mut output = String::with_capacity(self.len());
-                inner.for_each_run(|run| {
-                    if let Units::Ascii(bytes) = run {
-                        output.push_str(std::str::from_utf8(bytes).expect("ASCII units are UTF-8"));
-                    }
-                });
-                FlatUnits::ascii(&output)
-            } else {
-                let mut output = Vec::with_capacity(self.len());
-                inner.for_each_run(|run| run.extend_into(&mut output));
-                FlatUnits::Wide(Rc::from(output))
-            };
+            let units = Self::flattened(inner);
             inner.release_halves();
+            charge_materialized(match units.view() {
+                Units::Ascii(bytes) => bytes.len(),
+                Units::Wide(units) => std::mem::size_of_val(units),
+            });
             units
         })
+    }
+
+    /// The flat units without making a rope flat: a reader that needs the text only while it
+    /// runs leaves the rope's halves, which share their storage with the strings they were
+    /// cut from, in place of a copy kept for the string's life. Regular-expression matching
+    /// flattens V8-v7 RegExp's input variants this way (306 ropes, 995K units).
+    pub(crate) fn flat_unkept(&self) -> std::borrow::Cow<'_, FlatUnits> {
+        match &self.repr {
+            Repr::Flat(units) => std::borrow::Cow::Borrowed(units),
+            Repr::Shared(inner) => match inner.flat.get() {
+                Some(units) => std::borrow::Cow::Borrowed(units),
+                None => std::borrow::Cow::Owned(Self::flattened(inner)),
+            },
+        }
+    }
+
+    /// The units of a rope's runs, in one canonical allocation.
+    fn flattened(inner: &Rc<JsStringInner>) -> FlatUnits {
+        let length = inner.length as usize;
+        if inner.ascii {
+            return FlatUnits::ascii_with(length, |output| {
+                let mut written = 0;
+                inner.for_each_run(|run| {
+                    if let Units::Ascii(bytes) = run {
+                        output[written..written + bytes.len()].write_copy_of_slice(bytes);
+                        written += bytes.len();
+                    }
+                });
+            });
+        }
+        let mut output = Vec::with_capacity(length);
+        inner.for_each_run(|run| run.extend_into(&mut output));
+        FlatUnits::Wide(Rc::from(output))
     }
 
     /// The host text a `Wide` string made, if any.
@@ -888,6 +932,12 @@ impl JsString {
 
 impl PartialEq for JsString {
     fn eq(&self, other: &Self) -> bool {
+        if let (Repr::Flat(FlatUnits::Short(left)), Repr::Flat(FlatUnits::Short(right))) =
+            (&self.repr, &other.repr)
+        {
+            // Inline text pads its unused bytes with zero, so whole records compare.
+            return left.length == right.length && left.bytes == right.bytes;
+        }
         // Strings of different lengths differ without flattening a rope or reading units.
         self.len() == other.len() && self.units() == other.units()
     }

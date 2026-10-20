@@ -492,10 +492,20 @@ fn object_site_instruction_valid(
 
 impl ResidualProgram {
     /// Validate all cross-table references before a VM can observe the program.
+    /// `validate`, unless the program is proven valid (`ValidationProof`).
+    pub(crate) fn validate_unless_proven(&self) -> Result<(), String> {
+        if self.validated.holds() {
+            return Ok(());
+        }
+        self.validate()
+    }
+
     pub(crate) fn validate(&self) -> Result<(), String> {
         if self.functions.is_empty() && self.kind != super::ProgramKind::Wasm {
             return Err("program has no entry function".into());
         }
+        // Validation reads every record, and the cross-function checks read their parents'.
+        self.compile_released();
         let selective_capture_scope_unsafe =
             selective_capture_scope_unsafe(&self.functions, &self.atoms);
         // Captured name scopes are shared by sibling functions: each is checked once per
@@ -826,7 +836,10 @@ function.plain_local_slots(&self.superinstructions)
                 {
                     return Err(format!("function {index} has an invalid handler"));
                 }
-                if handler.slot.is_some_and(|slot| slot >= function.locals) {
+                if handler.slot.is_some_and(|slot| match slot {
+                    super::ThrownValueSlot::Local(slot) => slot >= function.locals,
+                    super::ThrownValueSlot::Register(register) => register >= function.registers,
+                }) {
                     return Err(format!("function {index} handler slot is out of bounds"));
                 }
                 if handler
@@ -1185,7 +1198,6 @@ mod tests {
             name: None,
             inferred_name: None,
             is_arrow: false,
-            reads_lexical_this: false,
             self_binding_slot: None,
             source_span: None,
             params: 0,
@@ -1257,6 +1269,8 @@ mod tests {
             literal_templates: Vec::new(),
             superinstructions: vec![],
             replay: None,
+            encoded_records: None,
+            validated: Default::default(),
         }
     }
 
