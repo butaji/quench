@@ -1308,8 +1308,10 @@ impl<H: Host> Vm<H> {
                         id: executing_program,
                         retained: current_program.take(),
                     };
+                    // The loop's entry program, which the unwind falls back to for a caller
+                    // whose pending call saved no residual: not the executing one.
                     let unwound = self.unwind_general_loop(
-                        p,
+                        entry_program,
                         frame,
                         pc + 1,
                         pc as u32,
