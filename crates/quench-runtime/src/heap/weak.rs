@@ -95,6 +95,7 @@ impl Heap {
             marks,
             slots,
             young_weak,
+            weak_cells,
             remembered,
             ..
         } = self;
@@ -111,13 +112,21 @@ impl Heap {
         let mut finalization_jobs = Vec::new();
         let is_marked = |value: Value| mark_bits.is_marked(value);
         if full {
-            for (index, slot) in slots.iter_mut().enumerate() {
-                if is_marked(Value::heap(index as u32))
-                    && let Some(cell) = slot.cell.as_mut()
-                {
-                    Self::prune_weak_cell(cell, &is_marked, &mut finalization_jobs);
+            // A slot reused since it was listed appears once per allocation; dead and
+            // non-weak occupants leave the list here.
+            weak_cells.sort_unstable();
+            weak_cells.dedup();
+            weak_cells.retain(|&index| {
+                let Some(cell) = slots.get_mut(index as usize).and_then(|slot| slot.cell.as_mut())
+                else {
+                    return false;
+                };
+                if !is_marked(Value::heap(index)) || !cell.has_weak_entries() {
+                    return false;
                 }
-            }
+                Self::prune_weak_cell(cell, &is_marked, &mut finalization_jobs);
+                true
+            });
         } else {
             for index in young_weak.iter().chain(remembered.iter()).copied() {
                 if let Some(cell) = slots
