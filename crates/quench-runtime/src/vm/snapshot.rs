@@ -365,7 +365,8 @@ impl<H: Host> Vm<H> {
             eval_script_context,
             deferred_dependency_batch,
             construct_target,
-            random_state,
+            // Each process draws its own sequence (`fresh_random_seed`).
+            random_state: _,
         } = self;
         let Realm {
             globals,
@@ -458,7 +459,6 @@ impl<H: Host> Vm<H> {
         let wasm_js::WasmJsIntrinsics { module, instance, memory, table, global } = wasm_js;
         [*module, *instance, *memory, *table, *global].snap(&mut writer)?;
         writer.value(*instanceof_has_instance_holder);
-        writer.u64(*random_state);
         write_host(host, &mut crate::SnapshotWriter { writer: &mut writer, heap }).map_err(SnapshotError)?;
         Ok(writer.finish())
     }
@@ -534,7 +534,6 @@ impl<H: Host> Vm<H> {
         let [module, instance, memory, table, global] = <[Value; 5]>::unsnap(&mut reader)?;
         self.wasm_js = wasm_js::WasmJsIntrinsics { module, instance, memory, table, global };
         self.instanceof_has_instance_holder = reader.value()?;
-        self.random_state = reader.u64()?;
         read_host(&mut self.host, &mut crate::SnapshotReader { reader: &mut reader, heap: &self.heap })
             .map_err(SnapshotError)?;
         reader.finish()?;

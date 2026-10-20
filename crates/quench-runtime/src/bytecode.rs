@@ -2032,20 +2032,19 @@ impl Function {
     /// Whether neither this function nor any enclosing one has dynamic scope access or
     /// contains a `with` statement. The compiler then resolved every lexical binding the body
     /// names, so a by-name load in it can only denote a global binding.
-    pub(crate) fn names_resolve_statically(
-        &self,
-        functions: &[FunctionSlot],
-        atoms: &AtomTable,
-    ) -> bool {
+    /// `program` holds this function; an enclosing function whose record it has not read yet
+    /// is read here.
+    pub(crate) fn names_resolve_statically(&self, program: &ResidualProgram) -> bool {
         *self.static_name_scope.get_or_init(|| {
+            let atoms = &program.atoms;
             !self.has_dynamic_scope_access()
                 && !self.contains_with_statement(|atom| {
                     atom < atoms.len() && &atoms[atom] == WITH_ENTER_BINDING
                 })
                 && self.parent.is_none_or(|parent| {
-                    functions
-                        .get(parent as usize)
-                        .is_some_and(|parent| parent.names_resolve_statically(functions, atoms))
+                    program
+                        .function_get(parent as usize)
+                        .is_some_and(|parent| parent.names_resolve_statically(program))
                 })
         })
     }

@@ -629,6 +629,9 @@ impl SnapshotWriter<'_> {
         self.writer.bool(root.is_some());
         root.map_or(Ok(()), |root| self.root(root))
     }
+    pub fn weak_root(&mut self, root: &crate::HostWeakRoot) -> Result<(), String> {
+        self.root(root.0)
+    }
 }
 
 /// Where a host reads back what it wrote through `SnapshotWriter`.
@@ -669,5 +672,8 @@ impl SnapshotReader<'_, '_> {
     }
     pub fn option_root(&mut self) -> Result<Option<crate::RootId>, String> {
         if self.bool()? { self.root().map(Some) } else { Ok(None) }
+    }
+    pub fn weak_root(&mut self) -> Result<crate::HostWeakRoot, String> {
+        self.root().map(crate::HostWeakRoot)
     }
 }

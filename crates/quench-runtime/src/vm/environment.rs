@@ -2029,7 +2029,7 @@ impl<H: Host> Vm<H> {
             frame.function != super::ROOT_FUNCTION_ID
                 && self.programs.runs_in_global_scope(frame.program)
                 && p.function_get(frame.function as usize)
-                    .is_some_and(|function| function.names_resolve_statically(&p.functions, &p.atoms))
+                    .is_some_and(|function| function.names_resolve_statically(p))
         })
     }
 

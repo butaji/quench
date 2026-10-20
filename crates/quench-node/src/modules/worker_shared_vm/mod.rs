@@ -543,3 +543,19 @@ pub(crate) fn poll(
     }
     crate::modules::process_shared_vm::deliver_each(runtime, program, "messagingDrain")
 }
+
+impl State {
+    pub(crate) fn write_snapshot(&self, writer: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> {
+        use crate::host::startup_snapshot::{require_quiescent, HostSnap};
+        let Self { ports, workers, next_port, api, context } = self;
+        require_quiescent(ports.is_empty() && workers.is_empty() && context.is_none(), "a message port")?;
+        next_port.write(writer)?;
+        api.write(writer)
+    }
+    pub(crate) fn read_snapshot(&mut self, reader: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<(), String> {
+        use crate::host::startup_snapshot::HostSnap;
+        self.next_port = HostSnap::read(reader)?;
+        self.api = HostSnap::read(reader)?;
+        Ok(())
+    }
+}

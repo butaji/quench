@@ -1,0 +1,369 @@
+//! The Node host's part of a startup snapshot (`quench_runtime::Runtime::build_snapshot`):
+//! the host state a bootstrapped VM's heap is bound to. A snapshot is taken at one point of
+//! `NodeHost::initialize`, before anything of the process's own (its options, its entry, its
+//! IPC channel) is installed; a restored host continues from there (`Host::resume`).
+//!
+//! Every field of the host is either written here (the guest handles the bootstrap cached),
+//! the restoring process's own (its arguments, descriptors, clocks and channels), or required
+//! empty at the snapshot point (sockets, timers, pending work), so a field added later does
+//! not compile until it is given one of those places.
+
+use quench_runtime::{HostWeakRoot, RootId, SnapshotReader, SnapshotWriter};
+use std::collections::HashMap;
+use std::hash::Hash;
+
+/// A host value a snapshot writes and reads whole.
+pub(crate) trait HostSnap: Sized {
+    fn write(&self, writer: &mut SnapshotWriter<'_>) -> Result<(), String>;
+    fn read(reader: &mut SnapshotReader<'_, '_>) -> Result<Self, String>;
+}
+
+macro_rules! host_snap_primitive {
+    ($($ty:ty: $write:ident, $read:ident;)*) => {$(
+        impl HostSnap for $ty {
+            fn write(&self, writer: &mut SnapshotWriter<'_>) -> Result<(), String> {
+                writer.$write(*self);
+                Ok(())
+            }
+            fn read(reader: &mut SnapshotReader<'_, '_>) -> Result<Self, String> {
+                reader.$read()
+            }
+        }
+    )*};
+}
+
+host_snap_primitive! {
+    bool: bool, bool;
+    u8: u8, u8;
+    u32: u32, u32;
+    u64: u64, u64;
+    f64: f64, f64;
+}
+
+impl HostSnap for usize {
+    fn write(&self, writer: &mut SnapshotWriter<'_>) -> Result<(), String> {
+        writer.len(*self);
+        Ok(())
+    }
+    fn read(reader: &mut SnapshotReader<'_, '_>) -> Result<Self, String> {
+        reader.len()
+    }
+}
+
+impl HostSnap for String {
+    fn write(&self, writer: &mut SnapshotWriter<'_>) -> Result<(), String> {
+        writer.str(self);
+        Ok(())
+    }
+    fn read(reader: &mut SnapshotReader<'_, '_>) -> Result<Self, String> {
+        reader.string()
+    }
+}
+
+impl HostSnap for std::path::PathBuf {
+    fn write(&self, writer: &mut SnapshotWriter<'_>) -> Result<(), String> {
+        writer.str(self.to_str().ok_or("a snapshot path is not Unicode")?);
+        Ok(())
+    }
+    fn read(reader: &mut SnapshotReader<'_, '_>) -> Result<Self, String> {
+        reader.string().map(Self::from)
+    }
+}
+
+impl HostSnap for RootId {
+    fn write(&self, writer: &mut SnapshotWriter<'_>) -> Result<(), String> {
+        writer.root(*self)
+    }
+    fn read(reader: &mut SnapshotReader<'_, '_>) -> Result<Self, String> {
+        reader.root()
+    }
+}
+
+impl HostSnap for HostWeakRoot {
+    fn write(&self, writer: &mut SnapshotWriter<'_>) -> Result<(), String> {
+        writer.weak_root(self)
+    }
+    fn read(reader: &mut SnapshotReader<'_, '_>) -> Result<Self, String> {
+        reader.weak_root()
+    }
+}
+
+impl<T: HostSnap> HostSnap for Option<T> {
+    fn write(&self, writer: &mut SnapshotWriter<'_>) -> Result<(), String> {
+        writer.bool(self.is_some());
+        self.as_ref().map_or(Ok(()), |value| value.write(writer))
+    }
+    fn read(reader: &mut SnapshotReader<'_, '_>) -> Result<Self, String> {
+        if reader.bool()? { T::read(reader).map(Some) } else { Ok(None) }
+    }
+}
+
+impl<T: HostSnap> HostSnap for Vec<T> {
+    fn write(&self, writer: &mut SnapshotWriter<'_>) -> Result<(), String> {
+        writer.len(self.len());
+        self.iter().try_for_each(|value| value.write(writer))
+    }
+    fn read(reader: &mut SnapshotReader<'_, '_>) -> Result<Self, String> {
+        (0..reader.len()?).map(|_| T::read(reader)).collect()
+    }
+}
+
+impl<A: HostSnap, B: HostSnap> HostSnap for (A, B) {
+    fn write(&self, writer: &mut SnapshotWriter<'_>) -> Result<(), String> {
+        self.0.write(writer)?;
+        self.1.write(writer)
+    }
+    fn read(reader: &mut SnapshotReader<'_, '_>) -> Result<Self, String> {
+        Ok((A::read(reader)?, B::read(reader)?))
+    }
+}
+
+impl<K: HostSnap + Eq + Hash, V: HostSnap, S: std::hash::BuildHasher + Default> HostSnap for HashMap<K, V, S> {
+    fn write(&self, writer: &mut SnapshotWriter<'_>) -> Result<(), String> {
+        writer.len(self.len());
+        self.iter().try_for_each(|(key, value)| {
+            key.write(writer)?;
+            value.write(writer)
+        })
+    }
+    fn read(reader: &mut SnapshotReader<'_, '_>) -> Result<Self, String> {
+        let len = reader.len()?;
+        let mut map = Self::with_capacity_and_hasher(len, S::default());
+        for _ in 0..len {
+            let key = K::read(reader)?;
+            map.insert(key, V::read(reader)?);
+        }
+        Ok(map)
+    }
+}
+
+/// `HostSnap` for a struct, field by field; every field must be listed.
+macro_rules! host_snap_struct {
+    ($ty:ty { $($field:ident),* $(,)? }) => {
+        impl $crate::host::startup_snapshot::HostSnap for $ty {
+            fn write(&self, writer: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> {
+                let Self { $($field),* } = self;
+                $( $crate::host::startup_snapshot::HostSnap::write($field, writer)?; )*
+                Ok(())
+            }
+            fn read(reader: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<Self, String> {
+                Ok(Self { $($field: $crate::host::startup_snapshot::HostSnap::read(reader)?),* })
+            }
+        }
+    };
+}
+pub(crate) use host_snap_struct;
+
+/// Refuses a snapshot unless `quiescent`: the named state must be empty at the snapshot point.
+pub(crate) fn require_quiescent(quiescent: bool, what: &str) -> Result<(), String> {
+    if quiescent { Ok(()) } else { Err(format!("startup snapshot taken with {what} in use")) }
+}
+
+/// Snapshot methods for a state each of whose fields must be empty at the snapshot point:
+/// the snapshot writes nothing for it, and a restored process keeps its own, fresh one.
+macro_rules! host_snap_empty {
+    ($ty:ty { $($field:ident),* $(,)? } $what:literal) => {
+        impl $ty {
+            pub(crate) fn write_snapshot(&self, _: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> {
+                let Self { $($field),* } = self;
+                $crate::host::startup_snapshot::require_quiescent(true $(&& $field.is_empty())*, $what)
+            }
+            pub(crate) fn read_snapshot(&mut self, _: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<(), String> {
+                Ok(())
+            }
+        }
+    };
+}
+pub(crate) use host_snap_empty;
+
+/// Snapshot methods for a state written whole, each field by its `HostSnap`.
+macro_rules! host_snap_state {
+    ($ty:ty { $($field:ident),* $(,)? }) => {
+        $crate::host::startup_snapshot::host_snap_struct!($ty { $($field),* });
+        impl $ty {
+            pub(crate) fn write_snapshot(&self, writer: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> {
+                $crate::host::startup_snapshot::HostSnap::write(self, writer)
+            }
+            pub(crate) fn read_snapshot(&mut self, reader: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<(), String> {
+                *self = $crate::host::startup_snapshot::HostSnap::read(reader)?;
+                Ok(())
+            }
+        }
+    };
+}
+pub(crate) use host_snap_state;
+
+/// Environment variables that give the process a channel of its own (an IPC descriptor): a
+/// process that sets any boots without a snapshot.
+const REFUSED_VARIABLES: &[&str] = &["NODE_CHANNEL_FD", "NODE_CHANNEL_SERIALIZATION_MODE"];
+/// Environment variables the bootstrap reads before the snapshot point: they key the
+/// snapshot, which a builder started with this process's environment bootstraps under.
+const KEYED_VARIABLES: &[&str] = &[
+    "HOME",
+    "NODE_OPTIONS",
+    "NODE_PENDING_DEPRECATION",
+    "NODE_DEBUG",
+    "NODE_PATH",
+    "QUENCH_PLATFORM",
+];
+/// `off` boots every process without a snapshot; `trace` reports why one was not used.
+pub(crate) const SNAPSHOT_ENV: &str = "QUENCH_STARTUP_SNAPSHOT";
+const SNAPSHOT_OFF: &str = "off";
+const SNAPSHOT_TRACE: &str = "trace";
+/// Set in the environment of the process that builds a snapshot, to the file it writes.
+pub(crate) const BUILD_ENV: &str = "QUENCH_BUILD_STARTUP_SNAPSHOT";
+/// The snapshots' directory beside the compile cache's (`CompileCache::directory`).
+const SNAPSHOT_SUBDIRECTORY: &str = "snapshot";
+const SNAPSHOT_EXTENSION: &str = "qss";
+const LOCK_EXTENSION: &str = "lock";
+/// A build lock older than this belongs to a builder that died: another may start.
+const STALE_BUILD: std::time::Duration = std::time::Duration::from_secs(60);
+/// The Node builtins a snapshot loads, as Node's own startup snapshot does: the modules
+/// nearly every program loads, whose loading is most of a short run.
+const PRELOADED_BUILTINS: &[&str] = &[
+    "events", "buffer", "util", "path", "fs", "url", "timers", "querystring", "async_hooks",
+    "diagnostics_channel", "stream", "module", "child_process", "http",
+];
+
+/// Refuses a read of the process's own state while a snapshot is built: what the snapshot
+/// keeps must not depend on the process that built it.
+pub(crate) fn refuse_process_state(
+    context: &mut quench_runtime::NativeContext<'_, crate::host::NodeHost>,
+    what: &str,
+) -> Result<(), quench_runtime::RootedError> {
+    if context.host_mut().building_snapshot {
+        return Err(quench_runtime::RootedError::host(format!("a startup snapshot cannot keep {what}")));
+    }
+    Ok(())
+}
+
+/// Loads the builtins a snapshot keeps (`PRELOADED_BUILTINS`), at the snapshot point.
+pub(crate) fn preload(
+    context: &mut quench_runtime::NativeContext<'_, crate::host::NodeHost>,
+) -> Result<(), quench_runtime::RootedError> {
+    let global = context.global_root()?;
+    let key = context.string_rooted("\0quench:require");
+    let require = context.get_property_rooted(global, key)?;
+    let undefined = context.undefined();
+    for name in PRELOADED_BUILTINS {
+        context.scoped(|context| {
+            let specifier = context.string_rooted(name);
+            context.call_rooted(require, undefined, &[specifier]).map(drop)
+        })?;
+    }
+    Ok(())
+}
+
+/// Where a process with these inputs finds its snapshot, when it may use one: the main
+/// thread of a file entry run without options, under an environment that changes nothing
+/// the bootstrap reads.
+pub(crate) fn snapshot_path(host: &crate::host::NodeHost, file_entry: bool, worker: bool) -> Option<std::path::PathBuf> {
+    if !file_entry || worker || host.eval_builtin_globals || !host.shared_state.borrow().exec_argv.is_empty() {
+        return None;
+    }
+    if REFUSED_VARIABLES.iter().any(|name| std::env::var_os(name).is_some())
+        || std::env::var_os(SNAPSHOT_ENV).is_some_and(|value| value == SNAPSHOT_OFF)
+    {
+        return None;
+    }
+    // Each build's snapshots share a directory, which a builder of another build removes.
+    let directory = host
+        .compile_cache
+        .directory()?
+        .parent()?
+        .join(SNAPSHOT_SUBDIRECTORY)
+        .join(format!("{:016x}", host.compile_cache.build()));
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    std::hash::Hash::hash(&host.node_library_root, &mut hasher);
+    for name in KEYED_VARIABLES {
+        std::hash::Hash::hash(&std::env::var_os(name), &mut hasher);
+    }
+    Some(directory.join(format!("{:016x}.{SNAPSHOT_EXTENSION}", std::hash::Hasher::finish(&hasher))))
+}
+
+/// The snapshot at `path`, mapped; when there is none, starts a process that builds it for
+/// the next run, unless one is building it already.
+pub(crate) fn load_or_schedule(path: &std::path::Path) -> Option<quench_runtime::KeptBytes> {
+    if let Some(bytes) = crate::host::compile_cache::map_file(path) {
+        return Some(bytes);
+    }
+    let lock = path.with_extension(LOCK_EXTENSION);
+    let stale = std::fs::metadata(&lock)
+        .and_then(|metadata| metadata.modified())
+        .is_ok_and(|modified| modified.elapsed().is_ok_and(|age| age > STALE_BUILD));
+    if stale {
+        let _ = std::fs::remove_file(&lock);
+    }
+    std::fs::create_dir_all(path.parent()?).ok()?;
+    std::fs::OpenOptions::new().write(true).create_new(true).open(&lock).ok()?;
+    let started = std::env::current_exe().ok().and_then(|executable| {
+        let mut builder = std::process::Command::new(executable);
+        builder
+            .env(BUILD_ENV, path)
+            .current_dir("/")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        // Its own process group, so a signal to this process's group (a terminal's interrupt,
+        // a supervisor ending the run) does not end the build it outlives.
+        #[cfg(unix)]
+        std::os::unix::process::CommandExt::process_group(&mut builder, 0);
+        builder.spawn().ok()
+    });
+    if started.is_none() {
+        let _ = std::fs::remove_file(&lock);
+    }
+    None
+}
+
+/// Reports whether a snapshot was restored, and why not, when `SNAPSHOT_ENV` asks for it.
+pub(crate) fn report(outcome: Result<(), &str>) {
+    if std::env::var_os(SNAPSHOT_ENV).is_some_and(|value| value == SNAPSHOT_TRACE) {
+        match outcome {
+            Ok(()) => eprintln!("quench: startup snapshot restored"),
+            Err(error) => eprintln!("quench: startup snapshot not restored: {error}"),
+        }
+    }
+}
+
+/// Builds the snapshot a process with this one's inputs restores, into `path`: runs the
+/// bootstrap to the snapshot point with an empty entry and writes the VM and host state.
+pub(crate) fn build(path: &std::path::Path) -> Result<(), String> {
+    let result = (|| {
+        let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+        let mut host = crate::host::NodeHost::new(vec![executable.to_string_lossy().into_owned()]);
+        host.building_snapshot = true;
+        let mut runtime = quench_runtime::Runtime::new(host);
+        let program = runtime
+            .compile_entry(quench_runtime::ExecutionRequest {
+                source: "",
+                name: "[startup snapshot]",
+                kind: quench_runtime::SourceKind::Script,
+            })
+            .map_err(|error| format!("{error:?}"))?;
+        let bytes = runtime.build_snapshot(&program, |host, writer| host.write_snapshot(writer))?;
+        let temporary = path.with_extension(format!("{SNAPSHOT_EXTENSION}.{}", std::process::id()));
+        std::fs::write(&temporary, &bytes).map_err(|error| error.to_string())?;
+        std::fs::rename(&temporary, path).map_err(|error| error.to_string())?;
+        remove_other_builds(path);
+        Ok(())
+    })();
+    let _ = std::fs::remove_file(path.with_extension(LOCK_EXTENSION));
+    result
+}
+
+/// Removes the snapshots of builds other than the one that wrote `path`: no process of this
+/// build reads them, and a rebuild leaves its predecessor's behind.
+fn remove_other_builds(path: &std::path::Path) {
+    let Some(build) = path.parent() else {
+        return;
+    };
+    let Some(builds) = build.parent().and_then(|builds| std::fs::read_dir(builds).ok()) else {
+        return;
+    };
+    for entry in builds.flatten() {
+        if entry.path() != build {
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
+    }
+}

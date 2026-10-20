@@ -72,6 +72,8 @@ const MODULE: &str = quench_js_check::checked_js!(
 );
 
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    // The module keeps its time origin, the process's own.
+    crate::host::startup_snapshot::refuse_process_state(context, "performance.timeOrigin")?;
     let factory = context.evaluate_script_rooted(MODULE, "node:perf_hooks.js")?;
     let now = context.host_function(crate::host::shared_vm::operation("perfHooksNow"))?;
     let undefined = context.undefined();

@@ -374,3 +374,20 @@ pub(super) fn emit(
     }
     result
 }
+
+impl Registry {
+    /// The hooks API a bootstrap built, with no hook installed.
+    pub(super) fn write_snapshot(&self, writer: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> {
+        use crate::host::startup_snapshot::{require_quiescent, HostSnap};
+        let Self { api, counts, depth, snapshot, promise_hook } = self;
+        require_quiescent(
+            counts.iter().all(|count| *count == 0) && *depth == 0 && snapshot.is_none() && !promise_hook,
+            "an async hook",
+        )?;
+        api.write(writer)
+    }
+    pub(super) fn read_snapshot(&mut self, reader: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<(), String> {
+        self.api = crate::host::startup_snapshot::HostSnap::read(reader)?;
+        Ok(())
+    }
+}

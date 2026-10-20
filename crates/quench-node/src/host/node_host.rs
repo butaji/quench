@@ -5,6 +5,8 @@ use std::rc::Rc;
 
 use crate::shared_run::EntryGoal;
 
+mod snapshot;
+
 /// Output callback owned by the canonical Node host boundary.
 pub type NodeOutputSink = std::sync::Arc<dyn Fn(&str) + Send + Sync>;
 
@@ -44,6 +46,8 @@ pub struct NodeHost {
     pub(crate) net_pending_writes: Vec<(u64, Vec<u8>)>,
     pub(crate) net_pending_ends: Vec<u64>,
     pub(crate) net_pending_destroys: Vec<(u64, bool)>,
+    /// Whether this host builds a startup snapshot, ending `initialize` at its point.
+    pub(crate) building_snapshot: bool,
 }
 
 #[derive(Clone)]
@@ -407,6 +411,7 @@ impl NodeHost {
             net_pending_writes: Vec::new(),
             net_pending_ends: Vec::new(),
             net_pending_destroys: Vec::new(),
+            building_snapshot: false,
         }
     }
 

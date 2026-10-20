@@ -2869,3 +2869,24 @@ pub(crate) fn native_tcp_receive(transport:&mut Transport,id:u64,fd:std::os::fd:
 pub(crate) fn listener_is_tcp(transport:&Transport,id:u64)->bool {
     matches!(transport.listeners.get(&id).and_then(Listener::socket),Some(ListenerSocket::Tcp(_)))
 }
+
+impl Transport {
+    pub(crate) fn write_snapshot(&self, writer: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> {
+        use crate::host::startup_snapshot::{require_quiescent, HostSnap};
+        let Self { native_tcp_connecting, native_tcp_unbound, next_id, listeners, sockets, connecting, closing_sockets } = self;
+        require_quiescent(
+            native_tcp_connecting.is_empty()
+                && native_tcp_unbound.is_empty()
+                && listeners.is_empty()
+                && sockets.is_empty()
+                && connecting.is_empty()
+                && closing_sockets.is_empty(),
+            "a TCP socket",
+        )?;
+        next_id.write(writer)
+    }
+    pub(crate) fn read_snapshot(&mut self, reader: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<(), String> {
+        self.next_id = crate::host::startup_snapshot::HostSnap::read(reader)?;
+        Ok(())
+    }
+}
