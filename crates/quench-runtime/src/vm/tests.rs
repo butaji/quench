@@ -10365,6 +10365,50 @@ fn js_jit_compiles_hot_numeric_functions_and_guards_polymorphic_inputs() {
     feature = "profile-memory",
     feature = "profile-gc-time"
 )))]
+fn js_jit_enters_compiled_known_callees_without_pushing_a_frame() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function add(left, right) { return left + right; }
+          for (let index = 0; index < 40; index++) {
+            if (add(index, 2) !== index + 2) throw Error('known call result');
+          }
+        "#,
+        "js-jit-known-call.js",
+    ))
+    .unwrap();
+    let add = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .name
+                .or(function.inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "add")
+        })
+        .unwrap() as u32;
+    let mut vm = Vm::new(SilentHost);
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+
+    let Some(super::program_store::JsTierState::Compiled(compiled)) = vm
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, add)
+    else {
+        panic!("the numeric callee should be compiled");
+    };
+    assert!(
+        compiled.native_entries() >= 9,
+        "promotion plus the remaining statically-known calls should enter native code"
+    );
+}
+
+#[test]
+#[cfg(not(any(
+    feature = "profile-aggregate",
+    feature = "profile-trace",
+    feature = "profile-memory",
+    feature = "profile-gc-time"
+)))]
 fn js_jit_compiles_number_capture_returns_and_observes_mutation() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
@@ -10497,6 +10541,66 @@ fn js_jit_compiles_int32_bitwise_helpers_and_guards_the_domain() {
     assert!(matches!(
         vm.programs
             .js_tier(super::program_store::ProgramId::MAIN, mask),
+        Some(super::program_store::JsTierState::Compiled(_))
+    ));
+}
+
+#[test]
+#[cfg(not(any(
+    feature = "profile-aggregate",
+    feature = "profile-trace",
+    feature = "profile-memory",
+    feature = "profile-gc-time"
+)))]
+fn js_jit_compiles_guarded_int32_identity_arm_and_falls_back_for_other_types() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function hashKey(key) {
+            switch (typeof key) {
+              case 'object':
+                if (!key) return 0;
+                return key.hashCode();
+              case 'number':
+                if ((key | 0) == key) return key;
+                return 'fraction';
+              default: return 'other';
+            }
+          }
+          for (let index = 0; index < 40; index++) {
+            if (hashKey(index) !== index) throw Error('integer fast arm');
+          }
+          if (hashKey(2.5) !== 'fraction') throw Error('fraction fallback');
+          if (hashKey('2') !== 'other') throw Error('type fallback');
+          if (hashKey({ hashCode() { return 7; } }) !== 7) throw Error('object path');
+        "#,
+        "js-jit-int32-identity.js",
+    ))
+    .unwrap();
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .name
+                .or(function.inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "hashKey")
+        })
+        .unwrap() as u32;
+    assert!(
+        super::js_compiled::int32_identity_return_candidate(
+            &program,
+            &program.functions[function_id as usize]
+        )
+        .is_some(),
+        "{}",
+        program.disassemble()
+    );
+    let mut vm = Vm::new(SilentHost);
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+    assert!(matches!(
+        vm.programs
+            .js_tier(super::program_store::ProgramId::MAIN, function_id),
         Some(super::program_store::JsTierState::Compiled(_))
     ));
 }
