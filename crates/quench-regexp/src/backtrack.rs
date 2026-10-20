@@ -104,6 +104,9 @@ enum UnitTest {
 /// A set of units: exact for ASCII by bitmap, and by `beyond` for any other unit.
 struct UnitSet {
     ascii: u128,
+    /// `ascii` as one flag per ASCII unit, derived by `UnitSet::of`: a test of an ASCII unit
+    /// loads its flag instead of shifting the 128-bit mask.
+    table: [bool; ASCII_UNITS as usize],
     beyond: Beyond,
 }
 
@@ -128,18 +131,27 @@ enum Beyond {
 }
 
 impl UnitSet {
-    fn union(&self, other: &Self) -> Self {
+    /// The set of the ASCII units in `ascii` and the units past ASCII `beyond` admits.
+    fn of(ascii: u128, beyond: Beyond) -> Self {
         Self {
-            ascii: self.ascii | other.ascii,
-            beyond: Beyond::Either(Box::new([self.beyond.clone(), other.beyond.clone()])),
+            ascii,
+            table: std::array::from_fn(|unit| ascii >> unit & 1 != 0),
+            beyond,
         }
+    }
+
+    fn union(&self, other: &Self) -> Self {
+        Self::of(
+            self.ascii | other.ascii,
+            Beyond::Either(Box::new([self.beyond.clone(), other.beyond.clone()])),
+        )
     }
 
     fn new(beyond: Beyond) -> Self {
         let ascii = (0..ASCII_UNITS)
             .filter(|value| beyond.matches(*value))
             .fold(0u128, |bits, value| bits | 1 << value);
-        Self { ascii, beyond }
+        Self::of(ascii, beyond)
     }
 
     /// Whether no unit is in the set.
@@ -150,7 +162,7 @@ impl UnitSet {
     #[inline(always)]
     fn contains(&self, value: u32) -> bool {
         if value < ASCII_UNITS {
-            self.ascii >> value & 1 != 0
+            self.table[value as usize]
         } else {
             self.beyond.matches(value)
         }
@@ -599,48 +611,98 @@ fn literal_prefix(expr: &Expr, flags: Flags, prefix: &mut Vec<u8>) -> bool {
     }
 }
 
-/// Where a match can start: at the subject's start when `at_start`, and wherever the unit
-/// there is in `units`. `only_at_start` is derived: no unit admits a start, so the subject's
-/// start is the sole candidate and a search need not scan for another.
+/// Where a match can start: at the subject's start when `at_start`, at its end when
+/// `at_end`, and wherever the unit there is in `units`. `only_at_start` is derived: no unit
+/// and not the end admits a start, so the subject's start is the sole candidate and a search
+/// need not scan for another.
 struct Starts {
     at_start: bool,
+    at_end: bool,
     units: UnitSet,
     only_at_start: bool,
 }
 
 impl Starts {
-    fn new(at_start: bool, units: UnitSet) -> Self {
-        let only_at_start = units.is_empty();
+    fn new(at_start: bool, at_end: bool, units: UnitSet) -> Self {
+        let only_at_start = units.is_empty() && !at_end;
         Self {
             at_start,
+            at_end,
             units,
             only_at_start,
         }
     }
 
+    /// Only the position `assertion` admits as a whole match's start, for an assertion that
+    /// holds at one end of the subject alone: `^` and `$` outside multiline mode, `\A`, `\z`.
+    fn of_anchor(assertion: Assertion, flags: Flags) -> Option<Self> {
+        let never = || UnitSet::new(Beyond::Never);
+        match assertion {
+            Assertion::Start if !flags.multiline => Some(Self::new(true, false, never())),
+            Assertion::StartBuffer => Some(Self::new(true, false, never())),
+            Assertion::End if !flags.multiline => Some(Self::new(false, true, never())),
+            Assertion::EndBuffer => Some(Self::new(false, true, never())),
+            _ => None,
+        }
+    }
+
+    /// No position: the starts of an expression that never consumes a unit.
+    fn none() -> Self {
+        Self::new(false, false, UnitSet::new(Beyond::Never))
+    }
+
     fn union(self, other: Self) -> Self {
-        Self::new(self.at_start || other.at_start, self.units.union(&other.units))
+        Self::new(
+            self.at_start || other.at_start,
+            self.at_end || other.at_end,
+            self.units.union(&other.units),
+        )
     }
 
     #[inline(always)]
     fn admits<T: Text + ?Sized>(&self, text: &T, position: usize) -> bool {
         (self.at_start && position == 0)
-            || (position < text.len() && self.units.contains(text.unit(position)))
+            || if position < text.len() {
+                self.units.contains(text.unit(position))
+            } else {
+                self.at_end && position == text.len()
+            }
     }
 }
 
-/// The starts of every match of `expr`, or `None` where any position may start one, as for
-/// an expression that can match empty.
+/// A superset of the positions where a match of `expr` can start, or `None` where any
+/// position may start one, as for an expression that can match empty anywhere.
 fn starts(expr: &Expr, flags: Flags) -> Option<Starts> {
-    let units = |beyond| {
-        Some(Starts::new(false, UnitSet::new(beyond)))
-    };
+    match expr {
+        Expr::Sequence(parts) => sequence_starts(parts, flags),
+        Expr::Alternation(alternatives) => {
+            let mut alternatives = alternatives.iter();
+            let first = starts(alternatives.next()?, flags)?;
+            alternatives.try_fold(first, |all, alternative| {
+                Some(all.union(starts(alternative, flags)?))
+            })
+        }
+        Expr::Capture { body, .. } => starts(body, flags),
+        Expr::Mode { body, flags: local } => starts(body, merge_flags(flags, *local)),
+        Expr::Assertion(assertion) => Starts::of_anchor(*assertion, flags),
+        expr if !nullable(expr) => consuming_starts(expr, flags),
+        _ => None,
+    }
+}
+
+/// A superset of the positions where a match of `expr` that consumes a unit can start, or
+/// `None` where any position may; an expression that never consumes starts nowhere.
+fn consuming_starts(expr: &Expr, flags: Flags) -> Option<Starts> {
+    let units = |beyond| Some(Starts::new(false, false, UnitSet::new(beyond)));
     match expr {
         Expr::Literal(value) if !flags.ignore_case => {
             let value = *value;
-            Some(Starts::new(false, UnitSet {
-                    ascii: if value < ASCII_UNITS { 1 << value } else { 0 },
-                    beyond: if value < ASCII_UNITS {
+            Some(Starts::new(
+                false,
+                false,
+                UnitSet::of(
+                    if value < ASCII_UNITS { 1 << value } else { 0 },
+                    if value < ASCII_UNITS {
                         Beyond::Never
                     } else {
                         Beyond::Literal {
@@ -648,7 +710,7 @@ fn starts(expr: &Expr, flags: Flags) -> Option<Starts> {
                             unicode: flags.unicode,
                         }
                     },
-                },
+                ),
             ))
         }
         Expr::Literal(value) => units(Beyond::Literal {
@@ -663,24 +725,71 @@ fn starts(expr: &Expr, flags: Flags) -> Option<Starts> {
             ignore_case: flags.ignore_case,
             unicode: flags.unicode,
         }),
-        Expr::Sequence(parts) => match parts.first()? {
-            // Outside multiline mode `^` holds only at the start, whatever follows.
-            Expr::Assertion(Assertion::Start) if !flags.multiline => Some(Starts::new(true, UnitSet::new(Beyond::Never))),
-            Expr::Assertion(Assertion::StartBuffer) => Some(Starts::new(true, UnitSet::new(Beyond::Never))),
-            first => starts(first, flags),
-        },
-        Expr::Alternation(alternatives) => {
-            let mut alternatives = alternatives.iter();
-            let first = starts(alternatives.next()?, flags)?;
-            alternatives.try_fold(first, |all, alternative| {
-                Some(all.union(starts(alternative, flags)?))
-            })
+        Expr::Sequence(parts) => {
+            sequence_consuming_starts(parts, flags).map(|(found, _)| found.unwrap_or_else(Starts::none))
         }
-        Expr::Capture { body, .. } => starts(body, flags),
-        Expr::Repeat { body, min, .. } if *min > 0 => starts(body, flags),
-        Expr::Assertion(Assertion::Start) if !flags.multiline => Some(Starts::new(true, UnitSet::new(Beyond::Never))),
-        Expr::Mode { body, flags: local } => starts(body, merge_flags(flags, *local)),
+        Expr::Alternation(alternatives) => alternatives.iter().try_fold(Starts::none(), |all, alternative| {
+            Some(all.union(consuming_starts(alternative, flags)?))
+        }),
+        Expr::Capture { body, .. } | Expr::Repeat { body, .. } => consuming_starts(body, flags),
+        Expr::Mode { body, flags: local } => consuming_starts(body, merge_flags(flags, *local)),
+        Expr::Assertion(_) | Expr::Lookaround { .. } => Some(Starts::none()),
         _ => None,
+    }
+}
+
+/// `starts` of a sequence: a match starts where its first part that consumes a unit does,
+/// or where an anchor met after only empty parts holds; one whose parts can all match
+/// empty without an anchor can start anywhere.
+fn sequence_starts(parts: &[Expr], flags: Flags) -> Option<Starts> {
+    match sequence_consuming_starts(parts, flags)? {
+        (found, true) => found,
+        (_, false) => None,
+    }
+}
+
+/// The starts of a sequence's consuming matches: the union of each part's
+/// (`consuming_starts`) up to its first part that cannot match empty, or up to an anchor
+/// met after only empty parts, which adds its own position. Zero-width tests other than
+/// anchors (word boundaries, lookarounds) leave the candidates to the parts that follow.
+/// The flag tells whether the walk stopped there, rather than running past every part,
+/// as a sequence that can match empty anywhere does.
+fn sequence_consuming_starts(parts: &[Expr], flags: Flags) -> Option<(Option<Starts>, bool)> {
+    let mut found: Option<Starts> = None;
+    let add = |found: &mut Option<Starts>, more: Starts| {
+        *found = Some(match found.take() {
+            Some(all) => all.union(more),
+            None => more,
+        });
+    };
+    for part in parts {
+        if let Expr::Assertion(assertion) = part {
+            if let Some(anchor) = Starts::of_anchor(*assertion, flags) {
+                add(&mut found, anchor);
+                return Some((found, true));
+            }
+            continue;
+        }
+        if matches!(part, Expr::Lookaround { .. }) {
+            continue;
+        }
+        add(&mut found, consuming_starts(part, flags)?);
+        if !nullable(part) {
+            return Some((found, true));
+        }
+    }
+    Some((found, false))
+}
+
+/// Whether `expr` can match the empty string.
+fn nullable(expr: &Expr) -> bool {
+    match expr {
+        Expr::Literal(_) | Expr::Dot | Expr::Class(_) => false,
+        Expr::Sequence(parts) => parts.iter().all(nullable),
+        Expr::Alternation(alternatives) => alternatives.iter().any(nullable),
+        Expr::Capture { body, .. } | Expr::Mode { body, .. } => nullable(body),
+        Expr::Repeat { body, min, .. } => *min == 0 || nullable(body),
+        Expr::Assertion(_) | Expr::Lookaround { .. } | Expr::Backreference(_) => true,
     }
 }
 
@@ -707,6 +816,12 @@ impl Program {
             prefix: (!prefix.is_empty()).then(|| literal_finder(&prefix)),
             literal_length: (whole_literal && capture_count == 0 && !prefix.is_empty()).then_some(prefix.len()),
         })
+    }
+
+    /// Whether every ASCII search starts by finding `literal` as the program's prefix
+    /// (`next_start`).
+    pub(crate) fn searches_prefix(&self, literal: &[u8]) -> bool {
+        self.prefix.as_ref().is_some_and(|prefix| prefix.needle() == literal)
     }
 
     /// The step budget of a search over `length` units, when a linear-time backend can
@@ -1212,6 +1327,15 @@ mod tests {
             r"[a-z]+\d{1,2}",
             r".",
             r"(?:(a)|(b))+",
+            r"\s*$",
+            r"a?$|b",
+            r"x*\b",
+            r"(?=a)b|$",
+            r"(?:^|c)a",
+            r"\b(?:a|$)",
+            r"a*(?!b)$",
+            r"(x?)\1$",
+            r"[ab]*c?$",
             r"NQ_VQ",
             r"ab(c)?",
             r"pad",
@@ -1247,6 +1371,10 @@ mod tests {
             "\u{1F600}a\u{1F600}",
             "lhv-h lhv-h",
             "?sevraqvq=12&q",
+            "a c ",
+            "xx\n",
+            " b \t",
+            "cab\nab",
         ];
         for flags in ["", "i", "m", "s", "u", "im", "iu"] {
             for pattern in patterns {
