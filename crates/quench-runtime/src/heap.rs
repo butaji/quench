@@ -389,6 +389,9 @@ pub(crate) struct Heap {
     /// The young cells with weak entries (weak maps and sets, weak refs, finalization
     /// registries): a minor collection prunes only these and the remembered cells.
     young_weak: Vec<u32>,
+    /// Slots that held a weak container (`Cell::has_weak_entries`) when allocated: what a
+    /// full collection prunes, instead of every slot. A reused or dead index is dropped there.
+    weak_cells: Vec<u32>,
     free_by_slab: Vec<FreeSlotBitmap>,
     free_slabs: Vec<u32>,
     free_slots: usize,
@@ -1195,6 +1198,7 @@ impl Heap {
             }
             if weak {
                 self.young_weak.push(index);
+                self.weak_cells.push(index);
             }
             #[cfg(feature = "profile-memory")]
             self.profile_allocation(Value::heap(index));
@@ -1216,6 +1220,7 @@ impl Heap {
         }
         if weak {
             self.young_weak.push(index as u32);
+            self.weak_cells.push(index as u32);
         }
         Value::heap(index as u32)
     }
@@ -1421,6 +1426,7 @@ impl Heap {
         self.remembered.clear();
         self.young.clear();
         self.young_weak.clear();
+        self.weak_cells.clear();
         self.roots.clear();
         self.sparse_arrays = None;
         self.collection_state = CollectionState::Idle;
