@@ -2640,9 +2640,13 @@ impl Heap {
         elements.values.insert(index, value);
         elements.length = elements.length.max(index.saturating_add(1));
         let (length, sparse_count) = (elements.length, elements.values.len());
-        let dense_count = self.array_elements(array).map_or(0, |dense| dense.len());
-        // Dense storage of the whole length takes no more words than the sparse entries hold.
-        let dense_enough = (sparse_count + dense_count).saturating_mul(SPARSE_ENTRY_SLOTS) >= length;
+        // Dense storage of the whole length takes no more words than the elements hold. Holes
+        // in the dense prefix are not elements; counting them would promote an array whose
+        // writes only grow its length, doubling its storage at every far write.
+        let fills = |count: usize| count.saturating_add(sparse_count).saturating_mul(SPARSE_ENTRY_SLOTS) >= length;
+        let dense = self.array_elements(array);
+        let dense_enough = fills(dense.map_or(0, |dense| dense.len()))
+            && fills(dense.map_or(0, |dense| dense.iter().filter(|value| !value.is_deleted()).count()));
         if length <= MAX_DENSE_ARRAY_HOLE_LENGTH || dense_enough {
             self.materialize_sparse_array(array, length);
         }
