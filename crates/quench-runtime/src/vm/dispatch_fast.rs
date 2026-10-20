@@ -6614,6 +6614,13 @@ fn lane_activate_environment<H: Host>(
             *binding = passed(slot);
         }
     }
+    // A non-arrow binds its `this` where its closures' arrows find it
+    // (`Vm::captured_lexical_this`), as a frame's promotion carries its bindings.
+    let dynamic_bindings = if target.lexical_this.is_none() {
+        vec![(vm.runtime_atoms.lexical_this, this)]
+    } else {
+        Vec::new()
+    };
     let environment = vm.heap.alloc(Cell::Environment {
         parent: target.env,
         function: target.function,
@@ -6622,7 +6629,7 @@ fn lane_activate_environment<H: Host>(
             program: Some(target.program.raw()),
             root_eval_scope: false,
             binding_site_pc: None,
-            dynamic_bindings: Vec::new().into(),
+            dynamic_bindings: dynamic_bindings.into(),
             with_objects: Box::default(),
         }),
     });

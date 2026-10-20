@@ -10387,8 +10387,9 @@ fn js_jit_enters_compiled_known_callees_without_pushing_a_frame() {
         .iter()
         .position(|function| {
             function
+                .header()
                 .name
-                .or(function.inferred_name)
+                .or(function.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == "add")
         })
         .unwrap() as u32;
