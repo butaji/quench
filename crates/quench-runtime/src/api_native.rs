@@ -229,6 +229,37 @@ pub enum BuiltinBrand {
     BoxedPrimitive,
 }
 
+/// A property descriptor's fields, as [[GetOwnProperty]] reports them or [[DefineOwnProperty]]
+/// reads them, without a descriptor object. An absent field is `None`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DescriptorFields<T = RootId> {
+    pub value: Option<T>,
+    pub writable: Option<bool>,
+    pub get: Option<T>,
+    pub set: Option<T>,
+    pub enumerable: Option<bool>,
+    pub configurable: Option<bool>,
+}
+
+impl<T> Default for DescriptorFields<T> {
+    fn default() -> Self {
+        Self { value: None, writable: None, get: None, set: None, enumerable: None, configurable: None }
+    }
+}
+
+impl<T> DescriptorFields<T> {
+    fn try_map_values<U, E>(self, mut map: impl FnMut(T) -> Result<U, E>) -> Result<DescriptorFields<U>, E> {
+        Ok(DescriptorFields {
+            value: self.value.map(&mut map).transpose()?,
+            writable: self.writable,
+            get: self.get.map(&mut map).transpose()?,
+            set: self.set.map(&mut map).transpose()?,
+            enumerable: self.enumerable,
+            configurable: self.configurable,
+        })
+    }
+}
+
 /// A real Promise's current settlement, without running reactions or guest hooks.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PromiseSnapshot<T = RootId> {
@@ -671,6 +702,34 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.completion(result)
     }
 
+    /// [[GetOwnProperty]]: the own property `key` of `object` as descriptor fields, with
+    /// no descriptor object; `None` when there is none.
+    pub fn own_property_fields_rooted(
+        &mut self,
+        object: RootId,
+        key: RootId,
+    ) -> Result<Option<DescriptorFields>, RootedError> {
+        let result = self.vm.embedding_own_property_fields(object, key);
+        let fields = result.map_err(|error| self.error(error))?;
+        fields
+            .map(|fields| fields.try_map_values(|value| Ok(self.scoped_value(value))))
+            .transpose()
+    }
+
+    /// `Reflect.defineProperty` with a descriptor given as its fields: whether the
+    /// definition succeeded.
+    pub fn define_property_fields_rooted(
+        &mut self,
+        object: RootId,
+        key: RootId,
+        fields: DescriptorFields,
+    ) -> Result<bool, RootedError> {
+        let result = fields
+            .try_map_values(|root| self.vm.embedding_value(root))
+            .and_then(|fields| self.vm.embedding_define_property_fields(object, key, fields));
+        result.map_err(|error| self.error(error))
+    }
+
     /// Own non-array-index keys without expanding a view's virtual element keys.
     pub fn own_non_index_keys_rooted(&mut self, root: RootId, enumerable_only: bool) -> Result<Vec<RootId>, RootedError> {
         let result = self.vm.embedding_non_index_own_keys(root, enumerable_only);
@@ -950,7 +1009,8 @@ impl<'a, H: Host> NativeContext<'a, H> {
 
     /// Compile and evaluate a host wrapper `prefix + body + suffix` whose body is static
     /// host text (an embedded library module): the program retains the body instead of a
-    /// copy of the wrapped source, and positions start at the wrapper origin.
+    /// copy of the wrapped source, and positions start at the wrapper origin. The compiled
+    /// program goes through the host's compile cache (`Host::kept_compiled_program`).
     pub fn evaluate_specialized_static_body_rooted(
         &mut self,
         prefix: &str,
@@ -958,9 +1018,32 @@ impl<'a, H: Host> NativeContext<'a, H> {
         suffix: &str,
         name: &str,
     ) -> Result<RootId, RootedError> {
+        self.evaluate_library_body(prefix, crate::bytecode::SourceText::Static(body), suffix, name)
+    }
+
+    /// `evaluate_specialized_static_body_rooted` for a library module text the host derived
+    /// from its embedded text (a projection), which the program retains instead.
+    pub fn evaluate_specialized_library_body_rooted(
+        &mut self,
+        prefix: &str,
+        body: String,
+        suffix: &str,
+        name: &str,
+    ) -> Result<RootId, RootedError> {
+        let body = crate::bytecode::SourceText::Shared(std::sync::Arc::from(body));
+        self.evaluate_library_body(prefix, body, suffix, name)
+    }
+
+    fn evaluate_library_body(
+        &mut self,
+        prefix: &str,
+        body: crate::bytecode::SourceText,
+        suffix: &str,
+        name: &str,
+    ) -> Result<RootId, RootedError> {
         let result = self
             .vm
-            .prepare_embedding_static_body(prefix, body, suffix, name)
+            .prepare_embedding_library_body_kept(prefix, body, suffix, name)
             .and_then(|prepared| self.vm.evaluate_embedding_prepared_script(&prepared));
         self.completion(result)
     }

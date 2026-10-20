@@ -56,7 +56,7 @@ impl<H: Host> Vm<H> {
         let iterator =
             self.native_with_realm(Native::IntlSegmenterSegmentsIterator, global, global);
         self.set_builtin_function_name(iterator, "[Symbol.iterator]")?;
-        let symbol_iterator = self.well_known_symbols["iterator"];
+        let symbol_iterator = self.well_known_symbols[WellKnownSymbol::Iterator];
         self.set_symbol_property(segments_prototype, symbol_iterator, iterator)?;
         let containing =
             self.native_with_realm(Native::IntlSegmenterSegmentsContaining, global, global);
@@ -191,7 +191,7 @@ impl<H: Host> Vm<H> {
                 .map(|index| Value::number(index as f64))
                 .collect();
             let boundaries = vm.new_array(boundaries);
-            let input = vm.heap.alloc(Cell::String(input));
+            let input = vm.heap.alloc_string(input);
             let prototype = vm.realm.intrinsics.intl_segments_prototypes[&vm.realm.globals];
             let object = vm.heap.alloc(Cell::Object(Self::empty_object(prototype)));
             let data = vm.new_array(vec![this, input, boundaries]);
@@ -215,7 +215,7 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, "incompatible Segments receiver".into()));
         };
         let (segmenter, input, boundaries) = (*segmenter, *input, *boundaries);
-        let Some(Cell::String(text)) = self.heap.get(input) else {
+        let Some(text) = self.heap.string(input) else {
             return Ok(None);
         };
         if index >= text.units().len() {
@@ -246,7 +246,7 @@ impl<H: Host> Vm<H> {
         let object = self.heap.alloc(Cell::Object(Self::empty_object(
             self.realm_object_prototype(self.realm.globals),
         )));
-        let text = self.heap.alloc(Cell::String(text));
+        let text = self.heap.alloc_string(text);
         self.set_named(p, object, "segment", text)?;
         self.set_named(p, object, "index", Value::number(start as f64))?;
         self.set_named(p, object, "input", input)?;

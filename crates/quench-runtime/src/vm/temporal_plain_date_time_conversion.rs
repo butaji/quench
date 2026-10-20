@@ -437,6 +437,6 @@ fn construct<H: Host>(
     for (argument, part) in args[3..9].iter_mut().zip(time) {
         *argument = Value::number(f64::from(part));
     }
-    args[9] = vm.heap.alloc(Cell::String(calendar.into()));
+    args[9] = vm.heap.alloc_string(calendar.into());
     vm.temporal_plain_date_time_construct(p, &args, constructor)
 }

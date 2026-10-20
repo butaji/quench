@@ -610,7 +610,7 @@ pub(crate) enum Native {
     WithEnter, WithExit,
     WasmHost,
     WebAssemblyValidate, WebAssemblyCompile, WebAssemblyInstantiate,
-    WasmModule, WasmModuleExports, WasmModuleImports,
+    WasmModule, WasmModuleExports, WasmModuleImports, WasmModuleCustomSections,
     WasmInstance, WasmInstanceExportsGetter,
     WasmMemory, WasmMemoryGrow, WasmMemoryBufferGetter,
     WasmTable, WasmTableLengthGetter, WasmTableGrow, WasmTableGet, WasmTableSet,
@@ -874,8 +874,9 @@ impl Native {
 
     /// Natives a lane `Call` makes in place from the running frame (`lane_call_native`):
     /// the string, RegExp and `Math` functions, the Array, Object, Reflect and JSON
-    /// functions, `String.fromCharCode` and `fromCodePoint` and the primitive conversions, which read no caller state beyond the
-    /// frame's published PC and run guest code only through ordinary nested calls.
+    /// functions, `String.fromCharCode` and `fromCodePoint`, the primitive conversions, the
+    /// keyed collection methods and embedder host functions, which read no caller state
+    /// beyond the frame's published PC and run guest code only through ordinary nested calls.
     pub(crate) fn runs_from_lane(self) -> bool {
         self.is_string_regexp_or_math()
             || matches!(
@@ -928,7 +929,72 @@ impl Native {
                     | Self::String
                     | Self::Number
                     | Self::Boolean
+                    | Self::HostFunction
+                    | Self::MapGet
+                    | Self::MapSet
+                    | Self::MapHas
+                    | Self::MapDelete
+                    | Self::MapClear
+                    | Self::MapKeys
+                    | Self::MapValues
+                    | Self::MapEntries
+                    | Self::MapForEach
+                    | Self::SetAdd
+                    | Self::SetHas
+                    | Self::SetDelete
+                    | Self::SetClear
+                    | Self::SetValues
+                    | Self::SetEntries
+                    | Self::SetForEach
+                    | Self::WeakMapGet
+                    | Self::WeakMapSet
+                    | Self::WeakMapHas
+                    | Self::WeakMapDelete
+                    | Self::WeakSetAdd
+                    | Self::WeakSetHas
+                    | Self::WeakSetDelete
+                    | Self::ReflectGetPrototypeOf
+                    | Self::ForInKeyIsEnumerable
+                    | Self::PromiseThen
+                    | Self::PromiseCatch
+                    | Self::PromiseResolve
+                    | Self::GeneratorNext
+                    | Self::GeneratorReturn
+                    | Self::GeneratorThrow
+                    | Self::AsyncGeneratorNext
+                    | Self::IteratorNext
+                    | Self::StringIteratorNext
             )
+            || self.is_data_view_element_method()
+    }
+
+    /// `DataView.prototype`'s element reads and writes (`getUint8` through `setBigUint64`).
+    pub(crate) fn is_data_view_element_method(self) -> bool {
+        matches!(
+            self,
+            Self::DataViewGetUint8
+                | Self::DataViewSetUint8
+                | Self::DataViewGetInt8
+                | Self::DataViewSetInt8
+                | Self::DataViewGetUint16
+                | Self::DataViewSetUint16
+                | Self::DataViewGetInt16
+                | Self::DataViewSetInt16
+                | Self::DataViewGetUint32
+                | Self::DataViewSetUint32
+                | Self::DataViewGetInt32
+                | Self::DataViewSetInt32
+                | Self::DataViewGetFloat32
+                | Self::DataViewSetFloat32
+                | Self::DataViewGetFloat64
+                | Self::DataViewSetFloat64
+                | Self::DataViewGetFloat16
+                | Self::DataViewSetFloat16
+                | Self::DataViewGetBigInt64
+                | Self::DataViewSetBigInt64
+                | Self::DataViewGetBigUint64
+                | Self::DataViewSetBigUint64
+        )
     }
 
     pub(crate) fn is_host_control_native(self) -> bool {
@@ -1571,6 +1637,9 @@ struct ObjectExtras {
     /// A `length` descriptor has been recorded for this object, as a non-writable array
     /// length is; never cleared.
     length_descriptor: bool,
+    /// Any property descriptor beside the shape has been recorded for this object
+    /// (`Vm::insert_descriptor`); never cleared.
+    side_descriptors: bool,
 }
 /// How structured serialization treats an object (HTML [[Serializable]] and
 /// [[Transferable]] host objects).
@@ -1680,6 +1749,7 @@ impl Object {
             Some(HeapReference::PromiseRecord(id)) => PROTO_PROMISE_RECORD_BASE + id,
             Some(HeapReference::IteratorRecord(id)) => PROTO_ITERATOR_RECORD_BASE + id,
             Some(HeapReference::AwaitRecord(_)) => unreachable!("an await state is never a prototype"),
+            Some(HeapReference::StringRecord(_)) => unreachable!("a string is never a prototype"),
             None if proto.is_null() => PROTO_NULL,
             None => {
                 debug_assert!(proto.is_undefined(), "a prototype is an object or null");
@@ -2096,6 +2166,15 @@ impl Object {
     pub(crate) fn mark_length_descriptor(&mut self) {
         self.extras_mut().length_descriptor = true;
     }
+    /// Whether the VM's descriptor table may hold an entry for this object: lookups of an
+    /// object without one need not probe the table.
+    #[inline(always)]
+    pub(crate) fn has_side_descriptors(&self) -> bool {
+        self.extras().is_some_and(|extras| extras.side_descriptors)
+    }
+    pub(crate) fn mark_side_descriptors(&mut self) {
+        self.extras_mut().side_descriptors = true;
+    }
     pub(crate) fn is_raw_json(&self) -> bool {
         self.extras().is_some_and(|extras| extras.raw_json)
     }
@@ -2472,10 +2551,6 @@ impl EnvironmentSlots {
         None
     }
 
-    /// The owner a sparse storage's unlisted slots share.
-    pub(crate) fn default_owner(&self) -> Option<Value> {
-        self.sparse().map(|(_, owner)| owner)
-    }
     pub(crate) fn len(&self) -> usize {
         self.sparse().map_or(self.0.len(), |(length, _)| length)
     }
@@ -2556,32 +2631,140 @@ impl EnvironmentSlots {
             })
     }
 
-    /// Slots of `len`, each `slot(index)`, stored sparsely around `default_owner` when one is
-    /// given, `len` reaches `SPARSE_CLONE_MIN_SLOTS` and the sparse words are fewer than the
-    /// dense ones; a copy that owns most of its slots stays dense, whose reads need no search.
-    /// `None` when a slot is missing.
-    pub(crate) fn try_from_slots(
-        len: usize,
-        default_owner: Option<Value>,
-        slot: impl FnMut(usize) -> Option<EnvironmentSlot>,
-    ) -> Option<Self> {
-        let Some(owner) = default_owner.filter(|_| len >= SPARSE_CLONE_MIN_SLOTS) else {
-            return super::thin_slice::ThinBoxSlice::try_from_fn(len, slot).map(Self);
+    /// The indexes a sparse storage lists, ascending.
+    fn sparse_indexes(&self) -> impl Iterator<Item = usize> + '_ {
+        let entries = if self.0.marked() {
+            self.0.len().saturating_sub(SPARSE_ENTRIES_START) / SPARSE_ENTRY_WORDS
+        } else {
+            0
         };
-        let shared = Value::shared_environment_slot(owner);
-        let dense = (0..len).map(slot).collect::<Option<Vec<_>>>()?;
-        let listed = dense.iter().filter(|value| value.0 != shared).count();
-        if SPARSE_ENTRIES_START + listed * SPARSE_ENTRY_WORDS >= len {
-            return Some(Self(super::thin_slice::ThinBoxSlice::from_exact_iter(dense.into_iter())));
+        (0..entries).filter_map(move |entry| {
+            self.0[SPARSE_ENTRIES_START + entry * SPARSE_ENTRY_WORDS]
+                .0
+                .as_environment_index()
+                .map(|index| index as usize)
+        })
+    }
+
+    /// `dense` stored sparsely around the owner most of its slots share, when it reaches
+    /// `SPARSE_CLONE_MIN_SLOTS` and the sparse words are fewer; a copy that owns most of its
+    /// slots stays dense, whose reads need no search.
+    fn compacted(dense: super::thin_slice::ThinBoxSlice<EnvironmentSlot>) -> Option<Self> {
+        let len = dense.len();
+        if len < SPARSE_CLONE_MIN_SLOTS {
+            return Some(Self(dense));
         }
+        let mut owners: Vec<(Value, usize)> = Vec::new();
+        for slot in dense.iter() {
+            if let EnvironmentSlotState::Shared(owner) = slot.state() {
+                match owners.iter_mut().find(|(candidate, _)| *candidate == owner) {
+                    Some((_, count)) => *count += 1,
+                    None => owners.push((owner, 1)),
+                }
+            }
+        }
+        let Some((owner, sharing)) = owners.into_iter().max_by_key(|(_, count)| *count) else {
+            return Some(Self(dense));
+        };
+        let listed = len - sharing;
+        if SPARSE_ENTRIES_START + listed * SPARSE_ENTRY_WORDS >= len {
+            return Some(Self(dense));
+        }
+        let shared = Value::shared_environment_slot(owner);
         let mut words = Vec::with_capacity(SPARSE_ENTRIES_START + listed * SPARSE_ENTRY_WORDS);
         words.push(EnvironmentSlot(Value::environment_index(u32::try_from(len).ok()?)));
         words.push(EnvironmentSlot(shared));
-        for (index, value) in dense.into_iter().enumerate() {
-            if value.0 != shared {
+        for (index, slot) in dense.iter().enumerate() {
+            if slot.0 != shared {
                 words.push(EnvironmentSlot(Value::environment_index(u32::try_from(index).ok()?)));
-                words.push(value);
+                words.push(*slot);
             }
+        }
+        let mut storage = super::thin_slice::ThinBoxSlice::from_exact_iter(words.into_iter());
+        storage.mark();
+        Some(Self(storage))
+    }
+
+    /// The slots of a per-iteration copy of `environment`, which holds these slots: a `reset`
+    /// slot is `undefined`, a `fresh` slot owns its current value (`owned_value` reads a
+    /// shared slot from its owner), and every other slot shares with the slot's current
+    /// owner. The copy's default owner is the one most slots share, so a copy of a copy
+    /// stays sparse, and a sparse source is copied through the slots it lists and the
+    /// fresh and reset ones alone. `fresh` and `reset` are sorted.
+    pub(crate) fn iteration_copy(
+        &self,
+        environment: Value,
+        fresh: &[u16],
+        reset: &[u16],
+        owned_value: impl Fn(Value, usize) -> Option<Value>,
+    ) -> Option<Self> {
+        let len = self.len();
+        let copy_slot = |index: usize| -> Option<EnvironmentSlot> {
+            let slot = u16::try_from(index).ok()?;
+            if reset.binary_search(&slot).is_ok() {
+                return Some(EnvironmentSlot::owned(Value::UNDEFINED));
+            }
+            let fresh = fresh.binary_search(&slot).is_ok();
+            Some(match self.state(index)? {
+                EnvironmentSlotState::Owned(value) if fresh => EnvironmentSlot::owned(value),
+                EnvironmentSlotState::Owned(_) => EnvironmentSlot::shared(environment),
+                EnvironmentSlotState::Shared(owner) if fresh => {
+                    EnvironmentSlot::owned(owned_value(owner, index)?)
+                }
+                EnvironmentSlotState::Shared(owner) => EnvironmentSlot::shared(owner),
+            })
+        };
+        let Some((_, owner)) = self.sparse() else {
+            // Every slot shares with its current owner, then the fresh and reset ones own.
+            let mut copy = super::thin_slice::ThinBoxSlice::from_exact_iter(self.0.iter().map(
+                |slot| match slot.state() {
+                    EnvironmentSlotState::Owned(_) => EnvironmentSlot::shared(environment),
+                    EnvironmentSlotState::Shared(owner) => EnvironmentSlot::shared(owner),
+                },
+            ));
+            for &slot in fresh {
+                let index = usize::from(slot);
+                let Some(source) = self.0.get(index) else {
+                    continue;
+                };
+                copy[index] = EnvironmentSlot::owned(match source.state() {
+                    EnvironmentSlotState::Owned(value) => value,
+                    EnvironmentSlotState::Shared(owner) => owned_value(owner, index)?,
+                });
+            }
+            for &slot in reset {
+                if let Some(target) = copy.get_mut(usize::from(slot)) {
+                    *target = EnvironmentSlot::owned(Value::UNDEFINED);
+                }
+            }
+            return Self::compacted(copy);
+        };
+        // Every slot the source does not list shares with `owner`, as the copy's do unless
+        // they are fresh or reset.
+        let mut indexes: Vec<usize> = self
+            .sparse_indexes()
+            .chain(fresh.iter().chain(reset).map(|&slot| usize::from(slot)))
+            .filter(|&index| index < len)
+            .collect();
+        indexes.sort_unstable();
+        indexes.dedup();
+        let shared = Value::shared_environment_slot(owner);
+        let mut listed = Vec::with_capacity(indexes.len());
+        for index in indexes {
+            let slot = copy_slot(index)?;
+            if slot.0 != shared {
+                listed.push((index, slot));
+            }
+        }
+        if SPARSE_ENTRIES_START + listed.len() * SPARSE_ENTRY_WORDS >= len {
+            return super::thin_slice::ThinBoxSlice::try_from_fn(len, copy_slot).map(Self);
+        }
+        let mut words = Vec::with_capacity(SPARSE_ENTRIES_START + listed.len() * SPARSE_ENTRY_WORDS);
+        words.push(EnvironmentSlot(Value::environment_index(u32::try_from(len).ok()?)));
+        words.push(EnvironmentSlot(shared));
+        for (index, slot) in listed {
+            words.push(EnvironmentSlot(Value::environment_index(u32::try_from(index).ok()?)));
+            words.push(slot);
         }
         let mut storage = super::thin_slice::ThinBoxSlice::from_exact_iter(words.into_iter());
         storage.mark();
@@ -2926,7 +3109,7 @@ pub(crate) enum Cell {
     /// The native callable's immutable host operation and structural signature.
     WasmHostFunction {
         target: WasmHostTarget,
-        signature: Rc<crate::WasmSignature>,
+        signature: Rc<crate::wasm::WasmHostSignature>,
     },
     /// Immutable references available until an element segment drops.
     WasmElements(Vec<Value>),
@@ -2947,7 +3130,6 @@ pub(crate) enum Cell {
         element_type: wasmparser::RefType,
         declarations: Box<crate::WasmTypes>,
     },
-    String(JsString),
     /// Boxed so a slot stays one tag word plus the object layout (`cells_stay_compact`).
     BigInt(Box<num_bigint::BigInt>),
     Symbol(SymbolData),
@@ -3055,7 +3237,6 @@ impl Cell {
             Self::WasmGlobal { .. } => "wasm_global",
             Self::WasmMemory { .. } => "wasm_memory",
             Self::WasmTable { .. } => "wasm_table",
-            Self::String(_) => "string",
             Self::BigInt(_) => "bigint",
             Self::Symbol(_) => "symbol",
             Self::Date { .. } => "date",

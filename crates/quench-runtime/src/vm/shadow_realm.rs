@@ -71,10 +71,10 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn install_shadow_realm_tag(&mut self, prototype: Value) -> Result<(), JsError> {
-        let Some(tag) = self.well_known_symbols.get("toStringTag").copied() else {
+        let Some(tag) = self.well_known_symbols.get(WellKnownSymbol::ToStringTag) else {
             return Ok(());
         };
-        let value = self.heap.alloc(Cell::String("ShadowRealm".into()));
+        let value = self.heap.alloc_string("ShadowRealm".into());
         self.set_symbol_property(prototype, tag, value)?;
         self.set_property_attributes(
             prototype,
@@ -169,7 +169,7 @@ impl<H: Host> Vm<H> {
         let (caller_global, realm_global) = (*caller_global, *realm_global);
         let evaluation_caller = self.realm.globals;
         let source = args.first().copied().unwrap_or(Value::UNDEFINED);
-        let Some(Cell::String(source)) = self.heap.get(source) else {
+        let Some(source) = self.heap.string(source) else {
             return self.with_realm_type_error(
                 p,
                 caller_global,
@@ -236,7 +236,7 @@ impl<H: Host> Vm<H> {
                 "ShadowRealm.prototype.importValue export name must be a string".into(),
             ));
         };
-        if !matches!(self.heap.get(export_name), Some(Cell::String(_))) {
+        if !self.heap.is_string(export_name) {
             return Err(self.type_error(
                 p,
                 "ShadowRealm.prototype.importValue export name must be a string".into(),
@@ -260,7 +260,7 @@ impl<H: Host> Vm<H> {
         specifier: JsString,
         export_name: Value,
     ) -> Result<Value, JsError> {
-        let specifier = self.heap.alloc(Cell::String(specifier));
+        let specifier = self.heap.alloc_string(specifier);
         let prior_global = self.switch_realm_global(realm_global);
         let import = self.call_native(p, Native::DynamicImport, Value::UNDEFINED, &[specifier]);
         self.switch_realm_global(prior_global);
@@ -324,7 +324,7 @@ impl<H: Host> Vm<H> {
         if descriptor.is_undefined() {
             return self.with_realm_type_error(p, caller, "ShadowRealm export not found");
         }
-        let Some(Cell::String(export_name)) = self.heap.get(export_name).cloned() else {
+        let Some(export_name) = self.heap.string(export_name).cloned() else {
             return self.with_realm_type_error(p, caller, "ShadowRealm export not found");
         };
         let export_atom = self.intern_js_atom(&export_name);
@@ -467,7 +467,7 @@ impl<H: Host> Vm<H> {
             }
         };
         let metadata = (|| {
-            let length_key = self.heap.alloc(Cell::String(JsString::from_str("length")));
+            let length_key = self.heap.alloc_string(JsString::from_str("length"));
             let length_descriptor =
                 self.object_get_own_property_descriptor(p, &[target, length_key])?;
             let length = if length_descriptor.is_undefined() {
@@ -481,10 +481,10 @@ impl<H: Host> Vm<H> {
                 }
             };
             let name = self.get_property(p, target, name_atom)?;
-            let name = if matches!(self.heap.get(name), Some(Cell::String(_))) {
+            let name = if self.heap.is_string(name) {
                 name
             } else {
-                self.heap.alloc(Cell::String(JsString::from_str("")))
+                self.heap.alloc_string(JsString::from_str(""))
             };
             Ok::<_, JsError>((name, length))
         })();
@@ -592,7 +592,7 @@ impl<H: Host> Vm<H> {
     ) -> JsError {
         let constructor_atom = self.intern_atom(name);
         let constructor = self.get_property(p, realm, constructor_atom);
-        let message_value = self.heap.alloc(Cell::String(JsString::from_str(message)));
+        let message_value = self.heap.alloc_string(JsString::from_str(message));
         let error = match constructor {
             Ok(constructor) if self.is_constructable(p, constructor) => self
                 .construct_value_with_new_target(p, constructor, constructor, &[message_value])

@@ -20,13 +20,13 @@ fn slice_bytes<T>(values: &[T]) -> usize {
 /// Each function's atom lists: names of parameters, locals, environment and globals.
 fn atom_bytes(function: &Function) -> usize {
     [
-        &function.parameter_atoms,
-        &function.local_atoms,
-        &function.environment_atoms,
-        &function.lexical_atoms,
+        &*function.parameter_atoms,
+        &*function.local_atoms,
+        &*function.environment_atoms,
+        &*function.lexical_atoms,
     ]
     .into_iter()
-    .map(|atoms| slice_bytes::<Atom>(atoms))
+    .map(slice_bytes::<Atom>)
     .sum::<usize>()
         + function.global_declarations.as_deref().map_or(0, |declarations| {
             size_of::<crate::bytecode::GlobalDeclarations>()

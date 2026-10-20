@@ -440,19 +440,7 @@ impl<H: Host> Vm<H> {
                 if self.is_host_private_symbol(key) { return Ok(Value::UNDEFINED); }
                 return self.proxy_own_property_descriptor(p, target, key);
             }
-            // A lazy data property reports its data descriptor; its attributes alone (as
-            // enumeration reads them) need no value.
-            match self.heap.get(key).cloned() {
-                Some(Cell::String(name)) => {
-                    let atom = self.intern_js_atom(&name);
-                    self.materialize_lazy_data_property(p, target, PropertyKey::string(atom))?;
-                }
-                Some(Cell::Symbol(_)) => {
-                    self.materialize_lazy_data_property(p, target, PropertyKey::symbol(key))?;
-                }
-                _ => {}
-            }
-            match self.ordinary_own_property(p, target, key)? {
+            match self.ordinary_get_own_property(p, target, key)? {
                 Some((value, attributes)) => self.property_descriptor_object(value, attributes),
                 None => Ok(Value::UNDEFINED),
             }
@@ -461,6 +449,30 @@ impl<H: Host> Vm<H> {
             self.heap.release_root(root);
         }
         outcome
+    }
+
+    /// [[GetOwnProperty]] of a non-Proxy object for a property key, as its value and
+    /// attributes. A lazy data property reports its data descriptor, so it materializes first;
+    /// its attributes alone (as enumeration reads them, `ordinary_own_property`) need no value.
+    /// The caller keeps `target` and `key` rooted.
+    pub(super) fn ordinary_get_own_property(
+        &mut self,
+        p: &ResidualProgram,
+        target: Value,
+        key: Value,
+    ) -> Result<Option<(Value, PropertyAttributes)>, JsError> {
+        if let Some(name) = self.heap.string(key).cloned() {
+            let atom = self.intern_js_atom(&name);
+            self.materialize_lazy_data_property(p, target, PropertyKey::string(atom))?;
+        } else {
+            match self.heap.get(key).cloned() {
+            Some(Cell::Symbol(_)) => {
+                self.materialize_lazy_data_property(p, target, PropertyKey::symbol(key))?;
+            }
+            _ => {}
+            }
+        }
+        self.ordinary_own_property(p, target, key)
     }
 
     /// An own property of a non-Proxy object as its value and attributes,
@@ -480,7 +492,7 @@ impl<H: Host> Vm<H> {
                 .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
             return Ok(Some((value, attributes)));
         }
-        let Some(Cell::String(key)) = self.heap.get(key).cloned() else {
+        let Some(key) = self.heap.string(key).cloned() else {
             unreachable!("ToPropertyKey returns a string or symbol")
         };
         let atom = self.intern_js_atom(&key);

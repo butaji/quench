@@ -182,6 +182,8 @@ fn decoder_rejects_out_of_range_local_load() {
         literal_templates: Vec::new(),
         superinstructions: vec![],
         replay: None,
+        encoded_records: None,
+            validated: Default::default(),
     };
     let path = std::env::temp_dir().join(format!("quench-invalid-local-{}", std::process::id()));
     program.write_binary(&path).unwrap();
@@ -264,6 +266,8 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
         literal_templates: Vec::new(),
         superinstructions: vec![],
         replay: None,
+        encoded_records: None,
+            validated: Default::default(),
     };
     let path = std::env::temp_dir().join(format!("quench-invalid-abi-{}", std::process::id()));
     program.write_binary(&path).unwrap();
@@ -483,6 +487,7 @@ fn source_lines_share_javascript_boundaries_and_preserve_wrapper_origins() {
         base: 0,
         line_offset: 0,
         column_offset: 0,
+        line_starts: Default::default(),
     };
     for (index, expected) in ["a", "b", "c", "d", "e", ""].into_iter().enumerate() {
         assert_eq!(source.source_line(index as u32 + 1), Some(expected));
@@ -494,6 +499,7 @@ fn source_lines_share_javascript_boundaries_and_preserve_wrapper_origins() {
         base: 0,
         line_offset: 1,
         column_offset: 2,
+        line_starts: Default::default(),
     };
     assert_eq!(wrapped.source_line(1), Some("first"));
     assert_eq!(wrapped.source_line(2), Some("second"));
@@ -507,6 +513,7 @@ fn source_lines_share_javascript_boundaries_and_preserve_wrapper_origins() {
         base: prefix.len() as u32,
         line_offset,
         column_offset,
+        line_starts: Default::default(),
     };
     assert_eq!(retained.source_line(1), Some("first"));
     assert_eq!(retained.source_line(2), Some("second"));
@@ -530,3 +537,86 @@ fn source_positions_round_trip_every_delta_shape() {
     assert_eq!(table.at(8), Some(positions[1]));
     assert_eq!(table.at(300), Some(positions[3]));
 }
+
+/// A compact encoding names every atom by its text: decoded under ids its reader's VM gives,
+/// here each original id shifted past names the reader already holds, the program encodes
+/// to the same bytes. The shift keeps the atoms' order, so atom-sorted bindings keep theirs,
+/// and a field the encoding misses would be written with its shifted id instead.
+#[test]
+fn compact_encoding_names_every_atom_by_its_text() {
+    let source = r#"
+        var shared = 1; let lexical = 2;
+        function outer(first, { nested: { inner } }, ...rest) {
+            const object = { alpha: first, beta: [1, 2, 3], gamma() { return this.alpha; } };
+            object.alpha.toString();
+            object.delta = object.beta.length + inner;
+            with (object) { alpha; }
+            eval("first + lexical");
+            return `${object.gamma()}-${rest.join(",")}`;
+        }
+        class Shape { field = 1; static count = 0; get area() { return this.field; } method() { return Shape.count; } }
+        const arrow = (value) => value?.property ?? /pattern/g.source;
+        function* sequence() { yield shared; }
+    "#;
+    let program = crate::Engine::specialize(source, "compact-atoms.js").unwrap();
+    let (bytes, order) = program.encode_compact();
+    let names: Vec<std::rc::Rc<str>> =
+        order.iter().map(|&atom| std::rc::Rc::from(&program.atoms[atom as usize])).collect();
+    let original: std::collections::HashMap<&str, u32> =
+        names.iter().map(|name| &**name).zip(order.iter().copied()).collect();
+    assert_eq!(original.len(), order.len(), "the test source names each atom once");
+    const SHIFT: u32 = 1 << 12;
+    let mut table = vec![std::rc::Rc::<str>::from(""); (SHIFT as usize) + program.atoms.len()];
+    for (name, &atom) in names.iter().zip(&order) {
+        table[(atom + SHIFT) as usize] = name.clone();
+    }
+    let text = super::SourceText::Shared(std::sync::Arc::from(source));
+    let mut decoded =
+        ResidualProgram::decode_compact(std::rc::Rc::new(bytes.clone()), &mut |name| original[name] + SHIFT, text).unwrap();
+    decoded.atoms = super::AtomTable::from_rcs(&table);
+    // Every record but the root's stays encoded until its first read; validation reads all.
+    assert!(decoded.functions[0].record().is_some());
+    assert!(decoded.functions[1..].iter().all(|slot| slot.record().is_none()));
+    decoded.validate().unwrap();
+    assert_eq!(decoded.encode_compact().0, bytes);
+    // Ids past a narrow immediate widen the instructions naming them, as compiling does.
+    const WIDE_SHIFT: u32 = 1 << 17;
+    let text = super::SourceText::Shared(std::sync::Arc::from(source));
+    let widened = ResidualProgram::decode_compact(std::rc::Rc::new(bytes.clone()), &mut |name| original[name] + WIDE_SHIFT, text).unwrap();
+    widened.compile_released();
+    let narrow: usize = decoded.functions.iter().map(|function| function.wide.len()).sum();
+    let wide: usize = widened.functions.iter().map(|function| function.wide.len()).sum();
+    assert!(wide > narrow, "atom ids past a narrow immediate are widened");
+    let names = |program: &ResidualProgram, shift: u32| {
+        program.functions.iter().flat_map(|function| {
+            function.code.iter().map(move |instruction| {
+                let instruction = super::control_flow::instruction_at(function, *instruction).unwrap();
+                (instruction.op(), instruction.op().immediate_names_atom(instruction.b()).then(|| instruction.imm() - shift))
+            })
+        }).collect::<Vec<_>>()
+    };
+    assert_eq!(names(&decoded, SHIFT), names(&widened, WIDE_SHIFT));
+    // The load checks the body; each deferred record is checked as it decodes.
+    let encoding = &bytes[..bytes.len() - size_of::<u64>()];
+    let region = super::binary::region_start(encoding).unwrap();
+    let mut corrupted = bytes.clone();
+    corrupted[region / 2] ^= 1;
+    let text = super::SourceText::Shared(std::sync::Arc::from(source));
+    assert!(ResidualProgram::decode_compact(std::rc::Rc::new(corrupted), &mut |name| original[name], text).is_err());
+    let mut corrupted = bytes.clone();
+    corrupted[region] ^= 1;
+    let text = super::SourceText::Shared(std::sync::Arc::from(source));
+    let lazy = ResidualProgram::decode_compact(std::rc::Rc::new(corrupted), &mut |name| original[name] + SHIFT, text)
+        .expect("a deferred record is not read at load");
+    let records = lazy.encoded_records.as_deref().unwrap();
+    let first_deferred = (0..lazy.functions.len()).find(|&index| records.ranges[index].is_some_and(|record| record.start as usize == region)).unwrap();
+    assert!(super::binary::decode_deferred_function(records, first_deferred).unwrap().is_err());
+    let shifted = |program: &ResidualProgram| {
+        program.functions.iter().filter_map(|function| function.name).collect::<Vec<_>>()
+    };
+    assert_eq!(
+        shifted(&decoded),
+        shifted(&program).iter().map(|atom| atom + SHIFT).collect::<Vec<_>>()
+    );
+}
+

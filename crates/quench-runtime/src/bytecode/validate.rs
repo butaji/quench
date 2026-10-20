@@ -162,7 +162,6 @@ fn promoted_local_layout_is_valid(function: &super::Function, atoms: &super::Ato
     let eligible_function = function.parent.is_some()
         && !function.is_async
         && !function.is_generator
-        && !function.is_class_constructor
         && !function.derived_constructor
         && !function.class_initializer
         && function.simple_parameters
@@ -493,6 +492,14 @@ fn object_site_instruction_valid(
 
 impl ResidualProgram {
     /// Validate all cross-table references before a VM can observe the program.
+    /// `validate`, unless the program is proven valid (`ValidationProof`).
+    pub(crate) fn validate_unless_proven(&self) -> Result<(), String> {
+        if self.validated.holds() {
+            return Ok(());
+        }
+        self.validate()
+    }
+
     pub(crate) fn validate(&self) -> Result<(), String> {
         if self.functions.is_empty() && self.kind != super::ProgramKind::Wasm {
             return Err("program has no entry function".into());
@@ -1262,6 +1269,8 @@ mod tests {
             literal_templates: Vec::new(),
             superinstructions: vec![],
             replay: None,
+            encoded_records: None,
+            validated: Default::default(),
         }
     }
 

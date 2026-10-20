@@ -399,12 +399,15 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         self.check_execution_interrupt()?;
-        self.with_call_roots(std::iter::once(this).chain(args.iter().copied()), |vm| {
+        let result = self.with_call_roots(std::iter::once(this).chain(args.iter().copied()), |vm| {
             let receiver = vm.string_method_receiver(p, native, this)?;
             vm.with_call_roots([receiver], |vm| {
                 vm.call_native_dispatch(p, native, receiver, args)
             })
-        })
+        });
+        // String natives make text on demand; charge it before the caller's next safepoint.
+        self.heap.charge_materialized_text();
+        result
     }
 
     fn call_native_dispatch(
@@ -999,7 +1002,7 @@ impl<H: Host> Vm<H> {
                 }
                 Ok(self
                     .heap
-                    .alloc(Cell::String("function () { [native code] }".into())))
+                    .alloc_string("function () { [native code] }".into()))
             }
             Native::Number
             | Native::NumberIsNaN
@@ -1015,7 +1018,7 @@ impl<H: Host> Vm<H> {
                 } else {
                     self.coerce_js_string(p, argument)?
                 };
-                Ok(self.heap.alloc(Cell::String(text)))
+                Ok(self.heap.alloc_string(text))
             }
             Native::Symbol => self.call_symbol_constructor(p, args),
             Native::SymbolToString
@@ -1419,8 +1422,8 @@ impl<H: Host> Vm<H> {
                 );
                 // ToPrimitive of a string is the string itself and concatenation never
                 // collects, so string + string needs neither coercion nor extra roots.
-                if matches!(self.heap.get(left), Some(Cell::String(_)))
-                    && matches!(self.heap.get(right), Some(Cell::String(_)))
+                if self.heap.is_string(left)
+                    && self.heap.is_string(right)
                 {
                     return self.concatenate(p, left, right);
                 }
@@ -1566,41 +1569,16 @@ impl<H: Host> Vm<H> {
         left: Value,
         right: Value,
     ) -> Result<Value, JsError> {
-        let Some(Cell::BigInt(left)) = self.heap.get(left) else {
-            return Err(self.type_error(p, MIXED_BIGINT_TYPES.into()));
-        };
-        let Some(Cell::BigInt(right)) = self.heap.get(right) else {
-            return Err(self.type_error(p, MIXED_BIGINT_TYPES.into()));
-        };
-        let (left, right): (&num_bigint::BigInt, &num_bigint::BigInt) = (left, right);
-        let nonzero_divisor = || {
-            if right.sign() == num_bigint::Sign::NoSign {
-                Err(crate::bigint::Error::DivisionByZero)
-            } else {
-                Ok(right)
-            }
-        };
-        let result = match op {
-            8 => Ok(left + right),
-            9 => Ok(left - right),
-            10 => Ok(left * right),
-            11 => nonzero_divisor().map(|right| left / right),
-            12 => nonzero_divisor().map(|right| left % right),
-            13 => {
-                if right.sign() == num_bigint::Sign::Minus {
-                    Err(crate::bigint::Error::NegativeExponent)
+        let Some(result) = self.bigint_operation(op, left, right) else {
+            return Err(self.type_error(
+                p,
+                if self.is_bigint(left) && self.is_bigint(right) {
+                    "BigInt operation is not supported"
                 } else {
-                    u32::try_from(right.magnitude())
-                        .map(|exponent| left.pow(exponent))
-                        .map_err(|_| crate::bigint::Error::ExponentTooLarge)
+                    MIXED_BIGINT_TYPES
                 }
-            }
-            14 => crate::bigint::shift(left, right, true),
-            15 => crate::bigint::shift(left, right, false),
-            17 => Ok(left | right),
-            18 => Ok(left ^ right),
-            19 => Ok(left & right),
-            _ => return Err(self.type_error(p, "BigInt operation is not supported".into())),
+                .into(),
+            ));
         };
         match result {
             Ok(value) => Ok(self.heap.alloc(Cell::bigint(value))),
@@ -1615,6 +1593,81 @@ impl<H: Host> Vm<H> {
             }
         }
     }
+
+    fn is_bigint(&self, value: Value) -> bool {
+        matches!(self.heap.get(value), Some(Cell::BigInt(_)))
+    }
+
+    /// BigInt operator `op` of two BigInt values: the result, or the error it raises. `None`
+    /// when an operand is not a BigInt or the operator has no BigInt meaning.
+    fn bigint_operation(
+        &self,
+        op: u32,
+        left: Value,
+        right: Value,
+    ) -> Option<Result<num_bigint::BigInt, crate::bigint::Error>> {
+        const EXPONENTIAL: u32 = BinaryOperator::Exponential as u32;
+        let (Some(Cell::BigInt(left)), Some(Cell::BigInt(right))) =
+            (self.heap.get(left), self.heap.get(right))
+        else {
+            return None;
+        };
+        let (left, right): (&num_bigint::BigInt, &num_bigint::BigInt) = (left, right);
+        let nonzero_divisor = || {
+            if right.sign() == num_bigint::Sign::NoSign {
+                Err(crate::bigint::Error::DivisionByZero)
+            } else {
+                Ok(right)
+            }
+        };
+        Some(match op {
+            ADDITION => Ok(left + right),
+            SUBTRACTION => Ok(left - right),
+            MULTIPLICATION => Ok(left * right),
+            DIVISION => nonzero_divisor().map(|right| left / right),
+            REMAINDER => nonzero_divisor().map(|right| left % right),
+            EXPONENTIAL => {
+                if right.sign() == num_bigint::Sign::Minus {
+                    Err(crate::bigint::Error::NegativeExponent)
+                } else {
+                    u32::try_from(right.magnitude())
+                        .map(|exponent| left.pow(exponent))
+                        .map_err(|_| crate::bigint::Error::ExponentTooLarge)
+                }
+            }
+            SHIFT_LEFT => crate::bigint::shift(left, right, true),
+            SHIFT_RIGHT => crate::bigint::shift(left, right, false),
+            BITWISE_OR => Ok(left | right),
+            BITWISE_XOR => Ok(left ^ right),
+            BITWISE_AND => Ok(left & right),
+            _ => return None,
+        })
+    }
+
+    /// `binary_bigint` where it succeeds, for callers that leave failures to it: the result
+    /// allocated, or `None`.
+    pub(super) fn bigint_binary_value(&mut self, op: u32, left: Value, right: Value) -> Option<Value> {
+        let value = self.bigint_operation(op, left, right)?.ok()?;
+        Some(self.heap.alloc(Cell::bigint(value)))
+    }
+
+    /// A relational operator (`<`, `<=`, `>`, `>=`) of two BigInt values.
+    pub(super) fn bigint_relation(&self, op: u32, left: Value, right: Value) -> Option<bool> {
+        let (Some(Cell::BigInt(left)), Some(Cell::BigInt(right))) =
+            (self.heap.get(left), self.heap.get(right))
+        else {
+            return None;
+        };
+        let ordering = left.cmp(right);
+        Some(match NumberRelation::from_operator(op)? {
+            NumberRelation::LessThan => ordering.is_lt(),
+            NumberRelation::LessEqual => ordering.is_le(),
+            NumberRelation::GreaterThan => ordering.is_gt(),
+            NumberRelation::GreaterEqual => ordering.is_ge(),
+            NumberRelation::Equal | NumberRelation::NotEqual => return None,
+        })
+    }
+
     #[cold]
     #[inline(never)]
     /// String concatenation for `+` once at least one operand is a string: an interned
@@ -1809,7 +1862,7 @@ impl<H: Host> Vm<H> {
                 (false, true) => self.is_html_dda(left),
                 (false, false) => match (self.heap.get(left), self.heap.get(right)) {
                     // Operands of one type compare as `===` does.
-                    (Some(Cell::String(left)), Some(Cell::String(right))) => left == right,
+                    _ if let (Some(l), Some(r)) = (self.heap.string(left), self.heap.string(right)) => l == r,
                     (Some(Cell::BigInt(left)), Some(Cell::BigInt(right))) => left == right,
                     _ if self.is_object_like(left) && self.is_object_like(right) => false,
                     _ => return None,
@@ -1876,10 +1929,8 @@ impl<H: Host> Vm<H> {
                 let atom = self.intern_atom(&index.to_string());
                 let element = self.get_property(p, self.heap.root_value(object).unwrap(), atom)?;
                 if matches!(element_kind, ArrayLikeElementKind::PropertyKey)
-                    && !matches!(
-                        self.heap.get(element),
-                        Some(Cell::String(_) | Cell::Symbol(_))
-                    )
+                    && !self.heap.is_string(element)
+                    && !matches!(self.heap.get(element), Some(Cell::Symbol(_)))
                 {
                     return Err(self
                         .type_error(p, "array-like list contains an invalid property key".into()));

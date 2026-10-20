@@ -1,4 +1,5 @@
 use super::{ArrayObject, AwaitState, FunctionRecord, IteratorRecord, Object, PromiseCell};
+use crate::vm::wtf16::JsString;
 use crate::value::Value;
 use std::alloc::Layout;
 use std::alloc::{alloc, dealloc};
@@ -15,6 +16,13 @@ pub(super) type FunctionRecordSpace = RecordSpace<FunctionRecord>;
 pub(super) type PromiseRecordSpace = RecordSpace<PromiseCell>;
 pub(super) type AwaitRecordSpace = RecordSpace<AwaitState>;
 pub(super) type IteratorRecordSpace = RecordSpace<IteratorRecord>;
+/// Strings have no legacy-slot fallback, so their space holds as many records as the legacy
+/// slots do (`MAX_HEAP_CELLS`).
+pub(super) type StringRecordSpace = RecordSpace<JsString, STRING_RECORD_CAPACITY>;
+pub(super) const STRING_RECORD_CAPACITY: usize = super::MAX_HEAP_CELLS;
+const _: () = assert!(STRING_RECORD_CAPACITY.is_power_of_two());
+const _: () = assert!(STRING_RECORD_CAPACITY.is_multiple_of(RECORDS_PER_BLOCK));
+const _: () = assert!(STRING_RECORD_CAPACITY <= u32::MAX as usize);
 
 /// What the collector does to every record family alike, whatever its record type: the
 /// per-collection passes iterate `Heap::record_families` instead of naming each space.
@@ -38,7 +46,7 @@ pub(super) trait RecordFamily {
     fn for_each_marked(&self, visit: &mut dyn FnMut(RecordId));
 }
 
-impl<T> RecordFamily for RecordSpace<T> {
+impl<T, const CAPACITY: usize> RecordFamily for RecordSpace<T, CAPACITY> {
     fn clear_marks(&mut self) {
         RecordSpace::clear_marks(self);
     }
@@ -84,7 +92,7 @@ const _: () = assert!(RECORD_SPACE_CAPACITY <= u32::MAX as usize);
 
 /// Each record family owns one fixed address range. Block metadata controls
 /// allocation and sweep, but resolving a live locator never walks it.
-pub(super) struct RecordSpace<T> {
+pub(super) struct RecordSpace<T, const CAPACITY: usize = RECORD_SPACE_CAPACITY> {
     base: NonNull<MaybeUninit<T>>,
     reserved: bool,
     reservation_failed: bool,
@@ -101,7 +109,7 @@ pub(super) struct RecordSpace<T> {
     remembered: Vec<RecordId>,
 }
 
-impl<T> Default for RecordSpace<T> {
+impl<T, const CAPACITY: usize> Default for RecordSpace<T, CAPACITY> {
     fn default() -> Self {
         Self {
             base: NonNull::dangling(),
@@ -181,7 +189,7 @@ impl RecordBlock {
     }
 }
 
-impl<T> RecordSpace<T> {
+impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
     /// Allocates a dense identity in this record space. The family's Value
     /// tag carries this ID directly, independent of legacy Cell slot allocation.
     #[inline(always)]
@@ -195,7 +203,7 @@ impl<T> RecordSpace<T> {
             self.free_word_base + bit as RecordId
         } else if self.free_cursor == 0
             && self.reserved
-            && (self.next_id as usize) < RECORD_SPACE_CAPACITY
+            && (self.next_id as usize) < CAPACITY
             && Self::split_id(self.next_id).0 < self.blocks.len()
         {
             let id = self.next_id;
@@ -250,7 +258,7 @@ impl<T> RecordSpace<T> {
             return Ok(id);
         }
         let id = self.next_id;
-        if id as usize >= RECORD_SPACE_CAPACITY {
+        if id as usize >= CAPACITY {
             return Err(value);
         }
         let (block_index, record_index) = Self::split_id(id);
@@ -296,7 +304,7 @@ impl<T> RecordSpace<T> {
         if self.reservation_failed {
             return false;
         }
-        let Ok(layout) = Layout::array::<MaybeUninit<T>>(RECORD_SPACE_CAPACITY) else {
+        let Ok(layout) = Layout::array::<MaybeUninit<T>>(CAPACITY) else {
             self.reservation_failed = true;
             return false;
         };
@@ -629,12 +637,12 @@ impl<T> RecordSpace<T> {
     }
 }
 
-impl<T> Drop for RecordSpace<T> {
+impl<T, const CAPACITY: usize> Drop for RecordSpace<T, CAPACITY> {
     fn drop(&mut self) {
         if !self.reserved {
             return;
         }
-        let layout = Layout::array::<MaybeUninit<T>>(RECORD_SPACE_CAPACITY)
+        let layout = Layout::array::<MaybeUninit<T>>(CAPACITY)
             .expect("record-space layout was validated at reservation");
         for (block_index, block) in self.blocks.iter().enumerate() {
             for (word_index, word) in block.occupied.iter().copied().enumerate() {
@@ -669,7 +677,7 @@ mod tests {
 
     #[test]
     fn object_record_addresses_are_dense_and_reuse_vacancies() {
-        let mut arena = RecordSpace::default();
+        let mut arena: RecordSpace<_> = RecordSpace::default();
         let first = arena.try_insert(String::from("first")).unwrap();
         let second = arena.try_insert(String::from("second")).unwrap();
         // SAFETY: both ids were returned by successful insertions and remain live.
@@ -698,7 +706,7 @@ mod tests {
     fn object_record_sweep_uses_marks_and_recycles_dead_ids() {
         use super::RecordSweep;
 
-        let mut arena = RecordSpace::default();
+        let mut arena: RecordSpace<_> = RecordSpace::default();
         let dead = arena.try_insert(String::from("dead")).unwrap();
         let live = arena.try_insert(String::from("live")).unwrap();
         assert!(arena.mark(live));
@@ -722,7 +730,7 @@ mod tests {
     fn bitmap_reuse_preserves_descending_free_id_order_across_sweeps() {
         use super::RecordSweep;
 
-        let mut arena = RecordSpace::default();
+        let mut arena: RecordSpace<_> = RecordSpace::default();
         let ids: Vec<_> = (0..6)
             .map(|value| arena.try_insert(value).unwrap())
             .collect();

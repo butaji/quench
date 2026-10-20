@@ -148,6 +148,56 @@ pub(super) fn apply(
     }
 }
 
+/// Coalesces the copies frame-register promotion leaves: each promoted load or store of a
+/// local becomes a `Move` beside the instruction that produces or consumes its value. The
+/// same producer and consumer coalescing as `apply` folds them away; dropping the `Nop`s a
+/// round leaves makes the next copies adjacent to their consumers, until none changes.
+pub(super) fn coalesce_promoted_moves(
+    function: &mut BcFunction,
+    methods: &(impl liveness::MethodArguments + ?Sized),
+    field_sites: &[FieldSite],
+    superinstructions: &[Superinstruction],
+) {
+    let mut liveness = None;
+    loop {
+        let mut changed = false;
+        while coalesce_distant_producer_moves(function, methods, field_sites, superinstructions, &mut liveness) {
+            changed = true;
+        }
+        changed |= forward_move_sources(function, methods, field_sites, superinstructions, &mut liveness);
+        if !changed {
+            return;
+        }
+        remove_nops(function);
+    }
+}
+
+/// Drops every `Nop`, relocating jumps, handlers and source positions onto the instruction
+/// that followed it.
+fn remove_nops(function: &mut BcFunction) {
+    let old = std::mem::take(&mut function.code);
+    let mut code = Vec::with_capacity(old.len());
+    let mut map = vec![0usize; old.len() + 1];
+    for (pc, &instruction) in old.iter().enumerate() {
+        map[pc] = code.len();
+        if instruction.op() != Op::Nop {
+            code.push(instruction);
+        }
+    }
+    map[old.len()] = code.len();
+    relocate(
+        &mut code,
+        &mut function.wide,
+        &map,
+        &mut function.handlers,
+        &mut function.parameter_end_pc,
+        &mut function.binding_sites,
+        &mut function.source_positions,
+        &old,
+    );
+    function.code = code;
+}
+
 /// The liveness of a function's code as it stands: each instruction's transfer masks and the
 /// registers live before it. A pass that leaves the code unchanged hands it on.
 struct CodeLiveness {

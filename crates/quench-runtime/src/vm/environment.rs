@@ -765,7 +765,7 @@ impl<H: Host> Vm<H> {
         if !self.has_property(p, object, key)? {
             return Ok(false);
         }
-        let Some(unscopables) = self.well_known_symbols.get("unscopables").copied() else {
+        let Some(unscopables) = self.well_known_symbols.get(WellKnownSymbol::Unscopables) else {
             return Ok(true);
         };
         let exclusions = self.get_index(p, object, unscopables)?;
@@ -870,7 +870,7 @@ impl<H: Host> Vm<H> {
         if objects.is_empty() {
             return Ok(None);
         }
-        let key = self.heap.alloc(Cell::String(self.atom_name(atom).into()));
+        let key = self.heap.alloc_string(self.atom_name(atom).into());
         self.with_call_roots(std::iter::once(key).chain(objects.iter().copied()), |vm| {
             for object in objects.iter().rev().copied() {
                 if vm.with_binding(p, object, key, atom)? {
@@ -1001,7 +1001,7 @@ impl<H: Host> Vm<H> {
             }
             return Err(self.reference_error(p, format!("{} is not defined", self.atom_name(atom))));
         }
-        let key = self.heap.alloc(Cell::String(self.atom_name(atom).into()));
+        let key = self.heap.alloc_string(self.atom_name(atom).into());
         // ResolveName has already selected a non-global object environment.
         // Preserve that reference even if evaluating the RHS removed the
         // binding before PutValue (the specification's captured Reference).
@@ -1297,7 +1297,7 @@ impl<H: Host> Vm<H> {
         if object == self.realm.globals {
             return self.load_name_without_with(p, atom, None, false);
         }
-        let key = self.heap.alloc(Cell::String(self.atom_name(atom).into()));
+        let key = self.heap.alloc_string(self.atom_name(atom).into());
         if !self.has_property(p, object, key)? {
             if strict {
                 return Err(
@@ -1358,7 +1358,7 @@ impl<H: Host> Vm<H> {
         if self.own_property(self.realm.globals, atom).is_some() {
             return Ok(true);
         }
-        let key = self.heap.alloc(Cell::String(self.atom_name(atom).into()));
+        let key = self.heap.alloc_string(self.atom_name(atom).into());
         self.has_property(p, self.realm.globals, key)
     }
 
@@ -1743,6 +1743,21 @@ impl<H: Host> Vm<H> {
             slot,
             !self.eval_script_context,
         )
+    }
+
+    /// `load_projected_environment_binding` of a global var where reading it runs no guest
+    /// code: a data property the global object or its prototypes hold
+    /// (`Vm::plain_named_get`). `None` for any other projection or read.
+    pub(super) fn plain_projected_global_var(&self, env: Value, slot: u16) -> Option<Value> {
+        let Cell::Environment { function, scope, .. } = self.heap.get(env)? else {
+            return None;
+        };
+        let owner_id = scope
+            .program()
+            .map_or(self.active_program, super::ProgramId::from_raw);
+        let owner = self.programs.residual(owner_id)?;
+        let atom = self.root_global_var_atom(owner, owner_id, *function, usize::from(slot))?;
+        self.plain_named_get(self.realm.globals, atom)
     }
 
     /// Reads a root-function projection (global var, global lexical or module import) or

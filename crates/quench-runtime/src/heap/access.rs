@@ -1,6 +1,6 @@
 use super::{
     ArrayObject, AwaitState, Cell, EnvironmentBindings, FunctionRecord, IteratorRecord,
-    PromiseCell, EnvironmentSlot, EnvironmentSlotState, EnvironmentSlots, Heap, Object,
+    PromiseCell, EnvironmentSlotState, EnvironmentSlots, Heap, Object,
 };
 use crate::bytecode::Atom;
 use crate::value::{HeapReference, Value};
@@ -138,26 +138,11 @@ impl Heap {
         let Cell::Environment { slots, .. } = self.get(environment)? else {
             return None;
         };
-        // Most slots share one owner: the source, or the owner a sparse source shares.
-        let default_owner = slots.default_owner().unwrap_or(environment);
-        EnvironmentSlots::try_from_slots(slots.len(), Some(default_owner), |index| {
-            let slot = u16::try_from(index).ok()?;
-            if reset.binary_search(&slot).is_ok() {
-                return Some(EnvironmentSlot::owned(Value::UNDEFINED));
-            }
-            let fresh = fresh.binary_search(&slot).is_ok();
-            Some(match slots.state(index)? {
-                EnvironmentSlotState::Owned(value) if fresh => EnvironmentSlot::owned(value),
-                EnvironmentSlotState::Owned(_) => EnvironmentSlot::shared(environment),
-                // A shared slot names its owner, which holds the slot itself.
-                EnvironmentSlotState::Shared(owner) if fresh => {
-                    let Cell::Environment { slots, .. } = self.get(owner)? else {
-                        return None;
-                    };
-                    EnvironmentSlot::owned(slots.owned(index)?)
-                }
-                EnvironmentSlotState::Shared(owner) => EnvironmentSlot::shared(owner),
-            })
+        slots.iteration_copy(environment, fresh, reset, |owner, index| {
+            let Cell::Environment { slots, .. } = self.get(owner)? else {
+                return None;
+            };
+            slots.owned(index)
         })
     }
 
@@ -254,6 +239,20 @@ impl Heap {
             Cell::Promise(promise) => Some(promise),
             _ => None,
         }
+    }
+
+    /// The string `value` names, if it is one.
+    #[inline(always)]
+    pub(crate) fn string(&self, value: Value) -> Option<&crate::vm::wtf16::JsString> {
+        let record_id = value.direct_string_index()?;
+        // SAFETY: string Values come only from `alloc_string` and stay live while reachable.
+        Some(unsafe { self.string_records.get_live(record_id) })
+    }
+
+    /// Whether `value` is a string.
+    #[inline(always)]
+    pub(crate) fn is_string(&self, value: Value) -> bool {
+        value.direct_string_index().is_some()
     }
 
     /// An await state (`AwaitState`), in its record or in a slot.
@@ -442,7 +441,7 @@ impl Heap {
             HeapReference::IteratorRecord(record_id) => {
                 &mut unsafe { iterator_records.get_live_mut(record_id) }.object
             }
-            HeapReference::AwaitRecord(_) => return None,
+            HeapReference::AwaitRecord(_) | HeapReference::StringRecord(_) => return None,
             HeapReference::LegacySlot(index) => {
                 slots.get_mut(index as usize)?.cell.as_mut()?.object_mut()?
             }
@@ -549,6 +548,7 @@ impl Heap {
             HeapReference::FunctionRecord(_)
             | HeapReference::IteratorRecord(_)
             | HeapReference::AwaitRecord(_)
+            | HeapReference::StringRecord(_)
             | HeapReference::LegacySlot(_) => None,
         }
     }
@@ -593,6 +593,7 @@ impl Heap {
             Some(HeapReference::PromiseRecord(id)) => self.promise_records.is_live(id),
             Some(HeapReference::AwaitRecord(id)) => self.await_records.is_live(id),
             Some(HeapReference::IteratorRecord(id)) => self.iterator_records.is_live(id),
+            Some(HeapReference::StringRecord(id)) => self.string_records.is_live(id),
             None => false,
         }
     }

@@ -115,7 +115,7 @@ impl<H: Host> Vm<H> {
         let value = self.heap.root(value);
         let outcome = (|| {
             let key = match key {
-                PropertyKey::String(atom) => self.heap.alloc(Cell::String(self.atom_value(atom))),
+                PropertyKey::String(atom) => self.heap.alloc_string(self.atom_value(atom)),
                 PropertyKey::Symbol(symbol) => symbol,
                 PropertyKey::Private(_) => {
                     return Err(JsError::validation(
@@ -140,11 +140,11 @@ impl<H: Host> Vm<H> {
         self.require_object_coercible(p, this)?;
         if this.as_number().is_some() || matches!(self.heap.get(this), Some(Cell::BigInt(_))) {
             let text = self.to_string(p, this)?;
-            return Ok(self.heap.alloc(Cell::String(text.into())));
+            return Ok(self.heap.alloc_string(text.into()));
         }
         if let Some((crate::BuiltinBrand::NumberObject | crate::BuiltinBrand::BigIntObject, value)) = self.boxed_primitive_data(this) {
             let text = self.to_string(p, value)?;
-            return Ok(self.heap.alloc(Cell::String(text.into())));
+            return Ok(self.heap.alloc_string(text.into()));
         }
         let to_string = self.intern_atom("toString");
         let method = self.get_property(p, this, to_string)?;
@@ -189,7 +189,7 @@ impl<H: Host> Vm<H> {
             match self.heap.get(value) {
                 Some(Cell::Proxy { .. }) if proxy_array => "Array",
                 Some(Cell::Proxy { .. }) if self.is_function(value) => "Function",
-                Some(Cell::String(_)) => "String",
+                _ if self.heap.is_string(value)  => "String",
                 Some(Cell::BigInt(_) | Cell::Symbol(_)) => "Object",
                 Some(Cell::Date { .. }) => "Date",
                 Some(Cell::RegExp { .. }) => "RegExp",
@@ -219,20 +219,16 @@ impl<H: Host> Vm<H> {
             None
         } else {
             self.well_known_symbols
-                .get("toStringTag")
-                .copied()
+                .get(WellKnownSymbol::ToStringTag)
                 .map(|symbol| self.get_index(p, value, symbol))
                 .transpose()?
         };
         let brand = tag
-            .and_then(|tag| match self.heap.get(tag) {
-                Some(Cell::String(text)) => Some(text.to_string()),
-                _ => None,
-            })
+            .and_then(|tag| self.heap.string(tag).map(|text| text.to_string()))
             .unwrap_or_else(|| brand.to_owned());
         Ok(self
             .heap
-            .alloc(Cell::String(format!("[object {brand}]").into())))
+            .alloc_string(format!("[object {brand}]").into()))
     }
 
     pub(super) fn descriptor_field(
@@ -248,7 +244,7 @@ impl<H: Host> Vm<H> {
         let descriptor_root = self.heap.root(descriptor);
         let result = (|| {
             let descriptor = self.heap.root_value(descriptor_root).unwrap_or(descriptor);
-            let key = self.heap.alloc(Cell::String(self.atom_value(atom)));
+            let key = self.heap.alloc_string(self.atom_value(atom));
             let descriptor = self.heap.root_value(descriptor_root).unwrap_or(descriptor);
             if !self.has_property(p, descriptor, key)? {
                 return Ok(None);
@@ -331,8 +327,7 @@ impl<H: Host> Vm<H> {
                     .map(|key| self.heap.root(key))
                     .collect();
                 for key in &own_keys {
-                    let Some(Cell::String(name)) =
-                        self.heap.get(self.heap.root_value(*key).unwrap())
+                    let Some(name) = self.heap.string(self.heap.root_value(*key).unwrap())
                     else {
                         continue;
                     };
@@ -741,7 +736,7 @@ impl<H: Host> Vm<H> {
                     self.heap.update_root(key, property_key);
                     let key = match self.heap.get(property_key).cloned() {
                         Some(Cell::Symbol(_)) => PropertyKey::symbol(property_key),
-                        Some(Cell::String(name)) => PropertyKey::string(self.intern_js_atom(&name)),
+                        _ if let Some(name) = self.heap.string(property_key).cloned()  => PropertyKey::string(self.intern_js_atom(&name)),
                         _ => unreachable!("ToPropertyKey returns a string or symbol"),
                     };
                     let object = self.heap.root_value(result).unwrap();
@@ -773,8 +768,10 @@ impl<H: Host> Vm<H> {
             return (a.is_nan() && b.is_nan())
                 || (a == b && (a != 0.0 || a.is_sign_negative() == b.is_sign_negative()));
         }
+        if let (Some(a), Some(b)) = (self.heap.string(left), self.heap.string(right)) {
+            return a == b;
+        }
         match (self.heap.get(left), self.heap.get(right)) {
-            (Some(Cell::String(a)), Some(Cell::String(b))) => a == b,
             (Some(Cell::BigInt(a)), Some(Cell::BigInt(b))) => a == b,
             _ => left == right,
         }

@@ -339,6 +339,19 @@ pub(crate) enum FieldLookup {
     Site(usize),
 }
 
+impl Op {
+    /// Whether an instruction of this op with field `b` names an atom by its immediate: an
+    /// atom index, or a field lookup by name (`FieldLookup::Atom`; through a nested field
+    /// site it names the site).
+    pub(crate) fn immediate_names_atom(self, b: u16) -> bool {
+        match self.immediate_role() {
+            ImmediateRole::AtomIndex => true,
+            ImmediateRole::FieldLookup => b != FieldBase::NESTED,
+            _ => false,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct NumericLocalStoreTarget {
     pub(crate) register: Register,
@@ -1201,17 +1214,19 @@ impl FunctionHeader {
 
 /// One entry of a program's function table: the header, always present, and the compiled
 /// record, written once. Reading the record through `Deref` requires that it was compiled.
+/// Clones of a program share its records (installing an entry clones it into the VM); a
+/// change through `DerefMut` copies a shared record first.
 #[derive(Clone, Debug)]
 pub struct FunctionSlot {
     header: FunctionHeader,
-    record: std::cell::OnceCell<Box<Function>>,
+    record: std::cell::OnceCell<std::rc::Rc<Function>>,
 }
 
 impl FunctionSlot {
     pub(crate) fn compiled(function: Function) -> Self {
         Self {
             header: FunctionHeader::of(&function),
-            record: std::cell::OnceCell::from(Box::new(function)),
+            record: std::cell::OnceCell::from(std::rc::Rc::new(function)),
         }
     }
 
@@ -1252,9 +1267,11 @@ impl std::ops::Deref for FunctionSlot {
 
 impl std::ops::DerefMut for FunctionSlot {
     fn deref_mut(&mut self) -> &mut Function {
-        self.record
-            .get_mut()
-            .expect("a function's record is changed only once it is compiled")
+        std::rc::Rc::make_mut(
+            self.record
+                .get_mut()
+                .expect("a function's record is changed only once it is compiled"),
+        )
     }
 }
 
@@ -1790,7 +1807,7 @@ impl Function {
     }
 
     /// Whether an activation is fully described by the function's static layout: a nested,
-    /// non-arrow, non-derived function whose parameters all live in registers, with no rest
+    /// non-derived function whose parameters all live in registers, with no rest
     /// array, self binding, `arguments` object, parameter-scope `arguments` error, inherited
     /// `with` scope or observable implicit bindings. Such a frame needs only its storage sized
     /// (cleared when no root map lets the collector skip stale registers), its parameters
@@ -1810,8 +1827,10 @@ impl Function {
                 .filter(|entry| entry.local < self.params)
                 .count();
             // Plain but for an `arguments` binding.
+            // An arrow's `this` is its environment's, which its activation binds
+            // (`Vm::lexical_activation_this`); one reaching `super` keeps its frame.
             let ordinary = self.parent.is_some()
-                && !self.is_arrow
+                && !(self.is_arrow && self.super_home_atom.is_some())
                 && !self.derived_constructor
                 && !self.rest
                 && self.self_binding_slot.is_none()
@@ -2636,6 +2655,9 @@ pub(crate) struct ProgramSource {
     pub(crate) base: u32,
     pub(crate) line_offset: u32,
     pub(crate) column_offset: u32,
+    /// `source_line_starts(text)`, indexed on the first line read: error source positions
+    /// read a line per throw, which a scan from the top would make linear in the source.
+    pub(crate) line_starts: std::cell::OnceCell<Box<[u32]>>,
 }
 
 /// Starts of JavaScript source lines, including an empty line after a final terminator.
@@ -2677,10 +2699,14 @@ impl ProgramSource {
         } else {
             (0, 0)
         };
-        let compiled_line = line.checked_add(line_offset)?.checked_sub(1)?;
-        let mut starts = source_line_starts(&self.text);
-        let start = starts.nth(compiled_line as usize)?;
-        let end = starts.next().unwrap_or(self.text.len());
+        let compiled_line = line.checked_add(line_offset)?.checked_sub(1)? as usize;
+        let starts = self.line_starts.get_or_init(|| {
+            source_line_starts(&self.text)
+                .map(|start| u32::try_from(start).unwrap_or(u32::MAX))
+                .collect()
+        });
+        let start = *starts.get(compiled_line)? as usize;
+        let end = starts.get(compiled_line + 1).map_or(self.text.len(), |&end| end as usize);
         let text = self.text.get(start..end)?
             .trim_end_matches(['\r', '\n', '\u{2028}', '\u{2029}']);
         if line != 1 {
@@ -2719,6 +2745,65 @@ pub struct ResidualProgram {
     pub(crate) superinstructions: Vec<Superinstruction>,
     /// How its functions can be compiled again from source, when they can.
     pub(crate) replay: Option<std::rc::Rc<crate::compile::replay::ProgramReplay>>,
+    /// The records a decoded program keeps encoded until their functions' first read.
+    pub(crate) encoded_records: Option<std::rc::Rc<EncodedRecords>>,
+    /// Whether the program is known to be valid (`ValidationProof`).
+    pub(crate) validated: ValidationProof,
+}
+
+/// The encoded records of a decoded program's deferred functions (`binary::decode_program`):
+/// each decodes on its function's first read, as a released record compiles again. A program
+/// loaded from the compile cache runs a small part of its functions, and decoding every
+/// record had been most of its load.
+pub(crate) struct EncodedRecords {
+    /// The program's whole encoding, as the host handed it over: its records stay in place,
+    /// in pages that a mapped file keeps out of memory until a record is read.
+    pub(crate) bytes: KeptBytes,
+    /// A compact encoding's atom ids, by table position (`binary::BinaryReader`).
+    pub(crate) atoms: Option<std::rc::Rc<[u32]>>,
+    /// Per function, its record in `bytes`, when it is deferred.
+    pub(crate) ranges: Box<[Option<DeferredRecord>]>,
+}
+
+impl std::fmt::Debug for EncodedRecords {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("EncodedRecords").field("ranges", &self.ranges.len()).finish_non_exhaustive()
+    }
+}
+
+/// Where a deferred record lies in its program's encoding, and its checksum, which decoding
+/// it checks: the load checked only the encoding's body.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct DeferredRecord {
+    pub(crate) start: u32,
+    pub(crate) length: u32,
+    pub(crate) checksum: u64,
+}
+
+/// Bytes a host kept for a compiled program (`Host::kept_compiled_program`), which the program
+/// decoded from them keeps for as long as it lives.
+pub type KeptBytes = std::rc::Rc<dyn AsRef<[u8]>>;
+
+/// That a program is valid without validating it: this build's compiler output, compiled and
+/// validated or decoded from its checksummed form by `Runtime::compile_entry`, which hands it
+/// to its embedder unchanged. A clone, which its owner may change, starts unproven.
+#[derive(Debug, Default)]
+pub(crate) struct ValidationProof(std::cell::Cell<bool>);
+
+impl ValidationProof {
+    pub(crate) fn holds(&self) -> bool {
+        self.0.get()
+    }
+
+    pub(crate) fn establish(&self) {
+        self.0.set(true);
+    }
+}
+
+impl Clone for ValidationProof {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
 }
 
 #[cold]
@@ -2759,14 +2844,23 @@ impl ResidualProgram {
     #[inline(never)]
     fn recompile_function(&self, index: usize) -> &Function {
         self.functions[index].record.get_or_init(|| {
-            let function = crate::compile::replay::recompile(self, index as u32)
-                .unwrap_or_else(|error| {
-                    panic!("function {index} of {} does not compile again: {error}", self.source_name)
-                })
-                .function;
+            let deferred = self
+                .encoded_records
+                .as_deref()
+                .and_then(|records| binary::decode_deferred_function(records, index));
+            let function = match deferred {
+                Some(decoded) => decoded.unwrap_or_else(|error| {
+                    panic!("function {index} of {} does not decode: {error}", self.source_name)
+                }),
+                None => crate::compile::replay::recompile(self, index as u32)
+                    .unwrap_or_else(|error| {
+                        panic!("function {index} of {} does not compile again: {error}", self.source_name)
+                    })
+                    .function,
+            };
             // As `prime_loop_decoding` primes the functions of an installed program.
             function.decoded.prime_loop(&function.code, &function.wide);
-            Box::new(function)
+            std::rc::Rc::new(function)
         })
     }
 
@@ -2888,6 +2982,36 @@ impl ResidualProgram {
 
     pub fn read_binary(path: &std::path::Path) -> Result<Self, String> {
         binary::read_program(path)
+    }
+
+    /// The compile-cache form of this program (`binary::encode_compact_program`) and the atom
+    /// ids its table names, in order.
+    pub(crate) fn encode_compact(&self) -> (Vec<u8>, Vec<u32>) {
+        binary::encode_compact_program(self)
+    }
+
+    /// This program as an application entry's cached form: its own atom ids, its source and a
+    /// checksum (`binary::encode_trusted_program`). Every released record compiles first.
+    pub(crate) fn encode_trusted(&self) -> Vec<u8> {
+        binary::encode_trusted_program(self)
+    }
+
+    /// Decodes `encode_trusted`'s bytes into a program proven valid: this build's compiler
+    /// output, which the host keys by build and whose checksum held.
+    pub(crate) fn decode_trusted(bytes: KeptBytes) -> Result<Self, String> {
+        let program = binary::decode_trusted_program(bytes)?;
+        program.validated.establish();
+        Ok(program)
+    }
+
+    /// Decodes `encode_compact`'s bytes with `intern`'s ids and `text` as the source; the
+    /// caller sets the atom table and validates.
+    pub(crate) fn decode_compact(
+        bytes: KeptBytes,
+        intern: &mut dyn FnMut(&str) -> u32,
+        text: SourceText,
+    ) -> Result<Self, String> {
+        binary::decode_compact_program(bytes, intern, text)
     }
 }
 mod binary;
