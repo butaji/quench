@@ -929,6 +929,12 @@ impl Native {
                     | Self::PromiseThen
                     | Self::PromiseCatch
                     | Self::PromiseResolve
+                    | Self::GeneratorNext
+                    | Self::GeneratorReturn
+                    | Self::GeneratorThrow
+                    | Self::AsyncGeneratorNext
+                    | Self::IteratorNext
+                    | Self::StringIteratorNext
             )
             || self.is_data_view_element_method()
     }
