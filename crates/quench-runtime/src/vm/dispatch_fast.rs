@@ -1073,6 +1073,18 @@ lane_handler! {
 }
 
 lane_handler! {
+    /// `RequireIteratorResult` of an object, which passes; any other value takes the general
+    /// path, which throws.
+    fn lane_require_iterator_result<>(cx, r, ip, i, view) {
+        let result = r.get(i.b);
+        if !result.is_record() && !(unsafe { vm(cx) }).is_object_like(result) {
+            return exit(ip);
+        }
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
     fn lane_store_local_plain<>(cx, r, ip, i, view) {
         let value = r.get(i.a);
         // SAFETY: validated bytecode bounds the slot by Function.locals.
@@ -6553,6 +6565,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::StoreLocalPlain => Some(lane_store_local_plain::<H>),
         Op::IteratorCleanupPush => Some(lane_iterator_cleanup_push::<H>),
         Op::DefineArrayElement => Some(lane_define_array_element::<H>),
+        Op::RequireIteratorResult => Some(lane_require_iterator_result::<H>),
         Op::IteratorCleanupPop => Some(lane_iterator_cleanup_pop::<H>),
         Op::StoreLocal | Op::StoreEnvLocal => Some(lane_store_local::<H>),
         Op::LoadThis => Some(lane_load_this::<H>),
