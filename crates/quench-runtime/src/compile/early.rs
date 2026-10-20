@@ -378,9 +378,8 @@ pub(super) fn parameter_early_error(
 }
 
 /// Whether a function with these parameters and body can observe a binding of `name` its
-/// own scope would hold: a reference anywhere in them, or a direct eval, which can name it at
-/// run time. Both count in nested functions too, whose eval sees the enclosing scopes, so any
-/// reference to `eval` there counts.
+/// own scope would hold: a reference anywhere in them, or a direct eval, which can name it
+/// at run time; nested functions included, which see the binding too.
 pub(super) fn function_may_reference(
     params: &FormalParameters<'_>,
     body: &[Statement<'_>],
@@ -395,7 +394,11 @@ pub(super) fn function_may_reference(
             &mut self,
             identifier: &oxc_ast::ast::IdentifierReference<'a>,
         ) {
-            self.found |= identifier.name == self.name || identifier.name == "eval";
+            self.found |= identifier.name == self.name;
+        }
+        fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
+            self.found |= is_direct_eval_call(call);
+            walk::walk_call_expression(self, call);
         }
     }
     let mut references = References { name, found: false };
@@ -403,7 +406,7 @@ pub(super) fn function_may_reference(
     for statement in body {
         references.visit_statement(statement);
     }
-    references.found || parameters_contain_direct_eval(params) || body_contains_direct_eval(body)
+    references.found
 }
 
 pub(super) fn parameters_contain_direct_eval(params: &FormalParameters<'_>) -> bool {
