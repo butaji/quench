@@ -697,6 +697,7 @@ impl<H: Host> Vm<H> {
         self.instanceof_constructor_layout = None;
         self.closure_shapes = [None; 2];
         self.regexp_object_shapes = None;
+        self.iterator_result_shape = None;
         self.regexp_last_index_layout = None;
         self.regexp_builtin_layout = None;
         self.regexp_symbol_layouts.clear();

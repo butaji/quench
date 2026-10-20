@@ -29,11 +29,6 @@ impl<H: Host> Vm<H> {
                 ..
             }) => Ok(CallTarget::User(*program, *id, *env)),
             Some(Cell::Function {
-                kind: FunctionKind::NumericUser(program, id),
-                env,
-                ..
-            }) => Ok(CallTarget::NumericUser(*program, *id, *env)),
-            Some(Cell::Function {
                 kind: FunctionKind::Native(native),
                 ..
             }) => Ok(CallTarget::Native(*native)),

@@ -53,7 +53,7 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
-        let constructor_atom = self.intern_atom("constructor");
+        let constructor_atom = self.runtime_atoms.constructor;
         self.set_property_attributes(
             prototype,
             PropertyKey::string(constructor_atom),
@@ -96,7 +96,7 @@ impl<H: Host> Vm<H> {
         function: Value,
         length: f64,
     ) -> Result<(), JsError> {
-        let atom = self.intern_atom("length");
+        let atom = self.length_atom;
         if self
             .own_property(function, atom)
             .and_then(|value| value.as_number())
@@ -454,7 +454,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let target_root = self.heap.root(target);
         let name_atom = self.intern_atom("name");
-        let length_atom = self.intern_atom("length");
+        let length_atom = self.length_atom;
         let target_realm = match self.function_realm(p, target) {
             Ok(realm) => realm,
             Err(_) => {

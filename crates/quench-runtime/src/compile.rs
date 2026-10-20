@@ -2926,6 +2926,7 @@ impl<'a> Compiler<'a> {
             name: name.map(|value| function.owner.atom(value)),
             inferred_name: None,
             is_arrow: false,
+            reads_lexical_this: false,
             self_binding_slot,
             source_span: options.source_span,
             params: params.len() as u16,

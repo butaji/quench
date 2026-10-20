@@ -147,6 +147,7 @@ impl Compiler<'_> {
             name: None,
             inferred_name: None,
             is_arrow: true,
+            reads_lexical_this: super::early::arrow_may_read_lexical_this(value),
             self_binding_slot: None,
             source_span,
             params: params.len() as u16,

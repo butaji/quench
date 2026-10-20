@@ -409,6 +409,25 @@ pub(super) fn function_may_reference(
     references.found
 }
 
+/// Whether an arrow function may read the `this` it inherits: its parameters or body name
+/// `this` or `super` anywhere, nested functions and classes included, so the answer only
+/// errs toward reading it.
+pub(super) fn arrow_may_read_lexical_this(arrow: &oxc_ast::ast::ArrowFunctionExpression<'_>) -> bool {
+    struct ThisReads(bool);
+    impl<'a> Visit<'a> for ThisReads {
+        fn visit_this_expression(&mut self, _: &oxc_ast::ast::ThisExpression) {
+            self.0 = true;
+        }
+        fn visit_super(&mut self, _: &oxc_ast::ast::Super) {
+            self.0 = true;
+        }
+    }
+    let mut reads = ThisReads(false);
+    reads.visit_formal_parameters(&arrow.params);
+    reads.visit_arrow_function_body(&arrow.body);
+    reads.0
+}
+
 pub(super) fn parameters_contain_direct_eval(params: &FormalParameters<'_>) -> bool {
     let mut finder = DirectEvalFinder(false);
     finder.visit_formal_parameters(params);

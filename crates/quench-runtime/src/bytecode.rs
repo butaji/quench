@@ -1077,6 +1077,10 @@ pub struct Function {
     /// SetFunctionName would name them right after creation.
     pub inferred_name: Option<Atom>,
     pub is_arrow: bool,
+    /// An arrow whose body may read the `this` it inherits: its source names `this` or
+    /// `super` anywhere. Any other arrow's activation binds no observable `this`, so it
+    /// activates as an ordinary function would (`CallPlan`).
+    pub reads_lexical_this: bool,
     pub self_binding_slot: Option<u16>,
     /// The function's source text as a range of the program's `source`, which
     /// `Function.prototype.toString` reads on demand.
@@ -1785,7 +1789,7 @@ impl Function {
                 .count();
             // Plain but for an `arguments` binding.
             let ordinary = self.parent.is_some()
-                && !self.is_arrow
+                && !(self.is_arrow && self.reads_lexical_this)
                 && !self.derived_constructor
                 && !self.rest
                 && self.self_binding_slot.is_none()
@@ -2723,7 +2727,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 100;
+    pub const FORMAT_VERSION: u8 = 101;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;

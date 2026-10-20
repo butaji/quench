@@ -102,7 +102,7 @@ impl<H: Host> Vm<H> {
         }
         let iterator = self.get_iterator(p, input)?;
         let iterator = self.heap.root(iterator);
-        let next_atom = self.intern_atom("next");
+        let next_atom = self.runtime_atoms.next;
         let next = self.get_property(p, self.heap.root_value(iterator).unwrap(), next_atom);
         match next {
             Ok(next) => Ok(AggregateInput::Iterable {

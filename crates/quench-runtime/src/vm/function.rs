@@ -35,7 +35,7 @@ impl<H: Host> Vm<H> {
             return Some(self.heap.alloc(Cell::String(source.as_str().into())));
         }
         let Some(Cell::Function {
-            kind: FunctionKind::User(program, id) | FunctionKind::NumericUser(program, id),
+            kind: FunctionKind::User(program, id),
             ..
         }) = self.heap.get(function)
         else {
@@ -57,7 +57,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn function_caller_is_restricted(&self, function: Value) -> bool {
         match self.heap.get(function) {
             Some(Cell::Function {
-                kind: FunctionKind::User(program_id, id) | FunctionKind::NumericUser(program_id, id),
+                kind: FunctionKind::User(program_id, id),
                 ..
             }) => self.programs.get(*program_id).is_some_and(|program| {
                 program
@@ -98,8 +98,7 @@ impl<H: Host> Vm<H> {
                 CallContext::Function(caller) | CallContext::Constructor(caller) => {
                     let Some(Cell::Function {
                         kind:
-                            FunctionKind::User(program_id, id)
-                            | FunctionKind::NumericUser(program_id, id),
+                            FunctionKind::User(program_id, id),
                         object,
                         ..
                     }) = self.heap.get(caller)
@@ -222,7 +221,7 @@ impl<H: Host> Vm<H> {
             .heap
             .root_value(target_root)
             .expect("bound target root remains live");
-        let length_atom = self.intern_atom("length");
+        let length_atom = self.length_atom;
         let length_key = self.heap.alloc(Cell::String(self.atom_value(length_atom)));
         let descriptor = self.object_get_own_property_descriptor(p, &[target, length_key])?;
         let bound_length = if !descriptor.is_undefined() {

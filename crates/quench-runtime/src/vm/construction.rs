@@ -154,7 +154,7 @@ impl<H: Host> Vm<H> {
                     let Cell::Function { env, .. } = cell else { unreachable!() };
                     self.host_function_constructible(*env)
                 }
-                FunctionKind::User(program_id, id) | FunctionKind::NumericUser(program_id, id) => {
+                FunctionKind::User(program_id, id) => {
                     self.programs.get(*program_id).is_some_and(|program| {
                         program.functions.get(*id as usize).is_some_and(|function| {
                             let header = function.header();
@@ -331,10 +331,7 @@ impl<H: Host> Vm<H> {
                 object: Self::empty_object(function_object_prototype),
                 realm: realm,
             }),
-            kind: match function_plan.dispatch {
-                DispatchClass::General => FunctionKind::User(self.active_program, id),
-                DispatchClass::Numeric => FunctionKind::NumericUser(self.active_program, id),
-            },
+            kind: FunctionKind::User(self.active_program, id),
             env,
         });
         // Only closures of a program's top level are ever found again by plan
@@ -377,7 +374,7 @@ impl<H: Host> Vm<H> {
             name: 0,
             prototype: None,
         };
-        let length = self.intern_atom("length");
+        let length = self.length_atom;
         self.set_property_with_attributes(
             function,
             length,
@@ -506,8 +503,7 @@ impl<H: Host> Vm<H> {
                 let (kind, derived_constructor) = match vm.heap.get(callee) {
                     Some(Cell::Function { kind, .. }) => {
                         let derived = match kind {
-                            FunctionKind::User(program_id, id)
-                            | FunctionKind::NumericUser(program_id, id) => {
+                            FunctionKind::User(program_id, id) => {
                                 vm.programs.get(*program_id).is_some_and(|program| {
                                     program
                                         .functions
@@ -521,7 +517,7 @@ impl<H: Host> Vm<H> {
                     }
                     _ => unreachable!("IsConstructor accepted a non-function target"),
                 };
-                if let FunctionKind::User(program_id, id) | FunctionKind::NumericUser(program_id, id) =
+                if let FunctionKind::User(program_id, id) =
                     kind
                 {
                     let Some(program) = vm.programs.get(program_id) else {
