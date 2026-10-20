@@ -11593,6 +11593,47 @@ fn lane_in_place_steps_keep_private_brands_and_field_definitions() {
 }
 
 #[test]
+fn lane_framed_calls_and_returns_keep_frames_and_their_semantics() {
+    // Calls of functions that need a frame are pushed and returned from the lane: closures,
+    // `arguments`, `this` modes, throws, recursion, tail returns, generators, async functions
+    // and `eval` keep the general loop's results.
+    let source = r#"
+      const out = [];
+      function counter() { let n = 0; return { inc: () => ++n, get: () => n }; }
+      function withArgs() { return arguments.length + ":" + [].join.call(arguments, "-"); }
+      function sloppyThis() { return typeof this; }
+      function strictThis() { "use strict"; return this === undefined ? "u" : typeof this; }
+      function thrower(x) { const f = () => x; if (x > 1) throw new Error("boom" + f()); return f(); }
+      function deep(n) { const g = () => n; return n === 0 ? g() : deep(n - 1) + g(); }
+      function tail(n) { const h = () => n; if (n === 0) return h(); return tail(n - 1); }
+      class K { constructor() { this.v = 1; } }
+      function callsCtor() { try { return K(); } catch (e) { return e.constructor.name; } }
+      function* gen() { yield 1; }
+      async function af() { return 2; }
+      function usesEval(s) { const local = 5; return eval(s); }
+      function run() {
+        const c = counter(); c.inc(); c.inc();
+        for (let i = 0; i < 4; i++) {
+          out.push(c.inc(), c.get(), withArgs(i, "a"), sloppyThis(), strictThis(), deep(3), tail(4), callsCtor());
+          try { out.push(thrower(i)); } catch (e) { out.push(e.message); }
+          out.push([...gen()].join(), typeof af(), usesEval("local + 1"));
+          const o = { m() { const x = () => this; return x() === o; } }; out.push(o.m());
+          const err = (() => { try { null.x; } catch (e) { return e.constructor.name; } })(); out.push(err);
+        }
+      }
+      run();
+      print(out.join(","));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "lane-framed-calls.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["3,3,2:0-a,object,u,6,0,TypeError,0,1,object,6,true,TypeError,4,4,2:1-a,object,u,6,0,TypeError,1,1,object,6,true,TypeError,5,5,2:2-a,object,u,6,0,TypeError,boom2,1,object,6,true,TypeError,6,6,2:3-a,object,u,6,0,TypeError,boom3,1,object,6,true,TypeError"]
+    );
+}
+
+#[test]
 fn lane_arrows_take_this_from_their_environment() {
     // Arrows called as frameless activations read `this` from the environment they
     // closed over: call/apply/bind receivers are ignored, a derived constructor's
