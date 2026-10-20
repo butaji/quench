@@ -692,6 +692,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn invalidate_field_caches(&mut self) {
         self.field_caches.fill(EMPTY_CACHE);
         self.symbol_write_proofs.clear();
+        self.symbol_load_proofs.clear();
         self.field_add_indices.fill(NO_FIELD_ADD_SET);
         self.field_add_sets.clear();
         self.megamorphic_field_indices.fill(NO_MEGAMORPHIC_FIELD);
@@ -1585,39 +1586,66 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// Records the accessor a field read at `site` meets on `object`'s immediate prototype,
-    /// when shapes answer both lookups and `object` holds no own `atom`.
+    /// Records the accessor a field read at `site` meets on a prototype of `object`, when
+    /// shapes answer every lookup from `object`, which holds no own `atom`, to the holder.
+    /// Every prototype passed becomes a prototype first, so a later change to one advances
+    /// `prototype_layout_epoch` and retires the entry.
     fn record_accessor_field_cache(&mut self, object: Value, atom: Atom, site: usize) {
+        let epoch = crate::heap::prototype_layout_epoch();
         let Some(receiver) = self.shape_property_lookup(object, atom) else {
             return;
         };
-        let receiver_shape = receiver.shape();
+        let (receiver_shape, prototype) = (receiver.shape(), receiver.proto());
         if self.shape_slot(receiver_shape, atom).is_some() {
             return;
         }
-        let Some(holder) = self.shape_property_lookup(receiver.proto(), atom) else {
+        let mut link = prototype;
+        let mut depth = 0u8;
+        let (holder, slot) = loop {
+            let Some(data) = self.heap.ordinary_object(link) else {
+                return;
+            };
+            if data.is_arguments_object() || self.shape_property_lookup(link, atom).is_none() {
+                return;
+            }
+            let Some(next_depth) = depth.checked_add(1) else {
+                return;
+            };
+            depth = next_depth;
+            if let Some(slot) = self.shape_slot(data.shape(), atom) {
+                break (link, slot);
+            }
+            link = data.proto();
+        };
+        let Some(holder_object) = self.heap.ordinary_object(holder) else {
             return;
         };
-        let holder_shape = holder.shape();
-        let Some(slot) = self
-            .shape_slot(holder_shape, atom)
-            .filter(|slot| *slot < FIELD_CACHE_SLOT_CAPACITY)
-        else {
-            return;
-        };
-        if self
-            .slot_attributes(holder, slot)
-            .is_some_and(|attributes| attributes.accessor && attributes.getter.is_some())
+        if slot >= FIELD_CACHE_SLOT_CAPACITY
+            || !self
+                .slot_attributes(holder_object, slot)
+                .is_some_and(|attributes| attributes.accessor && attributes.getter.is_some())
         {
-            self.accessor_field_caches.insert(
-                site,
-                AccessorFieldCache {
-                    receiver: receiver_shape,
-                    holder: holder_shape,
-                    slot: slot as u16,
-                },
-            );
+            return;
         }
+        let mut link = prototype;
+        for _ in 0..depth {
+            self.heap.mark_prototype(link);
+            link = self.heap.ordinary_object(link).map_or(Value::NULL, Object::proto);
+        }
+        // Marking a link that was no prototype yet leaves the epoch where it was.
+        if crate::heap::prototype_layout_epoch() != epoch {
+            return;
+        }
+        self.accessor_field_caches.insert(
+            site,
+            AccessorFieldCache {
+                receiver: receiver_shape,
+                prototype,
+                holder,
+                slot: slot as u16,
+                epoch,
+            },
+        );
     }
 
     /// The getter a field read of `atom` at cache index `site` calls on `object`, when the
@@ -1625,14 +1653,13 @@ impl<H: Host> Vm<H> {
     pub(super) fn cached_field_getter(&self, object: Value, atom: Atom, site: usize) -> Option<Value> {
         let cache = self.accessor_field_caches.get(&site)?;
         let receiver = self.shape_property_lookup(object, atom)?;
-        if receiver.shape() != cache.receiver {
+        if receiver.shape() != cache.receiver
+            || receiver.proto() != cache.prototype
+            || crate::heap::prototype_layout_epoch() != cache.epoch
+        {
             return None;
         }
-        let holder = self.shape_property_lookup(receiver.proto(), atom)?;
-        if holder.shape() != cache.holder {
-            return None;
-        }
-        self.slot_attributes(holder, usize::from(cache.slot))?
+        self.slot_attributes(self.heap.ordinary_object(cache.holder)?, usize::from(cache.slot))?
             .getter
     }
 

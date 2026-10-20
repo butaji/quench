@@ -385,7 +385,7 @@ impl<H: Host> Vm<H> {
             } => Ok(FrameOutcome::Await {
                 value,
                 destination,
-                frame: Some(*frame),
+                frame: Some(frame),
             }),
             FrameOutcome::Yield { .. } => {
                 Err(JsError("yield requires generator continuation".into()))
