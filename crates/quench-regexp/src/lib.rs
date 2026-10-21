@@ -304,6 +304,10 @@ struct CompleteMatcher {
     backtracking: Option<backtrack::Program>,
     /// `required_literal` as bytes, when every unit is ASCII.
     required_bytes: Option<LiteralFinder>,
+    /// `required_literal` as the native-endian bytes of its code units, which a UTF-16
+    /// subject's search looks for (`contains_code_unit_bytes`); `None` when it is empty or a
+    /// unit lies past UTF-16, where it occurs in no code-unit text.
+    required_wide: Option<LiteralFinder>,
     /// The fewest code points any match consumes (`min_length`). A code point is at least
     /// one unit of any subject, so a search with fewer units left has no match.
     min_length: usize,
@@ -324,12 +328,18 @@ impl CompleteMatcher {
         let backtracking = backtrack::Program::compile(&program, flags, names.len());
         let required_literal = required_literal(&program, flags);
         // A program that starts every ASCII search at its prefix finds the same literal
-        // there, so the run's own search answers a subject without it.
+        // there, so the run's own search answers a subject without it; an anchored one tries
+        // a single position, which costs less than scanning the subject for the literal.
         let required_bytes = (!required_literal.is_empty()
             && required_literal.iter().all(|unit| *unit <= u32::from(ASCII_MAX)))
         .then(|| required_literal.iter().map(|unit| *unit as u8).collect::<Vec<_>>())
-        .filter(|bytes| !backtracking.as_ref().is_some_and(|program| program.searches_prefix(bytes)))
+        .filter(|bytes| {
+            !backtracking
+                .as_ref()
+                .is_some_and(|program| program.searches_prefix(bytes) || program.anchored_at_start())
+        })
         .map(|bytes| literal_finder(&bytes));
+        let required_wide = code_unit_bytes(&required_literal).map(|bytes| literal_finder(&bytes));
         let min_length = min_length(&program);
         let tree = OnceCell::new();
         if backtracking.is_none() {
@@ -340,6 +350,7 @@ impl CompleteMatcher {
             required_literal,
             backtracking,
             required_bytes,
+            required_wide,
             min_length,
         }
     }
@@ -663,7 +674,12 @@ impl Regex {
         if let (false, Some(units)) = (unicode, subject.wide()) {
             // Outside unicode mode a code unit is a pattern unit: no decoding, and
             // positions are offsets.
-            if !contains_code_units(&units[start..], &complete.required_literal) {
+            if !complete.required_literal.is_empty()
+                && !complete
+                    .required_wide
+                    .as_ref()
+                    .is_some_and(|literal| contains_code_unit_bytes(&units[start..], literal.as_ref()))
+            {
                 return Some(None);
             }
             let found = program.find(units, start, sticky, None).ok()?;
@@ -1490,27 +1506,28 @@ fn required_literal(program: &Expr, flags: Flags) -> Box<[u32]> {
     best.into()
 }
 
-/// Whether `literal` occurs in UTF-16 `input`; an empty literal occurs everywhere. The search
-/// runs over the units' bytes, where an occurrence must start at a unit boundary.
-fn contains_code_units(input: &[u16], literal: &[u32]) -> bool {
+/// The native-endian bytes of `literal`'s code units, which a search of a UTF-16 text's bytes
+/// looks for; `None` when it is empty or a unit lies past UTF-16.
+fn code_unit_bytes(literal: &[u32]) -> Option<Vec<u8>> {
     if literal.is_empty() {
-        return true;
+        return None;
     }
-    let Some(needle) = literal
+    literal
         .iter()
         .map(|unit| u16::try_from(*unit).ok().map(u16::to_ne_bytes))
         .collect::<Option<Vec<_>>>()
-    else {
-        // A unit past UTF-16 occurs in no code-unit text.
-        return false;
-    };
-    let needle = needle.concat();
+        .map(|units| units.concat())
+}
+
+/// Whether the code units `needle` searches for (`code_unit_bytes`) occur in `input`: at an
+/// occurrence in its bytes that starts on a unit boundary.
+fn contains_code_unit_bytes(input: &[u16], needle: &memchr::memmem::Finder<'_>) -> bool {
     // SAFETY: the bytes of initialized `u16` values, which any `u8` view may read.
     let haystack = unsafe {
         std::slice::from_raw_parts(input.as_ptr().cast::<u8>(), std::mem::size_of_val(input))
     };
     let unit = std::mem::size_of::<u16>();
-    memchr::memmem::find_iter(haystack, &needle).any(|offset| offset % unit == 0)
+    needle.find_iter(haystack).any(|offset| offset % unit == 0)
 }
 
 /// Whether `literal` occurs in `input`.
@@ -3094,9 +3111,17 @@ fn is_line_terminator(value: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        contains_code_units, normalize_new_unicode_scripts, Flags, Regex, Subject,
-        NEW_UNICODE_SCRIPTS,
+        code_unit_bytes, contains_code_unit_bytes, literal_finder, normalize_new_unicode_scripts,
+        Flags, Regex, Subject, NEW_UNICODE_SCRIPTS,
     };
+
+    /// The wide search's required-literal check: an empty literal occurs everywhere, one with a
+    /// unit past UTF-16 nowhere.
+    fn contains_code_units(input: &[u16], literal: &[u32]) -> bool {
+        literal.is_empty()
+            || code_unit_bytes(literal)
+                .is_some_and(|needle| contains_code_unit_bytes(input, &literal_finder(&needle)))
+    }
 
     #[test]
     fn code_unit_literals_match_whole_units() {
