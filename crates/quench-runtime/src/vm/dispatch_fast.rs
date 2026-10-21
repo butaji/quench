@@ -392,7 +392,7 @@ const EMPTY_SCRIPT_CALL_TARGET: ScriptCallTarget = ScriptCallTarget {
 };
 
 /// Entries of the script call cache, indexed by the callee's heap index.
-const SCRIPT_CALL_TARGETS: usize = 256;
+const SCRIPT_CALL_TARGETS: usize = 1024;
 
 /// A callee that has no frameless target while `generation` and `program` hold: its calls
 /// take the general path without resolving it again.
