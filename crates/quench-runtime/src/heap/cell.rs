@@ -39,10 +39,10 @@ pub(crate) struct WeakMapEntries {
 mod cell_layout_tests {
     use super::*;
 
-    /// Every heap slot stores an `Option<Cell>`. The M4 object layout includes
-    /// two inline properties; an array keeps its element handle in that payload.
+    /// Every heap slot stores an `Option<Cell>`. The largest payload is an array: its object
+    /// and its element backing.
     const CELL_TAG_WORD_BYTES: usize = std::mem::size_of::<Value>();
-    const MAX_CELL_BYTES: usize = std::mem::size_of::<Object>() + CELL_TAG_WORD_BYTES;
+    const MAX_CELL_BYTES: usize = std::mem::size_of::<ArrayObject>() + CELL_TAG_WORD_BYTES;
 
     #[test]
     fn cells_stay_compact() {
