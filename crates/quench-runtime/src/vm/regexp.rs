@@ -667,10 +667,7 @@ impl<H: Host> Vm<H> {
             return None;
         }
         if !global {
-            let slot = self.regexp_last_index_slot(receiver)?;
-            self.heap
-                .property_get(self.object_data(receiver)?, slot)?
-                .as_number()?;
+            self.regexp_last_index_value(receiver)?.1.as_number()?;
         }
         let Some(Cell::RegExp { meta, .. }) = self.heap.get(receiver) else {
             return None;
@@ -843,6 +840,23 @@ impl<H: Host> Vm<H> {
             return Some(slot as usize);
         }
         self.regexp_last_index_slot_miss(receiver, shape)
+    }
+
+    /// The own writable data `lastIndex` of the RegExp `receiver`: its slot
+    /// (`regexp_last_index_slot`) and value, read through one lookup of the RegExp's cell.
+    #[inline(always)]
+    fn regexp_last_index_value(&mut self, receiver: Value) -> Option<(usize, Value)> {
+        let Some(Cell::RegExp { object, .. }) = self.heap.get(receiver) else {
+            return None;
+        };
+        let shape = object.shape();
+        if let Some((cached, slot)) = self.regexp_last_index_layout
+            && cached == shape
+        {
+            return Some((slot as usize, self.heap.property_get(object, slot as usize)?));
+        }
+        let slot = self.regexp_last_index_slot_miss(receiver, shape)?;
+        Some((slot, self.heap.property_get(self.object_data(receiver)?, slot)?))
     }
 
     /// `regexp_last_index_slot` of a shape the layout cache does not hold: the slot of an own
@@ -2532,10 +2546,7 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
-        let slot = self.regexp_last_index_slot(receiver)?;
-        let last_index = self
-            .object_data(receiver)
-            .and_then(|object| self.heap.property_get(object, slot))?;
+        let (slot, last_index) = self.regexp_last_index_value(receiver)?;
         if last_index.as_number().is_none()
             || (native == Native::RegExpTest && self.regexp_builtin_exec_matcher(receiver).is_none())
         {
