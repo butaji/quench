@@ -1089,7 +1089,7 @@ impl<H: Host> Vm<H> {
             .is_some_and(Vec::is_empty)
             && self.programs.residual(program).is_some_and(|p| {
                 p.function_get(function as usize).is_some_and(|function| {
-                    function.names_resolve_statically(&p.functions, &p.atoms)
+                    function.names_resolve_statically(&p)
                 })
             });
         let owner = if never_binds_dynamically {
@@ -1360,7 +1360,7 @@ impl<H: Host> Vm<H> {
                             Some(Cell::Function { kind: FunctionKind::Native(native), .. }) => format!("native {native:?}"),
                             Some(Cell::Function { kind: FunctionKind::User(program, id), .. }) => {
                                 let plan = self.programs.residual(*program).and_then(|code| {
-                                    let body = code.functions.get(*id as usize)?;
+                                    let body = code.function_get(*id as usize)?;
                                     Some(format!("user registers_only={} async={} gen={} class={} self={} args={:?}", body.call_plan(code).registers_only, body.is_async, body.is_generator, body.is_class_constructor, body.self_binding_slot.is_some(), body.arguments_slot.is_some()))
                                 });
                                 plan.unwrap_or_else(|| "user ?".into())

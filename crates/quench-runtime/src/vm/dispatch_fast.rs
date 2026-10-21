@@ -5929,7 +5929,7 @@ lane_handler! {
             && vm.programs.runs_in_global_scope(unsafe { (*cx).program })
             && !vm.atom_class(i.imm()).contains(AtomClass::INTERNAL)
             && code.function_get(function as usize).is_some_and(|function| {
-                function.names_resolve_statically(&code.functions, &code.atoms)
+                function.names_resolve_statically(code)
             });
         if global {
             requicken(ip, lane_load_global_name::<H>);
@@ -6213,6 +6213,27 @@ fn lane_call_native<H: Host>(
             native,
             r.get(i.c),
             r.get(window),
+            ImmediateLayout::lane_call_result_used(i.imm()),
+        )
+    {
+        note_allocation(vm);
+        return match result {
+            Ok(value) => Some(value),
+            Err(error) => {
+                vm.lane_raised = Some(error);
+                None
+            }
+        };
+    }
+    if argc >= 2
+        && let Some(result) = vm.steady_string_replace(
+            // SAFETY: the context's program outlives the lane run.
+            unsafe { &*(*cx).code },
+            native,
+            r.get(i.c),
+            // SAFETY: the call's window is registers of the running function.
+            unsafe { std::slice::from_raw_parts(r.0.add(usize::from(window)), usize::from(argc)) },
+            ImmediateLayout::lane_call_result_used(i.imm()),
         )
     {
         note_allocation(vm);
@@ -8469,6 +8490,31 @@ fn lane_call_fits(instruction: WideInstruction) -> bool {
     }
 }
 
+/// A `Call` record's operand, flagged when liveness (`live`, the registers live before each
+/// pc) shows its result register dead after the call: nothing reads the value the callee
+/// returns (`ImmediateLayout::lane_call_result_used`).
+fn lane_call_result_marked(
+    operand: LaneOperand,
+    instruction: WideInstruction,
+    live: Option<&[u64]>,
+    pc: usize,
+) -> LaneOperand {
+    if instruction.op() != Op::Call || instruction.result_flags() != 0 {
+        return operand;
+    }
+    let result = instruction.a() & crate::bytecode::REGISTER_MASK;
+    let dead = live
+        .and_then(|live| live.get(pc + 1))
+        .zip(1u64.checked_shl(u32::from(result)))
+        .is_some_and(|(after, bit)| after & bit == 0);
+    if !dead {
+        return operand;
+    }
+    // SAFETY: a `Call`'s operand is its immediate (`lane_operand`).
+    let imm = unsafe { operand.imm };
+    LaneOperand { imm: imm | ImmediateLayout::LANE_CALL_RESULT_UNUSED_FLAG }
+}
+
 /// A nested `GetField` whose only result flag stores its value to a field of `this` too
 /// (`lane_get_field_sink`).
 fn lane_sinks_field(instruction: WideInstruction) -> bool {
@@ -8539,6 +8585,7 @@ fn derive_lane_view<H: Host>(
     function: &Function,
     constants: &[Value],
     kind: crate::bytecode::ProgramKind,
+    live: Option<&[u64]>,
 ) -> LaneView {
     // Every backward jump observes host termination, including allocation-free
     // Wasm loops. Collection and stack-floor exits share this safepoint.
@@ -8574,9 +8621,11 @@ fn derive_lane_view<H: Host>(
                 binds_memory
                     || memory_register.is_none_or(|register| !lane_writes(instruction, register))
             };
-            let operand = lane_operand(instruction, pc, constants).filter(|_| {
-                keeps_view && lane_fields_fit(instruction, function) && lane_call_fits(instruction)
-            });
+            let operand = lane_operand(instruction, pc, constants)
+                .filter(|_| {
+                    keeps_view && lane_fields_fit(instruction, function) && lane_call_fits(instruction)
+                })
+                .map(|operand| lane_call_result_marked(operand, instruction, live, pc));
             // Control reaches this record only from the previous one when no
             // jump targets it; the general loop never enters at a record that
             // reads the accumulator.

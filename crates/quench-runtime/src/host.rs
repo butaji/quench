@@ -110,6 +110,16 @@ pub trait Host {
     /// differs from the code that ran before it (loading, linking, instantiation).
     fn before_wasm_native_compilation(&mut self) {}
 
+    /// A snapshot restore has read `bytes`, part of the snapshot the host gave it
+    /// (`Runtime::restore_snapshot`), and reads them again only to decode a function's record
+    /// on its first call: a host that mapped them may return their pages, so they are not
+    /// resident beside the state decoded from them.
+    fn snapshot_bytes_read(_bytes: &[u8])
+    where
+        Self: Sized,
+    {
+    }
+
     fn write_line(&mut self, text: &str);
     fn clock_millis(&mut self) -> f64;
 
@@ -138,6 +148,16 @@ pub trait Host {
     /// Install host-owned objects after shared intrinsics and native globals,
     /// before guest execution. Context roots expire when installation returns.
     fn initialize(_context: &mut crate::NativeContext<'_, Self>) -> Result<(), crate::RootedError>
+    where
+        Self: Sized,
+    {
+        Ok(())
+    }
+
+    /// Continue installation in a VM restored from a startup snapshot this host's state was
+    /// written into (`Runtime::write_snapshot`): what `initialize` does after the point the
+    /// snapshot was taken at.
+    fn resume(_context: &mut crate::NativeContext<'_, Self>) -> Result<(), crate::RootedError>
     where
         Self: Sized,
     {

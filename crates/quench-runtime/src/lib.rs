@@ -12,6 +12,7 @@ mod memory_edge;
 mod module_identity;
 mod number_to_string;
 mod profile;
+mod snapshot;
 pub(crate) use quench_stack as stack;
 mod unicode;
 mod value;
@@ -30,6 +31,7 @@ pub use wasm::{
 pub use bytecode::{KeptBytes, ResidualProgram};
 pub use compile::{CompilePhase, Diagnostic, Engine, set_compile_phase_boundary};
 pub use heap::{RootId, HeapMemoryComposition};
+pub use snapshot::{SnapshotReader, SnapshotWriter};
 pub use host::{
     CapabilityId, Host, HostContext, HostExecutionContext, HostGlobal, ModuleLoadError, ModuleLoadErrorKind,
     ModuleSource, SystemHost,

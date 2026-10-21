@@ -1,0 +1,31 @@
+verdicts {"behavior-pass":286,"declarations-pass":13,"oracle-failed":1}
+passing 299  fastest wall 2  fastest cpu 2  lowest rss 287
+wall median (ms) quench 96.1 node 96.1 bun 55.8
+cpu median (ms) quench 92.5 node 111.5 bun 57.8
+rss median (MiB) quench 17.1 node 71.9 bun 34.8
+slowest relative to the faster of Node and Bun (wall ms):
+  color-convert                            q     320 n    115 b     61  x5.3
+  date-fns                                 q     388 n   1419 b     80  x4.9
+  jiti                                     q     291 n    259 b     60  x4.8
+  undici                                   q     247 n    147 b     55  x4.5
+  baseline-browser-mapping                 q     208 n    101 b     58  x3.6
+  @radix-ui/react-focus-scope              q     260 n    130 b     76  x3.4
+  @typescript-eslint/tsconfig-utils        q     875 n    329 b    271  x3.2
+  @babel/core                              q     568 n    224 b    181  x3.1
+  semver                                   q     268 n    147 b     86  x3.1
+  @babel/generator                         q     283 n    114 b     93  x3.0
+  @babel/helper-module-transforms          q     562 n    251 b    186  x3.0
+  typescript-eslint                        q    2230 n   1145 b    745  x3.0
+not lowest rss: 12
+  undici-types                             q 74.6 n 74.6 b 75.6
+  typescript                               q 41.8 n 71.8 b 41.8
+  jiti                                     q 45.0 n 98.7 b 35.8
+  @typescript-eslint/typescript-estree     q 103.5 n 139.7 b 91.3
+  @typescript-eslint/scope-manager         q 113.6 n 144.9 b 88.3
+  @typescript-eslint/parser                q 107.9 n 144.9 b 92.7
+  @typescript-eslint/type-utils            q 174.2 n 204.5 b 120.5
+  @typescript-eslint/project-service       q 106.1 n 123.9 b 75.7
+  @typescript-eslint/tsconfig-utils        q 114.0 n 140.9 b 79.1
+  @eslint/core                             q 45.8 n 71.5 b 45.2
+  playwright                               q 98.1 n 138.9 b 97.3
+  @types/yargs                             q 45.4 n 71.6 b 45.3

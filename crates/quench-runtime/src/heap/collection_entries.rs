@@ -112,6 +112,21 @@ impl Compaction {
 }
 
 impl<T: CollectionEntry> CollectionEntries<T> {
+    /// The slots (holes included, so registered iterators keep their positions), the live
+    /// count and the registered iterators, for a snapshot; refused while a walk holds slot
+    /// positions outside any iterator. The key index is rebuilt on first lookup.
+    pub(crate) fn snapshot_parts(&self) -> crate::snapshot::SnapshotResult<(&[T], usize, &[Value])> {
+        if self.walks != 0 {
+            return Err(crate::snapshot::SnapshotError::unsupported("a collection being walked"));
+        }
+        Ok((&self.slots, self.live, &self.iterators))
+    }
+
+    /// The entries `snapshot_parts` gave.
+    pub(crate) fn from_snapshot_parts(slots: Vec<T>, live: usize, iterators: Vec<Value>) -> Self {
+        Self { slots, live, iterators, ..Self::default() }
+    }
+
     /// The number of live entries.
     pub(crate) fn len(&self) -> usize {
         self.live

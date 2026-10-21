@@ -23,6 +23,7 @@ pub(crate) use promise_record::{PromiseCell, PromiseReaction, PromiseRecord, Pro
 mod records;
 mod root;
 mod slots;
+mod snapshot;
 mod thin_slice;
 pub(crate) use thin_slice::ThinBoxSlice;
 mod weak;
@@ -58,10 +59,17 @@ fn payload_unit() -> usize {
     #[cfg(not(feature = "gc-tuning"))]
     PAYLOAD_BYTES_PER_ALLOCATION
 }
-/// The fewest allocations after which a collection is full on a small heap.
+/// The fewest allocations after which a collection is full on a small heap: the first
+/// collection runs after the young minimum, and is full once the allocation cap has passed.
 #[cfg(test)]
-pub(crate) const FULL_COLLECTION_ALLOCATION_BOUND: usize =
-    pacing::PRODUCTION_PACING.minimum_allocation_cap;
+pub(crate) const FULL_COLLECTION_ALLOCATION_BOUND: usize = {
+    let pacing = pacing::PRODUCTION_PACING;
+    if pacing.minimum_young > pacing.minimum_allocation_cap {
+        pacing.minimum_young
+    } else {
+        pacing.minimum_allocation_cap
+    }
+};
 /// Payload bytes beside a cell (string units, array elements) that weigh as one more
 /// allocation toward the next collection.
 #[cfg(not(feature = "gc-tuning"))]
@@ -1264,6 +1272,28 @@ impl Heap {
         let (properties, inline_properties) = self.initial_object_storage(shape, values, true);
         self.alloc_object(Object::with_property_storage(proto, properties, inline_properties))
     }
+    /// `alloc(Cell::Array { object: array })` of a fresh array, given its first named
+    /// properties `values` under `shape` first: the storage steps
+    /// `initialize_object_properties` takes on the published cell (arena storage, as an
+    /// array keeps its element backing in the payload; the replaced storage's integrity
+    /// carried over and its arena words released), taken before the array is published. No
+    /// collection runs in between, so the arena holds the values for their owner exactly as
+    /// after the two-step path.
+    pub(crate) fn alloc_array_with_properties(
+        &mut self,
+        mut array: ArrayObject,
+        shape: u32,
+        values: &[Value],
+    ) -> Value {
+        let (properties, inline_properties) = self.initial_object_storage(shape, values, false);
+        let previous = array.replace_property_storage(properties, inline_properties);
+        self.properties.release(previous);
+        let value = self.alloc(Cell::Array { object: array });
+        #[cfg(feature = "profile-memory")]
+        self.note_object_slots(value, values.len());
+        value
+    }
+
     pub(crate) fn initialize_object_properties(
         &mut self,
         owner: Value,
@@ -3468,7 +3498,7 @@ impl Heap {
                 Cell::TemporalZonedDateTime {
                     instant, calendar, ..
                 } => instant.time_zone.capacity() + calendar.capacity(),
-                Cell::RegExp { meta, .. } => meta.source.capacity() + meta.flags.capacity(),
+                Cell::RegExp { meta, .. } => meta.source.capacity(),
                 Cell::Array { object } => object.elements().capacity() * size_of::<Value>(),
                 Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),
                 Cell::WasmMemory { bytes, .. } => bytes.capacity(),
