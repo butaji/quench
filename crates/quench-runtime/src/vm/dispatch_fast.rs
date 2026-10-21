@@ -686,24 +686,23 @@ const EMPTY_SCRIPT_CALL_TARGET: ScriptCallTarget = ScriptCallTarget {
 };
 
 /// Entries of the script call cache, in sets of `SCRIPT_TARGET_WAYS` that a hash of the
-/// callee's heap index picks (`script_target_set`).
-const SCRIPT_CALL_TARGETS: usize = 256;
+/// callee's heap index picks (`script_target_set`). Express's router calls a matcher
+/// closure per layer, some 400 distinct callees a request, which 256 entries thrashed
+/// (Callgrind: 2.4% of a ping request re-resolving); 1024 hold them in 64 KiB per table.
+const SCRIPT_CALL_TARGETS: usize = 1024;
 /// Entries per set: the one most recently resolved first, then the one before it, so two
 /// callees whose indices share a set both stay resolved.
 const SCRIPT_TARGET_WAYS: usize = 2;
-/// The Fibonacci hashing multiplier, 2^32 divided by the golden ratio: it spreads the dense
-/// indices a record family hands out, which index bits alone would map to sets by stride.
-const SCRIPT_TARGET_HASH: u32 = 0x9E37_79B9;
 const _: () = assert!(SCRIPT_CALL_TARGETS.is_power_of_two() && SCRIPT_TARGET_WAYS == 2);
 
 /// The first entry of `callee`'s set in the script call cache, when it names a heap cell;
-/// the set's other entry follows it (`| 1`).
+/// the set's other entry follows it (`| 1`). The set is the shared direct-mapped index of
+/// the heap index (`shape_memo::direct_mapped_index`): a family's closures take indices at
+/// a fixed stride, which a multiplicative hash of the index alone crowds into a few sets.
 #[inline(always)]
 fn script_target_set(callee: Value) -> Option<usize> {
-    let hashed = callee.heap_index()?.wrapping_mul(SCRIPT_TARGET_HASH);
-    // The top bits of the product, as many as index an entry; the lowest names the way.
-    let index = (hashed >> (u32::BITS - SCRIPT_CALL_TARGETS.trailing_zeros())) as usize;
-    Some(index & (SCRIPT_CALL_TARGETS - SCRIPT_TARGET_WAYS))
+    let set = super::shape_memo::direct_mapped_index(callee.heap_index()?, SCRIPT_CALL_TARGETS / SCRIPT_TARGET_WAYS);
+    Some(set * SCRIPT_TARGET_WAYS)
 }
 
 /// Entries of the function target memo (`LaneStack::function_targets`), one per function
@@ -5676,6 +5675,19 @@ impl<H: Host> Vm<H> {
     ) -> Option<ScriptCallTarget> {
         let set = script_target_set(callee)?;
         let (program, function, env, numeric) = self.same_realm_script_target(callee)?;
+        #[cfg(feature = "profile-lane-exits")]
+        if let Some(body) = self.programs.residual(program).and_then(|code| {
+            let body = code.function_get(function as usize)?;
+            Some(format!(
+                "resolve {} span={:?} cross={} known={}",
+                body.name.map(|atom| code.atoms[atom as usize].to_string()).unwrap_or_default(),
+                body.source_span.map(|span| span.start),
+                program != self.active_program,
+                self.lane_stack.function_target(program, function, program != self.active_program).is_some(),
+            ))
+        }) {
+            super::lane_exits::record_detail(body);
+        }
         // A callee of another program runs its own residual, which the program store keeps
         // alive with the program for the lane run; only a plain closure of a program the
         // lane admits activates across programs.
