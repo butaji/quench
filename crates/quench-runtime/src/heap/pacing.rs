@@ -237,7 +237,7 @@ impl GenerationalPacing {
 /// 4 vCPU, 2026-10-20: 768 against 384 gave V8-v7 Score x1.161 with RayTrace x1.54 and
 /// RegExp x1.60 in 7/7 pairs, frameworks x1.023, max RSS geomean x0.997 and x0.999).
 pub(super) const PRODUCTION_PACING: GenerationalPacing = GenerationalPacing {
-    young: Ratio::new(1, 64),
+    young: Ratio::new(1, 8),
     minimum_young: YOUNG_MINIMUM_ALLOCATION,
     maximum_young: MAXIMUM_YOUNG,
     old_growth: Ratio::new(1, 1),
@@ -264,7 +264,7 @@ const MAXIMUM_YOUNG: usize = 1 << 17;
 
 /// The fewest allocations between young collections: twice the headroom, which kept every
 /// scorecard workload's max RSS within 1 MB and 5% (1024 raised koa's by 1.1 MB; TOD-161).
-const YOUNG_MINIMUM_ALLOCATION: usize = 2 * MEMORY_FIRST_MINIMUM_ALLOCATION;
+const YOUNG_MINIMUM_ALLOCATION: usize = 1 << 14;
 
 #[cfg(not(feature = "gc-tuning"))]
 pub(super) fn pacing() -> GenerationalPacing {
