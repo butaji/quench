@@ -1150,13 +1150,16 @@ fn jit_wasm_reference_body_cache_ab_error(options: &Options) -> Option<&'static 
         return (options.fixture.is_some() || options.fixtures.is_some() || options.all)
             .then_some("--preflight-only cannot select fixtures");
     }
-    let one_pinned_fixture = options.fixture.as_deref() == Some("tsf-wasm")
-        || options
-            .fixtures
-            .as_ref()
-            .is_some_and(|fixtures| fixtures.len() == 1 && fixtures[0] == "tsf-wasm");
-    (!one_pinned_fixture || options.all).then_some(
-        "--jit-wasm-reference-body-cache-ab is pinned to the single JetStream fixture tsf-wasm",
+    let supported_fixture = options
+        .fixture
+        .as_deref()
+        .is_some_and(|fixture| matches!(fixture, "tsf-wasm" | "sqlite3-wasm"))
+        || options.fixtures.as_ref().is_some_and(|fixtures| {
+            fixtures.len() == 1
+                && matches!(fixtures[0].as_str(), "tsf-wasm" | "sqlite3-wasm")
+        });
+    (!supported_fixture || options.all).then_some(
+        "--jit-wasm-reference-body-cache-ab supports one JetStream fixture: tsf-wasm or sqlite3-wasm",
     )
 }
 
