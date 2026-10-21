@@ -1007,6 +1007,61 @@ impl Native {
         ) || self.is_function_native()
     }
 
+    /// Natives a lane `new` constructs in place from the running frame
+    /// (`lane_construct_native`): the keyed collections, `Date`, `Promise`, `Object`,
+    /// `RegExp`, the buffers, typed arrays and errors and the primitive wrappers, whose
+    /// [[Construct]] reads no caller state beyond the frame's published PC and runs guest
+    /// code only through ordinary nested calls.
+    pub(crate) fn constructs_from_lane(self) -> bool {
+        self.is_typed_array_constructor()
+            || self.is_error_constructor()
+            || matches!(
+                self,
+                Self::Map
+                    | Self::Set
+                    | Self::WeakMap
+                    | Self::WeakSet
+                    | Self::Date
+                    | Self::Promise
+                    | Self::Object
+                    | Self::RegExp
+                    | Self::ArrayBuffer
+                    | Self::DataView
+                    | Self::Boolean
+                    | Self::Number
+                    | Self::String
+            )
+    }
+
+    /// Whether its [[Construct]] makes the object from the newTarget it is passed
+    /// (GetPrototypeFromConstructor), so the construction leaves its prototype as made.
+    pub(crate) fn constructs_from_new_target(self) -> bool {
+        self.is_typed_array_constructor()
+            || self.is_error_constructor()
+            || matches!(
+                self,
+                Self::Array
+                    | Self::ArrayBuffer
+                    | Self::SharedArrayBuffer
+                    | Self::RegExp
+                    | Self::Map
+                    | Self::Set
+                    | Self::WeakMap
+                    | Self::WeakSet
+                    | Self::WeakRef
+                    | Self::FinalizationRegistry
+                    | Self::DisposableStack
+                    | Self::AsyncDisposableStack
+                    | Self::ShadowRealm
+                    | Self::TemporalPlainDate
+                    | Self::TemporalPlainDateTime
+                    | Self::TemporalPlainMonthDay
+                    | Self::TemporalPlainYearMonth
+                    | Self::TemporalZonedDateTime
+                    | Self::TemporalInstant
+            )
+    }
+
     pub(crate) fn is_error_constructor(self) -> bool {
         matches!(
             self,

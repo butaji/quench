@@ -354,8 +354,7 @@ impl<H: Host> Vm<H> {
         } else {
             return Err(self.type_error(p, "Invalid calendar".into()));
         };
-        let prototype_atom = self.prototype_atom();
-        let prototype = self.get_property(p, new_target, prototype_atom)?;
+        let prototype = self.constructor_prototype_value(p, new_target)?;
         let prototype = if self.is_object_like(prototype) {
             prototype
         } else {
@@ -2333,8 +2332,7 @@ impl<H: Host> Vm<H> {
         if record.epoch_nanoseconds.unsigned_abs() > MAX_EPOCH_NANOSECONDS as u128 {
             return Err(self.range_error(p, "Invalid epochNanoseconds".into()));
         }
-        let prototype_atom = self.prototype_atom();
-        let prototype = self.get_property(p, new_target, prototype_atom)?;
+        let prototype = self.constructor_prototype_value(p, new_target)?;
         let prototype = if self.is_object_like(prototype) {
             prototype
         } else {
