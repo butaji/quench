@@ -1652,6 +1652,7 @@ pub(crate) struct Vm<H> {
     function_name_shapes: provenance::FunctionNameShapes,
     symbol_write_proofs: symbol_write_proof::SymbolWriteProofs,
     symbol_load_proofs: symbol_load_proof::SymbolLoadProofs,
+    array_iteration_proof: Option<iterators::ArrayIterationProof>,
     enumerable_keys: enumerable_key_memo::EnumerableKeyMemo,
     shape_attribute_memo: shape_memo::ShapeAttributeMemo,
     name_atom_memo: name_atom_memo::NameAtomMemo,
@@ -2545,6 +2546,7 @@ impl<H: Host> Vm<H> {
         self.function_name_shapes.clear();
         self.symbol_write_proofs.clear();
         self.symbol_load_proofs.clear();
+        self.array_iteration_proof = None;
         self.enumerable_keys.clear();
         self.shape_attribute_memo.clear();
         self.atom_strings.clear();
