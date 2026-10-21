@@ -41,7 +41,19 @@ struct JsonSerialization {
     /// The text written so far, and the nesting depth of the value being written.
     output: JsonText,
     depth: usize,
+    /// Member plans of the plain objects serialized so far, by shape and prototype
+    /// (`Vm::json_object_plan`). They are shape facts, so they hold only while no guest code
+    /// runs: the property steps (`Vm::json_serialize_property`) drop them all.
+    plans: rustc_hash::FxHashMap<(u32, Value), Option<JsonObjectPlan>>,
+    /// Counts the property steps taken, each of which drops `plans`: a plan read under one
+    /// count holds until it changes.
+    steps: u64,
 }
+
+/// An object's enumerable own data members, as keys with their slots, when it is an ordinary
+/// object of a non-dictionary shape that no `toJSON` reaches: serializing it reads each slot,
+/// which runs no guest code.
+type JsonObjectPlan = std::rc::Rc<[(Atom, usize)]>;
 
 impl JsonSerialization {
     /// Starts a member of an array or object that already holds `written` members: the
@@ -953,6 +965,8 @@ impl<H: Host> Vm<H> {
             to_json: self.intern_atom("toJSON"),
             output: JsonText::new(),
             depth: 0,
+            plans: Default::default(),
+            steps: 0,
         };
         let holder = self.json_object();
         let holder_root = self.heap.root(holder);
@@ -1055,6 +1069,9 @@ impl<H: Host> Vm<H> {
         state: &mut JsonSerialization,
     ) -> Result<bool, JsError> {
         let _stack = self.enter_stack()?;
+        // The steps may run guest code, which can change the shapes plans describe.
+        state.plans.clear();
+        state.steps += 1;
         let holder_root = self.heap.root(holder);
         let result = (|| {
             let holder = self.heap.root_value(holder_root).unwrap_or(holder);
@@ -1130,7 +1147,8 @@ impl<H: Host> Vm<H> {
             && let Some(value) = value
         {
             let calls_nothing = if self.is_object_like(value) {
-                self.json_lacks_to_json(value, state.to_json)
+                self.json_object_plan(value, state).is_some()
+                    || self.json_lacks_to_json(value, state.to_json)
             } else {
                 !matches!(self.heap.get(value), Some(Cell::BigInt(_)))
             };
@@ -1141,6 +1159,49 @@ impl<H: Host> Vm<H> {
             }
         }
         self.json_serialize_property(p, holder, key, state)
+    }
+
+    /// The member plan of `object` (`JsonObjectPlan`), derived once per shape and prototype
+    /// while no guest code runs; `None` for any object the plan does not describe.
+    fn json_object_plan(
+        &self,
+        object: Value,
+        state: &mut JsonSerialization,
+    ) -> Option<JsonObjectPlan> {
+        let data = self.heap.object_record(object)?;
+        let shape_key = (data.shape(), data.proto());
+        if let Some(plan) = state.plans.get(&shape_key) {
+            return plan.clone();
+        }
+        let plan = self.derive_json_object_plan(object, data, state.to_json);
+        state.plans.insert(shape_key, plan.clone());
+        plan
+    }
+
+    fn derive_json_object_plan(
+        &self,
+        object: Value,
+        data: &Object,
+        to_json: Atom,
+    ) -> Option<JsonObjectPlan> {
+        let shape = data.shape();
+        if self.shape_is_dictionary(shape)
+            || data.has_side_descriptors()
+            || data.is_raw_json()
+            || self.boxed_primitive_data(object).is_some()
+            || !self.json_lacks_to_json(object, to_json)
+        {
+            return None;
+        }
+        let accessors = self.shape_may_have_accessors(shape);
+        self.shape_enumerable_keys(object)?
+            .into_iter()
+            .map(|key| {
+                let slot = self.property_shape_slot(shape, PropertyKey::string(key))?;
+                let accessor = accessors && self.slot_attributes(data, slot)?.accessor;
+                (self.plain_named_key(key) && !accessor).then_some((key, slot))
+            })
+            .collect()
     }
 
     /// Whether `Get(value, "toJSON")` finds nothing, decided without running guest code, for
@@ -1343,7 +1404,15 @@ impl<H: Host> Vm<H> {
         let object_root = self.heap.root(object);
         let result = (|| {
             let object = self.heap.root_value(object_root).unwrap_or(object);
-            let keys = if let Some(property_list) = &state.property_list {
+            let plan = if state.property_list.is_none() && state.replacer.is_none() {
+                self.json_object_plan(object, state)
+            } else {
+                None
+            };
+            let planned_steps = state.steps;
+            let keys = if let Some(plan) = &plan {
+                plan.iter().map(|(key, _)| *key).collect()
+            } else if let Some(property_list) = &state.property_list {
                 property_list.clone()
             } else {
                 self.json_enumerable_keys(p, object)?
@@ -1351,7 +1420,7 @@ impl<H: Host> Vm<H> {
             state.output.push(b'{');
             state.depth += 1;
             let mut written = 0;
-            for key in keys {
+            for (index, key) in keys.into_iter().enumerate() {
                 let object = self.heap.root_value(object_root).unwrap_or(object);
                 // The member is written before its value is known; an omitted value
                 // takes it back.
@@ -1359,7 +1428,13 @@ impl<H: Host> Vm<H> {
                 state.begin_member(written);
                 self.write_json_key(key, &mut state.output);
                 state.output.extend_from_slice(if state.gap.is_empty() { b":" } else { b": " });
-                let value = self.plain_named_get(object, key);
+                // A plan read for this object holds while no member took the property steps.
+                let planned = plan.as_ref().filter(|_| state.steps == planned_steps).and_then(|plan| {
+                    self.heap
+                        .ordinary_object(object)
+                        .and_then(|data| self.heap.property_get(data, plan[index].1))
+                });
+                let value = planned.or_else(|| self.plain_named_get(object, key));
                 if self.json_member(p, object, JsonKey::Name(key), value, state)? {
                     written += 1;
                 } else {
