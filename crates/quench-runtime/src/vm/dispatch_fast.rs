@@ -2423,7 +2423,7 @@ lane_handler! {
 
 lane_handler! {
     /// `lane_set_index` past a record array, appending to a dense array at its length,
-    /// filling one of its holes, or a plain symbol-keyed write.
+    /// filling one of its holes, or a plain symbol- or string-keyed write.
     #[inline(never)]
     fn lane_set_index_slot<>(cx, r, ip, i, view) {
         let (object, key, value) = (r.get(i.b), r.get(i.c), r.get(i.a));
@@ -2432,6 +2432,7 @@ lane_handler! {
             && !vm.try_append_dense_element(object, key, value)
             && !vm.try_fill_dense_hole(object, key, value)
             && !vm.try_plain_symbol_set(object, key, value)
+            && !vm.try_plain_string_key_set(object, key, value)
         {
             return exit(ip);
         }
@@ -3054,14 +3055,15 @@ script_handler! {
 
 script_handler! {
     /// `GetField` of a string primitive, which `String.prototype` answers through the
-    /// site's cache (`Vm::cached_string_field_hit`): a method read, as `s.substring`. A miss
-    /// moves the record on as `lane_get_field_miss` decides.
+    /// site's cache (`Vm::string_prototype_field_hit`): a method read, as `s.substring`, at a
+    /// site `Vm::string_field_site_cacheable` admits. A miss moves the record on as
+    /// `lane_get_field_miss` decides.
     fn lane_get_field_string<>(cx, r, ip, i, view) {
-        // SAFETY: the context's program outlives the lane run.
-        let code = unsafe { &*(*cx).code };
-        let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b) }).and_then(|object| {
-            (unsafe { vm(cx) }).cached_string_field_hit(code, object, i.imm(), i.c)
-        }) else {
+        let vm = unsafe { vm(cx) };
+        let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b) })
+            .filter(|object| vm.heap.is_string(*object))
+            .and_then(|_| vm.string_prototype_field_hit(i.c))
+        else {
             sibling!(lane_get_field_miss::<H>, r, ip, Carried::script(cx))
         };
         r.set(i.a, value);
@@ -3202,8 +3204,12 @@ script_handler! {
             (unsafe { vm(cx) }).heap.is_string(base)
         });
         let handler: Option<Handler> = match lane_field_site_tier(unsafe { vm(cx) }, code, i) {
-            // A string primitive reads `String.prototype`, whatever tier its entries name.
-            _ if string_base => Some(lane_get_field_string::<H>),
+            // A string primitive reads `String.prototype`, whatever tier its entries name,
+            // where the site admits that read; any other read of one is the general read's.
+            _ if string_base && (unsafe { vm(cx) }).string_field_site_cacheable(code, i.imm()) => {
+                Some(lane_get_field_string::<H>)
+            }
+            _ if string_base => Some(lane_get_field::<H>),
             FieldSiteTier::Nested => Some(lane_get_field_nested::<H>),
             FieldSiteTier::General => Some(lane_get_field::<H>),
             FieldSiteTier::Getter => Some(lane_get_field_getter::<H>),
