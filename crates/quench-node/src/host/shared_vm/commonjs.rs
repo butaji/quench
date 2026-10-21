@@ -165,13 +165,14 @@ type PackageType = Result<Option<Option<quench_runtime::SourceKind>>, String>;
 thread_local! {
     /// Each `package.json` is read once per thread, as Node's package config reader caches
     /// each file it reads; a package with many modules (date-fns: 316 imports under one
-    /// 199 KB `package.json`) otherwise parsed it again for every module.
-    static PACKAGE_TYPES: std::cell::RefCell<std::collections::HashMap<std::path::PathBuf, PackageType>> =
+    /// 199 KB `package.json`) otherwise parsed it again for every module. Keyed by the
+    /// path's text: `Path`'s own hash walks its components.
+    static PACKAGE_TYPES: std::cell::RefCell<rustc_hash::FxHashMap<std::ffi::OsString, PackageType>> =
         Default::default();
 }
 
 fn package_type(package: std::path::PathBuf) -> PackageType {
-    if let Some(known) = PACKAGE_TYPES.with(|types| types.borrow().get(&package).cloned()) {
+    if let Some(known) = PACKAGE_TYPES.with(|types| types.borrow().get(package.as_os_str()).cloned()) {
         return known;
     }
     let read = || -> PackageType {
@@ -194,7 +195,7 @@ fn package_type(package: std::path::PathBuf) -> PackageType {
         }
     };
     let known = read();
-    PACKAGE_TYPES.with(|types| types.borrow_mut().insert(package, known.clone()));
+    PACKAGE_TYPES.with(|types| types.borrow_mut().insert(package.into_os_string(), known.clone()));
     known
 }
 

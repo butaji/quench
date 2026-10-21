@@ -2703,22 +2703,21 @@ impl<H: Host> Vm<H> {
         // Equal string constants share one cell, as engines intern literals: a string is an
         // immutable primitive, so which cell holds it is unobservable, and `===` between
         // literals from different sites then decides by identity before comparing text.
-        let mut strings: std::collections::HashMap<StringConstantKey<'_>, Value> =
-            std::collections::HashMap::new();
+        let mut strings: FxHashMap<StringConstantKey<'_>, Value> = FxHashMap::default();
         for constant in &program.constants {
             let key = match constant {
-                Constant::String(text) => Some(StringConstantKey::Text(text)),
-                Constant::StringUnits(units) => Some(StringConstantKey::Units(units)),
-                _ => None,
-            };
-            let value = match key.and_then(|key| strings.get(&key).copied().map(Ok).or(Some(Err(key)))) {
-                Some(Ok(shared)) => shared,
-                Some(Err(key)) => {
-                    let value = self.materialize_constant(constant);
-                    strings.insert(key, value);
-                    value
+                Constant::String(text) => StringConstantKey::Text(text),
+                Constant::StringUnits(units) => StringConstantKey::Units(units),
+                _ => {
+                    constants.push(self.materialize_constant(constant));
+                    continue;
                 }
-                None => self.materialize_constant(constant),
+            };
+            let value = match strings.entry(key) {
+                std::collections::hash_map::Entry::Occupied(shared) => *shared.get(),
+                std::collections::hash_map::Entry::Vacant(slot) => {
+                    *slot.insert(self.materialize_constant(constant))
+                }
             };
             constants.push(value);
         }
