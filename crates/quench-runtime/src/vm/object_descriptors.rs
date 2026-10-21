@@ -359,12 +359,35 @@ impl<H: Host> Vm<H> {
         outcome
     }
 
+    /// FromPropertyDescriptor of a property's complete descriptor: a data or an accessor
+    /// descriptor's four fields, in `from_property_descriptor`'s order, made in one allocation
+    /// of their literal shape, as every one of them has the same keys.
     fn property_descriptor_object(
         &mut self,
         value: Value,
         attributes: PropertyAttributes,
     ) -> Result<Value, JsError> {
-        self.from_property_descriptor(PropertyDescriptorRecord::from_attributes(value, attributes))
+        let [enumerable, configurable] = [attributes.enumerable, attributes.configurable].map(Self::integrity_bool);
+        let atoms = self.runtime_atoms;
+        let (keys, values) = if attributes.accessor {
+            (
+                [atoms.get, atoms.set, atoms.enumerable, atoms.configurable],
+                [
+                    attributes.getter.unwrap_or(Value::UNDEFINED),
+                    attributes.setter.unwrap_or(Value::UNDEFINED),
+                    enumerable,
+                    configurable,
+                ],
+            )
+        } else {
+            (
+                [atoms.value, atoms.writable, atoms.enumerable, atoms.configurable],
+                [value, Self::integrity_bool(attributes.writable), enumerable, configurable],
+            )
+        };
+        let shape = self.literal_shape(&keys);
+        let prototype = self.realm_object_prototype(self.realm.globals);
+        Ok(self.heap.alloc_object_with_properties(prototype, shape, &values))
     }
 
     pub(super) fn typed_array_index_key(key: &str) -> TypedArrayIndexKey {
