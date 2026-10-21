@@ -428,7 +428,20 @@ pub(crate) fn module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     let incoming_constructor = crate::host::shared_vm::commonjs::node_library_export(
         context, "http.js", "_http_incoming.js", "IncomingMessage",
     )?;
-    let incoming_data = context.array_rooted(&[incoming_constructor, emitter])?;
+    // One `_read` and `_destroy` serve every message: each finds its exchange under the
+    // host-private key its side records (`incoming::create`).
+    let server_exchange = context.private_symbol_rooted(Some("node:http:serverExchange"));
+    let client_exchange = context.private_symbol_rooted(Some("node:http:clientExchange"));
+    let exchange_keys = context.array_rooted(&[server_exchange, client_exchange])?;
+    let incoming_read = context.host_function_named_with_data(
+        crate::host::shared_vm::operation("httpIncomingRead"), "_read", exchange_keys,
+    )?;
+    let incoming_destroy = context.host_function_named_with_data(
+        crate::host::shared_vm::operation("httpIncomingDestroy"), "_destroy", exchange_keys,
+    )?;
+    let incoming_data = context.array_rooted(&[
+        incoming_constructor, emitter, incoming_read, incoming_destroy, server_exchange, client_exchange,
+    ])?;
     let incoming_factory = context.host_function_with_data(
         crate::host::shared_vm::operation("httpIncomingCreate"), incoming_data,
     )?;
