@@ -836,6 +836,8 @@ pub(super) struct LaneStack {
     cross_function_targets: Box<[ScriptCallTarget; FUNCTION_TARGETS]>,
     /// Constructors' plans (`lane_initialize_fields`, `lane_planned_receiver`).
     construct_plans: Box<[ConstructPlan; CONSTRUCT_PLANS]>,
+    /// The reads call sites answered (`ReadMemo`), one per set of sites (`read_memo_index`).
+    read_memos: Box<[ReadMemo; READ_MEMOS]>,
     /// The forwarding constructors whose activations constructions skipped, one per
     /// `Completion::Forwarder` activation, innermost last.
     forwarders: Vec<SkippedForwarder>,
@@ -869,6 +871,7 @@ impl Default for LaneStack {
             function_targets: Box::new([EMPTY_SCRIPT_CALL_TARGET; FUNCTION_TARGETS]),
             cross_function_targets: Box::new([EMPTY_SCRIPT_CALL_TARGET; FUNCTION_TARGETS]),
             construct_plans: Box::new([EMPTY_CONSTRUCT_PLAN; CONSTRUCT_PLANS]),
+            read_memos: Box::new([EMPTY_READ_MEMO; READ_MEMOS]),
             forwarders: Vec::new(),
             forwarded_methods: Vec::new(),
             activation_limit: std::cell::Cell::new(0),
@@ -895,6 +898,7 @@ impl LaneStack {
         *self.cross_targets = [EMPTY_SCRIPT_CALL_TARGET; SCRIPT_CALL_TARGETS];
         *self.function_targets = [EMPTY_SCRIPT_CALL_TARGET; FUNCTION_TARGETS];
         *self.cross_function_targets = [EMPTY_SCRIPT_CALL_TARGET; FUNCTION_TARGETS];
+        *self.read_memos = [EMPTY_READ_MEMO; READ_MEMOS];
     }
 
     /// The target `function_targets` holds for a closure of `function` of `program` in this
@@ -6169,7 +6173,17 @@ fn lane_direct_call_this<H: Host>(
     receiver: Value,
 ) -> Option<Value> {
     match target.this_binding {
-        ThisBinding::Lexical => return Some(target.lexical_this),
+        ThisBinding::Lexical => Some(target.lexical_this),
+        binding => lane_receiver_this(vm, binding, receiver),
+    }
+}
+
+/// `lane_direct_call_this` of a binding other than an arrow's own `this`, which the
+/// receiver alone decides; `None` for `ThisBinding::Lexical`.
+#[inline(always)]
+fn lane_receiver_this<H: Host>(vm: &Vm<H>, binding: ThisBinding, receiver: Value) -> Option<Value> {
+    match binding {
+        ThisBinding::Lexical => return None,
         // An arrow whose environment binds no `this` takes its caller's receiver.
         ThisBinding::CallerReceiver | ThisBinding::Strict => return Some(receiver),
         ThisBinding::Sloppy => {}
@@ -6229,7 +6243,11 @@ script_handler! {
             None
         } else {
             let passed = ReadArguments { registers: r, base: arguments, passed: argc };
-            unsafe { lane_call_read(cx, target, passed, this) }
+            let value = unsafe { lane_call_read(cx, target, passed, this) };
+            if value.is_some() {
+                lane_note_read(cx, ip, target, passed, this);
+            }
+            value
         };
         let Some(value) = value else {
             // An activation keeping values past the parameters, or a full lane stack, takes the
@@ -8369,18 +8387,13 @@ unsafe fn lane_call_read<H: Host>(
     arguments: ReadArguments,
     this: Value,
 ) -> Option<Value> {
+    // SAFETY: the context's program outlives the lane run.
+    let (vm, code) = unsafe { (vm(cx), &*(*cx).code) };
     // A forwarding body's answer is its method's leaf read on the field it reads, so both
     // kinds reach one leaf read, which the call handler then holds once.
     let (target, arguments, this) = if target.entry == CallEntry::ForwardsRead {
-        // SAFETY: the program store keeps a derived view alive with its program, and the
-        // context's program outlives the lane run; a forwarding body's view holds its method
-        // read after its field read.
-        let (records, code) = unsafe { ((*target.view).records(), &*(*cx).code) };
-        let (field, method) = unsafe { (&*records, &*records.add(1)) };
-        let vm = unsafe { vm(cx) };
-        let base = lane_read_base(crate::bytecode::FieldBase(field.b), arguments, this)?;
-        let receiver = lane_record_field_hit(vm, code, field, base)?;
-        let callee = lane_record_field_hit(vm, code, method, receiver)?;
+        // SAFETY: as for `ForwardRead::of`.
+        let (callee, receiver) = unsafe { ForwardRead::of::<H>(target) }?.method(vm, code, arguments, this)?;
         // SAFETY: as `Vm::script_call_entry`; a read resolves no target and collects nothing.
         let inner = unsafe { &*vm.script_call_entry(callee)? };
         if !inner.entry.reads() {
@@ -8392,7 +8405,8 @@ unsafe fn lane_call_read<H: Host>(
     } else {
         (target, arguments, this)
     };
-    unsafe { lane_call_leaf_read(cx, target, arguments, this) }
+    // SAFETY: as for `LeafRead::of`.
+    unsafe { LeafRead::of::<H>(target) }?.run(vm, code, arguments, this)
 }
 
 /// The values a call that a read answers passed (`lane_call_read`): parameter `k` is the
@@ -8418,47 +8432,441 @@ impl ReadArguments {
     }
 }
 
-/// `lane_call_read` of a `CallEntry::reads` target.
-///
-/// # Safety
-/// As for `lane_call_read`.
+/// The hit a field record of a read body answers with: its quickened primary entry, own or
+/// held by a record prototype (`lane_get_field_own`, `lane_get_field_holder`). Each hit is
+/// its cache's own validated read, whatever the record's state when it runs.
+#[derive(Clone, Copy)]
+enum FieldHit {
+    Own(u16),
+    Holder(u16),
+}
+
+impl FieldHit {
+    /// The hit `record`'s quickened handler names; `None` for any other record state.
+    #[inline(always)]
+    fn of<H: Host>(record: &LaneInstruction) -> Option<Self> {
+        let handler = record.handler;
+        if handler == lane_get_field_own::<H, true> as *const ()
+            || handler == lane_get_field_own::<H, false> as *const ()
+        {
+            Some(Self::Own(record.c))
+        } else if handler == lane_get_field_holder::<H, true> as *const ()
+            || handler == lane_get_field_holder::<H, false> as *const ()
+        {
+            Some(Self::Holder(record.c))
+        } else {
+            None
+        }
+    }
+
+    /// The hit on `object`; `None` for a miss.
+    #[inline(always)]
+    fn run<H: Host>(self, vm: &mut Vm<H>, code: &ResidualProgram, object: Value) -> Option<Value> {
+        match self {
+            Self::Own(cache) => vm.primary_own_field_hit(code, object, cache),
+            Self::Holder(cache) => vm.primary_record_holder_field_hit(code, object, cache),
+        }
+    }
+}
+
+/// The read a `CallEntry::reads` body answers with, by the state its records quickened to.
+#[derive(Clone, Copy)]
+enum LeafRead {
+    /// Its returning `GetField` (`lane_returning` of `kind`) on the object `base` names: the
+    /// kind's hit (`returning_field_hit`), or for a holder a record prototype's method read
+    /// with no call.
+    Field { base: u16, kind: u8, cache: u16 },
+    /// Its nested own read (`nested_own_field_hit`) of field site `site`.
+    Nested { site: u32 },
+    /// Its field record's hit, then the dense element the parameter `index` names.
+    Element { base: u16, field: FieldHit, index: u16 },
+}
+
+impl LeafRead {
+    /// The read `target`'s records answer with now; `None` for a record state no read hits.
+    ///
+    /// # Safety
+    /// `target` is a `CallEntry::reads` target of the running program, whose view holds its
+    /// returning record first and, for an element read, its `GetIndex` record after it.
+    #[inline(always)]
+    unsafe fn of<H: Host>(target: &ScriptCallTarget) -> Option<Self> {
+        // SAFETY: the program store keeps a derived view alive with its program.
+        let entry = unsafe { &*(*target.view).records() };
+        if target.entry == CallEntry::ReadsElement {
+            // SAFETY: as the function's contract.
+            let element = unsafe { &*(*target.view).records().add(1) };
+            return Some(Self::Element { base: entry.b, field: FieldHit::of::<H>(entry)?, index: element.c });
+        }
+        let handler = entry.handler;
+        if handler == lane_returning::<H, RETURNING_FIELD_NESTED> as *const () {
+            return Some(Self::Nested { site: entry.imm() });
+        }
+        let kind = if handler == lane_returning::<H, RETURNING_FIELD_POLYMORPHIC> as *const () {
+            RETURNING_FIELD_POLYMORPHIC
+        } else if handler == lane_returning::<H, RETURNING_FIELD_OWN> as *const () {
+            RETURNING_FIELD_OWN
+        } else if handler == lane_returning::<H, RETURNING_FIELD_HOLDER> as *const () {
+            RETURNING_FIELD_HOLDER
+        } else if handler == lane_returning::<H, RETURNING_FIELD_INHERITED> as *const () {
+            RETURNING_FIELD_INHERITED
+        } else {
+            return None;
+        };
+        Some(Self::Field { base: entry.b, kind, cache: entry.c })
+    }
+
+    /// The read's value for a call passing `arguments` on `this`; `None` for a miss.
+    #[inline(always)]
+    fn run<H: Host>(
+        self,
+        vm: &mut Vm<H>,
+        code: &ResidualProgram,
+        arguments: ReadArguments,
+        this: Value,
+    ) -> Option<Value> {
+        let base = |base: u16| lane_read_base(crate::bytecode::FieldBase(base), arguments, this);
+        match self {
+            Self::Element { base: field_base, field, index } => {
+                let array = field.run(vm, code, base(field_base)?)?;
+                vm.direct_dense_element(array, arguments.get(index)?)
+            }
+            Self::Nested { site } => {
+                // SAFETY: a nested record of the running program names its site.
+                let site = unsafe { code.field_sites.get_unchecked(site as usize) };
+                nested_own_field_hit(vm, code, site, lane_read_base(site.base, arguments, this)?)
+            }
+            Self::Field { base: field_base, kind, cache } => {
+                let object = base(field_base)?;
+                match kind {
+                    RETURNING_FIELD_POLYMORPHIC => {
+                        returning_field_hit::<H, RETURNING_FIELD_POLYMORPHIC>(vm, code, object, cache)
+                    }
+                    RETURNING_FIELD_OWN => returning_field_hit::<H, RETURNING_FIELD_OWN>(vm, code, object, cache),
+                    // A record prototype's method, read with no call; any other declines the
+                    // read, and the activation's own record reads it.
+                    RETURNING_FIELD_HOLDER => vm.primary_record_holder_field_hit(code, object, cache),
+                    _ => returning_field_hit::<H, RETURNING_FIELD_INHERITED>(vm, code, object, cache),
+                }
+            }
+        }
+    }
+}
+
+/// A `CallEntry::ForwardsRead` body's reads: the field of `this` or a parameter it reads,
+/// then the method of that field's value it calls.
+#[derive(Clone, Copy)]
+struct ForwardRead {
+    base: u16,
+    field: FieldHit,
+    method: FieldHit,
+}
+
+impl ForwardRead {
+    /// The reads `target`'s records answer with now; `None` for a record state no read hits.
+    ///
+    /// # Safety
+    /// `target` is a `CallEntry::ForwardsRead` target of the running program, whose view
+    /// holds its method read after its field read.
+    #[inline(always)]
+    unsafe fn of<H: Host>(target: &ScriptCallTarget) -> Option<Self> {
+        // SAFETY: the program store keeps a derived view alive with its program.
+        let (field, method) = unsafe {
+            let records = (*target.view).records();
+            (&*records, &*records.add(1))
+        };
+        Some(Self { base: field.b, field: FieldHit::of::<H>(field)?, method: FieldHit::of::<H>(method)? })
+    }
+
+    /// The method the body calls and its receiver, for a call passing `arguments` on `this`.
+    #[inline(always)]
+    fn method<H: Host>(
+        self,
+        vm: &mut Vm<H>,
+        code: &ResidualProgram,
+        arguments: ReadArguments,
+        this: Value,
+    ) -> Option<(Value, Value)> {
+        let base = lane_read_base(crate::bytecode::FieldBase(self.base), arguments, this)?;
+        let receiver = self.field.run(vm, code, base)?;
+        Some((self.method.run(vm, code, receiver)?, receiver))
+    }
+}
+
+/// A read a call site's memo makes (`MemoRead`): its field steps as copies of the field
+/// cache entries that answered them (`Vm::record_field_entry_hit`), so a step is one shape
+/// test. A read of a polymorphic or inherited entry, which probes further, has no memo.
+#[derive(Clone, Copy)]
+enum MemoLeaf {
+    /// The field of the object `base` names (`lane_read_base`).
+    Field { base: u16, field: super::FieldCache },
+    /// That field's array, then its dense element the parameter `index` names.
+    Element { base: u16, field: super::FieldCache, index: u16 },
+    /// That field's array, then its `length` (`Vm::array_length_field`).
+    Length { base: u16, field: super::FieldCache },
+    /// That field's object, then its own field `second`.
+    Nested { base: u16, field: super::FieldCache, second: super::FieldCache },
+}
+
+impl MemoLeaf {
+    /// The memo form of `read`, whose hits the active program's caches just answered; `None`
+    /// for a polymorphic or inherited read.
+    fn of<H: Host>(vm: &Vm<H>, code: &ResidualProgram, read: LeafRead) -> Option<Self> {
+        let entry = |hit: FieldHit| match hit {
+            FieldHit::Own(cache) | FieldHit::Holder(cache) => vm.field_cache_entry(cache),
+        };
+        Some(match read {
+            LeafRead::Field { base, kind: RETURNING_FIELD_OWN | RETURNING_FIELD_HOLDER, cache } => {
+                Self::Field { base, field: vm.field_cache_entry(cache) }
+            }
+            LeafRead::Field { .. } => return None,
+            LeafRead::Element { base, field, index } => Self::Element { base, field: entry(field), index },
+            LeafRead::Nested { site } => {
+                // SAFETY: a nested record of the running program names its site.
+                let site = unsafe { code.field_sites.get_unchecked(site as usize) };
+                let (base, field) = (site.base.0, vm.field_cache_entry(site.first.1));
+                match site.second {
+                    None => Self::Field { base, field },
+                    Some((atom, _)) if atom == vm.length_atom => Self::Length { base, field },
+                    Some((_, second)) => Self::Nested { base, field, second: vm.field_cache_entry(second) },
+                }
+            }
+        })
+    }
+
+    /// `LeafRead::run` of the read this memo records.
+    #[inline(always)]
+    fn run<H: Host>(&self, vm: &Vm<H>, arguments: ReadArguments, this: Value) -> Option<Value> {
+        let base = |base: u16| lane_read_base(crate::bytecode::FieldBase(base), arguments, this);
+        match *self {
+            Self::Field { base: field_base, field } => vm.record_field_entry_hit(field, base(field_base)?),
+            Self::Element { base: field_base, field, index } => {
+                let array = vm.record_field_entry_hit(field, base(field_base)?)?;
+                vm.direct_dense_element(array, arguments.get(index)?)
+            }
+            Self::Length { base: field_base, field } => {
+                let array = vm.record_field_entry_hit(field, base(field_base)?)?;
+                vm.array_length_field(array, vm.length_atom)
+            }
+            Self::Nested { base: field_base, field, second } => {
+                let object = vm.record_field_entry_hit(field, base(field_base)?)?;
+                vm.record_field_entry_hit(second, object)
+            }
+        }
+    }
+}
+
+/// What a call site's read target answered with (`lane_script_call_memo`), so the site's
+/// next call of the same callee makes the hits alone: the target's read, or a forwarding
+/// body's field and method reads and the read of the method they found. Every part depends
+/// on the callee alone, whose body is fixed, and on the shapes its steps name.
+#[derive(Clone, Copy)]
+enum MemoRead {
+    Leaf(MemoLeaf),
+    Forward {
+        /// The forwarding body's field read: the object `base` names, then its method.
+        base: u16,
+        field: super::FieldCache,
+        method_field: super::FieldCache,
+        /// The forwarding body's parameters, which it passes on in order.
+        params: u16,
+        /// The method the reads found, a `CallEntry::reads` target, and its binding.
+        method: Value,
+        method_this: ThisBinding,
+        read: MemoLeaf,
+    },
+}
+
+/// A call site's memo of its read (`MemoRead`), valid for `callee` in the generation and
+/// program it was made in, as `ScriptCallTarget` is.
+#[derive(Clone, Copy)]
+struct ReadMemo {
+    /// The call record that made it, which owns its slot (`read_memo_index`) while it holds.
+    site: Ip,
+    callee: Value,
+    generation: ScriptGeneration,
+    program: ProgramId,
+    this_binding: ThisBinding,
+    read: MemoRead,
+}
+
+/// Slots of the read memo (`LaneStack::read_memos`); a site whose slot another live site's
+/// memo holds keeps the full call form.
+const READ_MEMOS: usize = 64;
+const _: () = assert!(READ_MEMOS.is_power_of_two());
+
+const EMPTY_READ_MEMO: ReadMemo = ReadMemo {
+    site: std::ptr::null(),
+    callee: Value::UNDEFINED,
+    generation: NO_SCRIPT_GENERATION,
+    program: ProgramId::MAIN,
+    this_binding: ThisBinding::Sloppy,
+    read: MemoRead::Leaf(MemoLeaf::Field { base: 0, field: super::EMPTY_CACHE }),
+};
+
+/// The read memo slot of the call record `site`: the shared direct-mapped index
+/// (`shape_memo::direct_mapped_index`) of its address above the alignment bits every record
+/// shares, which spreads a view's consecutive records over the slots.
 #[inline(always)]
-unsafe fn lane_call_leaf_read<H: Host>(
+fn read_memo_index(site: Ip) -> usize {
+    let position = site as usize >> std::mem::align_of::<LaneInstruction>().trailing_zeros();
+    super::shape_memo::direct_mapped_index(position, READ_MEMOS)
+}
+
+/// Records `target`'s read at the call record `site` (`lane_memoize_read`) unless a live memo
+/// holds its slot: another site's, or the site's own, which then missed.
+#[inline(always)]
+fn lane_note_read<H: Host>(
     cx: *mut LaneContext<H>,
+    site: Ip,
     target: &ScriptCallTarget,
     arguments: ReadArguments,
     this: Value,
-) -> Option<Value> {
-    // SAFETY: as for `lane_call_read`.
-    let (entry, code) = unsafe { (&*(*target.view).records(), &*(*cx).code) };
-    let vm = unsafe { vm(cx) };
-    let base = |base: crate::bytecode::FieldBase| lane_read_base(base, arguments, this);
-    let handler = entry.handler;
-    if target.entry == CallEntry::ReadsElement {
-        // The field record's read, then the dense element its `GetIndex` names.
-        // SAFETY: an element-read body's view holds its `GetIndex` record after the field's.
-        let element = unsafe { &*(*target.view).records().add(1) };
-        let array = lane_record_field_hit(vm, code, entry, base(crate::bytecode::FieldBase(entry.b))?)?;
-        return vm.direct_dense_element(array, arguments.get(element.c)?);
+) {
+    let stack = unsafe { &vm(cx).lane_stack };
+    let held = &stack.read_memos[read_memo_index(site)];
+    if held.generation != stack.generation || held.site.is_null() {
+        lane_memoize_read(cx, site, target, arguments, this);
     }
-    if handler == lane_returning::<H, RETURNING_FIELD_NESTED> as *const () {
-        // SAFETY: a nested record names its site.
-        let site = unsafe { code.field_sites.get_unchecked(entry.imm() as usize) };
-        return nested_own_field_hit(vm, code, site, base(site.base)?);
+}
+
+/// The memo of the read `target` just answered at `site` for `arguments` and `this`, and the
+/// site's memo form (`lane_script_call_memo`); nothing for an arrow's own `this`, which the
+/// memo does not hold, or a read whose records no longer hit.
+#[cold]
+#[inline(never)]
+fn lane_memoize_read<H: Host>(
+    cx: *mut LaneContext<H>,
+    site: Ip,
+    target: &ScriptCallTarget,
+    arguments: ReadArguments,
+    this: Value,
+) {
+    // SAFETY: the context's program outlives the lane run.
+    let (vm, code) = unsafe { (vm(cx), &*(*cx).code) };
+    if target.this_binding == ThisBinding::Lexical {
+        return;
     }
-    let object = base(crate::bytecode::FieldBase(entry.b))?;
-    if handler == lane_returning::<H, RETURNING_FIELD_POLYMORPHIC> as *const () {
-        returning_field_hit::<H, RETURNING_FIELD_POLYMORPHIC>(vm, code, object, entry.c)
-    } else if handler == lane_returning::<H, RETURNING_FIELD_OWN> as *const () {
-        returning_field_hit::<H, RETURNING_FIELD_OWN>(vm, code, object, entry.c)
-    } else if handler == lane_returning::<H, RETURNING_FIELD_HOLDER> as *const () {
-        // A record prototype's method, read with no call; any other declines the read, and
-        // the activation's own record reads it.
-        vm.primary_record_holder_field_hit(code, object, entry.c)
-    } else if handler == lane_returning::<H, RETURNING_FIELD_INHERITED> as *const () {
-        returning_field_hit::<H, RETURNING_FIELD_INHERITED>(vm, code, object, entry.c)
+    let read = if target.entry == CallEntry::ForwardsRead {
+        // SAFETY: as for `ForwardRead::of`.
+        let Some(forward) = (unsafe { ForwardRead::of::<H>(target) }) else {
+            return;
+        };
+        let Some((method, _)) = forward.method(vm, code, arguments, this) else {
+            return;
+        };
+        // SAFETY: as `Vm::script_call_entry`; nothing here resolves a target or collects.
+        let Some(inner) = vm.script_call_entry(method).map(|inner| unsafe { &*inner }) else {
+            return;
+        };
+        if !inner.entry.reads() || inner.this_binding == ThisBinding::Lexical {
+            return;
+        }
+        // SAFETY: as for `LeafRead::of`.
+        let Some(read) = (unsafe { LeafRead::of::<H>(inner) }) else {
+            return;
+        };
+        let entry = |hit: FieldHit| match hit {
+            FieldHit::Own(cache) | FieldHit::Holder(cache) => vm.field_cache_entry(cache),
+        };
+        MemoRead::Forward {
+            base: forward.base,
+            field: entry(forward.field),
+            method_field: entry(forward.method),
+            params: target.params,
+            method,
+            method_this: inner.this_binding,
+            read: match MemoLeaf::of(vm, code, read) {
+                Some(read) => read,
+                None => return,
+            },
+        }
     } else {
-        None
+        // SAFETY: as for `LeafRead::of`.
+        let Some(read) = (unsafe { LeafRead::of::<H>(target) }) else {
+            return;
+        };
+        match MemoLeaf::of(vm, code, read) {
+            Some(read) => MemoRead::Leaf(read),
+            None => return,
+        }
+    };
+    vm.lane_stack.read_memos[read_memo_index(site)] = ReadMemo {
+        site,
+        callee: target.callee,
+        generation: vm.lane_stack.generation,
+        program: vm.active_program,
+        this_binding: target.this_binding,
+        read,
+    };
+    requicken(site, lane_script_call_memo::<H>);
+}
+
+/// The value the memo of the call record at `ip` answers its call with (`ReadMemo`); `None`
+/// where the memo is another site's or stale, the call is another callee's or a construction's
+/// (`lane_constructing`), or a hit misses.
+///
+/// # Safety
+/// `cx` is the running lane's context and `ip` its call record `i`.
+#[inline(always)]
+unsafe fn lane_memo_read<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    ip: Ip,
+    i: &LaneInstruction,
+) -> Option<Value> {
+    let vm: &Vm<H> = unsafe { vm(cx) };
+    let callee = r.get(i.b);
+    let held = &vm.lane_stack.read_memos[read_memo_index(ip)];
+    if held.site != ip
+        || held.callee != callee
+        || held.generation != vm.lane_stack.generation
+        || held.program != vm.active_program
+        || lane_constructing(vm, callee)
+    {
+        return None;
+    }
+    let this = lane_receiver_this(vm, held.this_binding, r.get(i.c))?;
+    let arguments = ReadArguments {
+        registers: r,
+        base: ImmediateLayout::call_window_base(i.imm()),
+        passed: ImmediateLayout::argument_count(i.imm()),
+    };
+    match &held.read {
+        MemoRead::Leaf(read) => read.run(vm, arguments, this),
+        MemoRead::Forward { base, field, method_field, params, method, method_this, read } => {
+            let base = lane_read_base(crate::bytecode::FieldBase(*base), arguments, this)?;
+            let receiver = vm.record_field_entry_hit(*field, base)?;
+            if vm.record_field_entry_hit(*method_field, receiver)? != *method {
+                return None;
+            }
+            let method_this = lane_receiver_this(vm, *method_this, receiver)?;
+            // The call passes the parameters in order, so its argument `k` is parameter `k`.
+            read.run(vm, arguments.within(*params), method_this)
+        }
+    }
+}
+
+script_handler! {
+    /// `lane_script_call_full` at a site whose read call made a memo (`lane_memoize_read`): the
+    /// memo's hits answer the call as the read target's would. A call the memo does not
+    /// answer, or a returning call the frame does not admit (`lane_returning_call_admitted`),
+    /// takes the full form, which the site then keeps.
+    fn lane_script_call_memo<>(cx, r, ip, i, view) {
+        let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
+        let value = if !unsafe { (*cx).script_calls } || (returns && !lane_returning_call_admitted(cx)) {
+            None
+        } else {
+            unsafe { lane_memo_read(cx, r, ip, i) }
+        };
+        let Some(value) = value else {
+            requicken(ip, lane_script_call_full::<H>);
+            sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
+        };
+        if !returns {
+            r.set(i.a, value);
+            next!(cx, r, following(ip), Carried::script(cx))
+        }
+        lane_return_value!(cx, ip, value)
     }
 }
 
@@ -8473,30 +8881,6 @@ fn lane_read_base(
     match base.register_index() {
         Some(register) => arguments.get(register),
         None => Some(this),
-    }
-}
-
-/// The hit of a non-returning `GetField` record's quickened primary entry, own or holder
-/// (`lane_get_field_own`, `lane_get_field_holder`), on `object`; `None` for any other
-/// record state or a miss.
-#[inline(always)]
-fn lane_record_field_hit<H: Host>(
-    vm: &mut Vm<H>,
-    code: &ResidualProgram,
-    record: &LaneInstruction,
-    object: Value,
-) -> Option<Value> {
-    let handler = record.handler;
-    if handler == lane_get_field_own::<H, true> as *const ()
-        || handler == lane_get_field_own::<H, false> as *const ()
-    {
-        vm.primary_own_field_hit(code, object, record.c)
-    } else if handler == lane_get_field_holder::<H, true> as *const ()
-        || handler == lane_get_field_holder::<H, false> as *const ()
-    {
-        vm.primary_record_holder_field_hit(code, object, record.c)
-    } else {
-        None
     }
 }
 
