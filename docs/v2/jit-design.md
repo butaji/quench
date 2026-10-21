@@ -1063,3 +1063,16 @@ not justify a Boolean guard rewrite or another equality-call shortcut. Raw
 diagnostic source: `enabled-diagnostic-1round.json` in the same report
 directory. This is attribution from instrumented inclusive counters, not an
 exclusive CPU profile or an optimization result.
+
+The census initially missed functions that ran as lane activations because it
+counted only ordinary JIT frame entries. Opt-in diagnostics now report
+`lane_entries` separately and include them in `all_entry_native_coverage_ppm`.
+This exposes `get`, `_getEntry` and `put` as lane-only entries in the hash-map
+fixture, while preserving frame-entry coverage for native JIT functions. A
+follow-up tried invoking compiled numeric callees directly at lane call sites.
+The same-machine three-round A/B was a loss: control median 3.22 Score / 74.01
+MiB versus candidate 2.87 / 78.28 MiB, with all rounds output-equivalent. The
+fast path was removed. The census showed those callers already pass through
+native `computeHashCode` and `equals` entries, so this dispatcher shortcut was
+redundant and increased peak RSS. Reports and full per-round data are in
+`evidence/jit-jetstream3-2026-10-21/hash-map-lane-census/`.
