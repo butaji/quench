@@ -310,6 +310,39 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// `key in object` for a string key other than an array index, where `object`'s chain is
+    /// ordinary objects (`Heap::ordinary_object`) without side descriptors up to `null`:
+    /// whether a shape along it names the key, which runs no guest code. `None` leaves any
+    /// other case (a proxy, an exotic object, a primitive operand) to the general path.
+    pub(super) fn plain_in(&mut self, op: u32, key: Value, object: Value) -> Option<bool> {
+        if op != oxc_ast::ast::BinaryOperator::In as u32 || !self.heap.is_string(key) {
+            return None;
+        }
+        self.heap.ordinary_object(object)?;
+        let atom = self.string_key_atom(key)?;
+        if self.atom_class(atom).contains(AtomClass::ARRAY_INDEX) {
+            return None;
+        }
+        let property = PropertyKey::string(atom);
+        let mut current = object;
+        loop {
+            let data = self.heap.ordinary_object(current)?;
+            if data.is_module_namespace()
+                || data.deferred_module().is_some()
+                || data.has_side_descriptors()
+            {
+                return None;
+            }
+            if self.property_shape_slot(data.shape(), property).is_some() {
+                return Some(true);
+            }
+            current = data.proto();
+            if current.is_null() {
+                return Some(false);
+            }
+        }
+    }
+
     /// `left instanceof right` when it reduces to a prototype-chain walk; `None` for any
     /// other operator or a case the full algorithm must decide.
     #[inline(always)]
