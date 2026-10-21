@@ -1071,6 +1071,21 @@ fn lane_frame_storage<H: Host>(cx: *mut LaneContext<H>) -> Option<&'static mut c
     unsafe { slots.as_mut() }
 }
 
+/// `lane_frame_storage` where its cache already holds the running frame's, without the
+/// lookup, and the environment it belongs to, whose barrier a store takes.
+#[inline(always)]
+fn lane_known_frame_storage<H: Host>(
+    cx: *mut LaneContext<H>,
+) -> Option<(&'static mut crate::heap::EnvironmentSlots, Value)> {
+    let known = unsafe { (*cx).frame_storage };
+    let vm = unsafe { vm(cx) };
+    if known.frame != unsafe { (*cx).frame } || known.slots.is_null() || vm.frames[known.frame].env != known.env {
+        return None;
+    }
+    // SAFETY: as `FrameStorage`; the lane holds no other reference to the storage.
+    Some((unsafe { &mut *known.slots }, known.env))
+}
+
 /// `lane_frame_storage` past its cache: the environment's storage, recorded.
 #[cold]
 #[inline(never)]
@@ -2009,6 +2024,16 @@ script_handler! {
     /// registers; any other load takes the general handler.
     fn lane_load_window_local<ENVIRONMENT: bool>(cx, r, ip, i, view) {
         let (slot, registers) = environment_window_fields(i);
+        // A frame run whose environment storage a local access found (`lane_frame_storage`).
+        if ENVIRONMENT
+            && i.a & crate::bytecode::NUMERIC_LOCAL_TARGET == 0
+            && unsafe { (*cx).env }.is_deleted()
+            && let Some((storage, _)) = lane_known_frame_storage(cx)
+            && let Some(value) = storage.dense().and_then(|dense| dense.dense_plain(slot))
+        {
+            r.set(i.a, value);
+            next!(cx, r, following(ip), view)
+        }
         if i.a & crate::bytecode::NUMERIC_LOCAL_TARGET == 0 && !unsafe { (*cx).env }.is_deleted() {
             let value = if ENVIRONMENT {
                 // SAFETY: as `lane_load_window_local_general`'s read of the window's storage.
@@ -2038,6 +2063,22 @@ script_handler! {
     /// young.
     fn lane_store_window_local<ENVIRONMENT: bool>(cx, r, ip, i, view) {
         let (slot, registers) = environment_window_fields(i);
+        // A frame run's store to an initialized binding of its environment's storage, after
+        // the environment's barrier.
+        if ENVIRONMENT
+            && i.c == 0
+            && unsafe { (*cx).env }.is_deleted()
+            && let Some((storage, environment)) = lane_known_frame_storage(cx)
+            && let Some(binding) = storage.dense_mut().and_then(|dense| dense.dense_plain_mut(slot))
+        {
+            let value = r.get(i.a);
+            *binding = value;
+            unsafe { vm(cx) }.heap.remember_cell(environment);
+            if let Some(register) = i.b.checked_sub(crate::bytecode::OPTIONAL_REGISTER_BIAS) {
+                r.set(register, value);
+            }
+            next!(cx, r, following(ip), view)
+        }
         if !unsafe { (*cx).env }.is_deleted() && i.c == 0 {
             let binding = if ENVIRONMENT {
                 // SAFETY: as `lane_load_window_local_general`'s read of the window's storage.
