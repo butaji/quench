@@ -1949,7 +1949,7 @@ impl<H: Host> Vm<H> {
                     .is_some_and(|attributes| attributes.accessor && attributes.getter.is_some())
             });
             if slot < FIELD_CACHE_SLOT_CAPACITY && own_getter {
-                self.accessor_field_caches.insert(
+                self.record_accessor_entry(
                     site,
                     AccessorFieldCache {
                         receiver: receiver_shape,
@@ -1999,7 +1999,7 @@ impl<H: Host> Vm<H> {
         if crate::heap::prototype_layout_epoch() != epoch {
             return;
         }
-        self.accessor_field_caches.insert(
+        self.record_accessor_entry(
             site,
             AccessorFieldCache {
                 receiver: receiver_shape,
@@ -2011,17 +2011,29 @@ impl<H: Host> Vm<H> {
         );
     }
 
+    /// Records `entry` among the site's accessor entries: one for its receiver shape is
+    /// replaced, and a full site drops its oldest.
+    fn record_accessor_entry(&mut self, site: usize, entry: AccessorFieldCache) {
+        let entries = self.accessor_field_caches.entry(site).or_default();
+        if let Some(existing) = entries.iter_mut().find(|cached| cached.receiver == entry.receiver) {
+            *existing = entry;
+            return;
+        }
+        if entries.len() >= INHERITED_FIELD_CACHE_WAYS {
+            entries.remove(0);
+        }
+        entries.push(entry);
+    }
+
     /// The getter a field read of `atom` at cache index `site` calls on `object`, when the
     /// site's recorded accessor still answers it (`record_accessor_field_cache`).
     pub(super) fn cached_field_getter(&self, object: Value, atom: Atom, site: usize) -> Option<Value> {
-        let cache = self.accessor_field_caches.get(&site)?;
+        let entries = self.accessor_field_caches.get(&site)?;
         let receiver = self.shape_property_lookup(object, atom)?;
-        if receiver.shape() != cache.receiver
-            || receiver.proto() != cache.prototype
-            || crate::heap::prototype_layout_epoch() != cache.epoch
-        {
-            return None;
-        }
+        let epoch = crate::heap::prototype_layout_epoch();
+        let cache = entries.iter().find(|cache| {
+            receiver.shape() == cache.receiver && receiver.proto() == cache.prototype && epoch == cache.epoch
+        })?;
         let holder = if cache.holder == OWN_ACCESSOR { object } else { cache.holder };
         self.slot_attributes(self.heap.ordinary_object(holder)?, usize::from(cache.slot))?
             .getter

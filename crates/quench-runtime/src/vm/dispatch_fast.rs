@@ -2536,7 +2536,7 @@ script_handler! {
 script_handler! {
     /// `lane_set_index` past a record array, appending to a dense array at its length,
     /// filling one of its holes, a Number stored into a typed array
-    /// (`Vm::typed_array_set_number`), or a plain symbol- or string-keyed write.
+    /// (`Vm::typed_array_set_number`), or a plain symbol-, string- or integer-keyed write.
     #[inline(never)]
     fn lane_set_index_slot<>(cx, r, ip, i, view) {
         let (object, key, value) = (r.get(i.b), r.get(i.c), r.get(i.a));
@@ -2549,6 +2549,10 @@ script_handler! {
                 .array_index_key(key)
                 .is_some_and(|index| vm.typed_array_set_number(object, index as usize, value))
             && !vm.try_plain_string_key_set(object, key, value)
+            && !key
+                .as_int()
+                .and_then(|index| usize::try_from(index).ok())
+                .is_some_and(|index| vm.set_plain_index_property(object, index, value).is_some())
         {
             return exit(ip);
         }
@@ -4276,6 +4280,7 @@ fn lane_relation_other<H: Host>(operator: u32, left: Value, right: Value) -> Opt
     vm.instanceof_truthy(operator, left, right)
         .or_else(|| vm.plain_in(operator, left, right))
         .or_else(|| vm.identity_equality(operator, left, right))
+        .or_else(|| vm.string_relation(operator, left, right))
         // A test of an arithmetic or bitwise result (`if (flags & MASK)`): the Number
         // operator's value, whose ToBoolean runs no guest code.
         .or_else(|| vm.bigint_relation(operator, left, right))
@@ -6860,11 +6865,22 @@ fn lane_native_value<H: Host>(
             string_char_code_at(vm, receiver, args[0])
                 .or_else(|| lane_string_or_native_call(cx, ip, callee, receiver, args))
         }
-        FunctionKind::Native(native @ (Native::MapGet | Native::MapHas | Native::SetHas)) => {
+        FunctionKind::Native(
+            native @ (Native::MapGet
+            | Native::MapHas
+            | Native::SetHas
+            | Native::WeakMapGet
+            | Native::WeakMapHas
+            | Native::WeakSetHas),
+        ) => {
             let key = args.first().copied().unwrap_or(Value::UNDEFINED);
             vm.pure_collection_lookup(native, receiver, key)
                 .or_else(|| lane_string_or_native_call(cx, ip, callee, receiver, args))
         }
+        FunctionKind::Native(Native::ArrayIsArray) => vm
+            .steady_is_array(args.first().copied().unwrap_or(Value::UNDEFINED))
+            .map(|holds| if holds { Value::TRUE } else { Value::FALSE })
+            .or_else(|| lane_string_or_native_call(cx, ip, callee, receiver, args)),
         FunctionKind::Native(
             native @ (Native::RegExpExec | Native::RegExpTest | Native::StringReplace),
         ) => lane_regexp_call(cx, ip, i, native, callee, receiver, args),
@@ -7026,6 +7042,10 @@ fn lane_call_native<H: Host>(
     // The values are copied before activations become frames, which moves the registers
     // they may lie in; the frames then root what the call passes.
     let arguments = super::call_arguments::CallArguments::from_slice(args);
+    #[cfg(feature = "profile-lane-exits")]
+    if !vm.lane_stack.activations.is_empty() {
+        super::lane_exits::record_detail(format!("materializes for native {native:?}"));
+    }
     // The callee observes the frame stack: lane activations become frames first, as leaving
     // the lane would make them, and the call runs from the innermost one.
     vm.materialize_lane_activations(cx);
