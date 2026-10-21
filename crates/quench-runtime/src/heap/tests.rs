@@ -829,7 +829,7 @@ fn regexp_legacy_constructor_is_traced_through_live_instances() {
             object: Box::new(plain_object()),
             meta: Box::new(crate::heap::RegExpMeta {
                 source: "a".into(),
-                flags: String::new(),
+                flags: crate::vm::RegExpFlags::validated(""),
                 legacy_constructor: owner(constructor),
             }),
             matcher: Rc::new(quench_regexp::Regex::with_flags("a", Default::default()).unwrap()),

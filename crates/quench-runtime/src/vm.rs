@@ -153,6 +153,7 @@ mod property_key;
 use call_arguments::CallArguments;
 use object::AtomClass;
 pub(crate) use program_store::ProgramId;
+pub(crate) use regexp::RegExpFlags;
 use program_store::{ModuleImport, ProgramStore};
 use promise::PromiseRuntime;
 use property_key::PropertyKey;

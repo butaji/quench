@@ -3490,7 +3490,7 @@ impl Heap {
                 Cell::TemporalZonedDateTime {
                     instant, calendar, ..
                 } => instant.time_zone.capacity() + calendar.capacity(),
-                Cell::RegExp { meta, .. } => meta.source.capacity() + meta.flags.capacity(),
+                Cell::RegExp { meta, .. } => meta.source.capacity(),
                 Cell::Array { object } => object.elements().capacity() * size_of::<Value>(),
                 Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),
                 Cell::WasmMemory { bytes, .. } => bytes.capacity(),
