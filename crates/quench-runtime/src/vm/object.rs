@@ -748,6 +748,7 @@ impl<H: Host> Vm<H> {
         }
         self.symbol_write_proofs.clear();
         self.symbol_load_proofs.clear();
+        self.array_iteration_proof = None;
         self.enumerable_keys.clear();
         self.field_add_sets.clear();
         self.megamorphic_fields.clear();
@@ -1312,6 +1313,11 @@ impl<H: Host> Vm<H> {
     /// Whether the site has an inherited entry (`inherited_field_hit`).
     pub(super) fn field_site_inherited(&self, site: u16) -> bool {
         self.inherited_field_indices[self.field_cache_index(site)] != NO_INHERITED_FIELD
+    }
+
+    /// Whether a read at the site met an accessor it cached (`cached_field_getter`).
+    pub(super) fn field_site_getter(&self, site: u16) -> bool {
+        self.accessor_field_caches.contains_key(&self.field_cache_index(site))
     }
 
     /// Whether the site's primary entry names a prototype holder (`primary_holder_field_hit`).
