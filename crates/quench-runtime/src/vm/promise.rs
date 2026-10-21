@@ -11,8 +11,7 @@ use crate::{ModuleSource, module_identity::ModuleIdentity};
 use rustc_hash::FxHashSet;
 
 fn module_cache_key(name: &str, module_type: &str) -> String {
-    let name = crate::module_identity::normalize(std::path::Path::new(name));
-    format!("{}:{module_type}", name.text())
+    format!("{}:{module_type}", crate::module_identity::normalized_text(name))
 }
 
 fn self_import_referrer(referrer: &str, resolved: &str) -> bool {
