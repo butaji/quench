@@ -732,7 +732,7 @@ pub(super) fn cached_this_field_increment_candidate(
     if function.params != 0
         || function.code.len() != 6
         || !function.handlers.is_empty()
-        || !eligible(function, &program.atoms)
+        || !eligible(function, program)
     {
         return None;
     }
