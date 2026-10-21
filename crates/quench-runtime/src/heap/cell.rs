@@ -2299,7 +2299,7 @@ impl Object {
         self.extras()?.private_elements.iter().find(|element| element.brand == brand)?.data
     }
     pub(crate) fn set_private_field(&mut self, brand: PrivateBrand, value: Value) -> bool {
-        let Some(element) = self.extras_mut().private_elements.iter_mut().find(|element| element.brand == brand && element.data.is_some()) else { return false; };
+        let Some(element) = self.extras_mut_existing().and_then(|extras| extras.private_elements.iter_mut().find(|element| element.brand == brand && element.data.is_some())) else { return false; };
         element.data = Some(value);
         true
     }
