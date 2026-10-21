@@ -2505,6 +2505,19 @@ impl<H: Host> Vm<H> {
         );
         crate::report_allocator_memory(phase);
     }
+    /// `Runtime::end_for_process_exit`: drops the host, and the program store when its drop
+    /// reports, and leaves every other field to the operating system.
+    pub(crate) fn end_for_process_exit(self) {
+        let vm = std::mem::ManuallyDrop::new(self);
+        // SAFETY: `vm` is never used or dropped again, so each field read here is dropped
+        // exactly once and the rest are never dropped.
+        unsafe {
+            if vm.programs.reports_on_drop() {
+                drop(std::ptr::read(&vm.programs));
+            }
+            drop(std::ptr::read(&vm.host));
+        }
+    }
     fn initialize(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         self.initialize_shared(&Rc::new(program.clone()), builtins::RealmScope::Complete)
     }
