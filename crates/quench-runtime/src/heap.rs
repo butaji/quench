@@ -159,7 +159,7 @@ impl<'slots> ParallelSweepSlab<'slots> {
         }
     }
 
-    fn sweep(&mut self, marks: &[AtomicU64]) -> ParallelSweepResult {
+    fn sweep(&mut self, marks: &[AtomicU64], compacts: bool) -> ParallelSweepResult {
         let mut result = ParallelSweepResult {
             slab: (self.base / SLOTS_PER_SLAB) as u32,
             ..ParallelSweepResult::default()
@@ -178,7 +178,7 @@ impl<'slots> ParallelSweepSlab<'slots> {
                 result.live += 1;
                 result.live_payload_bytes += cell.payload_bytes();
                 if let Some(object) = cell.object() {
-                    if object.properties().has_compact_range() {
+                    if compacts && object.properties().has_compact_range() {
                         result
                             .property_owners
                             .push(pack_offset_owner(object.properties().start_offset(), index));
@@ -1759,6 +1759,10 @@ impl Heap {
         }
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         let sweep_started = std::time::Instant::now();
+        // Property-arena owners are listed only for a full collection that compacts: the
+        // lists hold an entry per live owner at the heap's peak. A compaction that this
+        // sweep's releases make due waits for the next full collection.
+        let compacts = full && self.properties.compaction_due();
         let sweep_pool = if full
             && !self.has_direct_records()
             && self.slots.len() >= PARALLEL_MARK_MINIMUM_SLOTS
@@ -1775,11 +1779,11 @@ impl Heap {
             freed_cells,
             swept_slots,
         } = if let Some(pool) = sweep_pool {
-            self.sweep_full_parallel(pool)
+            self.sweep_full_parallel(pool, compacts)
         } else {
-            self.sweep_serial(full)
+            self.sweep_serial(full, compacts)
         };
-        let mut direct_property_owners = Vec::with_capacity(if full {
+        let mut direct_property_owners = Vec::with_capacity(if compacts {
             self.property_owner_counts.1
         } else {
             0
@@ -1807,7 +1811,7 @@ impl Heap {
             let payload_bytes = &mut self.payload_bytes;
             let (object_live, object_freed) = self.object_records.sweep(full, |record| match record {
                 RecordSweep::Keep(record_id, object) => {
-                    if full && object.properties().has_compact_range() {
+                    if compacts && object.properties().has_compact_range() {
                         direct_property_owners.push((
                             object.properties().start_offset(),
                             Value::direct_object(record_id),
@@ -1825,7 +1829,7 @@ impl Heap {
             let (function_live, function_freed) =
                 self.function_records.sweep(full, |record| match record {
                     RecordSweep::Keep(record_id, function) => {
-                        if full && function.object.properties().has_compact_range() {
+                        if compacts && function.object.properties().has_compact_range() {
                             direct_property_owners.push((
                                 function.object.properties().start_offset(),
                                 Value::direct_function(record_id),
@@ -1844,7 +1848,7 @@ impl Heap {
             let (promise_live, promise_freed) =
                 self.promise_records.sweep(full, |record| match record {
                     RecordSweep::Keep(record_id, promise) => {
-                        if full && promise.object.properties().has_compact_range() {
+                        if compacts && promise.object.properties().has_compact_range() {
                             direct_property_owners.push((
                                 promise.object.properties().start_offset(),
                                 Value::direct_promise(record_id),
@@ -1866,7 +1870,7 @@ impl Heap {
             let (iterator_live, iterator_freed) =
                 self.iterator_records.sweep(full, |record| match record {
                     RecordSweep::Keep(record_id, iterator) => {
-                        if full && iterator.object.properties().has_compact_range() {
+                        if compacts && iterator.object.properties().has_compact_range() {
                             direct_property_owners.push((
                                 iterator.object.properties().start_offset(),
                                 Value::direct_iterator(record_id),
@@ -1897,7 +1901,7 @@ impl Heap {
                     if full {
                         live_payload_bytes += array_payload_bytes(array);
                     }
-                    if full && array.properties().has_compact_range() {
+                    if compacts && array.properties().has_compact_range() {
                         direct_property_owners.push((
                             array.properties().start_offset(),
                             Value::direct_array(record_id),
@@ -1966,6 +1970,8 @@ impl Heap {
             // A full sweep recounts the ledger from the survivors: shrinking a live array
             // (truncation, `pop`, `splice`) is not charged back between full collections.
             self.payload_bytes = live_payload_bytes;
+        }
+        if compacts {
             self.property_owner_counts = (property_owners.len(), direct_property_owners.len());
             self.compact_property_arena(property_owners, direct_property_owners);
         }
@@ -2051,7 +2057,7 @@ impl Heap {
         self.memory_profile.collection_finished();
         finalization_jobs
     }
-    fn sweep_full_parallel(&mut self, pool: &ThreadPool) -> SweepOutput {
+    fn sweep_full_parallel(&mut self, pool: &ThreadPool, compacts: bool) -> SweepOutput {
         self.collection_state = CollectionState::Sweeping;
         let slot_len = self.slots.len();
         let mut slabs = self
@@ -2067,7 +2073,7 @@ impl Heap {
                 pool.install(|| {
                     batch
                         .par_iter_mut()
-                        .map(|slab| slab.sweep(marks))
+                        .map(|slab| slab.sweep(marks, compacts))
                         .collect::<Vec<_>>()
                 })
             };
@@ -2119,13 +2125,13 @@ impl Heap {
         output
     }
 
-    fn sweep_serial(&mut self, full: bool) -> SweepOutput {
+    fn sweep_serial(&mut self, full: bool, compacts: bool) -> SweepOutput {
         let mut live = 0;
         let mut live_payload_bytes = 0;
         let mut freed_cells = 0;
         let mut swept_slots = 0;
         let properties = &mut self.properties;
-        let mut property_owners_for_sweep = Vec::with_capacity(if full {
+        let mut property_owners_for_sweep = Vec::with_capacity(if compacts {
             self.property_owner_counts.0
         } else {
             0
@@ -2179,7 +2185,7 @@ impl Heap {
                             live += 1;
                             live_payload_bytes += slot.cell.as_ref().map_or(0, Cell::payload_bytes);
                             if let Some(object) = slot.cell.as_ref().and_then(Cell::object) {
-                                if properties.has_compact_range(object.properties()) {
+                                if compacts && properties.has_compact_range(object.properties()) {
                                     property_owners_for_sweep.push(pack_offset_owner(
                                         object.properties().start_offset(),
                                         index,
