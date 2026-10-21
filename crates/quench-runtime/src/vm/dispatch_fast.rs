@@ -6027,10 +6027,68 @@ fn lane_new_array<H: Host>(vm: &mut Vm<H>, prototype: Value, args: &[Value]) -> 
     })
 }
 
+/// The call a lane `Call` makes once its forwarders are applied: `f.call(thisArg, ...args)`
+/// calls `f` with `thisArg` and the rest, and a bound function that binds no arguments calls
+/// its target with its bound `this` and the call's arguments, as the general loop pushes
+/// them. The forwarders take no observable step of their own;
+/// a forwarder of another realm, or a bound function with bound arguments, is the callee.
+#[derive(Clone, Copy)]
+struct ForwardedCall {
+    callee: Value,
+    this: Value,
+    /// The register of the first argument.
+    base: u16,
+    argc: u16,
+}
+
+impl ForwardedCall {
+    /// The call record `i` makes as written.
+    fn written(r: Registers, i: &LaneInstruction) -> Self {
+        Self {
+            callee: r.get(i.b),
+            this: r.get(i.c),
+            base: ImmediateLayout::call_window_base(i.imm()),
+            argc: ImmediateLayout::argument_count(i.imm()),
+        }
+    }
+
+    /// The call `i` forwards to; reads only function records and the registers.
+    fn of<H: Host>(vm: &Vm<H>, r: Registers, i: &LaneInstruction) -> Self {
+        let mut call = Self::written(r, i);
+        loop {
+            match vm.heap.function(call.callee) {
+                Some(FunctionRecord {
+                    kind: FunctionKind::Native(Native::FunctionCall),
+                    realm,
+                    ..
+                }) if *realm == vm.realm.globals => {
+                    let passes_this = call.argc != 0;
+                    call = Self {
+                        callee: call.this,
+                        this: if passes_this { r.get(call.base) } else { Value::UNDEFINED },
+                        base: call.base + u16::from(passes_this),
+                        argc: call.argc - u16::from(passes_this),
+                    };
+                }
+                Some(FunctionRecord {
+                    kind: FunctionKind::Native(Native::FunctionBoundCall),
+                    env,
+                    realm,
+                    ..
+                }) if *realm == vm.realm.globals => match vm.bound_function_parts(*env) {
+                    Some((target, this, [])) => call = Self { callee: target, this, ..call },
+                    _ => return call,
+                },
+                _ => return call,
+            }
+        }
+    }
+}
+
 lane_handler! {
-    /// `Function.prototype.call` of a frameless target `f` (`f.call(thisArg, ...args)`):
-    /// `f`'s activation as `lane_script_call` makes it, with `this` the first value the call
-    /// passes and the remaining values its arguments. Any other takes the general path.
+    /// A forwarded call (`ForwardedCall`) of a frameless target: its activation as
+    /// `lane_script_call` makes it, with the forwarded `this` and arguments. Any other
+    /// takes the general path.
     #[inline(never)]
     fn lane_function_call<>(cx, r, ip, i, view) {
         match lane_function_call_activation(cx, r, ip, i) {
@@ -6050,20 +6108,18 @@ fn lane_function_call_activation<H: Host>(
     i: &LaneInstruction,
 ) -> Result<(Registers, Ip), Ip> {
     let vm = unsafe { vm(cx) };
-    let Some(target) = lane_script_target(cx, r.get(i.c)) else {
+    let call = ForwardedCall::of(vm, r, i);
+    let Some(target) = lane_script_target(cx, call.callee) else {
         return Err(exit(ip));
     };
-    let window = ImmediateLayout::call_window_base(i.imm());
-    let argc = usize::from(ImmediateLayout::argument_count(i.imm()));
-    let receiver = if argc == 0 { Value::UNDEFINED } else { r.get(window) };
     // `call_this_value` without its boxing of primitives, which allocates.
-    let Some(this) = lane_call_this(vm, &target, receiver) else {
+    let Some(this) = lane_call_this(vm, &target, call.this) else {
         return Err(exit(ip));
     };
-    // SAFETY: the values after `thisArg` are registers of the running function, which the
+    // SAFETY: the forwarded arguments are registers of the running function, which the
     // activation copies before anything can move them.
-    let rest = unsafe { r.0.add(usize::from(window) + 1) };
-    let arguments = ActivationArguments::Kept(rest, argc.saturating_sub(1));
+    let values = unsafe { r.0.add(usize::from(call.base)) };
+    let arguments = ActivationArguments::Kept(values, usize::from(call.argc));
     lane_activate_keeping(cx, r, ip, target, arguments, this, false, None)
 }
 
@@ -6084,7 +6140,15 @@ lane_handler! {
             }) => *kind,
             _ => sibling!(lane_frame_call::<H>, r, ip, Carried::script(cx)),
         };
-        if matches!(kind, FunctionKind::Native(Native::FunctionCall)) {
+        // A forwarded call of a frameless function activates it; of a native, makes it below.
+        let forwarded = matches!(
+            kind,
+            FunctionKind::Native(Native::FunctionCall | Native::FunctionBoundCall)
+        )
+        .then(|| ForwardedCall::of(vm, r, i));
+        if let Some(call) = forwarded
+            && lane_native_of(vm, call.callee).is_none()
+        {
             sibling!(lane_function_call::<H>, r, ip, Carried::script(cx))
         }
         // A call that returns its result completes its caller: an activation in the lane, or
@@ -6096,7 +6160,9 @@ lane_handler! {
             return exit(ip);
         }
         let receiver = r.get(i.c);
-        let value = match kind {
+        let value = if let Some(call) = forwarded {
+            lane_call_native(cx, r, ip, i, call)
+        } else { match kind {
             FunctionKind::Native(Native::ArrayPush) => {
                 let window = ImmediateLayout::call_window_base(i.imm());
                 let argc = ImmediateLayout::argument_count(i.imm());
@@ -6133,7 +6199,7 @@ lane_handler! {
                     .or_else(|| lane_string_or_native_call(cx, r, ip, i, receiver))
             }
             _ => lane_string_or_native_call(cx, r, ip, i, receiver),
-        };
+        } };
         let Some(value) = value else {
             return exit(ip);
         };
@@ -6173,33 +6239,37 @@ fn lane_string_or_native_call<H: Host>(
     let args = unsafe { std::slice::from_raw_parts(r.0.add(usize::from(window)), usize::from(argc)) };
     // RegExp exec and test run through `lane_call_native` (`Vm::steady_regexp_call`).
     vm.pure_string_method_call(code, r.get(i.b), receiver, args)
-        .or_else(|| lane_call_native(cx, r, ip, i))
+        .or_else(|| lane_call_native(cx, r, ip, i, ForwardedCall::written(r, i)))
 }
 
-/// A lane `Call` of a native that `Native::runs_from_lane` admits, made as the general path
-/// makes it from the running frame: with the frame's resume PC published and the arguments
-/// copied out of its registers, which stay rooted by the frame. Only a frame's own lane run
-/// calls out, so the frame stack the native and its nested calls observe is the general
-/// path's. `None` exits to the general path, which raises the error the call stashed in
-/// `Vm::lane_raised` or makes a call this does not admit.
+/// The native `callee` is when a lane `Call` makes it in place (`Native::runs_from_lane`).
+fn lane_native_of<H: Host>(vm: &Vm<H>, callee: Value) -> Option<Native> {
+    match vm.heap.function(callee) {
+        Some(FunctionRecord {
+            kind: FunctionKind::Native(native),
+            ..
+        }) if native.runs_from_lane() => Some(*native),
+        _ => None,
+    }
+}
+
+/// A lane `Call` (as `call` forwards it) of a native that `Native::runs_from_lane` admits,
+/// made as the general path makes it from the running frame: with the frame's resume PC
+/// published and the arguments copied out of its registers, which stay rooted by the frame.
+/// Only a frame's own lane run calls out, so the frame stack the native and its nested calls
+/// observe is the general path's. `None` exits to the general path, which raises the error
+/// the call stashed in `Vm::lane_raised` or makes a call this does not admit.
 #[inline(never)]
 fn lane_call_native<H: Host>(
     cx: *mut LaneContext<H>,
     r: Registers,
     ip: Ip,
     i: &LaneInstruction,
+    call: ForwardedCall,
 ) -> Option<Value> {
     let vm = unsafe { vm(cx) };
-    let callee = r.get(i.b);
-    let native = match vm.heap.function(callee) {
-        Some(FunctionRecord {
-            kind: FunctionKind::Native(native),
-            ..
-        }) if native.runs_from_lane() => *native,
-        _ => return None,
-    };
-    let window = ImmediateLayout::call_window_base(i.imm());
-    let argc = ImmediateLayout::argument_count(i.imm());
+    let native = lane_native_of(vm, call.callee)?;
+    let (window, argc) = (call.base, call.argc);
     // A unary Math function of a Number runs no guest code and observes no frame, so it
     // runs from any activation.
     if argc > 0
@@ -6215,7 +6285,7 @@ fn lane_call_native<H: Host>(
         && let Some(result) = vm.steady_regexp_call(
             unsafe { &*(*cx).code },
             native,
-            r.get(i.c),
+            call.this,
             r.get(window),
             ImmediateLayout::lane_call_result_used(i.imm()),
         )
@@ -6234,7 +6304,7 @@ fn lane_call_native<H: Host>(
             // SAFETY: the context's program outlives the lane run.
             unsafe { &*(*cx).code },
             native,
-            r.get(i.c),
+            call.this,
             // SAFETY: the call's window is registers of the running function.
             unsafe { std::slice::from_raw_parts(r.0.add(usize::from(window)), usize::from(argc)) },
             ImmediateLayout::lane_call_result_used(i.imm()),
@@ -6272,7 +6342,7 @@ fn lane_call_native<H: Host>(
         std::slice::from_raw_parts(r.0.add(usize::from(window)), usize::from(argc))
     });
     // The native branch of `Vm::call_value_with_target_inner`, whose callee this is.
-    let result = vm.call_native_guarded(code, native, r.get(i.c), arguments.as_slice(), callee);
+    let result = vm.call_native_guarded(code, native, call.this, arguments.as_slice(), call.callee);
     // The native's allocations may make a collection due, which the lane's safepoints take.
     note_allocation(vm);
     match result {
