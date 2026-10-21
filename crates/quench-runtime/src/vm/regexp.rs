@@ -2327,6 +2327,21 @@ impl<H: Host> Vm<H> {
     ) -> Result<Option<quench_regexp::Match>, JsError> {
         let last_index = self.regexp_last_index(p, this)?;
         let last_index = self.regexp_to_length_value(p, last_index)?;
+        self.regexp_match_from(p, this, input, last_index, None)
+    }
+
+    /// `regexp_builtin_match` past its `lastIndex` read: the match from `last_index` where
+    /// the flags make it stateful, storing the new `lastIndex` in `known_slot` when the
+    /// caller found its own writable data slot (`regexp_last_index_slot`) and no method
+    /// cache can observe the store, else as `store_regexp_last_index` does.
+    fn regexp_match_from(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+        input: &JsString,
+        last_index: usize,
+        known_slot: Option<usize>,
+    ) -> Result<Option<quench_regexp::Match>, JsError> {
         let (regex, stateful, sticky) = match self.heap.get(this) {
             Some(Cell::RegExp { matcher, meta, .. }) => (
                 Rc::clone(matcher),
@@ -2340,8 +2355,15 @@ impl<H: Host> Vm<H> {
             }
         };
         let start = if stateful { last_index } else { 0 };
+        let store = |vm: &mut Self, value: Value| match known_slot {
+            Some(slot) => {
+                vm.heap.property_set(this, slot, value);
+                Ok(())
+            }
+            None => vm.store_regexp_last_index(p, this, value),
+        };
         if stateful && start > input.units().len() {
-            self.store_regexp_last_index(p, this, Value::number(0.0))?;
+            store(self, Value::number(0.0))?;
             return Ok(None);
         }
         let subject = self.regexp_subject(input);
@@ -2357,7 +2379,7 @@ impl<H: Host> Vm<H> {
         };
         if stateful {
             let last_index = matched.as_ref().map_or(0, |matched| matched.range.end);
-            self.store_regexp_last_index(p, this, Value::number(last_index as f64))?;
+            store(self, Value::number(last_index as f64))?;
         }
         Ok(matched)
     }
@@ -2392,10 +2414,30 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let arguments = [subject];
-        Some(match native {
-            Native::RegExpExec => self.regexp_builtin_exec(p, receiver, &arguments),
-            _ => self.regexp_test(p, receiver, &arguments),
-        })
+        if native == Native::RegExpExec {
+            return Some(self.regexp_steady_exec(p, receiver, subject, slot, last_index));
+        }
+        Some(self.regexp_test(p, receiver, &arguments))
+    }
+
+    /// `regexp_builtin_exec` of `steady_regexp_call`'s case: a string subject, whose
+    /// conversion runs no guest code, and `lastIndex` the Number in the own data `slot`, so
+    /// neither its conversion nor the store runs guest code or allocates. A failed match is
+    /// `null` with nothing to root; a match builds its result as the builtin does.
+    fn regexp_steady_exec(
+        &mut self,
+        p: &ResidualProgram,
+        receiver: Value,
+        subject: Value,
+        slot: usize,
+        last_index: Value,
+    ) -> Result<Value, JsError> {
+        let input = self.coerce_js_string(p, subject)?;
+        let last_index = self.regexp_to_length_value(p, last_index)?;
+        let Some(matched) = self.regexp_match_from(p, receiver, &input, last_index, Some(slot))? else {
+            return Ok(Value::NULL);
+        };
+        self.with_call_roots([receiver, subject], |vm| vm.regexp_exec_result(receiver, subject, input, matched))
     }
 
     pub(super) fn regexp_builtin_exec(
@@ -2415,6 +2457,22 @@ impl<H: Host> Vm<H> {
             let Some(matched) = vm.regexp_builtin_match(p, this, &input)? else {
                 return Ok(Value::NULL);
             };
+            vm.regexp_exec_result(this, args.first().copied().unwrap_or(Value::UNDEFINED), input, matched)
+        })
+    }
+
+    /// The array `RegExp.prototype.exec` returns for `matched` of regexp `this` over `input`,
+    /// the string its `argument` converted to, which the caller roots with `this`; it records
+    /// the match as the legacy RegExp statics' last.
+    fn regexp_exec_result(
+        &mut self,
+        this: Value,
+        argument: Value,
+        input: JsString,
+        matched: quench_regexp::Match,
+    ) -> Result<Value, JsError> {
+        {
+            let vm = self;
             let has_indices = match vm.heap.get(this) {
                 Some(Cell::RegExp { meta, .. }) => meta.flags.contains('d'),
                 _ => false,
@@ -2438,8 +2496,7 @@ impl<H: Host> Vm<H> {
             let named = regexp_named_capture_ranges(&matched);
             let groups = vm.regexp_groups_object(&named, input.units())?;
             let index = Value::number(matched.range.start as f64);
-            let input_value =
-                vm.string_value_from(args.first().copied().unwrap_or(Value::UNDEFINED), &input);
+            let input_value = vm.string_value_from(argument, &input);
             vm.initialize_regexp_result(result, index, input_value, groups)?;
             if has_indices {
                 let indices = vm.regexp_indices_array(&matched, &named)?;
@@ -2448,7 +2505,7 @@ impl<H: Host> Vm<H> {
             }
             vm.record_regexp_legacy_match(this, input, matched)?;
             Ok(result)
-        })
+        }
     }
 
     /// Gives a fresh exec `result` array its `index`, `input` and `groups` properties: from
