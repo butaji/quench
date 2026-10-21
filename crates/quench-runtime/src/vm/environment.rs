@@ -1632,6 +1632,40 @@ impl<H: Host> Vm<H> {
         self.owned_capture(unsafe { &*slots }, root, slot)
     }
 
+    /// A capture that can be read from an owned or shared environment slot after applying the same
+    /// functionless-layer skipping as `capture`, without projected property lookup.
+    pub(super) fn jit_owned_capture(
+        &mut self,
+        frame: usize,
+        depth: u16,
+        slot: u16,
+    ) -> Option<Value> {
+        if let Some(value) = self.cached_direct_capture(frame, depth, slot) {
+            return Some(value);
+        }
+        let env = self.capture_env(frame, depth)?;
+        let Some(Cell::Environment {
+            function,
+            scope,
+            ..
+        }) = self.heap.get(env)
+        else {
+            return None;
+        };
+        let root = *function == super::ROOT_FUNCTION_ID;
+        if root && !self.root_environment_slot_is_binding(scope.program, slot) {
+            return None;
+        }
+        let Some(value) = self
+            .heap
+            .environment_slot(env, usize::from(slot))
+            .filter(|value| !value.is_deleted())
+        else {
+            return None;
+        };
+        Some(value)
+    }
+
     #[cold]
     #[inline(never)]
     fn walked_capture(
