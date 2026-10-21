@@ -1051,10 +1051,9 @@ impl Heap {
         prototype: Value,
         inline: [Value; INLINE_PROPERTY_COUNT],
     ) -> Value {
-        if !Object::inline_values_narrow(&inline) {
+        let Some(object) = Object::from_inline_header(header, inline) else {
             return self.alloc_object_with_properties_of_header(header, prototype, inline);
-        }
-        let object = Object::from_inline_header(header, inline);
+        };
         debug_assert!(object.proto() == prototype);
         self.alloc_object_of(object, prototype)
     }
@@ -1067,7 +1066,7 @@ impl Heap {
         prototype: Value,
         inline: [Value; INLINE_PROPERTY_COUNT],
     ) -> Value {
-        let shape = Object::from_inline_header(header, [Value::UNDEFINED; INLINE_PROPERTY_COUNT]).shape();
+        let shape = header.shape();
         let length = self.properties.len(ValueVec::inline_property_storage(shape));
         self.alloc_object_with_properties(prototype, shape, &inline[..length])
     }
