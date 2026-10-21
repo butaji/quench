@@ -2328,6 +2328,7 @@ impl<H: Host> Vm<H> {
 
     #[cfg(feature = "profile-memory")]
     pub(crate) fn report_memory_snapshot(&self, phase: &str) {
+        self.heap.report_narrow_fields(phase);
         let heap = self.heap.memory_composition();
         let page_size = std::env::var("QUENCH_MEMORY_PAGE_SIZE")
             .ok()
