@@ -8,6 +8,8 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 mod access;
+mod array_elements;
+pub(crate) use array_elements::{ArrayElements, UniqueElements};
 mod cell;
 mod cell_access;
 mod buffer_bytes;
@@ -284,7 +286,7 @@ impl Drop for StoppedCellDrop {
 fn cell_rc_drop_lock(cell: &Cell) -> Option<&'static Mutex<()>> {
     match cell {
         Cell::Array { object } => {
-            Some(&RC_DROP_LOCKS[rc_drop_lock_index(Rc::as_ptr(object.elements()) as usize)])
+            Some(&RC_DROP_LOCKS[rc_drop_lock_index(object.elements().as_ptr() as usize)])
         }
         Cell::ArrayBuffer { bytes, .. } => Some(if bytes.holds_external_rc() {
             &SHARED_RC_DROP_LOCK
@@ -306,7 +308,7 @@ fn cell_rc_drop_lock(cell: &Cell) -> Option<&'static Mutex<()>> {
 
 fn cell_has_shared_rc_payload(cell: &Cell) -> bool {
     match cell {
-        Cell::Array { object } => Rc::strong_count(object.elements()) > 1,
+        Cell::Array { object } => object.elements().owner_count() > 1,
         Cell::ArrayBuffer { bytes, .. } => bytes.is_shared(),
         Cell::WasmHostFunction { signature, .. } => Rc::strong_count(signature) > 1,
         Cell::Iterator { .. }
@@ -2838,7 +2840,7 @@ impl Heap {
             return;
         };
         let dense_length = elements.len();
-        let elements = Rc::make_mut(elements);
+        let elements = elements.make_mut();
         elements.resize(length, Value::DELETED);
         for (index, value) in sparse.into_iter().flat_map(|elements| elements.values) {
             if index < length && (index >= dense_length || elements[index].is_deleted()) {
