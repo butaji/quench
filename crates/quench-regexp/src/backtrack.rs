@@ -1097,6 +1097,19 @@ impl Program {
 
     /// Whether a match can only start at the subject's start (`Starts::only_at_start`), so a
     /// search tries that one position and scans for nothing.
+    /// Whether a search from `start` finds no match because of the anchor alone: an
+    /// anchored pattern begins only at the subject's start, and only with one of its
+    /// `anchored_first` units (`first`, the subject's unit there, `None` past its end), as
+    /// `find` rejects before a run.
+    pub(crate) fn anchor_excludes(&self, start: usize, first: Option<u32>) -> bool {
+        self.anchored
+            && (start != 0
+                || self
+                    .anchored_first
+                    .as_ref()
+                    .is_some_and(|units| first.is_none_or(|first| !units.contains(first))))
+    }
+
     pub(crate) fn anchored_at_start(&self) -> bool {
         self.anchored
     }

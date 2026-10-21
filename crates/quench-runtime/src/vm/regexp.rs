@@ -2402,8 +2402,13 @@ impl<H: Host> Vm<H> {
             }
             None => vm.store_regexp_last_index(p, this, value),
         };
-        if stateful && start > input.units().len() {
-            store(self, Value::number(0.0))?;
+        let units = input.units();
+        if (stateful && start > units.len())
+            || regex.excludes_search(units.len(), start, (start < units.len()).then(|| units.at(start)))
+        {
+            if stateful {
+                store(self, Value::number(0.0))?;
+            }
             return Ok(None);
         }
         let subject = self.regexp_subject(input);
