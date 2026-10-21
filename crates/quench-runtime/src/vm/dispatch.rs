@@ -175,7 +175,7 @@ impl<H: Host> Vm<H> {
     /// JavaScript program in the current realm that the loop may push in place: a non-root
     /// ordinary body (`CallPlan::in_loop`). Resolved targets are cached (`InLoopCallTarget`).
     #[inline(always)]
-    fn in_loop_call_target(
+    pub(super) fn in_loop_call_target(
         &mut self,
         p: &ResidualProgram,
         callee: Value,
