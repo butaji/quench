@@ -1367,6 +1367,22 @@ impl<H: Host> Vm<H> {
                     if matches!(instruction.op(), Op::Call | Op::Construct) {
                         let callee = self.frames[frame].registers.get(usize::from(instruction.register_b())).copied();
                         let detail = match callee.and_then(|callee| self.heap.function(callee)) {
+                            Some(crate::heap::FunctionRecord { kind: FunctionKind::Native(native @ (crate::heap::Native::FunctionBoundCall | crate::heap::Native::FunctionCall)), .. }) => {
+                                let receiver = self.frames[frame].registers.get(usize::from(instruction.register_c())).copied().unwrap_or(Value::UNDEFINED);
+                                let target = callee.and_then(|callee| self.forwarded_call(callee, receiver, &[])).map(|(target, _, _)| target);
+                                let described = match target.and_then(|target| self.heap.function(target)) {
+                                    Some(crate::heap::FunctionRecord { kind: FunctionKind::Native(target), .. }) => format!("native {target:?}"),
+                                    Some(crate::heap::FunctionRecord { kind: FunctionKind::User(program, id), .. }) => {
+                                        let name = self.programs.residual(*program).and_then(|code| {
+                                            let body = code.function_get(*id as usize)?;
+                                            Some(format!("{} same_program={} registers_only={}", body.name.map(|a| code.atoms[a as usize].to_string()).unwrap_or_default(), *program == cursor.program, body.call_plan(code).registers_only))
+                                        });
+                                        format!("user {}", name.unwrap_or_default())
+                                    }
+                                    None => "unforwarded".into(),
+                                };
+                                format!("native {native:?} -> {described}")
+                            }
                             Some(crate::heap::FunctionRecord { kind: FunctionKind::Native(native), .. }) => format!("native {native:?}"),
                             Some(crate::heap::FunctionRecord { kind: FunctionKind::User(program, id), .. }) => {
                                 let plan = self.programs.residual(*program).and_then(|code| {
@@ -1380,7 +1396,7 @@ impl<H: Host> Vm<H> {
                         let caller = p.function_get(self.frames[frame].function as usize).map(|f| (f.is_async, Self::lane_runs(cursor.lane, pc), self.frames.len() - 1 - frame, pending_calls.len()));
                         super::lane_exits::record_detail(format!("{:?} {detail} caller(async,arrow,depth,pending)={caller:?}", instruction.op()));
                     }
-                    if matches!(instruction.op(), Op::CloneEnv | Op::Return | Op::GetField | Op::GetIndex | Op::SetIndex | Op::LoadName) {
+                    if matches!(instruction.op(), Op::CloneEnv | Op::Return | Op::GetField | Op::GetIndex | Op::SetIndex | Op::LoadName | Op::SetFieldStrict | Op::SetField | Op::LoadNameCall | Op::PrivateIn) {
                         let function = p.function_get(self.frames[frame].function as usize);
                         let name = function.and_then(|f| f.name).map(|a| p.atoms[a as usize].to_string()).unwrap_or_default();
                         let span = function.map(|f| format!("{:?}", f.source_span)).unwrap_or_default();
@@ -1400,6 +1416,36 @@ impl<H: Host> Vm<H> {
                         let base = self.resolve_field_base(p, frame, base).ok();
                         let kind = base.and_then(|base| self.heap.get(base)).map_or("immediate", |cell| cell.profile_variant_name());
                         super::lane_exits::record_detail(format!("GetField {names} on {kind}"));
+                    }
+                    if matches!(instruction.op(), Op::GetIndex | Op::SetIndex) {
+                        let (base, key) = if instruction.op() == Op::GetIndex {
+                            (self.inert_operand(frame, instruction.operand_b()), self.inert_operand(frame, instruction.operand_c()))
+                        } else {
+                            (Some(self.read(frame, instruction.register_b())), Some(self.read(frame, instruction.register_c())))
+                        };
+                        let describe = |value: Option<Value>| match value {
+                            None => "?".to_string(),
+                            Some(v) if v.as_int().is_some() => "int".into(),
+                            Some(v) if v.as_number().is_some() => "num".into(),
+                            Some(v) if self.heap.string(v).is_some() => {
+                                let text = self.heap.string(v).unwrap();
+                                match self.lookup_js_atom(text) {
+                                    Some(atom) => format!("str(atom {:?})", self.atom_class(atom)),
+                                    None => "str(new)".into(),
+                                }
+                            }
+                            Some(v) if self.heap.array(v).is_some() => "array".into(),
+                            Some(v) => match self.heap.get(v) {
+                                Some(Cell::Symbol(symbol)) => format!("symbol {:?}", symbol.kind),
+                                _ if self.heap.ordinary_object(v).is_some() => {
+                                    let data = self.heap.ordinary_object(v).unwrap();
+                                    format!("ordinary(ext={} side={} nullproto={} dict={})", data.is_extensible(), data.has_side_descriptors(), data.proto().is_null(), self.shape_is_dictionary(data.shape()))
+                                }
+                                Some(cell) => format!("cell {}", cell.profile_variant_name()),
+                                None => "other".into(),
+                            },
+                        };
+                        super::lane_exits::record_detail(format!("{:?} kinds base={} key={}", instruction.op(), describe(base), describe(key)));
                     }
                     if matches!(instruction.op(), Op::JumpBinaryFalse | Op::Binary) {
                         let constants = self.programs.constants(cursor.program);
@@ -1493,6 +1539,19 @@ impl<H: Host> Vm<H> {
                 instruction_pc,
             );
             let ins = cursor.instruction(pc);
+            #[cfg(feature = "profile-lane-exits")]
+            super::lane_exits::count_general(
+                || {
+                    let body = p.function_get(cursor.function as usize);
+                    format!(
+                        "{} {} @{:?}",
+                        p.source_name,
+                        body.and_then(|body| body.name).map(|atom| p.atoms[atom as usize].to_string()).unwrap_or_default(),
+                        body.and_then(|body| body.source_span).map(|span| span.start),
+                    )
+                },
+                (cursor.program.raw(), cursor.function),
+            );
             pc += 1;
             #[cfg(feature = "profile-aggregate")]
             self.profile.opcode(

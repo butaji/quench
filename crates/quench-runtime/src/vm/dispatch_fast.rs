@@ -188,6 +188,13 @@ struct ActivationShape {
 }
 
 impl LaneView {
+    /// The address range its records span (`lane_exits::register_view`).
+    #[cfg(feature = "profile-lane-exits")]
+    pub(super) fn record_range(&self) -> (usize, usize) {
+        let start = self.records().addr();
+        (start, start + self.records.len() * std::mem::size_of::<LaneInstruction>())
+    }
+
     pub(super) fn records(&self) -> Ip {
         std::cell::UnsafeCell::raw_get(self.records.as_ptr()).cast_const()
     }
@@ -1250,6 +1257,8 @@ unsafe fn vm<'a, H: Host>(cx: *mut LaneContext<H>) -> &'a mut Vm<H> {
 /// The handler of the record at `ip`.
 #[inline(always)]
 fn handler<H: Host>(ip: Ip) -> Handler {
+    #[cfg(feature = "profile-lane-exits")]
+    super::lane_exits::count_record(ip.addr());
     // SAFETY: a view is only run by the VM type whose handlers built it, and
     // every reachable record is initialized.
     unsafe { std::mem::transmute::<*const (), Handler>((*ip).handler) }
@@ -2446,8 +2455,8 @@ script_handler! {
 
 script_handler! {
     /// `lane_set_index` past a record array, appending to a dense array at its length,
-    /// filling one of its holes, a plain symbol-keyed write, or a Number stored into a typed
-    /// array (`Vm::typed_array_set_number`).
+    /// filling one of its holes, a Number stored into a typed array
+    /// (`Vm::typed_array_set_number`), or a plain symbol- or string-keyed write.
     #[inline(never)]
     fn lane_set_index_slot<>(cx, r, ip, i, view) {
         let (object, key, value) = (r.get(i.b), r.get(i.c), r.get(i.a));
@@ -2459,6 +2468,7 @@ script_handler! {
             && !vm
                 .array_index_key(key)
                 .is_some_and(|index| vm.typed_array_set_number(object, index as usize, value))
+            && !vm.try_plain_string_key_set(object, key, value)
         {
             return exit(ip);
         }
@@ -3098,14 +3108,15 @@ script_handler! {
 
 script_handler! {
     /// `GetField` of a string primitive, which `String.prototype` answers through the
-    /// site's cache (`Vm::cached_string_field_hit`): a method read, as `s.substring`. A miss
-    /// moves the record on as `lane_get_field_miss` decides.
+    /// site's cache (`Vm::string_prototype_field_hit`): a method read, as `s.substring`, at a
+    /// site `Vm::string_field_site_cacheable` admits. A miss moves the record on as
+    /// `lane_get_field_miss` decides.
     fn lane_get_field_string<>(cx, r, ip, i, view) {
-        // SAFETY: the context's program outlives the lane run.
-        let code = unsafe { &*(*cx).code };
-        let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b) }).and_then(|object| {
-            (unsafe { vm(cx) }).cached_string_field_hit(code, object, i.imm(), i.c)
-        }) else {
+        let vm = unsafe { vm(cx) };
+        let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b) })
+            .filter(|object| vm.heap.is_string(*object))
+            .and_then(|_| vm.string_prototype_field_hit(i.c))
+        else {
             sibling!(lane_get_field_miss::<H>, r, ip, Carried::script(cx))
         };
         r.set(i.a, value);
@@ -3246,8 +3257,12 @@ script_handler! {
             (unsafe { vm(cx) }).heap.is_string(base)
         });
         let handler: Option<Handler> = match lane_field_site_tier(unsafe { vm(cx) }, code, i) {
-            // A string primitive reads `String.prototype`, whatever tier its entries name.
-            _ if string_base => Some(lane_get_field_string::<H>),
+            // A string primitive reads `String.prototype`, whatever tier its entries name,
+            // where the site admits that read; any other read of one is the general read's.
+            _ if string_base && (unsafe { vm(cx) }).string_field_site_cacheable(code, i.imm()) => {
+                Some(lane_get_field_string::<H>)
+            }
+            _ if string_base => Some(lane_get_field::<H>),
             FieldSiteTier::Nested => Some(lane_get_field_nested::<H>),
             FieldSiteTier::General => Some(lane_get_field::<H>),
             FieldSiteTier::Getter => Some(lane_get_field_getter::<H>),
@@ -3698,13 +3713,46 @@ fn lane_set_field<H: Host>(
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let vm = unsafe { vm(cx) };
-    // The general loop's cached write: the store inline, the add out of line.
-    if !vm.cached_field_write_hit(code, object, i.imm(), r.get(i.a), i.c) {
+    // A private field's store writes the object's private element, as the general loop's
+    // `SetField` does, before any cache; the general loop's cached write otherwise: the store
+    // inline, the add out of line.
+    let stored = if vm.is_private_name(i.imm()) {
+        lane_private_field_store(cx, code, object, i.imm(), r.get(i.a))
+    } else {
+        vm.cached_field_write_hit(code, object, i.imm(), r.get(i.a), i.c)
+    };
+    if !stored {
         return exit(ip);
     }
     // Adding a property can allocate.
     note_allocation(vm);
     next!(cx, r, following(ip), Carried::script(cx))
+}
+
+/// The store of private field `atom` of `object`, whose home follows the running function
+/// and the environment its frame would capture from, as `lane_cached_field_miss` reads one:
+/// the lane's frame, or a frameless activation's function and closure environment. `false`
+/// leaves the store, a private accessor's or method's included, to the general path.
+#[inline(never)]
+fn lane_private_field_store<H: Host>(
+    cx: *mut LaneContext<H>,
+    code: &ResidualProgram,
+    object: Value,
+    atom: crate::bytecode::Atom,
+    value: Value,
+) -> bool {
+    let vm = unsafe { vm(cx) };
+    match vm.lane_stack.activations.last() {
+        None => vm.set_private_field_value(code, object, atom, value),
+        Some(activation) => {
+            let Some(function) = activation.script().map(|_| activation.function) else {
+                return false;
+            };
+            // SAFETY: the context outlives the lane run.
+            let environment = unsafe { (*cx).env };
+            vm.memoized_set_private_field_value(code, environment, function, object, atom, value)
+        }
+    }
 }
 
 script_handler! {
@@ -3764,7 +3812,10 @@ script_handler! {
         let vm = unsafe { vm(cx) };
         let polymorphic = vm.field_site_polymorphic(i.c);
         let adds = vm.field_site_adds(i.c);
-        let handler: Option<Handler> = if adds && !polymorphic && vm.field_add_atom_eligible(i.imm()) {
+        // A private field's store takes the private element path (`lane_set_field`).
+        let handler: Option<Handler> = if vm.is_private_name(i.imm()) {
+            Some(if THIS { lane_set_this_field::<H> } else { lane_set_object_field::<H> })
+        } else if adds && !polymorphic && vm.field_add_atom_eligible(i.imm()) {
             Some(if THIS { lane_set_this_field_add::<H> } else { lane_set_object_field_add::<H> })
         } else if adds || polymorphic {
             Some(if THIS { lane_set_this_field::<H> } else { lane_set_object_field::<H> })

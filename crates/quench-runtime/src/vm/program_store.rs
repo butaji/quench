@@ -1672,7 +1672,13 @@ impl ProgramStore {
         }
         Some(view.get_or_init(|| {
             let live = entry.residual.register_root_masks(function);
-            derive(code, &entry.constants, entry.residual.kind, live)
+            let view = derive(code, &entry.constants, entry.residual.kind, live);
+            #[cfg(feature = "profile-lane-exits")]
+            {
+                let (start, end) = view.record_range();
+                super::lane_exits::register_view(start, end, census_label(entry, function));
+            }
+            view
         }))
     }
 
@@ -1712,7 +1718,13 @@ impl ProgramStore {
         let view = entry.lane_views.get(function as usize)?;
         Some(view.get_or_init(|| {
             let live = entry.residual.register_root_masks(function);
-            derive(code, &entry.constants, entry.residual.kind, live)
+            let view = derive(code, &entry.constants, entry.residual.kind, live);
+            #[cfg(feature = "profile-lane-exits")]
+            {
+                let (start, end) = view.record_range();
+                super::lane_exits::register_view(start, end, census_label(entry, function));
+            }
+            view
         }))
     }
 
@@ -1955,4 +1967,17 @@ fn numeric_promotion_decision(numeric: u8, observations: u8) -> Option<bool> {
         .iter()
         .find_map(|(look, minimum)| (*look == observations).then_some(*minimum))?;
     Some(numeric >= minimum)
+}
+
+/// The label the `profile-lane-exits` function census gives `function` of `entry`'s program.
+#[cfg(feature = "profile-lane-exits")]
+fn census_label(entry: &ProgramEntry, function: u32) -> String {
+    let code = &entry.residual;
+    let body = code.function_get(function as usize);
+    format!(
+        "{} {} @{:?}",
+        code.source_name,
+        body.and_then(|body| body.name).map(|atom| code.atoms[atom as usize].to_string()).unwrap_or_default(),
+        body.and_then(|body| body.source_span).map(|span| span.start),
+    )
 }
