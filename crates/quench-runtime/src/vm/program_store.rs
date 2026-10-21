@@ -209,6 +209,9 @@ pub(crate) struct ProgramStore {
     jit_mapped_bytes: usize,
     /// Allocated only when opt-in JavaScript JIT diagnostics are requested.
     js_jit_diagnostics: Option<FxHashMap<(u32, u32), JsJitCounters>>,
+    js_jit_dataview_float64_enabled: bool,
+    js_jit_dataview_float64_get_entries: u64,
+    js_jit_dataview_float64_set_entries: u64,
     /// Last matched numeric loop shape; hot entries keep reusing the same artifact.
     js_jit_numeric_find_candidate:
         Option<(ProgramId, u32, super::js_compiled::JsJitNumericFind)>,
@@ -233,6 +236,11 @@ impl Default for ProgramStore {
             js_jit_diagnostics: std::env::var_os("QUENCH_JS_JIT_STATS")
                 .is_some_and(|value| value == "1")
                 .then(FxHashMap::default),
+            js_jit_dataview_float64_enabled:
+                std::env::var_os("QUENCH_JS_JIT_DATAVIEW_FLOAT64")
+                    .is_none_or(|value| value != "0"),
+            js_jit_dataview_float64_get_entries: 0,
+            js_jit_dataview_float64_set_entries: 0,
             js_jit_numeric_find_candidate: None,
         }
     }
@@ -1087,6 +1095,21 @@ impl ProgramStore {
         self.js_jit_diagnostics.is_some()
     }
 
+    pub(super) fn js_jit_dataview_float64_enabled(&self) -> bool {
+        self.js_jit_dataview_float64_enabled
+    }
+
+    pub(super) fn note_js_jit_dataview_float64(&mut self, setter: bool) {
+        if self.js_jit_diagnostics.is_none() {
+            return;
+        }
+        if setter {
+            self.js_jit_dataview_float64_set_entries += 1;
+        } else {
+            self.js_jit_dataview_float64_get_entries += 1;
+        }
+    }
+
     /// Record the input guard outcome. Promotion checks only at prespecified
     /// sample sizes; exact binomial cutoffs spend alpha across those looks.
     pub(super) fn note_js_function_entry(
@@ -1840,6 +1863,13 @@ impl Drop for ProgramStore {
                 counters.code_bytes
             );
         }
+        let _ = writeln!(
+            stderr,
+            "QUENCH_JS_JIT_DATAVIEW_FLOAT64 {{\"enabled\":{},\"get_entries\":{},\"set_entries\":{}}}",
+            self.js_jit_dataview_float64_enabled,
+            self.js_jit_dataview_float64_get_entries,
+            self.js_jit_dataview_float64_set_entries
+        );
     }
 }
 

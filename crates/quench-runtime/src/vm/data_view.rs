@@ -218,6 +218,103 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// Fast-lane implementation of the common Float64 DataView calls. It only
+    /// handles primitive arguments and fixed, ordinary buffers; anything that
+    /// could invoke coercion or require a spec error takes the general path.
+    pub(super) fn lane_data_view_float64(
+        &mut self,
+        native: Native,
+        this: Value,
+        args: &[Value],
+    ) -> Option<Value> {
+        let setter = match native {
+            Native::DataViewGetFloat64 => false,
+            Native::DataViewSetFloat64 => true,
+            _ => return None,
+        };
+        let (buffer, offset, length) = match self.heap.get(this)? {
+            Cell::DataView {
+                object,
+                buffer,
+                length,
+                length_tracking: false,
+            } => (*buffer, object.offset, *length),
+            _ => return None,
+        };
+        let index = args
+            .first()
+            .copied()
+            .unwrap_or(Value::UNDEFINED)
+            .as_number()?;
+        if !index.is_finite() || index < 0.0 || index.fract() != 0.0 || index > usize::MAX as f64 {
+            return None;
+        }
+        let index = index as usize;
+        if index.checked_add(DATA_VIEW_DOUBLE_WIDTH)? > length {
+            return None;
+        }
+        let little_endian = args
+            .get(if setter {
+                DATA_VIEW_SET_ENDIAN_ARGUMENT
+            } else {
+                DATA_VIEW_GET_ENDIAN_ARGUMENT
+            })
+            .is_some_and(|value| self.truthy(*value));
+        let absolute = offset.checked_add(index)?;
+        if setter {
+            let value = args
+                .get(DATA_VIEW_VALUE_ARGUMENT)
+                .copied()
+                .unwrap_or(Value::UNDEFINED)
+                .as_number()?;
+            let Cell::ArrayBuffer {
+                bytes,
+                shared: false,
+                detached: false,
+                resizable: false,
+                immutable: false,
+                ..
+            } = self.heap.get_mut(buffer)?
+            else {
+                return None;
+            };
+            let bytes = bytes.lane_mut()?;
+            let target = bytes.get_mut(absolute..absolute.checked_add(8)?)?;
+            let encoded = if little_endian {
+                value.to_bits().to_le_bytes()
+            } else {
+                value.to_bits().to_be_bytes()
+            };
+            target.copy_from_slice(&encoded);
+            Some(Value::UNDEFINED)
+        } else {
+            let Cell::ArrayBuffer {
+                bytes,
+                shared: false,
+                detached: false,
+                resizable: false,
+                ..
+            } = self.heap.get(buffer)?
+            else {
+                return None;
+            };
+            if bytes.is_shared() || bytes.is_wasm_view() {
+                return None;
+            }
+            let bytes = bytes.read();
+            let source: [u8; 8] = bytes
+                .get(absolute..absolute.checked_add(8)?)?
+                .try_into()
+                .ok()?;
+            let bits = if little_endian {
+                u64::from_le_bytes(source)
+            } else {
+                u64::from_be_bytes(source)
+            };
+            Some(Value::number(f64::from_bits(bits)))
+        }
+    }
+
     pub(super) fn data_view_native(
         &mut self,
         p: &ResidualProgram,

@@ -4058,25 +4058,55 @@ lane_handler! {
             return exit(ip);
         }
         let receiver = r.get(i.c);
-        let value = match vm.heap.get(r.get(i.b)) {
+        let native = match vm.heap.get(r.get(i.b)) {
             Some(Cell::Function {
-                kind: FunctionKind::Native(Native::ArrayPush),
+                kind: FunctionKind::Native(native),
                 ..
-            }) => {
+            }) => Some(*native),
+            _ => None,
+        };
+        let value = match native {
+            Some(native @ (Native::DataViewGetFloat64 | Native::DataViewSetFloat64))
+                if vm.programs.js_jit_dataview_float64_enabled() =>
+            {
                 let window = ImmediateLayout::call_window_base(i.imm());
                 let argc = ImmediateLayout::argument_count(i.imm());
-                // SAFETY: the call's window is registers of the running function, which
-                // the push neither moves nor frees.
+                // SAFETY: the call window belongs to the active frame and this
+                // helper neither resizes registers nor calls into JavaScript.
                 let args = unsafe {
                     std::slice::from_raw_parts(r.0.add(usize::from(window)), usize::from(argc))
                 };
-                vm.array_push_dense(receiver, args)
+                let value = vm.lane_data_view_float64(native, receiver, args);
+                if value.is_some() {
+                    vm.programs.note_js_jit_dataview_float64(
+                        native == Native::DataViewSetFloat64,
+                    );
+                }
+                value
             }
-            Some(Cell::Function {
-                kind: FunctionKind::Native(Native::ArrayPop),
-                ..
-            }) => vm.array_pop_dense(receiver),
-            _ => None,
+            _ => match vm.heap.get(r.get(i.b)) {
+                Some(Cell::Function {
+                    kind: FunctionKind::Native(Native::ArrayPush),
+                    ..
+                }) => {
+                    let window = ImmediateLayout::call_window_base(i.imm());
+                    let argc = ImmediateLayout::argument_count(i.imm());
+                    // SAFETY: the call's window is registers of the running function, which
+                    // the push neither moves nor frees.
+                    let args = unsafe {
+                        std::slice::from_raw_parts(
+                            r.0.add(usize::from(window)),
+                            usize::from(argc),
+                        )
+                    };
+                    vm.array_push_dense(receiver, args)
+                }
+                Some(Cell::Function {
+                    kind: FunctionKind::Native(Native::ArrayPop),
+                    ..
+                }) => vm.array_pop_dense(receiver),
+                _ => None,
+            },
         };
         let Some(value) = value else {
             return exit(ip);
