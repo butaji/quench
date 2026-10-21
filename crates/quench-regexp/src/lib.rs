@@ -317,11 +317,16 @@ impl CompleteMatcher {
         let backtracking = backtrack::Program::compile(&program, flags, names.len());
         let required_literal = required_literal(&program, flags);
         // A program that starts every ASCII search at its prefix finds the same literal
-        // there, so the run's own search answers a subject without it.
+        // there, so the run's own search answers a subject without it; an anchored one tries
+        // a single position, which costs less than scanning the subject for the literal.
         let required_bytes = (!required_literal.is_empty()
             && required_literal.iter().all(|unit| *unit <= u32::from(ASCII_MAX)))
         .then(|| required_literal.iter().map(|unit| *unit as u8).collect::<Vec<_>>())
-        .filter(|bytes| !backtracking.as_ref().is_some_and(|program| program.searches_prefix(bytes)))
+        .filter(|bytes| {
+            !backtracking
+                .as_ref()
+                .is_some_and(|program| program.searches_prefix(bytes) || program.anchored_at_start())
+        })
         .map(|bytes| literal_finder(&bytes));
         let min_length = min_length(&program);
         let tree = OnceCell::new();
