@@ -1730,9 +1730,9 @@ pub(crate) struct Vm<H> {
     regexp_object_shapes: Option<(u32, u32)>,
     /// A RegExp receiver shape verified to hold an own writable data `lastIndex` at the paired
     /// slot; derived from shapes, so field-cache invalidation clears it.
-    regexp_last_index_layout: Option<(u32, u32)>,
+    regexp_last_index_layouts: Vec<(u32, u32)>,
     /// Derived from shapes, so field-cache invalidation clears it.
-    regexp_builtin_layout: Option<regexp::RegExpBuiltinLayout>,
+    regexp_builtin_layouts: Vec<regexp::RegExpBuiltinLayout>,
     /// Derived from shapes, so field-cache invalidation clears it.
     regexp_symbol_layouts: Vec<regexp::RegExpSymbolLayout>,
     /// An object verified to hold the native `Function.prototype[@@hasInstance]` as a
@@ -2510,6 +2510,19 @@ impl<H: Host> Vm<H> {
         );
         crate::report_allocator_memory(phase);
     }
+    /// `Runtime::end_for_process_exit`: drops the host, and the program store when its drop
+    /// reports, and leaves every other field to the operating system.
+    pub(crate) fn end_for_process_exit(self) {
+        let vm = std::mem::ManuallyDrop::new(self);
+        // SAFETY: `vm` is never used or dropped again, so each field read here is dropped
+        // exactly once and the rest are never dropped.
+        unsafe {
+            if vm.programs.reports_on_drop() {
+                drop(std::ptr::read(&vm.programs));
+            }
+            drop(std::ptr::read(&vm.host));
+        }
+    }
     fn initialize(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         self.initialize_shared(&Rc::new(program.clone()), builtins::RealmScope::Complete)
     }
@@ -2635,8 +2648,8 @@ impl<H: Host> Vm<H> {
         self.iterator_result_shape = None;
         self.descriptor_shapes = [None; 2];
         self.regexp_object_shapes = None;
-        self.regexp_last_index_layout = None;
-        self.regexp_builtin_layout = None;
+        self.regexp_last_index_layouts.clear();
+        self.regexp_builtin_layouts.clear();
         self.regexp_symbol_layouts.clear();
         self.set_instanceof_has_instance_holder(Value::NULL);
         self.program_cache_layouts.clear();

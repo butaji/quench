@@ -358,8 +358,8 @@ impl<H: Host> Vm<H> {
             iterator_result_shape: _,
             descriptor_shapes: _,
             regexp_object_shapes: _,
-            regexp_last_index_layout: _,
-            regexp_builtin_layout: _,
+            regexp_last_index_layouts: _,
+            regexp_builtin_layouts: _,
             regexp_symbol_layouts: _,
             instanceof_has_instance_holder,
             // Derived from the holder, which the restore sets through its setter.
