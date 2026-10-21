@@ -41,22 +41,33 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn typeof_value(&mut self, value: Value) -> Value {
+        let name = crate::bytecode::TYPEOF_NAMES[self.typeof_index(value)];
+        self.intern_dynamic_ascii(name)
+    }
+
+    /// The index in `TYPEOF_NAMES` of the name `typeof value` yields.
+    #[inline]
+    pub(super) fn typeof_index(&self, value: Value) -> usize {
         use crate::ValueType as T;
-        let text = if self.is_html_dda(value) {
-            "undefined"
-        } else {
-            match self.value_type(value) {
-                T::Undefined => "undefined",
-                T::Null | T::Object => "object",
-                T::Boolean => "boolean",
-                T::Number => "number",
-                T::String => "string",
-                T::BigInt => "bigint",
-                T::Symbol => "symbol",
-                T::Function => "function",
-            }
-        };
-        self.intern_dynamic_ascii(text)
+        if self.is_html_dda(value) {
+            return 0;
+        }
+        match self.value_type(value) {
+            T::Undefined => 0,
+            T::Null | T::Object => 1,
+            T::Boolean => 2,
+            T::Number => 3,
+            T::String => 4,
+            T::BigInt => 5,
+            T::Symbol => 6,
+            T::Function => 7,
+        }
+    }
+
+    /// The boolean a `UNARY_TYPEOF_IS` operator testing name `index` yields for `value`.
+    #[inline]
+    pub(super) fn typeof_test_value(&self, value: Value, index: usize, negated: bool) -> Value {
+        if (self.typeof_index(value) == index) != negated { Value::TRUE } else { Value::FALSE }
     }
 
     pub(super) fn to_numeric(
@@ -198,6 +209,9 @@ impl<H: Host> Vm<H> {
             }
             TYPEOF => return Ok(self.typeof_value(value)),
             VOID => Value::UNDEFINED,
+            op if let Some((index, negated)) = crate::bytecode::typeof_test(op) => {
+                self.typeof_test_value(value, index, negated)
+            }
             crate::bytecode::UNARY_TO_STRING => {
                 let text = self.coerce_js_string(p, value)?;
                 self.string_value_from(value, &text)
