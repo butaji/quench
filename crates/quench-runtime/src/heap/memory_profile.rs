@@ -9,6 +9,21 @@ use std::mem::size_of;
 
 const KINDS: usize = CellKind::NAMES.len();
 const BUCKETS: usize = 8;
+/// Census threshold: a site whose allocations survive their first collection at
+/// least this often is a pretenuring candidate.
+const PRETENURE_SURVIVAL_PERCENT: u64 = 90;
+/// Census threshold: sites with fewer allocations are too small to pretenure.
+const PRETENURE_MINIMUM_SITE_ALLOCATIONS: u64 = 64;
+/// Census report width: sites listed by survivor count.
+const SURVIVAL_REPORT_SITES: usize = 12;
+
+/// Fate of one allocation relative to its first collection.
+#[derive(Clone, Copy)]
+enum Survival {
+    DiedYoung,
+    DiedOld,
+    Live,
+}
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct AllocationSite {
@@ -58,6 +73,7 @@ pub(crate) struct MemoryProfile {
     object_allocated_slots: Vec<u32>,
     object_peak_slots: Vec<u32>,
     object_lifetimes: FxHashMap<ObjectLifetime, u64>,
+    site_survival: FxHashMap<(u32, u8), [u64; 3]>,
     identity_slots: FxHashMap<Value, usize>,
 }
 impl Default for MemoryProfile {
@@ -93,6 +109,7 @@ impl Default for MemoryProfile {
             object_allocated_slots: Vec::new(),
             object_peak_slots: Vec::new(),
             object_lifetimes: FxHashMap::default(),
+            site_survival: FxHashMap::default(),
             identity_slots: FxHashMap::default(),
         }
     }
@@ -399,6 +416,61 @@ impl MemoryProfile {
             checkpoint: None,
         };
         *self.object_lifetimes.entry(lifetime).or_default() += 1;
+        let fate = if self.births[index] > self.last_collection_clock {
+            Survival::DiedYoung
+        } else {
+            Survival::DiedOld
+        };
+        self.site_survival
+            .entry((self.object_sites[index], kind as u8))
+            .or_default()[fate as usize] += 1;
+    }
+
+    fn report_site_survival(&self, live: &FxHashMap<(u32, u8), u64>) {
+        let mut sites = self.site_survival.clone();
+        for (key, count) in live {
+            sites.entry(*key).or_default()[Survival::Live as usize] += count;
+        }
+        let survivors = |fates: &[u64; 3]| {
+            fates[Survival::DiedOld as usize] + fates[Survival::Live as usize]
+        };
+        let mut kinds = [[0u64; 3]; KINDS];
+        let (mut total_survivors, mut pretenurable) = (0u64, 0u64);
+        for ((_, kind), fates) in &sites {
+            for (sum, count) in kinds[*kind as usize].iter_mut().zip(fates) {
+                *sum += count;
+            }
+            let allocated: u64 = fates.iter().sum();
+            total_survivors += survivors(fates);
+            if allocated >= PRETENURE_MINIMUM_SITE_ALLOCATIONS
+                && survivors(fates) * 100 >= allocated * PRETENURE_SURVIVAL_PERCENT
+            {
+                pretenurable += survivors(fates);
+            }
+        }
+        eprintln!(
+            "{{\"kind\":\"quench-site-survival\",\"kind_names\":{:?},\"died_young_died_old_live_by_kind\":{:?},\"sites\":{},\"survivors\":{},\"survivors_from_pretenurable_sites\":{}}}",
+            CellKind::NAMES,
+            kinds,
+            sites.len(),
+            total_survivors,
+            pretenurable,
+        );
+        let mut rows = sites.into_iter().collect::<Vec<_>>();
+        rows.sort_unstable_by_key(|(key, fates)| (std::cmp::Reverse(survivors(fates)), *key));
+        for ((site, kind), fates) in rows.into_iter().take(SURVIVAL_REPORT_SITES) {
+            let site = self.sites[site as usize];
+            eprintln!(
+                "{{\"kind\":\"quench-site-survival-row\",\"program\":{},\"function\":{},\"pc\":{},\"cell_kind\":\"{}\",\"died_young\":{},\"died_old\":{},\"live\":{}}}",
+                json_number(site.map(|site| site.program)),
+                json_number(site.map(|site| site.function)),
+                json_number(site.map(|site| site.pc)),
+                CellKind::NAMES[kind as usize],
+                fates[Survival::DiedYoung as usize],
+                fates[Survival::DiedOld as usize],
+                fates[Survival::Live as usize],
+            );
+        }
     }
 
     fn site_id(&mut self, site: Option<AllocationSite>) -> u32 {
@@ -416,6 +488,7 @@ impl MemoryProfile {
 
     fn report_object_lifetimes(&self, phase: &str, heap: &Heap) {
         let mut rows = self.object_lifetimes.clone();
+        let mut live = FxHashMap::<(u32, u8), u64>::default();
         heap.for_each_live_value(|identity| {
             let Some(index) = self.identity_slots.get(&identity).copied() else {
                 return;
@@ -438,8 +511,10 @@ impl MemoryProfile {
                 death: None,
                 checkpoint: Some(heap.properties.len(object.properties()) as u32),
             };
+            *live.entry((lifetime.site, lifetime.kind)).or_default() += 1;
             *rows.entry(lifetime).or_default() += 1;
         });
+        self.report_site_survival(&live);
         let mut rows = rows.into_iter().collect::<Vec<_>>();
         rows.sort_unstable_by_key(|(row, _)| {
             (
