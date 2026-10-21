@@ -1076,3 +1076,12 @@ fast path was removed. The census showed those callers already pass through
 native `computeHashCode` and `equals` entries, so this dispatcher shortcut was
 redundant and increased peak RSS. Reports and full per-round data are in
 `evidence/jit-jetstream3-2026-10-21/hash-map-lane-census/`.
+
+A second narrow experiment matched the Number/Number branch of the benchmark's
+`equals` bytecode and replaced its call with direct `f64` equality after both
+Number guards. The diagnostic confirmed 53,999,999 fast comparisons, but a
+same-binary three-round screen scored 4.09 versus 4.57 through the compiled
+`equals` call; RSS improved by 0.46 MiB and only 1/3 adjacent score pairs
+favored the direct comparison. It was removed because the score regressed.
+The original call remains the fallback and active path. Raw diagnostic and
+paired data are in the same evidence directory.

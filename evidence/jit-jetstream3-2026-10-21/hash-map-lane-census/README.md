@@ -31,3 +31,30 @@ Reports:
 - `candidate-3round.json`: direct lane-side JIT call, diagnostics disabled.
 - `lane-jit-3round.json`: initial unpaired candidate screen; not used to accept
   the change because its score was noisy against earlier runs.
+
+## Direct Number equality screen
+
+The numeric lookup path was also changed temporarily to use an exact bytecode
+match for the `equals` Number path (`typeof` equality, object/function case
+checks, then `a == b`). With both arguments guarded as Numbers, that path has no
+coercions or effects and is equivalent to an IEEE `f64` comparison. The
+diagnostic confirmed 53,999,999 direct comparisons and removed the repeated
+compiled `equals` entry calls.
+
+The same-binary three-round screen did not show a score win:
+
+| Variant | Median Score | Median peak RSS | Per-round Scores |
+| --- | ---: | ---: | --- |
+| Equality call enabled | 4.57 | 74.01 MiB | 2.91, 4.57, 5.77 |
+| Direct Number equality | 4.09 | 73.58 MiB | 5.14, 4.09, 3.74 |
+
+Output matched for all rounds. RSS fell by 0.46 MiB, but Score fell by 10.5%
+and only one of three adjacent score pairs favored the direct comparison. The
+specialization was removed. The first unpaired three-round candidate screen
+scored 4.33, but its variance and the same-binary result do not support keeping
+it.
+
+- `numeric-equality-confirmed-diagnostic.json`: confirms direct path coverage.
+- `numeric-equality-off-3round.json`: same-binary existing equality call.
+- `numeric-equality-on-3round.json`: same-binary direct Number equality.
+- `numeric-equality-3round.json`: initial unpaired candidate screen.
