@@ -144,13 +144,17 @@ fn write_object(writer: &mut Writer, object: &Object) -> SnapshotResult<()> {
             let words = unsafe { object.payload.words };
             writer.u8(0);
             writer.u64(words[0]);
-            writer.u64(if object.is_array() { 0 } else { words[1] });
+            for word in &words[1..] {
+                writer.u64(if object.is_array() { 0 } else { *word });
+            }
         }
         Some(extras) => {
             // SAFETY: as above; the first word is the extras pointer, written field by field.
             let words = unsafe { object.payload.words };
             writer.u8(1);
-            writer.u64(if object.is_array() { 0 } else { words[1] });
+            for word in &words[1..] {
+                writer.u64(if object.is_array() { 0 } else { *word });
+            }
             write_extras(writer, extras)?;
         }
     }
@@ -160,16 +164,21 @@ fn write_object(writer: &mut Writer, object: &Object) -> SnapshotResult<()> {
 fn read_object(reader: &mut Reader<'_>) -> SnapshotResult<Object> {
     let meta = reader.u32()?;
     let auxiliary = reader.u32()?;
-    let words = match reader.u8()? {
-        0 => [reader.u64()?, reader.u64()?],
+    let mut words = [0; INLINE_PROPERTY_COUNT];
+    match reader.u8()? {
+        0 => {
+            for word in &mut words {
+                *word = reader.u64()?;
+            }
+        }
         1 => {
-            let second = reader.u64()?;
-            let extras = read_extras(reader)?;
-            [Object::tag_extras(Box::new(extras)), second]
+            for word in &mut words[1..] {
+                *word = reader.u64()?;
+            }
+            words[0] = Object::tag_extras(Box::new(read_extras(reader)?));
         }
         _ => return Err(SnapshotError("invalid snapshot object".into())),
-    };
-    const _: () = assert!(INLINE_PROPERTY_COUNT == 2);
+    }
     Ok(Object { meta, auxiliary, payload: ObjectPayload { words } })
 }
 
@@ -670,10 +679,10 @@ impl Cell {
                 writer.f64(*milliseconds);
                 write_object(writer, object)?;
             }
-            Self::RegExp { object, meta, matcher: _ } => {
+            Self::RegExp { object, meta } => {
                 writer.u8(tag::REGEXP);
                 write_object(writer, object)?;
-                let RegExpMeta { source, flags, legacy_constructor } = &**meta;
+                let RegExpMeta { source, flags, legacy_constructor, matcher: _ } = &**meta;
                 source.write_snapshot(writer);
                 writer.str(&flags.text());
                 match legacy_constructor {
@@ -850,7 +859,7 @@ impl Cell {
                     _ => return Err(SnapshotError("invalid snapshot regexp owner".into())),
                 };
                 let matcher = (decoder.regexp)(&source, &flag_text)?;
-                Self::RegExp { object, meta: Box::new(RegExpMeta { source, flags, legacy_constructor }), matcher }
+                Self::RegExp { object, meta: Rc::new(RegExpMeta { source, flags, legacy_constructor, matcher }) }
             }
             tag::ERROR => Self::Error(reader.string()?),
             tag::PROMISE => Self::Promise(Box::new(crate::heap::PromiseCell::read_snapshot(reader)?)),
