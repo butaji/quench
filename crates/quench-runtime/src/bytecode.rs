@@ -450,6 +450,15 @@ impl ImmediateLayout {
             })
     }
 
+    /// A lane `Call` record whose result register is dead after the call (`derive_lane_view`).
+    /// Lane call records carry no eval flags (`lane_call_fits`), so the flag reuses the
+    /// direct-eval bit; a callee whose result is unobservable may skip building it.
+    pub(crate) const LANE_CALL_RESULT_UNUSED_FLAG: u32 = Self::DIRECT_EVAL_FLAG;
+
+    pub(crate) const fn lane_call_result_used(imm: u32) -> bool {
+        imm & Self::LANE_CALL_RESULT_UNUSED_FLAG == 0
+    }
+
     pub(crate) const fn direct_eval(imm: u32) -> bool {
         imm & Self::DIRECT_EVAL_FLAG != 0
     }

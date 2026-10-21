@@ -2413,6 +2413,7 @@ impl<H: Host> Vm<H> {
         native: Native,
         receiver: Value,
         subject: Value,
+        result_used: bool,
     ) -> Option<Result<Value, JsError>> {
         if !matches!(native, Native::RegExpExec | Native::RegExpTest)
             || !matches!(self.heap.get(receiver), Some(Cell::RegExp { .. }))
@@ -2432,7 +2433,7 @@ impl<H: Host> Vm<H> {
         }
         let arguments = [subject];
         if native == Native::RegExpExec {
-            return Some(self.regexp_steady_exec(p, receiver, subject, slot, last_index));
+            return Some(self.regexp_steady_exec(p, receiver, subject, slot, last_index, result_used));
         }
         Some(self.regexp_test(p, receiver, &arguments))
     }
@@ -2448,12 +2449,19 @@ impl<H: Host> Vm<H> {
         subject: Value,
         slot: usize,
         last_index: Value,
+        result_used: bool,
     ) -> Result<Value, JsError> {
         let input = self.coerce_js_string(p, subject)?;
         let last_index = self.regexp_to_length_value(p, last_index)?;
         let Some(matched) = self.regexp_match_from(p, receiver, &input, last_index, Some(slot))? else {
             return Ok(Value::NULL);
         };
+        // Nothing reads the result: building it allocates and runs no guest code, so only
+        // the match's own effect, the legacy statics, remains.
+        if !result_used {
+            self.record_regexp_legacy_match(receiver, input, matched)?;
+            return Ok(Value::UNDEFINED);
+        }
         self.with_call_roots([receiver, subject], |vm| vm.regexp_exec_result(receiver, subject, input, matched))
     }
 
