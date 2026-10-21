@@ -154,10 +154,7 @@ impl UnitSet {
     }
 
     fn new(beyond: Beyond) -> Self {
-        let ascii = (0..ASCII_UNITS)
-            .filter(|value| beyond.matches(*value))
-            .fold(0u128, |bits, value| bits | 1 << value);
-        Self::of(ascii, beyond)
+        Self::of(beyond.ascii_mask(), beyond)
     }
 
     /// Whether no unit is in the set.
@@ -211,6 +208,28 @@ impl Beyond {
         Self::Ranges {
             ranges: merged.into_boxed_slice(),
             negative: class.negative,
+        }
+    }
+
+    /// The ASCII units the test admits, one bit per unit: derived from the ranges where the
+    /// test is exact ranges, and by testing each ASCII unit otherwise.
+    fn ascii_mask(&self) -> u128 {
+        match self {
+            Self::Never => 0,
+            Self::Either(either) => either.iter().fold(0, |bits, beyond| bits | beyond.ascii_mask()),
+            Self::Ranges { ranges, negative } => {
+                let members = ranges
+                    .iter()
+                    .take_while(|(min, _)| *min < ASCII_UNITS)
+                    .fold(0u128, |bits, &(min, max)| {
+                        let max = max.min(ASCII_UNITS - 1);
+                        bits | (u128::MAX >> (ASCII_UNITS - 1 - max)) & (u128::MAX << min)
+                    });
+                if *negative { !members } else { members }
+            }
+            _ => (0..ASCII_UNITS)
+                .filter(|value| self.matches(*value))
+                .fold(0u128, |bits, value| bits | 1 << value),
         }
     }
 
@@ -1659,6 +1678,31 @@ fn assertion_holds<T: Text + ?Sized>(test: AssertionTest, text: &T, position: us
 #[cfg(test)]
 mod tests {
     use super::super::{units_from_str, Flags, Regex};
+    use super::{Beyond, ASCII_UNITS};
+
+    /// A ranges test's derived ASCII mask: the units its per-unit test admits.
+    #[test]
+    fn ranges_ascii_mask_matches_each_unit() {
+        let cases: [&[(u32, u32)]; 5] = [
+            &[],
+            &[(0, 0)],
+            &[(0x30, 0x39), (0x41, 0x5a), (0x61, 0x7a)],
+            &[(0x7f, 0x7f), (0x80, 0x10ffff)],
+            &[(0x20, 0x2000)],
+        ];
+        for ranges in cases {
+            for negative in [false, true] {
+                let beyond = Beyond::Ranges {
+                    ranges: ranges.into(),
+                    negative,
+                };
+                let each = (0..ASCII_UNITS)
+                    .filter(|value| beyond.matches(*value))
+                    .fold(0u128, |bits, value| bits | 1 << value);
+                assert_eq!(beyond.ascii_mask(), each, "{ranges:?} negative={negative}");
+            }
+        }
+    }
 
     /// Every pattern, flag set and subject: the compiled program's match against the
     /// repository matcher's, from each start position.

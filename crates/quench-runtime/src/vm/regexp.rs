@@ -155,8 +155,20 @@ pub(super) struct RegExpSymbolLayout {
     slot: u32,
 }
 
+/// The receiver shapes a program's RegExps commonly share, each proven once: a literal's,
+/// a `new RegExp` result's (its `Constructed` transition), and a subclass instance's.
+pub(super) const REGEXP_RECEIVER_SHAPES: usize = 4;
+
+/// Records `entry` in a shape-proof cache of at most `capacity` entries, evicting the oldest.
+fn remember_shape_proof<T>(cache: &mut Vec<T>, capacity: usize, entry: T) {
+    if cache.len() == capacity {
+        cache.remove(0);
+    }
+    cache.push(entry);
+}
+
 /// The symbol methods a string method looks up on a RegExp argument: `@@replace`,
-/// `@@split`, `@@match`, `@@matchAll` and `@@search`, each with its own layout.
+/// `@@split`, `@@match`, `@@matchAll` and `@@search`, each proven per receiver shape.
 pub(super) const REGEXP_SYMBOL_LAYOUTS: usize = 5;
 
 /// The replace value of a fast `RegExp.prototype[@@replace]`: a template already converted
@@ -697,14 +709,19 @@ impl<H: Host> Vm<H> {
             None => {
                 let slot =
                     self.verify_regexp_symbol_layout(receiver, prototype, symbol)?;
-                self.regexp_symbol_layouts.retain(|layout| layout.symbol != symbol);
-                self.regexp_symbol_layouts.truncate(REGEXP_SYMBOL_LAYOUTS - 1);
-                self.regexp_symbol_layouts.push(RegExpSymbolLayout {
-                    symbol,
-                    receiver: receiver_shape,
-                    prototype: prototype_shape,
-                    slot: slot as u32,
-                });
+                // A changed prototype shape invalidates every proof made against the old one.
+                self.regexp_symbol_layouts
+                    .retain(|layout| layout.prototype == prototype_shape);
+                remember_shape_proof(
+                    &mut self.regexp_symbol_layouts,
+                    REGEXP_SYMBOL_LAYOUTS * REGEXP_RECEIVER_SHAPES,
+                    RegExpSymbolLayout {
+                        symbol,
+                        receiver: receiver_shape,
+                        prototype: prototype_shape,
+                        slot: slot as u32,
+                    },
+                );
                 slot
             }
         };
@@ -752,19 +769,25 @@ impl<H: Host> Vm<H> {
         }
         let receiver_shape = receiver_data.shape();
         let prototype_shape = self.object_data(prototype)?.shape();
-        let exec_slot = match self.regexp_builtin_layout {
-            Some(layout)
-                if layout.receiver == receiver_shape && layout.prototype == prototype_shape =>
-            {
-                layout.exec_slot as usize
-            }
-            _ => {
+        let proven = self.regexp_builtin_layouts.iter().find(|layout| {
+            layout.receiver == receiver_shape && layout.prototype == prototype_shape
+        });
+        let exec_slot = match proven {
+            Some(layout) => layout.exec_slot as usize,
+            None => {
                 let exec_slot = self.verify_regexp_builtin_layout(receiver, prototype)?;
-                self.regexp_builtin_layout = Some(RegExpBuiltinLayout {
-                    receiver: receiver_shape,
-                    prototype: prototype_shape,
-                    exec_slot: exec_slot as u32,
-                });
+                // A changed prototype shape invalidates every proof made against the old one.
+                self.regexp_builtin_layouts
+                    .retain(|layout| layout.prototype == prototype_shape);
+                remember_shape_proof(
+                    &mut self.regexp_builtin_layouts,
+                    REGEXP_RECEIVER_SHAPES,
+                    RegExpBuiltinLayout {
+                        receiver: receiver_shape,
+                        prototype: prototype_shape,
+                        exec_slot: exec_slot as u32,
+                    },
+                );
                 exec_slot
             }
         };
@@ -830,8 +853,10 @@ impl<H: Host> Vm<H> {
     /// The slot of `receiver`'s own writable data `lastIndex`, proven once per receiver shape.
     fn regexp_last_index_slot(&mut self, receiver: Value) -> Option<usize> {
         let shape = self.object_data(receiver)?.shape();
-        if let Some((cached, slot)) = self.regexp_last_index_layout
-            && cached == shape
+        if let Some(&(_, slot)) = self
+            .regexp_last_index_layouts
+            .iter()
+            .find(|(cached, _)| *cached == shape)
         {
             return Some(slot as usize);
         }
@@ -841,7 +866,11 @@ impl<H: Host> Vm<H> {
         if !attributes.writable || attributes.accessor {
             return None;
         }
-        self.regexp_last_index_layout = Some((shape, slot as u32));
+        remember_shape_proof(
+            &mut self.regexp_last_index_layouts,
+            REGEXP_RECEIVER_SHAPES,
+            (shape, slot as u32),
+        );
         Some(slot)
     }
 

@@ -1725,9 +1725,9 @@ pub(crate) struct Vm<H> {
     regexp_object_shapes: Option<(u32, u32)>,
     /// A RegExp receiver shape verified to hold an own writable data `lastIndex` at the paired
     /// slot; derived from shapes, so field-cache invalidation clears it.
-    regexp_last_index_layout: Option<(u32, u32)>,
+    regexp_last_index_layouts: Vec<(u32, u32)>,
     /// Derived from shapes, so field-cache invalidation clears it.
-    regexp_builtin_layout: Option<regexp::RegExpBuiltinLayout>,
+    regexp_builtin_layouts: Vec<regexp::RegExpBuiltinLayout>,
     /// Derived from shapes, so field-cache invalidation clears it.
     regexp_symbol_layouts: Vec<regexp::RegExpSymbolLayout>,
     /// An object verified to hold the native `Function.prototype[@@hasInstance]` as a
@@ -2627,8 +2627,8 @@ impl<H: Host> Vm<H> {
         self.iterator_result_shape = None;
         self.descriptor_shapes = [None; 2];
         self.regexp_object_shapes = None;
-        self.regexp_last_index_layout = None;
-        self.regexp_builtin_layout = None;
+        self.regexp_last_index_layouts.clear();
+        self.regexp_builtin_layouts.clear();
         self.regexp_symbol_layouts.clear();
         self.set_instanceof_has_instance_holder(Value::NULL);
         self.program_cache_layouts.clear();
