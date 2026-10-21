@@ -59,6 +59,8 @@ struct RuntimeAtoms {
     /// An iterator result's keys, in its literal order.
     value: Atom,
     done: Atom,
+    /// The iterator protocol's close method.
+    iterator_return: Atom,
     /// The internal keys a bound function's environment holds its parts under
     /// (`Vm::bound_function_parts`).
     bound_target: Atom,
@@ -2549,6 +2551,7 @@ impl<H: Host> Vm<H> {
             empty: self.intern_atom(""),
             value: self.intern_atom("value"),
             done: self.intern_atom("done"),
+            iterator_return: self.intern_atom("return"),
             bound_target: self.intern_atom(BOUND_TARGET_KEY),
             bound_this: self.intern_atom(BOUND_THIS_KEY),
             bound_args: self.intern_atom(BOUND_ARGS_KEY),
