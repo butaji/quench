@@ -475,19 +475,10 @@ fn take_store_context(
     shared_state: &Rc<RefCell<crate::host::SharedNodeState>>, async_id: StoreContext,
 ) -> Vec<RootId> {
     let mut shared = shared_state.borrow_mut();
-    let keys = shared
-        .async_hooks
-        .local_stores
-        .keys()
-        .filter_map(|(resource_id, local_id)| {
-            (*resource_id == async_id).then_some((*resource_id, *local_id))
-        })
-        .collect::<Vec<_>>();
-    keys.into_iter()
-        .filter_map(|key| {
-            let store = shared.async_hooks.local_stores.remove(&key)?;
-            shared.async_hooks.release_store(store).then_some(store)
-        })
+    let frame = shared.async_hooks.local_stores.remove(&async_id).unwrap_or_default();
+    frame
+        .into_iter()
+        .filter_map(|(_, store)| shared.async_hooks.release_store(store).then_some(store))
         .collect()
 }
 
@@ -498,20 +489,14 @@ fn inherit_stores(
 ) {
     let source_id = source_id.into();
     let target_id = target_id.into();
-    let inherited = async_hooks
-        .local_stores
-        .iter()
-        .filter_map(|((resource_id, local_id), store)| {
-            (*resource_id == source_id).then_some((*local_id, *store))
-        })
-        .collect::<Vec<_>>();
-    for (local_id, store) in inherited {
+    let Some(inherited) = async_hooks.local_stores.get(&source_id).cloned() else {
+        return;
+    };
+    for &(_, store) in &inherited {
         async_hooks.retain_store(store);
-        let previous = async_hooks
-            .local_stores
-            .insert((target_id, local_id), store);
-        debug_assert!(previous.is_none());
     }
+    let previous = async_hooks.local_stores.insert(target_id, inherited);
+    debug_assert!(previous.is_none());
 }
 
 pub(crate) struct ContextScope {
@@ -929,10 +914,14 @@ pub(crate) fn enter_with(
             .store_context();
         let mut shared = shared_state.borrow_mut();
         shared.async_hooks.enabled_local_storages.insert(local_id);
-        let previous = shared
-            .async_hooks
-            .local_stores
-            .insert((async_id, local_id), store);
+        let frame = shared.async_hooks.local_stores.entry(async_id).or_default();
+        let previous = match frame.iter_mut().find(|(candidate, _)| *candidate == local_id) {
+            Some((_, slot)) => Some(std::mem::replace(slot, store)),
+            None => {
+                frame.push((local_id, store));
+                None
+            }
+        };
         shared.async_hooks.retain_store(store);
         previous.filter(|previous| shared.async_hooks.release_store(*previous))
     };
@@ -956,8 +945,9 @@ pub(crate) fn get_store(
         shared
             .async_hooks
             .local_stores
-            .get(&(current_id, local_id))
-            .copied()
+            .get(&current_id)
+            .and_then(|frame| frame.iter().find(|(candidate, _)| *candidate == local_id))
+            .map(|&(_, store)| store)
     };
     Ok(store.unwrap_or_else(|| context.undefined()))
 }
@@ -973,19 +963,20 @@ pub(crate) fn disable_storage(
         let shared_state = context.host_mut().shared_state();
         let mut shared = shared_state.borrow_mut();
         shared.async_hooks.enabled_local_storages.remove(&local_id);
-        let keys = shared
-            .async_hooks
-            .local_stores
-            .keys()
-            .filter_map(|(resource_id, candidate)| {
-                (*candidate == local_id).then_some((*resource_id, *candidate))
-            })
-            .collect::<Vec<_>>();
-        keys.into_iter()
-            .filter_map(|key| {
-                let store = shared.async_hooks.local_stores.remove(&key)?;
-                shared.async_hooks.release_store(store).then_some(store)
-            })
+        let mut removed = Vec::new();
+        shared.async_hooks.local_stores.retain(|_, frame| {
+            frame.retain(|&(candidate, store)| {
+                let keep = candidate != local_id;
+                if !keep {
+                    removed.push(store);
+                }
+                keep
+            });
+            !frame.is_empty()
+        });
+        removed
+            .into_iter()
+            .filter(|store| shared.async_hooks.release_store(*store))
             .collect::<Vec<_>>()
     };
     for store in released {
