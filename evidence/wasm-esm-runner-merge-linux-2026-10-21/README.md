@@ -102,3 +102,47 @@ profiles; 11 rounds, same method:
 
 Interleaved `--jit` rounds before this campaign put this build at a median 23,534 against the
 previous merge's 24,111 and Node's 22,381 (six rounds each); the ranges overlap.
+
+## At `4974bb439`: startup snapshot kinds, trunk's opt-in snapshot (`coremark-esm-4974bb439-11.csv`)
+
+v2-merged `8336df453` added a startup snapshot that preloads 14 builtins. A restore decodes
+all a snapshot holds, about 5.2 MB anon with the builtins (heap 1.8, programs 1.5, shapes
+0.8, atoms 0.5; `iteration` build, empty entry), so CoreMark as a Wasm ES module rose from
+3.3 to 7.7 MB unbolted. This lane added a `bootstrap` kind restored when the entry's static
+graph cannot reach a builtin (docs/README.md, "Startup snapshot"); trunk meanwhile made the
+snapshot opt-in (`QUENCH_STARTUP_SNAPSHOT=on|trace`). The campaign runs the default, without
+a snapshot.
+
+The host was slower this run: interleaved `--jit` rounds put the previous campaign's binary at
+19,338 and this one at 19,371 (Node 18,698); no JIT 2,865 and 2,749, ranges overlapping.
+
+| Mode | Runtime | Median Score | Range | Median max RSS |
+| -- | -- | --: | -- | --: |
+| No JIT | **quench-node, Wasm ESM** | **2,841.9** | 2,613–2,939 | **2.93 MB** |
+| No JIT | quench-node, `run-js.mjs` | 2,894.8 | 2,764–2,923 | 2.91 MB |
+| No JIT | Wasmi v2 | 2,639.7 | 2,611–2,728 | 5.02 MB |
+| No JIT | Wasm3 | 1,821.5 | 1,706–1,859 | 3.82 MB |
+| JIT | **quench-node --jit, Wasm ESM** | **20,242.9** | 18,647–21,030 | **6.27 MB** |
+| JIT | quench-node --jit, `run-js.mjs` | 19,977.4 | 18,972–20,594 | 6.31 MB |
+| JIT | Node v26.12.0, Wasm ESM | 19,291.4 | 18,163–20,076 | 51.82 MB |
+| JIT | Node v26.12.0, `run-js.mjs` | 19,191.4 | 18,409–20,233 | 52.31 MB |
+| JIT | Wasmtime | 18,174.1 | 17,153–18,447 | 13.34 MB |
+| JIT | Winch | 9,232.1 | 8,538–9,592 | 11.56 MB |
+
+* No-JIT Score: won (1.077x Wasmi v2; 10 of 11 rounds).
+* No-JIT max RSS: won (2,960–3,020 KB against Wasm3's 3,708–4,068 KB; 11 of 11).
+* JIT Score: won (1.049x Node's best row; 9 of 11 rounds).
+* JIT max RSS: won (6.27 MB against Winch's 11.56 MB; 11 of 11).
+
+Max RSS of this bolted binary with and without the snapshot (KB, 3 runs, evicted):
+
+| Entry | Snapshot kind | Off | On |
+| -- | -- | --: | --: |
+| empty `.mjs` | bootstrap | 2,024 | 2,232 |
+| CoreMark Wasm ESM | bootstrap | 3,000–3,052 | 3,072 |
+| CoreMark Wasm ESM `--jit` | bootstrap | 6,300–6,528 | 6,208–6,324 |
+| `require("http", "util", "stream")` | preloaded | 9,844–9,980 | 7,592–7,720 |
+
+Restoring the bootstrap kind costs about 200 KB over booting for an empty script, so the
+opt-in default keeps CoreMark's lowest figure; an entry that loads the preloaded builtins
+saves about 2.3 MB with the snapshot on.
