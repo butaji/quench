@@ -81,6 +81,11 @@ impl ShapeTransitionIndex {
         self.children.iter().copied()
     }
 
+    /// An empty index with room for `capacity` children.
+    pub(super) fn with_capacity(capacity: usize) -> Self {
+        Self { children: hashbrown::HashTable::with_capacity(capacity) }
+    }
+
     /// Records `child`, already in `shapes`, under the parent and key its shape names.
     pub(super) fn insert_child(&mut self, shapes: &[Shape], child: u32) {
         self.children
