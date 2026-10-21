@@ -35,6 +35,6 @@ Rule (TOD-172):
 | JetStream (6 tests) | 5 | ×1.005 | ×0.995 |
 
 The saving is about 0.1 MB per process, below the rule and within the A/A noise floor
-(npm ×0.9987). Most of the eagerly filled tables were evidently not what kept pages
-resident; their large `vec!` fills come back to the allocator as whole pages. The unit test
-run hit a full disk; that does not change the decision.
+(npm ×0.9987). It is far below what the census suggested, so most of those table pages were
+likely not resident to begin with. Why was not investigated further. The unit test run hit a
+full disk; that does not change the decision.

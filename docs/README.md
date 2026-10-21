@@ -662,6 +662,12 @@ target/production/symbol-order target/production/coremark \
   train/KERNEL-no-jit.out... train/KERNEL-jit.out...
 ```
 
+An order names symbols with the profile's crate hashes, so a change that moves them disables
+it silently. `tools/check-link-order.sh BINARY ORDER` reports the share of the order's
+symbols the binary still has and fails below 90%. Check `quench-node`'s production build
+against `crates/quench-node/link/x86_64-linux.order` after manifest or dependency changes
+(TOD-171).
+
 Profiles go in priority order. Functions are laid out in first-appearance
 order, so the first profile's run touches one contiguous region and later
 profiles add only what earlier ones did not execute. With a compiled-mode
