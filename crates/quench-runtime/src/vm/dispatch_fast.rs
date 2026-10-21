@@ -3505,7 +3505,7 @@ fn lane_getter_activation<H: Host>(
         return Err(exit(ip));
     };
     let no_arguments = ActivationArguments::Kept(std::ptr::NonNull::dangling().as_ptr(), 0);
-    lane_activate_keeping(cx, r, ip, target, no_arguments, this, false, None)
+    lane_activate_keeping::<H, false>(cx, r, ip, target, no_arguments, this, false, None)
 }
 
 /// A `GetField` record's value where caches answer it (`lane_cached_field`): one read of a
@@ -6297,7 +6297,7 @@ script_handler! {
             return exit(ip);
         }
         let arguments = ImmediateLayout::call_window_base(i.imm());
-        let (registers, base) = lane_push_activation(cx, r, ip, target, arguments, this, false);
+        let (registers, base) = lane_push_activation::<H, false>(cx, r, ip, target, arguments, this, false);
         next!(cx, registers, base, Carried::script(cx))
     }
 }
@@ -6409,7 +6409,7 @@ script_handler! {
             {
                 sibling!(lane_script_call_general::<H>, r, ip, Carried::script(cx))
             }
-            let (registers, base) = lane_push_activation(cx, r, ip, target, arguments, this, false);
+            let (registers, base) = lane_push_activation::<H, false>(cx, r, ip, target, arguments, this, false);
             next!(cx, registers, base, Carried::script(cx))
         };
         if !returns {
@@ -6741,7 +6741,7 @@ fn lane_function_call_activation<H: Host>(
         return Err(exit(ip));
     };
     let arguments = ActivationArguments::Kept(args.as_ptr(), args.len());
-    lane_activate_keeping(cx, r, ip, target, arguments, this, false, None)
+    lane_activate_keeping::<H, false>(cx, r, ip, target, arguments, this, false, None)
 }
 
 script_handler! {
@@ -7169,7 +7169,7 @@ fn lane_call_keeping_activation<H: Host>(
         return Err(Some(exit(ip)));
     };
     let arguments = ActivationArguments::Window(ImmediateLayout::call_window_base(i.imm()));
-    lane_activate_keeping(cx, r, ip, target, arguments, this, false, None).map_err(Some)
+    lane_activate_keeping::<H, false>(cx, r, ip, target, arguments, this, false, None).map_err(Some)
 }
 
 script_handler! {
@@ -7230,10 +7230,10 @@ fn lane_construct_keeping_activation<H: Host>(
             env: target.env,
             method,
         };
-        return lane_activate_keeping(cx, r, ip, forwarded, arguments, this, false, Some(forwarder))
+        return lane_activate_keeping::<H, false>(cx, r, ip, forwarded, arguments, this, false, Some(forwarder))
             .map_err(Some);
     }
-    lane_activate_keeping(cx, r, ip, target, arguments, this, true, None).map_err(Some)
+    lane_activate_keeping::<H, false>(cx, r, ip, target, arguments, this, true, None).map_err(Some)
 }
 
 /// The method a forwarding constructor's body (`ScriptCallTarget::forwarded_method`) would
@@ -7430,7 +7430,7 @@ fn lane_forward_activation<H: Host>(
     let Some(this) = lane_call_this(vm, &target, receiver) else {
         return Err(exit(ip));
     };
-    lane_activate_keeping(cx, r, ip, target, kept, this, false, None)
+    lane_activate_keeping::<H, false>(cx, r, ip, target, kept, this, false, None)
 }
 
 use crate::bytecode::FORWARDED_APPLY_ARGUMENTS;
@@ -7604,8 +7604,7 @@ fn lane_script_target<H: Host>(cx: *mut LaneContext<H>, callee: Value) -> Option
 /// functions makes it the general loop's executing one: the residual, lane views and
 /// constants its records read, and the VM's active program, whose cache layout its sites
 /// index.
-#[cold]
-#[inline(never)]
+#[inline(always)]
 fn lane_enter_program<H: Host>(cx: *mut LaneContext<H>, program: ProgramId) {
     let vm = unsafe { vm(cx) };
     let Some(code) = vm.programs.residual(program) else {
@@ -7656,7 +7655,7 @@ fn lane_activate<H: Host>(
     // Values past the parameters stay observable (legacy `f.arguments`, a frame made of the
     // activation): the keeping activation holds them after the registers.
     if argc > target.params {
-        return lane_activate_keeping(
+        return lane_activate_keeping::<H, true>(
             cx,
             r,
             ip,
@@ -7670,7 +7669,7 @@ fn lane_activate<H: Host>(
     if !lane_activation_room(vm, target) {
         return Err(lane_script_call_frame::<H>(ip));
     }
-    Ok(lane_push_activation(cx, r, ip, target, arguments, this, constructs))
+    Ok(lane_push_activation::<H, true>(cx, r, ip, target, arguments, this, constructs))
 }
 
 /// Whether the lane stack takes `target`'s activation: capacity, the guest-call budget and
@@ -7684,9 +7683,11 @@ fn lane_activation_room<H: Host>(vm: &Vm<H>, target: &ScriptCallTarget) -> bool 
 /// `lane_activate` past its checks: the call passes at most `target`'s parameters, the lane
 /// stack has room (`lane_activation_room`), and the call may complete its caller. Pushes
 /// the activation and returns its registers and the callee's first record; it makes no
-/// call, so a handler activating through it keeps its registers.
+/// call, so a handler activating through it keeps its registers. Without `MAY_CROSS` the
+/// target is the running program's (`Vm::script_call_entry`), so the activation leaves it
+/// for no other program.
 #[inline(always)]
-fn lane_push_activation<H: Host>(
+fn lane_push_activation<H: Host, const MAY_CROSS: bool>(
     cx: *mut LaneContext<H>,
     r: Registers,
     ip: Ip,
@@ -7717,7 +7718,8 @@ fn lane_push_activation<H: Host>(
         Registers(registers)
     };
     // Only a plain call activates another program's callee (`Vm::resolve_script_call_target`).
-    let cross = target.program != unsafe { (*cx).program };
+    let cross = MAY_CROSS && target.program != unsafe { (*cx).program };
+    debug_assert!(MAY_CROSS || target.program == unsafe { (*cx).program });
     debug_assert!(!(cross && constructs));
     let activation = Activation {
         function: target.function,
@@ -8063,10 +8065,11 @@ fn lane_planned_receiver<H: Host>(
 /// `lane_activate` for a target that keeps its passed values, or for values a forwarding
 /// activation or frame kept: the activation's registers and the callee's first record, or
 /// the record to continue at when the call takes the general path. Out of line, so the
-/// common activation keeps its code.
+/// common activation keeps its code. Without `MAY_CROSS` the target is the running
+/// program's, as every path but a plain call's makes it (`lane_script_target`).
 #[inline(never)]
 #[allow(clippy::too_many_arguments)]
-fn lane_activate_keeping<H: Host>(
+fn lane_activate_keeping<H: Host, const MAY_CROSS: bool>(
     cx: *mut LaneContext<H>,
     r: Registers,
     ip: Ip,
@@ -8081,7 +8084,8 @@ fn lane_activate_keeping<H: Host>(
     let i = unsafe { &*ip };
     // A plain call passed more values than its parameters activates another program's callee
     // here too (`lane_activate`).
-    let cross = target.program != unsafe { (*cx).program };
+    let cross = MAY_CROSS && target.program != unsafe { (*cx).program };
+    debug_assert!(MAY_CROSS || target.program == unsafe { (*cx).program });
     debug_assert!(!(cross && (constructs || forwarder.is_some())));
     let argc = match arguments {
         ActivationArguments::Window(_) => usize::from(ImmediateLayout::argument_count(i.imm())),
@@ -8914,13 +8918,11 @@ const EMPTY_READ_MEMO: ReadMemo = ReadMemo {
     read: MemoRead::Leaf(MemoLeaf::Field { base: 0, field: super::EMPTY_CACHE }),
 };
 
-/// The read memo slot of the call record `site`: the shared direct-mapped index
-/// (`shape_memo::direct_mapped_index`) of its address above the alignment bits every record
-/// shares, which spreads a view's consecutive records over the slots.
+/// The read memo slot of the call record `site`: the shared direct-mapped index of its
+/// address (`shape_memo::direct_mapped_index`), which spreads a view's consecutive records.
 #[inline(always)]
 fn read_memo_index(site: Ip) -> usize {
-    let position = site as usize >> std::mem::align_of::<LaneInstruction>().trailing_zeros();
-    super::shape_memo::direct_mapped_index(position, READ_MEMOS)
+    super::shape_memo::direct_mapped_index(site as usize, READ_MEMOS)
 }
 
 /// Records `target`'s read at the call record `site` (`lane_memoize_read`) unless a live memo
