@@ -217,7 +217,7 @@ fn detect_source_kind(path: &Path) -> Result<quench_runtime::SourceKind, String>
     // The goal follows from the text alone, which parsing it (twice, for a module) costs a
     // whole compilation of: typescript.js (9 MB) was parsed on every load. It is kept in the
     // compile cache, keyed by the exact text, as a compiled program is.
-    let entry = detected_kinds().entry(DETECTED_KIND_NAME, &[text]);
+    let entry = text_facts_cache().entry(DETECTED_KIND_NAME, &[text]);
     if let Some(kind) = entry.as_ref().and_then(|entry| entry.load()).and_then(|bytes| detected_kind_of(bytes.as_ref().as_ref())) {
         return Ok(kind);
     }
@@ -231,9 +231,10 @@ fn detect_source_kind(path: &Path) -> Result<quench_runtime::SourceKind, String>
 /// The compile-cache name a detected parse goal is kept under.
 const DETECTED_KIND_NAME: &str = "\0quench:detected-source-kind";
 
-/// The cache detected parse goals are kept in: this build's compile cache, read from the
-/// environment as the host's own is, since detection runs where no host is reachable.
-fn detected_kinds() -> &'static crate::host::compile_cache::CompileCache {
+/// The cache facts derived from a file's text alone are kept in (its detected parse goal,
+/// its static CommonJS exports): this build's compile cache, read from the environment as
+/// the host's own is, since they are derived where no host is reachable.
+pub(super) fn text_facts_cache() -> &'static crate::host::compile_cache::CompileCache {
     static CACHE: std::sync::OnceLock<crate::host::compile_cache::CompileCache> = std::sync::OnceLock::new();
     CACHE.get_or_init(crate::host::compile_cache::CompileCache::from_environment)
 }
