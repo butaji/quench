@@ -1586,10 +1586,10 @@ lane_handler! {
 }
 
 lane_handler! {
-    /// `DefineArrayElement` at the literal's length (`Vm::append_literal_element`); any other
-    /// definition takes the general path.
+    /// `DefineArrayElement` into the literal's dense storage (`Vm::define_literal_element`);
+    /// any other definition takes the general path.
     fn lane_define_array_element<>(cx, r, ip, i, view) {
-        if !(unsafe { vm(cx) }).append_literal_element(r.get(i.b), i.imm() as usize, r.get(i.a)) {
+        if !(unsafe { vm(cx) }).define_literal_element(r.get(i.b), i.imm() as usize, r.get(i.a)) {
             return exit(ip);
         }
         next!(cx, r, following(ip), view)
