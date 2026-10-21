@@ -1944,11 +1944,14 @@ impl<H: Host> Vm<H> {
         };
         let (receiver_shape, prototype) = (receiver.shape(), receiver.proto());
         if let Some(slot) = self.shape_slot(receiver_shape, atom) {
-            let own_getter = self.heap.ordinary_object(object).is_some_and(|own| {
-                self.slot_attributes(own, slot)
-                    .is_some_and(|attributes| attributes.accessor && attributes.getter.is_some())
-            });
-            if slot < FIELD_CACHE_SLOT_CAPACITY && own_getter {
+            // An own accessor, as `debug`'s `enabled` on each logger function: every receiver
+            // of the shape holds its own getter in the slot, read from it at each hit.
+            let own_getter = slot < FIELD_CACHE_SLOT_CAPACITY
+                && !receiver.has_side_descriptors()
+                && self
+                    .slot_attributes(receiver, slot)
+                    .is_some_and(|attributes| attributes.accessor && attributes.getter.is_some());
+            if own_getter {
                 self.record_accessor_entry(
                     site,
                     AccessorFieldCache {
@@ -2034,9 +2037,15 @@ impl<H: Host> Vm<H> {
         let cache = entries.iter().find(|cache| {
             receiver.shape() == cache.receiver && receiver.proto() == cache.prototype && epoch == cache.epoch
         })?;
-        let holder = if cache.holder == OWN_ACCESSOR { object } else { cache.holder };
-        self.slot_attributes(self.heap.ordinary_object(holder)?, usize::from(cache.slot))?
-            .getter
+        let holder = if cache.holder == OWN_ACCESSOR {
+            if receiver.has_side_descriptors() {
+                return None;
+            }
+            receiver
+        } else {
+            self.heap.ordinary_object(cache.holder)?
+        };
+        self.slot_attributes(holder, usize::from(cache.slot))?.getter
     }
 
     /// What native accessor `getter` returns for `this` where its call is a read of the
