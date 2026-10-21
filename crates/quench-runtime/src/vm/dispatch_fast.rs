@@ -1739,7 +1739,7 @@ const fn lane_steps_in_place(op: Op) -> bool {
     )
 }
 
-lane_handler! {
+script_handler! {
     /// `IncDec` of a Number; other values take the general path. The view derives the
     /// direction from the record (`specialize_updates`).
     fn lane_inc_dec<DECREMENT: bool>(cx, r, ip, i, view) {
@@ -1747,11 +1747,11 @@ lane_handler! {
             return exit(ip);
         };
         r.set(i.a, value);
-        next!(cx, r, following(ip), view)
+        next!(cx, r, following(ip), Carried::script(cx))
     }
 }
 
-lane_handler! {
+script_handler! {
     /// A postfix update of a Number: `ToNumeric` into `a` and the `IncDec` of its result into
     /// `c` that follows it (`specialize_updates`). Other values take the general path at the
     /// conversion.
@@ -1762,7 +1762,7 @@ lane_handler! {
         };
         r.set(i.a, value);
         r.set(i.c, updated);
-        next!(cx, r, following(following(ip)), view)
+        next!(cx, r, following(following(ip)), Carried::script(cx))
     }
 }
 
@@ -2133,7 +2133,7 @@ fn lane_relation_operands<const CONSTANT: bool>(
     }
 }
 
-lane_handler! {
+script_handler! {
     /// `lane_operator` at a site that has met operands other than two integers: any Numbers,
     /// through their double values. Other operands take `lane_operator_other`, out of line,
     /// so this handler saves no registers for them.
@@ -2141,14 +2141,14 @@ lane_handler! {
     fn lane_operator_numbers<OP: u32>(cx, r, ip, i, view) {
         let Some(value) = super::operations::number_value_operator::<OP>(r.get(i.b), r.get(i.c))
         else {
-            sibling!(lane_operator_other::<H, OP>, r, ip, view)
+            sibling!(lane_operator_other::<H, OP>, r, ip, Carried::script(cx))
         };
         r.set(i.a, value);
-        next!(cx, r, following(ip), view)
+        next!(cx, r, following(ip), Carried::script(cx))
     }
 }
 
-lane_handler! {
+script_handler! {
     /// `lane_operator_numbers` of operands not both Numbers: a concatenation of strings or
     /// BigInt arithmetic in place; anything else takes the general path.
     #[inline(never)]
@@ -2163,7 +2163,7 @@ lane_handler! {
             return exit(ip);
         };
         r.set(i.a, value);
-        next!(cx, r, following(ip), view)
+        next!(cx, r, following(ip), Carried::script(cx))
     }
 }
 
@@ -2240,21 +2240,21 @@ lane_handler! {
     }
 }
 
-lane_handler! {
+script_handler! {
     /// `lane_get_index` with register base and key, decoded when the view was derived
     /// (`specialize_register_operands`).
     /// An array whose object is a record runs here, saving no registers; any other base takes
     /// `lane_get_index_slot`.
     fn lane_get_index_registers<>(cx, r, ip, i, view) {
         let Some(value) = (unsafe { vm(cx) }).direct_dense_element(r.get(i.b), r.get(i.c)) else {
-            sibling!(lane_get_index_slot::<H>, r, ip, view)
+            sibling!(lane_get_index_slot::<H>, r, ip, Carried::script(cx))
         };
         r.set(i.a, value);
-        next!(cx, r, following(ip), view)
+        next!(cx, r, following(ip), Carried::script(cx))
     }
 }
 
-lane_handler! {
+script_handler! {
     /// `lane_get_index_registers` past a record array.
     #[inline(never)]
     fn lane_get_index_slot<>(cx, r, ip, i, view) {
@@ -2270,24 +2270,24 @@ lane_handler! {
             return exit(ip);
         };
         r.set(i.a, value);
-        next!(cx, r, following(ip), view)
+        next!(cx, r, following(ip), Carried::script(cx))
     }
 }
 
-lane_handler! {
+script_handler! {
     /// Replacing a present dense element; any other write takes the general path.
     /// An array whose object is a record runs here, saving no registers; any other object
     /// takes `lane_set_index_slot`.
     fn lane_set_index<>(cx, r, ip, i, view) {
         let (object, key) = (r.get(i.b), r.get(i.c));
         if !(unsafe { vm(cx) }).try_replace_record_element(object, key, r.get(i.a)) {
-            sibling!(lane_set_index_slot::<H>, r, ip, view)
+            sibling!(lane_set_index_slot::<H>, r, ip, Carried::script(cx))
         }
-        next!(cx, r, following(ip), view)
+        next!(cx, r, following(ip), Carried::script(cx))
     }
 }
 
-lane_handler! {
+script_handler! {
     /// `lane_set_index` past a record array, appending to a dense array at its length,
     /// filling one of its holes, or a plain symbol-keyed write.
     #[inline(never)]
@@ -2303,7 +2303,7 @@ lane_handler! {
         }
         // Appending an element or adding a property can allocate.
         note_allocation(vm);
-        next!(cx, r, following(ip), view)
+        next!(cx, r, following(ip), Carried::script(cx))
     }
 }
 
@@ -3720,23 +3720,23 @@ script_handler! {
     }
 }
 
-lane_handler! {
+script_handler! {
     /// `lane_jump_binary_false` with register operands, decoded when the view was derived
     /// (`specialize_register_operands`): Number comparison of two integers
     /// (`integer_relation`); any other pair takes `lane_jump_binary_false_registers_other`.
     fn lane_jump_binary_false_registers<BACKWARD: bool>(cx, r, ip, i, view) {
         let (left, right) = (r.get(i.b), r.get(i.c));
         let Some(holds) = super::operations::integer_relation(u32::from(i.a), left, right) else {
-            sibling!(lane_jump_binary_false_registers_other::<H, BACKWARD>, r, ip, view)
+            sibling!(lane_jump_binary_false_registers_other::<H, BACKWARD>, r, ip, Carried::script(cx))
         };
         if !holds {
-            return lane_jump(cx, r, ip, BACKWARD, view, None);
+            return lane_jump(cx, r, ip, BACKWARD, Carried::script(cx), None);
         }
-        next!(cx, r, following(ip), view)
+        next!(cx, r, following(ip), Carried::script(cx))
     }
 }
 
-lane_handler! {
+script_handler! {
     /// `lane_jump_binary_false_registers` of operands other than two integers: the relations
     /// the lane decides without guest code (`lane_relation`); any other takes the general
     /// path. Out of line, so the integer case keeps few values live.
@@ -3746,9 +3746,9 @@ lane_handler! {
             return exit(ip);
         };
         if !holds {
-            return lane_jump(cx, r, ip, BACKWARD, view, None);
+            return lane_jump(cx, r, ip, BACKWARD, Carried::script(cx), None);
         }
-        next!(cx, r, following(ip), view)
+        next!(cx, r, following(ip), Carried::script(cx))
     }
 }
 
@@ -9434,7 +9434,7 @@ fn derive_lane_view<H: Host>(
             }
         }
     }
-    specialize_register_operands::<H>(function, constants, &mut records);
+    specialize_register_operands::<H>(function, kind, constants, &mut records);
     specialize_updates::<H>(&mut records);
     specialize_negated_instanceof::<H>(&mut records);
     specialize_frame_locals::<H>(function, &mut records);
@@ -9480,11 +9480,18 @@ fn derive_lane_view<H: Host>(
 /// operand carried in the record.
 fn specialize_register_operands<H: Host>(
     function: &Function,
+    kind: crate::bytecode::ProgramKind,
     constants: &[Value],
     records: &mut [LaneInstruction],
 ) {
     let binary = lane_binary::<H> as Handler as *const ();
-    let get_index = lane_get_index::<H> as Handler as *const ();
+    // A Wasm view's `GetIndex` (a multi-value result's read) keeps the general handler: the
+    // register form reaches its context through a JavaScript view (`script_handler!`).
+    let get_index = if kind == crate::bytecode::ProgramKind::Wasm {
+        std::ptr::null()
+    } else {
+        lane_get_index::<H> as Handler as *const ()
+    };
     let forward_test = lane_jump_binary_false::<H, false> as Handler as *const ();
     let backward_test = lane_jump_binary_false::<H, true> as Handler as *const ();
     for (pc, packed) in function.code.iter().enumerate() {
