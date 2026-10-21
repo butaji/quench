@@ -1593,10 +1593,16 @@ lane_handler! {
 }
 
 lane_handler! {
-    /// `DefineArrayElement` at the literal's length (`Vm::append_literal_element`); any other
-    /// definition takes the general path.
+    /// `DefineArrayElement` at the literal's length (`Vm::append_literal_element`), or into
+    /// the hole a sized literal (`MakeArray`) holds there, as the general path defines it
+    /// (`Vm::define_array_literal_element`); any other definition takes the general path.
     fn lane_define_array_element<>(cx, r, ip, i, view) {
-        if !(unsafe { vm(cx) }).append_literal_element(r.get(i.b), i.imm() as usize, r.get(i.a)) {
+        let vm = unsafe { vm(cx) };
+        let (array, index, value) = (r.get(i.b), i.imm() as usize, r.get(i.a));
+        if !vm.append_literal_element(array, index, value)
+            && !(vm.dense_array_length(array).is_some_and(|length| index < length)
+                && vm.set_array_element(array, index, value))
+        {
             return exit(ip);
         }
         next!(cx, r, following(ip), view)
@@ -2267,6 +2273,10 @@ lane_handler! {
             && !vm
                 .array_index_key(key)
                 .is_some_and(|index| vm.typed_array_set_number(object, index as usize, value))
+            && !key
+                .as_int()
+                .and_then(|index| usize::try_from(index).ok())
+                .is_some_and(|index| vm.set_plain_index_property(object, index, value).is_some())
         {
             return exit(ip);
         }
