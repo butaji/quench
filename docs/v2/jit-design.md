@@ -909,6 +909,16 @@ justify changing the existing tier or cache policy without a matched A/B.
 Report and reproduction details are in
 `evidence/jit-jetstream3-2026-10-21/sqlite-wasm-screen/`.
 
+The same-artifact reference-body cache was then screened on SQLite in three
+paired rounds. Cache-on scored 0.30 versus 0.32 off (paired ratio 0.897,
+95% interval 0.841–0.938); RSS fell only 0.38% (ratio 0.9962,
+0.9928–0.9985). The cache worsened score and remains opt-in. This was a
+diagnostic screen with a dirty-source provenance flag caused by widening the
+bench runner's fixture validation; both arms used the same production runtime
+binary. The runner now permits this matched screen for either `tsf-wasm` or
+`sqlite3-wasm`. Reports are in
+`evidence/jit-jetstream3-2026-10-21/sqlite-reference-body-cache/`.
+
 ## Numeric hash-map entry loop
 
 The observed 23-instruction `_findKeyEntry` loop has an opt-in bounded JIT-mode
