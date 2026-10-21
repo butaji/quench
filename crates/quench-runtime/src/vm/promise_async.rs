@@ -13,6 +13,24 @@ struct AwaitResume {
 }
 
 impl<H: Host> Vm<H> {
+    /// Clears the registers of a suspending frame that are dead where it resumes, the ones a
+    /// collection of it on the frame stack skips (its root mask at `frame.pc`): its
+    /// continuation then keeps alive only what the resumed code can read.
+    fn release_dead_registers(&self, frame: &mut super::Frame) {
+        let Some(mask) = self
+            .programs
+            .residual(frame.program)
+            .and_then(|program| program.register_root_mask(frame.function, frame.pc))
+        else {
+            return;
+        };
+        for (register, value) in frame.registers.iter_mut().enumerate() {
+            if register >= u64::BITS as usize || mask & (1 << register) == 0 {
+                *value = Value::UNDEFINED;
+            }
+        }
+    }
+
     pub(super) fn call_user_maybe_async(
         &mut self,
         p: &ResidualProgram,
@@ -55,6 +73,7 @@ impl<H: Host> Vm<H> {
                     destination,
                     frame: Some(mut frame),
                 } => {
+                    vm.release_dead_registers(&mut frame);
                     let continuation = Continuation::from_frame(
                         &mut frame,
                         Completion::Await(value),
@@ -301,6 +320,7 @@ impl<H: Host> Vm<H> {
                 destination,
                 frame: None,
             } => {
+                self.release_dead_registers(&mut frame);
                 let continuation = Continuation::from_frame(
                     &mut frame,
                     Completion::Await(value),
