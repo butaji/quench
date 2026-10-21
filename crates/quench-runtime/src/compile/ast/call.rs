@@ -49,9 +49,12 @@ impl FunctionCompiler<'_, '_> {
     /// Whether this function binds `atom` in its own scope or an active block, so a reference
     /// to it does not reach an outer scope.
     pub(in crate::compile) fn binds_name(&self, atom: Atom) -> bool {
-        self.function_scope.contains(&atom)
-            || self.active_lexical_binding(atom).is_some()
-            || self.scopes.contains(atom)
+        self.binds_own_name(atom) || self.scopes.contains(atom)
+    }
+
+    /// Whether this function itself binds `atom`, apart from the scopes it is nested in.
+    pub(in crate::compile) fn binds_own_name(&self, atom: Atom) -> bool {
+        self.function_scope.contains(&atom) || self.active_lexical_binding(atom).is_some()
     }
 
     pub(super) fn unary(&mut self, value: &UnaryExpression<'_>) -> Register {

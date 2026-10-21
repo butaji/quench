@@ -121,7 +121,7 @@ impl<H: Host> Vm<H> {
         new_target: Value,
     ) -> Result<Value, JsError> {
         let prototype_atom = self.prototype_atom();
-        let prototype = self.get_property(p, new_target, prototype_atom)?;
+        let prototype = self.constructor_prototype_value(p, new_target)?;
         let prototype = if self.object_data(prototype).is_some() {
             prototype
         } else {
@@ -257,7 +257,7 @@ impl<H: Host> Vm<H> {
             .weak_handle(target)
             .ok_or_else(|| self.type_error(p, "WeakRef target is not a live object".into()))?;
         let prototype_atom = self.prototype_atom();
-        let prototype = self.get_property(p, new_target, prototype_atom)?;
+        let prototype = self.constructor_prototype_value(p, new_target)?;
         let prototype = if self.object_data(prototype).is_some() {
             prototype
         } else {
@@ -658,7 +658,7 @@ impl<H: Host> Vm<H> {
         new_target: Value,
     ) -> Result<Value, JsError> {
         let prototype_atom = self.prototype_atom();
-        let prototype = self.get_property(p, new_target, prototype_atom)?;
+        let prototype = self.constructor_prototype_value(p, new_target)?;
         let prototype = if self.object_data(prototype).is_some() {
             prototype
         } else {
