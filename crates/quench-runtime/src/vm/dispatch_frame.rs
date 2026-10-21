@@ -1402,6 +1402,36 @@ impl<H: Host> Vm<H> {
                         let span = function.map(|f| format!("{:?}", f.source_span)).unwrap_or_default();
                         super::lane_exits::record_detail(format!("{:?} in {name} {span} pc={pc} lane={}", instruction.op(), Self::lane_runs(cursor.lane, pc)));
                     }
+                    if matches!(instruction.op(), Op::GetIndex | Op::SetIndex) {
+                        let (base, key) = if instruction.op() == Op::GetIndex {
+                            (self.inert_operand(frame, instruction.operand_b()), self.inert_operand(frame, instruction.operand_c()))
+                        } else {
+                            (Some(self.read(frame, instruction.register_b())), Some(self.read(frame, instruction.register_c())))
+                        };
+                        let describe = |value: Option<Value>| match value {
+                            None => "?".to_string(),
+                            Some(v) if v.as_int().is_some() => "int".into(),
+                            Some(v) if v.as_number().is_some() => "num".into(),
+                            Some(v) if self.heap.string(v).is_some() => {
+                                let text = self.heap.string(v).unwrap();
+                                match self.lookup_js_atom(text) {
+                                    Some(atom) => format!("str(atom class={:?})", self.atom_class(atom).0),
+                                    None => "str(new)".into(),
+                                }
+                            }
+                            Some(v) if self.heap.array(v).is_some() => "array".into(),
+                            Some(v) => match self.heap.get(v) {
+                                Some(Cell::Symbol(symbol)) => format!("symbol {:?}", symbol.kind),
+                                _ if self.heap.ordinary_object(v).is_some() => {
+                                    let data = self.heap.ordinary_object(v).unwrap();
+                                    format!("ordinary(ext={} side={} nullproto={} dict={})", data.is_extensible(), data.has_side_descriptors(), data.proto().is_null(), self.shape_is_dictionary(data.shape()))
+                                }
+                                Some(cell) => format!("cell {}", cell.profile_variant_name()),
+                                None => "other".into(),
+                            },
+                        };
+                        super::lane_exits::record_detail(format!("{:?} kinds base={} key={}", instruction.op(), describe(base), describe(key)));
+                    }
                     if matches!(instruction.op(), Op::JumpBinaryFalse | Op::Binary) {
                         let constants = self.programs.constants(cursor.program);
                         let registers = &self.frames[frame].registers;
