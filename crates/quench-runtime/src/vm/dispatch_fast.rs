@@ -1638,6 +1638,20 @@ lane_handler! {
 }
 
 lane_handler! {
+    /// `CloneEnv` in the lane's own frame while that frame holds no captured environment:
+    /// nothing to copy, as the general path finds (`Vm::clone_frame_environment`). A
+    /// captured frame's copy replaces the environment the lane reads through, and an
+    /// activation's would be its window's, so both take the general path.
+    fn lane_clone_env<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        if !vm.lane_stack.activations.is_empty() || vm.frames[unsafe { (*cx).frame }].captured {
+            return exit(ip);
+        }
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
     /// Numbers convert to themselves; other values take the general path.
     fn lane_to_numeric<>(cx, r, ip, i, view) {
         let value = r.get(i.b);
@@ -8339,6 +8353,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::StoreLocal | Op::StoreEnvLocal => Some(lane_store_local::<H>),
         Op::LoadThis => Some(lane_load_this::<H>),
         Op::InitializeTdz => Some(lane_initialize_tdz::<H>),
+        Op::CloneEnv => Some(lane_clone_env::<H>),
         Op::GetField => Some(lane_get_field_first::<H>),
         Op::SetField | Op::SetFieldStrict => Some(lane_set_object_field_own::<H>),
         Op::SetThisField | Op::SetThisFieldStrict => Some(lane_set_this_field_own::<H>),
