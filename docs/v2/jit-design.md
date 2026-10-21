@@ -1085,3 +1085,23 @@ same-binary three-round screen scored 4.09 versus 4.57 through the compiled
 favored the direct comparison. It was removed because the score regressed.
 The original call remains the fallback and active path. Raw diagnostic and
 paired data are in the same evidence directory.
+
+### Async-fs Float64 DataView calls
+
+The JetStream `async-fs` fixture spends substantial time in `File.swapByteOrder`
+calling `DataView.getFloat64` and `setFloat64`. The lane fast path handles only
+primitive numeric offsets and values on fixed, ordinary, non-shared DataViews;
+all coercion, bounds-error, detached, resizable, shared and unsupported buffer
+cases remain on the generic native implementation. The opt-in diagnostic
+counted 8,204,080 fast gets and 8,204,080 fast sets in the fixture.
+
+The three-round same-binary screen scored 2.97 with the path disabled and 3.32
+enabled (11.8% higher median), with peak RSS effectively unchanged at 87.93
+and 87.92 MiB. Five interleaved one-round pairs favored the path in four of
+five pairs; the median paired Quench/Node score ratio improved 9.5%, which
+controls for substantial host variation visible in the Node and Bun scores.
+The feature remains far behind the JIT peers on this fixture: the same
+three-round screen measured Bun at 110.07 Score / 66.63 MiB and Node at 50.42 /
+206.71 MiB. The change is retained as a local win, not a JetStream victory.
+Reports and pair-level detail are in
+`evidence/jit-jetstream3-2026-10-21/async-fs-dataview-fast-lane/`.
