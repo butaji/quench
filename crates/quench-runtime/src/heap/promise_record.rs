@@ -40,6 +40,9 @@ pub(crate) struct PromiseRecord {
     /// Set once the host is told of the rejection; identifiers start at one.
     pub(crate) rejection_id: Option<std::num::NonZeroU64>,
     pub(crate) host_context: Option<HostExecutionContext>,
+    /// A module's async evaluation waits on this promise: settling it makes module
+    /// advancement due (`PromiseRuntime::async_module_settled`).
+    pub(crate) module_evaluation: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
