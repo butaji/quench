@@ -117,6 +117,17 @@ impl<H: Host> Vm<H> {
         Ok(entries.get(key).unwrap_or(Value::UNDEFINED))
     }
 
+    pub(crate) fn embedding_array_like_values(&mut self, root: RootId) -> Result<Vec<RootId>, JsError> {
+        let value = self.embedding_value(root)?;
+        let program = self.embedding_program()?;
+        let values = self.create_list_from_array_like(
+            &program,
+            value,
+            super::operations::ArrayLikeElementKind::Any,
+        )?;
+        Ok(values.into_iter().map(|value| self.root(value)).collect())
+    }
+
     pub(crate) fn embedding_own_keys(&mut self, root: RootId) -> Result<Vec<RootId>, JsError> {
         let value = self.embedding_value(root)?;
         let program = self.embedding_program()?;

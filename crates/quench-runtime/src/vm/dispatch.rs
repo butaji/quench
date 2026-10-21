@@ -339,7 +339,7 @@ impl<H: Host> Vm<H> {
     /// plain array without holes, or an arguments object whose data `length` covers a
     /// hole-free prefix, neither carrying indexed descriptors or sparse elements. `None`
     /// leaves the list to the generic algorithm, whose reads may run guest code.
-    fn dense_apply_arguments(&self, list: Value) -> Option<Vec<Value>> {
+    pub(super) fn dense_apply_arguments(&self, list: Value) -> Option<Vec<Value>> {
         if list.is_null() || list.is_undefined() {
             return Some(Vec::new());
         }
