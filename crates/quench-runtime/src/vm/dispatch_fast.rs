@@ -2598,7 +2598,7 @@ script_handler! {
                 .map_or(vm.frames[unsafe { (*cx).frame }].function, |activation| activation.function);
             let body = code.function_get(function as usize);
             let shape = vm.current_capture_slots(unsafe { (*cx).frame }).map(|(slots, root)| {
-                (root.is_some(), unsafe { &*slots }.dense().is_some())
+                (root.is_some(), unsafe { &*slots }.dense().is_some(), unsafe { &*slots }.len())
             });
             super::lane_exits::record_detail(format!(
                 "capture walk in {} {} span={:?} depth={depth} frame_run={} (root, dense)={shape:?}",

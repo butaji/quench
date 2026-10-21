@@ -1415,7 +1415,7 @@ impl<H: Host> Vm<H> {
                             Some(v) if self.heap.string(v).is_some() => {
                                 let text = self.heap.string(v).unwrap();
                                 match self.lookup_js_atom(text) {
-                                    Some(atom) => format!("str(atom class={:?})", self.atom_class(atom).0),
+                                    Some(atom) => format!("str(plain_key={})", self.plain_named_key(atom)),
                                     None => "str(new)".into(),
                                 }
                             }
