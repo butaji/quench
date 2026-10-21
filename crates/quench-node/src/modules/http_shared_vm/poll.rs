@@ -476,13 +476,16 @@ pub(crate) fn poll(
                                 return Err(message);
                             }
                         };
-                        let diagnostic_message = match diagnostics_message(
-                            runtime,
-                            readable,
-                            response,
-                            server_root,
-                            socket_object,
-                        ) {
+                        // The start message is made only for a channel with subscribers, as
+                        // Node's server publishes it only then (`hasSubscribers`).
+                        let subscribed = crate::modules::diagnostics_channel_shared_vm::channel_has_subscribers(
+                            &shared_state.borrow(),
+                            REQUEST_START_CHANNEL,
+                        );
+                        let diagnostic_message = match subscribed
+                            .then(|| diagnostics_message(runtime, readable, response, server_root, socket_object))
+                            .transpose()
+                        {
                             Ok(message) => message,
                             Err(error) => {
                                 runtime.release_root(readable);
@@ -499,12 +502,15 @@ pub(crate) fn poll(
                                 shared_state,
                                 request_async_id,
                             );
-                            let diagnostic_result = crate::modules::diagnostics_channel_shared_vm::publish_named_runtime(
-                                runtime,
-                                program,
-                                "http.server.request.start",
-                                diagnostic_message,
-                            );
+                            let diagnostic_result = match diagnostic_message {
+                                Some(message) => crate::modules::diagnostics_channel_shared_vm::publish_named_runtime(
+                                    runtime,
+                                    program,
+                                    REQUEST_START_CHANNEL,
+                                    message,
+                                ),
+                                None => Ok(()),
+                            };
                             match diagnostic_result {
                                 Ok(()) => emit_event(
                                     runtime,
@@ -516,7 +522,9 @@ pub(crate) fn poll(
                                 Err(error) => Err(error),
                             }
                         };
-                        runtime.release_root(diagnostic_message);
+                        if let Some(message) = diagnostic_message {
+                            runtime.release_root(message);
+                        }
                         runtime.release_root(readable);
                         runtime.release_root(response);
                         runtime.release_root(id);
@@ -1590,6 +1598,9 @@ fn request_object(
     set_bool(runtime, request, "readable", true)?;
     Ok(request)
 }
+
+/// The diagnostics channel a server's request start publishes to.
+const REQUEST_START_CHANNEL: &str = "http.server.request.start";
 
 fn diagnostics_message(
     runtime: &mut Runtime<NodeHost>,
