@@ -411,7 +411,8 @@ impl<H: Host> Vm<H> {
     }
 
     /// `try_replace_dense_element` of an array whose object is a record and whose elements no
-    /// other array shares; `false` for any other object, so the write calls nothing.
+    /// other array shares, for a value the write barrier passes without logging; `false` for
+    /// any other write, so the write calls nothing.
     #[inline(always)]
     pub(super) fn try_replace_record_element(
         &mut self,
@@ -423,7 +424,7 @@ impl<H: Host> Vm<H> {
             object,
             key,
             value,
-            crate::heap::Heap::record_array_store_mut,
+            crate::heap::Heap::record_array_store_mut_unlogged,
         )
     }
 

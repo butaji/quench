@@ -433,8 +433,16 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
         let mask = 1_u64 << (record_index % OCCUPANCY_WORD_BITS);
         if *word & mask != 0 {
             *word &= !mask;
-            self.remembered.push(id);
+            self.log_remembered(id);
         }
+    }
+
+    /// Logs a record the barrier just unmarked, out of line: the log grows only once per
+    /// record per collection, so the stores that pass the barrier keep no call in their path.
+    #[cold]
+    #[inline(never)]
+    fn log_remembered(&mut self, id: RecordId) {
+        self.remembered.push(id);
     }
 
     /// The records the barrier logged since the last collection; each is unmarked.

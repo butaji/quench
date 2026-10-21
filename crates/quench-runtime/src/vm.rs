@@ -1652,6 +1652,7 @@ pub(crate) struct Vm<H> {
     function_name_shapes: provenance::FunctionNameShapes,
     symbol_write_proofs: symbol_write_proof::SymbolWriteProofs,
     symbol_load_proofs: symbol_load_proof::SymbolLoadProofs,
+    array_iteration_proof: Option<iterators::ArrayIterationProof>,
     enumerable_keys: enumerable_key_memo::EnumerableKeyMemo,
     shape_attribute_memo: shape_memo::ShapeAttributeMemo,
     name_atom_memo: name_atom_memo::NameAtomMemo,
@@ -1719,6 +1720,10 @@ pub(crate) struct Vm<H> {
     /// The shape of an iterator result `{ value, done }` (`Vm::iterator_result`); derived
     /// from shapes, so field-cache invalidation clears it.
     iterator_result_shape: Option<u32>,
+    /// The shapes of a complete data and accessor property descriptor object
+    /// (`Vm::property_descriptor_object`), indexed by `accessor`; derived from shapes, so
+    /// field-cache invalidation clears them.
+    descriptor_shapes: [Option<u32>; 2],
     /// The shape a new RegExp object starts in and the one its own `lastIndex` moves it to
     /// (`Vm::regexp_from_matcher`), as the first one recorded; derived from shapes, so
     /// field-cache invalidation clears it.
@@ -2545,6 +2550,7 @@ impl<H: Host> Vm<H> {
         self.function_name_shapes.clear();
         self.symbol_write_proofs.clear();
         self.symbol_load_proofs.clear();
+        self.array_iteration_proof = None;
         self.enumerable_keys.clear();
         self.shape_attribute_memo.clear();
         self.atom_strings.clear();
@@ -2627,6 +2633,7 @@ impl<H: Host> Vm<H> {
         self.function_name_shapes.clear();
         self.closure_templates.fill(None);
         self.iterator_result_shape = None;
+        self.descriptor_shapes = [None; 2];
         self.regexp_object_shapes = None;
         self.regexp_last_index_layout = None;
         self.regexp_builtin_layout = None;
