@@ -673,6 +673,15 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.completion(result)
     }
 
+    /// CreateListFromArrayLike: the values `length` and the indices below it give, read as
+    /// guest code reads them.
+    pub fn array_like_values_rooted(&mut self, root: RootId) -> Result<Vec<RootId>, RootedError> {
+        let result = self.vm.embedding_array_like_values(root);
+        let roots = result.map_err(|error| self.error(error))?;
+        self.roots.extend(roots.iter().copied());
+        Ok(roots)
+    }
+
     /// Reflect all own keys through the object's internal method.
     pub fn own_keys_rooted(&mut self, root: RootId) -> Result<Vec<RootId>, RootedError> {
         let result = self.vm.embedding_own_keys(root);

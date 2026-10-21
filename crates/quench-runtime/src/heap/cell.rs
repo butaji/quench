@@ -2400,6 +2400,20 @@ impl EnvironmentScopeRef {
         Self::boxed(scope)
     }
 
+    /// The scope of a function's activation, which names only its `program`: `new` of that
+    /// scope, without building it first.
+    pub(crate) fn of_program(program: u32) -> Self {
+        Self::inline(Some(program)).unwrap_or_else(|| {
+            Self::boxed(EnvironmentScope {
+                program: Some(program),
+                root_eval_scope: false,
+                binding_site_pc: None,
+                dynamic_bindings: EnvironmentBindings::Owned(Vec::new()),
+                with_objects: Box::default(),
+            })
+        })
+    }
+
     fn inline(program: Option<u32>) -> Option<Self> {
         let payload = program.map_or(Some(0), |program| usize::try_from(program).ok()?.checked_add(1))?;
         (payload.leading_zeros() >= INLINE_PROGRAM_SHIFT).then(|| {
@@ -2590,6 +2604,11 @@ impl EnvironmentSlots {
         debug_assert!(!self.0.marked());
         let value = self.0.get(slot)?.0;
         (!value.is_internal_marker()).then_some(value)
+    }
+    /// `dense` for writing.
+    #[inline(always)]
+    pub(crate) fn dense_mut(&mut self) -> Option<&mut Self> {
+        (!self.0.marked()).then_some(self)
     }
     /// `dense_plain`'s slot to write: an ordinary value's place, which a store replaces.
     #[inline(always)]
