@@ -2242,6 +2242,19 @@ lane_handler! {
     }
 }
 
+lane_handler! {
+    /// A `CloneEnv` of the running frame while no closure has captured its environment: the
+    /// copy is then the environment itself (`Vm::clone_frame_environment`). A frameless
+    /// activation's clone, or a captured environment's, takes the general path.
+    fn lane_clone_env<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        if !vm.lane_stack.activations.is_empty() || vm.frames[unsafe { (*cx).frame }].captured {
+            return exit(ip);
+        }
+        next!(cx, r, following(ip), view)
+    }
+}
+
 script_handler! {
     /// A capture the frame's environment owns directly; any other read takes the general path.
     /// A read through the frame's current capture cache runs here, saving no registers; any
@@ -8258,6 +8271,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::Binary | Op::NumericAdd | Op::NumericMultiply => Some(lane_binary::<H>),
         Op::GetIndex => Some(lane_get_index::<H>),
         Op::SetIndex => Some(lane_set_index::<H>),
+        Op::CloneEnv => Some(lane_clone_env::<H>),
         Op::LoadCapture => Some(lane_load_capture::<H>),
         Op::JumpBinaryFalse => Some(lane_jump_binary_false::<H, BACKWARD>),
         Op::LoadLocalPlain => Some(lane_load_local_plain::<H>),
