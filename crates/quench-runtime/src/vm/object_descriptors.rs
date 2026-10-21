@@ -2,6 +2,9 @@ use super::property_key::PropertyKey;
 use super::*;
 use crate::bytecode::PropertyDefinitionMode;
 
+/// The fields of a property descriptor object (ECMA-262 PropertyDescriptor's six).
+const DESCRIPTOR_FIELDS: usize = 6;
+
 pub(super) enum TypedArrayIndexKey {
     NotCanonical,
     Invalid,
@@ -208,6 +211,12 @@ pub(super) enum DescriptorConflict {
 }
 
 impl<H: Host> Vm<H> {
+    /// ToPropertyDescriptor's fields' keys, in the order it reads them.
+    fn descriptor_field_atoms(&self) -> [Atom; DESCRIPTOR_FIELDS] {
+        let atoms = self.runtime_atoms;
+        [atoms.enumerable, atoms.configurable, atoms.value, atoms.writable, atoms.get, atoms.set]
+    }
+
     pub(super) fn to_property_descriptor(
         &mut self,
         p: &ResidualProgram,
@@ -216,67 +225,68 @@ impl<H: Host> Vm<H> {
         if !self.is_object_like(descriptor) {
             return Err(self.type_error(p, "property descriptor is not an object".into()));
         }
+        let keys = self.descriptor_field_atoms();
+        // A descriptor whose fields, present or not, are all found without running code (an
+        // object literal, nearly always) is read without rooting: nothing allocates.
+        let mut plain = [None; DESCRIPTOR_FIELDS];
+        if keys.iter().zip(&mut plain).all(|(&key, field)| {
+            self.plain_property_lookup(descriptor, PropertyKey::string(key)).map(|found| *field = found).is_some()
+        }) {
+            return self.descriptor_record(p, plain);
+        }
         let descriptor_root = self.heap.root(descriptor);
-        let mut value_root = None;
-        let mut getter_root = None;
-        let mut setter_root = None;
+        let mut field_roots = [None; DESCRIPTOR_FIELDS];
         let result = (|| {
-            let descriptor = self.heap.root_value(descriptor_root).unwrap();
-            let enumerable = self
-                .descriptor_field(p, descriptor, "enumerable")?
-                .map(|value| self.truthy(value));
-            let descriptor = self.heap.root_value(descriptor_root).unwrap();
-            let configurable = self
-                .descriptor_field(p, descriptor, "configurable")?
-                .map(|value| self.truthy(value));
-            let descriptor = self.heap.root_value(descriptor_root).unwrap();
-            let value = self.descriptor_field(p, descriptor, "value")?;
-            value_root = value.map(|value| self.heap.root(value));
-            let descriptor = self.heap.root_value(descriptor_root).unwrap();
-            let writable = self
-                .descriptor_field(p, descriptor, "writable")?
-                .map(|value| self.truthy(value));
-            let descriptor = self.heap.root_value(descriptor_root).unwrap();
-            let getter = self.descriptor_field(p, descriptor, "get")?;
-            getter_root = getter.map(|value| self.heap.root(value));
-            if let Some(root) = getter_root {
-                let getter = self.heap.root_value(root).unwrap();
-                if !getter.is_undefined() && !self.is_function(getter) {
-                    return Err(self.type_error(p, "Accessor descriptor must be callable".into()));
+            for (index, key) in keys.into_iter().enumerate() {
+                let descriptor = self.heap.root_value(descriptor_root).unwrap();
+                let field = self.descriptor_field(p, descriptor, key)?;
+                if key == self.runtime_atoms.get {
+                    // The getter is checked before `set` is read, which may run code.
+                    self.checked_accessor(p, field)?;
                 }
+                field_roots[index] = field.map(|value| self.heap.root(value));
             }
-            let descriptor = self.heap.root_value(descriptor_root).unwrap();
-            let setter = self.descriptor_field(p, descriptor, "set")?;
-            setter_root = setter.map(|value| self.heap.root(value));
-            if let Some(root) = setter_root {
-                let setter = self.heap.root_value(root).unwrap();
-                if !setter.is_undefined() && !self.is_function(setter) {
-                    return Err(self.type_error(p, "Accessor descriptor must be callable".into()));
-                }
-            }
-            let record = PropertyDescriptorRecord {
-                value: value_root.map(|root| self.heap.root_value(root).unwrap()),
-                writable,
-                enumerable,
-                configurable,
-                getter: getter_root.map(|root| self.heap.root_value(root).unwrap()),
-                setter: setter_root.map(|root| self.heap.root_value(root).unwrap()),
-            };
-            if record.has_accessor_fields() && record.has_data_fields() {
-                return Err(self.type_error(
-                    p,
-                    "Property descriptor cannot mix accessor and data fields".into(),
-                ));
-            }
-            Ok(record)
+            let fields = field_roots.map(|root| root.map(|root| self.heap.root_value(root).unwrap()));
+            self.descriptor_record(p, fields)
         })();
-        for root in [Some(descriptor_root), value_root, getter_root, setter_root]
-            .into_iter()
-            .flatten()
-        {
+        for root in [Some(descriptor_root)].into_iter().chain(field_roots).flatten() {
             self.heap.release_root(root);
         }
         result
+    }
+
+    /// An accessor field that is absent, undefined or callable.
+    fn checked_accessor(&mut self, p: &ResidualProgram, field: Option<Value>) -> Result<(), JsError> {
+        match field {
+            Some(accessor) if !accessor.is_undefined() && !self.is_function(accessor) => {
+                Err(self.type_error(p, "Accessor descriptor must be callable".into()))
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// ToPropertyDescriptor's record of the fields it read, in `descriptor_field_atoms` order.
+    fn descriptor_record(
+        &mut self,
+        p: &ResidualProgram,
+        [enumerable, configurable, value, writable, getter, setter]: [Option<Value>; DESCRIPTOR_FIELDS],
+    ) -> Result<PropertyDescriptorRecord, JsError> {
+        self.checked_accessor(p, getter)?;
+        self.checked_accessor(p, setter)?;
+        let [writable, enumerable, configurable] =
+            [writable, enumerable, configurable].map(|field| field.map(|value| self.truthy(value)));
+        let record = PropertyDescriptorRecord {
+            value,
+            writable,
+            enumerable,
+            configurable,
+            getter,
+            setter,
+        };
+        if record.has_accessor_fields() && record.has_data_fields() {
+            return Err(self.type_error(p, "Property descriptor cannot mix accessor and data fields".into()));
+        }
+        Ok(record)
     }
 
     pub(super) fn own_descriptor_record(&mut self, descriptor: Value) -> PropertyDescriptorRecord {

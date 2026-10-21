@@ -3470,7 +3470,7 @@ impl<H: Host> Vm<H> {
                         .syntax_error_result(p, &message)
                         .map(|_| ());
                 }
-                let residual = crate::Engine::specialize_module_unspecialized_with_atom_prefix(
+                let residual = crate::Engine::specialize_module_with_atom_prefix(
                     &module.source,
                     &module.name,
                     &*self,
@@ -4002,7 +4002,7 @@ impl<H: Host> Vm<H> {
         {
             Some(program) => program,
             None => {
-                let residual = crate::Engine::specialize_module_unspecialized_with_atom_prefix(
+                let residual = crate::Engine::specialize_module_with_atom_prefix(
                     &module.source,
                     &module.name,
                     &*self,
@@ -4273,7 +4273,7 @@ impl<H: Host> Vm<H> {
         let Some(link_plan) = plan.link_plan else {
             return Ok(false);
         };
-        let residual = crate::Engine::specialize_module_unspecialized_with_atom_prefix(
+        let residual = crate::Engine::specialize_module_with_atom_prefix(
             &module.source,
             &module.name,
             &*self,

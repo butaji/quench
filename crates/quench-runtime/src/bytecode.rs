@@ -1514,6 +1514,26 @@ impl Function {
         self.global_declarations_or_none().map_or(&[], |declarations| &declarations.annex_b_var)
     }
 
+    /// The slots a module body's environment holds for its importers and linker: its imports
+    /// (whatever their phase), its exported locals and its hoisted functions, which `link_plan`
+    /// names and the linker addresses by slot. The body's other bindings are its own.
+    pub(crate) fn module_environment_slots<'a>(
+        &'a self,
+        link_plan: &'a ModuleLinkPlan,
+        imports: &'a [ModuleImportBinding],
+        atom_text: impl Fn(Atom) -> Option<&'a str> + 'a,
+    ) -> impl Iterator<Item = u16> + 'a {
+        let linked = move |name: &str| {
+            imports.iter().any(|import| import.local == name)
+                || link_plan.locals.iter().chain(&link_plan.hoisted_functions).any(|(local, _)| local == name)
+        };
+        self.local_atoms
+            .iter()
+            .enumerate()
+            .filter(move |(_, atom)| atom_text(**atom).is_some_and(linked))
+            .filter_map(|(slot, _)| u16::try_from(slot).ok())
+    }
+
     pub fn global_immutable_atoms(&self) -> &[Atom] {
         self.global_declarations_or_none().map_or(&[], |declarations| &declarations.immutable)
     }
@@ -1565,10 +1585,12 @@ impl Function {
     pub(crate) fn plain_local_context_ineligibility(
         &self,
     ) -> Option<PlainLocalContextIneligibility> {
-        if self.parent.is_none() {
+        let selective = self.selective_capture_slots.is_some();
+        // A root's locals are its script's global bindings, unless it is a module body whose
+        // activation splits (only a module body's may): then its uncaptured locals are its own.
+        if self.parent.is_none() && !selective {
             return Some(PlainLocalContextIneligibility::RootFunction);
         }
-        let selective = self.selective_capture_slots.is_some();
         let has_legacy_environment_access = self.code.iter().any(|instruction| {
             instruction.op() == Op::MakeClosure && !selective
                 || matches!(instruction.op(), Op::LoadEnvLocal | Op::StoreEnvLocal) && !selective
