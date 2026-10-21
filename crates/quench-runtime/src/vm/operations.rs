@@ -1907,6 +1907,16 @@ impl<H: Host> Vm<H> {
         if !self.is_object_like(list) {
             return Err(self.type_error(p, "array-like list must be an object".into()));
         }
+        // A hole-free array or arguments object answers every read below from its own data,
+        // which no guest code observes.
+        if let Some(values) = self.dense_apply_arguments(list)
+            && (matches!(element_kind, ArrayLikeElementKind::Any)
+                || values.iter().all(|value| {
+                    self.heap.is_string(*value) || matches!(self.heap.get(*value), Some(Cell::Symbol(_)))
+                }))
+        {
+            return Ok(values);
+        }
         let object = self.heap.root(list);
         let mut elements = Vec::new();
         let outcome = (|| {
