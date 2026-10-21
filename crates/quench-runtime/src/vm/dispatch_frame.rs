@@ -1386,6 +1386,21 @@ impl<H: Host> Vm<H> {
                         let span = function.map(|f| format!("{:?}", f.source_span)).unwrap_or_default();
                         super::lane_exits::record_detail(format!("{:?} in {name} {span} pc={pc} lane={}", instruction.op(), Self::lane_runs(cursor.lane, pc)));
                     }
+                    if instruction.op() == Op::GetField
+                        && let Some(lookup) = instruction.field_lookup()
+                    {
+                        let (base, atoms) = match lookup {
+                            crate::bytecode::FieldLookup::Site(site) => {
+                                let site = p.field_sites[site];
+                                (site.base, [Some(site.first.0), site.second.map(|second| second.0)])
+                            }
+                            crate::bytecode::FieldLookup::Atom { atom, base, .. } => (base, [Some(atom), None]),
+                        };
+                        let names = atoms.iter().flatten().map(|atom| p.atoms[*atom as usize].to_string()).collect::<Vec<_>>().join(".");
+                        let base = self.resolve_field_base(p, frame, base).ok();
+                        let kind = base.and_then(|base| self.heap.get(base)).map_or("immediate", |cell| cell.profile_variant_name());
+                        super::lane_exits::record_detail(format!("GetField {names} on {kind}"));
+                    }
                     if matches!(instruction.op(), Op::JumpBinaryFalse | Op::Binary) {
                         let constants = self.programs.constants(cursor.program);
                         let registers = &self.frames[frame].registers;
