@@ -79,6 +79,14 @@ enum LegacyRegExpMatch {
         input: JsString,
         matched: quench_regexp::Match,
     },
+    /// The match `matcher` finds in `input` from `start`, where a match is known to begin:
+    /// found again only when a static is read (`resolve_regexp_legacy_match`), as most
+    /// matches' statics are never read.
+    Pending {
+        input: JsString,
+        matcher: Rc<quench_regexp::Regex>,
+        start: usize,
+    },
     Invalid,
 }
 
@@ -1006,7 +1014,7 @@ impl<H: Host> Vm<H> {
         input: &JsString,
         input_value: Value,
         replacement: FastReplacement<'_>,
-        matcher: &quench_regexp::Regex,
+        matcher: &Rc<quench_regexp::Regex>,
         flags: RegExpFlags,
         result_used: bool,
     ) -> Result<Value, JsError> {
@@ -1130,7 +1138,7 @@ impl<H: Host> Vm<H> {
         input: &JsString,
         subject: &quench_regexp::Subject,
         template: &JsString,
-        matcher: &quench_regexp::Regex,
+        matcher: &Rc<quench_regexp::Regex>,
         flags: RegExpFlags,
         result_used: bool,
     ) -> Result<Value, JsError> {
@@ -1143,15 +1151,15 @@ impl<H: Host> Vm<H> {
                 |start| matcher.find_range_in_subject(subject, start),
                 Range::clone,
             )?;
-            let last = ranges
-                .last()
-                .and_then(|range| matcher.find_in_subject(subject, range.start).next());
+            // Only the last match's captures are observable, through the legacy statics,
+            // which find it again from its start if they are read.
+            let last = ranges.last().map(|range| Err(range.start));
             (ranges, last)
         } else {
             let found = matcher.find_in_subject(subject, 0).next();
             (
                 found.iter().map(|found| found.range.clone()).collect(),
-                found,
+                found.map(Ok),
             )
         };
         let Some(last) = last else {
@@ -1160,7 +1168,10 @@ impl<H: Host> Vm<H> {
             }
             return Ok(self.heap.alloc_string(input.clone()));
         };
-        self.record_regexp_legacy_match(receiver, input.clone(), last)?;
+        match last {
+            Ok(found) => self.record_regexp_legacy_match(receiver, input.clone(), found)?,
+            Err(start) => self.record_regexp_legacy_pending(receiver, input.clone(), matcher, start)?,
+        }
         // Nothing reads the result: building it runs no guest code, so only its one
         // observable outcome, a length past the limit raising, needs the length.
         if !result_used {
@@ -1767,12 +1778,12 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         receiver: Value,
         input: &JsString,
-        matcher: &quench_regexp::Regex,
+        matcher: &Rc<quench_regexp::Regex>,
         flags: RegExpFlags,
     ) -> Result<Value, JsError> {
         let subject = self.regexp_subject(input);
-        // Only the last match's captures are observable (the legacy statics), so the rest
-        // keep their ranges alone; the last is found again from its start for its captures.
+        // Only the last match's captures are observable (the legacy statics), so every match
+        // keeps its range alone; the statics find the last again from its start if read.
         let ranges = self.regexp_global_matches(
             p,
             receiver,
@@ -1784,11 +1795,7 @@ impl<H: Host> Vm<H> {
         let Some(last) = ranges.last() else {
             return Ok(Value::NULL);
         };
-        let last = matcher
-            .find_in_subject(&subject, last.start)
-            .next()
-            .expect("a match is found again from its own start");
-        self.record_regexp_legacy_match(receiver, input.clone(), last)?;
+        self.record_regexp_legacy_pending(receiver, input.clone(), matcher, last.start)?;
         let matched = ranges
             .into_iter()
             .map(|range| self.heap.alloc_string(input.substring(range)))
@@ -1907,6 +1914,7 @@ impl<H: Host> Vm<H> {
             .and_then(Value::as_number)
             .ok_or_else(|| JsError("missing RegExp legacy property selector".into()))?
             as Atom;
+        self.resolve_regexp_legacy_match();
         let name = self.atom_name(selector);
         let state = self
             .realm
@@ -1920,6 +1928,7 @@ impl<H: Host> Vm<H> {
             match &state.legacy_match {
                 LegacyRegExpMatch::Invalid => None,
                 LegacyRegExpMatch::Empty => Some(JsString::from_units(&[])),
+                LegacyRegExpMatch::Pending { .. } => unreachable!("resolved above"),
                 LegacyRegExpMatch::Matched { input, matched } => {
                     let range = match name {
                         "lastMatch" | "$&" => Some(matched.range.clone()),
@@ -2709,12 +2718,56 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
+    /// Finds a pending legacy match (`LegacyRegExpMatch::Pending`) again, so the statics
+    /// read its captures.
+    fn resolve_regexp_legacy_match(&mut self) {
+        let Some(LegacyRegExpMatch::Pending { input, matcher, start }) = self
+            .realm
+            .intrinsics
+            .regexp_intrinsics
+            .get(&self.realm.globals)
+            .map(|state| state.legacy_match.clone())
+        else {
+            return;
+        };
+        let subject = self.regexp_subject(&input);
+        let matched = matcher
+            .find_in_subject(&subject, start)
+            .next()
+            .expect("a pending legacy match begins at its start");
+        if let Some(state) = self.realm.intrinsics.regexp_intrinsics.get_mut(&self.realm.globals) {
+            state.legacy_match = LegacyRegExpMatch::Matched { input, matched };
+        }
+    }
+
     /// The legacy `RegExp` static state a successful builtin exec of `this` leaves behind.
     fn record_regexp_legacy_match(
         &mut self,
         this: Value,
         input: JsString,
         matched: quench_regexp::Match,
+    ) -> Result<(), JsError> {
+        self.record_regexp_legacy(this, input, |input| LegacyRegExpMatch::Matched { input, matched })
+    }
+
+    /// `record_regexp_legacy_match` for the match `matcher` finds from `start`, found again
+    /// only if a static is read.
+    fn record_regexp_legacy_pending(
+        &mut self,
+        this: Value,
+        input: JsString,
+        matcher: &Rc<quench_regexp::Regex>,
+        start: usize,
+    ) -> Result<(), JsError> {
+        let matcher = Rc::clone(matcher);
+        self.record_regexp_legacy(this, input, |input| LegacyRegExpMatch::Pending { input, matcher, start })
+    }
+
+    fn record_regexp_legacy(
+        &mut self,
+        this: Value,
+        input: JsString,
+        matched: impl FnOnce(JsString) -> LegacyRegExpMatch,
     ) -> Result<(), JsError> {
         let owner = match self.heap.get(this) {
             Some(Cell::RegExp { meta, .. }) => meta.legacy_constructor,
@@ -2731,7 +2784,7 @@ impl<H: Host> Vm<H> {
             match owner {
                 crate::heap::RegExpLegacyOwner::Enabled(_) => {
                     state.legacy_input = Some(input.clone());
-                    state.legacy_match = LegacyRegExpMatch::Matched { input, matched };
+                    state.legacy_match = matched(input);
                 }
                 crate::heap::RegExpLegacyOwner::Disabled(_) => {
                     state.legacy_input = None;
