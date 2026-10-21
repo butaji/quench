@@ -279,6 +279,11 @@ impl<H: Host> Vm<H> {
                 return Ok(());
             }
         }
+        // A symbol or an existing non-index name that the plain chain walk decides, as the
+        // lane stores it: no guest code runs and nothing fails before the slow path would.
+        if self.try_plain_symbol_set(object, key, value) || self.try_plain_string_key_set(object, key, value) {
+            return Ok(());
+        }
         self.set_index_slow(p, object, key, value, strict)
     }
 

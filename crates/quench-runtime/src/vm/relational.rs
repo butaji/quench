@@ -310,6 +310,40 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// `key in object` for a string key `plain_named_key` admits, along a chain of ordinary
+    /// objects (`Heap::ordinary_object`) up to `null`: HasProperty, whether a shape along it
+    /// names the key, data property or accessor alike, which runs no guest code. `None`
+    /// leaves any other case (a key a side-table descriptor holds, a namespace, a proxy, an
+    /// exotic object, a primitive operand) to the general path.
+    pub(super) fn plain_in(&mut self, op: u32, key: Value, object: Value) -> Option<bool> {
+        if op != oxc_ast::ast::BinaryOperator::In as u32 || !self.heap.is_string(key) {
+            return None;
+        }
+        self.heap.ordinary_object(object)?;
+        let atom = self.string_key_atom(key)?;
+        if !self.plain_named_key(atom) {
+            return None;
+        }
+        let property = PropertyKey::string(atom);
+        let mut current = object;
+        loop {
+            let data = self.heap.ordinary_object(current)?;
+            if data.is_module_namespace() || data.deferred_module().is_some() {
+                return None;
+            }
+            if self.property_shape_slot(data.shape(), property).is_some() {
+                return Some(true);
+            }
+            if data.has_side_descriptors() && self.descriptors.contains_key(&(current, property)) {
+                return None;
+            }
+            current = data.proto();
+            if current.is_null() {
+                return Some(false);
+            }
+        }
+    }
+
     /// `left instanceof right` when it reduces to a prototype-chain walk; `None` for any
     /// other operator or a case the full algorithm must decide.
     #[inline(always)]

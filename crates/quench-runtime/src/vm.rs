@@ -646,15 +646,16 @@ const BOUND_TARGET_KEY: &str = "\0quench:bound-target";
 const BOUND_THIS_KEY: &str = "\0quench:bound-this";
 const BOUND_ARGS_KEY: &str = "\0quench:bound-args";
 const NO_FIELD_HOLDER: u32 = u32::MAX;
-/// A field site's read of an accessor on a prototype of a shaped receiver: it holds while
-/// the receiver keeps its shape and prototype and the chain to `holder` keeps the layout it
-/// was proved under, `holder`'s `slot` attributes carrying the getter.
+/// A field site's read of an accessor of a shaped receiver, its own or on a prototype: it
+/// holds while the receiver keeps its shape and prototype and the chain to `holder` keeps the
+/// layout it was proved under, `holder`'s `slot` attributes carrying the getter.
 #[derive(Clone, Copy)]
 struct AccessorFieldCache {
     receiver: u32,
     /// The receiver's prototype, where the chain to `holder` starts.
     prototype: Value,
-    /// The object holding the accessor, or `OWN_ACCESSOR` for the receiver itself.
+    /// The prototype holding the accessor, or `OWN_ACCESSOR` for the receiver itself, whose
+    /// own slot each receiver of the shape fills with its own accessor.
     holder: Value,
     slot: u16,
     /// The `prototype_layout_epoch` the chain was proved under.
@@ -1707,9 +1708,10 @@ pub(crate) struct Vm<H> {
     /// `NO_INHERITED_FIELD`.
     inherited_field_indices: Vec<u32>,
     inherited_field_caches: Vec<InheritedFieldCache>,
-    /// Accessor reads by field-cache index (`AccessorFieldCache`); cleared with the field
-    /// caches.
-    accessor_field_caches: FxHashMap<usize, AccessorFieldCache>,
+    /// Accessor reads by field-cache index (`AccessorFieldCache`), up to
+    /// `INHERITED_FIELD_CACHE_WAYS` receiver shapes a site, oldest first, as an inherited
+    /// method's site sees one shape per subclass; cleared with the field caches.
+    accessor_field_caches: FxHashMap<usize, Vec<AccessorFieldCache>>,
     field_add_indices: Vec<u32>,
     field_add_sets: Vec<FieldAddCacheSet>,
     megamorphic_field_indices: Vec<u32>,
