@@ -1398,12 +1398,36 @@ impl RegisterRoots {
 /// as a change (zigzag) on the same line and absolute on a new one. Most entries take three
 /// bytes, a quarter of a `SourcePosition`, and a function keeps one per source location
 /// change while it compiles and for as long as it lives.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct SourcePositions {
     bytes: Vec<u8>,
     /// The final entry, which the next one is coded against.
     last: Option<SourcePosition>,
+    /// Where decoding may start, made on the first lookup of a table longer than one interval
+    /// (`SourcePositions::at`): a stack trace through a large function otherwise decoded its
+    /// table from the start for every frame (Babel: about 20K instructions a frame).
+    checkpoints: std::cell::OnceCell<Box<[SourcePositionCheckpoint]>>,
 }
+
+/// The entries between two `SourcePositions` checkpoints.
+const SOURCE_POSITION_CHECKPOINT_INTERVAL: usize = 32;
+
+/// A point decoding may resume from: the byte offset of an entry, the entry before it
+/// (which it is coded against) and the entry's own pc.
+#[derive(Clone, Copy, Debug)]
+struct SourcePositionCheckpoint {
+    offset: usize,
+    previous: SourcePosition,
+    pc: u32,
+}
+
+/// Two tables are equal when their entries are; the checkpoints are a memo of them.
+impl PartialEq for SourcePositions {
+    fn eq(&self, other: &Self) -> bool {
+        self.bytes == other.bytes && self.last == other.last
+    }
+}
+impl Eq for SourcePositions {}
 
 /// The payload bits of one LEB128 byte; the high bit marks a continuation.
 const LEB128_PAYLOAD_BITS: u32 = 7;
@@ -1427,6 +1451,7 @@ impl SourcePositions {
             u64::from(position.column)
         });
         self.last = Some(position);
+        self.checkpoints = std::cell::OnceCell::new();
     }
 
     fn write(&mut self, mut value: u64) {
@@ -1442,15 +1467,48 @@ impl SourcePositions {
     }
 
     pub(crate) fn iter(&self) -> SourcePositionIter<'_> {
-        SourcePositionIter {
-            bytes: &self.bytes,
-            previous: SourcePosition { pc: 0, line: 0, column: 0 },
-        }
+        self.iter_from(0, SourcePosition { pc: 0, line: 0, column: 0 })
     }
 
-    /// The position in effect at `pc`: the last entry at or before it.
+    fn iter_from(&self, offset: usize, previous: SourcePosition) -> SourcePositionIter<'_> {
+        SourcePositionIter { bytes: &self.bytes[offset..], previous }
+    }
+
+    /// The position in effect at `pc`: the last entry at or before it, decoded from the last
+    /// checkpoint at or before it.
     pub(crate) fn at(&self, pc: u32) -> Option<SourcePosition> {
-        self.iter().take_while(|position| position.pc <= pc).last()
+        let checkpoints = self.checkpoints.get_or_init(|| self.make_checkpoints());
+        let start = checkpoints.partition_point(|checkpoint| checkpoint.pc <= pc);
+        let mut iter = match start.checked_sub(1) {
+            Some(index) => self.iter_from(checkpoints[index].offset, checkpoints[index].previous),
+            None => self.iter(),
+        };
+        let mut found = None;
+        for position in iter.by_ref() {
+            if position.pc > pc {
+                break;
+            }
+            found = Some(position);
+        }
+        found
+    }
+
+    /// A checkpoint at every `SOURCE_POSITION_CHECKPOINT_INTERVAL`th entry after the first;
+    /// none for a table shorter than one interval, which decodes as fast from its start.
+    fn make_checkpoints(&self) -> Box<[SourcePositionCheckpoint]> {
+        let mut checkpoints = Vec::new();
+        let mut iter = self.iter();
+        let mut entry = 0;
+        loop {
+            let offset = self.bytes.len() - iter.bytes.len();
+            let previous = iter.previous;
+            let Some(position) = iter.next() else { break };
+            if entry > 0 && entry % SOURCE_POSITION_CHECKPOINT_INTERVAL == 0 {
+                checkpoints.push(SourcePositionCheckpoint { offset, previous, pc: position.pc });
+            }
+            entry += 1;
+        }
+        checkpoints.into_boxed_slice()
     }
 
     pub(crate) fn shrink_to_fit(&mut self) {
@@ -1570,14 +1628,16 @@ impl Function {
         imports: &'a [ModuleImportBinding],
         atom_text: impl Fn(Atom) -> Option<&'a str> + 'a,
     ) -> impl Iterator<Item = u16> + 'a {
-        let linked = move |name: &str| {
-            imports.iter().any(|import| import.local == name)
-                || link_plan.locals.iter().chain(&link_plan.hoisted_functions).any(|(local, _)| local == name)
-        };
+        // A set, once: a large module's locals against its whole link plan was quadratic.
+        let linked: rustc_hash::FxHashSet<&str> = imports
+            .iter()
+            .map(|import| import.local.as_str())
+            .chain(link_plan.locals.iter().chain(&link_plan.hoisted_functions).map(|(local, _)| local.as_str()))
+            .collect();
         self.local_atoms
             .iter()
             .enumerate()
-            .filter(move |(_, atom)| atom_text(**atom).is_some_and(linked))
+            .filter(move |(_, atom)| atom_text(**atom).is_some_and(|name| linked.contains(name)))
             .filter_map(|(slot, _)| u16::try_from(slot).ok())
     }
 
@@ -3166,6 +3226,7 @@ impl ResidualProgram {
     }
 }
 mod binary;
+pub(crate) use binary::{decode_static_module_analysis, encode_static_module_analysis};
 mod disassemble;
 #[cfg(test)]
 mod tests;

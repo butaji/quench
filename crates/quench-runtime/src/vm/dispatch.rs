@@ -1151,12 +1151,13 @@ impl<H: Host> Vm<H> {
                         || i.boolean_flag().expect("validated boolean immediate"),
                 )?
             }
-            Op::DefineArrayElement => self.define_array_literal_element(
-                p,
-                self.read(f, i.register_b()),
-                i.array_index() as usize,
-                self.read(f, i.register_a()),
-            )?,
+            Op::DefineArrayElement => {
+                let (array, index, value) =
+                    (self.read(f, i.register_b()), i.array_index() as usize, self.read(f, i.register_a()));
+                if !self.define_literal_element(array, index, value) {
+                    self.define_array_literal_element(p, array, index, value)?;
+                }
+            }
             Op::Move => self.write(f, i.result_register(), self.read(f, i.register_b())),
             Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
                 let operator = i.binary_operator();
