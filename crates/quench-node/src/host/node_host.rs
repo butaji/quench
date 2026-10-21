@@ -34,6 +34,9 @@ pub struct NodeHost {
     pub(crate) node_library_root: std::path::PathBuf,
     /// Compiled library modules kept across runs (`compile_cache`).
     pub(crate) compile_cache: crate::host::compile_cache::CompileCache,
+    /// Whether `Host::initialize` has finished: bootstrap's own programs decode back to back
+    /// (`cached_program_decoded`).
+    pub(crate) bootstrapped: bool,
     pub(crate) shared_state: Rc<RefCell<SharedNodeState>>,
     pub(crate) commonjs_entry: Option<CommonJsEntry>,
     pub(crate) inline_source: InlineSource,
@@ -396,6 +399,7 @@ impl NodeHost {
         Self {
             node_library_root,
             compile_cache: crate::host::compile_cache::CompileCache::from_environment(),
+            bootstrapped: false,
             shared_state: Rc::new(RefCell::new(SharedNodeState::new(
                 fs,
                 cwd,

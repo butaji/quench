@@ -1062,6 +1062,20 @@ impl quench_runtime::Host for NodeHost {
             entry.store(bytes);
         }
     }
+    /// A decoded program after bootstrap (the entry and its modules, a builtin or library
+    /// module loaded on first use) releases what loading it touched, as its compilation would
+    /// have at its phase boundary: with the compile cache warm, a run otherwise reaches no
+    /// release between bootstrap and its first collection (CoreMark as a Wasm ES module,
+    /// static x86_64 unbolted, 2026-10-21: max RSS 4404 -> 3412 KiB; through
+    /// `WebAssembly.instantiate`, 4920 -> 4016). Bootstrap's own programs decode back to back,
+    /// where a release after each only refaulted the same loader code (an empty script's run
+    /// 11 -> 18 ms).
+    fn cached_program_decoded(&mut self) {
+        if self.bootstrapped {
+            crate::host::resident_pages::release_read_only_code_and_data();
+        }
+    }
+
     fn proper_tail_calls(&self) -> bool {
         false
     }
@@ -1485,6 +1499,7 @@ impl quench_runtime::Host for NodeHost {
         commonjs::initialize(context)?;
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_commonjs");
+        context.host_mut().bootstrapped = true;
         Ok(())
     }
 }
