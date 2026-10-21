@@ -21,6 +21,8 @@ impl NodeHost {
             net_pending_ends,
             net_pending_destroys,
             building_snapshot: _,
+            // A cache of this process's filesystem, which the restoring one fills itself.
+            real_paths: _,
         } = self;
         require_quiescent(
             net_pending_writes.is_empty() && net_pending_ends.is_empty() && net_pending_destroys.is_empty(),
