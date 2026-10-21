@@ -94,9 +94,8 @@ pub trait Host {
         true
     }
 
-    /// A collection has finished, or a full one is starting: a host may return memory the
-    /// process no longer needs resident (its read-only pages), which nothing observable
-    /// depends on. At these boundaries the code about to run differs from the code that ran.
+    /// A collection has finished: a host may note it, as for memory it returns later, which
+    /// nothing observable depends on.
     fn at_collection_boundary(&mut self) {}
 
     /// A compiled host program kept across runs: the bytes `keep_compiled_program` was given
