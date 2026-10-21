@@ -6894,7 +6894,9 @@ fn lane_function_call_activation<H: Host>(
         return Err(exit(ip));
     };
     let arguments = ActivationArguments::Kept(args.as_ptr(), args.len());
-    lane_activate_keeping::<H, false>(cx, r, ip, target, arguments, this, false, None)
+    // The target may be another program's (`cross_call_entry`), which the activation enters
+    // and completes as `Completion::Cross`.
+    lane_activate_keeping::<H, true>(cx, r, ip, target, arguments, this, false, None)
 }
 
 script_handler! {
