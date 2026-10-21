@@ -310,6 +310,21 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// `key in object` for a string key naming an existing plain atom (`plain_named_key`) on a
+    /// chain the plain walk reads (`plain_property_lookup`): HasProperty, which runs no guest
+    /// code there. `None` for any other operator, key or object, and for a found accessor,
+    /// which that walk declines.
+    pub(super) fn plain_in(&self, op: u32, key: Value, object: Value) -> Option<bool> {
+        if op != oxc_ast::ast::BinaryOperator::In as u32 {
+            return None;
+        }
+        let atom = self.lookup_js_atom(self.heap.string(key)?)?;
+        if !self.plain_named_key(atom) {
+            return None;
+        }
+        Some(self.plain_property_lookup(object, PropertyKey::string(atom))?.is_some())
+    }
+
     /// `left instanceof right` when it reduces to a prototype-chain walk; `None` for any
     /// other operator or a case the full algorithm must decide.
     #[inline(always)]

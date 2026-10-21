@@ -465,6 +465,15 @@ impl<H: Host> Vm<H> {
         self.set_plain_key_property(object, atom, value)
     }
 
+    /// `set_plain_named_property` of a string key naming an existing atom, as `obj[name] = v`
+    /// stores it; false for any other key or a store that walk declines.
+    pub(super) fn try_plain_string_set(&mut self, object: Value, key: Value, value: Value) -> bool {
+        let Some(atom) = self.heap.string(key).and_then(|text| self.lookup_js_atom(text)) else {
+            return false;
+        };
+        self.set_plain_named_property(object, atom, value).is_some()
+    }
+
     /// `[[Get]]` of array index `index` along a chain of ordinary objects, which hold an index
     /// key as any other string key: its atom, found without spelling it
     /// (`lookup_array_index_atom`), read as `plain_property_lookup` reads a name. `None` for a
