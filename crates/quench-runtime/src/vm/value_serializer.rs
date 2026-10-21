@@ -813,7 +813,7 @@ impl<H: Host> Vm<H> {
         }
         let kind = match self.heap.get(value) {
             Some(Cell::Date { milliseconds, .. }) => Kind::Date(*milliseconds),
-            Some(Cell::RegExp { meta, .. }) => Kind::RegExp(meta.source.clone(), meta.flags.clone()),
+            Some(Cell::RegExp { meta, .. }) => Kind::RegExp(meta.source.clone(), meta.flags.text()),
             // Copy the entries first: serializing them can run guest code.
             Some(Cell::Map { entries, .. }) => Kind::Map(entries.iter().flat_map(|(key, value)| [key, value]).collect()),
             Some(Cell::Set { entries, .. }) => Kind::Set(entries.iter().collect()),

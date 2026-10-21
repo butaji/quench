@@ -8184,7 +8184,7 @@ fn string_match_all_fallback_roots_input_and_intrinsic_matcher() {
                             let atom = vm.intern_atom("matcher");
                             let matcher = vm.own_property(value, atom).unwrap();
                             assert!(
-                                matches!(vm.heap.get(matcher),Some(super::Cell::RegExp{meta,..})if meta.source.host_string()=="a"&&meta.flags=="g")
+                                matches!(vm.heap.get(matcher),Some(super::Cell::RegExp{meta,..})if meta.source.host_string()=="a"&&meta.flags.text()=="g")
                             );
                             let atom = vm.intern_atom("input");
                             let input = vm.own_property(value, atom).unwrap();
@@ -8685,7 +8685,7 @@ fn regexp_construction_roots_protocol_inputs_and_initialization_projections() {
                             else {
                                 panic!("constructor returns RegExp");
                             };
-                            let (source, flags) = (&meta.source, &meta.flags);
+                            let (source, flags) = (&meta.source, meta.flags.text());
                             assert_eq!(source.units(), &[u16::from(b'a')]);
                             assert_eq!(flags, "i");
                             if construct {
@@ -8817,7 +8817,7 @@ fn regexp_entrypoints_root_receivers_and_arguments_through_callbacks() {
                                     else {
                                         panic!("compiled receiver retained");
                                     };
-                                    let (source, flags) = (&meta.source, &meta.flags);
+                                    let (source, flags) = (&meta.source, meta.flags.text());
                                     assert_eq!(source.units(), &[u16::from(b'a')]);
                                     assert_eq!(flags, "g");
                                 }
