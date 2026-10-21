@@ -50,6 +50,8 @@ struct RuntimeAtoms {
     /// Read by every promise resolution and species lookup.
     then: Atom,
     constructor: Atom,
+    /// The iterator protocol's step method.
+    next: Atom,
     /// Canonical key for named function-info lookup; paired with length_atom.
     name: Atom,
     /// The empty string, an anonymous function's initial name.
@@ -1408,7 +1410,6 @@ const EMPTY_STRING_CONCAT_CACHE: StringConcatCache = StringConcatCache {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CallTarget {
     User(ProgramId, u32, Value),
-    NumericUser(ProgramId, u32, Value),
     Native(Native),
 }
 pub(super) enum StepResult {
@@ -2539,6 +2540,7 @@ impl<H: Host> Vm<H> {
             regexp_flag_accessors,
             then: self.intern_atom("then"),
             constructor: self.intern_atom("constructor"),
+            next: self.intern_atom("next"),
             name: self.intern_atom("name"),
             empty: self.intern_atom(""),
             value: self.intern_atom("value"),
@@ -2864,17 +2866,15 @@ impl<H: Host> Vm<H> {
                 self.profile.call_target(0, args.len());
                 self.call_native_guarded(p, native, this, args, callee)
             }
-            CallTarget::User(program_id, id, env)
-            | CallTarget::NumericUser(program_id, id, env) => {
-                let target_kind = if matches!(target, CallTarget::User(..)) {
-                    1
-                } else {
-                    2
-                };
-                self.profile.call_target(target_kind, args.len());
+            CallTarget::User(program_id, id, env) => {
                 let program = self.programs.get(program_id).ok_or_else(|| {
                     self.type_error(p, "function belongs to an unavailable program".into())
                 })?;
+                // The profile's user targets count general and numeric bodies apart.
+                let numeric = program
+                    .function_get(id as usize)
+                    .is_some_and(|function| function.dispatch == DispatchClass::Numeric);
+                self.profile.call_target(1 + usize::from(numeric), args.len());
                 let active_program = self.replace_active_program(program_id);
                 let realm = self
                     .heap
@@ -2929,7 +2929,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<(Value, Value), JsError> {
         let (program_id, id, env, realm) = match self.heap.function(callee) {
             Some(FunctionRecord {
-                kind: FunctionKind::User(program_id, id) | FunctionKind::NumericUser(program_id, id),
+                kind: FunctionKind::User(program_id, id),
                 env,
                 realm,
                 ..

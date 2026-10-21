@@ -1570,6 +1570,18 @@ lane_handler! {
 }
 
 lane_handler! {
+    /// `RequireIteratorResult` of an object, which passes; any other value takes the general
+    /// path, which throws.
+    fn lane_require_iterator_result<>(cx, r, ip, i, view) {
+        let result = r.get(i.b);
+        if !result.is_record() && !(unsafe { vm(cx) }).is_object_like(result) {
+            return exit(ip);
+        }
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
     fn lane_store_local_plain<>(cx, r, ip, i, view) {
         let value = r.get(i.a);
         // SAFETY: validated bytecode bounds the slot by Function.locals.
@@ -6021,23 +6033,11 @@ lane_handler! {
         if !matches!(
             vm.heap.function(r.get(i.b)),
             Some(FunctionRecord {
-                kind: FunctionKind::Native(_) | FunctionKind::NumericUser(..),
+                kind: FunctionKind::Native(_),
                 ..
             })
         ) {
             sibling!(lane_frame_call::<H>, r, ip, Carried::script(cx))
-        }
-        // A numeric function the lane activates without a frame
-        // (`Vm::resolve_script_call_target`) takes the script call.
-        if matches!(
-            vm.heap.function(r.get(i.b)),
-            Some(FunctionRecord {
-                kind: FunctionKind::NumericUser(..),
-                ..
-            })
-        ) && lane_script_target(cx, r.get(i.b)).is_some()
-        {
-            sibling!(lane_script_call::<H>, r, ip, Carried::script(cx))
         }
         if matches!(
             vm.heap.function(r.get(i.b)),
@@ -6150,9 +6150,8 @@ fn lane_string_or_native_call<H: Host>(
         .or_else(|| lane_call_native(cx, r, ip, i))
 }
 
-/// A lane `Call` of a native that `Native::runs_from_lane` admits, or of a numeric function
-/// (`FunctionKind::NumericUser`), whose executor runs it, made as the general path makes it
-/// from the running frame: with the frame's resume PC published and the arguments
+/// A lane `Call` of a native that `Native::runs_from_lane` admits, made as the general path
+/// makes it from the running frame: with the frame's resume PC published and the arguments
 /// copied out of its registers, which stay rooted by the frame. Only a frame's own lane run
 /// calls out, so the frame stack the native and its nested calls observe is the general
 /// path's. `None` exits to the general path, which raises the error the call stashed in
@@ -6166,24 +6165,18 @@ fn lane_call_native<H: Host>(
 ) -> Option<Value> {
     let vm = unsafe { vm(cx) };
     let callee = r.get(i.b);
-    // A native the lane admits, or a numeric function, which its own executor runs.
     let native = match vm.heap.function(callee) {
         Some(FunctionRecord {
             kind: FunctionKind::Native(native),
             ..
-        }) if native.runs_from_lane() => Some(*native),
-        Some(FunctionRecord {
-            kind: FunctionKind::NumericUser(..),
-            ..
-        }) => None,
+        }) if native.runs_from_lane() => *native,
         _ => return None,
     };
     let window = ImmediateLayout::call_window_base(i.imm());
     let argc = ImmediateLayout::argument_count(i.imm());
     // A unary Math function of a Number runs no guest code and observes no frame, so it
     // runs from any activation.
-    if let Some(native) = native
-        && argc > 0
+    if argc > 0
         && let Some(value) = r.get(window).as_number()
         && let Some(result) = super::number::math_unary(native, value)
     {
@@ -6191,8 +6184,7 @@ fn lane_call_native<H: Host>(
     }
     // A RegExp exec or test that runs no guest code and raises nothing observes no frame
     // either (`Vm::steady_regexp_call`).
-    if let Some(native) = native
-        && argc > 0
+    if argc > 0
         // SAFETY: the context's program outlives the lane run.
         && let Some(result) = vm.steady_regexp_call(
             unsafe { &*(*cx).code },
@@ -6232,14 +6224,8 @@ fn lane_call_native<H: Host>(
     let arguments = super::call_arguments::CallArguments::from_slice(unsafe {
         std::slice::from_raw_parts(r.0.add(usize::from(window)), usize::from(argc))
     });
-    let result = match native {
-        // The native branch of `Vm::call_value_with_target_inner`, whose callee this is.
-        Some(native) => {
-            vm.call_native_guarded(code, native, r.get(i.c), arguments.as_slice(), callee)
-        }
-        // The general path's call of the frame's callee.
-        None => vm.call_value_from_frame(code, callee, r.get(i.c), arguments.as_slice()),
-    };
+    // The native branch of `Vm::call_value_with_target_inner`, whose callee this is.
+    let result = vm.call_native_guarded(code, native, r.get(i.c), arguments.as_slice(), callee);
     // The native's allocations may make a collection due, which the lane's safepoints take.
     note_allocation(vm);
     match result {
@@ -8195,6 +8181,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::StoreLocalPlain => Some(lane_store_local_plain::<H>),
         Op::IteratorCleanupPush => Some(lane_iterator_cleanup_push::<H>),
         Op::DefineArrayElement => Some(lane_define_array_element::<H>),
+        Op::RequireIteratorResult => Some(lane_require_iterator_result::<H>),
         Op::IteratorCleanupPop => Some(lane_iterator_cleanup_pop::<H>),
         Op::StoreLocal | Op::StoreEnvLocal => Some(lane_store_local::<H>),
         Op::LoadThis => Some(lane_load_this::<H>),

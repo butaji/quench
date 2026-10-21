@@ -339,8 +339,7 @@ impl<H: Host> Vm<H> {
             B::AsyncFunction | B::GeneratorFunction => match self.heap.function(value) {
                 Some(FunctionRecord {
                     kind:
-                        FunctionKind::User(program, function)
-                        | FunctionKind::NumericUser(program, function),
+                        FunctionKind::User(program, function),
                     ..
                 }) => self
                     .programs
@@ -1013,7 +1012,7 @@ impl<H: Host> Vm<H> {
         let iterator = self.get_iterator(&program, source)?;
         let iterator = self.root(iterator);
         let value = self.embedding_value(iterator)?;
-        let next = self.intern_atom("next");
+        let next = self.runtime_atoms.next;
         match self.get_property(&program, value, next) {
             Ok(next) => Ok((iterator, self.root(next))),
             Err(error) => {

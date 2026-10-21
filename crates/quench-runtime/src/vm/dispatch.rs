@@ -1023,7 +1023,7 @@ impl<H: Host> Vm<H> {
                         }) => *source,
                         _ => iterator,
                     };
-                    let atom = self.intern_atom("next");
+                    let atom = self.runtime_atoms.next;
                     let method = self.get_property(p, receiver, atom)?;
                     if !self.is_function(method) {
                         return Err(
@@ -1054,10 +1054,10 @@ impl<H: Host> Vm<H> {
                     }
                     result
                 };
-                let done_atom = self.intern_atom("done");
+                let done_atom = self.runtime_atoms.done;
                 let done = self.get_property(p, result, done_atom)?;
                 if self.truthy(done) {
-                    let value_atom = self.intern_atom("value");
+                    let value_atom = self.runtime_atoms.value;
                     let value = self.get_property(p, result, value_atom)?;
                     self.write(f, i.result_register(), value);
                 } else {
@@ -1066,7 +1066,7 @@ impl<H: Host> Vm<H> {
                         self.write(f, state_register, Value::UNDEFINED);
                     }
                     let value = if asynchronous {
-                        let value_atom = self.intern_atom("value");
+                        let value_atom = self.runtime_atoms.value;
                         self.get_property(p, result, value_atom)?
                     } else {
                         Value::UNDEFINED

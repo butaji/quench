@@ -1146,7 +1146,7 @@ impl<H: Host> Vm<H> {
                     },
                 )?;
             }
-            let length = self.intern_atom("length");
+            let length = self.length_atom;
             self.set_property_with_attributes(
                 object,
                 length,
@@ -1208,7 +1208,7 @@ impl<H: Host> Vm<H> {
             "length",
             Value::number(FUNCTION_PROTOTYPE_LENGTH),
         )?;
-        let prototype_length = self.intern_atom("length");
+        let prototype_length = self.length_atom;
         self.set_property_attributes(
             self.function_proto,
             PropertyKey::string(prototype_length),
@@ -1222,7 +1222,7 @@ impl<H: Host> Vm<H> {
             },
         );
         self.set_builtin_function_name(self.function_proto, "")?;
-        let length = self.intern_atom("length");
+        let length = self.length_atom;
         self.set_builtin_value_named(function, "length", Value::number(1.0))?;
         self.set_property_attributes(
             function,
@@ -1306,7 +1306,7 @@ impl<H: Host> Vm<H> {
         self.set_named(program, constructor, "name", name)?;
         let name_atom = self.intern_atom("name");
         let prototype_atom = self.prototype_atom();
-        let constructor_atom = self.intern_atom("constructor");
+        let constructor_atom = self.runtime_atoms.constructor;
         self.set_property_attributes(
             constructor,
             PropertyKey::string(prototype_atom),
@@ -1774,7 +1774,7 @@ impl<H: Host> Vm<H> {
                 native,
                 Native::GeneratorFunction | Native::AsyncGeneratorFunction
             ) {
-                let constructor_atom = self.intern_atom("constructor");
+                let constructor_atom = self.runtime_atoms.constructor;
                 self.set_property_attributes(
                     prototype,
                     PropertyKey::string(constructor_atom),
@@ -1803,7 +1803,7 @@ impl<H: Host> Vm<H> {
                         setter: None,
                     },
                 );
-                let constructor_atom = self.intern_atom("constructor");
+                let constructor_atom = self.runtime_atoms.constructor;
                 self.set_property_attributes(
                     prototype,
                     PropertyKey::string(constructor_atom),
@@ -2123,7 +2123,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         self.set_builtin_function_name(constructor, "Function")?;
         self.set_builtin_value_named(constructor, "length", Value::number(1.0))?;
-        let constructor_length = self.intern_atom("length");
+        let constructor_length = self.length_atom;
         self.set_property_attributes(
             constructor,
             PropertyKey::string(constructor_length),
@@ -2166,7 +2166,7 @@ impl<H: Host> Vm<H> {
         );
         self.set_builtin_value_named(prototype, "constructor", constructor)?;
         self.set_builtin_value_named(prototype, "length", Value::number(0.0))?;
-        let length = self.intern_atom("length");
+        let length = self.length_atom;
         self.set_property_attributes(
             prototype,
             PropertyKey::string(length),

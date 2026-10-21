@@ -17,7 +17,7 @@ use std::ops::Range;
 
 use super::{
     class_is_single_unit, class_matches, equal, is_line_terminator, is_word_mode, merge_flags,
-    literal_finder, Assertion, Backreference, ClassExpr, Expr, Flags, LiteralFinder, Lookaround,
+    literal_finder, Assertion, Backreference, ClassExpr, ClassItem, ClassKind, Expr, Flags, LiteralFinder, Lookaround,
     Unit, ASCII_MAX,
 };
 
@@ -128,6 +128,12 @@ enum Beyond {
         ignore_case: bool,
         unicode: bool,
     },
+    /// A class of characters and ranges matched exactly: its members as sorted, disjoint
+    /// inclusive ranges, which `negative` complements.
+    Ranges {
+        ranges: Box<[(u32, u32)]>,
+        negative: bool,
+    },
 }
 
 impl UnitSet {
@@ -170,6 +176,44 @@ impl UnitSet {
 }
 
 impl Beyond {
+    /// The test `class` makes of a unit: a union of characters and ranges without case
+    /// folding is its member ranges, derived once; any other class tests its items.
+    fn class(class: &ClassExpr, ignore_case: bool, unicode: bool) -> Self {
+        let mut ranges = Vec::with_capacity(class.items.len());
+        let plain = !ignore_case
+            && matches!(class.kind, ClassKind::Union)
+            && class.items.iter().all(|item| match *item {
+                ClassItem::Character(character) => {
+                    ranges.push((character, character));
+                    true
+                }
+                ClassItem::Range(min, max) => {
+                    ranges.push((min, max));
+                    true
+                }
+                _ => false,
+            });
+        if !plain {
+            return Self::Class {
+                class: class.clone(),
+                ignore_case,
+                unicode,
+            };
+        }
+        ranges.sort_unstable();
+        let mut merged: Vec<(u32, u32)> = Vec::with_capacity(ranges.len());
+        for (min, max) in ranges {
+            match merged.last_mut() {
+                Some(last) if min <= last.1.saturating_add(1) => last.1 = last.1.max(max),
+                _ => merged.push((min, max)),
+            }
+        }
+        Self::Ranges {
+            ranges: merged.into_boxed_slice(),
+            negative: class.negative,
+        }
+    }
+
     /// Whether the test rejects every unit by construction.
     fn is_never(&self) -> bool {
         match self {
@@ -193,6 +237,11 @@ impl Beyond {
                 ignore_case,
                 unicode,
             } => class_matches(class, value, *ignore_case, *unicode),
+            Self::Ranges { ranges, negative } => {
+                let after = ranges.partition_point(|(min, _)| *min <= value);
+                let member = after != 0 && value <= ranges[after - 1].1;
+                member != *negative
+            }
         }
     }
 }
@@ -404,11 +453,7 @@ impl Compiler {
                 if !class_is_single_unit(class) {
                     return Err(Unsupported);
                 }
-                self.set(Beyond::Class {
-                    class: class.clone(),
-                    ignore_case: flags.ignore_case,
-                    unicode: flags.unicode,
-                })
+                self.set(Beyond::class(class, flags.ignore_case, flags.unicode))
             }
             _ => return Ok(None),
         }))
@@ -720,11 +765,9 @@ fn consuming_starts(expr: &Expr, flags: Flags) -> Option<Starts> {
         Expr::Dot => units(Beyond::Dot {
             dot_all: flags.dot_all,
         }),
-        Expr::Class(class) if class_is_single_unit(class) => units(Beyond::Class {
-            class: class.clone(),
-            ignore_case: flags.ignore_case,
-            unicode: flags.unicode,
-        }),
+        Expr::Class(class) if class_is_single_unit(class) => {
+            units(Beyond::class(class, flags.ignore_case, flags.unicode))
+        }
         Expr::Sequence(parts) => {
             sequence_consuming_starts(parts, flags).map(|(found, _)| found.unwrap_or_else(Starts::none))
         }
