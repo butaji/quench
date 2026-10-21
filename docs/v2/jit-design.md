@@ -871,6 +871,29 @@ This confirms a local speed path but not a JetStream Score gain. Quench remains
 well behind Node and Bun. Details and reports are in
 `evidence/jit-jetstream3-2026-10-21/async-fs-field-increment/`.
 
+## Full JetStream 3 coverage screen
+
+A one-round screen of the complete suite produced valid matching output on 33
+of 34 fixtures; `argon2-wasm` hit the 600-second per-engine timeout for
+Quench. Across the valid fixtures, Quench's geometric mean score was 8.46% of
+Node and 5.81% of Bun. The largest valid score gaps were `sqlite3-wasm`,
+`espree-wtb`, `typescript-lib`, and `async-fs`. Peak RSS also remains a major
+problem on `doxbee-promise` (966 MiB), `doxbee-async` (1004 MiB), and
+`async-fs` (891 MiB), while Quench uses less memory than peers on several
+other workloads. These single rounds are diagnostic screens, not
+qualification.
+
+The focused `typescript-lib` profile counted 28.9 million function entries,
+3.93 million native entries, 89 promotions, and 43 successful native
+compilations. The highest-cost work is in closure/call-heavy functions and
+functions above the current 256-instruction limit. The static guard census
+counts branch and type-check sites, but these profiles do not show meaningful
+redundant-guard coverage. This points to execution coverage and dynamic call,
+closure, and object costs as higher priorities than ISOP or other Boolean
+rewriting. Keep ISOP as a bounded offline experiment until a matched fixture
+shows an actual score gain. Full reports and reproduction commands are in
+`evidence/jit-jetstream3-2026-10-21/full-suite-screen/`.
+
 ## Numeric hash-map entry loop
 
 The observed 23-instruction `_findKeyEntry` loop has an opt-in bounded JIT-mode
