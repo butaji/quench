@@ -57,6 +57,77 @@ const HEAP_FAMILY_BITS: u64 = DIRECT_FUNCTION_HANDLE_BITS | DIRECT_PROMISE_HANDL
 /// The bits that name a heap value's reference family (`Value::heap_reference`).
 const HEAP_FAMILY_MASK: u64 = TAG_MASK | HEAP_FAMILY_BITS;
 
+/// A narrow value: a `Value` packed into 32 bits for an object's inline property slot. Bit 0
+/// set holds a `NARROW_INTEGER_BITS` integer above it. Bit 0 clear holds a `NARROW_CODE_BITS` code above it,
+/// naming the value's upper word in `NARROW_UPPER_WORDS`, and the lower word above that, at
+/// most `NARROW_INDEX_BITS` wide. Decoding rebuilds the exact bits, so a value is narrow
+/// exactly when it round-trips. The top two bits of a narrow value are equal, so a payload word
+/// whose upper half is a narrow value never carries an extras tag.
+pub(crate) const NARROW_INTEGER_FLAG: u32 = 1;
+const NARROW_CODE_BITS: u32 = 4;
+const NARROW_CODE_SHIFT: u32 = NARROW_INTEGER_FLAG.trailing_ones();
+const NARROW_INDEX_SHIFT: u32 = NARROW_CODE_SHIFT + NARROW_CODE_BITS;
+/// Lower-word width of a narrow non-integer: it leaves the top two bits clear.
+const NARROW_INDEX_BITS: u32 = u32::BITS - NARROW_INDEX_SHIFT - 2;
+/// Integer width of a narrow integer: its top two bits copy the sign.
+const NARROW_INTEGER_BITS: u32 = u32::BITS - NARROW_CODE_SHIFT - 1;
+const LOWER_WORD: u64 = u32::MAX as u64;
+/// Upper words of narrow non-integers by code: the eight heap reference families in
+/// `HEAP_FAMILY_BITS` order, then the tagged constants. Unused codes repeat `undefined`.
+const NARROW_UPPER_WORDS: [u64; 1 << NARROW_CODE_BITS] = {
+    let mut words = [TAG_UNDEFINED; 1 << NARROW_CODE_BITS];
+    let mut family = 0;
+    while family < NARROW_HEAP_FAMILIES {
+        words[family] = TAG_HEAP | (family as u64) << HEAP_FAMILY_SHIFT;
+        family += 1;
+    }
+    words[NARROW_HEAP_FAMILIES] = TAG_UNDEFINED;
+    words[NARROW_HEAP_FAMILIES + 1] = TAG_NULL;
+    words[NARROW_HEAP_FAMILIES + 2] = TAG_BOOL;
+    words[NARROW_HEAP_FAMILIES + 3] = TAG_DELETED;
+    words
+};
+const HEAP_FAMILY_SHIFT: u32 = HEAP_FAMILY_BITS.trailing_zeros();
+const NARROW_HEAP_FAMILIES: usize = 1 << HEAP_FAMILY_BITS.count_ones();
+const _: () = assert!(HEAP_FAMILY_BITS >> HEAP_FAMILY_SHIFT == NARROW_HEAP_FAMILIES as u64 - 1);
+const _: () = assert!(NARROW_HEAP_FAMILIES + 4 <= 1 << NARROW_CODE_BITS);
+
+impl Value {
+    /// This value as a narrow value, when it has one.
+    #[inline(always)]
+    pub(crate) fn to_narrow(self) -> Option<u32> {
+        let upper = self.0 & !LOWER_WORD;
+        let lower = self.0 as u32;
+        if upper == TAG_INT {
+            let integer = lower as i32;
+            let limit = 1i32 << (NARROW_INTEGER_BITS - 1);
+            return (-limit..limit)
+                .contains(&integer)
+                .then_some(((integer as u32) << NARROW_CODE_SHIFT) | NARROW_INTEGER_FLAG);
+        }
+        let code = match self.0 & TAG_MASK {
+            TAG_HEAP => ((self.0 & HEAP_FAMILY_BITS) >> HEAP_FAMILY_SHIFT) as usize,
+            TAG_UNDEFINED => NARROW_HEAP_FAMILIES,
+            TAG_NULL => NARROW_HEAP_FAMILIES + 1,
+            TAG_BOOL => NARROW_HEAP_FAMILIES + 2,
+            TAG_DELETED => NARROW_HEAP_FAMILIES + 3,
+            _ => return None,
+        };
+        (NARROW_UPPER_WORDS[code] == upper && lower >> NARROW_INDEX_BITS == 0)
+            .then_some(lower << NARROW_INDEX_SHIFT | (code as u32) << NARROW_CODE_SHIFT)
+    }
+
+    /// The value `narrow` packs (`to_narrow`).
+    #[inline(always)]
+    pub(crate) fn from_narrow(narrow: u32) -> Self {
+        if narrow & NARROW_INTEGER_FLAG != 0 {
+            return Self::integer((narrow as i32) >> NARROW_CODE_SHIFT);
+        }
+        let code = (narrow >> NARROW_CODE_SHIFT) as usize & ((1 << NARROW_CODE_BITS) - 1);
+        Self(NARROW_UPPER_WORDS[code] | u64::from(narrow >> NARROW_INDEX_SHIFT))
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum HeapReference {
     LegacySlot(u32),
@@ -508,6 +579,41 @@ impl fmt::Debug for Value {
 mod tests {
     use super::Value;
     use std::mem::size_of;
+
+    #[test]
+    fn narrow_values_round_trip_exactly() {
+        let narrow = [
+            Value::integer(0),
+            Value::integer(-1),
+            Value::integer((1 << 29) - 1),
+            Value::integer(-(1 << 29)),
+            Value::UNDEFINED,
+            Value::NULL,
+            Value::TRUE,
+            Value::FALSE,
+            Value::DELETED,
+            Value::heap(7),
+            Value::direct_object(0),
+            Value::direct_object((1 << 25) - 1),
+            Value::direct_string(3),
+        ];
+        for value in narrow {
+            let packed = value.to_narrow().expect("narrow");
+            assert_eq!(Value::from_narrow(packed), value);
+            assert!(packed >> 30 == 0 || packed >> 30 == 3, "top bits copy each other");
+        }
+        let wide = [
+            Value::integer(1 << 30),
+            Value::integer(i32::MIN),
+            Value::number(1.5),
+            Value::number(-0.0),
+            Value::direct_object(1 << 25),
+            Value::heap(1 << 26),
+        ];
+        for value in wide {
+            assert_eq!(value.to_narrow(), None, "{value:?}");
+        }
+    }
 
     #[test]
     fn value_is_one_machine_word() {
