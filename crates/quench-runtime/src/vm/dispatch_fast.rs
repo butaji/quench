@@ -557,6 +557,9 @@ enum CallEntry {
     /// Its body returns one of its captures (`capture_read_body`), as a bundler's export
     /// getter `() => binding` compiles, which a call answers by reading the capture.
     ReadsCapture,
+    /// Its body returns its `this` (`this_read_body`), as `get self() { return this; }`
+    /// compiles, which a call answers with the receiver it binds.
+    ReadsThis,
     /// It keeps frame locals and makes closures (`CallPlan::environment_activation`): its
     /// activation's window holds its environment and locals after its registers
     /// (`lane_activate_environment`). Only a plain call activates it.
@@ -567,7 +570,7 @@ impl CallEntry {
     /// A body a call answers by reading alone (`lane_call_leaf_read`).
     #[inline(always)]
     fn reads(self) -> bool {
-        matches!(self, Self::Reads | Self::ReadsElement | Self::ReadsCapture)
+        matches!(self, Self::Reads | Self::ReadsElement | Self::ReadsCapture | Self::ReadsThis)
     }
 }
 
@@ -630,6 +633,21 @@ fn capture_read_body(body: &Function) -> bool {
         _ => return false,
     };
     load.op() == Op::LoadCapture
+        && !load.returns_from_frame()
+        && done.op() == Op::Return
+        && done.a() == load.a()
+}
+
+/// Whether `body` is `LoadThis` and `Return` of it (`CallEntry::ReadsThis`): a function's own
+/// `this`, which neither an arrow's lexical one nor a constructor's binding complicates.
+fn this_read_body(body: &Function) -> bool {
+    let [load, done] = match body.code.get(..2) {
+        Some(&[load, done]) => [load, done].map(|packed| decoded_instruction(body, packed)),
+        _ => return false,
+    };
+    !body.is_arrow
+        && !body.is_class_constructor
+        && load.op() == Op::LoadThis
         && !load.returns_from_frame()
         && done.op() == Op::Return
         && done.a() == load.a()
@@ -5666,6 +5684,8 @@ impl<H: Host> Vm<H> {
                     CallEntry::ForwardsRead
                 } else if capture_read_body(body) {
                     CallEntry::ReadsCapture
+                } else if this_read_body(body) {
+                    CallEntry::ReadsThis
                 } else {
                     CallEntry::Activates
                 },
@@ -7815,6 +7835,10 @@ unsafe fn lane_call_leaf_read<H: Host>(
     let (entry, code) = unsafe { (&*(*target.view).records(), &*(*cx).code) };
     let vm = unsafe { vm(cx) };
     let base = |base: crate::bytecode::FieldBase| lane_read_base(base, &argument, this);
+    if target.entry == CallEntry::ReadsThis {
+        // The receiver the call binds (`lane_direct_call_this`), which is what it returns.
+        return Some(this);
+    }
     if target.entry == CallEntry::ReadsCapture {
         // The capture its closure's environment holds, read as its frameless activation's
         // `LoadCapture` would (`lane_load_capture_walk`); an uninitialized binding misses.
