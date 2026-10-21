@@ -4067,7 +4067,8 @@ lane_handler! {
         };
         let value = match native {
             Some(native @ (Native::DataViewGetFloat64 | Native::DataViewSetFloat64))
-                if vm.programs.js_jit_dataview_float64_enabled() =>
+                if vm.execution_mode == super::ExecutionMode::Compiled
+                    && vm.programs.js_jit_dataview_float64_enabled() =>
             {
                 let window = ImmediateLayout::call_window_base(i.imm());
                 let argc = ImmediateLayout::argument_count(i.imm());
