@@ -104,7 +104,7 @@ extern "C" fn fault_only_touched_pages() {
     quench_node::host::resident_pages::map_touched_pages_only();
     quench_node::host::resident_pages::release_read_only_pages();
     quench_runtime::set_compile_phase_boundary(
-        quench_node::host::resident_pages::release_read_only_code_and_data,
+        quench_node::host::resident_pages::release_at_compile_phase_boundary,
     );
 }
 
