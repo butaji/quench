@@ -2121,16 +2121,31 @@ fn lane_relation_operands<const CONSTANT: bool>(
 
 lane_handler! {
     /// `lane_operator` at a site that has met operands other than two integers: any Numbers,
-    /// through their double values.
+    /// through their double values. Other operands take `lane_operator_other`, out of line,
+    /// so this handler saves no registers for them.
     #[inline(never)]
     fn lane_operator_numbers<OP: u32>(cx, r, ip, i, view) {
+        let Some(value) = super::operations::number_value_operator::<OP>(r.get(i.b), r.get(i.c))
+        else {
+            sibling!(lane_operator_other::<H, OP>, r, ip, view)
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    /// `lane_operator_numbers` of operands not both Numbers: a concatenation of strings or
+    /// BigInt arithmetic in place; anything else takes the general path.
+    #[inline(never)]
+    fn lane_operator_other<OP: u32>(cx, r, ip, i, view) {
         let (left, right) = (r.get(i.b), r.get(i.c));
-        let Some(value) = (match super::operations::number_value_operator::<OP>(left, right) {
-            None if OP == super::operations::ADDITION => lane_concatenation(cx, left, right)
-                .or_else(|| lane_bigint_value(cx, OP, left, right)),
-            None => lane_bigint_value(cx, OP, left, right),
-            value => value,
-        }) else {
+        let value = if OP == super::operations::ADDITION {
+            lane_concatenation(cx, left, right).or_else(|| lane_bigint_value(cx, OP, left, right))
+        } else {
+            lane_bigint_value(cx, OP, left, right)
+        };
+        let Some(value) = value else {
             return exit(ip);
         };
         r.set(i.a, value);
@@ -2152,14 +2167,27 @@ lane_handler! {
 }
 
 lane_handler! {
-    /// `lane_operator_numbers` with a constant right operand.
+    /// `lane_operator_numbers` with a constant right operand; a concatenation takes
+    /// `lane_operator_constant_concatenation`, out of line.
     #[inline(never)]
     fn lane_operator_constant_numbers<OP: u32>(cx, r, ip, i, view) {
-        let (left, right) = (r.get(i.b), i.constant());
-        let Some(value) = (match super::operations::number_value_operator::<OP>(left, right) {
-            None if OP == super::operations::ADDITION => lane_concatenation(cx, left, right),
-            value => value,
-        }) else {
+        let Some(value) = super::operations::number_value_operator::<OP>(r.get(i.b), i.constant())
+        else {
+            if OP == super::operations::ADDITION {
+                sibling!(lane_operator_constant_concatenation::<H>, r, ip, view)
+            }
+            return exit(ip);
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    /// `lane_operator_constant_numbers` of an addition that concatenates.
+    #[inline(never)]
+    fn lane_operator_constant_concatenation<>(cx, r, ip, i, view) {
+        let Some(value) = lane_concatenation(cx, r.get(i.b), i.constant()) else {
             return exit(ip);
         };
         r.set(i.a, value);
