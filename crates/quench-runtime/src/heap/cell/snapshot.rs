@@ -59,7 +59,7 @@ mod tag {
 
 impl Native {
     /// One past the last native's discriminant.
-    const COUNT: u16 = Native::CallSiteGetFunction as u16 + 1;
+    pub(crate) const COUNT: u16 = Native::CallSiteGetFunction as u16 + 1;
 
     pub(crate) fn write_snapshot(self, writer: &mut Writer) {
         writer.u16(self as u16);
@@ -122,7 +122,13 @@ impl JsString {
 
     pub(crate) fn read_snapshot(reader: &mut Reader<'_>) -> SnapshotResult<Self> {
         Ok(match reader.u8()? {
-            0 => Self::from_unit_run(crate::vm::wtf16::Units::Ascii(reader.bytes()?)),
+            0 => {
+                let bytes = reader.bytes()?;
+                if !bytes.is_ascii() {
+                    return Err(SnapshotError("invalid snapshot ASCII string".into()));
+                }
+                Self::from_unit_run(crate::vm::wtf16::Units::Ascii(bytes))
+            }
             1 => Self::from_units(&reader.u16s()?),
             _ => return Err(SnapshotError("invalid snapshot string".into())),
         })

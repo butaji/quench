@@ -15,26 +15,11 @@ impl<H: Host> Vm<H> {
             if data.kind == crate::heap::SymbolKind::HostPrivate)
     }
 
+    /// An array of `keys`. Allocation never collects, so the keys need no roots meanwhile.
     pub(super) fn own_keys_array(&mut self, keys: Vec<Value>) -> Value {
-        let roots = keys
-            .iter()
-            .copied()
-            .map(|key| self.heap.root(key))
-            .collect::<Vec<_>>();
-        let keys = roots
-            .iter()
-            .filter_map(|root| self.heap.root_value(*root))
-            .collect::<Vec<_>>();
-        let result = self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
-                Self::empty_object(self.array_proto),
-                Rc::new(keys),
-            ),
-        });
-        roots.into_iter().for_each(|root| {
-            self.heap.release_root(root);
-        });
-        result
+        self.heap.alloc(Cell::Array {
+            object: crate::heap::ArrayObject::new(Self::empty_object(self.array_proto), Rc::new(keys)),
+        })
     }
 
     fn is_internal_property_name(&self, atom: Atom) -> bool {
@@ -71,6 +56,16 @@ impl<H: Host> Vm<H> {
             .collect()
     }
 
+    /// The own symbol keys of an ordinary `object` of `shape`, in order: the shape's symbol keys
+    /// the object still holds, but the host's private ones.
+    fn ordinary_own_symbol_keys(&self, object: Value, shape: u32) -> Vec<Value> {
+        self.shape_keys(shape)
+            .iter()
+            .filter_map(|key| key.symbol_value())
+            .filter(|symbol| !self.is_host_private_symbol(*symbol) && self.symbol_property(object, *symbol).is_some())
+            .collect()
+    }
+
     pub(super) fn ordinary_own_key_values(
         &mut self,
         object: Value,
@@ -97,12 +92,7 @@ impl<H: Host> Vm<H> {
                     || super::object_static::array_index(self.atom_name(*atom)).is_none()
             })
             .collect::<Vec<_>>();
-        let symbols = self
-            .shape_keys(shape)
-            .iter()
-            .filter_map(|key| key.symbol_value())
-            .filter(|symbol| !self.is_host_private_symbol(*symbol) && self.symbol_property(object, *symbol).is_some())
-            .collect::<Vec<_>>();
+        let symbols = self.ordinary_own_symbol_keys(object, shape);
         values.extend(
             strings
                 .into_iter()
@@ -508,17 +498,23 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         object: Value,
     ) -> Result<Value, JsError> {
-        let values = self
-            .object_own_key_values(p, object)?
-            .into_iter()
-            .filter(|key| matches!(self.heap.get(*key), Some(Cell::Symbol(_))))
-            .collect();
-        Ok(self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
-                Self::empty_object(self.array_proto),
-                Rc::new(values),
-            ),
-        }))
+        if matches!(self.heap.get(object), Some(Cell::Proxy { .. })) {
+            let values = self
+                .object_own_key_values(p, object)?
+                .into_iter()
+                .filter(|key| matches!(self.heap.get(*key), Some(Cell::Symbol(_))))
+                .collect();
+            return Ok(self.own_keys_array(values));
+        }
+        // An ordinary object's symbol keys are its shape's: no string key is made for them.
+        let target = self.box_object(object)?;
+        self.evaluate_deferred_namespace_for_key(p, target, None)?;
+        self.complete_lazy_keys(p, target)?;
+        let symbols = match self.object_data(target) {
+            Some(data) => self.ordinary_own_symbol_keys(target, data.shape()),
+            None => Vec::new(),
+        };
+        Ok(self.own_keys_array(symbols))
     }
 
     pub(super) fn object_own_keys(

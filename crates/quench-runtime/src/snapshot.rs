@@ -182,6 +182,7 @@ impl<'a> Reader<'a> {
         }
     }
 
+    #[inline]
     fn take(&mut self, len: usize) -> SnapshotResult<&'a [u8]> {
         if self.cursor - self.released >= RELEASE_STRIDE {
             self.release_read();
@@ -192,14 +193,17 @@ impl<'a> Reader<'a> {
         Ok(bytes)
     }
 
+    #[inline]
     fn array<const N: usize>(&mut self) -> SnapshotResult<[u8; N]> {
         Ok(self.take(N)?.try_into().expect("take returns N bytes"))
     }
 
+    #[inline]
     pub(crate) fn u8(&mut self) -> SnapshotResult<u8> {
         Ok(self.array::<1>()?[0])
     }
 
+    #[inline]
     pub(crate) fn bool(&mut self) -> SnapshotResult<bool> {
         match self.u8()? {
             0 => Ok(false),
@@ -208,14 +212,17 @@ impl<'a> Reader<'a> {
         }
     }
 
+    #[inline]
     pub(crate) fn u16(&mut self) -> SnapshotResult<u16> {
         Ok(u16::from_le_bytes(self.array()?))
     }
 
+    #[inline]
     pub(crate) fn u32(&mut self) -> SnapshotResult<u32> {
         Ok(u32::from_le_bytes(self.array()?))
     }
 
+    #[inline]
     pub(crate) fn u64(&mut self) -> SnapshotResult<u64> {
         Ok(u64::from_le_bytes(self.array()?))
     }
@@ -228,10 +235,12 @@ impl<'a> Reader<'a> {
         Ok(f64::from_bits(self.u64()?))
     }
 
+    #[inline]
     pub(crate) fn len(&mut self) -> SnapshotResult<usize> {
         Ok(self.u32()? as usize)
     }
 
+    #[inline]
     pub(crate) fn value(&mut self) -> SnapshotResult<crate::value::Value> {
         Ok(crate::value::Value::from_bits(self.u64()?))
     }
