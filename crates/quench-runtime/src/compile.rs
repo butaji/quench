@@ -255,24 +255,22 @@ pub(crate) struct StaticModuleAnalysis {
     pub(crate) plan: Option<StaticModulePlan>,
 }
 
-/// The key `static_module_analysis` memoizes a text under: its length, two hashes by
-/// unrelated algorithms (so distinct texts share a key only if both collide) and the name.
+/// The key `static_module_analysis` memoizes a text under: the module's name, the text's
+/// length and its hash. Texts are the process's own module files, not adversarial input, and
+/// a module is looked up about fifteen times, so one fast hash of its text serves.
 #[derive(PartialEq, Eq, Hash)]
 struct StaticModuleTextKey {
     length: usize,
-    fx: u64,
-    sip: u64,
+    hash: u64,
     name: Box<str>,
 }
 
 impl StaticModuleTextKey {
     fn of(source: &str, module_name: &str) -> Self {
         use std::hash::{Hash, Hasher};
-        let mut fx = rustc_hash::FxHasher::default();
-        source.hash(&mut fx);
-        let mut sip = std::hash::DefaultHasher::new();
-        source.hash(&mut sip);
-        Self { length: source.len(), fx: fx.finish(), sip: sip.finish(), name: module_name.into() }
+        let mut hasher = rustc_hash::FxHasher::default();
+        source.hash(&mut hasher);
+        Self { length: source.len(), hash: hasher.finish(), name: module_name.into() }
     }
 }
 impl Engine {
