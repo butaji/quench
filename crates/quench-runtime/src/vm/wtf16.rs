@@ -118,6 +118,29 @@ impl FlatUnits {
         Self::Ascii(unsafe { Rc::from_raw(Rc::into_raw(storage) as *const str) })
     }
 
+    /// The number of units, read from the representation without making a view.
+    #[inline]
+    fn len(&self) -> usize {
+        match self {
+            Self::Short(text) => usize::from(text.length),
+            Self::Ascii(text) => text.len(),
+            Self::AsciiSlice(slice) => slice.range.len(),
+            Self::Wide(units) => units.len(),
+        }
+    }
+
+    /// The unit at `index`, read from the representation without making a view.
+    #[inline]
+    pub(crate) fn unit(&self, index: usize) -> Option<u16> {
+        match self {
+            Self::Short(text) => text.as_str().as_bytes().get(index).map(|byte| u16::from(*byte)),
+            Self::Ascii(text) => text.as_bytes().get(index).map(|byte| u16::from(*byte)),
+            Self::AsciiSlice(slice) => (index < slice.range.len())
+                .then(|| u16::from(slice.text.as_bytes()[slice.range.start + index])),
+            Self::Wide(units) => units.get(index).copied(),
+        }
+    }
+
     #[inline]
     fn view(&self) -> Units<'_> {
         match self {
@@ -724,6 +747,16 @@ impl JsString {
         self.flat().view()
     }
 
+    /// The flat units when the string already has them: never flattens a rope, so a
+    /// reader needs no call on its way.
+    #[inline]
+    pub(crate) fn existing_flat(&self) -> Option<&FlatUnits> {
+        match &self.repr {
+            Repr::Flat(units) => Some(units),
+            Repr::Shared(inner) => inner.flat.get(),
+        }
+    }
+
     /// The flat units, flattening a rope on first use.
     #[inline]
     pub(crate) fn flat(&self) -> &FlatUnits {
@@ -821,7 +854,7 @@ impl JsString {
 
     pub(crate) fn len(&self) -> usize {
         match &self.repr {
-            Repr::Flat(units) => units.view().len(),
+            Repr::Flat(units) => units.len(),
             Repr::Shared(inner) => inner.length as usize,
         }
     }
