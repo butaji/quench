@@ -5692,7 +5692,6 @@ impl PromiseRuntime {
         let Self {
             rejection_notifications,
             last_rejection_id,
-            thenable_jobs,
             finally_handler_callbacks,
             finally_continuation_callbacks,
             aggregates,
@@ -5707,7 +5706,6 @@ impl PromiseRuntime {
         } = self;
         let pending = [
             ("a rejection notification", rejection_notifications.is_empty()),
-            ("a thenable job", thenable_jobs.is_empty()),
             ("a finally callback", finally_handler_callbacks.is_empty() && finally_continuation_callbacks.is_empty()),
             ("a promise combinator", aggregates.is_empty() && aggregate_jobs.is_empty()),
             ("a reaction capability", reaction_capabilities.is_empty()),
