@@ -7406,6 +7406,46 @@ script_handler! {
     }
 }
 
+script_handler! {
+    /// `ArgumentsLength` (`GET` false) or `ArgumentGet` (`GET` true) of a function whose
+    /// `arguments` binding is no forwarding one, in its frame's own lane run, as
+    /// `Vm::read_arguments_binding` reads it: an unmaterialized binding answers its length
+    /// and the indices it kept from the frame's values; a materialized object its own data
+    /// `length` in its creation layout (`Vm::arguments_object_length`). Any other read, an
+    /// element of a materialized object (which a mapped object aliases to the parameters)
+    /// among them, takes the general path.
+    #[inline(never)]
+    fn lane_frame_arguments<GET: bool>(cx, r, ip, i, view) {
+        // Only a frame's own run reads its binding; no activation runs such a function.
+        if !unsafe { (*cx).env }.is_deleted() {
+            return exit(ip);
+        }
+        let vm = unsafe { vm(cx) };
+        let frame = unsafe { (*cx).frame };
+        // SAFETY: the context's program outlives the lane run.
+        let code = unsafe { &*(*cx).code };
+        let Ok(binding) = vm.load_local_binding(code, frame, i.imm() as usize, None) else {
+            return exit(ip);
+        };
+        let kept = &vm.frames[frame].original_arguments;
+        let value = match (binding == Value::UNMATERIALIZED_ARGUMENTS, GET) {
+            (true, false) => Some(Value::length(kept.len())),
+            (true, true) => r
+                .get(i.b)
+                .as_int()
+                .and_then(|index| usize::try_from(index).ok())
+                .and_then(|index| kept.get(index).copied()),
+            (false, false) => vm.arguments_object_length(binding),
+            (false, true) => None,
+        };
+        let Some(value) = value else {
+            return exit(ip);
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
 /// The frameless target of a lane call to `callee`, resolved on first use.
 /// Whether `callee` is the target of a `new` whose `new.target` the general path still
 /// holds (`Vm::construct_target`): a lane activation would not bind it.
@@ -9418,6 +9458,15 @@ fn derive_lane_view<H: Host>(
                         Op::ArgumentsLength => lane_arguments_length::<H> as Handler,
                         Op::ArgumentGet => lane_argument_get::<H> as Handler,
                         _ => lane_load_forwarded_arguments::<H> as Handler,
+                    },
+                    produces: false,
+                })
+            } else if matches!(op, Op::ArgumentsLength | Op::ArgumentGet) {
+                Some(LaneHandler {
+                    handler: if op == Op::ArgumentsLength {
+                        lane_frame_arguments::<H, false> as Handler
+                    } else {
+                        lane_frame_arguments::<H, true> as Handler
                     },
                     produces: false,
                 })
