@@ -113,13 +113,12 @@ fn execute_shared_on_worker(
     mode: quench_runtime::ExecutionMode,
 ) -> Result<SharedCompletion, String> {
     let eval_builtin_globals = matches!(&input, SharedInput::Eval { .. });
-    let file_entry = matches!(&input, SharedInput::File { .. });
     let eval_source_nonempty = matches!(&input, SharedInput::Eval { source, .. } if !source.is_empty());
     let inline_source = match &input {
         SharedInput::Stdin { .. } => crate::host::node_host::InlineSource::Stdin,
         _ => crate::host::node_host::InlineSource::Eval,
     };
-    let (source, name, kind, commonjs_entry, exec_argv, entry_goal) = match input {
+    let (source, name, kind, commonjs_entry, exec_argv, entry_goal, entry_file) = match input {
         SharedInput::Eval {
             source,
             goal,
@@ -140,6 +139,7 @@ fn execute_shared_on_worker(
             None,
             exec_argv,
             goal,
+            None,
         ),
         SharedInput::Eval { source, exec_argv, print: true, .. } => {
             let literal = serde_json::to_string(&source).map_err(|error| error.to_string())?;
@@ -150,6 +150,7 @@ fn execute_shared_on_worker(
                 None,
                 exec_argv,
                 EntryGoal::Node,
+                None,
             )
         }
         SharedInput::File {
@@ -173,8 +174,8 @@ fn execute_shared_on_worker(
                 String::new()
             };
             let name = path.to_string_lossy().into_owned();
-            let commonjs_entry = if is_module { None } else { Some(path) };
-            (source, name, kind, commonjs_entry, exec_argv, goal)
+            let commonjs_entry = if is_module { None } else { Some(path.clone()) };
+            (source, name, kind, commonjs_entry, exec_argv, goal, Some(path))
         }
     };
 
@@ -199,8 +200,8 @@ fn execute_shared_on_worker(
     let request = ExecutionRequest { source: &source, name: &name, kind };
     let in_worker = worker.is_some();
     let host = new_host(worker)?;
-    let snapshot = crate::host::startup_snapshot::snapshot_path(&host, file_entry, in_worker)
-        .and_then(|path| crate::host::startup_snapshot::load_or_schedule(&path));
+    let snapshot_path = crate::host::startup_snapshot::snapshot_path(&host, entry_file.as_deref(), in_worker);
+    let snapshot = snapshot_path.as_deref().and_then(crate::host::startup_snapshot::load_or_schedule);
     let mut runtime = Runtime::new(host);
     runtime.set_execution_mode(mode);
     let mut program = runtime.compile_entry(request).map_err(|error| format!("{error:?}"))?;
@@ -208,12 +209,12 @@ fn execute_shared_on_worker(
     if let Some(snapshot) = snapshot {
         match runtime.restore_snapshot(snapshot, &program, |host, reader| host.read_snapshot(reader)) {
             Ok(entry) => {
-                crate::host::startup_snapshot::report(Ok(()));
+                crate::host::startup_snapshot::report(snapshot_path.as_deref(), Ok(()));
                 program = entry;
                 restored = true;
             }
             Err(error) => {
-                crate::host::startup_snapshot::report(Err(&error));
+                crate::host::startup_snapshot::report(snapshot_path.as_deref(), Err(&error));
                 // The restore may have left the runtime half replaced: boot a fresh one.
                 runtime = Runtime::new(new_host(None)?);
                 runtime.set_execution_mode(mode);
