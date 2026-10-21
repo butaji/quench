@@ -3414,14 +3414,16 @@ impl<H: Host> Vm<H> {
     }
 
     /// A static module's program kept by the host's compile cache
-    /// (`Host::kept_compiled_program`) for its exact text: compiled unspecialized, after its
-    /// early errors were ruled out, so neither repeats.
+    /// (`Host::kept_compiled_program`) for its exact text: compiled as this VM specializes,
+    /// after its early errors were ruled out, so neither repeats.
     fn kept_static_module_program(&mut self, module: &ModuleSource) -> Option<ResidualProgram> {
-        let bytes = self
-            .host
-            .kept_compiled_program(&module.name, &[STATIC_MODULE_GOAL, &module.source])?;
+        let bytes = self.host.kept_compiled_program(
+            &module.name,
+            &[self.specialization_part(), STATIC_MODULE_GOAL, &module.source],
+        )?;
         let text = crate::bytecode::SourceText::Shared(std::sync::Arc::from(module.source.as_str()));
-        self.decode_cached_program(bytes, text, 0, &module.name, false).ok()
+        let specialized = self.specialized;
+        self.decode_cached_program(bytes, text, 0, &module.name, specialized).ok()
     }
 
     /// Offers the host the compiled program of a static module (`kept_static_module_program`).
@@ -3430,7 +3432,7 @@ impl<H: Host> Vm<H> {
             && let Some(bytes) = self.encode_cached_program(&residual)
         {
             self.host
-                .keep_compiled_program(&module.name, &[STATIC_MODULE_GOAL, &module.source], &bytes);
+                .keep_compiled_program(&module.name, &[self.specialization_part(), STATIC_MODULE_GOAL, &module.source], &bytes);
         }
     }
 
