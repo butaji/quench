@@ -6,7 +6,6 @@ use crate::value::Value;
 use crate::value_vec::INLINE_PROPERTY_COUNT;
 use std::collections::{BTreeMap, HashSet};
 use std::mem::size_of;
-use std::rc::Rc;
 const KINDS: usize = CellKind::NAMES.len();
 
 /// Allocated heap records, arenas and unique backing storage at one instant.
@@ -220,7 +219,7 @@ impl Heap {
                     .expect("live direct array record");
                 let element_bytes = elements.capacity() * size_of::<Value>();
                 other_cell_payload_bytes += payload_bytes.saturating_sub(element_bytes);
-                let identity = Rc::as_ptr(elements) as usize;
+                let identity = elements.as_ptr() as usize;
                 if array_identities.insert(identity) {
                     const RC_HEADER_WORDS: usize = 2;
                     dense_array_elements_bytes += element_bytes;
@@ -234,7 +233,7 @@ impl Heap {
                         let elements = object.elements();
                         let element_bytes = elements.capacity() * size_of::<Value>();
                         other_cell_payload_bytes += payload_bytes.saturating_sub(element_bytes);
-                        let identity = Rc::as_ptr(elements) as usize;
+                        let identity = elements.as_ptr() as usize;
                         if array_identities.insert(identity) {
                             const RC_HEADER_WORDS: usize = 2;
                             dense_array_elements_bytes += element_bytes;

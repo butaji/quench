@@ -299,7 +299,7 @@ impl<H: Host> Vm<H> {
             return Ok(self.heap.alloc(Cell::Array {
                 object: crate::heap::ArrayObject::new(
                     Self::empty_object(self.array_proto),
-                    Rc::new(Vec::new()),
+                    Vec::new(),
                 ),
             }));
         }
@@ -308,7 +308,7 @@ impl<H: Host> Vm<H> {
             return Ok(self.heap.alloc(Cell::Array {
                 object: crate::heap::ArrayObject::new(
                     Self::empty_object(self.array_proto),
-                    Rc::new(keys),
+                    keys,
                 ),
             }));
         }
@@ -356,11 +356,11 @@ impl<H: Host> Vm<H> {
             let elements = keys
                 .iter()
                 .map(|key| self.heap.root_value(*key).unwrap())
-                .collect();
+                .collect::<Vec<_>>();
             Ok(self.heap.alloc(Cell::Array {
                 object: crate::heap::ArrayObject::new(
                     Self::empty_object(self.array_proto),
-                    Rc::new(elements),
+                    elements,
                 ),
             }))
         })();

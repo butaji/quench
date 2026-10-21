@@ -921,7 +921,7 @@ impl<H: Host> Vm<H> {
         self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
-                Rc::new(vec![Value::DELETED; length]),
+                vec![Value::DELETED; length],
             ),
         })
     }
@@ -972,7 +972,7 @@ impl<H: Host> Vm<H> {
                     self.heap.alloc(Cell::Array {
                         object: crate::heap::ArrayObject::new(
                             Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
-                            Rc::new(elements),
+                            elements,
                         ),
                     })
                 }

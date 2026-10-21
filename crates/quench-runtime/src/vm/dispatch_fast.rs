@@ -6432,7 +6432,7 @@ script_handler! {
 #[inline(never)]
 fn lane_new_array<H: Host>(vm: &mut Vm<H>, prototype: Value, args: &[Value]) -> Value {
     vm.heap.alloc(Cell::Array {
-        object: crate::heap::ArrayObject::new(Vm::<H>::empty_object(prototype), Rc::new(args.to_vec())),
+        object: crate::heap::ArrayObject::new(Vm::<H>::empty_object(prototype), args.to_vec()),
     })
 }
 

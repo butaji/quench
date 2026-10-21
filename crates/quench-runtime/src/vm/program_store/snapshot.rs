@@ -177,7 +177,7 @@ impl ProgramEntry {
         let residual = ResidualProgram::decode_snapshot(Rc::new(window), text, atoms)
             .map_err(|error| SnapshotError(format!("snapshot program: {error}")))?;
         let constants = reader.values()?;
-        let const_arrays = read_list(reader, |reader| Ok(if reader.bool()? { Some(Rc::new(reader.values()?)) } else { None }))?;
+        let const_arrays = read_list(reader, |reader| Ok(if reader.bool()? { Some(crate::heap::ArrayElements::from(reader.values()?)) } else { None }))?;
         let function_sources = Snap::unsnap(reader)?;
         let module_environment = Snap::unsnap(reader)?;
         let import_meta = Snap::unsnap(reader)?;
