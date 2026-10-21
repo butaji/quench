@@ -1447,7 +1447,7 @@ lane_handler! {
             // SAFETY: the running environment activation's window, whose function is the
             // innermost activation's and whose environment's parent is the context's.
             let environment = owner.map(|owner| unsafe {
-                window_environment(vm, r.0.add(usize::from(registers)), owner, (*cx).env, (*cx).program, (*cx).this)
+                window_environment(vm, &*(*cx).code, r.0.add(usize::from(registers)), owner, (*cx).env, (*cx).program, (*cx).this)
             });
             // SAFETY: the context's program outlives the lane run.
             let value = environment.and_then(|environment| {
@@ -5371,6 +5371,7 @@ impl<H: Host> Vm<H> {
                         let environment = unsafe {
                             window_environment(
                                 self,
+                                code,
                                 registers.as_mut_ptr().add(held),
                                 activation.function,
                                 state.env,
@@ -5679,11 +5680,17 @@ script_handler! {
         };
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
         let target = unsafe { &*target };
-        // One test: the out-of-line form sorts out the other entries, and the site calls it
-        // directly from now on.
+        // One test: the site calls the form for its target's entry directly from now on, an
+        // environment or keeping activation its own handler and any other entry the
+        // out-of-line form, which sorts them out.
         if target.entry != CallEntry::Activates {
-            requicken(ip, lane_script_call_full::<H>);
-            sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
+            let handler: Handler = match target.entry {
+                CallEntry::Environment => lane_script_call_environment::<H>,
+                CallEntry::Keeps => lane_script_call_keeping::<H>,
+                _ => lane_script_call_full::<H>,
+            };
+            requicken(ip, handler);
+            sibling!(handler, r, ip, Carried::script(cx))
         }
         // A receiver whose binding needs the heap takes the out-of-line form, so this
         // handler makes no call and keeps its registers.
@@ -5799,10 +5806,15 @@ script_handler! {
     fn lane_script_call_environment<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let callee = r.get(i.b);
-        let target = vm.script_call_entry(callee).filter(|_| !lane_constructing(vm, callee));
+        let target = vm
+            .script_call_entry(callee)
+            .filter(|_| unsafe { (*cx).script_calls } && !lane_constructing(vm, callee));
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
         let Some(target) = target.map(|target| unsafe { &*target }).filter(|target| target.entry == CallEntry::Environment)
         else {
+            // A site this form serves since `lane_script_call` saw an environment target
+            // calls the full form once its callee differs.
+            requicken(ip, lane_script_call_full::<H>);
             sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
         };
         let Some(this) = lane_call_this(vm, target, r.get(i.c)) else {
@@ -6333,30 +6345,43 @@ lane_handler! {
     fn lane_script_call_keeping<>(cx, r, ip, i, view) {
         match lane_call_keeping_activation(cx, r, ip, i) {
             Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
-            Err(next) => next,
+            Err(Some(next)) => next,
+            // A site this form serves since `lane_script_call` saw a keeping target calls
+            // the full form once its callee keeps nothing.
+            Err(None) => {
+                requicken(ip, lane_script_call_full::<H>);
+                sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
+            }
         }
     }
 }
 
-/// `lane_script_call_keeping`'s activation: the callee's registers and first record, or the
-/// record to continue at. Out of line, as `lane_construct_keeping_activation`.
+/// `lane_script_call_keeping`'s activation: the callee's registers and first record, the
+/// record to continue at, or `None` for a callee whose target keeps nothing, which the full
+/// form calls. Out of line, as `lane_construct_keeping_activation`.
 #[inline(never)]
 fn lane_call_keeping_activation<H: Host>(
     cx: *mut LaneContext<H>,
     r: Registers,
     ip: Ip,
     i: &LaneInstruction,
-) -> Result<(Registers, Ip), Ip> {
+) -> Result<(Registers, Ip), Option<Ip>> {
+    if !unsafe { (*cx).script_calls } {
+        return Err(Some(exit(ip)));
+    }
     let vm = unsafe { vm(cx) };
     let Some(target) = lane_script_target(cx, r.get(i.b)) else {
-        return Err(exit(ip));
+        return Err(None);
     };
+    if !target.forwards() {
+        return Err(None);
+    }
     let receiver = r.get(i.c);
     let Some(this) = lane_call_this(vm, &target, receiver) else {
-        return Err(exit(ip));
+        return Err(Some(exit(ip)));
     };
     let arguments = ActivationArguments::Window(ImmediateLayout::call_window_base(i.imm()));
-    lane_activate_keeping(cx, r, ip, target, arguments, this, false, None)
+    lane_activate_keeping(cx, r, ip, target, arguments, this, false, None).map_err(Some)
 }
 
 lane_handler! {
@@ -6684,10 +6709,56 @@ unsafe fn lane_unmaterialized_arguments<H: Host>(
     }
 }
 
-lane_handler! {
-    /// `ArgumentsLength` of a binding only kept values answer (`Function::forwards_arguments_only`):
-    /// their count, as the object made on entry holds it.
+/// The running keeping activation's kept-value count and its function, when the lane runs
+/// one (`ScriptActivation::forwards`): its values follow its registers in its window, which
+/// `r` names. `None` for a frame or any other activation.
+///
+/// # Safety
+/// `cx` is the running lane's context.
+#[inline(always)]
+unsafe fn lane_keeping_activation<H: Host>(cx: *mut LaneContext<H>) -> Option<(u16, u32)> {
+    if unsafe { (*cx).env }.is_deleted() {
+        return None;
+    }
+    let activation = unsafe { vm(cx) }.lane_stack.activations.last()?;
+    let script = activation.script().filter(|script| script.forwards)?;
+    Some((script.argc, activation.function))
+}
+
+script_handler! {
+    /// `lane_arguments_length_general` in a keeping activation: the count of the values it
+    /// kept, saving no registers.
     fn lane_arguments_length<>(cx, r, ip, i, view) {
+        if let Some((argc, _)) = unsafe { lane_keeping_activation(cx) } {
+            r.set(i.a, Value::integer(i32::from(argc)));
+            next!(cx, r, following(ip), view)
+        }
+        sibling!(lane_arguments_length_general::<H>, r, ip, view)
+    }
+}
+
+script_handler! {
+    /// `lane_argument_get_general` in a keeping activation at an integer index it kept: the
+    /// value after its registers, saving no registers.
+    fn lane_argument_get<>(cx, r, ip, i, view) {
+        if let Some((argc, function)) = unsafe { lane_keeping_activation(cx) }
+            && let Some(index) = r.get(i.b).as_int().and_then(|index| u16::try_from(index).ok()).filter(|index| *index < argc)
+        {
+            // SAFETY: the context's program outlives the lane run.
+            let registers = unsafe { &*(*cx).code }.function(function as usize).registers;
+            r.set(i.a, r.get(registers + index));
+            next!(cx, r, following(ip), view)
+        }
+        sibling!(lane_argument_get_general::<H>, r, ip, view)
+    }
+}
+
+script_handler! {
+    /// `ArgumentsLength` of a binding only kept values answer (`Function::forwards_arguments_only`):
+    /// their count, as the object made on entry holds it. `lane_arguments_length` answers a
+    /// keeping activation first.
+    #[inline(never)]
+    fn lane_arguments_length_general<>(cx, r, ip, i, view) {
         let Some((_, count)) = (unsafe { lane_unmaterialized_arguments(cx, i.imm() as usize) })
         else {
             return exit(ip);
@@ -6697,11 +6768,13 @@ lane_handler! {
     }
 }
 
-lane_handler! {
+script_handler! {
     /// `ArgumentGet` of such a binding at an integer index it holds: the kept value, as the
     /// object made on entry holds it. Any other key takes the general path, which
-    /// materializes the object (`Vm::read_arguments_binding`).
-    fn lane_argument_get<>(cx, r, ip, i, view) {
+    /// materializes the object (`Vm::read_arguments_binding`). `lane_argument_get` answers a
+    /// keeping activation first.
+    #[inline(never)]
+    fn lane_argument_get_general<>(cx, r, ip, i, view) {
         let Some((values, count)) = (unsafe { lane_unmaterialized_arguments(cx, i.imm() as usize) })
         else {
             return exit(ip);
@@ -6890,12 +6963,17 @@ fn lane_activate_environment<H: Host>(
             .add(usize::from(WINDOW_SLOTS))
             .write(std::mem::transmute::<u64, Value>(storage as u64));
         let local = registers.add(held);
-        std::ptr::copy_nonoverlapping(r.0.add(usize::from(arguments)), local, usize::from(argc));
+        // The few values a call passes are copied in place: one pass writes each as its
+        // parameter's local and, after the locals, as the value a frame keeps for legacy
+        // reflection, with no library copy per run.
+        for slot in 0..usize::from(argc) {
+            let value = r.get(arguments + slot as u16);
+            local.add(slot).write(value);
+            local.add(locals + slot).write(value);
+        }
         for slot in usize::from(argc)..locals {
             local.add(slot).write(Value::UNDEFINED);
         }
-        // The values passed, as a frame keeps them for legacy reflection.
-        std::ptr::copy_nonoverlapping(r.0.add(usize::from(arguments)), local.add(locals), usize::from(argc));
         stack.values.set_len(window + held + locals + usize::from(argc));
         Registers(registers)
     };
@@ -6942,6 +7020,7 @@ fn lane_activate_environment<H: Host>(
 /// `entries` starts the entries of a live environment window (`lane_activate_environment`).
 unsafe fn window_environment<H: Host>(
     vm: &mut Vm<H>,
+    code: &ResidualProgram,
     entries: *mut Value,
     function: u32,
     parent: Value,
@@ -6965,22 +7044,23 @@ unsafe fn window_environment<H: Host>(
         for slot in (0..in_place.len()).filter(|slot| window.captured(*slot)) {
             locals.add(slot).write(Value::DELETED);
         }
-        let environment = vm.heap.alloc(Cell::Environment {
-            parent,
-            function,
-            slots,
-            scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
+        // A non-arrow binds its `this` where its closures' arrows find it
+        // (`Vm::captured_lexical_this`), as a frame does when a closure or the body itself
+        // can observe its implicit bindings (`Function::activation_bindings_observable`);
+        // any other scope names only its program, which needs no allocation.
+        let body = code.function(function as usize);
+        let scope = if !body.is_arrow && body.activation_bindings_observable(&code.atoms, &code.functions) {
+            crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
                 program: Some(program.raw()),
                 root_eval_scope: false,
                 binding_site_pc: None,
                 dynamic_bindings: vec![(vm.runtime_atoms.lexical_this, this)].into(),
                 with_objects: Box::default(),
-            }),
-        });
-        let storage = match vm.heap.get(environment) {
-            Some(Cell::Environment { slots, .. }) => slots as *const crate::heap::EnvironmentSlots,
-            _ => unreachable!("the window's environment is an environment cell"),
+            })
+        } else {
+            crate::heap::EnvironmentScopeRef::of_program(program.raw())
         };
+        let (environment, storage) = vm.heap.alloc_environment(parent, function, slots, scope);
         entries.add(usize::from(WINDOW_ENVIRONMENT)).write(environment);
         entries
             .add(usize::from(WINDOW_SLOTS))

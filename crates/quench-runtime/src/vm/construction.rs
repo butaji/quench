@@ -318,7 +318,7 @@ impl<H: Host> Vm<H> {
     fn closure_of_template(&mut self, template: ClosureTemplate, env: Value) -> Value {
         let prototype = template
             .prototype
-            .map(|(parent, _)| self.heap.alloc(Cell::Object(Self::empty_object(parent))));
+            .map(|(parent, _)| self.heap.alloc_object(Self::empty_object(parent)));
         let object = crate::heap::Object::with_property_storage(
             template.function_prototype,
             crate::value_vec::ValueVec::inline_property_storage(template.shape),
