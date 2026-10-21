@@ -6327,7 +6327,28 @@ fn lane_string_or_native_call<H: Host>(
     let args = unsafe { std::slice::from_raw_parts(r.0.add(usize::from(window)), usize::from(argc)) };
     // RegExp exec and test run through `lane_call_native` (`Vm::steady_regexp_call`).
     vm.pure_string_method_call(code, r.get(i.b), receiver, args)
+        .or_else(|| lane_pure_native(vm, r.get(i.b), receiver, args))
         .or_else(|| lane_call_native(cx, r, ip, i))
+}
+
+/// A native call whose common case runs no guest code and observes no frame, answered in
+/// place so the lane's activations need not become frames (`lane_call_native`): a dense
+/// array's `indexOf` (`Vm::dense_index_of`) and `String.fromCharCode` of Numbers, which
+/// allocates its string. `None` leaves any other call to `lane_call_native`.
+#[inline(never)]
+fn lane_pure_native<H: Host>(vm: &mut Vm<H>, callee: Value, receiver: Value, args: &[Value]) -> Option<Value> {
+    let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = vm.heap.function(callee) else {
+        return None;
+    };
+    match *native {
+        Native::ArrayIndexOf => vm.dense_index_of(receiver, args),
+        Native::StringFromCharCode => {
+            let text = vm.from_char_code_numbers(args)?;
+            note_allocation(vm);
+            Some(text)
+        }
+        _ => None,
+    }
 }
 
 /// A lane `Call` of a native that `Native::runs_from_lane` admits, made as the general path
