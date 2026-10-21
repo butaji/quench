@@ -88,6 +88,12 @@ pub trait Host {
         false
     }
 
+    /// Whether `promise_job_boundary` may do anything now; while it is false the VM skips
+    /// the call, and its context, around each Promise job.
+    fn observes_promise_job_boundaries(&self) -> bool {
+        true
+    }
+
     /// A collection has finished, or a full one is starting: a host may return memory the
     /// process no longer needs resident (its read-only pages), which nothing observable
     /// depends on. At these boundaries the code about to run differs from the code that ran.
