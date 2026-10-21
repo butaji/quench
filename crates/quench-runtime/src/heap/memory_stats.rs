@@ -25,6 +25,7 @@ pub struct HeapMemoryComposition {
     pub promise_record_reserved_bytes: usize,
     pub await_record_reserved_bytes: usize,
     pub iterator_record_reserved_bytes: usize,
+    pub string_record_reserved_bytes: usize,
     pub legacy_cell_record_reserved_bytes: usize,
     pub free_slot_metadata_bytes: usize,
     pub slot_size_bytes: usize,
@@ -283,6 +284,7 @@ impl Heap {
             promise_record_reserved_bytes: self.promise_records.allocated_bytes(),
             await_record_reserved_bytes: self.await_records.allocated_bytes(),
             iterator_record_reserved_bytes: self.iterator_records.allocated_bytes(),
+            string_record_reserved_bytes: self.string_records.allocated_bytes(),
             legacy_cell_record_reserved_bytes: 0,
             free_slot_metadata_bytes: self.free_by_slab.capacity() * size_of::<FreeSlotBitmap>()
                 + self.free_slabs.capacity() * size_of::<u32>(),
@@ -350,6 +352,7 @@ impl HeapMemoryComposition {
             + self.promise_record_reserved_bytes
             + self.await_record_reserved_bytes
             + self.iterator_record_reserved_bytes
+            + self.string_record_reserved_bytes
             + self.legacy_cell_record_reserved_bytes
             + self.free_slot_metadata_bytes
             + self.boxed_object_header_bytes

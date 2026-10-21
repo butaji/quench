@@ -76,28 +76,19 @@ impl<H: Host> Vm<H> {
         let target = self.in_loop_call_target(p, callee)?;
         self.profile.call_source(0);
         let window = i.call_window();
-        if !i.returns_from_frame()
-            && target.0 == self.active_program
-            && self.execution_mode == super::ExecutionMode::Compiled
-            && let Some(value) = Vm::<H>::js_jit_compiled_call(
-                &mut self.programs,
-                self.active_program,
-                p,
-                target.1,
-                &self.frames[f].registers[usize::from(window.base)
-                    ..usize::from(window.base) + usize::from(window.count)],
-                self.execution_interrupt.atomic_flag(),
-            )
+        // Collection happens only at back edges, tail calls and explicit host safepoints, none
+        // of which can run while a frame is pushed; afterwards the new frame itself roots the
+        // callee, receiver and arguments.
+        let arguments: *const [Value] = self.register_window(f, window);
+        // SAFETY: the window lies in the caller frame, which the tier's direct call only reads.
+        if let Some(value) =
+            self.js_jit_compiled_call(p, (target.0, target.1), i.returns_from_frame(), unsafe { &*arguments })
         {
             self.write(f, i.result_register(), value);
             return Some(Ok(StepResult::Continue));
         }
         let this = self.read(f, i.register_c());
         self.profile.call_target(1, usize::from(window.count));
-        // Collection happens only at back edges, tail calls and explicit host safepoints, none
-        // of which can run while a frame is pushed; afterwards the new frame itself roots the
-        // callee, receiver and arguments.
-        let arguments: *const [Value] = self.register_window(f, window);
         // SAFETY: see `push_general_user_frame`; the window outlives callee setup.
         self.push_in_loop_call(p, f, pc, target, callee, this, unsafe { &*arguments }, i.result_register())
     }
@@ -348,7 +339,7 @@ impl<H: Host> Vm<H> {
     /// plain array without holes, or an arguments object whose data `length` covers a
     /// hole-free prefix, neither carrying indexed descriptors or sparse elements. `None`
     /// leaves the list to the generic algorithm, whose reads may run guest code.
-    fn dense_apply_arguments(&self, list: Value) -> Option<Vec<Value>> {
+    pub(super) fn dense_apply_arguments(&self, list: Value) -> Option<Vec<Value>> {
         if list.is_null() || list.is_undefined() {
             return Some(Vec::new());
         }
@@ -1490,19 +1481,16 @@ impl<H: Host> Vm<H> {
                 let function_index = i.known_function_index();
                 let argument_start = usize::from(window.base);
                 let argument_end = argument_start + usize::from(window.count);
-                let call_arguments = &self.frames[f].registers[argument_start..argument_end];
-                if !i.returns_from_frame()
-                    && p.kind != crate::bytecode::ProgramKind::Wasm
-                    && self.execution_mode == super::ExecutionMode::Compiled
-                    && let Some(value) = Vm::<H>::js_jit_compiled_call(
-                        &mut self.programs,
-                        self.active_program,
-                        p,
-                        u32::from(function_index),
-                        call_arguments,
-                        self.execution_interrupt.atomic_flag(),
-                    )
-                {
+                let call_arguments: *const [Value] =
+                    &self.frames[f].registers[argument_start..argument_end];
+                // SAFETY: the window lies in the caller frame, which the tier's direct call
+                // only reads.
+                if let Some(value) = self.js_jit_compiled_call(
+                    p,
+                    (self.active_program, u32::from(function_index)),
+                    i.returns_from_frame(),
+                    unsafe { &*call_arguments },
+                ) {
                     self.profile.call_target(1, usize::from(window.count));
                     self.write(f, i.result_register(), value);
                     return Ok(StepResult::Continue);

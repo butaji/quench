@@ -1008,6 +1008,32 @@ impl Heap {
         self.alloc_in_slot(cell, track_young)
     }
 
+    /// `alloc(Cell::Environment { .. })` without the dispatch on the cell's kind, with the
+    /// address of the environment's slot storage, which stays put while it lives. An
+    /// environment's weight is one allocation: it has no prototype, payload or external bytes.
+    pub(crate) fn alloc_environment(
+        &mut self,
+        parent: Value,
+        function: u32,
+        slots: EnvironmentSlots,
+        scope: EnvironmentScopeRef,
+    ) -> (Value, *const EnvironmentSlots) {
+        let cell = Cell::Environment { parent, function, slots, scope };
+        let environment = if cfg!(feature = "profile-aggregate") {
+            self.alloc(cell)
+        } else {
+            self.allocations += 1;
+            self.allocations_since_full = self.allocations_since_full.saturating_add(1);
+            self.total_allocations += 1;
+            self.alloc_in_slot(cell, self.tracks_young_cells())
+        };
+        let storage = match self.get(environment) {
+            Some(Cell::Environment { slots, .. }) => slots as *const EnvironmentSlots,
+            _ => unreachable!("an environment is allocated in a slot"),
+        };
+        (environment, storage)
+    }
+
     /// `alloc(Cell::Object(object))` without the dispatch on the cell's kind, which an
     /// ordinary object's construction knows: a direct record while one is free.
     #[inline(always)]
@@ -1724,7 +1750,7 @@ impl Heap {
             let memory_profile = &mut self.memory_profile;
             let properties = &mut self.properties;
             let payload_bytes = &mut self.payload_bytes;
-            let (object_live, object_freed) = self.object_records.sweep(|record| match record {
+            let (object_live, object_freed) = self.object_records.sweep(full, |record| match record {
                 RecordSweep::Keep(record_id, object) => {
                     if full && object.properties().has_compact_range() {
                         direct_property_owners.push((
@@ -1742,7 +1768,7 @@ impl Heap {
                 }
             });
             let (function_live, function_freed) =
-                self.function_records.sweep(|record| match record {
+                self.function_records.sweep(full, |record| match record {
                     RecordSweep::Keep(record_id, function) => {
                         if full && function.object.properties().has_compact_range() {
                             direct_property_owners.push((
@@ -1761,7 +1787,7 @@ impl Heap {
                 });
             let abandoned_job_contexts = &mut self.abandoned_job_contexts;
             let (promise_live, promise_freed) =
-                self.promise_records.sweep(|record| match record {
+                self.promise_records.sweep(full, |record| match record {
                     RecordSweep::Keep(record_id, promise) => {
                         if full && promise.object.properties().has_compact_range() {
                             direct_property_owners.push((
@@ -1781,9 +1807,9 @@ impl Heap {
                 });
             // An await state owns no arena storage; dropping a dead one frees its unresumed
             // continuation.
-            let (await_live, await_freed) = self.await_records.sweep(|_| {});
+            let (await_live, await_freed) = self.await_records.sweep(false, |_| {});
             let (iterator_live, iterator_freed) =
-                self.iterator_records.sweep(|record| match record {
+                self.iterator_records.sweep(full, |record| match record {
                     RecordSweep::Keep(record_id, iterator) => {
                         if full && iterator.object.properties().has_compact_range() {
                             direct_property_owners.push((
@@ -1800,7 +1826,7 @@ impl Heap {
                         memory_profile.freed_iterator(Value::direct_iterator(_record_id), slots);
                     }
                 });
-            let (string_live, string_freed) = self.string_records.sweep(|record| match record {
+            let (string_live, string_freed) = self.string_records.sweep(full, |record| match record {
                 RecordSweep::Keep(_, string) => {
                     if full {
                         live_payload_bytes += string.flat_unit_bytes();
@@ -1811,7 +1837,7 @@ impl Heap {
                 }
             });
             let mut dead_arrays = Vec::new();
-            let (array_live, array_freed) = self.array_records.sweep(|record| match record {
+            let (array_live, array_freed) = self.array_records.sweep(full, |record| match record {
                 RecordSweep::Keep(record_id, array) => {
                     if full {
                         live_payload_bytes += array_payload_bytes(array);
