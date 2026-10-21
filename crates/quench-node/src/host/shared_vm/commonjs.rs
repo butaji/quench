@@ -1457,45 +1457,6 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ),
     ("_http_server", BuiltinModule::Internal("_http_server")),
     ("node:_http_server", BuiltinModule::Internal("_http_server")),
-    ("_stream_duplex", BuiltinModule::Internal("_stream_duplex")),
-    (
-        "node:_stream_duplex",
-        BuiltinModule::Internal("_stream_duplex"),
-    ),
-    (
-        "_stream_passthrough",
-        BuiltinModule::Internal("_stream_passthrough"),
-    ),
-    (
-        "node:_stream_passthrough",
-        BuiltinModule::Internal("_stream_passthrough"),
-    ),
-    (
-        "_stream_readable",
-        BuiltinModule::Internal("_stream_readable"),
-    ),
-    (
-        "node:_stream_readable",
-        BuiltinModule::Internal("_stream_readable"),
-    ),
-    (
-        "_stream_transform",
-        BuiltinModule::Internal("_stream_transform"),
-    ),
-    (
-        "node:_stream_transform",
-        BuiltinModule::Internal("_stream_transform"),
-    ),
-    ("_stream_wrap", BuiltinModule::Internal("_stream_wrap")),
-    ("node:_stream_wrap", BuiltinModule::Internal("_stream_wrap")),
-    (
-        "_stream_writable",
-        BuiltinModule::Internal("_stream_writable"),
-    ),
-    (
-        "node:_stream_writable",
-        BuiltinModule::Internal("_stream_writable"),
-    ),
     ("_tls_common", BuiltinModule::Internal("_tls_common")),
     ("node:_tls_common", BuiltinModule::Internal("_tls_common")),
     ("_tls_wrap", BuiltinModule::Internal("_tls_wrap")),
@@ -1908,7 +1869,16 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             load(context, &root.join("lib/_http_incoming.js"), Some(parent), EntryGoal::CommonJs)
         }
         BuiltinModule::Internal("dns/promises") => node_library_module(context, "dns.js", "dns/promises.js"),
-        BuiltinModule::Internal(_) => context.object_rooted(),
+        // Node's `_http_*` modules build on its `http_parser` binding, which the native `http`
+        // module does not use; until they are projected from it they stay empty.
+        BuiltinModule::Internal(
+            "_http_agent" | "_http_client" | "_http_common" | "_http_outgoing" | "_http_server",
+        ) => context.object_rooted(),
+        // Every other such builtin is Node's own library module of that name.
+        BuiltinModule::Internal(name) => {
+            let relative = format!("{}.js", name.strip_prefix("node:").unwrap_or(name));
+            node_library_module(context, &relative, &relative)
+        }
         BuiltinModule::Fs => crate::modules::fs_shared_vm::module(context),
         BuiltinModule::InternalUrl => {
             // Node's bootstrap (exposed-window-or-worker.js) installs `URL.createObjectURL`
