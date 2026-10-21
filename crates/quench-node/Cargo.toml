@@ -18,6 +18,10 @@ path = "src/bin/quench-node.rs"
 # On the web lane the size-classed allocator serves the runtime's allocate-and-free pairs
 # without glibc's bin search (express ping 1.6-1.7K -> 2.2-2.4K requests/s on the merged
 # tree, 2026-10-21); merges from the trunk keep it linked here.
+# The JetStream lane (v2-cloud-jet) links it by default too (x86_64 Linux, 4 vCPU,
+# 2026-10-21, Score glibc -> quench-alloc): bigint-noble-ed25519 4.71 -> 8.79, UniPoker 16.1 ->
+# 19.2, typescript-lib 0.15 -> 0.19, stanford-crypto-aes 26.1 -> 28.8, hash-map 16.3 -> 17.1;
+# max RSS within 1 MB but aes 32.3 -> 34.4 MB, all below Bun's except where already above.
 default = ["quench-alloc"]
 profile-memory = ["quench-runtime/profile-memory"]
 verify-replay = ["quench-runtime/verify-replay"]
