@@ -10573,12 +10573,15 @@ fn js_jit_compiles_guarded_int32_identity_arm_and_falls_back_for_other_types() {
               default: return 'other';
             }
           }
-          for (let index = 0; index < 40; index++) {
-            if (hashKey(index) !== index) throw Error('integer fast arm');
+          function exercise() {
+            for (let index = 0; index < 40; index++) {
+              if (hashKey(index) !== index) throw Error('integer fast arm');
+            }
+            if (hashKey(2.5) !== 'fraction') throw Error('fraction fallback');
+            if (hashKey('2') !== 'other') throw Error('type fallback');
+            if (hashKey({ hashCode() { return 7; } }) !== 7) throw Error('object path');
           }
-          if (hashKey(2.5) !== 'fraction') throw Error('fraction fallback');
-          if (hashKey('2') !== 'other') throw Error('type fallback');
-          if (hashKey({ hashCode() { return 7; } }) !== 7) throw Error('object path');
+          exercise();
         "#,
         "js-jit-int32-identity.js",
     ))
@@ -10611,6 +10614,13 @@ fn js_jit_compiles_guarded_int32_identity_arm_and_falls_back_for_other_types() {
             .js_tier(super::program_store::ProgramId::MAIN, function_id),
         Some(super::program_store::JsTierState::Compiled(_))
     ));
+    let Some(super::program_store::JsTierState::Compiled(compiled)) = vm
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, function_id)
+    else {
+        unreachable!("the guarded identity function was compiled above")
+    };
+    assert!(compiled.native_entries() >= 9);
 }
 
 #[test]
@@ -12102,4 +12112,78 @@ fn lane_closures_of_one_function_keep_their_own_lexical_this() {
     let mut vm = Vm::new(RecordingHost(output.clone()));
     vm.execute(&Engine::specialize(source, "lane-closure-this.js").unwrap()).unwrap();
     assert_eq!(output.borrow().as_slice(), ["ab,o0,ab,o1,ab,o2,ab,o3"]);
+}
+
+#[test]
+fn lane_activations_made_frames_by_a_native_call_read_their_own_registers() {
+    // A frameless activation that calls a native becomes a VM frame, in which the lane goes
+    // on: the general steps it then runs in place (computed keys, spreads, object literals)
+    // read and write that frame's registers, not its caller's.
+    let source = r#"
+      function ensure(obj, tag) {
+        for (var i = 0, keys = Object.keys(obj); i < keys.length; i++) {
+          var key = keys[i];
+          var fns = obj[key];
+          if (typeof fns === 'function') obj[key] = { enter: fns, [tag + i]: [i, ...keys] };
+        }
+        return obj;
+      }
+      function visit(n) {
+        var out = [], a = 'a', b = 1.5, c = null;
+        for (var j = 0; j < n; j++) {
+          var visitor = ensure({ x() {}, y: { enter: j } }, 'k');
+          out.push(typeof visitor.x.enter + visitor.x.k0.join('|') + visitor.y.enter + a + b + c);
+        }
+        return out.join(',');
+      }
+      print(visit(3));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "lane-materialized-registers.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["function0|x|y0a1.5null,function0|x|y1a1.5null,function0|x|y2a1.5null"]
+    );
+}
+
+#[test]
+fn lane_raised_errors_unwind_through_callees_of_other_programs() {
+    // A lane step that throws in a callee of another program, pushed in the loop, unwinds to
+    // its caller's handler, which the caller's own program locates.
+    let source = r#"
+      function a() {} function b() {} function c() {} function d() {} function e() {}
+      const other = new Function('xs', 'let n = 0; for (let i = 0; i < xs.length; i++) { n += [...xs[i]].length; } return n;');
+      function run(xs) {
+        try { return other(xs); } catch (error) { return error.constructor.name; }
+      }
+      const out = [];
+      for (let k = 0; k < 4; k++) out.push(run([[1], [2, 3], k & 1 ? [4] : 5]));
+      print(out.join());
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "lane-raised-other-program.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["TypeError,4,TypeError,4"]);
+}
+
+#[test]
+fn promoted_move_coalescing_reads_liveness_of_the_code_it_rewrites() {
+    // Coalescing the copies frame-register promotion leaves runs in rounds that drop `Nop`s;
+    // a round after one must not judge producers by the earlier positions, or the callback
+    // copied into `filter`'s argument window is lost to an earlier call's result.
+    let source = r#"
+      function run(ex) {
+        var f = function (m) { return { d: m }; };
+        Object.defineProperty(ex, "e", { value: 1 });
+        const n = f({ SIGA: 1, b: 2, SIGC: 3 });
+        ex.x = Object.keys(n.d).filter(k => k.startsWith("SIG"));
+        return ex.x.join();
+      }
+      print(run({}));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "promoted-move-rounds.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["SIGA,SIGC"]);
 }

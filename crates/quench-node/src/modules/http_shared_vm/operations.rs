@@ -1057,6 +1057,19 @@ pub(crate) fn response_initialize(
 ) -> Result<RootId, RootedError> {
     let id = argument(context, args.first().copied());
     let response = argument(context, args.get(1).copied());
+    let numeric_id = argument_id(context, Some(id))?;
+    let owner = context.host_weak_root(response)?;
+    let replaced = {
+        let state = context.host_mut().shared_state();
+        let mut host = state.borrow_mut();
+        match host.http.responses.get_mut(&numeric_id) {
+            Some(record) => record.owner.replace(owner),
+            None => Some(owner),
+        }
+    };
+    if let Some(stale) = replaced {
+        context.release_host_weak_root(stale);
+    }
     let data = context.host_function_data()?;
     let key = context.string_rooted("responses");
     let responses = context.get_property_rooted(data, key)?;
@@ -1595,7 +1608,7 @@ pub(crate) fn response_destroy(
     let id = argument_id(context, args.first().copied())?;
     let shared_state = context.host_mut().shared_state();
     let mut host = shared_state.borrow_mut();
-    let (socket, async_id) = {
+    let (socket, async_id, owner) = {
         let Some(response) = host.http.responses.remove(&id) else {
             return Ok(context.undefined());
         };
@@ -1604,7 +1617,7 @@ pub(crate) fn response_destroy(
             host.http.responses.insert(id, response);
             return Ok(context.undefined());
         }
-        (response.socket, response.async_id)
+        (response.socket, response.async_id, response.owner)
     };
     let server_id = host
         .http
@@ -1618,8 +1631,10 @@ pub(crate) fn response_destroy(
     }
     net_shared_vm::close_socket(&mut host.tcp, socket);
     drop(host);
-    for root in crate::modules::async_hooks_shared_vm::take_context_stores(&shared_state, async_id)
-    {
+    if let Some(owner) = owner {
+        context.release_host_weak_root(owner);
+    }
+    for root in crate::modules::async_hooks_shared_vm::retire_context(&shared_state, async_id) {
         context.release_root(root);
     }
     Ok(context.undefined())

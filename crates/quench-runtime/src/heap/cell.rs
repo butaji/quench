@@ -1195,7 +1195,6 @@ impl Native {
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum FunctionKind {
     User(ProgramId, u32),
-    NumericUser(ProgramId, u32),
     Native(Native),
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2903,7 +2902,7 @@ impl FunctionRecord {
     /// The program whose code this function runs, which keeps that program alive.
     pub(crate) fn program(&self) -> Option<ProgramId> {
         match self.kind {
-            FunctionKind::User(program, _) | FunctionKind::NumericUser(program, _) => Some(program),
+            FunctionKind::User(program, _) => Some(program),
             FunctionKind::Native(_) => None,
         }
     }

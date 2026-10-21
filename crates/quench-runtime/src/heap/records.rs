@@ -499,7 +499,14 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
     /// Sweeps by bitmap word. Dead occupied records are transferred to the
     /// callback exactly once; marked records survive and keep their mark bit,
     /// which makes them old for the next minor collection.
-    pub(super) fn sweep(&mut self, mut visit: impl FnMut(RecordSweep<'_, T>)) -> (usize, usize) {
+    /// Frees every occupied, unmarked record through `visit`. Marked records reach `visit`
+    /// only when `visit_live` asks for them: a minor collection's survivors need nothing, so
+    /// it pays for its garbage, not for the old records it keeps.
+    pub(super) fn sweep(
+        &mut self,
+        visit_live: bool,
+        mut visit: impl FnMut(RecordSweep<'_, T>),
+    ) -> (usize, usize) {
         let mut live_count = 0;
         let mut freed_count = 0;
         for (block_index, block) in self.blocks.iter_mut().enumerate() {
@@ -507,8 +514,11 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
                 let occupied = block.occupied[word_index];
                 let marked = block.marked[word_index];
                 debug_assert_eq!(marked & !occupied, 0);
-                let mut live = marked;
                 let mut dead = occupied & !marked;
+                if !visit_live {
+                    live_count += marked.count_ones() as usize;
+                }
+                let mut live = if visit_live { marked } else { 0 };
                 while live != 0 {
                     let bit = live.trailing_zeros() as usize;
                     let record_index = word_index * OCCUPANCY_WORD_BITS + bit;
@@ -714,7 +724,7 @@ mod tests {
 
         let mut kept = Vec::new();
         let mut dropped = Vec::new();
-        let (live_count, freed_count) = arena.sweep(|record| match record {
+        let (live_count, freed_count) = arena.sweep(true, |record| match record {
             RecordSweep::Keep(id, value) => kept.push((id, value.clone())),
             RecordSweep::Dead(id, value) => dropped.push((id, value)),
         });
@@ -739,7 +749,7 @@ mod tests {
         }
 
         let mut dead_ids = Vec::new();
-        let (live_count, freed_count) = arena.sweep(|record| match record {
+        let (live_count, freed_count) = arena.sweep(true, |record| match record {
             RecordSweep::Keep(_, _) => {}
             RecordSweep::Dead(id, _) => dead_ids.push(id),
         });
@@ -751,7 +761,7 @@ mod tests {
         for &live in &[ids[1], ids[4], ids[5]] {
             assert!(arena.mark(live));
         }
-        assert_eq!(arena.sweep(|_| {}), (3, 0));
+        assert_eq!(arena.sweep(true, |_| {}), (3, 0));
         assert_eq!(arena.try_insert(11).unwrap(), ids[3]);
         assert_eq!(arena.try_insert(12).unwrap(), ids[2]);
         assert_eq!(arena.try_insert(13).unwrap(), ids[0]);
