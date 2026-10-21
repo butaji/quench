@@ -735,7 +735,7 @@ impl<H: Host> Vm<H> {
                     self.heap.update_root(key, property_key);
                     let key = match self.heap.get(property_key).cloned() {
                         Some(Cell::Symbol(_)) => PropertyKey::symbol(property_key),
-                        _ if let Some(name) = self.heap.string(property_key).cloned()  => PropertyKey::string(self.intern_js_atom(&name)),
+                        _ if let Some(atom) = self.string_key_atom(property_key) => PropertyKey::string(atom),
                         _ => unreachable!("ToPropertyKey returns a string or symbol"),
                     };
                     let object = self.heap.root_value(result).unwrap();

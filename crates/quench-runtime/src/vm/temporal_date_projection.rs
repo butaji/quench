@@ -288,8 +288,7 @@ impl<H: Host> Vm<H> {
         new_target: Value,
         default: Value,
     ) -> Result<Value, JsError> {
-        let atom = self.prototype_atom();
-        let prototype = self.get_property(p, new_target, atom)?;
+        let prototype = self.constructor_prototype_value(p, new_target)?;
         Ok(if self.is_object_like(prototype) {
             prototype
         } else {

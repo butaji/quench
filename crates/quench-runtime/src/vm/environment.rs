@@ -186,7 +186,17 @@ impl<H: Host> Vm<H> {
         {
             return Err(self.reference_error(p, "this binding is unavailable".into()));
         }
-        for index in 0..=frame {
+        // The owning constructor's callers resolve none of its bindings: only its own
+        // activation and those above it (arrows and eval code it encloses) can inherit the
+        // update. Without a running owner, every activation is considered.
+        let first = owner
+            .and_then(|(program, function, _)| {
+                (0..=frame).rev().find(|&index| {
+                    self.frames[index].program == program && self.frames[index].function == function
+                })
+            })
+            .unwrap_or(0);
+        for index in first..=frame {
             // An ordinary activation's receiver is authoritative even when it
             // omits unobservable lexical-this bindings. Only activations that
             // resolve this through an environment can inherit super()'s update.
@@ -2169,14 +2179,14 @@ impl<H: Host> Vm<H> {
             && self.global_scope_names_resolve_statically(p)
     }
 
-    /// Whether the executing activation is a nested function running in the global
-    /// environment whose names, with every enclosing function's, the compiler resolved
-    /// statically: a by-name load there can only denote a global binding.
+    /// Whether the executing activation's names, with every enclosing function's, the compiler
+    /// resolved statically where only global bindings lie beyond them
+    /// (`ProgramStore::unresolved_names_are_global`): a by-name load there can only denote a
+    /// global binding.
     #[inline(always)]
     fn global_scope_names_resolve_statically(&self, p: &ResidualProgram) -> bool {
         self.frames.last().is_some_and(|frame| {
-            frame.function != super::ROOT_FUNCTION_ID
-                && self.programs.runs_in_global_scope(frame.program)
+            self.programs.unresolved_names_are_global(frame.program, frame.function)
                 && p.function_get(frame.function as usize)
                     .is_some_and(|function| function.names_resolve_statically(p))
         })
