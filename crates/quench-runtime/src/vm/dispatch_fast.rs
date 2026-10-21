@@ -2089,7 +2089,7 @@ macro_rules! lane_return_value {
             next!(cx, registers, next, view)
         }
         if !unsafe { (*cx).inline_calls } && unsafe { (*cx).script_calls } {
-            return lane_return_script_frame(cx, ip, value);
+            return lane_return_script_frame(cx, ip, value, false);
         }
         return lane_frame_return(unsafe { vm(cx) }, ip, value);
     }};
@@ -6666,9 +6666,10 @@ script_handler! {
     /// lexical binding shadows it (`Vm::names_resolve_to_global_object`: a function whose
     /// unresolved names are global (`ProgramStore::unresolved_names_are_global`) and resolve
     /// statically, and a name no internal binding owns) takes `lane_load_global_name`; any
-    /// other always takes the general path.
+    /// other always takes the general path. A `LoadNameCall` (`CALL`) also writes the call's
+    /// receiver, `undefined` for a binding of the global object's environment.
     #[inline(never)]
-    fn lane_load_name_first<>(cx, r, ip, i, view) {
+    fn lane_load_name_first<CALL: bool>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let vm = unsafe { vm(cx) };
@@ -6683,8 +6684,8 @@ script_handler! {
                 function.names_resolve_statically(code)
             });
         if global {
-            requicken(ip, lane_load_global_name::<H>);
-            sibling!(lane_load_global_name::<H>, r, ip, Carried::script(cx))
+            requicken(ip, lane_load_global_name::<H, CALL>);
+            sibling!(lane_load_global_name::<H, CALL>, r, ip, Carried::script(cx))
         }
         requicken(ip, lane_exit::<H>);
         exit(ip)
@@ -6695,7 +6696,7 @@ script_handler! {
     /// A `LoadName` of a global object property (`lane_load_name_first`) that no global
     /// lexical binding shadows: the global object's cached field (`Vm::cached_field_hit`).
     /// Any other read, including a cache miss, takes the general path, which caches it.
-    fn lane_load_global_name<>(cx, r, ip, i, view) {
+    fn lane_load_global_name<CALL: bool>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let vm = unsafe { vm(cx) };
@@ -6709,6 +6710,9 @@ script_handler! {
             return exit(ip);
         };
         r.set(i.a, value);
+        if CALL {
+            r.set(i.b, Value::UNDEFINED);
+        }
         next!(cx, r, following(ip), Carried::script(cx))
     }
 }
@@ -7035,6 +7039,10 @@ fn lane_native_complete<H: Host>(
     // registers and caller are read again.
     if i.a & crate::bytecode::RETURN_REGISTER != 0 {
         let Some((registers, next, view)) = lane_complete_activation(cx, value) else {
+            // A frame of a script run retires in place, as its `Return` would.
+            if unsafe { !(*cx).inline_calls && (*cx).script_calls } {
+                return lane_return_script_frame(cx, ip, value, true);
+            }
             return lane_frame_return(vm, ip, value);
         };
         if is_exit(next) {
@@ -9651,21 +9659,26 @@ fn lane_enter_script_frame<H: Host>(cx: *mut LaneContext<H>, frame: usize) -> Ip
 /// which the general loop returns from at that call (`lane_frame_return`). A call into
 /// another program returns to the caller's, as the loop's return restores it.
 #[inline(never)]
-fn lane_return_script_frame<H: Host>(cx: *mut LaneContext<H>, ip: Ip, mut value: Value) -> Ip {
+fn lane_return_script_frame<H: Host>(
+    cx: *mut LaneContext<H>,
+    ip: Ip,
+    mut value: Value,
+    mut retired: bool,
+) -> Ip {
     let vm = unsafe { vm(cx) };
     let pending = unsafe { &mut *(*cx).pending };
     let mut frame = unsafe { (*cx).frame };
     let mut exit_ip = ip;
-    let mut retired = false;
     loop {
         let returns_here = pending
             .last()
             .is_some_and(|call| call.caller + 1 == frame && frame + 1 == vm.frames.len());
         if !returns_here {
+            // A record that has not run yet runs again on the general path; one that ran (a
+            // call made, `retired`) completes the loop's own frame with the value there.
             if !retired {
                 return exit(exit_ip);
             }
-            // The loop's own frame completes with the value: the general loop returns it.
             return lane_frame_return(vm, exit_ip, value);
         }
         let mut call = pending.pop().expect("a pending call names the returning frame");
@@ -9708,7 +9721,7 @@ fn lane_return_frame<H: Host>(r: Registers, ip: Ip) -> Ip {
     let i = unsafe { &*ip };
     let vm = unsafe { vm(cx) };
     if !unsafe { (*cx).inline_calls } && unsafe { (*cx).script_calls } {
-        return lane_return_script_frame(cx, ip, r.get(i.a));
+        return lane_return_script_frame(cx, ip, r.get(i.a), false);
     }
     let pending = unsafe { &mut *(*cx).pending };
     // An in-loop `new` substitutes its receiver for a non-object result;
@@ -9848,7 +9861,8 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::CallKnown => Some(lane_call_known::<H>),
         Op::Call => Some(lane_script_call::<H>),
         Op::Construct => Some(lane_script_construct::<H>),
-        Op::LoadName => Some(lane_load_name_first::<H>),
+        Op::LoadName => Some(lane_load_name_first::<H, false>),
+        Op::LoadNameCall => Some(lane_load_name_first::<H, true>),
         Op::MakeObject2 => Some(lane_make_object2::<H>),
         Op::MakeClosure => Some(lane_make_closure::<H>),
         Op::MakeObjectLiteral => Some(lane_make_object_literal::<H>),
