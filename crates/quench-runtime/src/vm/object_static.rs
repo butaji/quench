@@ -239,9 +239,8 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         descriptor: Value,
-        name: &str,
+        atom: Atom,
     ) -> Result<Option<Value>, JsError> {
-        let atom = self.intern_atom(name);
         if let Some(found) = self.plain_property_lookup(descriptor, PropertyKey::string(atom)) {
             return Ok(found);
         }
