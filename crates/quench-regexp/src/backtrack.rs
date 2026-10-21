@@ -1160,6 +1160,37 @@ impl Program {
         sticky: bool,
         budget: Option<usize>,
     ) -> Result<Option<Found>, Exhausted> {
+        self.search(text, first, sticky, budget, |registers| {
+            registers[..2 * self.capture_count]
+                .chunks_exact(2)
+                .map(|bounds| (bounds[0] != UNSET).then(|| bounds[0]..bounds[1]))
+                .collect()
+        })
+    }
+
+    /// `find`'s match bounds alone: its captures are never collected.
+    pub(crate) fn find_bounds<T: Text + ?Sized>(
+        &self,
+        text: &T,
+        first: usize,
+        sticky: bool,
+        budget: Option<usize>,
+    ) -> Result<Option<Range<usize>>, Exhausted> {
+        Ok(self
+            .search(text, first, sticky, budget, |_| Vec::new())?
+            .map(|found| found.start..found.end))
+    }
+
+    /// `find`, with the captures of a match built from its registers by `captures`.
+    #[inline(always)]
+    fn search<T: Text + ?Sized>(
+        &self,
+        text: &T,
+        first: usize,
+        sticky: bool,
+        budget: Option<usize>,
+        captures: impl FnOnce(&[usize]) -> Vec<Option<Range<usize>>>,
+    ) -> Result<Option<Found>, Exhausted> {
         if let (Some(length), Some(_)) = (self.literal_length, text.bytes()) {
             let last = if sticky { first } else { text.len() };
             return Ok(self.next_start(text, first, last).map(|start| Found {
@@ -1197,10 +1228,7 @@ impl Program {
             let Some((start, end)) = found else {
                 return Ok(None);
             };
-            let captures = registers[..2 * self.capture_count]
-                .chunks_exact(2)
-                .map(|bounds| (bounds[0] != UNSET).then(|| bounds[0]..bounds[1]))
-                .collect();
+            let captures = captures(registers);
             Ok(Some(Found {
                 start,
                 end,

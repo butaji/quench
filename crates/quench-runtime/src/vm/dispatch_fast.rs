@@ -6190,15 +6190,18 @@ fn lane_native_value<H: Host>(
                         .and_then(|index| text.units().get(index))
                         .map_or(Value::number(f64::NAN), |unit| Value::number(unit.into())),
                 ),
-                _ => lane_string_or_native_call(cx, ip, i, callee, receiver, args),
+                _ => lane_string_or_native_call(cx, ip, callee, receiver, args),
             }
         }
         FunctionKind::Native(native @ (Native::MapGet | Native::MapHas | Native::SetHas)) => {
             let key = args.first().copied().unwrap_or(Value::UNDEFINED);
             vm.pure_collection_lookup(native, receiver, key)
-                .or_else(|| lane_string_or_native_call(cx, ip, i, callee, receiver, args))
+                .or_else(|| lane_string_or_native_call(cx, ip, callee, receiver, args))
         }
-        _ => lane_string_or_native_call(cx, ip, i, callee, receiver, args),
+        FunctionKind::Native(
+            native @ (Native::RegExpExec | Native::RegExpTest | Native::StringReplace),
+        ) => lane_regexp_call(cx, ip, i, native, callee, receiver, args),
+        _ => lane_string_or_native_call(cx, ip, callee, receiver, args),
     }
 }
 
@@ -6231,12 +6234,16 @@ fn lane_native_complete<H: Host>(
     next!(cx, r, following(ip), Carried::script(cx))
 }
 
-/// A lane native call that `lane_native_call` does not make inline: a pure string method or
-/// `RegExp.prototype.exec` in place, else the native through `lane_call_native`.
-fn lane_string_or_native_call<H: Host>(
+/// `RegExp.prototype.exec` or `test`, or `String.prototype.replace` of a RegExp, made in
+/// place when it runs no guest code and raises nothing, so it observes no frame
+/// (`Vm::steady_regexp_call`, `Vm::steady_string_replace`); any other such call goes on as
+/// `lane_string_or_native_call` makes it.
+#[inline(never)]
+fn lane_regexp_call<H: Host>(
     cx: *mut LaneContext<H>,
     ip: Ip,
     i: &LaneInstruction,
+    native: Native,
     callee: Value,
     receiver: Value,
     args: &[Value],
@@ -6244,9 +6251,40 @@ fn lane_string_or_native_call<H: Host>(
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
-    // RegExp exec and test run through `lane_call_native` (`Vm::steady_regexp_call`).
+    let result_used = ImmediateLayout::lane_call_result_used(i.imm());
+    let steady = match (native, args) {
+        (Native::StringReplace, _) => vm.steady_string_replace(code, native, receiver, args, result_used),
+        (_, [subject, ..]) => vm.steady_regexp_call(code, native, receiver, *subject, result_used),
+        _ => None,
+    };
+    let Some(result) = steady else {
+        return lane_string_or_native_call(cx, ip, callee, receiver, args);
+    };
+    // The call's allocations may make a collection due, which the lane's safepoints take.
+    note_allocation(vm);
+    match result {
+        Ok(value) => Some(value),
+        Err(error) => {
+            vm.lane_raised = Some(error);
+            None
+        }
+    }
+}
+
+/// A lane native call that `lane_native_call` does not make inline: a pure string method in
+/// place, else the native through `lane_call_native`.
+fn lane_string_or_native_call<H: Host>(
+    cx: *mut LaneContext<H>,
+    ip: Ip,
+    callee: Value,
+    receiver: Value,
+    args: &[Value],
+) -> Option<Value> {
+    let vm = unsafe { vm(cx) };
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
     vm.pure_string_method_call(code, callee, receiver, args)
-        .or_else(|| lane_call_native(cx, ip, i, callee, receiver, args))
+        .or_else(|| lane_call_native(cx, ip, callee, receiver, args))
 }
 
 /// A lane `Call` of a native that `Native::runs_from_lane` admits, made as the general path
@@ -6259,7 +6297,6 @@ fn lane_string_or_native_call<H: Host>(
 fn lane_call_native<H: Host>(
     cx: *mut LaneContext<H>,
     ip: Ip,
-    i: &LaneInstruction,
     callee: Value,
     receiver: Value,
     args: &[Value],
@@ -6278,46 +6315,6 @@ fn lane_call_native<H: Host>(
         && let Some(result) = super::number::math_unary(native, value)
     {
         return Some(Value::number(result));
-    }
-    // A RegExp exec or test that runs no guest code and raises nothing observes no frame
-    // either (`Vm::steady_regexp_call`).
-    if let Some(&subject) = args.first()
-        // SAFETY: the context's program outlives the lane run.
-        && let Some(result) = vm.steady_regexp_call(
-            unsafe { &*(*cx).code },
-            native,
-            receiver,
-            subject,
-            ImmediateLayout::lane_call_result_used(i.imm()),
-        )
-    {
-        note_allocation(vm);
-        return match result {
-            Ok(value) => Some(value),
-            Err(error) => {
-                vm.lane_raised = Some(error);
-                None
-            }
-        };
-    }
-    if args.len() >= 2
-        && let Some(result) = vm.steady_string_replace(
-            // SAFETY: the context's program outlives the lane run.
-            unsafe { &*(*cx).code },
-            native,
-            receiver,
-            args,
-            ImmediateLayout::lane_call_result_used(i.imm()),
-        )
-    {
-        note_allocation(vm);
-        return match result {
-            Ok(value) => Some(value),
-            Err(error) => {
-                vm.lane_raised = Some(error);
-                None
-            }
-        };
     }
     if !unsafe { (*cx).script_calls } {
         return None;

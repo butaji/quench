@@ -323,6 +323,7 @@ impl<H: Host> Vm<H> {
             function_name_shapes: _,
             typeof_names: _,
             closure_templates: _,
+            enumerable_keys: _,
             capture_walks: _,
             shape_attribute_memo: _,
             name_atom_memo: _,
