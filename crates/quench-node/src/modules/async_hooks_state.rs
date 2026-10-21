@@ -134,6 +134,10 @@ impl SharedAsyncHooksState {
         }
     }
 
+    pub(crate) fn tracks_promise_lifecycle_resources(&self) -> bool {
+        self.registry.tracks_promise_lifecycle_resources()
+    }
+
     /// Node internal/async_hooks getDefaultTriggerAsyncId: a negative slot
     /// means inherit executionAsyncId; scope never changes execution or ALS.
     /// Node gives Promises async resources only while its promise hook is installed.
@@ -169,5 +173,64 @@ impl SharedAsyncHooksState {
         }
         self.store_references.remove(&store);
         true
+    }
+}
+
+impl SharedAsyncHooksState {
+    /// The identity counters and cached module of a bootstrap that ran no async resource:
+    /// a restored process continues numbering where the snapshot's left off.
+    pub(crate) fn write_snapshot(&self, writer: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> {
+        use crate::host::startup_snapshot::{require_quiescent, HostSnap};
+        let Self {
+            identity,
+            module,
+            registry,
+            default_trigger_async_id,
+            context_triggers,
+            job_resources,
+            next_job_id,
+            job_stack,
+            promise_resources,
+            promise_resources_pruned_epoch: _,
+            scoped_resource,
+            local_stores,
+            store_references,
+            destroyed_resources,
+            enabled_local_storages,
+        } = self;
+        let cells = &identity.0;
+        require_quiescent(
+            cells.current_async_id.get() == ROOT_ASYNC_ID
+                && cells.current_trigger_id.get() == ROOT_TRIGGER_ASYNC_ID
+                && cells.current_store.get() == StoreContext::Resource(ROOT_ASYNC_ID)
+                && default_trigger_async_id.is_none()
+                && scoped_resource.is_none(),
+            "an async execution context",
+        )?;
+        require_quiescent(
+            context_triggers.is_empty()
+                && job_resources.is_empty()
+                && job_stack.is_empty()
+                && promise_resources.is_empty()
+                && local_stores.is_empty()
+                && store_references.is_empty()
+                && destroyed_resources.is_empty()
+                && enabled_local_storages.is_empty(),
+            "an async resource",
+        )?;
+        cells.next_async_id.get().write(writer)?;
+        cells.next_local_storage_id.get().write(writer)?;
+        next_job_id.write(writer)?;
+        module.write(writer)?;
+        registry.write_snapshot(writer)
+    }
+
+    pub(crate) fn read_snapshot(&mut self, reader: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<(), String> {
+        use crate::host::startup_snapshot::HostSnap;
+        self.identity.0.next_async_id.set(HostSnap::read(reader)?);
+        self.identity.0.next_local_storage_id.set(HostSnap::read(reader)?);
+        self.next_job_id = HostSnap::read(reader)?;
+        self.module = HostSnap::read(reader)?;
+        self.registry.read_snapshot(reader)
     }
 }

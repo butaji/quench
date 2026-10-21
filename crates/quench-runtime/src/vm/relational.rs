@@ -105,7 +105,7 @@ impl<H: Host> Vm<H> {
                     Ok(false)
                 });
             }
-            let key_atom = vm.heap.string(key).cloned().map(|name| vm.intern_js_atom(&name));
+            let key_atom = vm.string_key_atom(key);
             if matches!(vm.heap.get(object), Some(Cell::TypedArray { .. }))
                 && let Some(name) = vm.heap.string(key).cloned()
             {
@@ -144,8 +144,8 @@ impl<H: Host> Vm<H> {
                             return Ok(true);
                         }
                     }
-                    let descriptor = vm.object_get_own_property_descriptor(p, &[current, key])?;
-                    if !descriptor.is_undefined() {
+                    // [[GetOwnProperty]] itself: presence needs no descriptor object.
+                    if vm.ordinary_get_own_property(p, current, key)?.is_some() {
                         return Ok(true);
                     }
                     let next = vm.object_get_prototype_of(p, current)?;
@@ -310,19 +310,38 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// `key in object` for a string key naming an existing plain atom (`plain_named_key`) on a
-    /// chain the plain walk reads (`plain_property_lookup`): HasProperty, which runs no guest
-    /// code there. `None` for any other operator, key or object, and for a found accessor,
-    /// which that walk declines.
-    pub(super) fn plain_in(&self, op: u32, key: Value, object: Value) -> Option<bool> {
-        if op != oxc_ast::ast::BinaryOperator::In as u32 {
+    /// `key in object` for a string key `plain_named_key` admits, along a chain of ordinary
+    /// objects (`Heap::ordinary_object`) up to `null`: HasProperty, whether a shape along it
+    /// names the key, data property or accessor alike, which runs no guest code. `None`
+    /// leaves any other case (a key a side-table descriptor holds, a namespace, a proxy, an
+    /// exotic object, a primitive operand) to the general path.
+    pub(super) fn plain_in(&mut self, op: u32, key: Value, object: Value) -> Option<bool> {
+        if op != oxc_ast::ast::BinaryOperator::In as u32 || !self.heap.is_string(key) {
             return None;
         }
-        let atom = self.lookup_js_atom(self.heap.string(key)?)?;
+        self.heap.ordinary_object(object)?;
+        let atom = self.string_key_atom(key)?;
         if !self.plain_named_key(atom) {
             return None;
         }
-        Some(self.plain_property_lookup(object, PropertyKey::string(atom))?.is_some())
+        let property = PropertyKey::string(atom);
+        let mut current = object;
+        loop {
+            let data = self.heap.ordinary_object(current)?;
+            if data.is_module_namespace() || data.deferred_module().is_some() {
+                return None;
+            }
+            if self.property_shape_slot(data.shape(), property).is_some() {
+                return Some(true);
+            }
+            if data.has_side_descriptors() && self.descriptors.contains_key(&(current, property)) {
+                return None;
+            }
+            current = data.proto();
+            if current.is_null() {
+                return Some(false);
+            }
+        }
     }
 
     /// `left instanceof right` when it reduces to a prototype-chain walk; `None` for any

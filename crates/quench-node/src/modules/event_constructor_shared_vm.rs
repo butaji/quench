@@ -290,3 +290,5 @@ pub(crate) fn capture_deliver(
     }
     result
 }
+
+crate::host::startup_snapshot::host_snap_struct!(EmitterKeys { capture, constructor });

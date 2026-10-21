@@ -9,9 +9,10 @@ use oxc_span::GetSpan;
 use std::{collections::BTreeSet, path::Path};
 
 pub(super) fn names(path: &Path, source: &str) -> Vec<String> {
-    let resolver = super::commonjs::commonjs_resolver();
     let mut names = BTreeSet::new();
-    collect(path, source, &resolver, &mut BTreeSet::new(), &mut names);
+    super::commonjs::with_commonjs_resolver(|resolver| {
+        collect(path, source, resolver, &mut BTreeSet::new(), &mut names);
+    });
     names.remove("default");
     names.remove("module.exports");
     names.into_iter().collect()
@@ -30,21 +31,13 @@ fn collect(
     if !visited.insert(path.to_path_buf()) {
         return;
     }
-    let allocator = oxc_allocator::Allocator::default();
-    let parsed = oxc_parser::Parser::new(&allocator, source, oxc_span::SourceType::cjs()).parse();
-    let mut exports = Exports {
-        source,
-        names: BTreeSet::new(),
-        reexports: BTreeSet::new(),
-        required: std::collections::BTreeMap::new(),
-    };
-    exports.visit_program(&parsed.program);
+    let exports = file_exports(source);
     names.extend(exports.names);
     for specifier in exports.reexports {
         let Some(base) = path.parent() else {
             continue;
         };
-        let Ok(resolution) = resolver.resolve(base, &specifier) else {
+        let Ok(resolution) = super::commonjs::resolve_kept(resolver, |resolver| resolver.resolve(base, &specifier)) else {
             continue;
         };
         let resolved = resolution.full_path();
@@ -57,6 +50,76 @@ fn collect(
         }
     }
 }
+/// What the static recognizers read from one file's text, as cjs-module-lexer returns it:
+/// the names it exports and the specifiers it re-exports, each in order.
+struct FileExports {
+    names: Vec<String>,
+    reexports: Vec<String>,
+}
+
+/// The compile-cache name a file's `FileExports` is kept under, keyed by its exact text.
+const FILE_EXPORTS_NAME: &str = "\0quench:commonjs-exports";
+
+/// `FileExports` of `source`, kept across runs: an ES module importing a CommonJS package
+/// otherwise parsed each of its files on every run.
+fn file_exports(source: &str) -> FileExports {
+    let entry = super::commonjs::text_facts_cache().entry(FILE_EXPORTS_NAME, &[source]);
+    if let Some(found) = entry.as_ref().and_then(|entry| entry.load()).and_then(|bytes| FileExports::decode(bytes.as_ref().as_ref())) {
+        return found;
+    }
+    let allocator = oxc_allocator::Allocator::default();
+    let parsed = oxc_parser::Parser::new(&allocator, source, oxc_span::SourceType::cjs()).parse();
+    let mut exports = Exports {
+        source,
+        names: BTreeSet::new(),
+        reexports: BTreeSet::new(),
+        required: std::collections::BTreeMap::new(),
+    };
+    exports.visit_program(&parsed.program);
+    let found = FileExports { names: exports.names.into_iter().collect(), reexports: exports.reexports.into_iter().collect() };
+    if let Some(entry) = entry {
+        entry.store(&found.encode());
+    }
+    found
+}
+
+impl FileExports {
+    /// Each list as its length, then each string as its byte length and bytes (u32 LE).
+    fn encode(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        for list in [&self.names, &self.reexports] {
+            bytes.extend_from_slice(&(list.len() as u32).to_le_bytes());
+            for text in list {
+                bytes.extend_from_slice(&(text.len() as u32).to_le_bytes());
+                bytes.extend_from_slice(text.as_bytes());
+            }
+        }
+        bytes
+    }
+
+    fn decode(mut bytes: &[u8]) -> Option<Self> {
+        let number = |bytes: &mut &[u8]| -> Option<usize> {
+            let (head, rest) = bytes.split_first_chunk::<{ size_of::<u32>() }>()?;
+            *bytes = rest;
+            usize::try_from(u32::from_le_bytes(*head)).ok()
+        };
+        let list = |bytes: &mut &[u8]| -> Option<Vec<String>> {
+            let count = number(bytes)?;
+            (0..count)
+                .map(|_| {
+                    let length = number(bytes)?;
+                    let (text, rest) = bytes.split_at_checked(length)?;
+                    *bytes = rest;
+                    String::from_utf8(text.to_vec()).ok()
+                })
+                .collect()
+        };
+        let names = list(&mut bytes)?;
+        let reexports = list(&mut bytes)?;
+        bytes.is_empty().then_some(Self { names, reexports })
+    }
+}
+
 struct Exports<'s> {
     source: &'s str,
     names: BTreeSet<String>,

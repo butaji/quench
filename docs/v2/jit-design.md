@@ -799,3 +799,159 @@ the benchmark driver's `quickHash`; the hot generated React functions `Ru` and
 candidate limit, while `Eu` uses captures and calls the current JS tier does not
 lower. These screens have one round each and do not qualify a win. See
 `evidence/jit-jetstream3-2026-10-20/web-ssr-baseline/README.md`.
+
+The guard-census follow-up attributes the same coverage gap more precisely:
+`Ru` entered the interpreter 15,525 times with 831 bytecodes, 47 calls, 42
+capture loads, allocations, and throws; `Eu` entered 15,524 times with 53
+bytecodes, 3 captures, a call, and exception-capable control flow. `Ru` is
+over the bytecode budget, while `Eu` fails activation eligibility before
+lowering. Their 49 and 2 conditional branch sites are census counts, not proof
+of redundant guards. Current evidence therefore gives no sound small pure
+predicate region for ISOP or lazy block versioning. Keep the existing tier
+architecture and exact interpreter fallback; next useful work is to improve
+native coverage of the renderer's effectful call/field path or find a smaller
+hot subregion with measured payback. The diagnostic report is from one
+instrumented round and is not performance evidence; details are in
+`evidence/jit-jetstream3-2026-10-20/guard-census-attribution/`.
+
+## Cached `this` field returns
+
+The JIT-mode entry has a narrow direct-getter matcher for a return-marked
+`GetField` from fixed `this`, followed by the compiler's unreachable fallback
+tail. On a cached data-property hit, it returns the value through an ordinary
+`Return` opcode. Accessors, proxies, cache misses, and non-fixed `this` use the
+interpreter from bytecode zero. Diagnostic counters confirmed 10,799,999 fast
+entries each for `get key` and `get value`, out of 10.8 million entries per
+function; the one initial cache miss per function stayed interpreted. The
+JetStream round validated output. One corrected-matcher production round
+scored 3.76 at 74.13 MiB; Bun scored 245.20 and Node 136.06. That sample and
+the saved parent sample (1.02 at 73.82 MiB) are unpaired, and the peer scores
+varied substantially between runs. They do not establish an optimization or a
+win. The earlier one-round score delta used a matcher that had zero fast
+entries and is noise. Tightening the candidate to the observed four-word
+shape produced a similar one-round sample (3.75 / 74.06 MiB); this also remains
+unpaired evidence. Corrected diagnostic data and screen reports are in
+`evidence/jit-jetstream3-2026-10-20/this-field-return-screen/`.
+
+The matcher now also accepts a three-bytecode return-marked `GetField(this)`
+getter with its unreachable fallback tail. In `sync-fs`, this covers
+`File.get data()`: one diagnostic counted 36,951,119 guarded returns from
+36,951,120 entries, with the first cache miss interpreted. Across three clean
+production samples, the candidate median Score was 2.86 versus 2.59 for its
+parent control, while median peak RSS stayed near 72.2 MiB for both. Median
+Quench wall time fell from 123.38 s to 112.25 s. The first two samples were
+grouped by binary and the peer scores moved substantially, so this is a small
+directional screen, not qualification. Quench still trails Bun and Node by a
+wide margin. Details and reports are in
+`evidence/jit-jetstream3-2026-10-21/sync-fs-getter/`.
+
+The `async-fs` memory profile exposed a separate host allocation problem:
+`NodeHost` created a VM `WeakRef` and host weak root for each Promise even when
+no async-hooks `init` or `destroy` callback was enabled. I kept Promise IDs and
+job-context propagation intact, while omitting that weakly tracked lifecycle
+record when neither hook kind has listeners. An uninstrumented production one-round JIT
+screen validated output and reported 3.44 Score / 891 MiB RSS for Quench, versus
+73.60 / 210 MiB for Node and 128.96 / 67 MiB for Bun. The earlier Quench
+production one-round screen was 1.31 / 7.26 GiB. This is a large memory
+reduction but still loses on both metrics; the samples are diagnostic, not a
+paired qualification. Raw reports and the reproduction command are in
+`evidence/jit-jetstream3-2026-10-21/async-fs-promise-lifecycle/`.
+
+The async-fs diagnostic also found 259,198 hot `CountVisitor` method entries
+that update one own numeric field and return `undefined`. I added a guarded
+JIT-mode fast entry for that exact bytecode shape; it uses the existing
+successful own-field load/store caches, and only skips interpretation for a
+fixed receiver with a Number value. The iteration diagnostic confirmed 59,119
+fast `visitFile` returns and 200,079 fast `visitDir` returns, with one cold
+interpreter entry per method. A seven-sample microbenchmark measured median
+57.86 ms for one million guarded calls versus 193.68 ms for the interpreted
+shape. The production async-fs screen scored 3.09 at 891 MiB; one earlier
+screen scored 3.44 at the same RSS, with substantial peer-score variation.
+This confirms a local speed path but not a JetStream Score gain. Quench remains
+well behind Node and Bun. Details and reports are in
+`evidence/jit-jetstream3-2026-10-21/async-fs-field-increment/`.
+
+## Full JetStream 3 coverage screen
+
+A one-round screen of the complete suite produced valid matching output on 33
+of 34 fixtures; `argon2-wasm` hit the 600-second per-engine timeout for
+Quench. Across the valid fixtures, Quench's geometric mean score was 8.46% of
+Node and 5.81% of Bun. The largest valid score gaps were `sqlite3-wasm`,
+`espree-wtb`, `typescript-lib`, and `async-fs`. Peak RSS also remains a major
+problem on `doxbee-promise` (966 MiB), `doxbee-async` (1004 MiB), and
+`async-fs` (891 MiB), while Quench uses less memory than peers on several
+other workloads. These single rounds are diagnostic screens, not
+qualification.
+
+A three-round glibc allocator screen tried `MALLOC_TRIM_THRESHOLD_=0` on
+`doxbee-promise` and `doxbee-async`. Median peak RSS was unchanged (within
+0.01%) in both fixtures. Quench Score rose 3.8–4.3%, but large peer timing
+drift between sequential screens makes that inconclusive. Aggressive trim
+is not retained as a runtime setting. Raw reports are in
+`evidence/jit-jetstream3-2026-10-21/doxbee-glibc-trim/`.
+
+The focused `typescript-lib` profile counted 28.9 million function entries,
+3.93 million native entries, 89 promotions, and 43 successful native
+compilations. The highest-cost work is in closure/call-heavy functions and
+functions above the current 256-instruction limit. The static guard census
+counts branch and type-check sites, but these profiles do not show meaningful
+redundant-guard coverage. This points to execution coverage and dynamic call,
+closure, and object costs as higher priorities than ISOP or other Boolean
+rewriting. Keep ISOP as a bounded offline experiment until a matched fixture
+shows an actual score gain. Full reports and reproduction commands are in
+`evidence/jit-jetstream3-2026-10-21/full-suite-screen/`.
+
+## SQLite Wasm execution profile
+
+The `sqlite3-wasm` diagnostic scored 0.25 / 162.4 MiB RSS for Quench, versus
+25.96 / 67.6 MiB for Node and 12.26 / 89.4 MiB for Bun. This agrees with the
+full-suite screen's 0.27 score. The instrumented workload compiled 2,517 of
+2,533 functions in its largest module, emitting 8.04 MB of code in 24.7 s;
+across module instances it recorded 23,033 native functions, 28.0 MB of code,
+69.7 s cumulative compilation, 26.0 million native entry requests, and 2.23
+million compiled-to-VM reference callouts. It reports zero compiled import
+callouts. This points toward generated-code throughput, module compilation,
+and reference-call boundaries as the next Wasm-side diagnostics. It does not
+justify changing the existing tier or cache policy without a matched A/B.
+Report and reproduction details are in
+`evidence/jit-jetstream3-2026-10-21/sqlite-wasm-screen/`.
+
+The same-artifact reference-body cache was then screened on SQLite in three
+paired rounds. Cache-on scored 0.30 versus 0.32 off (paired ratio 0.897,
+95% interval 0.841–0.938); RSS fell only 0.38% (ratio 0.9962,
+0.9928–0.9985). The cache worsened score and remains opt-in. This was a
+diagnostic screen with a dirty-source provenance flag caused by widening the
+bench runner's fixture validation; both arms used the same production runtime
+binary. The runner now permits this matched screen for either `tsf-wasm` or
+`sqlite3-wasm`. Reports are in
+`evidence/jit-jetstream3-2026-10-21/sqlite-reference-body-cache/`.
+
+## Numeric hash-map entry loop
+
+The observed 23-instruction `_findKeyEntry` loop has an opt-in bounded JIT-mode
+entry path for numeric keys (`QUENCH_JS_JIT_NUMERIC_FIND=1`). It checks cached
+own fields, supports present dense and sparse array data, resolves only
+owned/shared lexical captures, and uses an already-compiled same-program
+numeric `equals`. It returns through the ordinary bytecode `Return` and leaves
+the frame untouched on every failed guard. The path polls interrupts and falls
+back after 256 chain entries.
+
+A one-round diagnostic validated the fixture and counted 53,999,968 fast
+returns out of 54 million entries; the first cache miss used the interpreter.
+A clean one-round screen scored 3.61 at 74.07 MiB and 125.32 seconds, versus
+Bun 108.18 / 99.03 MiB / 1.75 seconds and Node 124.44 / 159.59 MiB / 1.79
+seconds. Quench used less RSS, but the score remains far behind and the single
+round is not a matched comparison. This is coverage evidence, not a benchmark
+win. Reports are in
+`evidence/jit-jetstream3-2026-10-21/numeric-find-loop/`.
+
+The matcher now caches its last positive program/function result, avoiding a
+bytecode rescan at every hot entry. A later one-round screen was directionally
+faster (4.52 / 74.17 MiB / 111.36 s), but Node and Bun scores moved from 124.44
+and 108.18 to 155.13 and 175.49 as well. The screens are unpaired and do not
+establish a score win.
+
+An interleaved same-binary three-pair screen compared the path enabled and
+disabled. Disabled was faster in every pair (105.48 vs 126.62 s, 110.01 vs
+117.55 s, and 114.85 vs 127.91 s) with effectively unchanged RSS. The
+high-coverage loop therefore stays opt-in rather than shipping as the default.

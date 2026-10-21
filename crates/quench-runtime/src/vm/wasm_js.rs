@@ -515,13 +515,7 @@ impl<H: Host> Vm<H> {
             self.set_builtin_value_named(namespace, interface.name, constructor)?;
         }
         self.install_wasm_errors(program, namespace)?;
-        let js_tag = self.heap.alloc(Cell::WasmTag {
-            declarations: crate::WasmTypes::from_functions([wasmparser::FuncType::new(
-                [wasmparser::ValType::EXTERNREF],
-                [],
-            )]),
-            ty: 0,
-        });
+        let js_tag = self.heap.alloc(js_tag_cell());
         self.wasm_js.js_tag = js_tag;
         let atom = self.intern_atom("JSTag");
         self.set_property_with_attributes(
@@ -1955,4 +1949,20 @@ impl<H: Host> Vm<H> {
             _ => Err(self.type_error(p, "receiver is not a WebAssembly.Global".into())),
         }
     }
+}
+
+/// `WebAssembly.JSTag`'s type: a tag whose one `externref` parameter carries a JavaScript
+/// exception through Wasm. Every realm makes the same one.
+pub(crate) fn js_tag_type() -> (crate::WasmTypes, u32) {
+    let declarations = crate::WasmTypes::from_functions([wasmparser::FuncType::new(
+        [wasmparser::ValType::EXTERNREF],
+        [],
+    )]);
+    (declarations, 0)
+}
+
+/// `WebAssembly.JSTag`'s cell (`js_tag_type`).
+pub(crate) fn js_tag_cell() -> Cell {
+    let (declarations, ty) = js_tag_type();
+    Cell::WasmTag { declarations, ty }
 }

@@ -186,7 +186,17 @@ impl<H: Host> Vm<H> {
         {
             return Err(self.reference_error(p, "this binding is unavailable".into()));
         }
-        for index in 0..=frame {
+        // The owning constructor's callers resolve none of its bindings: only its own
+        // activation and those above it (arrows and eval code it encloses) can inherit the
+        // update. Without a running owner, every activation is considered.
+        let first = owner
+            .and_then(|(program, function, _)| {
+                (0..=frame).rev().find(|&index| {
+                    self.frames[index].program == program && self.frames[index].function == function
+                })
+            })
+            .unwrap_or(0);
+        for index in first..=frame {
             // An ordinary activation's receiver is authoritative even when it
             // omits unobservable lexical-this bindings. Only activations that
             // resolve this through an environment can inherit super()'s update.
@@ -1696,6 +1706,40 @@ impl<H: Host> Vm<H> {
         self.owned_capture(unsafe { &*slots }, root, slot)
     }
 
+    /// A capture that can be read from an owned or shared environment slot after applying the same
+    /// functionless-layer skipping as `capture`, without projected property lookup.
+    pub(super) fn jit_owned_capture(
+        &mut self,
+        frame: usize,
+        depth: u16,
+        slot: u16,
+    ) -> Option<Value> {
+        if let Some(value) = self.cached_direct_capture(frame, depth, slot) {
+            return Some(value);
+        }
+        let env = self.capture_env(frame, depth)?;
+        let Some(Cell::Environment {
+            function,
+            scope,
+            ..
+        }) = self.heap.get(env)
+        else {
+            return None;
+        };
+        let root = *function == super::ROOT_FUNCTION_ID;
+        if root && !self.root_environment_slot_is_binding(scope.program(), slot) {
+            return None;
+        }
+        let Some(value) = self
+            .heap
+            .environment_slot(env, usize::from(slot))
+            .filter(|value| !value.is_deleted())
+        else {
+            return None;
+        };
+        Some(value)
+    }
+
     #[cold]
     #[inline(never)]
     fn walked_capture(
@@ -2135,16 +2179,16 @@ impl<H: Host> Vm<H> {
             && self.global_scope_names_resolve_statically(p)
     }
 
-    /// Whether the executing activation is a nested function running in the global
-    /// environment whose names, with every enclosing function's, the compiler resolved
-    /// statically: a by-name load there can only denote a global binding.
+    /// Whether the executing activation's names, with every enclosing function's, the compiler
+    /// resolved statically where only global bindings lie beyond them
+    /// (`ProgramStore::unresolved_names_are_global`): a by-name load there can only denote a
+    /// global binding.
     #[inline(always)]
     fn global_scope_names_resolve_statically(&self, p: &ResidualProgram) -> bool {
         self.frames.last().is_some_and(|frame| {
-            frame.function != super::ROOT_FUNCTION_ID
-                && self.programs.runs_in_global_scope(frame.program)
+            self.programs.unresolved_names_are_global(frame.program, frame.function)
                 && p.function_get(frame.function as usize)
-                    .is_some_and(|function| function.names_resolve_statically(&p.functions, &p.atoms))
+                    .is_some_and(|function| function.names_resolve_statically(p))
         })
     }
 
@@ -2556,14 +2600,16 @@ fn direct_store_owner<'p>(
     program: super::ProgramId,
     function: u32,
     scope: &crate::heap::EnvironmentScopeRef,
-) -> Option<&'p crate::bytecode::FunctionSlot> {
+) -> Option<&'p crate::bytecode::Function> {
     if function == super::ROOT_FUNCTION_ID
         || function == u32::MAX
         || scope.program().is_some_and(|owner| owner != program.raw())
     {
         return None;
     }
-    p.functions.get(function as usize)
+    // Read on demand: an environment restored from a startup snapshot can outlive its
+    // function's record in this process.
+    p.function_get(function as usize)
 }
 
 /// The `Vm::capture_walks` entry a walk from `env` to `depth` uses.

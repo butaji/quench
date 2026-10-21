@@ -402,7 +402,7 @@ pub(crate) fn poll(
                         };
                         let socket_object =
                             runtime.object_rooted().map_err(|error| error.to_string())?;
-                        let request = match request_object(
+                        let head = match request_head(
                             runtime,
                             message.method,
                             message.target,
@@ -411,7 +411,7 @@ pub(crate) fn poll(
                             message.raw_headers,
                             socket_object,
                         ) {
-                            Ok(request) => request,
+                            Ok(head) => head,
                             Err(error) => {
                                 runtime.release_root(socket_object);
                                 return Err(error);
@@ -430,7 +430,7 @@ pub(crate) fn poll(
                         let readable = match runtime.call_rooted(
                             incoming_factory,
                             undefined,
-                            &[request, body, open, transport, server_side],
+                            &[head.as_slice(), &[body, open, transport, server_side]].concat(),
                         ) {
                             Ok(readable) => readable,
                             Err(error) => {
@@ -438,7 +438,7 @@ pub(crate) fn poll(
                                 if let Some(exception) = error.exception {
                                     runtime.release_root(exception);
                                 }
-                                runtime.release_root(request);
+                                release_roots(runtime, &head);
                                 runtime.release_root(body);
                                 runtime.release_root(open);
                                 runtime.release_root(transport);
@@ -448,7 +448,7 @@ pub(crate) fn poll(
                                 return Err(message);
                             }
                         };
-                        runtime.release_root(request);
+                        release_roots(runtime, &head);
                         runtime.release_root(body);
                         runtime.release_root(open);
                         runtime.release_root(transport);
@@ -476,13 +476,16 @@ pub(crate) fn poll(
                                 return Err(message);
                             }
                         };
-                        let diagnostic_message = match diagnostics_message(
-                            runtime,
-                            readable,
-                            response,
-                            server_root,
-                            socket_object,
-                        ) {
+                        // The start message is made only for a channel with subscribers, as
+                        // Node's server publishes it only then (`hasSubscribers`).
+                        let subscribed = crate::modules::diagnostics_channel_shared_vm::channel_has_subscribers(
+                            &shared_state.borrow(),
+                            REQUEST_START_CHANNEL,
+                        );
+                        let diagnostic_message = match subscribed
+                            .then(|| diagnostics_message(runtime, readable, response, server_root, socket_object))
+                            .transpose()
+                        {
                             Ok(message) => message,
                             Err(error) => {
                                 runtime.release_root(readable);
@@ -499,12 +502,15 @@ pub(crate) fn poll(
                                 shared_state,
                                 request_async_id,
                             );
-                            let diagnostic_result = crate::modules::diagnostics_channel_shared_vm::publish_named_runtime(
-                                runtime,
-                                program,
-                                "http.server.request.start",
-                                diagnostic_message,
-                            );
+                            let diagnostic_result = match diagnostic_message {
+                                Some(message) => crate::modules::diagnostics_channel_shared_vm::publish_named_runtime(
+                                    runtime,
+                                    program,
+                                    REQUEST_START_CHANNEL,
+                                    message,
+                                ),
+                                None => Ok(()),
+                            };
                             match diagnostic_result {
                                 Ok(()) => emit_event(
                                     runtime,
@@ -516,7 +522,9 @@ pub(crate) fn poll(
                                 Err(error) => Err(error),
                             }
                         };
-                        runtime.release_root(diagnostic_message);
+                        if let Some(message) = diagnostic_message {
+                            runtime.release_root(message);
+                        }
                         runtime.release_root(readable);
                         runtime.release_root(response);
                         runtime.release_root(id);
@@ -836,7 +844,7 @@ fn deliver_client_response_head(
     request_root: RootId,
     message: super::protocol::ResponseMessage,
 ) -> Result<RootId, String> {
-    let response = response_object(
+    let head = response_head(
         runtime,
         message.status,
         message.message,
@@ -856,7 +864,7 @@ fn deliver_client_response_head(
     let readable = match runtime.call_rooted(
         incoming_factory,
         undefined,
-        &[response, body, open, exchange_id],
+        &[head.as_slice(), &[body, open, exchange_id]].concat(),
     ) {
         Ok(readable) => readable,
         Err(error) => {
@@ -864,7 +872,7 @@ fn deliver_client_response_head(
             if let Some(exception) = error.exception {
                 runtime.release_root(exception);
             }
-            runtime.release_root(response);
+            release_roots(runtime, &head);
             runtime.release_root(body);
             runtime.release_root(open);
             runtime.release_root(exchange_id);
@@ -873,7 +881,7 @@ fn deliver_client_response_head(
         }
     };
     let emitted = emit_event(runtime, program, request_root, "response", &[readable]);
-    runtime.release_root(response);
+    release_roots(runtime, &head);
     runtime.release_root(body);
     runtime.release_root(open);
     runtime.release_root(exchange_id);
@@ -1557,7 +1565,10 @@ fn emit(
     }
 }
 
-fn request_object(
+/// A server request's head as the incoming-message factory's leading arguments
+/// (`incoming::MessageHead`), after marking the connection's socket object readable and
+/// writable.
+fn request_head(
     runtime: &mut Runtime<NodeHost>,
     method: String,
     path: String,
@@ -1565,31 +1576,26 @@ fn request_object(
     _headers: Vec<(String, String)>,
     raw_headers: Vec<(String, String)>,
     socket: RootId,
-) -> Result<RootId, String> {
-    let request = runtime.object_rooted().map_err(|error| error.to_string())?;
-    set_text(runtime, request, "method", &method)?;
-    set_text(runtime, request, "url", &path)?;
-    set_text(runtime, request, "httpVersion", &version)?;
-    let (major, minor) = version
-        .split_once('.')
-        .map(|(major, minor)| (major.parse().unwrap_or(1), minor.parse().unwrap_or(1)))
-        .unwrap_or((1, 1));
-    set_number(runtime, request, "httpVersionMajor", major as f64)?;
-    set_number(runtime, request, "httpVersionMinor", minor as f64)?;
-    let raw_headers = raw_header_array(runtime, raw_headers)?;
-    set_named(runtime, request, "rawHeaders", raw_headers)?;
+) -> Result<Vec<RootId>, String> {
     // IncomingMessage consumers use socket.readable to distinguish a fully
     // received message from a finished socket. This connection remains
     // readable after the request framing has completed, just as Node's
     // keep-alive socket does.
     set_bool(runtime, socket, "readable", true)?;
     set_bool(runtime, socket, "writable", true)?;
-    let socket = duplicate_root(runtime, socket)?;
-    set_named(runtime, request, "socket", socket)?;
-    set_bool(runtime, request, "complete", true)?;
-    set_bool(runtime, request, "readable", true)?;
-    Ok(request)
+    super::incoming::MessageHead {
+        request: Some((method, path)),
+        status: None,
+        version,
+        raw_headers,
+        socket: Some(socket),
+        complete: true,
+    }
+    .arguments(runtime)
 }
+
+/// The diagnostics channel a server's request start publishes to.
+const REQUEST_START_CHANNEL: &str = "http.server.request.start";
 
 fn diagnostics_message(
     runtime: &mut Runtime<NodeHost>,
@@ -1627,25 +1633,37 @@ fn duplicate_root(runtime: &mut Runtime<NodeHost>, root: RootId) -> Result<RootI
     Ok(runtime.root(value))
 }
 
-fn response_object(
+/// A client response's head as the incoming-message factory's leading arguments
+/// (`incoming::MessageHead`).
+fn response_head(
     runtime: &mut Runtime<NodeHost>,
     status: u16,
     message: String,
     _headers: Vec<(String, String)>,
     raw_headers: Vec<(String, String)>,
     complete: bool,
-) -> Result<RootId, String> {
-    let response = runtime.object_rooted().map_err(|error| error.to_string())?;
-    set_number(runtime, response, "statusCode", status as f64)?;
-    set_text(runtime, response, "statusMessage", &message)?;
-    set_text(runtime, response, "httpVersion", "1.1")?;
-    let raw_headers = raw_header_array(runtime, raw_headers)?;
-    set_named(runtime, response, "rawHeaders", raw_headers)?;
-    set_bool(runtime, response, "complete", complete)?;
-    Ok(response)
+) -> Result<Vec<RootId>, String> {
+    super::incoming::MessageHead {
+        request: None,
+        status: Some((status, message)),
+        version: CLIENT_RESPONSE_VERSION.to_owned(),
+        raw_headers,
+        socket: None,
+        complete,
+    }
+    .arguments(runtime)
 }
 
-fn raw_header_array(
+/// The HTTP version a client response reports.
+const CLIENT_RESPONSE_VERSION: &str = "1.1";
+
+fn release_roots(runtime: &mut Runtime<NodeHost>, roots: &[RootId]) {
+    for root in roots {
+        runtime.release_root(*root);
+    }
+}
+
+pub(super) fn raw_header_array(
     runtime: &mut Runtime<NodeHost>,
     raw_headers: Vec<(String, String)>,
 ) -> Result<RootId, String> {

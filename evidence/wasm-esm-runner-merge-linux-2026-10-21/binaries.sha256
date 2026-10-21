@@ -1,0 +1,6 @@
+111ccb23fcf5e3e36ea933bbb779da457fa08b8960fe9e9cc9ba56ab3a493977  bin/quench-node
+9fcda04480553b4e4fc63be892328d15f01c8aa4d84d30dc0485aea525659567  cm/coremark-minimal-mvp.wasm
+d358f73d22dca2a9f280047eb9b9a6fef06f8e9c997e5a313595c45cc1002f2d  cm/target/release/bm
+caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943  node26/bin/node
+3731388a93dd56c67ba776bac578f114c7e08bf7fb4e49f0b62fe30f15c7f2f6  bin/quench-node (acd849678 merge)
+e08a9a8ba9feedfb7448125a79b1862fec7d9d8fae8e7380dbfdca8db6c3315e  bin/quench-node (4974bb439)

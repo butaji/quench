@@ -10,6 +10,21 @@ pub(crate) mod esm_wasm;
 pub(crate) mod policy_projection;
 pub(crate) use commonjs::source_kind;
 
+thread_local! {
+    /// The import resolver, kept as `commonjs::with_commonjs_resolver` keeps the require one.
+    static IMPORT_RESOLVER: oxc_resolver::Resolver = oxc_resolver::Resolver::new(oxc_resolver::ResolveOptions {
+        extensions: vec![".mjs".into(), ".js".into(), ".json".into(), ".cjs".into()],
+        main_files: vec!["index".into()],
+        condition_names: vec!["node".into(), "import".into(), "default".into()],
+        ..Default::default()
+    });
+}
+
+/// Runs `use_resolver` with the resolver of an ES module's imports.
+pub(crate) fn with_import_resolver<R>(use_resolver: impl FnOnce(&oxc_resolver::Resolver) -> R) -> R {
+    IMPORT_RESOLVER.with(use_resolver)
+}
+
 pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
     quench_runtime::host_functions![
         method "workerConstruct" (1) => crate::modules::worker_threads_shared_vm::construct,
@@ -1061,6 +1076,11 @@ impl quench_runtime::Host for NodeHost {
         crate::host::resident_pages::release_read_only_pages();
     }
 
+    /// The snapshot is a tracked read-only mapping (`startup_snapshot::load_or_schedule`).
+    fn snapshot_bytes_read(bytes: &[u8]) {
+        crate::host::resident_pages::release_tracked_bytes(bytes);
+    }
+
     fn kept_compiled_program(&mut self, name: &str, parts: &[&str]) -> Option<quench_runtime::KeptBytes> {
         self.compile_cache.entry(name, parts)?.load()
     }
@@ -1069,6 +1089,20 @@ impl quench_runtime::Host for NodeHost {
             entry.store(bytes);
         }
     }
+    /// A decoded program after bootstrap (the entry and its modules, a builtin or library
+    /// module loaded on first use) releases what loading it touched, as its compilation would
+    /// have at its phase boundary: with the compile cache warm, a run otherwise reaches no
+    /// release between bootstrap and its first collection (CoreMark as a Wasm ES module,
+    /// static x86_64 unbolted, 2026-10-21: max RSS 4404 -> 3412 KiB; through
+    /// `WebAssembly.instantiate`, 4920 -> 4016). Bootstrap's own programs decode back to back,
+    /// where a release after each only refaulted the same loader code (an empty script's run
+    /// 11 -> 18 ms).
+    fn cached_program_decoded(&mut self) {
+        if self.bootstrapped {
+            crate::host::resident_pages::release_read_only_code_and_data();
+        }
+    }
+
     fn proper_tail_calls(&self) -> bool {
         false
     }
@@ -1250,26 +1284,25 @@ impl quench_runtime::Host for NodeHost {
         let path = match path {
             Some(path) => path,
             None => {
-                let resolver = oxc_resolver::Resolver::new(oxc_resolver::ResolveOptions {
-                    extensions: vec![".mjs".into(), ".js".into(), ".json".into(), ".cjs".into()],
-                    main_files: vec!["index".into()],
-                    condition_names: vec!["node".into(), "import".into(), "default".into()],
-                    ..Default::default()
-                });
                 let resolution_specifier = if internal {
                     format!("./{specifier}")
                 } else {
                     specifier.to_owned()
                 };
-                let resolution = match resolver.resolve(&base, &resolution_specifier) {
-                    Ok(resolution) => resolution,
-                    Err(oxc_resolver::ResolveError::Specifier(_)) => return Ok(None),
-                    Err(error) => return Err(esm_errors::unresolved(&resolver, error, specifier, &base, &referrer_path)),
+                let resolved = with_import_resolver(|resolver| {
+                    match commonjs::resolve_kept(resolver, |resolver| resolver.resolve(&base, &resolution_specifier)) {
+                        Ok(resolution) => Ok(Some(resolution.full_path())),
+                        Err(oxc_resolver::ResolveError::Specifier(_)) => Ok(None),
+                        Err(error) => Err(esm_errors::unresolved(resolver, error, specifier, &base, &referrer_path)),
+                    }
+                })?;
+                let Some(path) = resolved else {
+                    return Ok(None);
                 };
-                resolution.full_path()
+                path
             }
         };
-        let path = std::fs::canonicalize(&path).unwrap_or(path);
+        let path = self.real_path(path);
         if !internal {
             if let Some(error) = esm_errors::unloadable(&path) {
                 return Err(error);
@@ -1301,9 +1334,9 @@ impl quench_runtime::Host for NodeHost {
             return Ok(Some(quench_runtime::ModuleSource::text(name, source)));
         }
         let source = if extension == "json" {
-            String::from_utf8_lossy(&bytes).into_owned()
+            commonjs::source_text(&bytes).into_owned()
         } else {
-            let kind = Self::source_kind(&path)?;
+            let kind = commonjs::source_kind_of_real(&path)?;
             if kind == quench_runtime::SourceKind::Module {
                 String::from_utf8(bytes)
                     .map_err(|error| format!("module {} is not UTF-8: {error}", path.display()))?
@@ -1315,7 +1348,7 @@ impl quench_runtime::Host for NodeHost {
                 );
                 source.push_str("export { __quenchModule as 'module.exports' };\n");
                 for (index, export) in
-                    commonjs_exports::names(&path, &String::from_utf8_lossy(&bytes))
+                    commonjs_exports::names(&path, &commonjs::source_text(&bytes))
                         .into_iter()
                         .enumerate()
                 {
@@ -1492,6 +1525,16 @@ impl quench_runtime::Host for NodeHost {
         commonjs::initialize(context)?;
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_commonjs");
+        context.host_mut().bootstrapped = true;
+        Ok(())
+    }
+
+    fn resume(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
+        crate::host::resident_pages::release_read_only_pages();
+        context.scoped(crate::modules::process_shared_vm::refresh_identity)?;
+        context.scoped(crate::modules::performance_binding_shared_vm::refresh_time_origins)?;
+        commonjs::finish_initialize(context)?;
+        context.host_mut().bootstrapped = true;
         Ok(())
     }
 }

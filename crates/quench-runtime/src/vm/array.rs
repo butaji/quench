@@ -530,18 +530,48 @@ impl<H: Host> Vm<H> {
         true
     }
 
-    /// `define_array_literal_element` at a literal's length, the definition every element of
-    /// a literal without elisions makes: the element joins the dense storage. A literal is
-    /// unreachable from guest code until it is complete, so no prototype observes the index.
-    /// `false` leaves any other definition to `define_array_literal_element`.
-    pub(super) fn append_literal_element(&mut self, array: Value, index: usize, value: Value) -> bool {
-        if self.dense_array_length(array) != Some(index) || index >= MAX_ARRAY_LENGTH {
+    /// `define_array_literal_element` into a literal's dense storage: the hole `MakeArray`
+    /// left at `index` (`Vm::hole_array`), or the next element at the literal's length. A
+    /// literal is unreachable from guest code until it is complete, so no prototype observes
+    /// the index, and CreateDataProperty stores the value as its own element. `false` leaves
+    /// any other definition to `define_array_literal_element`.
+    pub(super) fn define_literal_element(&mut self, array: Value, index: usize, value: Value) -> bool {
+        let Some(length) = self.dense_array_length(array) else {
+            return false;
+        };
+        if index > length || index >= MAX_ARRAY_LENGTH {
             return false;
         }
         let Some(object) = self.heap.array_store_mut(array, value) else {
             return false;
         };
-        super::index::mutable_array_elements(object.elements_mut()).push(value);
+        let elements = super::index::mutable_array_elements(object.elements_mut());
+        if index == length {
+            elements.push(value);
+        } else {
+            elements[index] = value;
+        }
+        true
+    }
+
+    /// ArrayAccumulation's CreateDataPropertyOrThrow of `values` at a dense literal's next
+    /// indices (`define_literal_element` of each at the literal's length) as one append.
+    /// `false` leaves the literal untouched.
+    pub(super) fn append_literal_elements(&mut self, array: Value, values: &[Value]) -> bool {
+        let Some(length) = self.dense_array_length(array) else {
+            return false;
+        };
+        if length.checked_add(values.len()).is_none_or(|end| end > MAX_ARRAY_LENGTH) {
+            return false;
+        }
+        let Some(object) = self.heap.array_mut(array) else {
+            unreachable!("matched an array above");
+        };
+        let elements = super::index::mutable_array_elements(object.elements_mut());
+        let capacity = elements.capacity();
+        elements.extend_from_slice(values);
+        let grown = elements.capacity() - capacity;
+        self.heap.charge_payload_growth(grown * size_of::<Value>());
         true
     }
 

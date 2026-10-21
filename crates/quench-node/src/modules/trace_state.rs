@@ -331,3 +331,31 @@ impl Drop for EnvironmentSpan {
         self.state.borrow_mut().trace.end_span(self.index);
     }
 }
+
+impl TraceState {
+    /// The categories' buffers and handles the bootstrap made; the process's start, options
+    /// and output file are its own.
+    pub(crate) fn write_snapshot(&self, writer: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> {
+        use crate::host::startup_snapshot::{require_quiescent, HostSnap};
+        let Self {
+            started: _,
+            cli_categories: _,
+            enabled,
+            next_handle,
+            path: _,
+            file_pattern: _,
+            category_buffers,
+            events,
+            environment_id: _,
+        } = self;
+        require_quiescent(enabled.is_empty() && events.is_empty(), "trace events")?;
+        next_handle.write(writer)?;
+        category_buffers.write(writer)
+    }
+    pub(crate) fn read_snapshot(&mut self, reader: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<(), String> {
+        use crate::host::startup_snapshot::HostSnap;
+        self.next_handle = HostSnap::read(reader)?;
+        self.category_buffers = HostSnap::read(reader)?;
+        Ok(())
+    }
+}

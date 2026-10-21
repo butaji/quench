@@ -1939,7 +1939,12 @@ pub(super) const UV_DIRENT_FIFO: i32 = 4;
 pub(super) const UV_DIRENT_SOCKET: i32 = 5;
 pub(super) const UV_DIRENT_CHAR: i32 = 6;
 pub(super) const UV_DIRENT_BLOCK: i32 = 7;
+/// libuv's Windows-only open flags, which are no bits elsewhere.
 const UV_FS_O_FILEMAP: i32 = 0;
+const UV_FS_O_TEMPORARY: i32 = 0;
+const UV_FS_O_SHORT_LIVED: i32 = 0;
+const UV_FS_O_SEQUENTIAL: i32 = 0;
+const UV_FS_O_RANDOM: i32 = 0;
 const UV_FS_COPYFILE_EXCL: i32 = 1;
 const UV_FS_COPYFILE_FICLONE: i32 = 2;
 const UV_FS_COPYFILE_FICLONE_FORCE: i32 = 4;
@@ -1974,6 +1979,10 @@ const FS_CONSTANT_VALUES: &[(&str, i32)] = &[
     ("O_CREAT", libc::O_CREAT),
     ("O_EXCL", libc::O_EXCL),
     ("UV_FS_O_FILEMAP", UV_FS_O_FILEMAP),
+    ("UV_FS_O_TEMPORARY", UV_FS_O_TEMPORARY),
+    ("UV_FS_O_SHORT_LIVED", UV_FS_O_SHORT_LIVED),
+    ("UV_FS_O_SEQUENTIAL", UV_FS_O_SEQUENTIAL),
+    ("UV_FS_O_RANDOM", UV_FS_O_RANDOM),
     ("O_NOCTTY", libc::O_NOCTTY),
     ("O_TRUNC", libc::O_TRUNC),
     ("O_APPEND", libc::O_APPEND),
@@ -2023,6 +2032,10 @@ const FS_CONSTANT_VALUES: &[(&str, i32)] = &[
     ("S_IRUSR", S_IRUSR),
     ("S_IWUSR", S_IWUSR),
     ("UV_FS_O_FILEMAP", UV_FS_O_FILEMAP),
+    ("UV_FS_O_TEMPORARY", UV_FS_O_TEMPORARY),
+    ("UV_FS_O_SHORT_LIVED", UV_FS_O_SHORT_LIVED),
+    ("UV_FS_O_SEQUENTIAL", UV_FS_O_SEQUENTIAL),
+    ("UV_FS_O_RANDOM", UV_FS_O_RANDOM),
     ("UV_FS_COPYFILE_EXCL", UV_FS_COPYFILE_EXCL),
     ("COPYFILE_EXCL", UV_FS_COPYFILE_EXCL),
     ("UV_FS_COPYFILE_FICLONE", UV_FS_COPYFILE_FICLONE),
@@ -2885,6 +2898,29 @@ fn read_into_unsafe_buffer(context: &mut NativeContext<'_, NodeHost>, bytes: Vec
     context.call_rooted(slice, buffer, &[start, end])
 }
 
+/// Whether `options` is the string `utf8` or `utf-8` and Node's option policy for it would
+/// observe nothing. `getOptions(options, defaults)` then copies `defaults`, sets the encoding
+/// (which `assertEncoding` accepts) and reads `signal`; `validateReadFileBufferOptions` reads
+/// `buffer`. Where the plain `defaults` finds neither key along its prototype chain (a lookup
+/// that runs no guest code), those reads return `undefined`, so `defaults` given the
+/// encoding stands for the copy.
+fn utf8_encoding_option(
+    context: &mut NativeContext<'_, NodeHost>,
+    options: RootId,
+    defaults: RootId,
+) -> Result<bool, RootedError> {
+    if !matches!(context.string_text(options)?.as_deref(), Some("utf8" | "utf-8")) {
+        return Ok(false);
+    }
+    for name in ["signal", "buffer"] {
+        let key = context.string_rooted(name);
+        if context.has_property_rooted(defaults, key)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 pub(crate) fn read_file_sync(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
@@ -2907,6 +2943,10 @@ pub(crate) fn read_file_sync(
         .rooted_value(provided_options)
         .is_some_and(|value| value.is_undefined() || value.is_null());
     let options = if defaulted {
+        defaults
+    } else if utf8_encoding_option(context, provided_options, defaults)? {
+        let key = context.string_rooted("encoding");
+        context.define_data_property_rooted(defaults, key, provided_options, true, true, true)?;
         defaults
     } else {
         let options =

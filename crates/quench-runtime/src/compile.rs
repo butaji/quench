@@ -247,6 +247,32 @@ pub(crate) struct StaticModulePlan {
     pub(crate) has_top_level_await: bool,
 }
 pub(crate) use crate::bytecode::ModuleReexport as StaticModuleReexport;
+
+/// `Engine::static_module_analysis`: a static module text's early error, or else its plan
+/// (none when the stack does not bound its syntax).
+pub(crate) struct StaticModuleAnalysis {
+    pub(crate) early_error: Option<String>,
+    pub(crate) plan: Option<StaticModulePlan>,
+}
+
+/// The key `static_module_analysis` memoizes a text under: the module's name, the text's
+/// length and its hash. Texts are the process's own module files, not adversarial input, and
+/// a module is looked up about fifteen times, so one fast hash of its text serves.
+#[derive(PartialEq, Eq, Hash)]
+struct StaticModuleTextKey {
+    length: usize,
+    hash: u64,
+    name: Box<str>,
+}
+
+impl StaticModuleTextKey {
+    fn of(source: &str, module_name: &str) -> Self {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = rustc_hash::FxHasher::default();
+        source.hash(&mut hasher);
+        Self { length: source.len(), hash: hasher.finish(), name: module_name.into() }
+    }
+}
 impl Engine {
     /// V8 excludes tagged templates from eval's compilation cache because each
     /// evaluation owns distinct template objects, including nested function sites.
@@ -312,46 +338,67 @@ impl Engine {
     }
 
     /// The SyntaxError message of a module source's first early error, if it has one.
-    pub(crate) fn static_module_early_error(source: &str) -> Option<String> {
-        let normalized = early::normalize_hashbang(source);
-        let allocator = Allocator::with_capacity(normalized.len().saturating_mul(6));
-        let parsed = Parser::new(&allocator, &normalized, SourceType::mjs()).parse();
-        if stack::validate_parsed(&parsed).is_err() {
-            return None;
-        }
-        if let Some(error) = parsed.diagnostics.first() {
-            return Some(syntax_message::parse_failure(&normalized, error));
-        }
-        oxc_semantic::SemanticBuilder::new()
-            .with_check_syntax_error(true)
-            .build(&parsed.program)
-            .diagnostics
-            .first()
-            .map(|error| error.message.to_string())
+    /// A static module's link plan, when its text has no early error and the stack bounds
+    /// its syntax (`static_module_analysis`).
+    pub(crate) fn static_module_plan(source: &str, module_name: &str) -> Option<StaticModulePlan> {
+        Self::static_module_analysis(source, module_name).plan.clone()
     }
 
-    pub(crate) fn static_module_plan(source: &str, module_name: &str) -> Option<StaticModulePlan> {
+    /// What a static module's text says before it links, from one parse and semantic check,
+    /// memoized for the thread by the text and name: linking and evaluating a module asks for
+    /// it several times (a module graph parsed each module three times, 12% of a Babel run).
+    pub(crate) fn static_module_analysis(source: &str, module_name: &str) -> Rc<StaticModuleAnalysis> {
+        Self::static_module_analysis_with(source, module_name, |analyze| analyze())
+    }
+
+    /// `static_module_analysis`, whose memo misses `obtain`, which analyzes the text with the
+    /// function it is given or finds the analysis elsewhere (a host's compile cache).
+    pub(crate) fn static_module_analysis_with(
+        source: &str,
+        module_name: &str,
+        obtain: impl FnOnce(&dyn Fn() -> StaticModuleAnalysis) -> StaticModuleAnalysis,
+    ) -> Rc<StaticModuleAnalysis> {
+        thread_local! {
+            static ANALYSES: std::cell::RefCell<FxHashMap<StaticModuleTextKey, Rc<StaticModuleAnalysis>>> =
+                std::cell::RefCell::default();
+        }
+        let key = StaticModuleTextKey::of(source, module_name);
+        if let Some(analysis) = ANALYSES.with(|analyses| analyses.borrow().get(&key).cloned()) {
+            return analysis;
+        }
+        let analysis = Rc::new(obtain(&|| Self::analyze_static_module(source, module_name)));
+        ANALYSES.with(|analyses| analyses.borrow_mut().insert(key, analysis.clone()));
+        analysis
+    }
+
+    fn analyze_static_module(source: &str, module_name: &str) -> StaticModuleAnalysis {
+        let unbounded = StaticModuleAnalysis { early_error: None, plan: None };
         let normalized = early::normalize_hashbang(source);
         let allocator = Allocator::with_capacity(normalized.len().saturating_mul(6));
         let parsed = Parser::new(&allocator, &normalized, SourceType::mjs()).parse();
         if stack::validate_parsed(&parsed).is_err() {
-            return None;
+            return unbounded;
         }
-        if !parsed.diagnostics.is_empty() {
-            return None;
+        if let Some(error) = parsed.diagnostics.first() {
+            return StaticModuleAnalysis {
+                early_error: Some(syntax_message::parse_failure(&normalized, error)),
+                plan: None,
+            };
         }
         let semantic = oxc_semantic::SemanticBuilder::new()
             .with_check_syntax_error(true)
             .build(&parsed.program);
-        if !semantic.diagnostics.is_empty() {
-            return None;
+        if let Some(error) = semantic.diagnostics.first() {
+            return StaticModuleAnalysis { early_error: Some(error.message.to_string()), plan: None };
         }
-        let link_plan = Self::module_link_plan(&parsed.program.body, module_name);
-        Some(StaticModulePlan {
-            link_plan,
-            requests: module_requests(&parsed.program.body),
-            has_top_level_await: has_top_level_await(&parsed.program.body),
-        })
+        StaticModuleAnalysis {
+            early_error: None,
+            plan: Some(StaticModulePlan {
+                link_plan: Self::module_link_plan(&parsed.program.body, module_name),
+                requests: module_requests(&parsed.program.body),
+                has_top_level_await: has_top_level_await(&parsed.program.body),
+            }),
+        }
     }
 
     fn module_link_plan(statements: &[Statement<'_>], module_name: &str) -> Option<ModuleLinkPlan> {
@@ -672,8 +719,9 @@ impl Engine {
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         Self::specialize_module_with_mode(source, name, SpecializationMode::Disabled)
     }
-    /// Compile a module against an existing program's canonical atom prefix.
-    pub(crate) fn specialize_module_unspecialized_with_atom_prefix(
+    /// Compile a module against an existing program's canonical atom prefix, specializing
+    /// exactly when the VM it extends does, as a run-time script does.
+    pub(crate) fn specialize_module_with_atom_prefix(
         source: &str,
         name: &str,
         atom_prefix: &dyn AtomPrefix,
@@ -681,7 +729,7 @@ impl Engine {
         Self::specialize_with_mode(
             source,
             name,
-            SpecializationMode::Disabled,
+            SpecializationMode::of(atom_prefix),
             atom_prefix,
             SourceType::mjs(),
             true,
@@ -942,7 +990,7 @@ impl Engine {
         // spans still address `normalized`, retaining exact nested function source.
         drop(semantic);
         // Parsing and analysis are done; the code generator's work starts here.
-        compile_phase_boundary();
+        compile_phase_boundary(CompilePhase::CodeGeneration);
         let eval_context = if let ParsedProgramShape::Eval(context, _) = expected_shape {
             if wrapped_eval {
                 let body = eval_method_body(&mut parsed.program, ordinary_private_context)
@@ -1033,19 +1081,29 @@ impl Engine {
     }
 }
 
-/// What a compilation does between parsing and code generation, set once by the embedding:
-/// a host may return the parser's read-only pages there, so they and the code generator's are
-/// not resident together at a compilation's peak.
-static COMPILE_PHASE_BOUNDARY: std::sync::OnceLock<fn()> = std::sync::OnceLock::new();
+/// A point in compilation where the code about to run differs from the code that ran, which
+/// an embedding may act on (`set_compile_phase_boundary`), as a host returns read-only pages
+/// the next phase does not touch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CompilePhase {
+    /// A compilation has parsed and analysed its source; its code generation starts.
+    CodeGeneration,
+    /// A function compiles, or decodes from its program's kept bytes, on its first call: code
+    /// that has not run before is about to.
+    FirstCall,
+}
 
-/// Sets the action a compilation takes once it has parsed its source; the first call wins.
-pub fn set_compile_phase_boundary(action: fn()) {
+/// What a compilation does at each `CompilePhase`, set once by the embedding.
+static COMPILE_PHASE_BOUNDARY: std::sync::OnceLock<fn(CompilePhase)> = std::sync::OnceLock::new();
+
+/// Sets the action a compilation takes at each `CompilePhase`; the first call wins.
+pub fn set_compile_phase_boundary(action: fn(CompilePhase)) {
     let _ = COMPILE_PHASE_BOUNDARY.set(action);
 }
 
-fn compile_phase_boundary() {
+pub(crate) fn compile_phase_boundary(phase: CompilePhase) {
     if let Some(action) = COMPILE_PHASE_BOUNDARY.get() {
-        action();
+        action(phase);
     }
 }
 
@@ -2011,6 +2069,7 @@ impl<'a> Compiler<'a> {
                 capture_layout::mapped_arguments(&function),
             ),
             dynamic_descendant: false,
+            module_root: false,
         };
         let arguments_slot = function.arguments_slot;
         capture_layout::apply_function(&mut function, id as usize, &layout, &self.atoms);
@@ -2552,9 +2611,22 @@ impl<'a> Compiler<'a> {
         let dynamic = capture_layout::dynamic_name_resolution(&facts);
         let reachable = capture_layout::dynamic_name_scopes(&facts, &dynamic);
         self.resolve_name_bindings(&mut functions, &reachable);
-        let layout_inputs = capture_layout::inputs(&facts, &dynamic, |id| {
+        let mut layout_inputs = capture_layout::inputs(&facts, &dynamic, |id| {
             functions[id].as_ref().and_then(capture_layout::mapped_arguments)
         });
+        // A module body splits around the bindings its link plan addresses; one without a
+        // plan keeps every binding in its environment.
+        if self.module_goal
+            && let (Some(plan), Some(inputs), Some(Some(root))) =
+                (&module_link_plan, layout_inputs.first_mut(), functions.first())
+        {
+            inputs.module_root = true;
+            inputs.captured.extend(
+                root.module_environment_slots(plan, &module_imports, |atom| self.atoms.get(atom as usize)),
+            );
+            inputs.captured.sort_unstable();
+            inputs.captured.dedup();
+        }
         // A replayable function resolves every name statically and no dynamic lookup reaches
         // its bindings, so nothing outside its own compilation and layout decides its code.
         let mut replays: FxHashMap<u32, replay::FunctionReplay> = std::mem::take(&mut self.early_replays);

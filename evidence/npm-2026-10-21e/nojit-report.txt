@@ -1,0 +1,39 @@
+verdicts {"behavior-pass":286,"declarations-pass":13,"oracle-failed":1}
+passing 299  fastest wall 267  fastest cpu 284  lowest rss 292
+wall median (ms) quench 42.3 node 93.3 bun 64.3
+cpu median (ms) quench 40.5 node 112.9 bun 67.9
+rss median (MiB) quench 14.2 node 72.0 bun 37.4
+slowest relative to the faster of Node and Bun (wall ms):
+  color-convert                            q     220 n    122 b     69  x3.2
+  jiti                                     q     226 n    270 b     95  x2.4
+  undici                                   q     109 n    132 b     48  x2.3
+  schema-utils                             q     375 n    256 b    206  x1.8
+  require-from-string                      q     116 n     79 b     67  x1.7
+  ajv-formats                              q     201 n    145 b    118  x1.7
+  whatwg-url                               q     194 n    148 b    121  x1.6
+  playwright                               q     632 n    404 b    402  x1.6
+  browserslist                             q     126 n    124 b     85  x1.5
+  ajv-keywords                             q     184 n    141 b    159  x1.3
+  execa                                    q     148 n    235 b    114  x1.3
+  ajv                                      q     148 n    150 b    117  x1.3
+  node-fetch                               q      63 n     91 b     50  x1.3
+  typescript-eslint                        q     879 n    905 b    712  x1.2
+  @babel/core                              q     229 n    250 b    188  x1.2
+  date-fns                                 q      94 n   1210 b     77  x1.2
+  @typescript-eslint/eslint-plugin         q     840 n    846 b    721  x1.2
+  @testing-library/dom                     q     810 n    843 b    707  x1.1
+  vitest                                   q     616 n    656 b    553  x1.1
+  @babel/helper-module-transforms          q     257 n    252 b    232  x1.1
+  semver                                   q     152 n    138 b    149  x1.1
+  fflate                                   q      72 n     92 b     65  x1.1
+  lucide-react                             q     159 n    208 b    145  x1.1
+  zod                                      q      85 n    135 b     78  x1.1
+  axios                                    q     140 n    170 b    128  x1.1
+not lowest rss: 7
+  @types/node                              q 72.5 n 71.7 b 71.8
+  @types/json-schema                       q 45.2 n 71.7 b 44.9
+  @types/chai                              q 45.8 n 71.5 b 45.0
+  @types/babel__traverse                   q 54.9 n 71.7 b 54.6
+  @types/babel__template                   q 53.1 n 71.7 b 52.8
+  @types/yargs                             q 45.7 n 71.9 b 45.2
+  @types/ms                                q 44.5 n 71.7 b 44.1
