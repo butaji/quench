@@ -32,7 +32,7 @@ impl<H: Host> Vm<H> {
                     let arguments = vm.heap.alloc(Cell::Array {
                         object: crate::heap::ArrayObject::new(
                             Self::empty_object(vm.array_proto),
-                            Rc::new(args.to_vec()),
+                            args.to_vec(),
                         ),
                     });
                     return vm.call_value(p, trap, handler, &[target, this, arguments]);
@@ -76,7 +76,7 @@ impl<H: Host> Vm<H> {
                     let arguments = vm.heap.alloc(Cell::Array {
                         object: crate::heap::ArrayObject::new(
                             Self::empty_object(vm.array_proto),
-                            Rc::new(args.to_vec()),
+                            args.to_vec(),
                         ),
                     });
                     let result =

@@ -790,7 +790,7 @@ impl<H: Host> Vm<H> {
         self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
-                Rc::new(rest.to_vec()),
+                rest.to_vec(),
             ),
         })
     }
@@ -808,7 +808,7 @@ impl<H: Host> Vm<H> {
         let arguments = self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
                 Self::empty_object(self.object_proto),
-                Rc::new(args.to_vec()),
+                args.to_vec(),
             ),
         });
         self.initialize_arguments_object(arguments, context.callee(), args, mapped)?;

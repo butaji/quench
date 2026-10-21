@@ -306,13 +306,13 @@ impl<H: Host> Vm<H> {
         let Some(object) = self.heap.array_mut(this) else {
             unreachable!("matched an array above");
         };
-        let taken = super::index::mutable_array_elements(object.elements_mut())
-            .splice(start..start + delete_count, items.iter().copied())
-            .collect::<Vec<_>>();
+        let elements = super::index::mutable_array_elements(object.elements_mut());
+        let taken = elements[start..start + delete_count].to_vec();
+        elements.splice(start..start + delete_count, &items);
         let Some(removed_object) = self.heap.array_mut(removed) else {
             unreachable!("matched an array above");
         };
-        *super::index::mutable_array_elements(removed_object.elements_mut()) = taken;
+        *removed_object.elements_mut() = taken.into();
         true
     }
 
