@@ -2197,6 +2197,33 @@ impl<H: Host> Vm<H> {
         true
     }
 
+    /// Increment or decrement a cached own writable Number field without
+    /// falling through the ordinary get/coerce/set bytecodes. The successful
+    /// own-field load and strict-store caches prove the shape, data descriptor,
+    /// and writability; the value is checked as Number before the store helper
+    /// runs. Any miss leaves guest-visible state untouched.
+    #[inline(always)]
+    pub(super) fn cached_field_increment_hit(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        atom: Atom,
+        read_site: u16,
+        write_site: u16,
+        decrement: bool,
+    ) -> bool {
+        let Some(old) = self.primary_own_field_hit(p, object, read_site) else {
+            return false;
+        };
+        let Some(number) = old.as_number() else {
+            return false;
+        };
+        let next = Value::number(if decrement { number - 1.0 } else { number + 1.0 });
+        // A matching successful strict store cache proves this same shape has an own
+        // writable data property at the field slot. The store helper rechecks that guard.
+        self.cached_field_store_hit(p, object, atom, next, write_site)
+    }
+
     /// A cached own-data store or a cached property add to an ordinary object: neither runs
     /// guest code nor throws, so the dispatch loop's fast match completes both.
     #[inline(always)]
