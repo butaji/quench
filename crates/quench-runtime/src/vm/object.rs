@@ -5,7 +5,7 @@ use crate::value::HeapReference;
 const PRIVATE_NAME_PREFIX: &str = "\0quench:private:";
 
 /// Bit set of facts derived from an atom's text; `DERIVED` marks the set as computed.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub(super) struct AtomClass(u8);
 
 impl AtomClass {

@@ -7,8 +7,52 @@ enum CollectionEntries {
     Pairs,
     Values,
 }
+/// The name of the Map and Set count accessor `collection_size_field` answers.
+const COLLECTION_SIZE: &str = "size";
 include!("collections_set_relations.rs");
 impl<H: Host> Vm<H> {
+    /// A Map's or Set's `size` read that runs no guest code: the walk from the receiver
+    /// through ordinary prototypes meets no other `size` before an accessor whose getter is
+    /// the collection's own (`Map.prototype.size` or `Set.prototype.size`, wherever a
+    /// prototype holds it, as primordials copy it), which reads the entry count. `None` leaves
+    /// the read to the general path.
+    pub(super) fn collection_size_field(&self, object: Value, atom: Atom) -> Option<Value> {
+        let (getter, count) = match self.heap.get(object)? {
+            Cell::Map { entries, .. } => (Native::MapSizeGetter, entries.len()),
+            Cell::Set { entries, .. } => (Native::SetSizeGetter, entries.len()),
+            _ => return None,
+        };
+        if !self.atom_class(atom).contains(object::AtomClass::VIRTUAL_FIELD)
+            || self.atom_name(atom) != COLLECTION_SIZE
+        {
+            return None;
+        }
+        let key = PropertyKey::string(atom);
+        let mut current = object;
+        let mut data = self.heap.get(object)?.object()?;
+        loop {
+            if data.is_module_namespace()
+                || (data.has_side_descriptors() && self.descriptors.contains_key(&(current, key)))
+            {
+                return None;
+            }
+            if let Some(slot) = self.property_shape_slot(data.shape(), key) {
+                let attributes = self.slot_attributes(data, slot)?;
+                let found = attributes.getter.filter(|_| attributes.accessor)?;
+                let own = matches!(
+                    self.heap.function(found),
+                    Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) if *native == getter
+                );
+                return own.then(|| Value::length(count));
+            }
+            current = data.proto();
+            if current.is_null() {
+                return None;
+            }
+            data = self.heap.ordinary_object(current)?;
+        }
+    }
+
     fn keep_alive(&mut self, value: Value) {
         if !self
             .kept_alive
