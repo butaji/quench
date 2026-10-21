@@ -1114,17 +1114,54 @@ impl<H: Host> Vm<H> {
     ) -> Option<Value> {
         debug_assert!(self.lane_admits(p));
         let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
-        let index = self.field_cache_index(site);
-        // SAFETY: the active program's layout reserves every compiler-emitted site.
-        let cache = unsafe { *self.field_caches.get_unchecked(index) };
+        let cache = self.field_cache_entry(site);
+        if cache.holder != NO_FIELD_HOLDER {
+            return None;
+        }
+        let value = self.own_field_entry_hit(cache, receiver)?;
+        self.profile.field_cache_hit(0, 0);
+        Some(value)
+    }
+
+    /// The own data field the holderless field cache entry `cache` proves for `receiver`;
+    /// `None` where its shape differs.
+    #[inline(always)]
+    fn own_field_entry_hit(&self, cache: FieldCache, receiver: &Object) -> Option<Value> {
         // The exact shape matches only outside dictionary storage (`Object::exact_shape`).
-        if cache.receiver != receiver.exact_shape() || cache.holder != NO_FIELD_HOLDER {
+        if cache.receiver != receiver.exact_shape() {
             return None;
         }
         // SAFETY: as for `cached_field_hit`; the exact match rules out a dictionary.
-        let value = unsafe { self.heap.property_get_flat(receiver, cache.slot as usize) };
-        self.profile.field_cache_hit(0, 0);
-        Some(value)
+        Some(unsafe { self.heap.property_get_flat(receiver, cache.slot as usize) })
+    }
+
+    /// The field cache entry of the active program's `site`.
+    #[inline(always)]
+    pub(super) fn field_cache_entry(&self, site: u16) -> FieldCache {
+        // SAFETY: the active program's layout reserves every compiler-emitted site.
+        unsafe { *self.field_caches.get_unchecked(self.field_cache_index(site)) }
+    }
+
+    /// The value the field cache entry `cache` proves for the direct object `object`: its own
+    /// data field where the entry names no holder, else that of its prototype, an object
+    /// record; `None` where either shape differs. The primary own and record-holder reads
+    /// make it of their site's entry; a call's read memo makes it of a copy, which holds
+    /// while the shapes it names do.
+    #[inline(always)]
+    pub(super) fn record_field_entry_hit(&self, cache: FieldCache, object: Value) -> Option<Value> {
+        let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
+        if cache.holder == NO_FIELD_HOLDER {
+            return self.own_field_entry_hit(cache, receiver);
+        }
+        let holder = self.heap.object_record_by_id(receiver.proto_link().object_record_id()?);
+        if cache.receiver != receiver.exact_shape()
+            || holder.is_module_namespace()
+            || cache.holder != holder.exact_shape()
+        {
+            return None;
+        }
+        // SAFETY: as `cached_ordinary_holder_field_value`.
+        Some(unsafe { self.heap.property_get_flat(holder, cache.slot as usize) })
     }
 
     /// The store `cached_field_store_hit` makes to an own data field of a direct object that
@@ -1222,19 +1259,11 @@ impl<H: Host> Vm<H> {
         site: u16,
     ) -> Option<Value> {
         debug_assert!(self.lane_admits(p));
-        let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
-        let holder = self.heap.object_record_by_id(receiver.proto_link().object_record_id()?);
-        // SAFETY: the active program's layout reserves every compiler-emitted site.
-        let cache = unsafe { *self.field_caches.get_unchecked(self.field_cache_index(site)) };
-        if cache.holder == NO_FIELD_HOLDER
-            || cache.receiver != receiver.exact_shape()
-            || holder.is_module_namespace()
-            || cache.holder != holder.exact_shape()
-        {
+        let cache = self.field_cache_entry(site);
+        if cache.holder == NO_FIELD_HOLDER {
             return None;
         }
-        // SAFETY: as `cached_ordinary_holder_field_value`.
-        let value = unsafe { self.heap.property_get_flat(holder, cache.slot as usize) };
+        let value = self.record_field_entry_hit(cache, object)?;
         self.profile.field_cache_hit(0, 1);
         Some(value)
     }
