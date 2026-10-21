@@ -8,7 +8,7 @@ use wasmparser::{
     UnpackedIndex, ValType,
 };
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct WasmTypes {
     groups: Rc<[Vec<SubType>]>,
 }

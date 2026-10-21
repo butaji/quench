@@ -220,6 +220,11 @@ pub(crate) fn initialize_promise(
     promise: RootId,
     resource: quench_runtime::HostExecutionContext,
 ) -> Result<(), RootedError> {
+    // A promise is weakly tracked only while an init or destroy hook can observe it; its
+    // identity and job context need no record (`tracks_promise_lifecycle_resources`).
+    if !context.host_mut().shared_state().borrow().async_hooks.tracks_promise_lifecycle_resources() {
+        return Ok(());
+    }
     // A long run of promises can stay within one event-loop turn, where the turn-end prune
     // never comes: every new promise first prunes the table once a collection has run since
     // the last prune, so it holds only promises that may still be live.

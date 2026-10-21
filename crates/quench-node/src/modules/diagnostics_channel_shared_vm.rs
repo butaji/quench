@@ -766,3 +766,5 @@ fn invalid_arg(context: &mut NativeContext<'_, NodeHost>, name: &str) -> RootedE
     let _ = context.set_property_rooted(error, code, value, error);
     context.throw(error)
 }
+
+crate::host::startup_snapshot::host_snap_struct!(SharedDiagnosticsState { channels, module });

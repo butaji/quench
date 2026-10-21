@@ -284,3 +284,10 @@ impl FsState {
         self.0.borrow_mut().descriptors.remove(&fd);
     }
 }
+
+impl FsState {
+    /// Whether no descriptor is open (`startup_snapshot`).
+    pub(crate) fn snapshot_quiescent(&self) -> bool {
+        self.0.borrow().descriptors.is_empty()
+    }
+}

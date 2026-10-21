@@ -3298,3 +3298,48 @@ impl RegExpMatcherCache {
         self.entries = 0;
     }
 }
+
+impl crate::snapshot::Snap for RegExpIntrinsics {
+    fn snap(&self, writer: &mut crate::snapshot::Writer) -> crate::snapshot::SnapshotResult<()> {
+        let Self { constructor, prototype, legacy_input, legacy_match, result_template } = self;
+        writer.value(*constructor);
+        writer.value(*prototype);
+        writer.bool(legacy_input.is_some());
+        if let Some(input) = legacy_input {
+            input.write_snapshot(writer);
+        }
+        writer.bool(match legacy_match {
+            LegacyRegExpMatch::Empty => false,
+            LegacyRegExpMatch::Invalid => true,
+            LegacyRegExpMatch::Matched { .. } | LegacyRegExpMatch::Pending { .. } => {
+                return Err(crate::snapshot::SnapshotError::unsupported("legacy RegExp match data"));
+            }
+        });
+        writer.bool(result_template.is_some());
+        if let Some(RegExpResultTemplate { anchor, index_slot, input_slot, groups_slot }) = result_template {
+            writer.value(*anchor);
+            writer.len(*index_slot);
+            writer.len(*input_slot);
+            writer.len(*groups_slot);
+        }
+        Ok(())
+    }
+
+    fn unsnap(reader: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::SnapshotResult<Self> {
+        let constructor = reader.value()?;
+        let prototype = reader.value()?;
+        let legacy_input = if reader.bool()? { Some(JsString::read_snapshot(reader)?) } else { None };
+        let legacy_match = if reader.bool()? { LegacyRegExpMatch::Invalid } else { LegacyRegExpMatch::Empty };
+        let result_template = if reader.bool()? {
+            Some(RegExpResultTemplate {
+                anchor: reader.value()?,
+                index_slot: reader.len()?,
+                input_slot: reader.len()?,
+                groups_slot: reader.len()?,
+            })
+        } else {
+            None
+        };
+        Ok(Self { constructor, prototype, legacy_input, legacy_match, result_template })
+    }
+}
