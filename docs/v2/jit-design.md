@@ -47,7 +47,7 @@ JetStream 3 is the acceptance workload, not a code-generation oracle. Its stock 
 
 `quench-node --jit` selects `ExecutionMode::Compiled` on the same runtime and VM; the default remains interpreted. The first JS tier is intentionally narrow. Its profile is a Bernoulli observation per eligible entry: success means every formal argument is a Number. For each function, it tests at four prespecified looks (32, 64, 128, 255), with critical success counts (31, 59, 113, 219). Each exact binomial upper-tail test spends at most `0.05 / 4` under the null that Number-entry probability is at most 0.80, so a union bound limits false promotion across repeated looks for one function to 5%, assuming stationary independent entries. The 256-function tracking cap does not turn this into a 5% VM-wide family-wise guarantee; controlling that would require allocating error across candidates or a separately calibrated online procedure. A successful look marks promotion; if that entry has a non-Number argument, promotion stays pending until the next Number entry can compile and enter natively. A failed final look leaves the function interpreted. This improves the former repeatedly-peeked Wilson threshold, which did not retain its nominal fixed-sample coverage after optional stopping. If workload phase changes violate the stationary model, a time-uniform confidence sequence is a suitable follow-up, with its own stated assumptions and calibration ([Howard et al.](https://doi.org/10.1214/20-AOS1991)). The profile gate estimates guard stability, not native speedup or compilation payback. Cranelift lowers straight-line numeric functions containing Number parameters and Number constants, moves, `+`, `-`, `*`, `/`, and a terminal return; non-Number constants remain interpreter-only. It also lowers forward-only decision trees that compare Number parameters with Number constants and return static string constants, including Unicode `StringUnits` values. That result is a bytecode Return PC; the VM retrieves the rooted constant, writes the selected Return register, and resumes ordinary dispatch and unwind. All formal parameters are guarded as Numbers before native entry. A failed guard leaves the initialized frame at PC 0, and unsupported bytecode stays interpreted. This uses Futamura-style specialization of fixed residual functions, but does not yet generate the interpreter/compiler from one semantic source as Deegen does.
 
-The current tier is a prototype, not a measured optimization strategy: its exact sequential gate estimates guard stability, but compilation cost, observed time saved and expected remaining calls are not yet included in the payback estimator above. Ershov/Sethi-Ullman scheduling is not yet applied because these functions are short and Cranelift handles native register allocation. The category-theory state relation is expressed through a shared comparison classifier, guard invariant, forward-DAG restriction, rooted return map, and ordinary dispatcher return; it is not a runtime type or compiler abstraction. The string-return tier rejects loops, joins, heap access, calls, exceptions and dynamic return values; all non-Number inputs and unsupported shapes remain in the interpreter. Native candidates are capped at 256 bytecodes and 256 registers; the compiled body has no internal poll, so the shared dispatcher checks cancellation before entering and immediately after returning. Profiling-feature builds leave this JS tier disabled so native execution cannot omit interpreter instrumentation. Unit tests count actual native calls in test builds; normal benchmark reports record mode selection; opt-in `--jit-diagnostics` adds candidate entries, profiles, promotions, compile time, mapped bytes, and native entries to captured stderr for attribution-only runs.
+The current tier is a prototype, not a measured optimization strategy: its exact sequential gate estimates guard stability, but compilation cost, observed time saved and expected remaining calls are not yet included in the payback estimator above. Ershov/Sethi-Ullman scheduling is not yet applied because these functions are short and Cranelift handles native register allocation. The category-theory state relation is expressed through a shared comparison classifier, guard invariant, forward-DAG restriction, rooted return map, and ordinary dispatcher return; it is not a runtime type or compiler abstraction. The string-return tier rejects loops, joins, heap access, calls, exceptions and dynamic return values; all non-Number inputs and unsupported shapes remain in the interpreter. Native candidates are capped at 256 bytecodes and 256 registers; the compiled body has no internal poll, so the shared dispatcher checks cancellation before entering and immediately after returning. Profiling-feature builds leave this JS tier disabled so native execution cannot omit interpreter instrumentation. Unit tests count actual native calls in test builds; normal benchmark reports record mode selection; opt-in `--jit-diagnostics` adds candidate entries, profiles, promotions, compile time, mapped bytes, native/fallback entries, and a static census of conditional branches, `typeof`, strict-comparison and relational-comparison bytecode sites. The census is diagnostic only: these sites are not assumed pure or redundant, and profile data is never used as a don't-care proof. A later Boolean simplifier should operate only on effect-free lowered predicates with path-condition proofs, and must have strict node, cover, compile-time and code-size budgets before any matched JetStream comparison.
 
 Tier metadata is sparse and capped at 256 functions per VM. At most eight functions and 64 KiB of page-rounded executable mappings are retained; unsupported functions, mapping failures and budget exhaustion continue in the interpreter. This bounds executable mappings and profile state, but does not include Cranelift's temporary compilation allocations in the RSS budget. Page-rounded mapping capacity is not a resident-set measurement; benchmark RSS remains the acceptance metric.
 
@@ -771,3 +771,31 @@ Quench 4.35. This is not a score win; the remaining gap is concentrated in
 the linked-entry lookup loop and its heap and call work. The raw reports and
 limitations are documented in
 `evidence/jit-jetstream3-2026-10-20/int32-identity-arm/README.md`.
+
+## Direct Int32 identity calls
+
+The compiled same-program call path now accepts an already-promoted Int32
+identity artifact. It checks the single numeric argument against the artifact's
+existing Int32 domain guard; a miss goes through the ordinary activation path.
+This removes the callee frame only for the effect-free identity arm.
+
+On the cloud Linux x86_64 host, separate single-round `hash-map` screens
+validated at 1.94 Score / 75.3 MiB for the changed binary and 0.91 / 75.2 MiB
+for its parent binary. Quench wall time was 277.44 s and 432.29 s respectively.
+The Bun and Node screens varied substantially between rounds, and the samples
+were not paired, so this is directional evidence only. Quench still loses the
+fixture's Score bar by over two orders of magnitude. The focused runtime test
+type-checks but its test executable build was stopped after 29 minutes without
+finishing. Full details are in
+`evidence/jit-jetstream3-2026-10-20/int32-direct-call/README.md`.
+
+## Web-SSR native coverage gap
+
+The one-round Web-SSR screen on the same host scored 6.06 in JIT mode and 5.77
+in interpreter mode, with peak RSS of 135.5 MiB and 133.1 MiB. Node scored
+92.42 / 203.6 MiB and Bun 81.45 / 227.8 MiB. The diagnostic run compiled only
+the benchmark driver's `quickHash`; the hot generated React functions `Ru` and
+`Eu` stayed interpreted. `Ru` has 831 bytecodes, beyond the current 256-bytecode
+candidate limit, while `Eu` uses captures and calls the current JS tier does not
+lower. These screens have one round each and do not qualify a win. See
+`evidence/jit-jetstream3-2026-10-20/web-ssr-baseline/README.md`.

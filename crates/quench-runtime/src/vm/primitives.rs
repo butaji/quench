@@ -29,11 +29,6 @@ impl<H: Host> Vm<H> {
                 ..
             }) => Ok(CallTarget::User(*program, *id, *env)),
             Some(FunctionRecord {
-                kind: FunctionKind::NumericUser(program, id),
-                env,
-                ..
-            }) => Ok(CallTarget::NumericUser(*program, *id, *env)),
-            Some(FunctionRecord {
                 kind: FunctionKind::Native(native),
                 ..
             }) => Ok(CallTarget::Native(*native)),
@@ -48,32 +43,29 @@ impl<H: Host> Vm<H> {
         &self,
         callee: Value,
     ) -> Option<(super::ProgramId, u32, Value)> {
-        self.same_realm_script_target(callee)
-            .filter(|(.., numeric)| !numeric)
-            .map(|(program, id, env, _)| (program, id, env))
-    }
-
-    /// `same_realm_user_target` of an ordinary or a numeric script function
-    /// (`FunctionKind::NumericUser`), and whether it is numeric.
-    pub(super) fn same_realm_script_target(
-        &self,
-        callee: Value,
-    ) -> Option<(super::ProgramId, u32, Value, bool)> {
         match self.heap.function(callee) {
             Some(FunctionRecord {
                 kind: FunctionKind::User(program, id),
                 env,
                 realm,
                 ..
-            }) if *realm == self.realm.globals => Some((*program, *id, *env, false)),
-            Some(FunctionRecord {
-                kind: FunctionKind::NumericUser(program, id),
-                env,
-                realm,
-                ..
-            }) if *realm == self.realm.globals => Some((*program, *id, *env, true)),
+            }) if *realm == self.realm.globals => Some((*program, *id, *env)),
             _ => None,
         }
+    }
+
+    /// `same_realm_user_target`, and whether its body is numeric (`DispatchClass::Numeric`).
+    pub(super) fn same_realm_script_target(
+        &self,
+        callee: Value,
+    ) -> Option<(super::ProgramId, u32, Value, bool)> {
+        let (program, id, env) = self.same_realm_user_target(callee)?;
+        let numeric = self
+            .programs
+            .residual(program)
+            .and_then(|code| code.function_get(id as usize).map(|body| body.dispatch))
+            == Some(crate::bytecode::DispatchClass::Numeric);
+        Some((program, id, env, numeric))
     }
 
     pub(super) fn non_callable_target(

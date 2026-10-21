@@ -272,10 +272,17 @@ pub struct Regex {
     /// The automata backend is a guarded fast path for ASCII patterns. Regex
     /// syntax it cannot represent (backreferences/lookaround and other
     /// ECMAScript-only constructs) continues through our complete matcher.
-    compiled: Option<regex::bytes::Regex>,
+    compiled_serves_matches: bool,
     /// Test-only matching may use regular syntax with captures whose reported
     /// values differ from ECMAScript; the boolean and end offset remain exact.
-    range_backend: RangeBackend,
+    compiled_serves_ranges: bool,
+    /// The byte backend's automaton, built from `compiled_source` when a match first needs
+    /// it: building one can take megabytes (a long case-insensitive pattern such as a URI
+    /// grammar), and most patterns a program constructs at startup never run. `None` inside
+    /// is a pattern the backend refused, which the complete matcher serves.
+    compiled: OnceCell<Option<regex::bytes::Regex>>,
+    /// The source the byte backend compiles; empty when it serves neither use.
+    compiled_source: Box<str>,
     /// Reusable capture workspace for the compiled backend. Creating
     /// `CaptureLocations` for every `exec`/`replace` call allocates a fresh
     /// vector on the fixture's hot path; the regex object is already cached
@@ -354,14 +361,6 @@ fn lower_tree(pattern: &ast::Pattern<'_>, source: &str, names: &[String]) -> Exp
 }
 
 /// The byte matcher that answers range-only queries (`Regex::range_matcher`).
-enum RangeBackend {
-    None,
-    /// `compiled` itself: both uses compile the same source and flags, and one matcher keeps
-    /// one cache pool.
-    Compiled,
-    Own(regex::bytes::Regex),
-}
-
 impl std::fmt::Debug for Regex {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
@@ -412,23 +411,19 @@ impl Regex {
         let backend_enabled = !flags.unicode_sets
             && !flags.unicode
             && std::env::var_os("QUENCH_COMPILED_REGEXP").is_some();
-        let compiled = (backend_enabled
+        let compiled_serves_matches = backend_enabled
             && compiled_source_syntax_is_safe(source, NonCapturingGroups::Allowed)
-            && compiled_structure_is_safe(&parsed.body))
-        .then(|| compile_byte_regex(source, flags))
-        .flatten();
-        let range_backend = if !(backend_enabled && compiled_test_source_is_safe(source)) {
-            RangeBackend::None
-        } else if compiled.is_some() {
-            RangeBackend::Compiled
+            && compiled_structure_is_safe(&parsed.body);
+        let compiled_serves_ranges = backend_enabled && compiled_test_source_is_safe(source);
+        let compiled_source = if compiled_serves_matches || compiled_serves_ranges {
+            source.into()
         } else {
-            compile_byte_regex(source, flags).map_or(RangeBackend::None, RangeBackend::Own)
+            Box::default()
         };
-        let compiled_locations = compiled
-            .as_ref()
-            .map(regex::bytes::Regex::capture_locations);
         let complete = OnceCell::new();
-        if compiled.is_none() {
+        // The source stays kept either way: `tree` lowers it again when the backtracking
+        // program let construction drop the tree.
+        if !compiled_serves_matches {
             let _ = complete.set(CompleteMatcher::lower(
                 &parsed,
                 &normalized_source,
@@ -443,9 +438,11 @@ impl Regex {
             capture_names: names,
             has_named_groups,
             compiled_dot_requires_cr_guard: !flags.dot_all && has_bare_dot(source),
-            compiled,
-            range_backend,
-            compiled_locations: RefCell::new(compiled_locations),
+            compiled_serves_matches,
+            compiled_serves_ranges,
+            compiled: OnceCell::new(),
+            compiled_source,
+            compiled_locations: RefCell::new(None),
         })
     }
 
@@ -475,13 +472,21 @@ impl Regex {
         lower(&parsed)
     }
 
+    /// The byte backend's automaton, built on first use (`compiled`).
+    fn byte_backend(&self) -> Option<&regex::bytes::Regex> {
+        self.compiled
+            .get_or_init(|| compile_byte_regex(&self.compiled_source, self.flags))
+            .as_ref()
+    }
+
+    /// The byte matcher sound for match results, if any.
+    fn compiled(&self) -> Option<&regex::bytes::Regex> {
+        self.compiled_serves_matches.then(|| self.byte_backend()).flatten()
+    }
+
     /// The byte matcher sound for match ranges, if any.
     fn range_matcher(&self) -> Option<&regex::bytes::Regex> {
-        match &self.range_backend {
-            RangeBackend::None => None,
-            RangeBackend::Compiled => self.compiled.as_ref(),
-            RangeBackend::Own(compiled) => Some(compiled),
-        }
+        self.compiled_serves_ranges.then(|| self.byte_backend()).flatten()
     }
 
     #[inline]
@@ -500,7 +505,7 @@ impl Regex {
         if text.is_ascii()
             && (!self.compiled_dot_requires_cr_guard || !text.as_bytes().contains(&b'\r'))
         {
-            if let Some(compiled) = &self.compiled {
+            if let Some(compiled) = self.compiled() {
                 // Most replace/test patterns have no captures. Use the
                 // allocation-free search API for those, avoiding both a
                 // capture workspace probe and construction of an empty range
@@ -512,9 +517,8 @@ impl Regex {
                     return Matches { item };
                 }
                 let mut workspace = self.compiled_locations.borrow_mut();
-                let locations = workspace
-                    .as_mut()
-                    .expect("compiled regexp has capture workspace");
+                let locations =
+                    workspace.get_or_insert_with(|| compiled.capture_locations());
                 let item = compiled
                     .captures_read_at(locations, text.as_bytes(), start)
                     .map(|matched| Match {
@@ -535,9 +539,7 @@ impl Regex {
 
     fn find_compiled(&self, compiled: &regex::bytes::Regex, bytes: &[u8], start: usize) -> Matches {
         let mut workspace = self.compiled_locations.borrow_mut();
-        let locations = workspace
-            .as_mut()
-            .expect("compiled regexp has capture workspace");
+        let locations = workspace.get_or_insert_with(|| compiled.capture_locations());
         let item = compiled
             .captures_read_at(locations, bytes, start)
             .map(|matched| Match {
@@ -559,7 +561,7 @@ impl Regex {
         if let Some(found) = self.backtracking_find(subject, start, false, true) {
             return Matches { item: found };
         }
-        if let (Some(bytes), Some(compiled)) = (subject.ascii(), &self.compiled) {
+        if let (Some(bytes), Some(compiled)) = (subject.ascii(), self.compiled()) {
             if !self.compiled_dot_requires_cr_guard || !subject.has_carriage_return() {
                 return self.find_compiled(compiled, bytes, start);
             }
@@ -597,7 +599,7 @@ impl Regex {
         }
         if let (Some(bytes), Some(compiled)) = (
             subject.ascii(),
-            self.range_matcher().or(self.compiled.as_ref()),
+            self.range_matcher().or(self.compiled()),
         ) {
             if !self.compiled_dot_requires_cr_guard || !subject.has_carriage_return() {
                 return compiled
@@ -626,9 +628,9 @@ impl Regex {
             // A sticky search has no automata path: the repository matcher answers it.
             let automata = !sticky
                 && if captures {
-                    self.compiled.is_some()
+                    self.compiled().is_some()
                 } else {
-                    self.range_matcher().or(self.compiled.as_ref()).is_some()
+                    self.range_matcher().or(self.compiled()).is_some()
                 };
             if automata
                 && (!captures || self.capture_names.is_empty())
@@ -647,7 +649,7 @@ impl Regex {
                     return Some(None);
                 }
             }
-            let linear = self.compiled.is_some()
+            let linear = self.compiled().is_some()
                 && (!self.compiled_dot_requires_cr_guard || !subject.has_carriage_return());
             let budget = linear.then(|| backtrack::Program::budget(bytes.len()));
             let found = program.find(bytes, start, sticky, budget).ok()?;
@@ -700,7 +702,7 @@ impl Regex {
         if input.iter().all(|unit| *unit <= ASCII_MAX)
             && (!self.compiled_dot_requires_cr_guard || !input.contains(&u16::from(b'\r')))
         {
-            if let Some(compiled) = &self.compiled {
+            if let Some(compiled) = self.compiled() {
                 let bytes = input.iter().map(|unit| *unit as u8).collect::<Vec<_>>();
                 return self.find_compiled(compiled, &bytes, start);
             }
@@ -3228,6 +3230,23 @@ mod tests {
         )
         .unwrap();
         assert!(regex.find_from("abc", 0).next().is_some());
+    }
+
+    #[test]
+    fn byte_backend_is_built_on_first_match_and_keeps_its_results() {
+        // A pattern the byte backend serves builds no automaton until a match needs it, and
+        // matching through it, before and after, gives the same results. The backend is
+        // opt-in (`QUENCH_COMPILED_REGEXP`), so without it no automaton is ever built.
+        let host = r"^(?:[a-z][a-z0-9+\-.]*:)?\/\/(?:[a-z0-9\-._~]|%[0-9a-f]{2})+(?::\d{1,5})?$";
+        let regex = Regex::with_flags(host, Flags::from("i")).unwrap();
+        assert!(regex.compiled.get().is_none());
+        let found = |text: &str| regex.find_from(text, 0).next().map(|m| m.range);
+        assert_eq!(found("HTTP://Example.COM:8080"), Some(0..23));
+        assert_eq!(regex.compiled.get().is_some(), regex.compiled_serves_matches);
+        assert_eq!(found("http://exa mple"), None);
+        let captures = Regex::with_flags(r"(\w+)-(\d+)", Flags::from("")).unwrap();
+        let matched = captures.find_from("id: abc-42", 0).next().unwrap();
+        assert_eq!((matched.range, matched.captures), (4..10, vec![Some(4..7), Some(8..10)]));
     }
 
     #[test]

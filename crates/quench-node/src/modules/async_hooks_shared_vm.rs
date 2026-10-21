@@ -396,7 +396,7 @@ pub(crate) fn enter_resource_context(
 }
 
 pub(crate) fn complete_callback_context(context: &mut NativeContext<'_, NodeHost>, id: u64) -> Result<(), RootedError> {
-    for root in take_context_stores(&context.host_mut().shared_state(), id) { context.release_root(root); }
+    for root in retire_context(&context.host_mut().shared_state(), id) { context.release_root(root); }
     queue_destroy(context, id)
 }
 
@@ -443,11 +443,19 @@ pub(crate) fn clear_context(
     shared_state: &Rc<RefCell<crate::host::SharedNodeState>>,
     async_id: u64,
 ) {
-    // A finished context is never entered again, so its trigger goes with its stores.
-    shared_state.borrow_mut().async_hooks.context_triggers.remove(&async_id);
-    for root in take_context_stores(shared_state, async_id) {
+    for root in retire_context(shared_state, async_id) {
         runtime.release_root(root);
     }
+}
+
+/// Forget a completed context: its trigger, which only an execution inside the context reads,
+/// and its stores, returned for release. No execution enters a completed context again.
+pub(crate) fn retire_context(
+    shared_state: &Rc<RefCell<crate::host::SharedNodeState>>,
+    async_id: u64,
+) -> Vec<RootId> {
+    shared_state.borrow_mut().async_hooks.context_triggers.remove(&async_id);
+    take_context_stores(shared_state, async_id)
 }
 
 pub(crate) fn take_context_stores(

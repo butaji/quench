@@ -892,7 +892,7 @@ impl<H: Host> Vm<H> {
         if let Some(object) = self.object_data_mut(arguments) {
             object.set_arguments_object();
         }
-        let length = self.intern_atom("length");
+        let length = self.length_atom;
         self.set_property_with_attributes(
             arguments,
             length,
@@ -1331,23 +1331,11 @@ impl<H: Host> Vm<H> {
             // A supported native function still returns through the ordinary
             // Return instruction, preserving the dispatch loop's frame and
             // constructor unwind path. Guard misses leave pc at zero.
-            if pc == 0 && self.execution_mode == ExecutionMode::Compiled {
-                if let Some((return_pc, return_register, value)) = self.js_jit_at_entry(p, frame) {
-                    self.write(frame, return_register, value);
-                    pc = return_pc;
-                    continue;
-                }
-                let (program_id, function_id) =
-                    (self.frames[frame].program, self.frames[frame].function);
-                self.programs
-                    .record_js_jit_fallback_entry(program_id, function_id);
-                if p.kind != crate::bytecode::ProgramKind::Wasm
-                    && self.programs.js_jit_diagnostics_enabled()
-                    && self.frames[frame].js_jit_interpreter_started.is_none()
-                {
-                    self.frames[frame].js_jit_interpreter_started =
-                        Some(std::time::Instant::now());
-                }
+            if pc == 0
+                && let Some(return_pc) = self.js_tier_frame_entry(p, frame)
+            {
+                pc = return_pc;
+                continue;
             }
             if Self::lane_runs(cursor.lane, pc) {
                 pc = self.run_fast_lane(
@@ -1434,8 +1422,11 @@ impl<H: Host> Vm<H> {
                         id: executing_program,
                         retained: current_program.take(),
                     };
+                    // The loop's entry program, as at every unwind: it names the program of
+                    // each frame that executes no retained one, which the executing residual
+                    // `p` does not once a pending call of another program unwinds.
                     let unwound = self.unwind_general_loop(
-                        p,
+                        entry_program,
                         frame,
                         pc + 1,
                         pc as u32,

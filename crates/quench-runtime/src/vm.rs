@@ -50,6 +50,8 @@ struct RuntimeAtoms {
     /// Read by every promise resolution and species lookup.
     then: Atom,
     constructor: Atom,
+    /// The iterator protocol's step method.
+    next: Atom,
     /// Canonical key for named function-info lookup; paired with length_atom.
     name: Atom,
     /// The empty string, an anonymous function's initial name.
@@ -274,8 +276,6 @@ impl Default for CaptureCache {
 /// Capture walks `Vm::walked_capture_slots` remembers, by start environment and depth: enough
 /// for the closures of a few nested scopes reading their outer bindings in turn.
 const CAPTURE_WALKS: usize = 64;
-/// Named function shapes `Vm::append_function_name` remembers: the functions of a program
-/// region a closure-heavy loop creates.
 /// Closure templates `Vm::closure_in_realm` remembers, one per function id modulo the count:
 /// the nested functions a closure-heavy region makes again on each call of its parent. A
 /// conflict overwrites the entry, which only costs the displaced function's next closure
@@ -1410,7 +1410,6 @@ const EMPTY_STRING_CONCAT_CACHE: StringConcatCache = StringConcatCache {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CallTarget {
     User(ProgramId, u32, Value),
-    NumericUser(ProgramId, u32, Value),
     Native(Native),
 }
 pub(super) enum StepResult {
@@ -2388,6 +2387,7 @@ impl<H: Host> Vm<H> {
             + heap.promise_record_reserved_bytes
             + heap.await_record_reserved_bytes
             + heap.iterator_record_reserved_bytes
+            + heap.string_record_reserved_bytes
             + heap.legacy_cell_record_reserved_bytes
             + heap.free_slot_metadata_bytes
             + property_arena_bytes
@@ -2397,7 +2397,7 @@ impl<H: Host> Vm<H> {
             + heap.sparse_array_sidecar_bytes
             + vm_metadata_bytes;
         eprintln!(
-            "{{\"kind\":\"quench-memory-composition\",\"phase\":\"{phase}\",\"collection\":{},\"cell_kind_names\":{:?},\"cell_counts\":{:?},\"cell_variant_names\":{:?},\"cell_variant_counts\":{:?},\"occupied_slots\":{},\"complete_slot_slabs\":{},\"fully_free_slot_slabs\":{},\"partial_slot_slabs\":{},\"fully_empty_slot_pages\":{fully_empty_slot_pages},\"slot_arena_reserved_bytes\":{},\"object_record_reserved_bytes\":{},\"object_record_reusable_ids\":{},\"object_record_allocation_scan_cursor\":{},\"array_record_reserved_bytes\":{},\"array_record_reusable_ids\":{},\"array_record_allocation_scan_cursor\":{},\"function_record_reserved_bytes\":{},\"promise_record_reserved_bytes\":{},\"await_record_reserved_bytes\":{},\"iterator_record_reserved_bytes\":{},\"legacy_cell_record_reserved_bytes\":{},\"free_slot_metadata_bytes\":{},\"object_headers\":{},\"embedded_object_headers\":{},\"boxed_object_headers\":{},\"boxed_object_header_bytes\":{},\"object_property_counts_by_width\":{:?},\"inline_property_attribution_bytes_overlapping_slots\":{},\"object_header_size_bytes\":{},\"cell_size_bytes\":{},\"slot_size_bytes\":{},\"property_arena_values_bytes\":{},\"property_arena_metadata_bytes\":{},\"property_arena_used_values\":{},\"property_arena_capacity_values\":{},\"live_property_used_values\":{},\"live_property_capacity_values\":{},\"live_property_used_values_by_width\":{:?},\"live_property_capacity_values_by_width\":{:?},\"dense_array_elements_bytes\":{},\"dense_array_headers_bytes\":{},\"dense_array_backing_count\":{},\"sparse_array_sidecar_bytes\":{},\"string_buffers_bytes\":{},\"string_buffer_count\":{},\"other_cell_payload_bytes\":{},\"cell_payload_total_bytes\":{},\"shape_table_bytes\":{},\"shape_count\":{},\"dictionary_shape_count\":{},\"shape_lookup_bytes\":{},\"transition_table_bytes\":{},\"descriptor_side_table_bytes\":{},\"cache_side_table_bytes\":{},\"atom_side_table_bytes\":{},\"frame_bytes\":{},\"profile_instrumentation_bytes\":{},\"accounted_runtime_bytes\":{},\"accounted_with_profile_bytes\":{}}}",
+            "{{\"kind\":\"quench-memory-composition\",\"phase\":\"{phase}\",\"collection\":{},\"cell_kind_names\":{:?},\"cell_counts\":{:?},\"cell_variant_names\":{:?},\"cell_variant_counts\":{:?},\"occupied_slots\":{},\"complete_slot_slabs\":{},\"fully_free_slot_slabs\":{},\"partial_slot_slabs\":{},\"fully_empty_slot_pages\":{fully_empty_slot_pages},\"slot_arena_reserved_bytes\":{},\"object_record_reserved_bytes\":{},\"object_record_reusable_ids\":{},\"object_record_allocation_scan_cursor\":{},\"array_record_reserved_bytes\":{},\"array_record_reusable_ids\":{},\"array_record_allocation_scan_cursor\":{},\"function_record_reserved_bytes\":{},\"promise_record_reserved_bytes\":{},\"await_record_reserved_bytes\":{},\"iterator_record_reserved_bytes\":{},\"string_record_reserved_bytes\":{},\"legacy_cell_record_reserved_bytes\":{},\"free_slot_metadata_bytes\":{},\"object_headers\":{},\"embedded_object_headers\":{},\"boxed_object_headers\":{},\"boxed_object_header_bytes\":{},\"object_property_counts_by_width\":{:?},\"inline_property_attribution_bytes_overlapping_slots\":{},\"object_header_size_bytes\":{},\"cell_size_bytes\":{},\"slot_size_bytes\":{},\"property_arena_values_bytes\":{},\"property_arena_metadata_bytes\":{},\"property_arena_used_values\":{},\"property_arena_capacity_values\":{},\"live_property_used_values\":{},\"live_property_capacity_values\":{},\"live_property_used_values_by_width\":{:?},\"live_property_capacity_values_by_width\":{:?},\"dense_array_elements_bytes\":{},\"dense_array_headers_bytes\":{},\"dense_array_backing_count\":{},\"sparse_array_sidecar_bytes\":{},\"string_buffers_bytes\":{},\"string_buffer_count\":{},\"other_cell_payload_bytes\":{},\"cell_payload_total_bytes\":{},\"shape_table_bytes\":{},\"shape_count\":{},\"dictionary_shape_count\":{},\"shape_lookup_bytes\":{},\"transition_table_bytes\":{},\"descriptor_side_table_bytes\":{},\"cache_side_table_bytes\":{},\"atom_side_table_bytes\":{},\"frame_bytes\":{},\"profile_instrumentation_bytes\":{},\"accounted_runtime_bytes\":{},\"accounted_with_profile_bytes\":{}}}",
             self.heap.collection_count(),
             CellKind::NAMES,
             heap.cell_counts,
@@ -2418,6 +2418,7 @@ impl<H: Host> Vm<H> {
             heap.promise_record_reserved_bytes,
             heap.await_record_reserved_bytes,
             heap.iterator_record_reserved_bytes,
+            heap.string_record_reserved_bytes,
             heap.legacy_cell_record_reserved_bytes,
             heap.free_slot_metadata_bytes,
             heap.object_headers,
@@ -2498,7 +2499,6 @@ impl<H: Host> Vm<H> {
         self.transitions.clear();
         self.shape_slot_memo.clear();
         self.function_name_shapes.clear();
-        self.closure_templates.fill(None);
         self.symbol_write_proofs.clear();
         self.symbol_load_proofs.clear();
         self.shape_attribute_memo.clear();
@@ -2540,6 +2540,7 @@ impl<H: Host> Vm<H> {
             regexp_flag_accessors,
             then: self.intern_atom("then"),
             constructor: self.intern_atom("constructor"),
+            next: self.intern_atom("next"),
             name: self.intern_atom("name"),
             empty: self.intern_atom(""),
             value: self.intern_atom("value"),
@@ -2865,17 +2866,15 @@ impl<H: Host> Vm<H> {
                 self.profile.call_target(0, args.len());
                 self.call_native_guarded(p, native, this, args, callee)
             }
-            CallTarget::User(program_id, id, env)
-            | CallTarget::NumericUser(program_id, id, env) => {
-                let target_kind = if matches!(target, CallTarget::User(..)) {
-                    1
-                } else {
-                    2
-                };
-                self.profile.call_target(target_kind, args.len());
+            CallTarget::User(program_id, id, env) => {
                 let program = self.programs.get(program_id).ok_or_else(|| {
                     self.type_error(p, "function belongs to an unavailable program".into())
                 })?;
+                // The profile's user targets count general and numeric bodies apart.
+                let numeric = program
+                    .function_get(id as usize)
+                    .is_some_and(|function| function.dispatch == DispatchClass::Numeric);
+                self.profile.call_target(1 + usize::from(numeric), args.len());
                 let active_program = self.replace_active_program(program_id);
                 let realm = self
                     .heap
@@ -2930,7 +2929,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<(Value, Value), JsError> {
         let (program_id, id, env, realm) = match self.heap.function(callee) {
             Some(FunctionRecord {
-                kind: FunctionKind::User(program_id, id) | FunctionKind::NumericUser(program_id, id),
+                kind: FunctionKind::User(program_id, id),
                 env,
                 realm,
                 ..

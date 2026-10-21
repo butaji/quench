@@ -35,7 +35,7 @@ impl<H: Host> Vm<H> {
             return Some(self.heap.alloc_string(source.as_str().into()));
         }
         let Some(FunctionRecord {
-            kind: FunctionKind::User(program, id) | FunctionKind::NumericUser(program, id),
+            kind: FunctionKind::User(program, id),
             ..
         }) = self.heap.function(function)
         else {
@@ -57,7 +57,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn function_caller_is_restricted(&self, function: Value) -> bool {
         match self.heap.function(function) {
             Some(FunctionRecord {
-                kind: FunctionKind::User(program_id, id) | FunctionKind::NumericUser(program_id, id),
+                kind: FunctionKind::User(program_id, id),
                 ..
             }) => self.programs.get(*program_id).is_some_and(|program| {
                 program
@@ -97,8 +97,7 @@ impl<H: Host> Vm<H> {
                 CallContext::Function(caller) | CallContext::Constructor(caller) => {
                     let Some(FunctionRecord {
                         kind:
-                            FunctionKind::User(program_id, id)
-                            | FunctionKind::NumericUser(program_id, id),
+                            FunctionKind::User(program_id, id),
                         realm,
                         ..
                     }) = self.heap.function(caller)
@@ -221,7 +220,7 @@ impl<H: Host> Vm<H> {
             .heap
             .root_value(target_root)
             .expect("bound target root remains live");
-        let length_atom = self.intern_atom("length");
+        let length_atom = self.length_atom;
         let length_key = self.heap.alloc_string(self.atom_value(length_atom));
         // HasOwnProperty(Target, "length"): [[GetOwnProperty]], a Proxy's through its trap.
         let bound_length = if self.own_property_enumerable(p, target, length_key)?.is_some() {
