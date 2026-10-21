@@ -497,7 +497,7 @@ enum ActivationArguments {
 pub(super) struct ScriptCallTarget {
     callee: Value,
     /// The `LaneStack::generation` it was resolved in.
-    generation: u64,
+    generation: ScriptGeneration,
     program: ProgramId,
     function: u32,
     env: Value,
@@ -507,12 +507,11 @@ pub(super) struct ScriptCallTarget {
     /// `registers`), derived once.
     room: u16,
     params: u16,
-    strict: bool,
-    /// An arrow's `this`, found in its environment when it was resolved: `None` for any
-    /// other function, `Some(None)` for an arrow whose environment binds none, which then
-    /// takes its caller's receiver. An arrow whose binding is still uninitialized (before
-    /// `super()`) is never resolved, and an initialized binding never changes.
-    lexical_this: Option<Option<Value>>,
+    /// How a call binds its `this` (`ThisBinding`).
+    this_binding: ThisBinding,
+    /// An arrow's own `this` (`ThisBinding::Lexical`), found in its environment when it was
+    /// resolved; unused for any other binding.
+    lexical_this: Value,
     /// `new` may activate it too (`Vm::inline_constructible`).
     constructs: bool,
     /// `new` may run its body as the stores alone (`Function::only_initializes_this_fields`).
@@ -627,6 +626,29 @@ impl ScriptCallTarget {
     }
 }
 
+/// How a call of a `ScriptCallTarget` binds `this`, one byte so the entry stays one cache
+/// line: the receiver as is (strict), the receiver boxed or the global for nullish
+/// (sloppy), or for an arrow its environment's `this` (`ScriptCallTarget::lexical_this`),
+/// or the caller's receiver when its environment binds none. An arrow whose binding is
+/// still uninitialized (before `super()`) is never resolved, and an initialized binding
+/// never changes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+enum ThisBinding {
+    Sloppy,
+    Strict,
+    Lexical,
+    CallerReceiver,
+}
+
+/// A lane run's generation (`LaneStack::generation`), narrow so a cache entry stays one
+/// line; its wrap clears every entry, so no stale one can match a reused number.
+type ScriptGeneration = u32;
+
+/// The size a script call cache entry keeps, one cache line, which each call reads.
+const SCRIPT_CALL_TARGET_BYTES: usize = 64;
+const _: () = assert!(std::mem::size_of::<ScriptCallTarget>() <= SCRIPT_CALL_TARGET_BYTES);
+
 /// A `ScriptCallTarget::forwarded_method` that names no record. A program with more distinct
 /// forwarding bodies than the index spans leaves the rest unrecorded.
 const NO_FORWARDED_METHOD: u16 = u16::MAX;
@@ -641,8 +663,8 @@ const EMPTY_SCRIPT_CALL_TARGET: ScriptCallTarget = ScriptCallTarget {
     registers: 0,
     room: 0,
     params: 0,
-    strict: false,
-    lexical_this: None,
+    this_binding: ThisBinding::Sloppy,
+    lexical_this: Value::UNDEFINED,
     constructs: false,
     initializes: false,
     entry: CallEntry::Activates,
@@ -800,13 +822,13 @@ pub(super) struct LaneStack {
     /// Names the collection epoch and realm of the running lane, which no lane instruction
     /// changes: a target resolved under another generation is stale. Lane runs move between
     /// programs far more often than either changes, so each target names its program instead.
-    generation: u64,
+    generation: ScriptGeneration,
     /// The epoch and realm `generation` names.
     generation_key: (u64, Value),
 }
 
 /// A generation no lane runs under: an empty target entry never matches.
-const NO_SCRIPT_GENERATION: u64 = 0;
+const NO_SCRIPT_GENERATION: ScriptGeneration = 0;
 
 impl Default for LaneStack {
     fn default() -> Self {
@@ -903,7 +925,12 @@ impl LaneStack {
 
     fn enter_generation(&mut self, key: (u64, Value)) {
         if self.generation == NO_SCRIPT_GENERATION || self.generation_key != key {
-            self.generation += 1;
+            self.generation = self.generation.wrapping_add(1);
+            if self.generation == NO_SCRIPT_GENERATION {
+                // A wrapped number could name entries of a generation long past.
+                self.clear_script_targets();
+                self.generation = NO_SCRIPT_GENERATION + 1;
+            }
             self.generation_key = key;
         }
     }
@@ -5488,17 +5515,15 @@ impl<H: Host> Vm<H> {
                 self.target_capture(code, env)
             };
             // An arrow's `this` is its own closure's environment's, like `capture`.
-            let lexical_this = match known.lexical_this {
-                Some(_) => {
-                    let this = self.captured_lexical_this(env);
-                    if this.is_some_and(Value::is_deleted) {
-                        return None;
-                    }
-                    Some(this)
-                }
-                None => None,
+            let (this_binding, lexical_this) = match known.this_binding {
+                ThisBinding::Lexical | ThisBinding::CallerReceiver => match self.captured_lexical_this(env) {
+                    Some(this) if this.is_deleted() => return None,
+                    Some(this) => (ThisBinding::Lexical, this),
+                    None => (ThisBinding::CallerReceiver, Value::UNDEFINED),
+                },
+                binding => (binding, Value::UNDEFINED),
             };
-            let target = ScriptCallTarget { callee, env, capture, lexical_this, ..known };
+            let target = ScriptCallTarget { callee, env, capture, this_binding, lexical_this, ..known };
             self.lane_stack.remember_script_target(set, target);
             return Some(target);
         }
@@ -5593,8 +5618,13 @@ impl<H: Host> Vm<H> {
             ))
             .ok()?,
             params: body.params,
-            strict: body.strict,
-            lexical_this,
+            this_binding: match lexical_this {
+                Some(Some(_)) => ThisBinding::Lexical,
+                Some(None) => ThisBinding::CallerReceiver,
+                None if body.strict => ThisBinding::Strict,
+                None => ThisBinding::Sloppy,
+            },
+            lexical_this: lexical_this.flatten().unwrap_or(Value::UNDEFINED),
             constructs: shape.constructs && !environment,
             initializes: shape.initializes && !environment,
             entry: if environment {
@@ -5721,10 +5751,13 @@ fn lane_direct_call_this<H: Host>(
     target: &ScriptCallTarget,
     receiver: Value,
 ) -> Option<Value> {
-    if let Some(lexical) = target.lexical_this {
-        // An arrow's own `this`, or its caller's receiver when its environment binds none.
-        Some(lexical.unwrap_or(receiver))
-    } else if target.strict || receiver.direct_object_index().is_some() {
+    match target.this_binding {
+        ThisBinding::Lexical => return Some(target.lexical_this),
+        // An arrow whose environment binds no `this` takes its caller's receiver.
+        ThisBinding::CallerReceiver | ThisBinding::Strict => return Some(receiver),
+        ThisBinding::Sloppy => {}
+    }
+    if receiver.direct_object_index().is_some() {
         Some(receiver)
     } else if receiver.is_null() || receiver.is_undefined() {
         Some(vm.realm.globals)
