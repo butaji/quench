@@ -23,6 +23,8 @@ impl NodeHost {
             building_snapshot: _,
             // False at the snapshot point; a restored host sets it in `Host::resume`.
             bootstrapped: _,
+            // A cache of this process's filesystem, which the restoring one fills itself.
+            real_paths: _,
         } = self;
         require_quiescent(
             net_pending_writes.is_empty() && net_pending_ends.is_empty() && net_pending_destroys.is_empty(),

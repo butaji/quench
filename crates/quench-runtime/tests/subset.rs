@@ -405,6 +405,35 @@ fn shared_atomics_round_trip_negative_bigints() {
     );
 }
 
+/// A register read only by the catch handler stays live across an `await` that resumes by
+/// throwing into it.
+#[test]
+fn awaited_rejections_reach_handlers_with_their_registers() {
+    assert_eq!(
+        output("async function f() { var err = {}; try { await Promise.reject(err); } catch (e) { print(e === err); } } f();"),
+        ["true"]
+    );
+}
+
+/// IteratorClose looks `return` up through a Proxy iterator's `get` trap.
+#[test]
+fn proxy_iterators_close_through_their_get_trap() {
+    assert_eq!(
+        output("const log = []; const it = new Proxy({ next() { return { done: false, value: 1 }; } }, { get(t, k) { log.push(String(k)); return t[k]; } }); const [a] = { [Symbol.iterator]() { return it; } }; print(log.join());"),
+        ["next,return"]
+    );
+}
+
+/// `@@split` converts an object limit after constructing its splitter, which observes a
+/// prototype `exec` the conversion installs.
+#[test]
+fn regexp_split_observes_exec_replaced_by_its_limit() {
+    assert_eq!(
+        output("const r = /a/[Symbol.split]('abba', { valueOf() { RegExp.prototype.exec = () => null; return 100; } }); print(r.length);"),
+        ["1"]
+    );
+}
+
 /// A `var` read before any write is `undefined`, even when its frame slot moved into a
 /// register of a reused frame (TOD-140: TypeScript's `(function (E) {...})(E || (E = {}))`).
 #[test]

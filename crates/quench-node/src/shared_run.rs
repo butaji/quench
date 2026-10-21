@@ -73,6 +73,55 @@ pub fn execute_shared_with_execution_mode(
     argv: Vec<String>,
     mode: quench_runtime::ExecutionMode,
 ) -> Result<SharedCompletion, String> {
+    execute_shared_with_teardown(input, argv, mode, Teardown::Free)
+}
+
+/// What becomes of an entry's runtime once the entry finishes.
+#[derive(Clone, Copy)]
+enum Teardown {
+    /// Dropped: an embedding or a Worker's thread goes on after the entry.
+    Free,
+    /// Ended for the exit that follows (`Runtime::end_for_process_exit`): the CLI's process
+    /// exits once its entry finishes.
+    ProcessExit,
+}
+
+/// An entry's runtime, ended by its `Teardown` on every path out of the entry.
+struct EntryRuntime {
+    runtime: std::mem::ManuallyDrop<Runtime<NodeHost>>,
+    teardown: Teardown,
+}
+
+impl std::ops::Deref for EntryRuntime {
+    type Target = Runtime<NodeHost>;
+    fn deref(&self) -> &Self::Target {
+        &self.runtime
+    }
+}
+
+impl std::ops::DerefMut for EntryRuntime {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.runtime
+    }
+}
+
+impl Drop for EntryRuntime {
+    fn drop(&mut self) {
+        // SAFETY: `runtime` is taken once, here, and never used again.
+        let runtime = unsafe { std::mem::ManuallyDrop::take(&mut self.runtime) };
+        match self.teardown {
+            Teardown::Free => drop(runtime),
+            Teardown::ProcessExit => runtime.end_for_process_exit(),
+        }
+    }
+}
+
+fn execute_shared_with_teardown(
+    input: SharedInput,
+    argv: Vec<String>,
+    mode: quench_runtime::ExecutionMode,
+    teardown: Teardown,
+) -> Result<SharedCompletion, String> {
     #[cfg(target_os = "linux")]
     let (_parent_mask, worker_mask) =
         crate::modules::process_signals_state::ParentSignalMask::block_for_worker()
@@ -85,7 +134,7 @@ pub fn execute_shared_with_execution_mode(
             worker_mask
                 .restore()
                 .map_err(|error| format!("runtime execution signal mask: {error}"))?;
-            execute_shared_on_worker(input, argv, None, mode)
+            execute_shared_on_worker(input, argv, None, mode, teardown)
         })
         .map_err(|error| format!("runtime worker thread: {error}"))?
         .join()
@@ -103,6 +152,7 @@ pub(crate) fn execute_worker(
         argv,
         Some(worker),
         quench_runtime::ExecutionMode::Interpreted,
+        Teardown::Free,
     )
 }
 
@@ -111,6 +161,7 @@ fn execute_shared_on_worker(
     argv: Vec<String>,
     worker: Option<crate::modules::worker_shared_vm::WorkerContext>,
     mode: quench_runtime::ExecutionMode,
+    teardown: Teardown,
 ) -> Result<SharedCompletion, String> {
     let eval_builtin_globals = matches!(&input, SharedInput::Eval { .. });
     let eval_source_nonempty = matches!(&input, SharedInput::Eval { source, .. } if !source.is_empty());
@@ -202,7 +253,10 @@ fn execute_shared_on_worker(
     let host = new_host(worker)?;
     let snapshot_path = crate::host::startup_snapshot::snapshot_path(&host, entry_file.as_deref(), in_worker);
     let snapshot = snapshot_path.as_deref().and_then(crate::host::startup_snapshot::load_or_schedule);
-    let mut runtime = Runtime::new(host);
+    let mut runtime = EntryRuntime {
+        runtime: std::mem::ManuallyDrop::new(Runtime::new(host)),
+        teardown,
+    };
     runtime.set_execution_mode(mode);
     let mut program = runtime.compile_entry(request).map_err(|error| format!("{error:?}"))?;
     let mut restored = false;
@@ -216,7 +270,7 @@ fn execute_shared_on_worker(
             Err(error) => {
                 crate::host::startup_snapshot::report(snapshot_path.as_deref(), Err(&error));
                 // The restore may have left the runtime half replaced: boot a fresh one.
-                runtime = Runtime::new(new_host(None)?);
+                *runtime = Runtime::new(new_host(None)?);
                 runtime.set_execution_mode(mode);
                 program = runtime.compile_entry(request).map_err(|error| format!("{error:?}"))?;
             }
@@ -321,7 +375,8 @@ pub fn executable_path() -> std::io::Result<PathBuf> {
         .unwrap_or(executable))
 }
 
-/// Parse the development CLI's entry form and route it through `execute_shared`.
+/// Parse the development CLI's entry form and route it through `execute_shared`. The
+/// caller's process exits once this returns, so the entry's runtime is ended for that exit.
 pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<ExitCode, String> {
     // A process started to build a startup snapshot builds it instead (`startup_snapshot`);
     // its bootstrap cannot read the environment, so the variable stays out of the snapshot.
@@ -511,7 +566,7 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
     let executable = executable_path().map_err(|error| error.to_string())?;
     let mut argv = vec![executable.to_string_lossy().into_owned()];
     argv.extend(guest_arguments);
-    execute_shared_with_execution_mode(
+    execute_shared_with_teardown(
         input,
         argv,
         if jit {
@@ -519,6 +574,7 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
         } else {
             quench_runtime::ExecutionMode::Interpreted
         },
+        Teardown::ProcessExit,
     )
     .map(SharedCompletion::exit_code)
 }

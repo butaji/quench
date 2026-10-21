@@ -7,6 +7,31 @@ pub(crate) const LEXICAL_THIS_BINDING: &str = "\0quench:lexical-this";
 /// The `Unary` operator a template literal substitution compiles to: ToString (ECMA-262
 /// 13.15.5.1 step 5), which no source operator spells. It extends oxc's operator numbering.
 pub(crate) const UNARY_TO_STRING: u32 = oxc_ast::ast::UnaryOperator::Delete as u32 + 1;
+/// The names `typeof` yields (ECMA-262 13.5.3.1), indexed as `typeof_name_index` (vm/coercion.rs) classifies
+/// values.
+pub(crate) const TYPEOF_NAMES: [&str; 8] =
+    ["undefined", "object", "boolean", "number", "string", "bigint", "symbol", "function"];
+/// The `Unary` operators that compare `typeof` of their operand with a name in
+/// `TYPEOF_NAMES` (`typeof x === "function"`): this plus the name's index tests equality,
+/// and that plus `TYPEOF_NAMES.len()` inequality. The comparison of two strings that
+/// `typeof` and a literal would make has no effects, so it needs neither string.
+pub(crate) const UNARY_TYPEOF_IS: u32 = UNARY_TO_STRING + 1;
+const UNARY_TYPEOF_TESTS: u32 = 2 * TYPEOF_NAMES.len() as u32;
+
+/// The `UNARY_TYPEOF_IS` operator testing `typeof x` against `name`, negated for an
+/// inequality; `None` when no value's `typeof` is `name`.
+pub(crate) fn typeof_test_operator(name: &str, negated: bool) -> Option<u32> {
+    let index = TYPEOF_NAMES.iter().position(|candidate| *candidate == name)? as u32;
+    Some(UNARY_TYPEOF_IS + index + if negated { TYPEOF_NAMES.len() as u32 } else { 0 })
+}
+
+/// The name index and negation a `UNARY_TYPEOF_IS` operator tests.
+#[inline(always)]
+pub(crate) fn typeof_test(operator: u32) -> Option<(usize, bool)> {
+    let offset = operator.checked_sub(UNARY_TYPEOF_IS).filter(|offset| *offset < UNARY_TYPEOF_TESTS)?;
+    let names = TYPEOF_NAMES.len() as u32;
+    Some(((offset % names) as usize, offset >= names))
+}
 pub(crate) const NEW_TARGET_BINDING: &str = "\0quench:new-target";
 
 pub type Atom = u32;
@@ -1373,12 +1398,36 @@ impl RegisterRoots {
 /// as a change (zigzag) on the same line and absolute on a new one. Most entries take three
 /// bytes, a quarter of a `SourcePosition`, and a function keeps one per source location
 /// change while it compiles and for as long as it lives.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct SourcePositions {
     bytes: Vec<u8>,
     /// The final entry, which the next one is coded against.
     last: Option<SourcePosition>,
+    /// Where decoding may start, made on the first lookup of a table longer than one interval
+    /// (`SourcePositions::at`): a stack trace through a large function otherwise decoded its
+    /// table from the start for every frame (Babel: about 20K instructions a frame).
+    checkpoints: std::cell::OnceCell<Box<[SourcePositionCheckpoint]>>,
 }
+
+/// The entries between two `SourcePositions` checkpoints.
+const SOURCE_POSITION_CHECKPOINT_INTERVAL: usize = 32;
+
+/// A point decoding may resume from: the byte offset of an entry, the entry before it
+/// (which it is coded against) and the entry's own pc.
+#[derive(Clone, Copy, Debug)]
+struct SourcePositionCheckpoint {
+    offset: usize,
+    previous: SourcePosition,
+    pc: u32,
+}
+
+/// Two tables are equal when their entries are; the checkpoints are a memo of them.
+impl PartialEq for SourcePositions {
+    fn eq(&self, other: &Self) -> bool {
+        self.bytes == other.bytes && self.last == other.last
+    }
+}
+impl Eq for SourcePositions {}
 
 /// The payload bits of one LEB128 byte; the high bit marks a continuation.
 const LEB128_PAYLOAD_BITS: u32 = 7;
@@ -1402,6 +1451,7 @@ impl SourcePositions {
             u64::from(position.column)
         });
         self.last = Some(position);
+        self.checkpoints = std::cell::OnceCell::new();
     }
 
     fn write(&mut self, mut value: u64) {
@@ -1417,15 +1467,48 @@ impl SourcePositions {
     }
 
     pub(crate) fn iter(&self) -> SourcePositionIter<'_> {
-        SourcePositionIter {
-            bytes: &self.bytes,
-            previous: SourcePosition { pc: 0, line: 0, column: 0 },
-        }
+        self.iter_from(0, SourcePosition { pc: 0, line: 0, column: 0 })
     }
 
-    /// The position in effect at `pc`: the last entry at or before it.
+    fn iter_from(&self, offset: usize, previous: SourcePosition) -> SourcePositionIter<'_> {
+        SourcePositionIter { bytes: &self.bytes[offset..], previous }
+    }
+
+    /// The position in effect at `pc`: the last entry at or before it, decoded from the last
+    /// checkpoint at or before it.
     pub(crate) fn at(&self, pc: u32) -> Option<SourcePosition> {
-        self.iter().take_while(|position| position.pc <= pc).last()
+        let checkpoints = self.checkpoints.get_or_init(|| self.make_checkpoints());
+        let start = checkpoints.partition_point(|checkpoint| checkpoint.pc <= pc);
+        let mut iter = match start.checked_sub(1) {
+            Some(index) => self.iter_from(checkpoints[index].offset, checkpoints[index].previous),
+            None => self.iter(),
+        };
+        let mut found = None;
+        for position in iter.by_ref() {
+            if position.pc > pc {
+                break;
+            }
+            found = Some(position);
+        }
+        found
+    }
+
+    /// A checkpoint at every `SOURCE_POSITION_CHECKPOINT_INTERVAL`th entry after the first;
+    /// none for a table shorter than one interval, which decodes as fast from its start.
+    fn make_checkpoints(&self) -> Box<[SourcePositionCheckpoint]> {
+        let mut checkpoints = Vec::new();
+        let mut iter = self.iter();
+        let mut entry = 0;
+        loop {
+            let offset = self.bytes.len() - iter.bytes.len();
+            let previous = iter.previous;
+            let Some(position) = iter.next() else { break };
+            if entry > 0 && entry % SOURCE_POSITION_CHECKPOINT_INTERVAL == 0 {
+                checkpoints.push(SourcePositionCheckpoint { offset, previous, pc: position.pc });
+            }
+            entry += 1;
+        }
+        checkpoints.into_boxed_slice()
     }
 
     pub(crate) fn shrink_to_fit(&mut self) {
@@ -1545,14 +1628,16 @@ impl Function {
         imports: &'a [ModuleImportBinding],
         atom_text: impl Fn(Atom) -> Option<&'a str> + 'a,
     ) -> impl Iterator<Item = u16> + 'a {
-        let linked = move |name: &str| {
-            imports.iter().any(|import| import.local == name)
-                || link_plan.locals.iter().chain(&link_plan.hoisted_functions).any(|(local, _)| local == name)
-        };
+        // A set, once: a large module's locals against its whole link plan was quadratic.
+        let linked: rustc_hash::FxHashSet<&str> = imports
+            .iter()
+            .map(|import| import.local.as_str())
+            .chain(link_plan.locals.iter().chain(&link_plan.hoisted_functions).map(|(local, _)| local.as_str()))
+            .collect();
         self.local_atoms
             .iter()
             .enumerate()
-            .filter(move |(_, atom)| atom_text(**atom).is_some_and(linked))
+            .filter(move |(_, atom)| atom_text(**atom).is_some_and(|name| linked.contains(name)))
             .filter_map(|(slot, _)| u16::try_from(slot).ok())
     }
 
@@ -3039,7 +3124,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 101;
+    pub const FORMAT_VERSION: u8 = 102;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;
@@ -3141,6 +3226,7 @@ impl ResidualProgram {
     }
 }
 mod binary;
+pub(crate) use binary::{decode_static_module_analysis, encode_static_module_analysis};
 mod disassemble;
 #[cfg(test)]
 mod tests;

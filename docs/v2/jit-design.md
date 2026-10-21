@@ -849,13 +849,82 @@ The `async-fs` memory profile exposed a separate host allocation problem:
 `NodeHost` created a VM `WeakRef` and host weak root for each Promise even when
 no async-hooks `init` or `destroy` callback was enabled. I kept Promise IDs and
 job-context propagation intact, while omitting that weakly tracked lifecycle
-record when neither hook kind has listeners. A clean production one-round JIT
+record when neither hook kind has listeners. An uninstrumented production one-round JIT
 screen validated output and reported 3.44 Score / 891 MiB RSS for Quench, versus
 73.60 / 210 MiB for Node and 128.96 / 67 MiB for Bun. The earlier Quench
 production one-round screen was 1.31 / 7.26 GiB. This is a large memory
 reduction but still loses on both metrics; the samples are diagnostic, not a
 paired qualification. Raw reports and the reproduction command are in
 `evidence/jit-jetstream3-2026-10-21/async-fs-promise-lifecycle/`.
+
+The async-fs diagnostic also found 259,198 hot `CountVisitor` method entries
+that update one own numeric field and return `undefined`. I added a guarded
+JIT-mode fast entry for that exact bytecode shape; it uses the existing
+successful own-field load/store caches, and only skips interpretation for a
+fixed receiver with a Number value. The iteration diagnostic confirmed 59,119
+fast `visitFile` returns and 200,079 fast `visitDir` returns, with one cold
+interpreter entry per method. A seven-sample microbenchmark measured median
+57.86 ms for one million guarded calls versus 193.68 ms for the interpreted
+shape. The production async-fs screen scored 3.09 at 891 MiB; one earlier
+screen scored 3.44 at the same RSS, with substantial peer-score variation.
+This confirms a local speed path but not a JetStream Score gain. Quench remains
+well behind Node and Bun. Details and reports are in
+`evidence/jit-jetstream3-2026-10-21/async-fs-field-increment/`.
+
+## Full JetStream 3 coverage screen
+
+A one-round screen of the complete suite produced valid matching output on 33
+of 34 fixtures; `argon2-wasm` hit the 600-second per-engine timeout for
+Quench. Across the valid fixtures, Quench's geometric mean score was 8.46% of
+Node and 5.81% of Bun. The largest valid score gaps were `sqlite3-wasm`,
+`espree-wtb`, `typescript-lib`, and `async-fs`. Peak RSS also remains a major
+problem on `doxbee-promise` (966 MiB), `doxbee-async` (1004 MiB), and
+`async-fs` (891 MiB), while Quench uses less memory than peers on several
+other workloads. These single rounds are diagnostic screens, not
+qualification.
+
+A three-round glibc allocator screen tried `MALLOC_TRIM_THRESHOLD_=0` on
+`doxbee-promise` and `doxbee-async`. Median peak RSS was unchanged (within
+0.01%) in both fixtures. Quench Score rose 3.8–4.3%, but large peer timing
+drift between sequential screens makes that inconclusive. Aggressive trim
+is not retained as a runtime setting. Raw reports are in
+`evidence/jit-jetstream3-2026-10-21/doxbee-glibc-trim/`.
+
+The focused `typescript-lib` profile counted 28.9 million function entries,
+3.93 million native entries, 89 promotions, and 43 successful native
+compilations. The highest-cost work is in closure/call-heavy functions and
+functions above the current 256-instruction limit. The static guard census
+counts branch and type-check sites, but these profiles do not show meaningful
+redundant-guard coverage. This points to execution coverage and dynamic call,
+closure, and object costs as higher priorities than ISOP or other Boolean
+rewriting. Keep ISOP as a bounded offline experiment until a matched fixture
+shows an actual score gain. Full reports and reproduction commands are in
+`evidence/jit-jetstream3-2026-10-21/full-suite-screen/`.
+
+## SQLite Wasm execution profile
+
+The `sqlite3-wasm` diagnostic scored 0.25 / 162.4 MiB RSS for Quench, versus
+25.96 / 67.6 MiB for Node and 12.26 / 89.4 MiB for Bun. This agrees with the
+full-suite screen's 0.27 score. The instrumented workload compiled 2,517 of
+2,533 functions in its largest module, emitting 8.04 MB of code in 24.7 s;
+across module instances it recorded 23,033 native functions, 28.0 MB of code,
+69.7 s cumulative compilation, 26.0 million native entry requests, and 2.23
+million compiled-to-VM reference callouts. It reports zero compiled import
+callouts. This points toward generated-code throughput, module compilation,
+and reference-call boundaries as the next Wasm-side diagnostics. It does not
+justify changing the existing tier or cache policy without a matched A/B.
+Report and reproduction details are in
+`evidence/jit-jetstream3-2026-10-21/sqlite-wasm-screen/`.
+
+The same-artifact reference-body cache was then screened on SQLite in three
+paired rounds. Cache-on scored 0.30 versus 0.32 off (paired ratio 0.897,
+95% interval 0.841–0.938); RSS fell only 0.38% (ratio 0.9962,
+0.9928–0.9985). The cache worsened score and remains opt-in. This was a
+diagnostic screen with a dirty-source provenance flag caused by widening the
+bench runner's fixture validation; both arms used the same production runtime
+binary. The runner now permits this matched screen for either `tsf-wasm` or
+`sqlite3-wasm`. Reports are in
+`evidence/jit-jetstream3-2026-10-21/sqlite-reference-body-cache/`.
 
 ## Numeric hash-map entry loop
 

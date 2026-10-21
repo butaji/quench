@@ -249,8 +249,9 @@ snapshot holds of the builder's process: `process.argv`, `execArgv`, `execPath`,
 `Math.random` seed. While a snapshot is built, reading `process.env`, `process.cwd()` or
 `perf_hooks` fails the build, since the snapshot would keep the builder's.
 
-A process uses a snapshot when it runs a file entry on the main thread with no CLI options
-and no IPC channel (`NODE_CHANNEL_FD`). Restoring decodes all a snapshot holds (heap,
+A process uses a snapshot when `QUENCH_STARTUP_SNAPSHOT` is `on` or `trace` and it runs a
+file entry on the main thread with no CLI options and no IPC channel (`NODE_CHANNEL_FD`).
+Without it processes boot without one. Restoring decodes all a snapshot holds (heap,
 programs, shapes and atoms: about 5 MB resident for the preloaded builtins), so there are
 two kinds (`SnapshotKind`): `preloaded`, as above, and `bootstrap`, without the builtins. A
 process restores `bootstrap` when its entry's static graph cannot reach a builtin
@@ -265,9 +266,8 @@ build, keyed by the library root and the variables the bootstrap reads (`HOME`,
 with the kind in the file name. When an eligible process finds none it starts the
 executable with `QUENCH_BUILD_STARTUP_SNAPSHOT=<file>`, detached and holding a lock file, which
 builds it for later runs and removes other builds' snapshots. A snapshot that does not
-restore boots the process as if there were none. `QUENCH_STARTUP_SNAPSHOT=off` boots every
-process without one; `QUENCH_STARTUP_SNAPSHOT=trace` reports on stderr whether one was
-restored, and which kind.
+restore boots the process as if there were none. `QUENCH_STARTUP_SNAPSHOT=trace` also
+reports on stderr whether one was restored, and which kind.
 
 ## Shared runtime host roots
 

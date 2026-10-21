@@ -1,0 +1,28 @@
+v8/crypto                        speed x1.034 wins 4/5  RSS     4.3 ->     4.5 MB  wall 5.1s
+v8/deltablue                     speed x0.991 wins 1/5  RSS     3.8 ->     3.8 MB  wall 2.0s
+v8/earley-boyer                  speed x0.962 wins 0/5  RSS     8.4 ->     7.7 MB  wall 5.1s
+v8/navier-stokes                 speed x1.019 wins 3/5  RSS     4.5 ->     4.6 MB  wall 3.1s
+v8/raytrace                      speed x0.910 wins 2/5  RSS     3.8 ->     3.8 MB  wall 3.1s
+v8/regexp                        speed x0.965 wins 2/5  RSS     7.3 ->     7.3 MB  wall 6.7s
+v8/richards                      speed x1.025 wins 5/5  RSS     3.8 ->     3.8 MB  wall 2.0s
+v8/splay                         speed x0.988 wins 2/5  RSS    38.2 ->    31.3 MB  wall 2.2s
+fw/express                       speed x0.968 wins 1/5  RSS    24.0 ->    23.9 MB  wall 0.2s
+fw/koa                           speed x1.005 wins 3/5  RSS    32.3 ->    32.2 MB  wall 0.2s
+fw/fastify                       speed x0.986 wins 2/5  RSS    26.6 ->    26.4 MB  wall 0.6s
+fw/hono                          speed x1.073 wins 3/5  RSS    29.3 ->    29.1 MB  wall 0.2s
+fw/h3                            speed x1.030 wins 4/5  RSS    28.0 ->    27.8 MB  wall 0.2s
+js3/json-parse-inspector         speed x0.969 wins 2/5  RSS    84.7 ->    84.6 MB  wall 1.7s
+js3/json-stringify-inspector     speed x0.930 wins 1/5  RSS    84.7 ->    84.6 MB  wall 1.5s
+js3/web-ssr                      speed x1.059 wins 3/5  RSS    58.6 ->    58.2 MB  wall 5.8s
+js3/hash-map                     speed x0.964 wins 2/5  RSS    24.5 ->    22.9 MB  wall 3.6s
+js3/chai-wtb                     speed x0.979 wins 1/5  RSS    22.3 ->    22.1 MB  wall 15.0s
+js3/doxbee-promise               speed x1.095 wins 3/5  RSS    53.2 ->    49.7 MB  wall 4.7s
+js3/doxbee-async                 speed x1.084 wins 3/5  RSS    50.8 ->    48.2 MB  wall 2.3s
+js3/async-fs                     speed x0.949 wins 2/5  RSS    17.4 ->    17.1 MB  wall 11.8s
+js3/lazy-collections             speed x0.870 wins 1/5  RSS    11.8 ->    11.6 MB  wall 9.3s
+js3/acorn-wtb                    speed x1.005 wins 3/5  RSS    37.7 ->    35.8 MB  wall 41.1s
+js3/source-map-wtb               speed x0.994 wins 2/5  RSS    43.0 ->    42.6 MB  wall 22.8s
+js3/espree-wtb                   speed x0.988 wins 1/5  RSS    51.2 ->    48.6 MB  wall 41.9s
+== fw        speed geomean x1.012  RSS ratio geomean x0.994  (5 workloads)
+== js3       speed geomean x0.989  RSS ratio geomean x0.971  (12 workloads)
+== v8        speed geomean x0.986  RSS ratio geomean x0.968  (8 workloads)
