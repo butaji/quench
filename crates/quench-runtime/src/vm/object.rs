@@ -5,7 +5,7 @@ use crate::value::HeapReference;
 const PRIVATE_NAME_PREFIX: &str = "\0quench:private:";
 
 /// Bit set of facts derived from an atom's text; `DERIVED` marks the set as computed.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub(super) struct AtomClass(u8);
 
 impl AtomClass {
@@ -1692,7 +1692,7 @@ impl<H: Host> Vm<H> {
 
     /// A string primitive's `GetField` where no lookup can run guest code, in the order
     /// `get_field_cached` takes: its `length`, then the `String.prototype` data property
-    /// its site cache holds (`string_field_cache_read`). An index, or any other key, is
+    /// its site cache holds (`string_prototype_field_hit`). An index, or any other key, is
     /// left to the general path.
     pub(super) fn cached_string_field_hit(
         &self,
@@ -1701,19 +1701,37 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         site: u16,
     ) -> Option<Value> {
-        let Some(text) = self.heap.string(object) else {
-            return None;
-        };
+        let text = self.heap.string(object)?;
         if atom == self.length_atom {
             return Some(Value::number(text.len() as f64));
         }
-        if !(self.specialized && p.specialized)
-            || self.atom_class(atom).contains(AtomClass::ARRAY_INDEX)
-        {
+        if !self.string_field_site_cacheable(p, atom) {
             return None;
         }
-        let hit = self.string_field_cache_read(atom, site)??;
-        Some(hit.value)
+        self.string_prototype_field_hit(site)
+    }
+
+    /// Whether a string primitive's read of `atom` in `p` can take the `String.prototype`
+    /// data property its site caches (`string_prototype_field_hit`): specialized code
+    /// reading neither `length` nor an index, which the string itself answers, nor a name
+    /// no shape answers. It depends on the site alone, so a handler checks it once.
+    pub(super) fn string_field_site_cacheable(&self, p: &ResidualProgram, atom: Atom) -> bool {
+        atom != self.length_atom
+            && self.specialized
+            && p.specialized
+            && !self.atom_class(atom).contains(AtomClass::ARRAY_INDEX)
+            && self.field_cache_atom_eligible(atom)
+    }
+
+    /// The `String.prototype` data property site `site` caches, at a site that
+    /// `string_field_site_cacheable` admits.
+    #[inline(always)]
+    pub(super) fn string_prototype_field_hit(&self, site: u16) -> Option<Value> {
+        let prototype = self.heap.object_record(self.string_proto)?;
+        if self.shape_is_dictionary(prototype.shape()) {
+            return None;
+        }
+        Some(self.cached_field_value(self.field_cache_index(site), prototype)?.value)
     }
 
     /// The field cache's answer for an object cell other than a string or a
