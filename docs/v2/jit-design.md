@@ -1011,3 +1011,18 @@ screened. Promise score rose from 3.07 to 3.60 while Async fell from 5.19 to
 The hasher change was reverted because these sequential screens did not show a
 consistent score and memory win. Reports are in
 `evidence/jit-jetstream3-2026-10-21/doxbee-fxhash-context-map/`.
+
+## Guarded numeric hash-map lookup
+
+`_findKeyEntry` has an exact bytecode matcher for its 23-instruction linked
+entry loop. The fast helper is guarded at function entry, uses the existing
+field caches for the list and entry fields, and calls the already-compiled
+numeric `equals` target. On a guard miss, it leaves the frame untouched for
+ordinary interpretation. A 3-pair same-binary JetStream `hash-map` screen
+showed enabled median Score 2.93 versus 2.63 disabled, with sampled peak RSS
+74.17 MiB versus 74.06 MiB and median wall time 163.9 s versus 174.6 s. All
+three adjacent score pairs favored enabled. The helper is now enabled by
+default for eligible inputs; `QUENCH_JS_JIT_NUMERIC_FIND=0` retains the
+interpreter for A/B screens. The result is a fixture-specific screen, not
+qualification against Node/Bun or a suite-wide win. Raw reports and method
+are in `evidence/jit-jetstream3-2026-10-21/hash-map-numeric-find-screen/`.
