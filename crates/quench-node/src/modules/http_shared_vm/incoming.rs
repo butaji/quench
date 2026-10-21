@@ -2,42 +2,114 @@
 use crate::host::NodeHost;
 use crate::modules::event_constructor_shared_vm::get;
 use crate::modules::net_shared_vm;
-use quench_runtime::{NativeContext, RootId, RootedError};
+use quench_runtime::{NativeContext, RootId, RootedError, Runtime, Value};
 type Context<'a> = NativeContext<'a, NodeHost>;
 fn call(c: &mut Context<'_>, object: RootId, name: &str, args: &[RootId]) -> Result<RootId, RootedError> {
     let method = get(c, object, name)?;
     c.call_rooted(method, object, args)
 }
-/// Every field a parsed message head carries (`poll::request_object` for a server request,
-/// `poll::response_object` for a client response), in the order they are copied onto the
-/// library IncomingMessage after `_addHeaderLines` has seen `rawHeaders`.
-const MESSAGE_HEAD_FIELDS: [&str; 11] = [
+/// Every field a parsed message head carries (`MessageHead`), in the order they are copied
+/// onto the library IncomingMessage after `_addHeaderLines` has seen `rawHeaders`.
+const MESSAGE_HEAD_FIELDS: [&str; 10] = [
     "method", "url", "statusCode", "statusMessage", "httpVersion", "httpVersionMajor",
-    "httpVersionMinor", "rawHeaders", "socket", "complete", "readable",
+    "httpVersionMinor", "rawHeaders", "socket", "complete",
 ];
+/// `create`'s arguments past the head's fields: the body text, whether the body is still
+/// open, the exchange id and whether the exchange is a server's.
+const BODY_ARGUMENT: usize = MESSAGE_HEAD_FIELDS.len();
+const OPEN_ARGUMENT: usize = BODY_ARGUMENT + 1;
+const ID_ARGUMENT: usize = OPEN_ARGUMENT + 1;
+const SERVER_ARGUMENT: usize = ID_ARGUMENT + 1;
+/// The head field `_addHeaderLines` reads first.
+const RAW_HEADERS_FIELD: &str = "rawHeaders";
+/// The version a head without a parsable `major.minor` reports.
+const DEFAULT_VERSION: (u32, u32) = (1, 1);
+
+/// A parsed message head: a server request's method and target, or a client response's
+/// status, with the version, raw header lines, the connection's socket object and whether
+/// the message is complete.
+pub(super) struct MessageHead {
+    pub(super) request: Option<(String, String)>,
+    pub(super) status: Option<(u16, String)>,
+    pub(super) version: String,
+    pub(super) raw_headers: Vec<(String, String)>,
+    pub(super) socket: Option<RootId>,
+    pub(super) complete: bool,
+}
+
+impl MessageHead {
+    /// The head's fields as `create`'s leading arguments, in `MESSAGE_HEAD_FIELDS` order,
+    /// an absent one `undefined`. The caller releases the roots.
+    pub(super) fn arguments(self, runtime: &mut Runtime<NodeHost>) -> Result<Vec<RootId>, String> {
+        let (major, minor) = self
+            .version
+            .split_once('.')
+            .and_then(|(major, minor)| Some((major.parse().ok()?, minor.parse().ok()?)))
+            .unwrap_or(DEFAULT_VERSION);
+        let raw_headers = super::poll::raw_header_array(runtime, self.raw_headers)?;
+        let socket = self.socket.and_then(|socket| runtime.rooted_value(socket));
+        let text = |runtime: &mut Runtime<NodeHost>, text: Option<&str>| match text {
+            Some(text) => runtime.string_rooted(text),
+            None => runtime.root(Value::UNDEFINED),
+        };
+        let mut arguments = Vec::with_capacity(MESSAGE_HEAD_FIELDS.len());
+        for name in MESSAGE_HEAD_FIELDS {
+            let root = match name {
+                "method" => text(runtime, self.request.as_ref().map(|(method, _)| method.as_str())),
+                "url" => text(runtime, self.request.as_ref().map(|(_, target)| target.as_str())),
+                "statusCode" => runtime.root(
+                    self.status.as_ref().map_or(Value::UNDEFINED, |(code, _)| Value::number(f64::from(*code))),
+                ),
+                "statusMessage" => text(runtime, self.status.as_ref().map(|(_, message)| message.as_str())),
+                "httpVersion" => runtime.string_rooted(&self.version),
+                "httpVersionMajor" => runtime.root(Value::number(f64::from(major))),
+                "httpVersionMinor" => runtime.root(Value::number(f64::from(minor))),
+                RAW_HEADERS_FIELD => raw_headers,
+                "socket" => runtime.root(socket.unwrap_or(Value::UNDEFINED)),
+                "complete" => runtime.root(if self.complete { Value::TRUE } else { Value::FALSE }),
+                _ => unreachable!("every message head field has a value"),
+            };
+            arguments.push(root);
+        }
+        Ok(arguments)
+    }
+}
+
+/// Indices of the factory's configuration (`operations`): the shared `_read` and
+/// `_destroy`, and the host-private keys a server request and a client response record
+/// their exchange under.
+const READ_FUNCTION: &str = "2";
+const DESTROY_FUNCTION: &str = "3";
+const SERVER_EXCHANGE_KEY: &str = "4";
+const CLIENT_EXCHANGE_KEY: &str = "5";
 pub(crate) fn create(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let configuration = c.host_function_data()?;
     let constructor = get(c, configuration, "0")?;
     let missing = c.undefined();
+    let argument = |index: usize| args.get(index).copied().unwrap_or(missing);
     // The library supports an absent socket. The native exchange below owns
     // actual byte production until a public native Socket is attached.
     let stream = c.construct_rooted(constructor, constructor, &[missing])?;
-    let message = args[0];
-    let raw = get(c, message, "rawHeaders")?;
+    let raw_index = MESSAGE_HEAD_FIELDS.iter().position(|name| *name == RAW_HEADERS_FIELD).expect("raw headers are a head field");
+    let raw = argument(raw_index);
     let length = get(c, raw, "length")?;
     call(c, stream, "_addHeaderLines", &[raw, length])?;
-    for name in MESSAGE_HEAD_FIELDS {
-        let value = c.get_named_property_rooted(message, name)?;
-        if c.rooted_value(value).is_some_and(|value| value.is_undefined()) { continue; }
+    for (index, name) in MESSAGE_HEAD_FIELDS.into_iter().enumerate() {
+        let value = argument(index);
+        if c.rooted_value(value).is_none_or(|value| value.is_undefined()) { continue; }
         c.assign_named_property_rooted(stream, name, value)?;
     }
-    let open = args.get(2).copied().unwrap_or(missing);
+    let open = argument(OPEN_ARGUMENT);
     if c.truthy_rooted(open)? { let no = c.boolean(false); c.assign_named_property_rooted(stream, "complete", no)?; }
-    let id = args.get(3).copied().unwrap_or(missing);
-    let server = args.get(4).copied().unwrap_or(missing);
-    let data = c.array_rooted(&[stream, id, server])?;
-    for (name, operation) in [("_read", "httpIncomingRead"), ("_destroy", "httpIncomingDestroy")] {
-        let function = c.host_function_named_with_data(crate::host::shared_vm::operation(operation), name, data)?;
+    // The exchange id goes under the side's host-private key, which the shared `_read`
+    // and `_destroy` (`owner`) read back.
+    let id = argument(ID_ARGUMENT);
+    let server = argument(SERVER_ARGUMENT);
+    let key = if c.truthy_rooted(server)? { SERVER_EXCHANGE_KEY } else { CLIENT_EXCHANGE_KEY };
+    let key = get(c, configuration, key)?;
+    c.assign_property_rooted(stream, key, id)?;
+    for (name, function) in [("_read", READ_FUNCTION), ("_destroy", DESTROY_FUNCTION)] {
+        let function = get(c, configuration, function)?;
         c.assign_named_property_rooted(stream, name, function)?;
     }
     let socket = get(c, stream, "socket")?;
@@ -49,7 +121,7 @@ pub(crate) fn create(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<
             c.set_prototype_rooted(socket, prototype)?;
         }
     }
-    let body = args.get(1).copied().unwrap_or(missing);
+    let body = argument(BODY_ARGUMENT);
     if let Some(units) = c.string_code_units(body)? {
         if !units.is_empty() {
             let bytes: Vec<_> = units.into_iter().map(|unit| unit as u8).collect();
@@ -60,18 +132,19 @@ pub(crate) fn create(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<
     if !c.truthy_rooted(open)? { let eof = c.null(); call(c, stream, "push", &[eof])?; }
     Ok(stream)
 }
+/// The message `receiver` is and its exchange: the id its side's host-private key holds
+/// (`create`), and whether that side is the server's.
 fn owner(c: &mut Context<'_>, receiver: RootId) -> Result<(RootId, bool, Option<u64>), RootedError> {
-    let data = c.host_function_data()?;
-    let stream = get(c, data, "0")?;
-    if !c.strict_equal_rooted(stream, receiver)? {
-        let error = c.type_error_rooted("Illegal invocation")?;
-        return Err(c.throw(error));
+    let keys = c.host_function_data()?;
+    for (index, server) in [("0", true), ("1", false)] {
+        let key = get(c, keys, index)?;
+        let id = c.get_property_rooted(receiver, key)?;
+        if let Some(number) = c.rooted_value(id).and_then(|value| value.as_number()) {
+            return Ok((id, server, Some(number as u64)));
+        }
     }
-    let id = get(c, data, "1")?;
-    let server = get(c, data, "2")?;
-    let server = c.truthy_rooted(server)?;
-    let number = c.rooted_value(id).and_then(|value| value.as_number()).map(|number| number as u64);
-    Ok((id, server, number))
+    let error = c.type_error_rooted("Illegal invocation")?;
+    Err(c.throw(error))
 }
 pub(crate) fn read(c: &mut Context<'_>, receiver: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     let (_, server, id) = owner(c, receiver)?;

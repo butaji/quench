@@ -787,7 +787,7 @@ impl FunctionCompiler<'_, '_> {
                 _ => backing,
             };
             let value = if let Some(initializer) = initializer.filter(|initializer| {
-                observes_nothing(initializer) || self.function_initializer_inlines(initializer)
+                observes_nothing(initializer) || self.initializer_inlines(initializer)
             }) {
                 // Evaluating it here, in the constructor, is evaluating it in its initializer.
                 self.expression(initializer)
@@ -922,43 +922,38 @@ impl<'a> oxc_ast_visit::Visit<'a> for InitializerReferences<'a> {
 }
 
 impl FunctionCompiler<'_, '_> {
-    /// Whether a field initializer that is an arrow or function expression evaluates the same
-    /// in the constructor as in its initializer. Making the closure runs no code; the closure
-    /// captures the same `this` and home object, and its free names resolve the same when the
-    /// constructor binds none of them. `new.target` and direct `eval` see the activation.
-    fn function_initializer_inlines(&mut self, initializer: &Expression<'_>) -> bool {
+    /// Whether a field initializer evaluates the same in the constructor as in its
+    /// initializer function. Both run with the same receiver and home object inside the same
+    /// enclosing scopes, so its names resolve the same unless the constructor itself binds
+    /// one, and the constructor runs no code of its own before its fields. `new.target` and
+    /// direct `eval` see the activation; an initializer can name neither `arguments` nor
+    /// `await` or `yield` (early errors).
+    fn initializer_inlines(&mut self, initializer: &Expression<'_>) -> bool {
         use oxc_ast_visit::Visit;
         let mut references = InitializerReferences::default();
+        references.visit_expression(initializer);
+        // A name a function initializer binds as a parameter resolves inside it, to that
+        // parameter or an inner shadow, never to the constructor's binding.
         let params = match initializer {
-            Expression::ArrowFunctionExpression(arrow) => {
-                references.visit_arrow_function_expression(arrow);
-                &arrow.params
-            }
-            Expression::FunctionExpression(function) => {
-                references.visit_function(function, oxc_syntax::scope::ScopeFlags::Function);
-                &function.params
-            }
-            _ => return false,
+            Expression::ArrowFunctionExpression(arrow) => Some(&arrow.params),
+            Expression::FunctionExpression(function) => Some(&function.params),
+            _ => None,
         };
-        // A name the function binds as a parameter resolves inside it, to that parameter or
-        // an inner shadow, never to the constructor's binding.
         let own = params
-            .items
-            .iter()
-            .flat_map(|param| param.pattern.get_binding_identifiers())
-            .map(|binding| binding.name.as_str())
-            .chain(
+            .into_iter()
+            .flat_map(|params| {
                 params
-                    .rest
+                    .items
                     .iter()
-                    .flat_map(|rest| rest.rest.argument.get_binding_identifiers())
-                    .map(|binding| binding.name.as_str()),
-            )
+                    .flat_map(|param| param.pattern.get_binding_identifiers())
+                    .chain(params.rest.iter().flat_map(|rest| rest.rest.argument.get_binding_identifiers()))
+            })
+            .map(|binding| binding.name.as_str())
             .collect::<Vec<_>>();
         !references.activation_bound
             && references.names.iter().filter(|name| !own.contains(name)).all(|name| {
                 let atom = self.owner.atom(name);
-                !self.binds_name(atom)
+                !self.binds_own_name(atom)
             })
     }
 }

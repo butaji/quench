@@ -866,6 +866,9 @@ impl<H: Host> Vm<H> {
         if let Some(concats) = &mut self.string_concats {
             concats.fill(EMPTY_STRING_CONCAT_CACHE);
         }
+        if let Some(atoms) = &mut self.string_atoms {
+            atoms.fill((Value::UNDEFINED, 0));
+        }
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         self.heap.record_vm_gc_phase(3, after_collection_started);
         self.host.at_collection_boundary();

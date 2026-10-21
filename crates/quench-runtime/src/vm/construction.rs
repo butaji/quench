@@ -712,16 +712,8 @@ impl<H: Host> Vm<H> {
                     vm.switch_realm_global(previous_global);
                     let result = result?;
                     let result = if vm.intl_constructor_prototypes(native).is_none()
-                        && !native.is_typed_array_constructor()
-                        && !native.is_error_constructor()
-                        && !matches!(
-                            native,
-                            Native::Proxy
-                                | Native::Array
-                                | Native::ArrayBuffer
-                                | Native::SharedArrayBuffer
-                                | Native::RegExp
-                        )
+                        && !native.constructs_from_new_target()
+                        && native != Native::Proxy
                         && !(native == Native::Object
                             && new_target == vm.native_value(Native::Object)
                             && args
@@ -866,6 +858,21 @@ impl<H: Host> Vm<H> {
         Some(object)
     }
 
+    /// `Get(constructor, "prototype")` of GetPrototypeFromConstructor: an own data property
+    /// read in place (`own_function_prototype_data`), which runs no guest code, and any
+    /// other through [[Get]].
+    pub(super) fn constructor_prototype_value(
+        &mut self,
+        p: &ResidualProgram,
+        constructor: Value,
+    ) -> Result<Value, JsError> {
+        let prototype_atom = self.prototype_atom();
+        match self.own_function_prototype_data(constructor, prototype_atom) {
+            Some(prototype) => Ok(prototype),
+            None => self.get_property(p, constructor, prototype_atom),
+        }
+    }
+
     pub(super) fn own_function_prototype_data(
         &self,
         constructor: Value,
@@ -957,8 +964,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         new_target: Value,
     ) -> Result<Value, JsError> {
-        let prototype_atom = self.prototype_atom();
-        let prototype = self.get_property(p, new_target, prototype_atom)?;
+        let prototype = self.constructor_prototype_value(p, new_target)?;
         if self.object_data(prototype).is_some() {
             return Ok(prototype);
         }
@@ -980,8 +986,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         new_target: Value,
     ) -> Result<Value, JsError> {
-        let prototype_atom = self.prototype_atom();
-        let prototype = self.get_property(p, new_target, prototype_atom)?;
+        let prototype = self.constructor_prototype_value(p, new_target)?;
         if self.object_data(prototype).is_some() {
             return Ok(prototype);
         }
@@ -1002,7 +1007,16 @@ impl<H: Host> Vm<H> {
         new_target: Value,
         native: Native,
     ) -> Result<Value, JsError> {
-        if self.object_data(result).is_none() {
+        let Some(current) = self.object_data(result).map(Object::proto) else {
+            return Ok(result);
+        };
+        // GetPrototypeFromConstructor reading an own data `prototype` runs no guest code, and
+        // [[SetPrototypeOf]] to the prototype the object already has changes nothing. A
+        // DataView still checks its buffer afterwards.
+        if native != Native::DataView
+            && let Some(prototype_atom) = self.known_prototype_atom()
+            && self.own_function_prototype_data(new_target, prototype_atom) == Some(current)
+        {
             return Ok(result);
         }
         let result_root = self.heap.root(result);
@@ -1055,7 +1069,7 @@ impl<H: Host> Vm<H> {
         native: Native,
     ) -> Result<Option<Value>, JsError> {
         let prototype_atom = self.prototype_atom();
-        let prototype = self.get_property(p, new_target, prototype_atom)?;
+        let prototype = self.constructor_prototype_value(p, new_target)?;
         let prototype = if prototype.is_null() || self.object_data(prototype).is_none() {
             let Some(intrinsic) = TYPED_ARRAY_INSTALLS
                 .iter()

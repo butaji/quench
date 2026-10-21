@@ -654,6 +654,7 @@ struct AccessorFieldCache {
     receiver: u32,
     /// The receiver's prototype, where the chain to `holder` starts.
     prototype: Value,
+    /// The object holding the accessor, or `OWN_ACCESSOR` for the receiver itself.
     holder: Value,
     slot: u16,
     /// The `prototype_layout_epoch` the chain was proved under.
@@ -979,6 +980,8 @@ const EMPTY_CALL_TARGET: InLoopCallTarget = InLoopCallTarget {
     env: Value::UNDEFINED,
 };
 const STRING_CONCAT_CACHE_SIZE: usize = 64;
+/// Slots of `Vm::string_atoms`, a power of two.
+const STRING_ATOM_CACHE_SIZE: usize = 256;
 #[derive(Clone, Copy)]
 struct StringConcatCache {
     left: Value,
@@ -1320,6 +1323,10 @@ impl ShapeFacts {
     /// one, as an add carries data attributes, so a chain without this fact holds data
     /// properties alone and a read of any slot is its value.
     const ACCESSORS: u8 = 1 << 2;
+    /// Some property of the chain was made an accessor whose functions
+    /// `Vm::shape_accessors` holds (`ShapeAttributes::table_accessors`): one with a setter, as
+    /// every lazy data property is, rather than a getter alone.
+    const TABLE_ACCESSORS: u8 = 1 << 3;
 
     fn extended_by(self, transition: ShapeTransition) -> Self {
         let introduced = |fact: bool, bit: u8| if fact { bit } else { 0 };
@@ -1330,8 +1337,13 @@ impl ShapeFacts {
             self.0
                 | introduced(transition.introduces_gc_roots(), Self::MAY_HAVE_GC_ROOTS)
                 | introduced(descriptor(ShapeAttributes::slot_getter), Self::SLOT_GETTERS)
-                | introduced(descriptor(|attributes| attributes.accessor), Self::ACCESSORS),
+                | introduced(descriptor(|attributes| attributes.accessor), Self::ACCESSORS)
+                | introduced(descriptor(ShapeAttributes::table_accessors), Self::TABLE_ACCESSORS),
         )
+    }
+
+    fn table_accessors(self) -> bool {
+        self.0 & Self::TABLE_ACCESSORS != 0
     }
 
     fn accessors(self) -> bool {
@@ -1684,6 +1696,9 @@ pub(crate) struct Vm<H> {
     symbol_registry: FxHashMap<String, Value>,
     well_known_symbols: WellKnownSymbols,
     string_concats: Option<Box<[StringConcatCache]>>,
+    /// String values recently interned as property keys, and their atoms
+    /// (`Vm::string_key_atom`); collection empties it.
+    string_atoms: Option<Box<[(Value, Atom); STRING_ATOM_CACHE_SIZE]>>,
     call_targets: Box<[InLoopCallTarget; CALL_TARGET_CACHE_SIZE]>,
     field_caches: Vec<FieldCache>,
     /// Field load sites whose data property was found beyond the immediate prototype, by
@@ -1726,6 +1741,9 @@ pub(crate) struct Vm<H> {
     /// (`Vm::property_descriptor_object`), indexed by `accessor`; derived from shapes, so
     /// field-cache invalidation clears them.
     descriptor_shapes: [Option<u32>; 2],
+    /// The field slots of the descriptor shape `ToPropertyDescriptor` last read
+    /// (`object_descriptors::DescriptorLayout`); derived from shapes.
+    descriptor_layout: Option<object_descriptors::DescriptorLayout>,
     /// The shape a new RegExp object starts in and the one its own `lastIndex` moves it to
     /// (`Vm::regexp_from_matcher`), as the first one recorded; derived from shapes, so
     /// field-cache invalidation clears it.
@@ -2586,6 +2604,7 @@ impl<H: Host> Vm<H> {
         self.symbol_registry.clear();
         self.well_known_symbols.clear();
         self.string_concats = None;
+        self.string_atoms = None;
         *self.call_targets = [EMPTY_CALL_TARGET; CALL_TARGET_CACHE_SIZE];
         self.lane_stack.clear_script_targets();
         let atom_text = self.atom_text.clone();
@@ -2648,6 +2667,7 @@ impl<H: Host> Vm<H> {
         self.closure_templates.fill(None);
         self.iterator_result_shape = None;
         self.descriptor_shapes = [None; 2];
+        self.descriptor_layout = None;
         self.regexp_object_shapes = None;
         self.regexp_last_index_layouts.clear();
         self.regexp_builtin_layouts.clear();
@@ -2703,22 +2723,21 @@ impl<H: Host> Vm<H> {
         // Equal string constants share one cell, as engines intern literals: a string is an
         // immutable primitive, so which cell holds it is unobservable, and `===` between
         // literals from different sites then decides by identity before comparing text.
-        let mut strings: std::collections::HashMap<StringConstantKey<'_>, Value> =
-            std::collections::HashMap::new();
+        let mut strings: FxHashMap<StringConstantKey<'_>, Value> = FxHashMap::default();
         for constant in &program.constants {
             let key = match constant {
-                Constant::String(text) => Some(StringConstantKey::Text(text)),
-                Constant::StringUnits(units) => Some(StringConstantKey::Units(units)),
-                _ => None,
-            };
-            let value = match key.and_then(|key| strings.get(&key).copied().map(Ok).or(Some(Err(key)))) {
-                Some(Ok(shared)) => shared,
-                Some(Err(key)) => {
-                    let value = self.materialize_constant(constant);
-                    strings.insert(key, value);
-                    value
+                Constant::String(text) => StringConstantKey::Text(text),
+                Constant::StringUnits(units) => StringConstantKey::Units(units),
+                _ => {
+                    constants.push(self.materialize_constant(constant));
+                    continue;
                 }
-                None => self.materialize_constant(constant),
+            };
+            let value = match strings.entry(key) {
+                std::collections::hash_map::Entry::Occupied(shared) => *shared.get(),
+                std::collections::hash_map::Entry::Vacant(slot) => {
+                    *slot.insert(self.materialize_constant(constant))
+                }
             };
             constants.push(value);
         }
