@@ -971,3 +971,17 @@ scores were 3.69 and 4.69, but sequential peer drift means the score changes
 are inconclusive; Quench remains much slower than Node and Bun. Raw data and
 method are in
 `evidence/jit-jetstream3-2026-10-21/async-hooks-promise-context-cleanup/`.
+
+A one-round Doxbee Promise JIT census found zero native entries across 10.8
+million function entries. The hottest `doxbee` and anonymous closure bodies
+were rejected as unsupported activation/function kinds; `runIteration` made
+one compile attempt but its loop includes calls, array mutation, and Promise
+aggregation. The measured branch/type-check sites do not establish redundant
+guards, so Boolean simplification is not the next target. Census data is in
+`evidence/jit-jetstream3-2026-10-21/doxbee-native-entry-census/`.
+
+A fast return for empty AsyncLocalStorage maps was screened in sequential
+three-round builds. Promise score moved upward while Async moved downward, with
+flat RSS and large peer timing drift. The change was reverted because the
+screen did not establish a matched win. Results are in
+`evidence/jit-jetstream3-2026-10-21/doxbee-empty-als-snapshot/`.
