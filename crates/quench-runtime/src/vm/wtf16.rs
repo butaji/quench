@@ -118,6 +118,7 @@ impl FlatUnits {
         Self::Ascii(unsafe { Rc::from_raw(Rc::into_raw(storage) as *const str) })
     }
 
+    #[inline]
     fn view(&self) -> Units<'_> {
         match self {
             Self::Short(text) => Units::Ascii(text.as_str().as_bytes()),
@@ -718,16 +719,28 @@ impl JsString {
         )))
     }
 
+    #[inline]
     pub(crate) fn units(&self) -> Units<'_> {
         self.flat().view()
     }
 
     /// The flat units, flattening a rope on first use.
+    #[inline]
     pub(crate) fn flat(&self) -> &FlatUnits {
         let inner = match &self.repr {
             Repr::Flat(units) => return units,
             Repr::Shared(inner) => inner,
         };
+        match inner.flat.get() {
+            Some(units) => units,
+            None => Self::flatten_shared(inner),
+        }
+    }
+
+    /// `flat` of a rope not yet flattened, out of line so readers of flat strings stay small.
+    #[cold]
+    #[inline(never)]
+    fn flatten_shared(inner: &Rc<JsStringInner>) -> &FlatUnits {
         inner.flat.get_or_init(|| {
             let units = Self::flattened(inner);
             inner.release_halves();
