@@ -1512,7 +1512,9 @@ impl quench_runtime::Host for NodeHost {
         crate::host::resident_pages::release_read_only_pages();
         context.scoped(crate::modules::process_shared_vm::refresh_identity)?;
         context.scoped(crate::modules::performance_binding_shared_vm::refresh_time_origins)?;
-        commonjs::finish_initialize(context)
+        commonjs::finish_initialize(context)?;
+        context.host_mut().bootstrapped = true;
+        Ok(())
     }
 }
 
