@@ -120,7 +120,8 @@ crate::snapshot::snap_struct!(ErrorRealmIntrinsics {
 crate::snapshot::snap_struct!(PrivateHomeKey { environment, program, function, name });
 crate::snapshot::snap_struct!(RuntimeAtoms {
     lexical_this, new_target, regexp_exec, regexp_flags, last_index, regexp_flag_accessors, then,
-    constructor, next, name, empty, value, done, writable, enumerable, configurable, get, set,
+    constructor, next, name, empty, value, done, iterator_return, writable, enumerable, configurable,
+    get, set,
     bound_target, bound_this, bound_args,
 });
 crate::snapshot::snap_struct!(RealmIntrinsics {
