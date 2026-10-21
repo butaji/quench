@@ -1676,6 +1676,26 @@ impl ProgramStore {
         }))
     }
 
+    /// Whether a lane call may derive `function`'s view now: it has one, or an earlier entry
+    /// or lane call already deferred it, as `entry_lane_view` defers a first entry. The first
+    /// call of a function the lane has no view for marks it and takes the general path, so a
+    /// function called once costs no view (about a thousand instructions per bytecode
+    /// instruction).
+    pub(super) fn lane_call_may_derive(&self, id: ProgramId, function: u32) -> bool {
+        let Some(entry) = self.entry(id) else {
+            return false;
+        };
+        let derived = entry
+            .lane_views
+            .get(function as usize)
+            .is_some_and(|view| view.get().is_some());
+        derived
+            || entry
+                .lane_deferred
+                .get(function as usize)
+                .is_some_and(|deferred| deferred.replace(true))
+    }
+
     pub(super) fn lane_view(
         &self,
         id: ProgramId,
@@ -1796,6 +1816,13 @@ impl ProgramStore {
                 ModuleImport::Binding(_, _, fallback) => *fallback,
             }));
         }
+    }
+}
+
+impl ProgramStore {
+    /// Whether dropping the store reports something (`QUENCH_JS_JIT_STATS`).
+    pub(crate) fn reports_on_drop(&self) -> bool {
+        self.js_jit_diagnostics.is_some()
     }
 }
 

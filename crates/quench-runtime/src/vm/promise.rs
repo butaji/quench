@@ -11,8 +11,7 @@ use crate::{ModuleSource, module_identity::ModuleIdentity};
 use rustc_hash::FxHashSet;
 
 fn module_cache_key(name: &str, module_type: &str) -> String {
-    let name = crate::module_identity::normalize(std::path::Path::new(name));
-    format!("{}:{module_type}", name.text())
+    format!("{}:{module_type}", crate::module_identity::normalized_text(name))
 }
 
 fn self_import_referrer(referrer: &str, resolved: &str) -> bool {
@@ -1005,6 +1004,8 @@ pub(super) struct PromiseJob {
 
 #[derive(Clone, Copy, Debug)]
 pub(super) struct ThenableJob {
+    /// The realm the job runs in: the one current when the thenable resolved its promise.
+    pub(super) realm: Value,
     pub(super) then: Value,
     pub(super) thenable: Value,
     pub(super) promise: Value,
@@ -1078,7 +1079,6 @@ pub(super) struct DynamicImportJob {
 pub(super) struct PromiseRuntime {
     pub(super) rejection_notifications: VecDeque<RejectionNotification>,
     pub(super) last_rejection_id: u64,
-    pub(super) thenable_jobs: FxHashMap<Value, ThenableJob>,
     pub(super) finally_handler_callbacks: FxHashMap<Value, FinallyHandlerCallback>,
     pub(super) finally_continuation_callbacks: FxHashMap<Value, FinallyContinuationCallback>,
     pub(super) aggregates: FxHashMap<Value, AggregateRecord>,
@@ -1087,6 +1087,9 @@ pub(super) struct PromiseRuntime {
     pub(super) modules: FxHashMap<String, ModuleRecord>,
     pub(super) dynamic_import_jobs: Vec<DynamicImportJob>,
     pub(super) async_module_order: VecDeque<String>,
+    /// A promise an async-evaluating module waits on has settled since module advancement
+    /// last completed modules.
+    pub(super) async_module_settled: bool,
     pub(super) module_sources: FxHashMap<ModuleIdentity, Value>,
     pub(super) waiting_static_modules: Vec<ModuleSource>,
     pub(super) active_native: Vec<super::activation::NativeActivation>,
@@ -1106,7 +1109,6 @@ impl PromiseRuntime {
                 }
             };
         }
-        edges!(self.thenable_jobs, |job| [job.then, job.thenable, job.promise]);
         edges!(self.finally_handler_callbacks, |callback| [
             callback.handler,
             callback.constructor
@@ -1416,6 +1418,7 @@ impl<H: Host> Vm<H> {
                 rejection: PromiseRejectionState::Unobserved,
                 rejection_id: None,
                 host_context,
+                module_evaluation: false,
             },
         });
         if let Some(identity) = host_context {
@@ -1638,7 +1641,6 @@ impl<H: Host> Vm<H> {
                 self.promise_aggregate(p, this, args, AggregateMode::AllSettledKeyed)
             }
             Native::PromiseAny => self.promise_aggregate(p, this, args, AggregateMode::Any),
-            Native::PromiseThenableJob => self.promise_thenable_job(p),
             Native::PromiseAggregateJob => {
                 self.promise_aggregate_job(p, args.first().copied().unwrap_or(Value::UNDEFINED))
             }
@@ -2110,6 +2112,7 @@ impl<H: Host> Vm<H> {
                 };
                 record.begin_async_evaluation(namespace);
                 record.track_evaluation_promise(promise);
+                self.watch_module_evaluation(promise);
                 self.realm
                     .promise
                     .async_module_order
@@ -3962,7 +3965,17 @@ impl<H: Host> Vm<H> {
         let promise = &self.realm.promise;
         !promise.dynamic_import_jobs.is_empty()
             || !promise.waiting_static_modules.is_empty()
-            || !promise.async_module_order.is_empty()
+            || promise.async_module_settled
+    }
+
+    /// Marks `promise` as one a module's async evaluation waits on; module advancement
+    /// becomes due when it settles, or now if it already has.
+    fn watch_module_evaluation(&mut self, promise: Value) {
+        let settled = self.promise_record_mut(promise).is_none_or(|record| {
+            record.module_evaluation = true;
+            record.state != PromiseState::Pending
+        });
+        self.realm.promise.async_module_settled |= settled;
     }
 
     pub(super) fn advance_static_module_jobs(
@@ -3992,24 +4005,38 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
+    /// Async-evaluating modules whose evaluation promise has settled: the ones module
+    /// advancement completes, as (key, promise, namespace).
+    fn settled_async_modules(&self) -> impl Iterator<Item = (&String, Value, Value)> + '_ {
+        self.realm.promise.async_module_order.iter().filter_map(|key| {
+            let module = self.realm.promise.modules.get(key)?;
+            if module.phase() != ModulePhase::EvaluatingAsync {
+                return None;
+            }
+            let promise = module.evaluation_promise()?;
+            let settled = self
+                .promise_record(promise)
+                .is_some_and(|record| record.state != PromiseState::Pending);
+            settled.then_some((key, promise, module.pending_namespace()?))
+        })
+    }
+
     fn settle_pending_async_modules(&mut self, p: &ResidualProgram) -> Result<(), JsError> {
-        let pending = self
-            .realm
-            .promise
-            .async_module_order
-            .iter()
-            .filter_map(|key| {
-                let module = self.realm.promise.modules.get(key)?;
-                (module.phase() == ModulePhase::EvaluatingAsync).then(|| {
-                    Some((
-                        key.clone(),
-                        module.evaluation_promise()?,
-                        module.pending_namespace()?,
-                    ))
-                })?
-            })
+        if !std::mem::take(&mut self.realm.promise.async_module_settled) {
+            return Ok(());
+        }
+        let completed = self.complete_settled_async_modules(p);
+        // A failed completion leaves the rest due.
+        self.realm.promise.async_module_settled |= completed.is_err();
+        completed
+    }
+
+    fn complete_settled_async_modules(&mut self, p: &ResidualProgram) -> Result<(), JsError> {
+        let settled = self
+            .settled_async_modules()
+            .map(|(key, promise, namespace)| (key.clone(), promise, namespace))
             .collect::<Vec<_>>();
-        for (key, promise, namespace) in pending {
+        for (key, promise, namespace) in settled {
             let Some(record) = self.promise_record(promise).cloned() else {
                 continue;
             };
@@ -4184,7 +4211,6 @@ impl<H: Host> Vm<H> {
         }
         self.programs.set_module_imports(program_id, imports);
         let active_program = self.replace_active_program(program_id);
-        let specialized = std::mem::replace(&mut self.specialized, false);
         let evaluated = (|| {
             let closure = self.closure(&residual, 0, Value::NULL)?;
             let evaluation = self.call_value(&residual, closure, Value::UNDEFINED, &[])?;
@@ -4205,6 +4231,7 @@ impl<H: Host> Vm<H> {
                         ));
                     };
                     module_record.track_evaluation_promise(evaluation);
+                    self.watch_module_evaluation(evaluation);
                 } else if pending {
                     self.drain_jobs_until_promise(&residual, evaluation)?;
                 }
@@ -4288,7 +4315,6 @@ impl<H: Host> Vm<H> {
             Ok(values)
         })();
         self.set_active_program(active_program);
-        self.specialized = specialized;
         evaluated
     }
 
@@ -5287,17 +5313,16 @@ impl<H: Host> Vm<H> {
         if !self.is_function(then) {
             return self.promise_settle(p, promise, PromiseState::Fulfilled, value);
         }
-        let job = self.native_with_env(Native::PromiseThenableJob, Value::NULL);
-        self.realm.promise.thenable_jobs.insert(
-            job,
-            ThenableJob {
-                then,
-                thenable: value,
-                promise,
-                execution_context: self.host.capture_job_context(self.promise_record(promise).and_then(|record| record.host_context)),
-            },
-        );
-        self.enqueue_job(job, vec![]);
+        let execution_context = self
+            .host
+            .capture_job_context(self.promise_record(promise).and_then(|record| record.host_context));
+        self.realm.jobs.push_back(super::PendingJob::Thenable(ThenableJob {
+            realm: self.realm.globals,
+            then,
+            thenable: value,
+            promise,
+            execution_context,
+        }));
         Ok(())
     }
 
@@ -5689,7 +5714,6 @@ impl PromiseRuntime {
         let Self {
             rejection_notifications,
             last_rejection_id,
-            thenable_jobs,
             finally_handler_callbacks,
             finally_continuation_callbacks,
             aggregates,
@@ -5701,15 +5725,16 @@ impl PromiseRuntime {
             module_sources,
             waiting_static_modules,
             active_native,
+            async_module_settled,
         } = self;
         let pending = [
             ("a rejection notification", rejection_notifications.is_empty()),
-            ("a thenable job", thenable_jobs.is_empty()),
             ("a finally callback", finally_handler_callbacks.is_empty() && finally_continuation_callbacks.is_empty()),
             ("a promise combinator", aggregates.is_empty() && aggregate_jobs.is_empty()),
             ("a reaction capability", reaction_capabilities.is_empty()),
             ("a module record", modules.is_empty() && async_module_order.is_empty() && module_sources.is_empty()),
             ("a module load", dynamic_import_jobs.is_empty() && waiting_static_modules.is_empty()),
+            ("a settled async module", !async_module_settled),
             ("a native activation", active_native.is_empty()),
         ];
         if let Some((what, _)) = pending.iter().find(|(_, empty)| !empty) {
