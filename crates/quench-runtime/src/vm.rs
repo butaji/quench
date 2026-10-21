@@ -2396,6 +2396,29 @@ impl<H: Host> Vm<H> {
 
     #[cfg(feature = "profile-memory")]
     pub(crate) fn report_memory_snapshot(&self, phase: &str) {
+        {
+            // Census: field-cache entries ever filled, and the 4 KiB pages holding them.
+            const PAGE: usize = 4096;
+            let per_page = PAGE / size_of::<FieldCache>();
+            let filled: Vec<usize> = self
+                .field_caches
+                .iter()
+                .enumerate()
+                .filter(|(_, cache)| **cache != EMPTY_CACHE)
+                .map(|(site, _)| site)
+                .collect();
+            let mut pages: Vec<usize> = filled.iter().map(|site| site / per_page).collect();
+            pages.dedup();
+            let adds = self.field_add_indices.iter().filter(|index| **index != NO_FIELD_ADD_SET).count();
+            eprintln!(
+                "{{\"kind\":\"quench-cache-census\",\"phase\":\"{phase}\",\"sites\":{},\"filled\":{},\"pages\":{},\"total_pages\":{},\"field_adds\":{}}}",
+                self.field_caches.len(),
+                filled.len(),
+                pages.len(),
+                self.field_caches.len().div_ceil(per_page),
+                adds,
+            );
+        }
         let heap = self.heap.memory_composition();
         let page_size = std::env::var("QUENCH_MEMORY_PAGE_SIZE")
             .ok()
