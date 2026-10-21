@@ -271,6 +271,13 @@ enum Inst {
     Split {
         alternative: u32,
     },
+    /// `Split` whose next instruction begins a body that can start only at the positions
+    /// `Program::guards[guard]` admits: elsewhere the body fails at once, so the run goes
+    /// straight to `alternative` and keeps no choice.
+    GuardedSplit {
+        alternative: u32,
+        guard: u32,
+    },
     Jump(u32),
     /// A group's start into its temporary register: with a restore entry where the group
     /// may run again on one path (`Compiler::repeated`), plainly elsewhere, as the group's
@@ -392,6 +399,8 @@ pub(crate) struct Program {
     sets: Box<[UnitSet]>,
     /// Capture index lists for `ResetCaptures` and `Backreference`.
     lists: Box<[u32]>,
+    /// The starts of guarded bodies, for `GuardedSplit`.
+    guards: Box<[Starts]>,
     capture_count: usize,
     register_count: usize,
     /// Where matches can start; `None` where any position can.
@@ -427,6 +436,7 @@ struct Compiler {
     instructions: Vec<Inst>,
     sets: Vec<UnitSet>,
     lists: Vec<u32>,
+    guards: Vec<Starts>,
     registers: u32,
     /// Bodies being compiled that one path may run more than once, or whose registers a
     /// caller keeps across their run: loops with more than one iteration and lookarounds.
@@ -456,6 +466,21 @@ impl Compiler {
                 .push(u32::try_from(item).map_err(|_| Unsupported)?);
         }
         Ok((first, self.lists.len() as u32 - first))
+    }
+
+    /// A split to `alternative` before a body `expr`, guarded by the body's starts when
+    /// they are known.
+    fn split(&mut self, alternative: u32, body: &Expr, flags: Flags) -> Inst {
+        match starts(body, flags) {
+            Some(guard) => {
+                self.guards.push(guard);
+                Inst::GuardedSplit {
+                    alternative,
+                    guard: self.guards.len() as u32 - 1,
+                }
+            }
+            None => Inst::Split { alternative },
+        }
     }
 
     fn set(&mut self, beyond: Beyond) -> UnitTest {
@@ -497,14 +522,15 @@ impl Compiler {
             }
             Expr::Alternation(alternatives) => {
                 let mut exits = Vec::new();
-                for (index, alternative) in alternatives.iter().enumerate() {
+                for (index, alternative_expr) in alternatives.iter().enumerate() {
                     let last = index + 1 == alternatives.len();
                     let split = (!last).then(|| self.emit(Inst::Split { alternative: 0 }));
-                    self.compile(alternative, flags)?;
+                    self.compile(alternative_expr, flags)?;
                     if let Some(split) = split {
                         exits.push(self.emit(Inst::Jump(0)));
                         let alternative = self.pc();
-                        self.instructions[split as usize] = Inst::Split { alternative };
+                        self.instructions[split as usize] =
+                            self.split(alternative, alternative_expr, flags);
                     }
                 }
                 let end = self.pc();
@@ -575,9 +601,7 @@ impl Compiler {
                     let exit = self.pc();
                     match skip {
                         // Greedy: the iteration first, the exit on backtracking.
-                        None => {
-                            self.instructions[split as usize] = Inst::Split { alternative: exit }
-                        }
+                        None => self.instructions[split as usize] = self.split(exit, body, flags),
                         // Lazy: the exit first, the iteration on backtracking.
                         Some(skip) => {
                             self.instructions[split as usize] = Inst::Split {
@@ -1042,6 +1066,7 @@ impl Program {
             instructions: Vec::new(),
             sets: Vec::new(),
             lists: Vec::new(),
+            guards: Vec::new(),
             registers: u32::try_from(2 * capture_count).ok()?,
             repeated: 0,
         };
@@ -1054,6 +1079,7 @@ impl Program {
             instructions: compiler.instructions.into_boxed_slice(),
             sets: compiler.sets.into_boxed_slice(),
             lists: compiler.lists.into_boxed_slice(),
+            guards: compiler.guards.into_boxed_slice(),
             capture_count,
             register_count: compiler.registers as usize,
             anchored: starts.as_ref().is_some_and(|starts| starts.only_at_start),
@@ -1071,6 +1097,19 @@ impl Program {
 
     /// Whether a match can only start at the subject's start (`Starts::only_at_start`), so a
     /// search tries that one position and scans for nothing.
+    /// Whether a search from `start` finds no match because of the anchor alone: an
+    /// anchored pattern begins only at the subject's start, and only with one of its
+    /// `anchored_first` units (`first`, the subject's unit there, `None` past its end), as
+    /// `find` rejects before a run.
+    pub(crate) fn anchor_excludes(&self, start: usize, first: Option<u32>) -> bool {
+        self.anchored
+            && (start != 0
+                || self
+                    .anchored_first
+                    .as_ref()
+                    .is_some_and(|units| first.is_none_or(|first| !units.contains(first))))
+    }
+
     pub(crate) fn anchored_at_start(&self) -> bool {
         self.anchored
     }
@@ -1093,6 +1132,24 @@ impl Program {
             UnitTest::Exact(expected) => value == expected,
             UnitTest::Set(set) => self.sets[set as usize].contains(value),
         }
+    }
+
+    /// The end of the run of units from `from` to at most `to` that pass `test`. An ASCII
+    /// subject tests each byte by the set's table, resolved once for the run.
+    fn run_end<T: Text + ?Sized>(&self, test: UnitTest, text: &T, from: usize, to: usize) -> usize {
+        let taken = match (test, text.bytes()) {
+            (UnitTest::Set(set), Some(bytes)) => {
+                let table = &self.sets[set as usize].table;
+                bytes[from..to]
+                    .iter()
+                    .position(|unit| !table[usize::from(*unit & ASCII_MAX as u8)])
+            }
+            (UnitTest::Exact(expected), Some(bytes)) => {
+                bytes[from..to].iter().position(|unit| u32::from(*unit) != expected)
+            }
+            (test, None) => (from..to).position(|index| !self.test(test, text.unit(index))),
+        };
+        taken.map_or(to, |taken| from + taken)
     }
 
     /// The first match at a position from `first`, trying only `first` when `sticky`.
@@ -1163,8 +1220,12 @@ impl Program {
             return (from == 0).then_some(0);
         }
         if let (Some(prefix), Some(bytes)) = (&self.prefix, text.bytes()) {
-            let found = from + prefix.find(&bytes[from..])?;
-            return (found <= last).then_some(found);
+            // A start after `last` is no answer, so the scan stops where such a match begins.
+            let end = last.saturating_add(prefix.needle().len()).min(bytes.len());
+            return bytes
+                .get(from..end)
+                .and_then(|window| prefix.find(window))
+                .map(|offset| from + offset);
         }
         match &self.starts {
             None => Some(from),
@@ -1173,6 +1234,12 @@ impl Program {
                 // subject's start is found here or first in the scan.
                 if bytes.get(from).is_some_and(|unit| starts.units.table[usize::from(*unit & ASCII_MAX as u8)]) {
                     return Some(from);
+                }
+                // A one-position search, as a sticky one, has no further unit to scan for.
+                if from == last {
+                    let edge =
+                        (starts.at_start && from == 0) || (starts.at_end && from == bytes.len());
+                    return edge.then_some(from);
                 }
                 Self::scan_start_bytes(starts, self.scan, bytes, from, last)
             }
@@ -1261,10 +1328,7 @@ impl Program {
                     if floor > length {
                         false
                     } else if greedy {
-                        let mut end = position;
-                        while end < ceiling && self.test(test, text.unit(end)) {
-                            end += 1;
-                        }
+                        let end = self.run_end(test, text, position, ceiling);
                         if end < floor {
                             false
                         } else {
@@ -1280,10 +1344,7 @@ impl Program {
                             true
                         }
                     } else {
-                        let mut end = position;
-                        while end < floor && self.test(test, text.unit(end)) {
-                            end += 1;
-                        }
+                        let end = self.run_end(test, text, position, floor);
                         if end < floor {
                             false
                         } else {
@@ -1315,6 +1376,18 @@ impl Program {
                         position,
                     });
                     pc += 1;
+                    true
+                }
+                Inst::GuardedSplit { alternative, guard } => {
+                    if self.guards[guard as usize].admits(text, position) {
+                        stack.push(Frame::Choice {
+                            pc: alternative,
+                            position,
+                        });
+                        pc += 1;
+                    } else {
+                        pc = alternative;
+                    }
                     true
                 }
                 Inst::Jump(target) => {
@@ -1693,6 +1766,18 @@ mod tests {
             r"^$",
             r"^(?:ba|q)",
             r"^\s*a",
+            // Guarded splits: optional bodies and alternatives whose first units, anchors
+            // or boundaries decide whether they can start at a position.
+            r"(^a)?b",
+            r"(?:$|a)?b",
+            r"(?:x|y\b|z)?\w",
+            r"(?:(?=a)\w|b)c",
+            r"(a|b\1)?c",
+            r"(?:a|^b|c$)+?d",
+            r"(?:ab|ac|b)",
+            r"(;)?\s|(x)?$",
+            r"(?:(\w+):)?(\w*)",
+            r"(?:[+, ]|ab)",
         ];
         let subjects = [
             "",
@@ -1733,6 +1818,9 @@ mod tests {
             "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzc",
             "xa..............................&",
             "\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0} a",
+            // A split-style subject: a separator run, then ones past one scan block.
+            "a ; b;c ;d , e+f..............................; g ;",
+            "xb yb\nab b$a cd bd ac",
         ];
         for flags in ["", "i", "m", "s", "u", "im", "iu"] {
             for pattern in patterns {
@@ -1767,11 +1855,11 @@ mod tests {
                             actual, expected,
                             "/{pattern}/{flags} on {subject:?} from {first}"
                         );
+                        let raw = |found: Option<super::Found>| {
+                            found.map(|found| (found.start..found.end, found.captures))
+                        };
                         if !regex.flags.unicode {
                             // Outside unicode mode a decoded unit is a code unit.
-                            let raw = |found: Option<super::Found>| {
-                                found.map(|found| (found.start..found.end, found.captures))
-                            };
                             let code_units = subject.encode_utf16().collect::<Vec<_>>();
                             let wide = program.find(&code_units[..], first, false, None).ok();
                             let decoded = program.find(&units[..], first, false, None).ok();
@@ -1791,6 +1879,23 @@ mod tests {
                                 bytes, expected,
                                 "/{pattern}/{flags} on bytes {subject:?} from {first}"
                             );
+                        }
+                        // A sticky search is the search's match when that starts at `first`,
+                        // on every text form.
+                        let at_first = |text_find: &dyn Fn(bool) -> Option<super::Found>| {
+                            let sticky = raw(text_find(true));
+                            let search =
+                                raw(text_find(false)).filter(|(range, _)| range.start == first);
+                            assert_eq!(
+                                sticky, search,
+                                "/{pattern}/{flags} sticky on {subject:?} at {first}"
+                            );
+                        };
+                        let decoded = |sticky| program.find(&units[..], first, sticky, None).ok().flatten();
+                        at_first(&decoded);
+                        if subject.is_ascii() {
+                            let bytes = subject.as_bytes();
+                            at_first(&|sticky| program.find(bytes, first, sticky, None).ok().flatten());
                         }
                     }
                 }

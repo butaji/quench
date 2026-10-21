@@ -166,3 +166,10 @@ impl Kernel {
         self.descriptor = None;
     }
 }
+
+impl Kernel {
+    /// Whether no inotify descriptor is open (`startup_snapshot`).
+    pub(crate) fn snapshot_quiescent(&self) -> bool {
+        self.descriptor.is_none() && self.pending.is_empty()
+    }
+}

@@ -311,6 +311,7 @@ const JIT_DIRECT_COMPARE_BRANCHES_ENV: &str = "QUENCH_WASM_JIT_DIRECT_COMPARE_BR
 const JIT_AFFINE_PAIR_ENV: &str = "QUENCH_WASM_JIT_AFFINE_PAIR";
 const JIT_REFERENCE_BODY_CACHE_ENV: &str = "QUENCH_WASM_JIT_REFERENCE_BODY_CACHE";
 const JIT_EMSCRIPTEN_MEMCPY_LEAF_ENV: &str = "QUENCH_WASM_JIT_EMSCRIPTEN_MEMCPY_LEAF";
+const JIT_NUMERIC_FIND_ENV: &str = "QUENCH_JS_JIT_NUMERIC_FIND";
 const JIT_NATIVE_ENTRY_SAMPLE_INTERVAL: u64 = 256;
 const MAX_JIT_ROOT_FUNCTIONS: usize = 128;
 const MAX_JIT_ROOT_BYTECODES_PER_FUNCTION: usize = 80_000;
@@ -364,6 +365,16 @@ fn jit_reference_body_cache_enabled() -> bool {
 fn jit_emscripten_memcpy_leaf_enabled() -> bool {
     std::env::var(JIT_EMSCRIPTEN_MEMCPY_LEAF_ENV)
         .is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+}
+
+/// Keep the numeric hash-map loop as an opt-in experiment until it has a
+/// matched score win.
+fn jit_numeric_find_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var(JIT_NUMERIC_FIND_ENV)
+            .is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+    })
 }
 
 fn jit_wasm_root_only_enabled() -> bool {
@@ -6545,6 +6556,144 @@ impl<H: Host> Vm<H> {
         None
     }
 
+    /// Run a narrow numeric linked-entry search using guarded VM field and
+    /// array probes, plus the already-promoted numeric equality artifact.
+    /// Every failure leaves the frame untouched for interpreter execution.
+    fn js_jit_numeric_find_at_entry(
+        &mut self,
+        program: &ResidualProgram,
+        frame: usize,
+        candidate: super::js_compiled::JsJitNumericFind,
+    ) -> Option<(usize, crate::bytecode::Register, Value)> {
+        const MAX_STEPS: usize = 256;
+        let program_id = self.frames.get(frame)?.program;
+        let function_id = self.frames.get(frame)?.function;
+        if !self.frames[frame].fixed_this {
+            return None;
+        }
+        let (key_value, index_value, hash_value) = {
+            let arguments = self.frames[frame].registers.get(..3)?;
+            (arguments[0], arguments[1], arguments[2])
+        };
+        if key_value.as_number().is_none() || index_value.as_int().is_none() {
+            return None;
+        }
+        let Some(key_hash) = hash_value.as_number() else {
+            return None;
+        };
+        let receiver = self.frames[frame].this;
+        let array = match self.cached_field_hit(program, receiver, candidate.list_cache) {
+            super::object::FieldCacheProbe::Hit(value) => value,
+            super::object::FieldCacheProbe::Ineligible => {
+                return None;
+            }
+            super::object::FieldCacheProbe::OrdinaryMiss => {
+                return None;
+            }
+        };
+        let Some(mut entry) = self.direct_array_index_data(array, index_value) else {
+            return None;
+        };
+        let mut cached_equals_function = None;
+        let mut equal_arguments = [Value::UNDEFINED; 2];
+        equal_arguments[0] = key_value;
+
+        for step in 0..MAX_STEPS {
+            if step & 31 == 0
+                && self
+                    .execution_interrupt
+                    .atomic_flag()
+                    .load(std::sync::atomic::Ordering::Relaxed)
+            {
+                return None;
+            }
+            if !self.truthy(entry) {
+                if self.programs.js_jit_diagnostics_enabled() {
+                    self.programs
+                        .record_js_jit_entry(program_id, function_id, true, 3);
+                    self.programs
+                        .record_js_jit_numeric_find_entry(program_id, function_id);
+                }
+                return Some((candidate.return_pc, candidate.return_register, entry));
+            }
+            if self.heap.object(entry).is_none() {
+                return None;
+            }
+            let entry_hash = match self.cached_field_hit(program, entry, candidate.hash_cache) {
+                super::object::FieldCacheProbe::Hit(value) => {
+                    let Some(value) = value.as_number() else {
+                        return None;
+                    };
+                    value
+                }
+                super::object::FieldCacheProbe::Ineligible => {
+                    return None;
+                }
+                super::object::FieldCacheProbe::OrdinaryMiss => {
+                    return None;
+                }
+            };
+            if entry_hash == key_hash {
+                let equals_function = if let Some(equals_function) = cached_equals_function {
+                    equals_function
+                } else {
+                    let equals = self.jit_owned_capture(
+                        frame,
+                        candidate.equals_depth,
+                        candidate.equals_slot,
+                    )?;
+                    let (equals_program, equals_function, _) =
+                        self.in_loop_call_target(program, equals)?;
+                    if equals_program != program_id {
+                        return None;
+                    }
+                    equals_function
+                };
+                cached_equals_function = Some(equals_function);
+                let entry_key = match self.cached_field_hit(program, entry, candidate.key_cache) {
+                    super::object::FieldCacheProbe::Hit(value) => value,
+                    super::object::FieldCacheProbe::Ineligible => {
+                        return None;
+                    }
+                    super::object::FieldCacheProbe::OrdinaryMiss => {
+                        return None;
+                    }
+                };
+                if entry_key.as_number().is_none() {
+                    return None;
+                }
+                equal_arguments[1] = entry_key;
+                let equal =
+                    self.js_jit_compiled_call(program, (program_id, equals_function), false, &equal_arguments);
+                let Some(equal) = equal else {
+                    return None;
+                };
+                if equal == Value::TRUE {
+                    if self.programs.js_jit_diagnostics_enabled() {
+                        self.programs
+                            .record_js_jit_entry(program_id, function_id, true, 3);
+                        self.programs
+                            .record_js_jit_numeric_find_entry(program_id, function_id);
+                    }
+                    return Some((candidate.return_pc, candidate.return_register, entry));
+                }
+                if equal != Value::FALSE {
+                    return None;
+                }
+            }
+            entry = match self.cached_field_hit(program, entry, candidate.next_cache) {
+                super::object::FieldCacheProbe::Hit(value) => value,
+                super::object::FieldCacheProbe::Ineligible => {
+                    return None;
+                }
+                super::object::FieldCacheProbe::OrdinaryMiss => {
+                    return None;
+                }
+            };
+        }
+        None
+    }
+
     /// Try the per-function JavaScript tier at an already-initialized frame's
     /// entry. A guard miss leaves the frame untouched so the interpreter can
     /// run from the same bytecode PC.
@@ -6561,6 +6710,17 @@ impl<H: Host> Vm<H> {
         let program_id = self.frames[frame].program;
         let function_id = self.frames[frame].function;
         let function = program.function_get(function_id as usize)?;
+        let numeric_find_candidate = if jit_numeric_find_enabled() {
+            self.programs
+                .js_jit_numeric_find_candidate(program_id, function_id, function)
+        } else {
+            None
+        };
+        if let Some(candidate) = numeric_find_candidate
+            && let Some(result) = self.js_jit_numeric_find_at_entry(program, frame, candidate)
+        {
+            return Some(result);
+        }
         let field_return_candidate =
             super::js_compiled::cached_this_field_return_candidate(function);
         let mut field_return_diagnostic_entry_recorded = false;

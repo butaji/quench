@@ -2375,7 +2375,7 @@ impl<H: Host> Vm<H> {
                 return Ok(false);
             }
             let current = self
-                .descriptor_field(p, descriptor, "value")?
+                .descriptor_field(p, descriptor, self.runtime_atoms.value)?
                 .unwrap_or(Value::UNDEFINED);
             return Ok(self.same_value(current, value));
         }
@@ -2515,8 +2515,8 @@ impl<H: Host> Vm<H> {
                     self.heap.root_value(value).unwrap(),
                 )
             } else {
-                if self.descriptor_field(p, current, "get")?.is_some()
-                    || self.descriptor_field(p, current, "set")?.is_some()
+                if self.descriptor_field(p, current, self.runtime_atoms.get)?.is_some()
+                    || self.descriptor_field(p, current, self.runtime_atoms.set)?.is_some()
                     || !self.descriptor_flag(current, "writable")
                 {
                     return Ok(false);

@@ -446,3 +446,30 @@ pub(crate) fn optional_callback(context:&mut NativeContext<'_,NodeHost>,receiver
  let callback=context.get_property_rooted(receiver,args[0])?;
  if context.is_callable_rooted(callback)? {Ok(callback)} else {Ok(context.undefined())}
 }
+
+impl SharedEventLoop {
+    /// Whether nothing is scheduled (`startup_snapshot`); the identifier counters carry over
+    /// in no handle, so a restored process numbers from its own.
+    pub(crate) fn snapshot_quiescent(&self) -> bool {
+        let SharedCallbacks {
+            next_ticks,
+            immediates,
+            next_immediate_id: _,
+            immediate_ref_count,
+            immediate_ref_latch,
+            timers,
+            next_timer_id: _,
+            firing_timers,
+            cancelled_timers,
+            exiting,
+        } = &self.shared;
+        next_ticks.is_empty()
+            && immediates.is_empty()
+            && *immediate_ref_count == 0
+            && !immediate_ref_latch
+            && timers.is_empty()
+            && firing_timers.is_empty()
+            && cancelled_timers.is_empty()
+            && !exiting
+    }
+}
