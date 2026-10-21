@@ -1915,6 +1915,38 @@ impl<H: Host> Vm<H> {
             .getter
     }
 
+    /// What native accessor `getter` returns for `this` where its call is a read of the
+    /// receiver's internal slots that cannot throw for it, running no guest code and
+    /// allocating nothing: a typed array's, DataView's, Map's or Set's size accessors. `None`
+    /// for any other getter or receiver, whose call the general path makes.
+    pub(super) fn pure_native_getter_value(&self, getter: Value, this: Value) -> Option<Value> {
+        let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = self.heap.function(getter) else {
+            return None;
+        };
+        match *native {
+            Native::TypedArrayLengthGetter
+            | Native::TypedArrayByteLengthGetter
+            | Native::TypedArrayByteOffsetGetter => self.typed_array_getter_value(*native, this),
+            Native::DataViewByteLengthGetter | Native::DataViewByteOffsetGetter => {
+                let (buffer, offset, length) = self.data_view_view(this)?;
+                if self.array_buffer_out_of_bounds(buffer, offset, length) {
+                    return None;
+                }
+                let value = if *native == Native::DataViewByteLengthGetter { length } else { offset };
+                Some(Value::number(value as f64))
+            }
+            Native::MapSizeGetter => match self.heap.get(this) {
+                Some(Cell::Map { entries, .. }) => Some(Value::number(entries.len() as f64)),
+                _ => None,
+            },
+            Native::SetSizeGetter => match self.heap.get(this) {
+                Some(Cell::Set { entries, .. }) => Some(Value::number(entries.len() as f64)),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     /// The part of `get_field_miss` that reads a data property of a shaped receiver or its
     /// ordinary prototypes, recording the cache entry that answers it next time; it runs no
     /// guest code. `None` leaves the read to `get_property`.
