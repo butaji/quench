@@ -205,6 +205,9 @@ pub(crate) struct SharedChildProcess {
     pub(crate) ipc: Option<crate::modules::child_process_ipc_shared_vm::IpcChannel>,
     pub(crate) ipc_pipe: Option<u64>,
     pub(crate) events: std::sync::mpsc::Receiver<ChildProcessEvent>,
+    /// Held until the loop delivers the child's exit; dropping it lets the waiter reap the
+    /// child, which stays signalable as a zombie until then, as under Node.
+    pub(crate) reap: Option<std::sync::mpsc::Sender<()>>,
     pub(crate) stdout_terminal: bool,
     pub(crate) stderr_terminal: bool,
     pub(crate) exit: Option<(Option<i32>, Option<String>)>,

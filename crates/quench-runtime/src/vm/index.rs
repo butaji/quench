@@ -129,6 +129,11 @@ impl<H: Host> Vm<H> {
                 return Ok(value);
             }
         }
+        // A symbol or an existing non-index name that the plain chain walk answers, as the
+        // lane reads it (`plain_keyed_get`): no guest code runs before the slow path would.
+        if let Some(value) = self.plain_keyed_get(object, key) {
+            return Ok(value);
+        }
         self.get_index_slow(p, object, key)
     }
 
