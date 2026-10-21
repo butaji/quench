@@ -714,8 +714,13 @@ target/production/bolt-profile $PROFILED_BINARY bolt --order $ORDER \
 llvm-bolt $BINARY -o $BINARY-bolt -data=bolt/profile.fdata \
   -reorder-blocks=ext-tsp -split-functions -split-all-cold \
   -reorder-functions=user -function-order=bolt/function.order \
-  -skip-funcs-file=bolt/skip.funcs -use-gnu-stack
+  -skip-funcs-file=bolt/skip.funcs -use-gnu-stack -jump-tables=move
 ```
+
+`-jump-tables=move` lays the jump tables of hot code beside it, apart from the cold
+ones: in place, the `match` tables of the dispatch and the compiler sit among
+`.rodata`'s merged constants, and a run kept about 120 KB of them resident (V8-v7
+max RSS, bolted static x86_64, 2026-10-22: 20-160 KB lower on every fixture).
 
 `quench-node` registers its read-only file mappings with userfaultfd for
 asynchronous write protection at start (`resident_pages::map_touched_pages_only`,
