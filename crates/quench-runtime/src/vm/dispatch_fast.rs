@@ -6399,11 +6399,11 @@ fn lane_direct_call_this<H: Host>(
 /// receiver alone decides; `None` for `ThisBinding::Lexical`.
 #[inline(always)]
 fn lane_receiver_this<H: Host>(vm: &Vm<H>, binding: ThisBinding, receiver: Value) -> Option<Value> {
-    match binding {
-        ThisBinding::Lexical => return None,
+    // Compares, not a table: a sloppy method's object receiver, the common call, takes the
+    // first two.
+    if binding != ThisBinding::Sloppy {
         // An arrow whose environment binds no `this` takes its caller's receiver.
-        ThisBinding::CallerReceiver | ThisBinding::Strict => return Some(receiver),
-        ThisBinding::Sloppy => {}
+        return (binding != ThisBinding::Lexical).then_some(receiver);
     }
     if receiver.direct_object_index().is_some() {
         Some(receiver)
