@@ -342,7 +342,7 @@ impl<H: Host> Vm<H> {
     /// other does not decode here (`decode_cached_program`). Without it, processes that run
     /// a module under each specialization replaced each other's entry, and each compiled it
     /// again (typescript.js, 9 MB of source, about 3 s per process).
-    fn specialization_part(&self) -> &'static str {
+    pub(super) fn specialization_part(&self) -> &'static str {
         if self.specialized { "specialized" } else { "unspecialized" }
     }
 
