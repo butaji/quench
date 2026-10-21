@@ -879,3 +879,16 @@ fn is_token(text: &str) -> bool {
 fn contains_line_break(text: &str) -> bool {
     text.bytes().any(|byte| byte == b'\r' || byte == b'\n')
 }
+
+impl FetchState {
+    pub(crate) fn write_snapshot(&self, writer: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> {
+        use crate::host::startup_snapshot::{require_quiescent, HostSnap};
+        let Self { next_id, requests, pending, completions, sender: _, receiver: _ } = self;
+        require_quiescent(requests.is_empty() && pending.is_empty() && completions.is_empty(), "a fetch")?;
+        next_id.write(writer)
+    }
+    pub(crate) fn read_snapshot(&mut self, reader: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<(), String> {
+        self.next_id = crate::host::startup_snapshot::HostSnap::read(reader)?;
+        Ok(())
+    }
+}

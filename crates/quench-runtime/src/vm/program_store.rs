@@ -6,6 +6,8 @@ use crate::heap::WeakHandle;
 use rustc_hash::FxHashMap;
 use std::io::Write as _;
 
+mod snapshot;
+
 #[derive(Default)]
 struct JsJitCounters {
     source_name: Option<Box<str>>,
@@ -24,6 +26,13 @@ struct JsJitCounters {
     rejection_reason: Option<&'static str>,
     compile_ns: u64,
     native_entries: u64,
+    field_return_candidate_entries: u64,
+    field_return_fixed_this_entries: u64,
+    field_return_fast_entries: u64,
+    field_increment_candidate_entries: u64,
+    field_increment_fixed_this_entries: u64,
+    field_increment_fast_entries: u64,
+    numeric_find_fast_entries: u64,
     fallback_entries: u64,
     interpreter_completions: u64,
     interpreter_inclusive_ns: u64,
@@ -85,7 +94,9 @@ struct ProgramEntry {
     constants: Vec<Value>,
     const_arrays: Vec<Option<Rc<Vec<Value>>>>,
     function_sources: Vec<Option<Value>>,
-    regexp_literals: Vec<Option<Result<Rc<quench_regexp::Regex>, Rc<str>>>>,
+    /// Each RegExp literal site's record, shared by every object it evaluates to, or its
+    /// compile error.
+    regexp_literals: Vec<Option<Result<Rc<crate::heap::RegExpMeta>, Rc<str>>>>,
     module_environment: Option<Value>,
     import_meta: Option<Value>,
     module_imports: Vec<(u16, ModuleImport)>,
@@ -210,6 +221,9 @@ pub(crate) struct ProgramStore {
     jit_mapped_bytes: usize,
     /// Allocated only when opt-in JavaScript JIT diagnostics are requested.
     js_jit_diagnostics: Option<FxHashMap<(u32, u32), JsJitCounters>>,
+    /// Last matched numeric loop shape; hot entries keep reusing the same artifact.
+    js_jit_numeric_find_candidate:
+        Option<(ProgramId, u32, super::js_compiled::JsJitNumericFind)>,
 }
 
 impl Default for ProgramStore {
@@ -231,11 +245,29 @@ impl Default for ProgramStore {
             js_jit_diagnostics: std::env::var_os("QUENCH_JS_JIT_STATS")
                 .is_some_and(|value| value == "1")
                 .then(FxHashMap::default),
+            js_jit_numeric_find_candidate: None,
         }
     }
 }
 
 impl ProgramStore {
+    pub(super) fn js_jit_numeric_find_candidate(
+        &mut self,
+        id: ProgramId,
+        function_id: u32,
+        function: &crate::bytecode::Function,
+    ) -> Option<super::js_compiled::JsJitNumericFind> {
+        if let Some((cached_id, cached_function, candidate)) = self.js_jit_numeric_find_candidate
+            && cached_id == id
+            && cached_function == function_id
+        {
+            return Some(candidate);
+        }
+        let candidate = super::js_compiled::numeric_find_candidate(function)?;
+        self.js_jit_numeric_find_candidate = Some((id, function_id, candidate));
+        Some(candidate)
+    }
+
     pub(super) fn cached_global_eval(&self, source: &JsString) -> Option<ProgramId> {
         let program = *self.global_eval_programs.get(source)?;
         self.entry(program).map(|_| program)
@@ -534,6 +566,18 @@ impl ProgramStore {
         if let Some(entry) = self.entry_mut(id) {
             entry.scope = scope;
         }
+    }
+
+    /// Whether a by-name load the compiler left unresolved in `function` of the program can
+    /// only denote a global binding, given that the function's names resolve statically: a
+    /// module's environment holds only bindings the compiler resolved, at its root as in its
+    /// functions; a global-scope program's root body may still meet bindings its own
+    /// declarations add, so only its nested functions qualify.
+    pub(crate) fn unresolved_names_are_global(&self, id: ProgramId, function: u32) -> bool {
+        self.entry(id).is_some_and(|entry| {
+            entry.residual.kind == crate::bytecode::ProgramKind::Module
+                || (function != super::ROOT_FUNCTION_ID && self.runs_in_global_scope(id))
+        })
     }
 
     /// Whether the program's root body evaluates in the global environment.
@@ -1458,6 +1502,78 @@ impl ProgramStore {
         }
     }
 
+    pub(super) fn record_js_jit_field_return_candidate(
+        &mut self,
+        id: ProgramId,
+        function: u32,
+        fixed_this: bool,
+    ) {
+        if let Some(counters) = self
+            .js_jit_diagnostics
+            .as_mut()
+            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
+        {
+            counters.field_return_candidate_entries =
+                counters.field_return_candidate_entries.saturating_add(1);
+            counters.field_return_fixed_this_entries = counters
+                .field_return_fixed_this_entries
+                .saturating_add(u64::from(fixed_this));
+        }
+    }
+
+    pub(super) fn record_js_jit_field_return_entry(&mut self, id: ProgramId, function: u32) {
+        if let Some(counters) = self
+            .js_jit_diagnostics
+            .as_mut()
+            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
+        {
+            counters.field_return_fast_entries =
+                counters.field_return_fast_entries.saturating_add(1);
+        }
+    }
+
+    pub(super) fn record_js_jit_field_increment_candidate(
+        &mut self,
+        id: ProgramId,
+        function: u32,
+        fixed_this: bool,
+    ) {
+        if let Some(counters) = self
+            .js_jit_diagnostics
+            .as_mut()
+            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
+        {
+            counters.field_increment_candidate_entries =
+                counters.field_increment_candidate_entries.saturating_add(1);
+            counters.field_increment_fixed_this_entries = counters
+                .field_increment_fixed_this_entries
+                .saturating_add(u64::from(fixed_this));
+        }
+    }
+
+    pub(super) fn record_js_jit_field_increment_entry(&mut self, id: ProgramId, function: u32) {
+        if let Some(counters) = self
+            .js_jit_diagnostics
+            .as_mut()
+            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
+        {
+            counters.field_increment_fast_entries =
+                counters.field_increment_fast_entries.saturating_add(1);
+        }
+    }
+
+    pub(super) fn record_js_jit_numeric_find_entry(&mut self, id: ProgramId, function: u32) {
+        if let Some(counters) = self
+            .js_jit_diagnostics
+            .as_mut()
+            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
+        {
+            counters.numeric_find_fast_entries = counters
+                .numeric_find_fast_entries
+                .saturating_add(1);
+        }
+    }
+
     pub(super) fn record_js_jit_fallback_entry(&mut self, id: ProgramId, function: u32) {
         if let Some(counters) = self
             .js_jit_diagnostics
@@ -1554,6 +1670,7 @@ impl ProgramStore {
             &crate::bytecode::Function,
             &[Value],
             crate::bytecode::ProgramKind,
+            Option<&[u64]>,
         ) -> super::dispatch_fast::LaneView,
     ) -> Option<*const super::dispatch_fast::LaneView> {
         let entry = self.entry(id)?;
@@ -1565,7 +1682,36 @@ impl ProgramStore {
         if !entry.lane_deferred.get(function as usize)?.replace(true) && !may_loop(code) {
             return None;
         }
-        Some(view.get_or_init(|| derive(code, &entry.constants, entry.residual.kind)))
+        Some(view.get_or_init(|| {
+            let live = entry.residual.register_root_masks(function);
+            let view = derive(code, &entry.constants, entry.residual.kind, live);
+            #[cfg(feature = "profile-lane-exits")]
+            {
+                let (start, end) = view.record_range();
+                super::lane_exits::register_view(start, end, census_label(entry, function));
+            }
+            view
+        }))
+    }
+
+    /// Whether a lane call may derive `function`'s view now: it has one, or an earlier entry
+    /// or lane call already deferred it, as `entry_lane_view` defers a first entry. The first
+    /// call of a function the lane has no view for marks it and takes the general path, so a
+    /// function called once costs no view (about a thousand instructions per bytecode
+    /// instruction).
+    pub(super) fn lane_call_may_derive(&self, id: ProgramId, function: u32) -> bool {
+        let Some(entry) = self.entry(id) else {
+            return false;
+        };
+        let derived = entry
+            .lane_views
+            .get(function as usize)
+            .is_some_and(|view| view.get().is_some());
+        derived
+            || entry
+                .lane_deferred
+                .get(function as usize)
+                .is_some_and(|deferred| deferred.replace(true))
     }
 
     pub(super) fn lane_view(
@@ -1576,12 +1722,22 @@ impl ProgramStore {
             &crate::bytecode::Function,
             &[Value],
             crate::bytecode::ProgramKind,
+            Option<&[u64]>,
         ) -> super::dispatch_fast::LaneView,
     ) -> Option<*const super::dispatch_fast::LaneView> {
         let entry = self.entry(id)?;
         let code = entry.residual.function_get(function as usize)?;
         let view = entry.lane_views.get(function as usize)?;
-        Some(view.get_or_init(|| derive(code, &entry.constants, entry.residual.kind)))
+        Some(view.get_or_init(|| {
+            let live = entry.residual.register_root_masks(function);
+            let view = derive(code, &entry.constants, entry.residual.kind, live);
+            #[cfg(feature = "profile-lane-exits")]
+            {
+                let (start, end) = view.record_range();
+                super::lane_exits::register_view(start, end, census_label(entry, function));
+            }
+            view
+        }))
     }
 
     pub(crate) fn constant(&self, id: ProgramId, index: usize) -> Option<Value> {
@@ -1629,19 +1785,19 @@ impl ProgramStore {
         Some(*cached.get_or_insert(source))
     }
 
-    pub(crate) fn regexp_literal_matcher(
+    pub(crate) fn regexp_literal_meta(
         &self,
         id: ProgramId,
         site: usize,
-    ) -> Option<Result<Rc<quench_regexp::Regex>, Rc<str>>> {
+    ) -> Option<Result<Rc<crate::heap::RegExpMeta>, Rc<str>>> {
         self.entry(id)?.regexp_literals.get(site)?.as_ref().cloned()
     }
 
-    pub(crate) fn cache_regexp_literal_matcher(
+    pub(crate) fn cache_regexp_literal_meta(
         &mut self,
         id: ProgramId,
         site: usize,
-        matcher: Result<Rc<quench_regexp::Regex>, Rc<str>>,
+        matcher: Result<Rc<crate::heap::RegExpMeta>, Rc<str>>,
     ) -> bool {
         let Some(entry) = self.entry_mut(id) else {
             return false;
@@ -1684,6 +1840,13 @@ impl ProgramStore {
                 ModuleImport::Binding(_, _, fallback) => *fallback,
             }));
         }
+    }
+}
+
+impl ProgramStore {
+    /// Whether dropping the store reports something (`QUENCH_JS_JIT_STATS`).
+    pub(crate) fn reports_on_drop(&self) -> bool {
+        self.js_jit_diagnostics.is_some()
     }
 }
 
@@ -1746,7 +1909,7 @@ impl Drop for ProgramStore {
             }
             let _ = write!(
                 stderr,
-                ",\"status\":\"{status}\",\"parameter_count\":{},\"instruction_count\":{},\"entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"compile_ns\":{},\"native_entries\":{},\"native_entry_coverage_ppm\":{},\"fallback_entries\":{},\"interpreter_completions\":{},\"interpreter_inclusive_ns\":{},\"guard_census\":{{\"conditional_branch_sites\":{},\"typeof_operations\":{},\"strict_comparison_sites\":{},\"relational_comparison_sites\":{}}},\"opcodes\":[",
+                ",\"status\":\"{status}\",\"parameter_count\":{},\"instruction_count\":{},\"entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"compile_ns\":{},\"native_entries\":{},\"native_entry_coverage_ppm\":{},\"field_return_candidate_entries\":{},\"field_return_fixed_this_entries\":{},\"field_return_fast_entries\":{},\"field_increment_candidate_entries\":{},\"field_increment_fixed_this_entries\":{},\"field_increment_fast_entries\":{},\"numeric_find_fast_entries\":{},\"fallback_entries\":{},\"interpreter_completions\":{},\"interpreter_inclusive_ns\":{},\"guard_census\":{{\"conditional_branch_sites\":{},\"typeof_operations\":{},\"strict_comparison_sites\":{},\"relational_comparison_sites\":{}}},\"opcodes\":[",
                 counters.parameter_count,
                 counters.instruction_count,
                 counters.entries,
@@ -1757,6 +1920,13 @@ impl Drop for ProgramStore {
                 counters.compile_ns,
                 counters.native_entries,
                 native_entry_coverage_ppm,
+                counters.field_return_candidate_entries,
+                counters.field_return_fixed_this_entries,
+                counters.field_return_fast_entries,
+                counters.field_increment_candidate_entries,
+                counters.field_increment_fixed_this_entries,
+                counters.field_increment_fast_entries,
+                counters.numeric_find_fast_entries,
                 counters.fallback_entries,
                 counters.interpreter_completions,
                 counters.interpreter_inclusive_ns,
@@ -1809,4 +1979,17 @@ fn numeric_promotion_decision(numeric: u8, observations: u8) -> Option<bool> {
         .iter()
         .find_map(|(look, minimum)| (*look == observations).then_some(*minimum))?;
     Some(numeric >= minimum)
+}
+
+/// The label the `profile-lane-exits` function census gives `function` of `entry`'s program.
+#[cfg(feature = "profile-lane-exits")]
+fn census_label(entry: &ProgramEntry, function: u32) -> String {
+    let code = &entry.residual;
+    let body = code.function_get(function as usize);
+    format!(
+        "{} {} @{:?}",
+        code.source_name,
+        body.and_then(|body| body.name).map(|atom| code.atoms[atom as usize].to_string()).unwrap_or_default(),
+        body.and_then(|body| body.source_span).map(|span| span.start),
+    )
 }

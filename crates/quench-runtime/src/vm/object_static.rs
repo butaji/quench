@@ -235,9 +235,8 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         descriptor: Value,
-        name: &str,
+        atom: Atom,
     ) -> Result<Option<Value>, JsError> {
-        let atom = self.intern_atom(name);
         if let Some(found) = self.plain_property_lookup(descriptor, PropertyKey::string(atom)) {
             return Ok(found);
         }
@@ -736,7 +735,7 @@ impl<H: Host> Vm<H> {
                     self.heap.update_root(key, property_key);
                     let key = match self.heap.get(property_key).cloned() {
                         Some(Cell::Symbol(_)) => PropertyKey::symbol(property_key),
-                        _ if let Some(name) = self.heap.string(property_key).cloned()  => PropertyKey::string(self.intern_js_atom(&name)),
+                        _ if let Some(atom) = self.string_key_atom(property_key) => PropertyKey::string(atom),
                         _ => unreachable!("ToPropertyKey returns a string or symbol"),
                     };
                     let object = self.heap.root_value(result).unwrap();
@@ -880,6 +879,16 @@ impl<H: Host> Vm<H> {
             return Ok(true);
         }
         let value = descriptor_value.or(existing).unwrap_or(Value::UNDEFINED);
+        // A new data property is added with its attributes in one shape transition, as
+        // `set_shape_property` and `set_property_attributes` would leave it in two.
+        if is_new
+            && !matches!(key, PropertyKey::Private(_))
+            && let Some(data) = DataAttributes::of(attributes)
+            && self.object_data(target).is_some()
+        {
+            self.create_shape_data_property(target, key, value, data)?;
+            return Ok(true);
+        }
         if is_new || descriptor_value.is_some() && (current.writable || current.configurable) {
             if (current.accessor || !current.writable && current.configurable) && descriptor_data {
                 self.remove_property_attributes(target, key);

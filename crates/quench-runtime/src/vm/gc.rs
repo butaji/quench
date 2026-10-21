@@ -363,6 +363,7 @@ impl<H: Host> Vm<H> {
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         let mut phase_started = std::time::Instant::now();
         self.constructed_shapes.fill(super::provenance::ConstructedShape::EMPTY);
+        self.enumerable_keys.clear();
         #[cfg(feature = "profile-aggregate")]
         for (index, frame) in self.frames.iter().enumerate() {
             self.profile.gc_frame(
@@ -865,6 +866,9 @@ impl<H: Host> Vm<H> {
         if let Some(concats) = &mut self.string_concats {
             concats.fill(EMPTY_STRING_CONCAT_CACHE);
         }
+        if let Some(atoms) = &mut self.string_atoms {
+            atoms.fill((Value::UNDEFINED, 0));
+        }
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         self.heap.record_vm_gc_phase(3, after_collection_started);
         self.host.at_collection_boundary();
@@ -1047,7 +1051,6 @@ impl<H: Host> Vm<H> {
         // admits no frameless call while one is due, would push a frame for every call. The
         // job's own values are call roots, and a collection inside its callback, which any
         // back edge makes, is no less possible.
-        self.maybe_collect(program);
         let previous = std::mem::replace(&mut self.native_microtask_running, true);
         let result = match job {
             PendingJob::Call {

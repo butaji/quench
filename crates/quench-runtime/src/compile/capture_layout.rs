@@ -9,6 +9,10 @@ use crate::bytecode::{Function, Op, WITH_ENTER_BINDING};
 pub(crate) struct LayoutInputs {
     pub(crate) captured: Vec<u16>,
     pub(crate) dynamic_descendant: bool,
+    /// Whether the function is a module's body. Its module-scope bindings live in the module
+    /// environment, which importers and the linker address by slot, and are in `captured`;
+    /// its block bindings are as private to its activation as a function's.
+    pub(crate) module_root: bool,
 }
 
 /// What the program-wide layout analyses read of one function, fixed once it is compiled:
@@ -105,6 +109,7 @@ pub(super) fn inputs(
         .map(|((id, captured), dynamic_descendant)| LayoutInputs {
             captured: complete_captured(captured, arguments(id)),
             dynamic_descendant,
+            module_root: false,
         })
         .collect()
 }
@@ -140,18 +145,20 @@ pub(super) fn apply_function(
     atoms: &CompilerAtoms<'_>,
 ) {
     let mut captured = inputs.captured.clone();
-    if !has_closure(function) {
+    // A module body's `captured` includes the bindings its module environment holds
+    // (`Function::module_environment_slots`), closures or not, so it always splits.
+    if !inputs.module_root && !has_closure(function) {
         // No closure of this activation can exist, and no nested function captures
         // its locals: a per-iteration or block copy of the environment is unobservable
         // under the same layout conditions that let a closure's activation split.
-        if captured.is_empty() && selective_layout_is_safe(function, id, inputs.dynamic_descendant)
+        if captured.is_empty() && selective_layout_is_safe(function, id, inputs)
         {
             remove_unobservable_clones(function, &captured);
         }
         return;
     }
 
-    let can_split = selective_layout_is_safe(function, id, inputs.dynamic_descendant);
+    let can_split = selective_layout_is_safe(function, id, inputs);
     if can_split {
         // The runtime finds compiler bindings such as class home objects by name in
         // the environment, so they live there like captured bindings; the other
@@ -250,10 +257,13 @@ fn inherited_dynamic_scope(functions: &[FunctionFacts]) -> Vec<bool> {
     inherited
 }
 
-fn selective_layout_is_safe(function: &Function, id: usize, has_dynamic_descendant: bool) -> bool {
-    id != 0
-        && function.parent.is_some()
-        && !has_dynamic_descendant
+/// Whether the function's activation may keep its uncaptured locals out of its environment:
+/// a nested function, or a module body, whose environment nothing outside it reads by name.
+fn selective_layout_is_safe(function: &Function, id: usize, inputs: &LayoutInputs) -> bool {
+    let nested = id != 0 && function.parent.is_some();
+    let module_body = inputs.module_root && function.parent.is_none();
+    (nested || module_body)
+        && !inputs.dynamic_descendant
         && !function.is_async
         && !function.is_generator
         && !function.is_class_constructor
@@ -293,21 +303,59 @@ fn rewrite_local_ownership(function: &mut Function, captured: &[u16]) {
 }
 
 /// A per-iteration environment copy is observable only through a closure holding one of its
-/// fresh bindings. When no fresh binding of a clone site is captured, every closure sees the
-/// same binding objects with or without the copy, so the site does nothing.
+/// fresh bindings, and only when its site runs again in the same activation: a closure made
+/// after one run must then keep the bindings the next run replaces. When no fresh binding of
+/// a clone site is captured, or the site runs at most once (`may_repeat`), every closure sees
+/// the same binding objects with or without the copy, so the site does nothing. A copy that
+/// stays would also be the environment every later closure of the activation captures.
 fn remove_unobservable_clones(function: &mut Function, captured: &[u16]) {
     let observable = |plan: &crate::bytecode::EnvironmentClone| {
         plan.fresh
             .iter()
             .any(|slot| captured.binary_search(slot).is_ok())
     };
-    for instruction in &mut function.code {
+    let backward = backward_transfers(function);
+    for (pc, instruction) in function.code.iter_mut().enumerate() {
         if instruction.op() == Op::CloneEnv
-            && !observable(&function.environment_clones[instruction.environment_clone_index()])
+            && (!observable(&function.environment_clones[instruction.environment_clone_index()])
+                || !may_repeat(&backward, pc))
         {
             *instruction = crate::bytecode::Instr::new(Op::Nop, 0, 0, 0, 0);
         }
     }
+}
+
+/// Every control transfer of `function` to an instruction at or before its source, as
+/// (target, source): jumps, branch table entries (which are jumps), and exception and
+/// `finally` continuations, taken from the last instruction their range covers.
+fn backward_transfers(function: &Function) -> Vec<(usize, usize)> {
+    use crate::bytecode::ControlFlowLayout;
+    let mut transfers = Vec::new();
+    for (pc, instruction) in function.instructions().enumerate() {
+        if matches!(
+            instruction.op().control_flow_layout(),
+            ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump
+        ) && instruction.jump_target() as usize <= pc
+        {
+            transfers.push((instruction.jump_target() as usize, pc));
+        }
+    }
+    for handler in function.handlers.iter() {
+        let last = handler.end.saturating_sub(1) as usize;
+        for target in std::iter::once(handler.target).chain(handler.return_target) {
+            if target as usize <= last {
+                transfers.push((target as usize, last));
+            }
+        }
+    }
+    transfers
+}
+
+/// Whether the instruction at `pc` may run more than once in one activation. A cycle through
+/// `pc` must leave it for an instruction before it, by a transfer from at or after `pc` to at
+/// or before it, which `backward` lists.
+fn may_repeat(backward: &[(usize, usize)], pc: usize) -> bool {
+    backward.iter().any(|&(target, source)| target <= pc && pc <= source)
 }
 
 fn rewrite_if_captured(instruction: &mut crate::bytecode::Instr, captured: &[u16]) {

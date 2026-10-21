@@ -28,7 +28,8 @@ const CODE_MAPPING: &str = "r-xp";
 
 /// A release and the refaults of the code a run touches again after it cost about 1.2 ms
 /// (about 730 pages at 1.7 µs, the lodash npm scenario, x86_64 VM, 2026-10-19). Releases after
-/// library loads (`release_read_only_pages_after_load`) come at most once per this interval,
+/// library loads (`release_read_only_pages_after_load`) and at compilations' phase boundaries
+/// (`at_compile_phase`) each come at most once per this interval,
 /// which bounds that cost to about 1% of a run's time: loads that follow each other faster run
 /// the same loader and compiler code, which a release would only refault (semver scenario
 /// 926 -> 741 ms). Collections keep releasing at each boundary (`at_collection_boundary`):
@@ -89,9 +90,38 @@ static TRACKED_MAPPINGS: std::sync::Mutex<Vec<(usize, usize)>> = std::sync::Mute
 /// before unmapping it.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub fn track_read_only_mapping(start: usize, length: usize) {
+    // A mapping aligned to a huge page maps a whole huge folio of a cached file on one fault
+    // (a 5 MB startup snapshot was 4 MB resident after its records were first read).
+    // SAFETY: advice on a live mapping the caller owns; it changes only how faults map.
+    unsafe {
+        libc::madvise(start as *mut libc::c_void, length, libc::MADV_NOHUGEPAGE);
+    }
     register_touched_pages_only(start, length);
     if let Ok(mut mappings) = TRACKED_MAPPINGS.lock() {
         mappings.push((start, length));
+    }
+}
+
+/// Releases the whole pages of `bytes` when they lie in a mapping `track_read_only_mapping`
+/// tracked; other bytes are left alone.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+pub fn release_tracked_bytes(bytes: &[u8]) {
+    let page = page_size();
+    let start = (bytes.as_ptr() as usize).next_multiple_of(page);
+    let end = (bytes.as_ptr() as usize + bytes.len()) / page * page;
+    if start >= end {
+        return;
+    }
+    // Held while releasing, so the mapping is not unmapped meanwhile.
+    let Ok(mappings) = TRACKED_MAPPINGS.lock() else {
+        return;
+    };
+    if mappings.iter().any(|&(mapping, length)| mapping <= start && end <= mapping + length) {
+        // SAFETY: the range lies in a live, read-only private file mapping, whose discarded
+        // pages fault back in from the file.
+        unsafe {
+            libc::madvise(start as *mut libc::c_void, end - start, libc::MADV_DONTNEED);
+        }
     }
 }
 
@@ -127,6 +157,56 @@ pub fn release_read_only_code_and_data() {
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
 pub fn release_read_only_code_and_data() {}
+
+/// The host's action at a compilation's phase boundaries (`set_compile_phase_boundary`), each
+/// at most once per `LOAD_RELEASE_INTERVAL`. Code generation pages code and data out
+/// (`release_read_only_code_and_data`); compilations that follow it quickly (functions a
+/// program builds at run time with `new Function`, `eval` or `vm`) run the same parser and
+/// code generator, which a release would only refault, and each release reads the whole
+/// mapping table (7% of the `@testing-library/dom` npm scenario's instructions). A first call
+/// releases the read-only pages, timed apart from the collections' releases, which come far
+/// more often: a run that reports its result once at the end first calls its reporting code
+/// then, at its heap's peak, with the code it ran since the last collection resident (V8-v7
+/// RegExp).
+pub fn at_compile_phase(phase: quench_runtime::CompilePhase) {
+    match phase {
+        quench_runtime::CompilePhase::CodeGeneration => {
+            release_once_per_interval(CompileRelease::CodeGeneration, release_read_only_code_and_data)
+        }
+        quench_runtime::CompilePhase::FirstCall => {
+            release_once_per_interval(CompileRelease::FirstCall, release_read_only_pages)
+        }
+    }
+}
+
+/// The compile-phase releases timed apart from each other (`at_compile_phase`).
+#[derive(Clone, Copy)]
+enum CompileRelease {
+    CodeGeneration,
+    FirstCall,
+}
+
+/// When each compile-phase release last ran, indexed by `CompileRelease`.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+static LAST_COMPILE_RELEASES: std::sync::Mutex<[Option<std::time::Instant>; 2]> =
+    std::sync::Mutex::new([None; 2]);
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn release_once_per_interval(release: CompileRelease, action: fn()) {
+    let Ok(mut releases) = LAST_COMPILE_RELEASES.lock() else {
+        return;
+    };
+    let last = &mut releases[release as usize];
+    if last.is_some_and(|last| last.elapsed() < LOAD_RELEASE_INTERVAL) {
+        return;
+    }
+    *last = Some(std::time::Instant::now());
+    drop(releases);
+    action();
+}
+
+#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+fn release_once_per_interval(_: CompileRelease, _: fn()) {}
 
 /// The page-aligned address ranges of the segments above, from the loader's own table: every
 /// non-writable segment of the executable, which the table lists without a name, and every
@@ -224,22 +304,35 @@ pub fn release_free_heap_pages() {}
 /// The address ranges of the process's file mappings (not the kernel's bracketed ones) whose
 /// permissions are one of `permissions`.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+/// The table is read as bytes, its fields split at spaces: a process with many compile-cache
+/// entries mapped has a line for each (over 1,200 for the jsdom npm scenario), and decoding it
+/// as text cost about 3,700 instructions a line.
 fn file_mappings(permissions: &[&str]) -> Vec<(usize, usize)> {
-    let Ok(maps) = std::fs::read_to_string(MAPS_PATH) else {
-        return Vec::new();
+    std::fs::read(MAPS_PATH).map_or_else(|_| Vec::new(), |maps| parse_file_mappings(&maps, permissions))
+}
+
+/// `file_mappings` over the table's bytes `maps`.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn parse_file_mappings(maps: &[u8], permissions: &[&str]) -> Vec<(usize, usize)> {
+    let hex = |digits: &[u8]| {
+        digits.iter().try_fold(0usize, |value, &digit| {
+            Some(value.checked_mul(16)? + char::from(digit).to_digit(16)? as usize)
+        })
     };
-    maps.lines()
+    maps.split(|&byte| byte == b'\n')
         .filter_map(|line| {
-            let mut fields = line.split_whitespace();
+            let mut fields = line.split(|&byte| byte == b' ').filter(|field| !field.is_empty());
             let (range, mode) = (fields.next()?, fields.next()?);
-            // Offset, device and inode precede the path; a bracketed name ([vdso]) is the
-            // kernel's and an anonymous mapping has none.
-            let path = fields.nth(3)?;
-            if !permissions.contains(&mode) || !path.starts_with('/') {
+            if !permissions.iter().any(|permission| permission.as_bytes() == mode) {
                 return None;
             }
-            let (start, end) = range.split_once('-')?;
-            Some((usize::from_str_radix(start, 16).ok()?, usize::from_str_radix(end, 16).ok()?))
+            // Offset, device and inode precede the path; a bracketed name ([vdso]) is the
+            // kernel's and an anonymous mapping has none.
+            if fields.nth(3)?.first() != Some(&b'/') {
+                return None;
+            }
+            let dash = range.iter().position(|&byte| byte == b'-')?;
+            Some((hex(&range[..dash])?, hex(&range[dash + 1..])?))
         })
         .collect()
 }
@@ -304,9 +397,14 @@ static TOUCHED_PAGES_ONLY: std::sync::atomic::AtomicI32 = std::sync::atomic::Ato
 const NO_FD: libc::c_int = -1;
 
 /// Registers the mapping at `start` for write protection, which turns off fault-around in it
-/// (`map_touched_pages_only`); nothing when no descriptor is open.
+/// (`map_touched_pages_only`); nothing when no descriptor is open. The kernel registers whole
+/// pages only, and a mapping spans its last partial page, so `length` is rounded up to it: a
+/// compile-cache entry is mapped at its file's length, and with that length every
+/// registration had failed, so reading one record faulted in the whole entry (V8-v7 RegExp's
+/// 266 KiB, while its heap was at its peak).
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 fn register_touched_pages_only(start: usize, length: usize) {
+    let length = length.next_multiple_of(page_size());
     /// `struct uffdio_register` from `<linux/userfaultfd.h>`.
     #[repr(C)]
     struct UffdioRegister {
@@ -322,6 +420,9 @@ fn register_touched_pages_only(start: usize, length: usize) {
     if fd == NO_FD {
         return;
     }
+    // A mapping covers whole pages, and the kernel refuses a range that does not: a file whose
+    // length is no page multiple ends its mapping on a partial page.
+    let length = length.next_multiple_of(page_size());
     let mut range = UffdioRegister { start: start as u64, len: length as u64, mode: UFFDIO_REGISTER_MODE_WP, ioctls: 0 };
     // SAFETY: the ioctl reads and writes only `range`; a failed registration leaves the
     // mapping with fault-around.
@@ -348,4 +449,26 @@ pub fn unmap_tracked_mapping(start: usize, length: usize) {
 pub fn release_read_only_pages() {}
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+pub fn release_tracked_bytes(_bytes: &[u8]) {}
+
+#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
 pub fn release_read_only_pages_after_load() {}
+
+#[cfg(all(test, target_os = "linux", target_arch = "x86_64"))]
+mod tests {
+    /// File mappings with the asked permissions, by their ranges; anonymous and kernel
+    /// mappings and other permissions are left out.
+    #[test]
+    fn parses_file_mappings() {
+        let maps = b"55d0c8a00000-55d0c8a3f000 r--p 00000000 08:01 1234                       /usr/bin/quench node\n\
+7f00aa000000-7f00aa021000 rw-p 00000000 00:00 0 \n\
+7f00ab000000-7f00ab200000 r-xp 00028000 08:01 99 /lib/libc.so.6\n\
+7ffd1c3f2000-7ffd1c3f4000 r--p 00000000 00:00 0                          [vvar]\n\
+7f00ac000000-7f00ac001000 r--p 00001000 08:01 77 /lib/libc.so.6\n";
+        assert_eq!(
+            super::parse_file_mappings(maps, &["r--p"]),
+            [(0x55d0c8a00000, 0x55d0c8a3f000), (0x7f00ac000000, 0x7f00ac001000)]
+        );
+        assert_eq!(super::parse_file_mappings(maps, &["r-xp"]), [(0x7f00ab000000, 0x7f00ab200000)]);
+    }
+}

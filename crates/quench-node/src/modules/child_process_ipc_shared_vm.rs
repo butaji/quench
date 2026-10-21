@@ -897,3 +897,19 @@ pub(crate) fn listener_reference(context: &mut NativeContext<'_, NodeHost>, _: R
     }
     Ok(context.undefined())
 }
+
+impl State {
+    pub(crate) fn write_snapshot(&self, writer: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> {
+        use crate::host::startup_snapshot::{require_quiescent, HostSnap};
+        let Self { channel, parse, stringify, received } = self;
+        require_quiescent(channel.is_none() && received.is_empty(), "an IPC channel")?;
+        parse.write(writer)?;
+        stringify.write(writer)
+    }
+    pub(crate) fn read_snapshot(&mut self, reader: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<(), String> {
+        use crate::host::startup_snapshot::HostSnap;
+        self.parse = HostSnap::read(reader)?;
+        self.stringify = HostSnap::read(reader)?;
+        Ok(())
+    }
+}

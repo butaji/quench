@@ -1013,6 +1013,63 @@ pub(crate) fn cleanup(transport: &mut Transport) {
     transport.closing_sockets.clear();
 }
 
+/// Wait up to `timeout` for the transport to have work: a pending connection on a listener,
+/// data or end on a socket the host reads, or room for a socket's queued bytes. The event
+/// loop's idle wait: readiness ends it at once, where a fixed sleep made every arrival wait
+/// out the interval. Sources outside the transport keep the interval as their bound, and a
+/// transport with nothing to watch sleeps it.
+pub(crate) fn wait_ready(transport: &Transport, timeout: std::time::Duration) {
+    use std::os::fd::AsRawFd;
+    let watch = |fd: std::os::fd::RawFd, events: libc::c_short| libc::pollfd { fd, events, revents: 0 };
+    let mut descriptors = transport
+        .listeners
+        .values()
+        .filter_map(Listener::socket)
+        .map(|listener| {
+            let fd = match listener {
+                ListenerSocket::Tcp(listener) => listener.as_raw_fd(),
+                #[cfg(unix)]
+                ListenerSocket::Local { listener, .. } => listener.as_raw_fd(),
+            };
+            watch(fd, libc::POLLIN)
+        })
+        .collect::<Vec<_>>();
+    for socket in transport.sockets.values() {
+        if !matches!(socket.delivery, DeliveryPhase::Delivered) {
+            continue;
+        }
+        let reads = socket.read_demand == ReadDemand::Active && !socket.read_ended;
+        let writes = socket.write_offset < socket.pending_write.len();
+        let events = if reads { libc::POLLIN } else { 0 } | if writes { libc::POLLOUT } else { 0 };
+        if events != 0 {
+            let fd = match socket.stream.raw() {
+                RawStream::Tcp(stream) => stream.as_raw_fd(),
+                #[cfg(unix)]
+                RawStream::Local(stream) => stream.as_raw_fd(),
+            };
+            descriptors.push(watch(fd, events));
+        }
+    }
+    if descriptors.is_empty() {
+        std::thread::sleep(timeout);
+        return;
+    }
+    let timeout = libc::timespec {
+        tv_sec: timeout.as_secs() as libc::time_t,
+        tv_nsec: libc::c_long::from(timeout.subsec_nanos() as i32),
+    };
+    // SAFETY: the descriptors are open for the duration of the call, which only writes
+    // their `revents`.
+    unsafe {
+        libc::ppoll(
+            descriptors.as_mut_ptr(),
+            descriptors.len() as libc::nfds_t,
+            &timeout,
+            std::ptr::null(),
+        );
+    }
+}
+
 pub(crate) const fn poll_interval() -> std::time::Duration {
     std::time::Duration::from_millis(1)
 }
@@ -2868,4 +2925,25 @@ pub(crate) fn native_tcp_receive(transport:&mut Transport,id:u64,fd:std::os::fd:
 }
 pub(crate) fn listener_is_tcp(transport:&Transport,id:u64)->bool {
     matches!(transport.listeners.get(&id).and_then(Listener::socket),Some(ListenerSocket::Tcp(_)))
+}
+
+impl Transport {
+    pub(crate) fn write_snapshot(&self, writer: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> {
+        use crate::host::startup_snapshot::{require_quiescent, HostSnap};
+        let Self { native_tcp_connecting, native_tcp_unbound, next_id, listeners, sockets, connecting, closing_sockets } = self;
+        require_quiescent(
+            native_tcp_connecting.is_empty()
+                && native_tcp_unbound.is_empty()
+                && listeners.is_empty()
+                && sockets.is_empty()
+                && connecting.is_empty()
+                && closing_sockets.is_empty(),
+            "a TCP socket",
+        )?;
+        next_id.write(writer)
+    }
+    pub(crate) fn read_snapshot(&mut self, reader: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<(), String> {
+        self.next_id = crate::host::startup_snapshot::HostSnap::read(reader)?;
+        Ok(())
+    }
 }

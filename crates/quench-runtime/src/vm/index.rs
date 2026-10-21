@@ -129,6 +129,11 @@ impl<H: Host> Vm<H> {
                 return Ok(value);
             }
         }
+        // A symbol or an existing non-index name that the plain chain walk answers, as the
+        // lane reads it (`plain_keyed_get`): no guest code runs before the slow path would.
+        if let Some(value) = self.plain_keyed_get(object, key) {
+            return Ok(value);
+        }
         self.get_index_slow(p, object, key)
     }
 
@@ -155,8 +160,13 @@ impl<H: Host> Vm<H> {
             return self.get_symbol_property_with_receiver(p, object, key, object);
         }
 
-        let key = self.coerce_js_string(p, key)?;
-        let atom = self.intern_js_atom(&key);
+        let atom = match self.string_key_atom(key) {
+            Some(atom) => atom,
+            None => {
+                let key = self.coerce_js_string(p, key)?;
+                self.intern_js_atom(&key)
+            }
+        };
         self.get_property(p, object, atom)
     }
 
@@ -281,6 +291,11 @@ impl<H: Host> Vm<H> {
                 return Ok(());
             }
         }
+        // A symbol or an existing non-index name that the plain chain walk decides, as the
+        // lane stores it: no guest code runs and nothing fails before the slow path would.
+        if self.try_plain_symbol_set(object, key, value) || self.try_plain_string_key_set(object, key, value) {
+            return Ok(());
+        }
         self.set_index_slow(p, object, key, value, strict)
     }
 
@@ -351,6 +366,30 @@ impl<H: Host> Vm<H> {
             .filter(|value| !value.is_deleted())
     }
 
+    /// A present own data index on an ordinary array, whether it lives in the dense
+    /// vector or sparse backing. Accessors and absent indices stay on the full lookup path.
+    pub(super) fn direct_array_index_data(&self, base: Value, key: Value) -> Option<Value> {
+        let index = usize::try_from(self.array_index_key(key)?).ok()?;
+        let array = self.heap.array(base)?;
+        if let Some(value) = array
+            .elements()
+            .get(index)
+            .copied()
+            .filter(|value| !value.is_deleted())
+        {
+            return Some(value);
+        }
+        if self
+            .array_descriptor_entry(base, index)
+            .is_some_and(|(_, attributes)| attributes.accessor)
+        {
+            return None;
+        }
+        self.heap
+            .sparse_get(base, index)
+            .filter(|value| !value.is_deleted())
+    }
+
     /// Stores `value` at `key` of `object` when that replaces a present dense element of a
     /// plain array (no indexed descriptors, not frozen) with no mapped `arguments` to mirror:
     /// one array lookup serves the guards and the write. `false` leaves the store, unobserved,
@@ -382,7 +421,8 @@ impl<H: Host> Vm<H> {
     }
 
     /// `try_replace_dense_element` of an array whose object is a record and whose elements no
-    /// other array shares; `false` for any other object, so the write calls nothing.
+    /// other array shares, for a value the write barrier passes without logging; `false` for
+    /// any other write, so the write calls nothing.
     #[inline(always)]
     pub(super) fn try_replace_record_element(
         &mut self,
@@ -394,7 +434,7 @@ impl<H: Host> Vm<H> {
             object,
             key,
             value,
-            crate::heap::Heap::record_array_store_mut,
+            crate::heap::Heap::record_array_store_mut_unlogged,
         )
     }
 
@@ -481,6 +521,7 @@ impl<H: Host> Vm<H> {
             return self.set_property_with_program(p, object, atom, value);
         }
 
+        let key_value = key;
         let key = self.coerce_js_string(p, key)?;
         if let Some(index) = super::object_static::array_index(key.host_string())
             && self.heap.array(object).is_some()
@@ -521,7 +562,10 @@ impl<H: Host> Vm<H> {
                 return Ok(());
             }
         }
-        let atom = self.intern_js_atom(&key);
+        let atom = match self.string_key_atom(key_value) {
+            Some(atom) => atom,
+            None => self.intern_js_atom(&key),
+        };
         self.set_property_with_program_mode(p, object, atom, value, strict)
     }
 

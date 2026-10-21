@@ -148,7 +148,6 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     let exiting = context.boolean(false);
     install(context, process, "_exiting", exiting)?;
     let shared_state = context.host_mut().shared_state();
-    let argv = shared_state.borrow().process_argv.clone();
     let exec_argv = shared_state.borrow().exec_argv.clone();
     if let Some(pair) = exec_argv.windows(2).rev().find(|pair| {
         matches!(
@@ -178,6 +177,46 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     let load_env_file =
         context.host_function(crate::host::shared_vm::operation("processLoadEnvFile"))?;
     install(context, process, "loadEnvFile", load_env_file)?;
+    install_identity(context, process)?;
+    let version = format!("v{}", process_state::NODE_VERSION);
+    let version = context.string_rooted(&version);
+    let key = context.string_rooted("version");
+    context.define_data_property_rooted(process, key, version, false, true, true)?;
+    let global = context.global_root()?;
+    let symbol_key = context.string_rooted("Symbol");
+    let symbol = context.get_property_rooted(global, symbol_key)?;
+    let tag_key = context.string_rooted("toStringTag");
+    let tag = context.get_property_rooted(symbol, tag_key)?;
+    let process_tag = context.string_rooted("process");
+    if !context.set_property_rooted(process, tag, process_tag, process)? {
+        return Err(RootedError::host("cannot set process toStringTag"));
+    }
+    context.scoped(|context| install_config(context, process))?;
+    context.scoped(|context| {
+        install_facts(context, process, "features", process_state::feature_facts())
+    })?;
+    context.scoped(|context| install_versions(context, process))?;
+    install(context, global, "global", global)?;
+    define_global_process(context, global, process)?;
+    let retained = context.retain(process)?;
+    let previous = context
+        .host_mut()
+        .shared_state()
+        .borrow_mut()
+        .process_module
+        .replace(retained);
+    if let Some(previous) = previous {
+        context.release_root(previous);
+    }
+    Ok(())
+}
+
+/// The process's arguments, executable and ids on `process`. A restored startup snapshot
+/// (`Host::resume`) holds another process's, which these replace in place.
+fn install_identity(context: &mut NativeContext<'_, NodeHost>, process: RootId) -> Result<(), RootedError> {
+    let shared_state = context.host_mut().shared_state();
+    let argv = shared_state.borrow().process_argv.clone();
+    let exec_argv = shared_state.borrow().exec_argv.clone();
     for (name, values) in [
         ("argv", argv.as_slice()),
         ("execArgv", exec_argv.as_slice()),
@@ -220,35 +259,23 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     let ppid = 0;
     let ppid = context.number(ppid as f64);
     install(context, process, "ppid", ppid)?;
-    let version = format!("v{}", process_state::NODE_VERSION);
-    let version = context.string_rooted(&version);
-    let key = context.string_rooted("version");
-    context.define_data_property_rooted(process, key, version, false, true, true)?;
-    let global = context.global_root()?;
-    let symbol_key = context.string_rooted("Symbol");
-    let symbol = context.get_property_rooted(global, symbol_key)?;
-    let tag_key = context.string_rooted("toStringTag");
-    let tag = context.get_property_rooted(symbol, tag_key)?;
-    let process_tag = context.string_rooted("process");
-    if !context.set_property_rooted(process, tag, process_tag, process)? {
-        return Err(RootedError::host("cannot set process toStringTag"));
-    }
-    context.scoped(|context| install_config(context, process))?;
-    context.scoped(|context| {
-        install_facts(context, process, "features", process_state::feature_facts())
-    })?;
-    context.scoped(|context| install_versions(context, process))?;
-    install(context, global, "global", global)?;
-    define_global_process(context, global, process)?;
-    let retained = context.retain(process)?;
-    let previous = context
+    Ok(())
+}
+
+/// `install_identity` on the installed `process` (`Host::resume`).
+pub(crate) fn refresh_identity(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
+    let process = context
         .host_mut()
         .shared_state()
-        .borrow_mut()
+        .borrow()
         .process_module
-        .replace(retained);
-    if let Some(previous) = previous {
-        context.release_root(previous);
+        .ok_or_else(|| RootedError::host("process is not initialized"))?;
+    install_identity(context, process)?;
+    // The bootstrap's process streams describe the builder's descriptors.
+    for (name, fd) in [("stdout", STDOUT_FD), ("stderr", STDERR_FD)] {
+        let key = context.string_rooted(name);
+        let stream = context.get_property_rooted(process, key)?;
+        install_terminal(context, stream, fd)?;
     }
     Ok(())
 }
@@ -277,6 +304,12 @@ fn install_exit_code(
     Ok(())
 }
 
+/// Whether the stream's descriptor is a terminal, as `isTTY`.
+fn install_terminal(context: &mut NativeContext<'_, NodeHost>, stream: RootId, fd: i32) -> Result<(), RootedError> {
+    let tty = context.boolean(crate::modules::tty_state::is_terminal_fd(fd));
+    install(context, stream, "isTTY", tty)
+}
+
 fn create_stream(
     context: &mut NativeContext<'_, NodeHost>,
     fd: i32,
@@ -285,8 +318,7 @@ fn create_stream(
     let writable = context.boolean(true);
     install(context, stream, "writable", writable)?;
     install(context, stream, "_isStdio", writable)?;
-    let tty = context.boolean(crate::modules::tty_state::is_terminal_fd(fd));
-    install(context, stream, "isTTY", tty)?;
+    install_terminal(context, stream, fd)?;
     let fd_value = context.number(fd as f64);
     install(context, stream, "fd", fd_value)?;
     let data = context.number(fd as f64);
@@ -790,6 +822,7 @@ pub(crate) fn cwd(
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
+    crate::host::startup_snapshot::refuse_process_state(context, "process.cwd()")?;
     let cwd = context.host_mut().shared_state().borrow().cwd.clone();
     match cwd.query_path() {
         Ok(path) => Ok(context.string_rooted(&path.to_string_lossy())),
@@ -2182,7 +2215,7 @@ fn drain_checkpoint(
                     .map(|due| due.saturating_duration_since(std::time::Instant::now()))
                     .map_or(poll_interval, |delay| delay.min(poll_interval));
                 if !wait.is_zero() {
-                    std::thread::sleep(wait);
+                    crate::modules::net_shared_vm::wait_ready(&shared_state.borrow().tcp, wait);
                 }
                 continue;
             }
@@ -2241,7 +2274,7 @@ fn drain_checkpoint(
                     .map(|due| due.saturating_duration_since(std::time::Instant::now()))
                     .map_or(poll_interval, |delay| delay.min(poll_interval));
                 if !wait.is_zero() {
-                    std::thread::sleep(wait);
+                    crate::modules::net_shared_vm::wait_ready(&shared_state.borrow().tcp, wait);
                 }
                 continue;
             }
@@ -3594,6 +3627,7 @@ pub(crate) fn environment(context: &mut NativeContext<'_, NodeHost>) -> Vec<(Str
 /// `process.env`: the environment as Node's bootstrap reads it, less an IPC channel's own
 /// variables.
 pub(crate) fn initialize_env(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    crate::host::startup_snapshot::refuse_process_state(context, "process.env")?;
     let process = context.host_mut().shared_state().borrow().process_module.ok_or_else(|| RootedError::host("process is not initialized"))?;
     let env = context.object_rooted()?;
     for (name, value) in environment(context) {

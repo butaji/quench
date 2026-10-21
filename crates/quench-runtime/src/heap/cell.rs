@@ -11,6 +11,9 @@ use rustc_hash::FxHashMap;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+mod snapshot;
+pub(crate) use snapshot::CellDecoder;
+
 /// Changes whenever the layout an object used as a prototype offers its inheritors can have
 /// changed: its shape, prototype or integrity changes, and at every collection, after which a
 /// dead prototype's record may be reused. A cache that proved a prototype chain under one value
@@ -39,10 +42,10 @@ pub(crate) struct WeakMapEntries {
 mod cell_layout_tests {
     use super::*;
 
-    /// Every heap slot stores an `Option<Cell>`. The M4 object layout includes
-    /// two inline properties; an array keeps its element handle in that payload.
+    /// Every heap slot stores an `Option<Cell>`. The largest payload is an array: its object
+    /// and its element backing.
     const CELL_TAG_WORD_BYTES: usize = std::mem::size_of::<Value>();
-    const MAX_CELL_BYTES: usize = std::mem::size_of::<Object>() + CELL_TAG_WORD_BYTES;
+    const MAX_CELL_BYTES: usize = std::mem::size_of::<ArrayObject>() + CELL_TAG_WORD_BYTES;
 
     #[test]
     fn cells_stay_compact() {
@@ -100,6 +103,7 @@ impl WeakMapEntries {
 }
 #[rustfmt::skip]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[repr(u16)]
 pub(crate) enum Native {
     Print, HostDone, CreateRealm, IsHTMLDDA, EvalScript, CollectGarbage, RealmTypeError, Eval, Function, FunctionPrototype, FunctionPrototypeHasInstance, FunctionCaller, DynamicImport, AbstractModuleSource, AbstractModuleSourceToStringTag, ShadowRealm, ShadowRealmEvaluate, ShadowRealmImportValue, ShadowRealmImportValueFulfilled, ShadowRealmWrappedFunction,
     Object,
@@ -871,129 +875,23 @@ impl Native {
             )
     }
 
-    /// Natives a lane `Call` makes in place from the running frame (`lane_call_native`):
-    /// the string, RegExp and `Math` functions, the Array, Object, Reflect and JSON
-    /// functions, `String.fromCharCode` and `fromCodePoint`, the primitive conversions, the
-    /// keyed collection methods and embedder host functions, which read no caller state
-    /// beyond the frame's published PC and run guest code only through ordinary nested calls.
+    /// Natives a lane `Call` makes in place from the running frame (`lane_call_native`),
+    /// as the general loop's native branch makes them once lane activations are frames:
+    /// every native but those whose call the general loop takes as its own step. The
+    /// call-forwarding natives push their target as a frame there (and run under a
+    /// forwarding boundary), direct `eval` reads the calling instruction, and `with` entry
+    /// and exit change the running frame's object environment.
     pub(crate) fn runs_from_lane(self) -> bool {
-        self.is_string_regexp_or_math()
-            || matches!(
-                self,
-                Self::ArrayIsArray
-                    | Self::ArrayIteratorNext
-                    | Self::ArrayIndexOf
-                    | Self::ArrayLastIndexOf
-                    | Self::ArrayIncludes
-                    | Self::ArraySlice
-                    | Self::ArrayJoin
-                    | Self::ArrayConcat
-                    | Self::ArrayMap
-                    | Self::ArrayForEach
-                    | Self::ArrayFilter
-                    | Self::ArraySome
-                    | Self::ArrayEvery
-                    | Self::ArrayFind
-                    | Self::ArrayFindIndex
-                    | Self::ArrayReduce
-                    | Self::ArraySplice
-                    | Self::ArrayShift
-                    | Self::ArrayUnshift
-                    | Self::ArrayFrom
-                    | Self::ArrayOf
-                    | Self::ObjectKeys
-                    | Self::ObjectValues
-                    | Self::ObjectEntries
-                    | Self::ObjectCreate
-                    | Self::ObjectAssign
-                    | Self::ObjectDefineProperty
-                    | Self::ObjectFreeze
-                    | Self::ObjectGetPrototypeOf
-                    | Self::ObjectSetPrototypeOf
-                    | Self::ObjectHasOwn
-                    | Self::ObjectGetOwnPropertyDescriptor
-                    | Self::ObjectPrototypeHasOwnProperty
-                    | Self::ReflectGet
-                    | Self::ReflectHas
-                    | Self::ReflectSet
-                    | Self::ReflectOwnKeys
-                    | Self::ReflectDefineProperty
-                    | Self::ReflectGetOwnPropertyDescriptor
-                    | Self::FunctionBind
-                    | Self::JsonStringify
-                    | Self::JsonParse
-                    | Self::NumberIsInteger
-                    | Self::ParseInt
-                    | Self::StringFromCharCode
-                    | Self::StringFromCodePoint
-                    | Self::String
-                    | Self::Number
-                    | Self::Boolean
-                    | Self::HostFunction
-                    | Self::MapGet
-                    | Self::MapSet
-                    | Self::MapHas
-                    | Self::MapDelete
-                    | Self::MapClear
-                    | Self::MapKeys
-                    | Self::MapValues
-                    | Self::MapEntries
-                    | Self::MapForEach
-                    | Self::SetAdd
-                    | Self::SetHas
-                    | Self::SetDelete
-                    | Self::SetClear
-                    | Self::SetValues
-                    | Self::SetEntries
-                    | Self::SetForEach
-                    | Self::WeakMapGet
-                    | Self::WeakMapSet
-                    | Self::WeakMapHas
-                    | Self::WeakMapDelete
-                    | Self::WeakSetAdd
-                    | Self::WeakSetHas
-                    | Self::WeakSetDelete
-                    | Self::ReflectGetPrototypeOf
-                    | Self::ForInKeyIsEnumerable
-                    | Self::PromiseThen
-                    | Self::PromiseCatch
-                    | Self::PromiseResolve
-                    | Self::GeneratorNext
-                    | Self::GeneratorReturn
-                    | Self::GeneratorThrow
-                    | Self::AsyncGeneratorNext
-                    | Self::IteratorNext
-                    | Self::StringIteratorNext
-            )
-            || self.is_data_view_element_method()
-    }
-
-    /// `DataView.prototype`'s element reads and writes (`getUint8` through `setBigUint64`).
-    pub(crate) fn is_data_view_element_method(self) -> bool {
-        matches!(
+        !matches!(
             self,
-            Self::DataViewGetUint8
-                | Self::DataViewSetUint8
-                | Self::DataViewGetInt8
-                | Self::DataViewSetInt8
-                | Self::DataViewGetUint16
-                | Self::DataViewSetUint16
-                | Self::DataViewGetInt16
-                | Self::DataViewSetInt16
-                | Self::DataViewGetUint32
-                | Self::DataViewSetUint32
-                | Self::DataViewGetInt32
-                | Self::DataViewSetInt32
-                | Self::DataViewGetFloat32
-                | Self::DataViewSetFloat32
-                | Self::DataViewGetFloat64
-                | Self::DataViewSetFloat64
-                | Self::DataViewGetFloat16
-                | Self::DataViewSetFloat16
-                | Self::DataViewGetBigInt64
-                | Self::DataViewSetBigInt64
-                | Self::DataViewGetBigUint64
-                | Self::DataViewSetBigUint64
+            Self::FunctionCall
+                | Self::FunctionApply
+                | Self::FunctionBoundCall
+                | Self::ReflectApply
+                | Self::ReflectConstruct
+                | Self::Eval
+                | Self::WithEnter
+                | Self::WithExit
         )
     }
 
@@ -1002,6 +900,61 @@ impl Native {
             self,
             Self::HostDone | Self::CreateRealm | Self::Boolean | Self::BigInt
         ) || self.is_function_native()
+    }
+
+    /// Natives a lane `new` constructs in place from the running frame
+    /// (`lane_construct_native`): the keyed collections, `Date`, `Promise`, `Object`,
+    /// `RegExp`, the buffers, typed arrays and errors and the primitive wrappers, whose
+    /// [[Construct]] reads no caller state beyond the frame's published PC and runs guest
+    /// code only through ordinary nested calls.
+    pub(crate) fn constructs_from_lane(self) -> bool {
+        self.is_typed_array_constructor()
+            || self.is_error_constructor()
+            || matches!(
+                self,
+                Self::Map
+                    | Self::Set
+                    | Self::WeakMap
+                    | Self::WeakSet
+                    | Self::Date
+                    | Self::Promise
+                    | Self::Object
+                    | Self::RegExp
+                    | Self::ArrayBuffer
+                    | Self::DataView
+                    | Self::Boolean
+                    | Self::Number
+                    | Self::String
+            )
+    }
+
+    /// Whether its [[Construct]] makes the object from the newTarget it is passed
+    /// (GetPrototypeFromConstructor), so the construction leaves its prototype as made.
+    pub(crate) fn constructs_from_new_target(self) -> bool {
+        self.is_typed_array_constructor()
+            || self.is_error_constructor()
+            || matches!(
+                self,
+                Self::Array
+                    | Self::ArrayBuffer
+                    | Self::SharedArrayBuffer
+                    | Self::RegExp
+                    | Self::Map
+                    | Self::Set
+                    | Self::WeakMap
+                    | Self::WeakSet
+                    | Self::WeakRef
+                    | Self::FinalizationRegistry
+                    | Self::DisposableStack
+                    | Self::AsyncDisposableStack
+                    | Self::ShadowRealm
+                    | Self::TemporalPlainDate
+                    | Self::TemporalPlainDateTime
+                    | Self::TemporalPlainMonthDay
+                    | Self::TemporalPlainYearMonth
+                    | Self::TemporalZonedDateTime
+                    | Self::TemporalInstant
+            )
     }
 
     pub(crate) fn is_error_constructor(self) -> bool {
@@ -1308,6 +1261,11 @@ pub(crate) struct InlineObjectHeader {
 }
 
 impl InlineObjectHeader {
+    /// The inline shape this header stores.
+    pub(crate) fn shape(self) -> u32 {
+        ValueVec::from_parts(0, self.auxiliary).auxiliary()
+    }
+
     /// No receiver's header: an unplanned entry's, which no construction reads.
     pub(crate) const EMPTY: Self = Self {
         meta: 0,
@@ -1334,13 +1292,13 @@ pub(crate) struct Object {
     /// `ValueVec::auxiliary`: the shape and the dictionary flag. Property names live once in
     /// the VM's shape table; objects keep only the data the shape selects.
     auxiliary: u32,
-    /// The inline property values, or, for an object that has `ObjectExtras`, a tagged
-    /// pointer to them; they then also hold the inline values. Extras are rare, so the
-    /// common object pays no word for them. Without inline storage, the payload also keeps
-    /// the storage position (`ValueVec`'s start): the second word for a plain object; for an
-    /// array, whose second word is its element backing, the first word under `START_TAG`, or
-    /// the extras when it has them.
-    payload: ObjectPayload,
+    /// One word: with `ObjectExtras`, `EXTRAS_TAG` and a pointer to them, and they then hold
+    /// the inline values and the storage position. Extras are rare, so the common object pays
+    /// no word for them. Without extras: the inline values as narrow values
+    /// (`Value::to_narrow`), the first slot in the lower half; or, without inline storage,
+    /// the storage position (`ValueVec`'s start). An inline value that has no narrow form
+    /// moves the values into extras, so every value stays storable.
+    payload: u64,
 }
 
 /// Bits of `Object::meta` holding the prototype's heap reference. The field is partitioned
@@ -1394,32 +1352,6 @@ const _: () = assert!(
     PROTO_INDEX_BITS & (OBJECT_ARRAY | OBJECT_INLINE_STORAGE | VALUE_VEC_INTEGRITY_BITS) == 0
         && (OBJECT_ARRAY | OBJECT_INLINE_STORAGE) & VALUE_VEC_INTEGRITY_BITS == 0
 );
-/// Marks an array's storage position in its first payload word; like `EXTRAS_TAG`, no
-/// `Value` carries it.
-const START_TAG: u64 = 0x7ffe_8000_0000_0000;
-const START_TAG_MASK: u64 = 0xffff_8000_0000_0000;
-
-/// `Object::payload`: inline values, or `EXTRAS_TAG` and an `ObjectExtras` pointer in the first
-/// word. No `Value` carries that tag: it is a NaN pattern, and numbers canonicalize NaN. An
-/// array's object never stores properties inline, and its second word holds the array's element
-/// backing, owned by the `ArrayObject` around it.
-#[repr(C)]
-union ObjectPayload {
-    inline: [Value; INLINE_PROPERTY_COUNT],
-    words: [u64; INLINE_PROPERTY_COUNT],
-    array: std::mem::ManuallyDrop<ArrayPayload>,
-}
-
-#[repr(C)]
-struct ArrayPayload {
-    extras: u64,
-    elements: std::mem::ManuallyDrop<Rc<Vec<Value>>>,
-    /// The words past the two an array uses, so the payload spans the inline values.
-    _unused: [u64; INLINE_PROPERTY_COUNT - 2],
-}
-
-const _: () = assert!(size_of::<ArrayPayload>() == size_of::<[Value; INLINE_PROPERTY_COUNT]>());
-
 /// Inline property values held by `ObjectExtras`; undefined until an object moves its own in.
 #[derive(Clone, Copy, Debug)]
 struct DisplacedInline([Value; INLINE_PROPERTY_COUNT]);
@@ -1435,17 +1367,15 @@ const EXTRAS_TAG_MASK: u64 = 0xffff_0000_0000_0000;
 
 impl Clone for Object {
     fn clone(&self) -> Self {
-        // The words copy bit for bit; the copy then gets its own extras. An array's second
-        // word is its backing, which `ArrayObject::clone` replaces without reading.
-        // SAFETY: both views are plain words.
-        let mut words = unsafe { self.payload.words };
-        if let Some(extras) = self.extras() {
-            words[0] = Self::tag_extras(Box::new(extras.clone()));
-        }
+        // The word copies bit for bit; a copy with extras gets its own.
+        let payload = match self.extras() {
+            Some(extras) => Self::tag_extras(Box::new(extras.clone())),
+            None => self.payload,
+        };
         Self {
             meta: self.meta,
             auxiliary: self.auxiliary,
-            payload: ObjectPayload { words },
+            payload,
         }
     }
 }
@@ -1460,9 +1390,12 @@ impl Drop for Object {
     }
 }
 
-/// An array: its object, whose payload also holds the dense element backing.
+/// An array: its object, which keeps named properties in the arena, and its dense element
+/// backing.
+#[derive(Clone)]
 pub(crate) struct ArrayObject {
     object: Object,
+    elements: Rc<Vec<Value>>,
 }
 
 impl ArrayObject {
@@ -1481,45 +1414,15 @@ impl ArrayObject {
             properties.preserve_integrity_from(current);
             object.set_properties(properties);
         }
-        // SAFETY: the second word is unused by an object without inline storage; this writes
-        // the backing there without reading or dropping what it held.
-        unsafe {
-            std::ptr::write(
-                std::ptr::addr_of_mut!((*object.payload.array).elements),
-                std::mem::ManuallyDrop::new(elements),
-            );
-        }
-        Self { object }
+        Self { object, elements }
     }
 
     pub(crate) fn elements(&self) -> &Rc<Vec<Value>> {
-        // SAFETY: `new` stored the backing, which this array owns until it drops.
-        unsafe { &self.object.payload.array.elements }
+        &self.elements
     }
 
     pub(crate) fn elements_mut(&mut self) -> &mut Rc<Vec<Value>> {
-        // SAFETY: as in `elements`, with `&mut self` making the borrow unique.
-        unsafe { &mut (*self.object.payload.array).elements }
-    }
-}
-
-impl Drop for ArrayObject {
-    fn drop(&mut self) {
-        // SAFETY: the backing was stored by `new` and is dropped only here.
-        unsafe { std::mem::ManuallyDrop::drop(&mut (*self.object.payload.array).elements) };
-    }
-}
-
-impl Clone for ArrayObject {
-    fn clone(&self) -> Self {
-        Self::new_cloned(self.object.clone(), self.elements().clone())
-    }
-}
-
-impl ArrayObject {
-    /// `new` for an object that already has arena storage and a stale second word.
-    fn new_cloned(object: Object, elements: Rc<Vec<Value>>) -> Self {
-        Self::new(object, elements)
+        &mut self.elements
     }
 }
 
@@ -1552,7 +1455,7 @@ impl std::fmt::Debug for Object {
             .debug_struct("Object")
             .field("proto", &self.proto())
             .field("properties", &self.properties())
-            .field("inline_properties", self.inline_property_values())
+            .field("inline_properties", &self.inline_values())
             .field("extras", &self.extras())
             .finish()
     }
@@ -1800,7 +1703,7 @@ impl Object {
         }
     }
 
-    /// Whether this object is an array's, whose payload holds the element backing.
+    /// Whether this object is an array's, which keeps named properties in the arena.
     pub(crate) fn is_array(&self) -> bool {
         self.meta & OBJECT_ARRAY != 0
     }
@@ -1835,31 +1738,16 @@ impl Object {
 
     #[inline(always)]
     fn storage_position(&self) -> u32 {
-        if !self.is_array() {
-            // SAFETY: both views are plain words; without inline storage the second word
-            // holds the position.
-            return unsafe { self.payload.words[1] } as u32;
-        }
         match self.extras() {
             Some(extras) => extras.arena_start,
-            // SAFETY: as above; an array without extras keeps it in the first word.
-            None => {
-                let word = unsafe { self.payload.words[0] };
-                debug_assert_eq!(word & START_TAG_MASK, START_TAG);
-                word as u32
-            }
+            None => self.payload as u32,
         }
     }
 
     fn set_storage_position(&mut self, position: u32) {
-        if !self.is_array() {
-            // SAFETY: both views are plain words.
-            unsafe { self.payload.words[1] = u64::from(position) };
-        } else if let Some(extras) = self.extras_mut_existing() {
-            extras.arena_start = position;
-        } else {
-            // SAFETY: as above.
-            unsafe { self.payload.words[0] = START_TAG | u64::from(position) };
+        match self.extras_mut_existing() {
+            Some(extras) => extras.arena_start = position,
+            None => self.payload = u64::from(position),
         }
     }
 
@@ -1874,8 +1762,7 @@ impl Object {
     }
 
     fn extras_pointer(&self) -> Option<*mut ObjectExtras> {
-        // SAFETY: both union views are plain words.
-        let word = unsafe { self.payload.words[0] };
+        let word = self.payload;
         (word & EXTRAS_TAG_MASK == EXTRAS_TAG)
             .then_some((word & !EXTRAS_TAG_MASK) as usize as *mut ObjectExtras)
     }
@@ -1889,24 +1776,18 @@ impl Object {
         let extras = match self.extras_pointer() {
             Some(extras) => extras,
             None => {
-                // An array moves its storage position from the first word into the extras;
-                // any other object's words are inline values (or, without inline storage, a
-                // stale first word and the position in the second, which stays).
-                let arena_start = if self.is_array() {
-                    self.storage_position()
+                // The payload word moves into the extras: the inline values, or the storage
+                // position.
+                let (inline, arena_start) = if self.meta & OBJECT_INLINE_STORAGE != 0 {
+                    (Self::unpack_inline(self.payload), 0)
                 } else {
-                    0
+                    ([Value::UNDEFINED; INLINE_PROPERTY_COUNT], self.payload as u32)
                 };
-                // SAFETY: an untagged payload holds plain words.
-                let inline = unsafe { self.payload.inline };
-                let word = Self::tag_extras(Box::new(ObjectExtras {
+                self.payload = Self::tag_extras(Box::new(ObjectExtras {
                     inline_properties: DisplacedInline(inline),
                     arena_start,
                     ..ObjectExtras::default()
                 }));
-                // Only the first word changes: an array keeps its element backing in the second.
-                // SAFETY: both union views are plain words.
-                unsafe { self.payload.words[0] = word };
                 self.extras_pointer().expect("extras just installed")
             }
         };
@@ -1919,23 +1800,62 @@ impl Object {
         self.extras_pointer().map(|extras| unsafe { &mut *extras })
     }
 
+    /// The payload word of inline `values`, when each has a narrow form.
+    #[inline(always)]
+    fn pack_inline(values: [Value; INLINE_PROPERTY_COUNT]) -> Option<u64> {
+        let mut word = 0;
+        for (slot, value) in values.into_iter().enumerate() {
+            word |= u64::from(value.to_narrow()?) << (slot as u32 * u32::BITS);
+        }
+        Some(word)
+    }
+
+    #[inline(always)]
+    fn unpack_inline(word: u64) -> [Value; INLINE_PROPERTY_COUNT] {
+        std::array::from_fn(|slot| Value::from_narrow((word >> (slot as u32 * u32::BITS)) as u32))
+    }
+
+    /// An object of `proto` and inline `shape` holding `values`, at most the inline slots and
+    /// `undefined` past them; `None` when a value has no narrow form.
+    #[inline(always)]
+    pub(crate) fn with_inline_values(proto: Value, shape: u32, values: &[Value]) -> Option<Self> {
+        debug_assert!(values.len() <= INLINE_PROPERTY_COUNT);
+        // A loop over the fixed bound unrolls to element moves, where one over `values`
+        // becomes a `memcpy` call.
+        let inline = std::array::from_fn(|slot| values.get(slot).copied().unwrap_or(Value::UNDEFINED));
+        let payload = Self::pack_inline(inline)?;
+        let mut object = Self {
+            meta: Self::encode_proto(proto),
+            auxiliary: 0,
+            payload,
+        };
+        // Inline storage leaves the payload word alone.
+        object.set_properties(ValueVec::inline_property_storage(shape));
+        Some(object)
+    }
+
+    /// Whether inline `values` fit the payload word without moving into extras.
+    #[inline(always)]
+    pub(crate) fn inline_values_narrow(values: &[Value]) -> bool {
+        values.iter().all(|value| value.to_narrow().is_some())
+    }
+
     /// The inline property slots, wherever they live.
-    fn inline_property_values(&self) -> &[Value; INLINE_PROPERTY_COUNT] {
+    #[inline(always)]
+    fn inline_values(&self) -> [Value; INLINE_PROPERTY_COUNT] {
         match self.extras() {
-            Some(extras) => &extras.inline_properties.0,
-            // SAFETY: an untagged payload holds the inline values.
-            None => unsafe { &self.payload.inline },
+            Some(extras) => extras.inline_properties.0,
+            None => Self::unpack_inline(self.payload),
         }
     }
 
-    fn inline_property_values_mut(&mut self) -> &mut [Value; INLINE_PROPERTY_COUNT] {
-        if let Some(extras) = self.extras_pointer() {
-            // SAFETY: a tagged payload owns a live `ObjectExtras` for the object's lifetime,
-            // and `&mut self` makes this its only borrow.
-            unsafe { &mut (*extras).inline_properties.0 }
-        } else {
-            // SAFETY: an untagged payload holds the inline values.
-            unsafe { &mut self.payload.inline }
+    /// Stores the inline property slots: in the payload word when each value has a narrow
+    /// form and the object has no extras, else in the extras.
+    fn store_inline_values(&mut self, values: [Value; INLINE_PROPERTY_COUNT]) {
+        match (self.extras_mut_existing(), Self::pack_inline(values)) {
+            (Some(extras), _) => extras.inline_properties.0 = values,
+            (None, Some(word)) => self.payload = word,
+            (None, None) => self.extras_mut().inline_properties.0 = values,
         }
     }
 
@@ -1947,39 +1867,85 @@ impl Object {
         let mut object = Self {
             meta: Self::encode_proto(proto),
             auxiliary: 0,
-            payload: ObjectPayload {
-                inline: inline_properties,
-            },
+            payload: 0,
         };
         object.set_properties(properties);
+        if properties.has_inline_property_storage() {
+            object.store_inline_values(inline_properties);
+        }
         object
     }
 
     /// An object of `header`'s prototype and inline shape holding `inline`: what
-    /// `with_property_storage` makes, from header words derived once.
+    /// `with_property_storage` makes, from header words derived once. `None` when a value
+    /// has no narrow form, so the payload word cannot hold it.
     #[inline(always)]
     pub(crate) fn from_inline_header(
         header: InlineObjectHeader,
         inline: [Value; INLINE_PROPERTY_COUNT],
-    ) -> Self {
-        Self {
+    ) -> Option<Self> {
+        Some(Self {
             meta: header.meta,
             auxiliary: header.auxiliary,
-            payload: ObjectPayload { inline },
+            payload: Self::pack_inline(inline)?,
+        })
+    }
+
+    #[inline(always)]
+    pub(crate) fn inline_properties(&self) -> Option<[Value; INLINE_PROPERTY_COUNT]> {
+        (self.meta & OBJECT_INLINE_STORAGE != 0).then(|| self.inline_values())
+    }
+
+    /// The inline property at `slot`, when the object stores its properties inline.
+    #[inline(always)]
+    pub(crate) fn inline_property(&self, slot: usize) -> Option<Value> {
+        if self.meta & OBJECT_INLINE_STORAGE == 0 {
+            return None;
+        }
+        debug_assert!(slot < INLINE_PROPERTY_COUNT);
+        Some(match self.extras() {
+            Some(extras) => extras.inline_properties.0[slot],
+            None => Value::from_narrow((self.payload >> (slot as u32 * u32::BITS)) as u32),
+        })
+    }
+
+    /// Stores `value` at inline `slot`, moving the inline values into extras when the payload
+    /// word cannot hold it.
+    #[cfg(test)]
+    pub(crate) fn set_inline_property(&mut self, slot: usize, value: Value) {
+        // A cached slot past the inline values is a caller bug, not a reason to panic here.
+        if slot < INLINE_PROPERTY_COUNT && !self.store_inline_narrow(slot, value) {
+            self.set_inline_property_wide(slot, value);
         }
     }
 
-    pub(crate) fn inline_properties(&self) -> Option<&[Value; INLINE_PROPERTY_COUNT]> {
-        (self.meta & OBJECT_INLINE_STORAGE != 0).then(|| self.inline_property_values())
-    }
-
-    pub(crate) fn set_inline_property(&mut self, slot: usize, value: Value) {
+    /// Stores `value` at inline `slot` unless the payload word holds the inline values and
+    /// cannot hold `value`; `false` leaves the object unchanged for the caller to move its
+    /// values to the arena.
+    #[inline(always)]
+    pub(crate) fn store_inline_narrow(&mut self, slot: usize, value: Value) -> bool {
         debug_assert!(self.properties().has_inline_property_storage());
         debug_assert!(slot < INLINE_PROPERTY_COUNT);
-        // A cached slot past the inline values is a caller bug, not a reason to panic here.
-        if let Some(entry) = self.inline_property_values_mut().get_mut(slot) {
-            *entry = value;
+        match (self.extras_pointer(), value.to_narrow()) {
+            (None, Some(narrow)) => {
+                let shift = slot as u32 * u32::BITS;
+                self.payload = self.payload & !(u64::from(u32::MAX) << shift) | u64::from(narrow) << shift;
+                true
+            }
+            (None, None) => false,
+            (Some(_), _) => {
+                self.set_inline_property_wide(slot, value);
+                true
+            }
         }
+    }
+
+    /// `set_inline_property` into extras: the object has them, or `value` has no narrow form.
+    #[cold]
+    fn set_inline_property_wide(&mut self, slot: usize, value: Value) {
+        let mut values = self.inline_values();
+        values[slot] = value;
+        self.store_inline_values(values);
     }
 
     pub(crate) fn replace_property_storage(
@@ -1990,10 +1956,9 @@ impl Object {
         let previous = self.properties();
         properties.preserve_integrity_from(previous);
         self.set_properties(properties);
-        // Arena storage leaves the inline values alone: an array keeps its element backing in
-        // the payload.
+        // Arena storage keeps its position in the payload word (or the extras) instead.
         if properties.has_inline_property_storage() {
-            *self.inline_property_values_mut() = inline_properties;
+            self.store_inline_values(inline_properties);
         }
         previous
     }
@@ -2004,7 +1969,7 @@ impl Object {
         let previous = self.properties();
         self.set_properties(properties);
         if properties.has_inline_property_storage() {
-            *self.inline_property_values_mut() = *source.inline_property_values();
+            self.store_inline_values(source.inline_values());
         }
         previous
     }
@@ -2222,7 +2187,7 @@ impl Object {
         self.extras()?.private_elements.iter().find(|element| element.brand == brand)?.data
     }
     pub(crate) fn set_private_field(&mut self, brand: PrivateBrand, value: Value) -> bool {
-        let Some(element) = self.extras_mut().private_elements.iter_mut().find(|element| element.brand == brand && element.data.is_some()) else { return false; };
+        let Some(element) = self.extras_mut_existing().and_then(|extras| extras.private_elements.iter_mut().find(|element| element.brand == brand && element.data.is_some())) else { return false; };
         element.data = Some(value);
         true
     }
@@ -2247,7 +2212,10 @@ impl Object {
     }
 }
 
-const _: () = assert!(std::mem::size_of::<Object>() == (1 + INLINE_PROPERTY_COUNT) * std::mem::size_of::<Value>());
+/// An object is its header word and one payload word.
+const _: () = assert!(std::mem::size_of::<Object>() == 2 * std::mem::size_of::<u64>());
+/// The payload word holds every inline slot as a narrow value.
+const _: () = assert!(INLINE_PROPERTY_COUNT * u32::BITS as usize == u64::BITS as usize);
 
 #[cfg(test)]
 mod object_payload_tests {
@@ -2264,7 +2232,7 @@ mod object_payload_tests {
         object.set_arguments_object();
         assert!(object.is_arguments_object());
         assert_eq!(object.shape(), 7);
-        assert_eq!(object.inline_properties().copied(), Some(inline));
+        assert_eq!(object.inline_properties(), Some(inline));
 
         let mut cloned = object.clone();
         cloned.set_inline_property(0, Value::integer(17));
@@ -2978,14 +2946,26 @@ pub(crate) struct ZonedInstant {
     pub(crate) time_zone: String,
 }
 
-/// A RegExp's source text, flags and legacy-constructor owner: read when a pattern is
-/// recompiled, reflected or matched through legacy statics, not on every match.
-#[derive(Clone, Debug)]
+/// A RegExp's source text, flags, legacy-constructor owner and compiled matcher: all fixed
+/// at creation and replaced together by `RegExp.prototype.compile`.
+#[derive(Clone)]
 pub(crate) struct RegExpMeta {
     pub(crate) source: JsString,
-    pub(crate) flags: String,
+    pub(crate) flags: crate::vm::RegExpFlags,
     // One constructor identity owns creation realm and legacy eligibility.
     pub(crate) legacy_constructor: RegExpLegacyOwner,
+    pub(crate) matcher: Rc<quench_regexp::Regex>,
+}
+
+impl std::fmt::Debug for RegExpMeta {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("RegExpMeta")
+            .field("source", &self.source)
+            .field("flags", &self.flags)
+            .field("legacy_constructor", &self.legacy_constructor)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -3146,10 +3126,11 @@ pub(crate) enum Cell {
     BigInt(Box<num_bigint::BigInt>),
     Symbol(SymbolData),
     Date { milliseconds: f64, object: Box<Object> },
+    /// `meta` is shared: every evaluation of one literal site takes the site's record
+    /// (`ProgramStore::regexp_literal_meta`), and `compile` replaces the receiver's copy.
     RegExp {
         object: Box<Object>,
-        meta: Box<RegExpMeta>,
-        matcher: Rc<quench_regexp::Regex>,
+        meta: Rc<RegExpMeta>,
     },
     Error(String),
     /// A promise: an ordinary object with its [[PromiseState]] and reactions.
