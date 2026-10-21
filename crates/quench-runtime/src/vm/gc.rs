@@ -834,14 +834,7 @@ impl<H: Host> Vm<H> {
         );
         self.descriptors
             .retain(|(object, _), _| self.heap.is_live(*object));
-        let mut abandoned_job_contexts = self.heap.take_abandoned_job_contexts();
-        self.realm.promise.thenable_jobs.retain(|job, record| {
-            let live = self.heap.is_live(*job);
-            if !live {
-                abandoned_job_contexts.extend(record.execution_context);
-            }
-            live
-        });
+        let abandoned_job_contexts = self.heap.take_abandoned_job_contexts();
         for context in abandoned_job_contexts {
             self.release_job_context(context);
         }
@@ -1066,6 +1059,7 @@ impl<H: Host> Vm<H> {
                 self.call_value(program, callback, this, &args).map(|_| ())
             }
             PendingJob::Reaction(reaction) => self.run_promise_reaction(program, reaction),
+            PendingJob::Thenable(thenable) => self.run_thenable_job(program, thenable),
         };
         self.native_microtask_running = previous;
         self.active_call_roots.truncate(start);

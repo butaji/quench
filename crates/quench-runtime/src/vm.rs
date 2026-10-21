@@ -510,6 +510,7 @@ enum PendingJob {
         args: Vec<Value>,
     },
     Reaction(promise::PromiseJob),
+    Thenable(promise::ThenableJob),
 }
 
 impl PendingJob {
@@ -525,6 +526,7 @@ impl PendingJob {
                 roots.extend_from_slice(args);
             }
             Self::Reaction(job) => roots.extend([job.realm, job.handler, job.next, job.value]),
+            Self::Thenable(job) => roots.extend([job.realm, job.then, job.thenable, job.promise]),
         }
     }
 }
@@ -2270,9 +2272,8 @@ impl<H: Host> Vm<H> {
         eprintln!("{{\"kind\":\"quench-live-cells\",\"top\":{:?}}}", &kinds[..kinds.len().min(8)]);
         let promise = &self.realm.promise;
         eprintln!(
-            "{{\"kind\":\"quench-vm-tables\",\"live_slots\":{},\"thenable_jobs\":{},\"reaction_capabilities\":{},\"jobs\":{},\"descriptors\":{},\"function_values\":{},\"frames\":{},\"active_call_roots\":{}}}",
+            "{{\"kind\":\"quench-vm-tables\",\"live_slots\":{},\"reaction_capabilities\":{},\"jobs\":{},\"descriptors\":{},\"function_values\":{},\"frames\":{},\"active_call_roots\":{}}}",
             self.heap.live_slots(),
-            promise.thenable_jobs.len(),
             promise.reaction_capabilities.len(),
             self.realm.jobs.len(),
             self.descriptors.len(),
