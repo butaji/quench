@@ -120,6 +120,7 @@ mod error;
 mod eval;
 mod fdlibm_math;
 mod field_cache;
+mod zero_table;
 mod finalization;
 mod function;
 mod function_cache;
@@ -715,6 +716,40 @@ const EMPTY_CACHE: FieldCache = FieldCache {
     holder: NO_FIELD_HOLDER,
     slot: 0,
 };
+/// A field cache stored with its receiver and holder XOR'd with their sentinels, so the
+/// empty entry is all zero bits (`zero_table`).
+impl zero_table::ZeroCoded for FieldCache {
+    type Raw = [u32; 3];
+    #[inline(always)]
+    fn encode(self) -> [u32; 3] {
+        [self.receiver ^ NO_FIELD_RECEIVER, self.holder ^ NO_FIELD_HOLDER, u32::from(self.slot)]
+    }
+    #[inline(always)]
+    fn decode(raw: [u32; 3]) -> Self {
+        Self {
+            receiver: raw[0] ^ NO_FIELD_RECEIVER,
+            holder: raw[1] ^ NO_FIELD_HOLDER,
+            slot: raw[2] as u16,
+        }
+    }
+}
+/// A per-site table index stored XOR'd with the shared sentinel `u32::MAX`
+/// (`NO_FIELD_ADD_SET`, `NO_MEGAMORPHIC_FIELD`, `NO_INHERITED_FIELD`), so the empty entry is
+/// zero.
+impl zero_table::ZeroCoded for u32 {
+    type Raw = u32;
+    #[inline(always)]
+    fn encode(self) -> u32 {
+        self ^ u32::MAX
+    }
+    #[inline(always)]
+    fn decode(raw: u32) -> Self {
+        raw ^ u32::MAX
+    }
+}
+const _: () = assert!(
+    NO_FIELD_ADD_SET == u32::MAX && NO_MEGAMORPHIC_FIELD == u32::MAX && NO_INHERITED_FIELD == u32::MAX
+);
 /// One cached property-add transition: an extensible ordinary object of `source_shape` whose
 /// prototype chain still has exactly `prototype_shapes[..prototype_depth]` gains `atom` at `slot`
 /// and moves to `target_shape`.
@@ -1700,19 +1735,19 @@ pub(crate) struct Vm<H> {
     /// (`Vm::string_key_atom`); collection empties it.
     string_atoms: Option<Box<[(Value, Atom); STRING_ATOM_CACHE_SIZE]>>,
     call_targets: Box<[InLoopCallTarget; CALL_TARGET_CACHE_SIZE]>,
-    field_caches: Vec<FieldCache>,
+    field_caches: zero_table::ZeroTable<FieldCache>,
     /// Field load sites whose data property was found beyond the immediate prototype, by
     /// global site index; cleared with the field caches.
     /// Per cache site, the index of its `inherited_field_caches` entry, or
     /// `NO_INHERITED_FIELD`.
-    inherited_field_indices: Vec<u32>,
+    inherited_field_indices: zero_table::ZeroTable<u32>,
     inherited_field_caches: Vec<InheritedFieldCache>,
     /// Accessor reads by field-cache index (`AccessorFieldCache`); cleared with the field
     /// caches.
     accessor_field_caches: FxHashMap<usize, AccessorFieldCache>,
-    field_add_indices: Vec<u32>,
+    field_add_indices: zero_table::ZeroTable<u32>,
     field_add_sets: Vec<FieldAddCacheSet>,
-    megamorphic_field_indices: Vec<u32>,
+    megamorphic_field_indices: zero_table::ZeroTable<u32>,
     /// The cache sites whose per-site entries (`field_caches`, `megamorphic_field_indices`,
     /// `field_add_indices`, `inherited_field_indices`) were written since the last
     /// `invalidate_field_caches`, which then resets only those; `None` once they outnumber
@@ -2373,7 +2408,7 @@ impl<H: Host> Vm<H> {
                     + frame.registers.capacity() * size_of::<Value>()
             })
             .sum();
-        let field_add_cache_bytes = self.field_add_indices.capacity() * size_of::<u32>()
+        let field_add_cache_bytes = self.field_add_indices.reserved_bytes()
             + self.field_add_sets.capacity() * size_of::<FieldAddCacheSet>();
         eprintln!(
             "{{\"kind\":\"quench-memory\",\"phase\":\"{phase}\",\"heap_slots\":{slots},\"slot_bytes\":{slot_bytes},\"free_bytes\":{free_bytes},\"cell_bytes\":{cell_bytes},\"cell_counts\":{cell_counts:?},\"property_values\":{property_values},\"property_capacity\":{property_capacity},\"property_free_ranges\":{property_free},\"live_property_values\":{live_property_values},\"live_property_capacity\":{live_property_capacity},\"array_elements\":{array_elements},\"array_capacity\":{array_capacity},\"shapes\":{},\"shape_capacity\":{},\"max_shape_width\":{max_shape_width},\"shape_bytes\":{shape_bytes},\"shape_lookup_index_payload_bytes\":{shape_lookup_index_payload_bytes},\"transitions\":{},\"transition_bytes\":{},\"frame_bytes\":{frame_bytes},\"field_cache_bytes\":{},\"megamorphic_field_sites\":{},\"megamorphic_field_entries\":{megamorphic_field_entries},\"max_megamorphic_field_entries\":{max_megamorphic_field_entries},\"method_cache_bytes\":{},\"megamorphic_method_sites\":{}}}",
@@ -2381,8 +2416,8 @@ impl<H: Host> Vm<H> {
             self.shapes.capacity(),
             self.transitions.len(),
             self.transitions.bytes(),
-            self.field_caches.capacity() * size_of::<FieldCache>()
-                + self.megamorphic_field_indices.capacity() * size_of::<u32>()
+            self.field_caches.reserved_bytes()
+                + self.megamorphic_field_indices.reserved_bytes()
                 + field_add_cache_bytes,
             self.megamorphic_fields.len(),
             self.method_caches.capacity() * size_of::<[MethodCache; 2]>(),
@@ -2419,9 +2454,9 @@ impl<H: Host> Vm<H> {
         let transition_table_bytes = self.transitions.bytes();
         let descriptor_side_table_bytes = self.descriptors.capacity()
             * size_of::<((Value, property_key::PropertyKey), PropertyAttributes)>();
-        let cache_side_table_bytes = self.field_caches.capacity() * size_of::<FieldCache>()
-            + self.megamorphic_field_indices.capacity() * size_of::<u32>()
-            + self.field_add_indices.capacity() * size_of::<u32>()
+        let cache_side_table_bytes = self.field_caches.reserved_bytes()
+            + self.megamorphic_field_indices.reserved_bytes()
+            + self.field_add_indices.reserved_bytes()
             + self.field_add_sets.capacity() * size_of::<FieldAddCacheSet>()
             + self.method_caches.capacity() * size_of::<[MethodCache; 2]>();
         let atom_side_table_bytes = self.atoms.capacity() * (size_of::<Atom>() + 1)
@@ -2639,14 +2674,18 @@ impl<H: Host> Vm<H> {
             bound_this: self.intern_atom(BOUND_THIS_KEY),
             bound_args: self.intern_atom(BOUND_ARGS_KEY),
         };
-        self.field_caches = vec![EMPTY_CACHE; program.cache_sites as usize];
+        self.field_caches.clear();
+        self.field_caches.extend_empty(program.cache_sites as usize);
         self.field_cache_writes = Some(Vec::new());
         Self::prime_loop_decoding(program);
         self.inherited_field_caches.clear();
-        self.inherited_field_indices = vec![NO_INHERITED_FIELD; program.cache_sites as usize];
-        self.field_add_indices = vec![NO_FIELD_ADD_SET; program.cache_sites as usize];
+        self.inherited_field_indices.clear();
+        self.inherited_field_indices.extend_empty(program.cache_sites as usize);
+        self.field_add_indices.clear();
+        self.field_add_indices.extend_empty(program.cache_sites as usize);
         self.field_add_sets.clear();
-        self.megamorphic_field_indices = vec![NO_MEGAMORPHIC_FIELD; program.cache_sites as usize];
+        self.megamorphic_field_indices.clear();
+        self.megamorphic_field_indices.extend_empty(program.cache_sites as usize);
         self.megamorphic_fields.clear();
         self.length_atom = self.intern_atom("length");
         self.prototype_atom = self.intern_atom("prototype");
@@ -2788,22 +2827,10 @@ impl<H: Host> Vm<H> {
             method_base: self.method_caches.len(),
             object_base: self.object_shapes.len(),
         });
-        self.field_caches.resize(
-            self.field_caches.len() + usize::from(program.cache_sites),
-            EMPTY_CACHE,
-        );
-        self.megamorphic_field_indices.resize(
-            self.megamorphic_field_indices.len() + usize::from(program.cache_sites),
-            NO_MEGAMORPHIC_FIELD,
-        );
-        self.field_add_indices.resize(
-            self.field_add_indices.len() + usize::from(program.cache_sites),
-            NO_FIELD_ADD_SET,
-        );
-        self.inherited_field_indices.resize(
-            self.inherited_field_indices.len() + usize::from(program.cache_sites),
-            NO_INHERITED_FIELD,
-        );
+        self.field_caches.extend_empty(usize::from(program.cache_sites));
+        self.megamorphic_field_indices.extend_empty(usize::from(program.cache_sites));
+        self.field_add_indices.extend_empty(usize::from(program.cache_sites));
+        self.inherited_field_indices.extend_empty(usize::from(program.cache_sites));
         self.method_caches.resize(
             self.method_caches.len() + program.method_sites.len(),
             [EMPTY_METHOD_CACHE; 2],

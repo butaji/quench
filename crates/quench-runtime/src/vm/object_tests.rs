@@ -58,15 +58,11 @@ fn field_cache_entries<H: Host>(
         .into_iter()
         .flat_map(|site| {
             let index = vm.field_cache_index(site);
-            let primary = vm
-                .field_caches
-                .get(index)
-                .copied()
+            let primary = (index < vm.field_caches.len())
+                .then(|| vm.field_caches.get(index))
                 .filter(|entry| entry.receiver != NO_FIELD_RECEIVER);
-            let table = vm
-                .megamorphic_field_indices
-                .get(index)
-                .copied()
+            let table = (index < vm.megamorphic_field_indices.len())
+                .then(|| vm.megamorphic_field_indices.get(index))
                 .filter(|index| *index != NO_MEGAMORPHIC_FIELD)
                 .and_then(|index| vm.megamorphic_fields.get(index as usize));
             let entries = table.into_iter().flat_map(|table| {
@@ -136,8 +132,8 @@ fn method_cache_program(mut program: ResidualProgram) -> ResidualProgram {
 #[test]
 fn third_receiver_promotes_field_site_to_megamorphic() {
     let mut vm = Vm::new(SilentHost);
-    vm.field_caches.push(EMPTY_CACHE);
-    vm.megamorphic_field_indices.push(NO_MEGAMORPHIC_FIELD);
+    vm.field_caches.extend_empty(1);
+    vm.megamorphic_field_indices.extend_empty(1);
     for receiver in 1..=4 {
         vm.record_field_cache(
             0,
@@ -151,7 +147,7 @@ fn third_receiver_promotes_field_site_to_megamorphic() {
     let table = &vm.megamorphic_fields[0];
     assert_eq!(table.len(), 4);
     assert!(table.get(1, NO_FIELD_HOLDER).is_some() && table.get(4, NO_FIELD_HOLDER).is_some());
-    assert_eq!(vm.megamorphic_field_indices, [0]);
+    assert_eq!(vm.megamorphic_field_indices.get(0), 0);
 }
 
 #[test]
@@ -1176,10 +1172,10 @@ fn only_arrow_closures_keep_their_creator_s_implicit_bindings() {
 fn field_cache_invalidation_resets_every_written_site() {
     const SITES: usize = 64;
     let mut vm = Vm::new(SilentHost);
-    vm.field_caches = vec![EMPTY_CACHE; SITES];
-    vm.megamorphic_field_indices = vec![NO_MEGAMORPHIC_FIELD; SITES];
-    vm.field_add_indices = vec![NO_FIELD_ADD_SET; SITES];
-    vm.inherited_field_indices = vec![NO_INHERITED_FIELD; SITES];
+    vm.field_caches.extend_empty(SITES);
+    vm.megamorphic_field_indices.extend_empty(SITES);
+    vm.field_add_indices.extend_empty(SITES);
+    vm.inherited_field_indices.extend_empty(SITES);
     vm.field_cache_writes = Some(Vec::new());
     let record = |vm: &mut Vm<SilentHost>, site: usize| {
         for receiver in 1..=3 {
@@ -1188,7 +1184,7 @@ fn field_cache_invalidation_resets_every_written_site() {
     };
     let all_empty = |vm: &Vm<SilentHost>| {
         vm.field_caches.iter().all(|cache| cache.receiver == EMPTY_CACHE.receiver)
-            && vm.megamorphic_field_indices.iter().all(|&index| index == NO_MEGAMORPHIC_FIELD)
+            && vm.megamorphic_field_indices.iter().all(|index| index == NO_MEGAMORPHIC_FIELD)
     };
     // Few writes reset one by one; more than the sparse share overflow to a full reset.
     for written in [vec![3, 40], (0..SITES).collect::<Vec<_>>()] {
