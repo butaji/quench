@@ -3183,11 +3183,52 @@ script_handler! {
     #[inline(never)]
     fn lane_get_field<>(cx, r, ip, i, view) {
         let Some(value) = (unsafe { lane_field_value(cx, r, i) }) else {
-            return exit(ip);
+            // A getter the site caches runs as a frameless activation, returning into the
+            // read's register as a call's callee would.
+            let Some((target, this)) = (unsafe { lane_field_getter_target(cx, r, i) }) else {
+                return exit(ip);
+            };
+            match lane_activate_passing(cx, r, ip, &target, 0, 0, this, false) {
+                Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
+                Err(next) => return next,
+            }
         };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
     }
+}
+
+/// The getter a single `GetField` record's site caches for its base
+/// (`Vm::cached_field_getter`), where it is a plain frameless target the lane activates
+/// with no arguments, and the `this` its call binds. `None` leaves the read to the general
+/// path: a nested record, a receiver whose binding reads the heap, an activation the lane
+/// stack has no room for (whose fallback is a call record's) or any other getter.
+///
+/// # Safety
+/// `cx` is the running lane's context and `r` its registers.
+#[inline(never)]
+unsafe fn lane_field_getter_target<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    i: &LaneInstruction,
+) -> Option<(ScriptCallTarget, Value)> {
+    if i.b == crate::bytecode::FieldBase::NESTED || !unsafe { (*cx).script_calls } {
+        return None;
+    }
+    let base = unsafe { lane_field_base(cx, r, crate::bytecode::FieldBase(i.b)) }?;
+    let getter = {
+        let vm = unsafe { vm(cx) };
+        vm.cached_field_getter(base, i.imm(), vm.field_cache_index(i.c))?
+    };
+    let target = lane_script_target(cx, getter)?;
+    let vm = unsafe { vm(cx) };
+    let room = vm.lane_stack.activations.len() < vm.lane_stack.activation_limit.get()
+        && vm.lane_stack.values.capacity() - vm.lane_stack.values.len() >= usize::from(target.room);
+    if target.entry != CallEntry::Activates || !room {
+        return None;
+    }
+    let this = lane_direct_call_this(vm, &target, base)?;
+    Some((target, this))
 }
 
 /// A `GetField` record's value where caches answer it (`lane_cached_field`): one read of a
@@ -6923,10 +6964,28 @@ fn lane_activate<H: Host>(
     this: Value,
     constructs: bool,
 ) -> Result<(Registers, Ip), Ip> {
+    // SAFETY: `ip` is a record of the running view.
+    let argc = ImmediateLayout::argument_count(unsafe { &*ip }.imm());
+    lane_activate_passing(cx, r, ip, target, arguments, argc, this, constructs)
+}
+
+/// `lane_activate` passing `argc` values from register `arguments` on, for a record whose
+/// immediate is no call's: a getter's call from a field read passes none.
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn lane_activate_passing<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    ip: Ip,
+    target: &ScriptCallTarget,
+    arguments: u16,
+    argc: u16,
+    this: Value,
+    constructs: bool,
+) -> Result<(Registers, Ip), Ip> {
     let vm = unsafe { vm(cx) };
     // SAFETY: `ip` is a record of the running view.
     let i = unsafe { &*ip };
-    let argc = ImmediateLayout::argument_count(i.imm());
     let count = usize::from(target.registers);
     // A call that returns its callee's completion completes its caller too, which only an
     // activation's return does in the lane. A host permitting proper tail calls
