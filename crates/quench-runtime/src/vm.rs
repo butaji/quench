@@ -510,6 +510,7 @@ enum PendingJob {
         args: Vec<Value>,
     },
     Reaction(promise::PromiseJob),
+    Thenable(promise::ThenableJob),
 }
 
 impl PendingJob {
@@ -525,6 +526,7 @@ impl PendingJob {
                 roots.extend_from_slice(args);
             }
             Self::Reaction(job) => roots.extend([job.realm, job.handler, job.next, job.value]),
+            Self::Thenable(job) => roots.extend([job.realm, job.then, job.thenable, job.promise]),
         }
     }
 }
@@ -1730,9 +1732,9 @@ pub(crate) struct Vm<H> {
     regexp_object_shapes: Option<(u32, u32)>,
     /// A RegExp receiver shape verified to hold an own writable data `lastIndex` at the paired
     /// slot; derived from shapes, so field-cache invalidation clears it.
-    regexp_last_index_layout: Option<(u32, u32)>,
+    regexp_last_index_layouts: Vec<(u32, u32)>,
     /// Derived from shapes, so field-cache invalidation clears it.
-    regexp_builtin_layout: Option<regexp::RegExpBuiltinLayout>,
+    regexp_builtin_layouts: Vec<regexp::RegExpBuiltinLayout>,
     /// Derived from shapes, so field-cache invalidation clears it.
     regexp_symbol_layouts: Vec<regexp::RegExpSymbolLayout>,
     /// An object verified to hold the native `Function.prototype[@@hasInstance]` as a
@@ -2270,9 +2272,8 @@ impl<H: Host> Vm<H> {
         eprintln!("{{\"kind\":\"quench-live-cells\",\"top\":{:?}}}", &kinds[..kinds.len().min(8)]);
         let promise = &self.realm.promise;
         eprintln!(
-            "{{\"kind\":\"quench-vm-tables\",\"live_slots\":{},\"thenable_jobs\":{},\"reaction_capabilities\":{},\"jobs\":{},\"descriptors\":{},\"function_values\":{},\"frames\":{},\"active_call_roots\":{}}}",
+            "{{\"kind\":\"quench-vm-tables\",\"live_slots\":{},\"reaction_capabilities\":{},\"jobs\":{},\"descriptors\":{},\"function_values\":{},\"frames\":{},\"active_call_roots\":{}}}",
             self.heap.live_slots(),
-            promise.thenable_jobs.len(),
             promise.reaction_capabilities.len(),
             self.realm.jobs.len(),
             self.descriptors.len(),
@@ -2510,6 +2511,19 @@ impl<H: Host> Vm<H> {
         );
         crate::report_allocator_memory(phase);
     }
+    /// `Runtime::end_for_process_exit`: drops the host, and the program store when its drop
+    /// reports, and leaves every other field to the operating system.
+    pub(crate) fn end_for_process_exit(self) {
+        let vm = std::mem::ManuallyDrop::new(self);
+        // SAFETY: `vm` is never used or dropped again, so each field read here is dropped
+        // exactly once and the rest are never dropped.
+        unsafe {
+            if vm.programs.reports_on_drop() {
+                drop(std::ptr::read(&vm.programs));
+            }
+            drop(std::ptr::read(&vm.host));
+        }
+    }
     fn initialize(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         self.initialize_shared(&Rc::new(program.clone()), builtins::RealmScope::Complete)
     }
@@ -2635,8 +2649,8 @@ impl<H: Host> Vm<H> {
         self.iterator_result_shape = None;
         self.descriptor_shapes = [None; 2];
         self.regexp_object_shapes = None;
-        self.regexp_last_index_layout = None;
-        self.regexp_builtin_layout = None;
+        self.regexp_last_index_layouts.clear();
+        self.regexp_builtin_layouts.clear();
         self.regexp_symbol_layouts.clear();
         self.set_instanceof_has_instance_holder(Value::NULL);
         self.program_cache_layouts.clear();
@@ -2689,22 +2703,21 @@ impl<H: Host> Vm<H> {
         // Equal string constants share one cell, as engines intern literals: a string is an
         // immutable primitive, so which cell holds it is unobservable, and `===` between
         // literals from different sites then decides by identity before comparing text.
-        let mut strings: std::collections::HashMap<StringConstantKey<'_>, Value> =
-            std::collections::HashMap::new();
+        let mut strings: FxHashMap<StringConstantKey<'_>, Value> = FxHashMap::default();
         for constant in &program.constants {
             let key = match constant {
-                Constant::String(text) => Some(StringConstantKey::Text(text)),
-                Constant::StringUnits(units) => Some(StringConstantKey::Units(units)),
-                _ => None,
-            };
-            let value = match key.and_then(|key| strings.get(&key).copied().map(Ok).or(Some(Err(key)))) {
-                Some(Ok(shared)) => shared,
-                Some(Err(key)) => {
-                    let value = self.materialize_constant(constant);
-                    strings.insert(key, value);
-                    value
+                Constant::String(text) => StringConstantKey::Text(text),
+                Constant::StringUnits(units) => StringConstantKey::Units(units),
+                _ => {
+                    constants.push(self.materialize_constant(constant));
+                    continue;
                 }
-                None => self.materialize_constant(constant),
+            };
+            let value = match strings.entry(key) {
+                std::collections::hash_map::Entry::Occupied(shared) => *shared.get(),
+                std::collections::hash_map::Entry::Vacant(slot) => {
+                    *slot.insert(self.materialize_constant(constant))
+                }
             };
             constants.push(value);
         }

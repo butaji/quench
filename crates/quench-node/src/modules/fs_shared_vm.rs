@@ -2898,6 +2898,29 @@ fn read_into_unsafe_buffer(context: &mut NativeContext<'_, NodeHost>, bytes: Vec
     context.call_rooted(slice, buffer, &[start, end])
 }
 
+/// Whether `options` is the string `utf8` or `utf-8` and Node's option policy for it would
+/// observe nothing. `getOptions(options, defaults)` then copies `defaults`, sets the encoding
+/// (which `assertEncoding` accepts) and reads `signal`; `validateReadFileBufferOptions` reads
+/// `buffer`. Where the plain `defaults` finds neither key along its prototype chain (a lookup
+/// that runs no guest code), those reads return `undefined`, so `defaults` given the
+/// encoding stands for the copy.
+fn utf8_encoding_option(
+    context: &mut NativeContext<'_, NodeHost>,
+    options: RootId,
+    defaults: RootId,
+) -> Result<bool, RootedError> {
+    if !matches!(context.string_text(options)?.as_deref(), Some("utf8" | "utf-8")) {
+        return Ok(false);
+    }
+    for name in ["signal", "buffer"] {
+        let key = context.string_rooted(name);
+        if context.has_property_rooted(defaults, key)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 pub(crate) fn read_file_sync(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
@@ -2920,6 +2943,10 @@ pub(crate) fn read_file_sync(
         .rooted_value(provided_options)
         .is_some_and(|value| value.is_undefined() || value.is_null());
     let options = if defaulted {
+        defaults
+    } else if utf8_encoding_option(context, provided_options, defaults)? {
+        let key = context.string_rooted("encoding");
+        context.define_data_property_rooted(defaults, key, provided_options, true, true, true)?;
         defaults
     } else {
         let options =

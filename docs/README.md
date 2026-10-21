@@ -251,15 +251,23 @@ snapshot holds of the builder's process: `process.argv`, `execArgv`, `execPath`,
 
 A process uses a snapshot when `QUENCH_STARTUP_SNAPSHOT` is `on` or `trace` and it runs a
 file entry on the main thread with no CLI options and no IPC channel (`NODE_CHANNEL_FD`).
-Without it processes boot without one: a restored realm keeps its preloaded builtins
-resident, which a script that loads none of them pays for in max RSS. Snapshots live in a `snapshot` directory beside the
-compile cache's, one directory per build, keyed by the library root and the variables the
-bootstrap reads (`HOME`, `NODE_OPTIONS`, `NODE_PENDING_DEPRECATION`, `NODE_DEBUG`,
-`NODE_PATH`, `QUENCH_PLATFORM`). When an eligible process finds none it starts the
+Without it processes boot without one. Restoring decodes all a snapshot holds (heap,
+programs, shapes and atoms: about 5 MB resident for the preloaded builtins), so there are
+two kinds (`SnapshotKind`): `preloaded`, as above, and `bootstrap`, without the builtins. A
+process restores `bootstrap` when its entry's static graph cannot reach a builtin
+(`startup_snapshot/entry_graph.rs`): the scan resolves static imports, re-exports and a
+WebAssembly module's imports as the ES module loader does, through packages, and stops at a
+builtin specifier, a dynamic `import()`, the text `require` or `getBuiltinModule`, a `.node`
+addon, a file it cannot resolve or parse, or past 64 files or 1 MiB. Either kind runs a
+program the same way: the kind decides only which builtins are loaded before it starts.
+Snapshots live in a `snapshot` directory beside the compile cache's, one directory per
+build, keyed by the library root and the variables the bootstrap reads (`HOME`,
+`NODE_OPTIONS`, `NODE_PENDING_DEPRECATION`, `NODE_DEBUG`, `NODE_PATH`, `QUENCH_PLATFORM`),
+with the kind in the file name. When an eligible process finds none it starts the
 executable with `QUENCH_BUILD_STARTUP_SNAPSHOT=<file>`, detached and holding a lock file, which
 builds it for later runs and removes other builds' snapshots. A snapshot that does not
 restore boots the process as if there were none. `QUENCH_STARTUP_SNAPSHOT=trace` also
-reports on stderr whether one was restored.
+reports on stderr whether one was restored, and which kind.
 
 ## Shared runtime host roots
 
