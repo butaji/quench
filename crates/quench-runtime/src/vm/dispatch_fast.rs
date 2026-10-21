@@ -4398,6 +4398,10 @@ fn lane_activate<H: Host>(
         (*cx).env = target.env;
         (*cx).capture = target.capture;
     }
+    if vm.programs.js_jit_diagnostics_enabled() {
+        vm.programs
+            .record_js_jit_lane_entry(unsafe { (*cx).program }, target.function);
+    }
     Ok((callee_registers, base))
 }
 
@@ -4591,6 +4595,10 @@ fn lane_activate_keeping<H: Host>(
         (*cx).this = this;
         (*cx).env = target.env;
         (*cx).capture = target.capture;
+    }
+    if vm.programs.js_jit_diagnostics_enabled() {
+        vm.programs
+            .record_js_jit_lane_entry(unsafe { (*cx).program }, target.function);
     }
     Ok((callee_registers, base))
 }

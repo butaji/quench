@@ -17,6 +17,7 @@ struct JsJitCounters {
     guard_strict_comparisons: u32,
     guard_relational_comparisons: u32,
     entries: u64,
+    lane_entries: u64,
     numeric_entries: u64,
     promotions: u64,
     compile_attempts: u64,
@@ -1231,6 +1232,24 @@ impl ProgramStore {
         numeric: bool,
         parameter_count: u16,
     ) {
+        self.record_js_jit_counter_entry(id, function, Some(numeric), parameter_count);
+    }
+
+    pub(super) fn record_js_jit_lane_entry(&mut self, id: ProgramId, function: u32) {
+        let parameter_count = self
+            .entry(id)
+            .and_then(|entry| entry.residual.functions.get(function as usize))
+            .map_or(0, |function| function.params);
+        self.record_js_jit_counter_entry(id, function, None, parameter_count);
+    }
+
+    fn record_js_jit_counter_entry(
+        &mut self,
+        id: ProgramId,
+        function: u32,
+        numeric: Option<bool>,
+        parameter_count: u16,
+    ) {
         let key = (id.raw(), function);
         let Some(diagnostics) = self.js_jit_diagnostics.as_ref() else {
             return;
@@ -1241,11 +1260,15 @@ impl ProgramStore {
                 .as_mut()
                 .and_then(|diagnostics| diagnostics.get_mut(&key))
             {
-                counters.entries = counters.entries.saturating_add(1);
                 counters.parameter_count = parameter_count;
-                counters.numeric_entries = counters
-                    .numeric_entries
-                    .saturating_add(u64::from(numeric));
+                if let Some(numeric) = numeric {
+                    counters.entries = counters.entries.saturating_add(1);
+                    counters.numeric_entries = counters
+                        .numeric_entries
+                        .saturating_add(u64::from(numeric));
+                } else {
+                    counters.lane_entries = counters.lane_entries.saturating_add(1);
+                }
             }
             return;
         }
@@ -1359,10 +1382,14 @@ impl ProgramStore {
             counters.guard_typeof_ops = guard_census.1;
             counters.guard_strict_comparisons = guard_census.2;
             counters.guard_relational_comparisons = guard_census.3;
-            counters.entries = counters.entries.saturating_add(1);
-            counters.numeric_entries = counters
-                .numeric_entries
-                .saturating_add(u64::from(numeric));
+            if let Some(numeric) = numeric {
+                counters.entries = counters.entries.saturating_add(1);
+                counters.numeric_entries = counters
+                    .numeric_entries
+                    .saturating_add(u64::from(numeric));
+            } else {
+                counters.lane_entries = counters.lane_entries.saturating_add(1);
+            }
         }
     }
 
@@ -1720,7 +1747,11 @@ impl Drop for ProgramStore {
                     JsTierState::Unsupported => "unsupported",
                     JsTierState::Compiled(_) => "compiled",
                 })
-                .unwrap_or("reclaimed");
+                .unwrap_or(if counters.lane_entries != 0 {
+                    "lane-only"
+                } else {
+                    "reclaimed"
+                });
             let function_name = entry
                 .and_then(|entry| entry.residual.functions.get(*function as usize).map(|f| (entry, f)))
                 .and_then(|(entry, function)| {
@@ -1740,6 +1771,14 @@ impl Drop for ProgramStore {
                     / u128::from(counters.entries))
                     .min(1_000_000) as u64
             };
+            let total_entries = counters.entries.saturating_add(counters.lane_entries);
+            let all_entry_native_coverage_ppm = if total_entries == 0 {
+                0
+            } else {
+                (u128::from(counters.native_entries) * 1_000_000
+                    / u128::from(total_entries))
+                .min(1_000_000) as u64
+            };
             let _ = write!(
                 stderr,
                 "QUENCH_JS_JIT_STATS {{\"program\":{program},\"function\":{function},\"function_name\":"
@@ -1755,10 +1794,11 @@ impl Drop for ProgramStore {
             }
             let _ = write!(
                 stderr,
-                ",\"status\":\"{status}\",\"parameter_count\":{},\"instruction_count\":{},\"entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"compile_ns\":{},\"native_entries\":{},\"native_entry_coverage_ppm\":{},\"field_return_candidate_entries\":{},\"field_return_fixed_this_entries\":{},\"field_return_fast_entries\":{},\"field_increment_candidate_entries\":{},\"field_increment_fixed_this_entries\":{},\"field_increment_fast_entries\":{},\"numeric_find_fast_entries\":{},\"fallback_entries\":{},\"interpreter_completions\":{},\"interpreter_inclusive_ns\":{},\"guard_census\":{{\"conditional_branch_sites\":{},\"typeof_operations\":{},\"strict_comparison_sites\":{},\"relational_comparison_sites\":{}}},\"opcodes\":[",
+                ",\"status\":\"{status}\",\"parameter_count\":{},\"instruction_count\":{},\"entries\":{},\"lane_entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"compile_ns\":{},\"native_entries\":{},\"native_entry_coverage_ppm\":{},\"all_entry_native_coverage_ppm\":{},\"field_return_candidate_entries\":{},\"field_return_fixed_this_entries\":{},\"field_return_fast_entries\":{},\"field_increment_candidate_entries\":{},\"field_increment_fixed_this_entries\":{},\"field_increment_fast_entries\":{},\"numeric_find_fast_entries\":{},\"fallback_entries\":{},\"interpreter_completions\":{},\"interpreter_inclusive_ns\":{},\"guard_census\":{{\"conditional_branch_sites\":{},\"typeof_operations\":{},\"strict_comparison_sites\":{},\"relational_comparison_sites\":{}}},\"opcodes\":[",
                 counters.parameter_count,
                 counters.instruction_count,
                 counters.entries,
+                counters.lane_entries,
                 counters.numeric_entries,
                 counters.promotions,
                 counters.compile_attempts,
@@ -1766,6 +1806,7 @@ impl Drop for ProgramStore {
                 counters.compile_ns,
                 counters.native_entries,
                 native_entry_coverage_ppm,
+                all_entry_native_coverage_ppm,
                 counters.field_return_candidate_entries,
                 counters.field_return_fixed_this_entries,
                 counters.field_return_fast_entries,
