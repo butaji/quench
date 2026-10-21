@@ -623,6 +623,25 @@ impl Heap {
         bytes
     }
 
+    /// Census of live array element backings: distinct, empty, and spare capacity.
+    pub(crate) fn report_array_backings(&self, phase: &str) {
+        let mut seen = rustc_hash::FxHashSet::default();
+        let (mut arrays, mut distinct, mut empty, mut len, mut capacity) = (0u64, 0u64, 0u64, 0u64, 0u64);
+        self.array_records.for_each_live(|_, array| {
+            arrays += 1;
+            let elements = array.elements();
+            if seen.insert(std::rc::Rc::as_ptr(elements)) {
+                distinct += 1;
+                empty += u64::from(elements.is_empty());
+                len += elements.len() as u64;
+                capacity += elements.capacity() as u64;
+            }
+        });
+        eprintln!(
+            "{{\"kind\":\"quench-array-backings\",\"phase\":\"{phase}\",\"arrays\":{arrays},\"distinct\":{distinct},\"empty\":{empty},\"len\":{len},\"capacity\":{capacity}}}"
+        );
+    }
+
     pub(crate) fn array_element_stats(&self) -> (usize, usize) {
         let mut total = (0, 0);
         self.array_records.for_each_live(|_, array| {
