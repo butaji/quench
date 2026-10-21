@@ -497,7 +497,7 @@ enum ActivationArguments {
 pub(super) struct ScriptCallTarget {
     callee: Value,
     /// The `LaneStack::generation` it was resolved in.
-    generation: u64,
+    generation: ScriptGeneration,
     program: ProgramId,
     function: u32,
     env: Value,
@@ -507,12 +507,11 @@ pub(super) struct ScriptCallTarget {
     /// `registers`), derived once.
     room: u16,
     params: u16,
-    strict: bool,
-    /// An arrow's `this`, found in its environment when it was resolved: `None` for any
-    /// other function, `Some(None)` for an arrow whose environment binds none, which then
-    /// takes its caller's receiver. An arrow whose binding is still uninitialized (before
-    /// `super()`) is never resolved, and an initialized binding never changes.
-    lexical_this: Option<Option<Value>>,
+    /// How a call binds its `this` (`ThisBinding`).
+    this_binding: ThisBinding,
+    /// An arrow's own `this` (`ThisBinding::Lexical`), found in its environment when it was
+    /// resolved; unused for any other binding.
+    lexical_this: Value,
     /// `new` may activate it too (`Vm::inline_constructible`).
     constructs: bool,
     /// `new` may run its body as the stores alone (`Function::only_initializes_this_fields`).
@@ -627,6 +626,29 @@ impl ScriptCallTarget {
     }
 }
 
+/// How a call of a `ScriptCallTarget` binds `this`, one byte so the entry stays one cache
+/// line: the receiver as is (strict), the receiver boxed or the global for nullish
+/// (sloppy), or for an arrow its environment's `this` (`ScriptCallTarget::lexical_this`),
+/// or the caller's receiver when its environment binds none. An arrow whose binding is
+/// still uninitialized (before `super()`) is never resolved, and an initialized binding
+/// never changes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+enum ThisBinding {
+    Sloppy,
+    Strict,
+    Lexical,
+    CallerReceiver,
+}
+
+/// A lane run's generation (`LaneStack::generation`), narrow so a cache entry stays one
+/// line; its wrap clears every entry, so no stale one can match a reused number.
+type ScriptGeneration = u32;
+
+/// The size a script call cache entry keeps, one cache line, which each call reads.
+const SCRIPT_CALL_TARGET_BYTES: usize = 64;
+const _: () = assert!(std::mem::size_of::<ScriptCallTarget>() <= SCRIPT_CALL_TARGET_BYTES);
+
 /// A `ScriptCallTarget::forwarded_method` that names no record. A program with more distinct
 /// forwarding bodies than the index spans leaves the rest unrecorded.
 const NO_FORWARDED_METHOD: u16 = u16::MAX;
@@ -641,8 +663,8 @@ const EMPTY_SCRIPT_CALL_TARGET: ScriptCallTarget = ScriptCallTarget {
     registers: 0,
     room: 0,
     params: 0,
-    strict: false,
-    lexical_this: None,
+    this_binding: ThisBinding::Sloppy,
+    lexical_this: Value::UNDEFINED,
     constructs: false,
     initializes: false,
     entry: CallEntry::Activates,
@@ -800,13 +822,13 @@ pub(super) struct LaneStack {
     /// Names the collection epoch and realm of the running lane, which no lane instruction
     /// changes: a target resolved under another generation is stale. Lane runs move between
     /// programs far more often than either changes, so each target names its program instead.
-    generation: u64,
+    generation: ScriptGeneration,
     /// The epoch and realm `generation` names.
     generation_key: (u64, Value),
 }
 
 /// A generation no lane runs under: an empty target entry never matches.
-const NO_SCRIPT_GENERATION: u64 = 0;
+const NO_SCRIPT_GENERATION: ScriptGeneration = 0;
 
 impl Default for LaneStack {
     fn default() -> Self {
@@ -903,7 +925,12 @@ impl LaneStack {
 
     fn enter_generation(&mut self, key: (u64, Value)) {
         if self.generation == NO_SCRIPT_GENERATION || self.generation_key != key {
-            self.generation += 1;
+            self.generation = self.generation.wrapping_add(1);
+            if self.generation == NO_SCRIPT_GENERATION {
+                // A wrapped number could name entries of a generation long past.
+                self.clear_script_targets();
+                self.generation = NO_SCRIPT_GENERATION + 1;
+            }
             self.generation_key = key;
         }
     }
@@ -3133,9 +3160,13 @@ script_handler! {
 /// register or `this`, or a nested site's chain of two. `None` leaves the read to the
 /// general path.
 ///
+/// Out of line: the generic reads (`lane_get_field`, `lane_get_field_sink`, a returning
+/// `GetField`) run it on their slower paths, so one copy serves them all instead of each
+/// carrying its own probe (DeltaBlue, PGO build: ~40 instruction-cache lines of warm code).
+///
 /// # Safety
 /// `cx` is the running lane's context and `r` its registers.
-#[inline(always)]
+#[inline(never)]
 unsafe fn lane_field_value<H: Host>(
     cx: *mut LaneContext<H>,
     r: Registers,
@@ -5509,17 +5540,15 @@ impl<H: Host> Vm<H> {
                 self.target_capture(code, env)
             };
             // An arrow's `this` is its own closure's environment's, like `capture`.
-            let lexical_this = match known.lexical_this {
-                Some(_) => {
-                    let this = self.captured_lexical_this(env);
-                    if this.is_some_and(Value::is_deleted) {
-                        return None;
-                    }
-                    Some(this)
-                }
-                None => None,
+            let (this_binding, lexical_this) = match known.this_binding {
+                ThisBinding::Lexical | ThisBinding::CallerReceiver => match self.captured_lexical_this(env) {
+                    Some(this) if this.is_deleted() => return None,
+                    Some(this) => (ThisBinding::Lexical, this),
+                    None => (ThisBinding::CallerReceiver, Value::UNDEFINED),
+                },
+                binding => (binding, Value::UNDEFINED),
             };
-            let target = ScriptCallTarget { callee, env, capture, lexical_this, ..known };
+            let target = ScriptCallTarget { callee, env, capture, this_binding, lexical_this, ..known };
             self.lane_stack.remember_script_target(set, target);
             return Some(target);
         }
@@ -5614,8 +5643,13 @@ impl<H: Host> Vm<H> {
             ))
             .ok()?,
             params: body.params,
-            strict: body.strict,
-            lexical_this,
+            this_binding: match lexical_this {
+                Some(Some(_)) => ThisBinding::Lexical,
+                Some(None) => ThisBinding::CallerReceiver,
+                None if body.strict => ThisBinding::Strict,
+                None => ThisBinding::Sloppy,
+            },
+            lexical_this: lexical_this.flatten().unwrap_or(Value::UNDEFINED),
             constructs: shape.constructs && !environment,
             initializes: shape.initializes && !environment,
             entry: if environment {
@@ -5742,10 +5776,13 @@ fn lane_direct_call_this<H: Host>(
     target: &ScriptCallTarget,
     receiver: Value,
 ) -> Option<Value> {
-    if let Some(lexical) = target.lexical_this {
-        // An arrow's own `this`, or its caller's receiver when its environment binds none.
-        Some(lexical.unwrap_or(receiver))
-    } else if target.strict || receiver.direct_object_index().is_some() {
+    match target.this_binding {
+        ThisBinding::Lexical => return Some(target.lexical_this),
+        // An arrow whose environment binds no `this` takes its caller's receiver.
+        ThisBinding::CallerReceiver | ThisBinding::Strict => return Some(receiver),
+        ThisBinding::Sloppy => {}
+    }
+    if receiver.direct_object_index().is_some() {
         Some(receiver)
     } else if receiver.is_null() || receiver.is_undefined() {
         Some(vm.realm.globals)
@@ -5798,8 +5835,8 @@ script_handler! {
         {
             None
         } else {
-            let argument = |parameter: u16| (parameter < argc).then(|| r.get(arguments + parameter));
-            unsafe { lane_call_read(cx, target, argument, this) }
+            let passed = ReadArguments { registers: r, base: arguments, passed: argc };
+            unsafe { lane_call_read(cx, target, passed, this) }
         };
         let Some(value) = value else {
             match lane_activate(cx, r, ip, target, arguments, this, false) {
@@ -6035,22 +6072,15 @@ lane_handler! {
     #[inline(never)]
     fn lane_native_call<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
-        if !matches!(
-            vm.heap.function(r.get(i.b)),
+        // The callee's kind, read once: a call changes no function record before it runs.
+        let kind = match vm.heap.function(r.get(i.b)) {
             Some(FunctionRecord {
-                kind: FunctionKind::Native(_),
+                kind: kind @ FunctionKind::Native(_),
                 ..
-            })
-        ) {
-            sibling!(lane_frame_call::<H>, r, ip, Carried::script(cx))
-        }
-        if matches!(
-            vm.heap.function(r.get(i.b)),
-            Some(FunctionRecord {
-                kind: FunctionKind::Native(Native::FunctionCall),
-                ..
-            })
-        ) {
+            }) => *kind,
+            _ => sibling!(lane_frame_call::<H>, r, ip, Carried::script(cx)),
+        };
+        if matches!(kind, FunctionKind::Native(Native::FunctionCall)) {
             sibling!(lane_function_call::<H>, r, ip, Carried::script(cx))
         }
         // A call that returns its result completes its caller: an activation in the lane, or
@@ -6062,11 +6092,8 @@ lane_handler! {
             return exit(ip);
         }
         let receiver = r.get(i.c);
-        let value = match vm.heap.function(r.get(i.b)) {
-            Some(FunctionRecord {
-                kind: FunctionKind::Native(Native::ArrayPush),
-                ..
-            }) => {
+        let value = match kind {
+            FunctionKind::Native(Native::ArrayPush) => {
                 let window = ImmediateLayout::call_window_base(i.imm());
                 let argc = ImmediateLayout::argument_count(i.imm());
                 // SAFETY: the call's window is registers of the running function, which
@@ -6076,14 +6103,8 @@ lane_handler! {
                 };
                 vm.array_push_dense(receiver, args)
             }
-            Some(FunctionRecord {
-                kind: FunctionKind::Native(Native::ArrayPop),
-                ..
-            }) => vm.array_pop_dense(receiver),
-            Some(FunctionRecord {
-                kind: FunctionKind::Native(Native::StringCharCodeAt),
-                ..
-            }) if ImmediateLayout::argument_count(i.imm()) != 0 => {
+            FunctionKind::Native(Native::ArrayPop) => vm.array_pop_dense(receiver),
+            FunctionKind::Native(Native::StringCharCodeAt) if ImmediateLayout::argument_count(i.imm()) != 0 => {
                 // `charCodeAt` of a string at an integer index: the unit there, or NaN outside
                 // the string. Any other receiver or index takes the native's coercions.
                 let window = ImmediateLayout::call_window_base(i.imm());
@@ -6098,16 +6119,12 @@ lane_handler! {
                     _ => lane_string_or_native_call(cx, r, ip, i, receiver),
                 }
             }
-            Some(FunctionRecord {
-                kind: FunctionKind::Native(native @ (Native::MapGet | Native::MapHas | Native::SetHas)),
-                ..
-            }) => {
+            FunctionKind::Native(native @ (Native::MapGet | Native::MapHas | Native::SetHas)) => {
                 let key = if ImmediateLayout::argument_count(i.imm()) == 0 {
                     Value::UNDEFINED
                 } else {
                     r.get(ImmediateLayout::call_window_base(i.imm()))
                 };
-                let native = *native;
                 vm.pure_collection_lookup(native, receiver, key)
                     .or_else(|| lane_string_or_native_call(cx, r, ip, i, receiver))
             }
@@ -7676,7 +7693,7 @@ fn returning_field_hit<H: Host, const KIND: u8>(
 }
 
 /// The value a frameless read target (`CallEntry::reads`, `CallEntry::ForwardsRead`)
-/// returns for a call passing `argument(k)` as parameter `k` (`None` where not passed) on
+/// returns for a call passing `arguments.get(k)` as parameter `k` (`None` where not passed) on
 /// `this`, where the reads its records have quickened to hit. Answering it at the call
 /// leaves nothing for an activation to observe: each hit runs no guest code and allocates
 /// nothing. `None` for any other record state or a miss, which the call activates to run.
@@ -7687,36 +7704,55 @@ fn returning_field_hit<H: Host, const KIND: u8>(
 unsafe fn lane_call_read<H: Host>(
     cx: *mut LaneContext<H>,
     target: &ScriptCallTarget,
-    argument: impl Fn(u16) -> Option<Value>,
+    arguments: ReadArguments,
     this: Value,
 ) -> Option<Value> {
-    if target.entry != CallEntry::ForwardsRead {
-        return unsafe { lane_call_leaf_read(cx, target, argument, this) };
+    // A forwarding body's answer is its method's leaf read on the field it reads, so both
+    // kinds reach one leaf read, which the call handler then holds once.
+    let (target, arguments, this) = if target.entry == CallEntry::ForwardsRead {
+        // SAFETY: the program store keeps a derived view alive with its program, and the
+        // context's program outlives the lane run; a forwarding body's view holds its method
+        // read after its field read.
+        let (records, code) = unsafe { ((*target.view).records(), &*(*cx).code) };
+        let (field, method) = unsafe { (&*records, &*records.add(1)) };
+        let vm = unsafe { vm(cx) };
+        let base = lane_read_base(crate::bytecode::FieldBase(field.b), arguments, this)?;
+        let receiver = lane_record_field_hit(vm, code, field, base)?;
+        let callee = lane_record_field_hit(vm, code, method, receiver)?;
+        // SAFETY: as `Vm::script_call_entry`; a read resolves no target and collects nothing.
+        let inner = unsafe { &*vm.script_call_entry(callee)? };
+        if !inner.entry.reads() {
+            return None;
+        }
+        let inner_this = lane_direct_call_this(vm, inner, receiver)?;
+        // The call passes the parameters in order, so its argument `k` is parameter `k`.
+        (inner, arguments.within(target.params), inner_this)
+    } else {
+        (target, arguments, this)
+    };
+    unsafe { lane_call_leaf_read(cx, target, arguments, this) }
+}
+
+/// The values a call that a read answers passed (`lane_call_read`): parameter `k` is the
+/// call window's register `base + k` while `k < passed`, else unpassed. A concrete value,
+/// not a closure, so the reads it feeds are one copy whatever forwarded them.
+#[derive(Clone, Copy)]
+struct ReadArguments {
+    registers: Registers,
+    base: u16,
+    passed: u16,
+}
+
+impl ReadArguments {
+    #[inline(always)]
+    fn get(self, parameter: u16) -> Option<Value> {
+        (parameter < self.passed).then(|| self.registers.get(self.base + parameter))
     }
-    // SAFETY: the program store keeps a derived view alive with its program, and the
-    // context's program outlives the lane run; a forwarding body's view holds its method
-    // read after its field read.
-    let (records, code) = unsafe { ((*target.view).records(), &*(*cx).code) };
-    let (field, method) = unsafe { (&*records, &*records.add(1)) };
-    let vm = unsafe { vm(cx) };
-    let base = lane_read_base(crate::bytecode::FieldBase(field.b), &argument, this)?;
-    let receiver = lane_record_field_hit(vm, code, field, base)?;
-    let callee = lane_record_field_hit(vm, code, method, receiver)?;
-    // SAFETY: as `Vm::script_call_entry`; a read resolves no target and collects nothing.
-    let inner = unsafe { &*vm.script_call_entry(callee)? };
-    if !inner.entry.reads() {
-        return None;
-    }
-    let inner_this = lane_direct_call_this(vm, inner, receiver)?;
-    // The call passes the parameters in order, so its argument `k` is parameter `k`.
-    let passed = target.params;
-    unsafe {
-        lane_call_leaf_read(
-            cx,
-            inner,
-            |parameter| if parameter < passed { argument(parameter) } else { None },
-            inner_this,
-        )
+
+    /// The arguments a body of `params` parameters passes on in order.
+    #[inline(always)]
+    fn within(self, params: u16) -> Self {
+        Self { passed: self.passed.min(params), ..self }
     }
 }
 
@@ -7728,20 +7764,20 @@ unsafe fn lane_call_read<H: Host>(
 unsafe fn lane_call_leaf_read<H: Host>(
     cx: *mut LaneContext<H>,
     target: &ScriptCallTarget,
-    argument: impl Fn(u16) -> Option<Value>,
+    arguments: ReadArguments,
     this: Value,
 ) -> Option<Value> {
     // SAFETY: as for `lane_call_read`.
     let (entry, code) = unsafe { (&*(*target.view).records(), &*(*cx).code) };
     let vm = unsafe { vm(cx) };
-    let base = |base: crate::bytecode::FieldBase| lane_read_base(base, &argument, this);
+    let base = |base: crate::bytecode::FieldBase| lane_read_base(base, arguments, this);
     let handler = entry.handler;
     if target.entry == CallEntry::ReadsElement {
         // The field record's read, then the dense element its `GetIndex` names.
         // SAFETY: an element-read body's view holds its `GetIndex` record after the field's.
         let element = unsafe { &*(*target.view).records().add(1) };
         let array = lane_record_field_hit(vm, code, entry, base(crate::bytecode::FieldBase(entry.b))?)?;
-        return vm.direct_dense_element(array, argument(element.c)?);
+        return vm.direct_dense_element(array, arguments.get(element.c)?);
     }
     if handler == lane_returning::<H, RETURNING_FIELD_NESTED> as *const () {
         // SAFETY: a nested record names its site.
@@ -7767,11 +7803,11 @@ unsafe fn lane_call_leaf_read<H: Host>(
 #[inline(always)]
 fn lane_read_base(
     base: crate::bytecode::FieldBase,
-    argument: &impl Fn(u16) -> Option<Value>,
+    arguments: ReadArguments,
     this: Value,
 ) -> Option<Value> {
     match base.register_index() {
-        Some(register) => argument(register),
+        Some(register) => arguments.get(register),
         None => Some(this),
     }
 }
