@@ -50,20 +50,21 @@ pub struct NodeHost {
     pub(crate) building_snapshot: bool,
     /// Module paths' real paths, as Node's ESM resolver keeps them for the process
     /// (lib/internal/modules/esm/resolve.js `realpathCache`): every import of a module
-    /// resolves through one, and canonicalizing reads each path component's link.
-    pub(crate) real_paths: rustc_hash::FxHashMap<std::path::PathBuf, std::path::PathBuf>,
+    /// resolves through one, and canonicalizing reads each path component's link. Keyed by
+    /// the path's text: `Path`'s own hash walks its components.
+    pub(crate) real_paths: rustc_hash::FxHashMap<std::ffi::OsString, std::path::PathBuf>,
 }
 
 impl NodeHost {
     /// `path`'s real path through `real_paths`; a path that cannot be resolved is returned
     /// as it is and not kept.
     pub(crate) fn real_path(&mut self, path: std::path::PathBuf) -> std::path::PathBuf {
-        if let Some(real) = self.real_paths.get(&path) {
+        if let Some(real) = self.real_paths.get(path.as_os_str()) {
             return real.clone();
         }
         match std::fs::canonicalize(&path) {
             Ok(real) => {
-                self.real_paths.insert(path, real.clone());
+                self.real_paths.insert(path.into_os_string(), real.clone());
                 real
             }
             Err(_) => path,
