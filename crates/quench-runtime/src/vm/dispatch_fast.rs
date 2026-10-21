@@ -3632,7 +3632,12 @@ lane_handler! {
         // view was derived with `c` indexing one.
         let constant = unsafe { *(&*(*cx).constants).get_unchecked(usize::from(i.c)) };
         let negated = u32::from(i.a) == STRICT_INEQUALITY_OPERATOR;
-        let equal = value == constant || (value.is_heap() && unsafe { vm(cx) }.strict_equal(value, constant));
+        let vm = unsafe { vm(cx) };
+        // Two `typeof` names are equal only when identical (`Vm::typeof_name`).
+        let equal = value == constant
+            || (value.is_heap()
+                && !(vm.is_typeof_name(value) && vm.is_typeof_name(constant))
+                && vm.strict_equal(value, constant));
         if equal == negated {
             return lane_jump(cx, r, ip, BACKWARD, view, None);
         }
