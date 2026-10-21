@@ -505,7 +505,7 @@ impl<H: Host> Vm<H> {
                 return Ok(matcher.clone());
             }
             let matcher = Rc::new(
-                Self::compile_regexp(source, flags)
+                Self::compile_regexp(source, flags, super::regexp::PatternValidity::EarlyChecked)
                     .map_err(|error| SnapshotError(format!("snapshot regexp: {error:?}")))?,
             );
             matchers.insert(key, matcher.clone());

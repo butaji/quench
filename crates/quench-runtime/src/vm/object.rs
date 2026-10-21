@@ -5,7 +5,7 @@ use crate::value::HeapReference;
 const PRIVATE_NAME_PREFIX: &str = "\0quench:private:";
 
 /// Bit set of facts derived from an atom's text; `DERIVED` marks the set as computed.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub(super) struct AtomClass(u8);
 
 impl AtomClass {
@@ -40,6 +40,8 @@ const SHAPE_INDEX_WALK_DISTANCE: usize = 32;
 /// Long walks from one shape after which that shape gets a lookup index.
 const SHAPE_INDEX_LONG_WALKS: u8 = 8;
 pub(super) const FIELD_CACHE_SLOT_CAPACITY: usize = u16::MAX as usize + 1;
+/// `AccessorFieldCache::holder` of an accessor the receiver holds itself.
+const OWN_ACCESSOR: Value = Value::UNDEFINED;
 
 struct FieldCacheHit {
     value: Value,
@@ -592,6 +594,30 @@ impl<H: Host> Vm<H> {
         true
     }
 
+    /// Whether no prototype of `object` holds array index `index` or could answer it outside
+    /// its storage (a proxy, typed array, module namespace, arguments object or boxed
+    /// primitive): HasProperty of the index, where `object` holds none, is then false.
+    pub(super) fn inherited_index_absent(&self, object: Value, index: usize) -> bool {
+        let mut current = self.object_data(object).map(|data| data.proto());
+        while let Some(holder) = current.filter(|value| !value.is_null()) {
+            if matches!(self.heap.get(holder), Some(Cell::Proxy { .. } | Cell::TypedArray { .. })) {
+                return false;
+            }
+            let Some(data) = self.object_data(holder) else {
+                return false;
+            };
+            if data.is_module_namespace()
+                || data.is_arguments_object()
+                || data.boxed_primitive().is_some()
+                || !self.lacks_own_index(holder, index)
+            {
+                return false;
+            }
+            current = Some(data.proto());
+        }
+        true
+    }
+
     /// Whether storing each index of `indices`, none of them own, on `array` is a plain
     /// data definition (`inherited_index_unclaimed`).
     pub(super) fn array_indices_store_plainly(
@@ -930,7 +956,7 @@ impl<H: Host> Vm<H> {
         self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
-                Rc::new(vec![Value::DELETED; length]),
+                crate::heap::ArrayElements::filled(length, Value::DELETED),
             ),
         })
     }
@@ -981,7 +1007,7 @@ impl<H: Host> Vm<H> {
                     self.heap.alloc(Cell::Array {
                         object: crate::heap::ArrayObject::new(
                             Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
-                            Rc::new(elements),
+                            elements,
                         ),
                     })
                 }
@@ -1925,10 +1951,11 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// Records the accessor a field read at `site` meets on a prototype of `object`, when
-    /// shapes answer every lookup from `object`, which holds no own `atom`, to the holder.
-    /// Every prototype passed becomes a prototype first, so a later change to one advances
-    /// `prototype_layout_epoch` and retires the entry.
+    /// Records the accessor a field read at `site` meets on `object` or a prototype of it,
+    /// when shapes answer every lookup from `object` to the holder. An own accessor's entry
+    /// names no holder (`OWN_ACCESSOR`): a receiver of its shape holds its own accessor in
+    /// that slot. Every prototype passed becomes a prototype first, so a later change to one
+    /// advances `prototype_layout_epoch` and retires the entry.
     fn record_accessor_field_cache(&mut self, object: Value, atom: Atom, site: usize) {
         // The shared overflow site serves reads of every atom; an entry there would answer
         // one name's read with another's getter.
@@ -1940,7 +1967,26 @@ impl<H: Host> Vm<H> {
             return;
         };
         let (receiver_shape, prototype) = (receiver.shape(), receiver.proto());
-        if self.shape_slot(receiver_shape, atom).is_some() {
+        if let Some(slot) = self.shape_slot(receiver_shape, atom) {
+            // An own accessor, as `debug`'s `enabled` on each logger function: every receiver
+            // of the shape holds its own getter in the slot, read from it at each hit.
+            let own_getter = slot < FIELD_CACHE_SLOT_CAPACITY
+                && !receiver.has_side_descriptors()
+                && self
+                    .slot_attributes(receiver, slot)
+                    .is_some_and(|attributes| attributes.accessor && attributes.getter.is_some());
+            if own_getter {
+                self.record_accessor_entry(
+                    site,
+                    AccessorFieldCache {
+                        receiver: receiver_shape,
+                        prototype,
+                        holder: OWN_ACCESSOR,
+                        slot: slot as u16,
+                        epoch,
+                    },
+                );
+            }
             return;
         }
         let mut link = prototype;
@@ -1980,7 +2026,7 @@ impl<H: Host> Vm<H> {
         if crate::heap::prototype_layout_epoch() != epoch {
             return;
         }
-        self.accessor_field_caches.insert(
+        self.record_accessor_entry(
             site,
             AccessorFieldCache {
                 receiver: receiver_shape,
@@ -1992,19 +2038,38 @@ impl<H: Host> Vm<H> {
         );
     }
 
+    /// Records `entry` among the site's accessor entries: one for its receiver shape is
+    /// replaced, and a full site drops its oldest.
+    fn record_accessor_entry(&mut self, site: usize, entry: AccessorFieldCache) {
+        let entries = self.accessor_field_caches.entry(site).or_default();
+        if let Some(existing) = entries.iter_mut().find(|cached| cached.receiver == entry.receiver) {
+            *existing = entry;
+            return;
+        }
+        if entries.len() >= INHERITED_FIELD_CACHE_WAYS {
+            entries.remove(0);
+        }
+        entries.push(entry);
+    }
+
     /// The getter a field read of `atom` at cache index `site` calls on `object`, when the
     /// site's recorded accessor still answers it (`record_accessor_field_cache`).
     pub(super) fn cached_field_getter(&self, object: Value, atom: Atom, site: usize) -> Option<Value> {
-        let cache = self.accessor_field_caches.get(&site)?;
+        let entries = self.accessor_field_caches.get(&site)?;
         let receiver = self.shape_property_lookup(object, atom)?;
-        if receiver.shape() != cache.receiver
-            || receiver.proto() != cache.prototype
-            || crate::heap::prototype_layout_epoch() != cache.epoch
-        {
-            return None;
-        }
-        self.slot_attributes(self.heap.ordinary_object(cache.holder)?, usize::from(cache.slot))?
-            .getter
+        let epoch = crate::heap::prototype_layout_epoch();
+        let cache = entries.iter().find(|cache| {
+            receiver.shape() == cache.receiver && receiver.proto() == cache.prototype && epoch == cache.epoch
+        })?;
+        let holder = if cache.holder == OWN_ACCESSOR {
+            if receiver.has_side_descriptors() {
+                return None;
+            }
+            receiver
+        } else {
+            self.heap.ordinary_object(cache.holder)?
+        };
+        self.slot_attributes(holder, usize::from(cache.slot))?.getter
     }
 
     /// What native accessor `getter` returns for `this` where its call is a read of the

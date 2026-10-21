@@ -5154,7 +5154,7 @@ impl<H: Host> Vm<H> {
                 "dynamic import own keys result is not an array".into(),
             ));
         };
-        let keys = elements.as_ref().clone();
+        let keys = elements.to_vec();
         let mut module_type = None;
         for key in keys {
             let key_name = match self.heap.get(key) {
