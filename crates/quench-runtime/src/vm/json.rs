@@ -1113,6 +1113,61 @@ impl<H: Host> Vm<H> {
         result
     }
 
+    /// SerializeJSONProperty of a container's member, given the member's value when reading
+    /// it runs no guest code (`plain_named_get`, a present dense element). With no replacer,
+    /// a value that is no object or BigInt, or one that no `toJSON` reaches
+    /// (`plain_property_lookup`), serializes as it is: the property steps would call nothing.
+    /// Any other member takes them (`json_serialize_property`).
+    fn json_member(
+        &mut self,
+        p: &ResidualProgram,
+        holder: Value,
+        key: JsonKey,
+        value: Option<Value>,
+        state: &mut JsonSerialization,
+    ) -> Result<bool, JsError> {
+        if state.replacer.is_none()
+            && let Some(value) = value
+        {
+            let calls_nothing = if self.is_object_like(value) {
+                self.json_lacks_to_json(value, state.to_json)
+            } else {
+                !matches!(self.heap.get(value), Some(Cell::BigInt(_)))
+            };
+            if calls_nothing {
+                // A nested container recurses here, as the property steps would.
+                let _stack = self.enter_stack()?;
+                return self.json_serialize_value(p, value, state);
+            }
+        }
+        self.json_serialize_property(p, holder, key, state)
+    }
+
+    /// Whether `Get(value, "toJSON")` finds nothing, decided without running guest code, for
+    /// an object the serializer reads as it is: an ordinary object, or a plain array whose own
+    /// shape lacks the key, along a chain of ordinary objects. A boxed primitive, whose
+    /// serialization coerces it, and any other object answer `false`.
+    fn json_lacks_to_json(&self, value: Value, to_json: Atom) -> bool {
+        let key = PropertyKey::string(to_json);
+        if self.boxed_primitive_data(value).is_some() {
+            return false;
+        }
+        let start = match self.heap.array(value) {
+            Some(array) if !array.has_indexed_descriptors() && !array.is_arguments_object() => {
+                let data = &**array;
+                if self.property_shape_slot(data.shape(), key).is_some()
+                    || data.has_side_descriptors()
+                {
+                    return false;
+                }
+                data.proto()
+            }
+            Some(_) => return false,
+            None => value,
+        };
+        start.is_null() || self.plain_property_lookup(start, key) == Some(None)
+    }
+
     /// A key's string value, allocated last before the call that receives it.
     fn json_key_value(&mut self, key: JsonKey) -> Value {
         let text = match key {
@@ -1262,7 +1317,10 @@ impl<H: Host> Vm<H> {
             for index in 0..length {
                 let array = self.heap.root_value(array_root).unwrap_or(array);
                 state.begin_member(index);
-                if !self.json_serialize_property(p, array, JsonKey::Index(index), state)? {
+                let element = self
+                    .present_dense_elements(array, index..index + 1)
+                    .map(|element| element[0]);
+                if !self.json_member(p, array, JsonKey::Index(index), element, state)? {
                     state.output.extend_from_slice(b"null");
                 }
             }
@@ -1301,7 +1359,8 @@ impl<H: Host> Vm<H> {
                 state.begin_member(written);
                 self.write_json_key(key, &mut state.output);
                 state.output.extend_from_slice(if state.gap.is_empty() { b":" } else { b": " });
-                if self.json_serialize_property(p, object, JsonKey::Name(key), state)? {
+                let value = self.plain_named_get(object, key);
+                if self.json_member(p, object, JsonKey::Name(key), value, state)? {
                     written += 1;
                 } else {
                     state.output.truncate(member);
