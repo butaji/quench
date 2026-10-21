@@ -160,8 +160,13 @@ impl<H: Host> Vm<H> {
             return self.get_symbol_property_with_receiver(p, object, key, object);
         }
 
-        let key = self.coerce_js_string(p, key)?;
-        let atom = self.intern_js_atom(&key);
+        let atom = match self.string_key_atom(key) {
+            Some(atom) => atom,
+            None => {
+                let key = self.coerce_js_string(p, key)?;
+                self.intern_js_atom(&key)
+            }
+        };
         self.get_property(p, object, atom)
     }
 
@@ -511,6 +516,7 @@ impl<H: Host> Vm<H> {
             return self.set_property_with_program(p, object, atom, value);
         }
 
+        let key_value = key;
         let key = self.coerce_js_string(p, key)?;
         if let Some(index) = super::object_static::array_index(key.host_string())
             && self.heap.array(object).is_some()
@@ -551,7 +557,10 @@ impl<H: Host> Vm<H> {
                 return Ok(());
             }
         }
-        let atom = self.intern_js_atom(&key);
+        let atom = match self.string_key_atom(key_value) {
+            Some(atom) => atom,
+            None => self.intern_js_atom(&key),
+        };
         self.set_property_with_program_mode(p, object, atom, value, strict)
     }
 
