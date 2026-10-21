@@ -218,24 +218,22 @@ impl GenerationalPacing {
     }
 }
 
-/// Production pacing, memory-first on the owner's direction of 2026-10-17 (TOD-123): young
-/// collections every sixty-fourth of a live set (at least 384 weight; from an eighth, with
-/// read-only pages released after every collection: V8-v7 max RSS RegExp 7244-7500 -> 6852
-/// KiB, EarleyBoyer 7792-8000 -> 9040-9160, the floor-bound fixtures unchanged, static
-/// x86_64 unbolted, 2026-10-18; RSS is this lane's only criterion), a full collection once the old
-/// generation has doubled or one live set of allocation has passed since the last one, and,
-/// when more than half of young allocations survive, full collections with one live set
-/// between them, probing survival with a minor collection every fourth one. The minimums are
-/// the pre-generational 384-cell headroom. The Score lane's table (eight live sets per young
-/// collection, four per full one, 2^15 and 2^18 minimums) raised npm peak RSS by up to 17 MiB
-/// per package (semver 27.6 -> 45.2, typescript-eslint 188 -> 226); the owner reaffirmed
-/// memory-first on 2026-10-18.
+/// Production pacing: young collections every eighth of a live set, at least
+/// `YOUNG_MINIMUM_ALLOCATION` and at most `MAXIMUM_YOUNG` weight; a full collection once the
+/// old generation has doubled or one live set of allocation has passed since the last one;
+/// and, when more than half of young allocations survive, full collections with one live set
+/// between them, probing survival with a minor collection every fourth one. Old growth and
+/// the allocation cap keep the pre-generational 384-cell headroom.
 ///
-/// The young floor is `YOUNG_MINIMUM_ALLOCATION`, not the 384 headroom: at a sixty-fourth of a
-/// small live set the floor decides the interval, and 384 collected small programs every few
-/// hundred allocations without lowering their peak (TOD-161, quench-node scorecard, x86_64
-/// 4 vCPU, 2026-10-20: 768 against 384 gave V8-v7 Score x1.161 with RayTrace x1.54 and
-/// RegExp x1.60 in 7/7 pairs, frameworks x1.023, max RSS geomean x0.997 and x0.999).
+/// History: memory-first on 2026-10-17/18 (TOD-123) set a sixty-fourth of a live set with a
+/// 384 floor, later 768 (TOD-161: V8-v7 Score x1.161 against 384, max RSS geomean x0.997);
+/// the Score lane's table (eight live sets per young collection, 2^15 and 2^18 minimums) had
+/// raised npm peak RSS by up to 17 MiB per package. On 2026-10-20 the owner set the npm lane
+/// to fastest and lowest memory together; at a sixty-fourth, a program collects every few
+/// hundred allocations while it loads, when nearly all of them survive. npm top-300, matched
+/// runs (x86_64 Linux VM, 4 CPUs, 2026-10-21, Quench / Bun medians): wall 63.1 / 63.9 ->
+/// 57.9 / 61.6 ms, CPU 62.4 / 69.1 -> 56.4 / 66.2 ms, fastest of three 143 -> 164 of 299,
+/// median peak RSS 14.4 -> 14.7 MiB, lowest peak RSS 289 -> 290 of 299.
 pub(super) const PRODUCTION_PACING: GenerationalPacing = GenerationalPacing {
     young: Ratio::new(1, 8),
     minimum_young: YOUNG_MINIMUM_ALLOCATION,
@@ -262,8 +260,8 @@ const MEMORY_FIRST_MINIMUM_ALLOCATION: usize = 384;
 /// splay 161 -> 92 MB, with Scores within the run-to-run band. 2^16 cut little more memory.
 const MAXIMUM_YOUNG: usize = 1 << 17;
 
-/// The fewest allocations between young collections: twice the headroom, which kept every
-/// scorecard workload's max RSS within 1 MB and 5% (1024 raised koa's by 1.1 MB; TOD-161).
+/// The fewest allocations between young collections: a loading program's interval, where an
+/// eighth of its still-small live set would collect while nearly everything survives.
 const YOUNG_MINIMUM_ALLOCATION: usize = 1 << 14;
 
 #[cfg(not(feature = "gc-tuning"))]
