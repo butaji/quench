@@ -748,6 +748,7 @@ impl<H: Host> Vm<H> {
         }
         self.symbol_write_proofs.clear();
         self.symbol_load_proofs.clear();
+        self.array_iteration_proof = None;
         self.enumerable_keys.clear();
         self.field_add_sets.clear();
         self.megamorphic_fields.clear();
@@ -758,6 +759,7 @@ impl<H: Host> Vm<H> {
         self.function_name_shapes.clear();
         self.closure_templates.fill(None);
         self.iterator_result_shape = None;
+        self.descriptor_shapes = [None; 2];
         self.regexp_object_shapes = None;
         self.regexp_last_index_layout = None;
         self.regexp_builtin_layout = None;
@@ -1209,6 +1211,34 @@ impl<H: Host> Vm<H> {
         Some(hit.value)
     }
 
+    /// `primary_holder_field_hit` when the receiver's prototype is an object record, the
+    /// common holder, read without the cell families' dispatch (`Heap::object`), which is a
+    /// call: `None` for any other prototype as for a miss.
+    #[inline(always)]
+    pub(super) fn primary_record_holder_field_hit(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        site: u16,
+    ) -> Option<Value> {
+        debug_assert!(self.lane_admits(p));
+        let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
+        let holder = self.heap.object_record_by_id(receiver.proto_link().object_record_id()?);
+        // SAFETY: the active program's layout reserves every compiler-emitted site.
+        let cache = unsafe { *self.field_caches.get_unchecked(self.field_cache_index(site)) };
+        if cache.holder == NO_FIELD_HOLDER
+            || cache.receiver != receiver.exact_shape()
+            || holder.is_module_namespace()
+            || cache.holder != holder.exact_shape()
+        {
+            return None;
+        }
+        // SAFETY: as `cached_ordinary_holder_field_value`.
+        let value = unsafe { self.heap.property_get_flat(holder, cache.slot as usize) };
+        self.profile.field_cache_hit(0, 1);
+        Some(value)
+    }
+
     /// `primary_own_field_hit` for a receiver any heap cell holds, such as a function's own
     /// static field (`Strength.REQUIRED`), which a direct object's record lookup misses.
     #[inline(always)]
@@ -1311,6 +1341,11 @@ impl<H: Host> Vm<H> {
     /// Whether the site has an inherited entry (`inherited_field_hit`).
     pub(super) fn field_site_inherited(&self, site: u16) -> bool {
         self.inherited_field_indices[self.field_cache_index(site)] != NO_INHERITED_FIELD
+    }
+
+    /// Whether a read at the site met an accessor it cached (`cached_field_getter`).
+    pub(super) fn field_site_getter(&self, site: u16) -> bool {
+        self.accessor_field_caches.contains_key(&self.field_cache_index(site))
     }
 
     /// Whether the site's primary entry names a prototype holder (`primary_holder_field_hit`).

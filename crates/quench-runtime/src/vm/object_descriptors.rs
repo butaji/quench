@@ -395,7 +395,14 @@ impl<H: Host> Vm<H> {
                 [value, Self::integrity_bool(attributes.writable), enumerable, configurable],
             )
         };
-        let shape = self.literal_shape(&keys);
+        let shape = match self.descriptor_shapes[usize::from(attributes.accessor)] {
+            Some(shape) => shape,
+            None => {
+                let shape = self.literal_shape(&keys);
+                self.descriptor_shapes[usize::from(attributes.accessor)] = Some(shape);
+                shape
+            }
+        };
         let prototype = self.realm_object_prototype(self.realm.globals);
         Ok(self.heap.alloc_object_with_properties(prototype, shape, &values))
     }
@@ -497,13 +504,10 @@ impl<H: Host> Vm<H> {
         if let Some(name) = self.heap.string(key).cloned() {
             let atom = self.intern_js_atom(&name);
             self.materialize_lazy_data_property(p, target, PropertyKey::string(atom))?;
-        } else {
-            match self.heap.get(key).cloned() {
-            Some(Cell::Symbol(_)) => {
-                self.materialize_lazy_data_property(p, target, PropertyKey::symbol(key))?;
-            }
-            _ => {}
-            }
+            return self.ordinary_own_string_property(p, target, &name, atom);
+        }
+        if matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
+            self.materialize_lazy_data_property(p, target, PropertyKey::symbol(key))?;
         }
         self.ordinary_own_property(p, target, key)
     }
@@ -529,6 +533,17 @@ impl<H: Host> Vm<H> {
             unreachable!("ToPropertyKey returns a string or symbol")
         };
         let atom = self.intern_js_atom(&key);
+        self.ordinary_own_string_property(p, target, &key, atom)
+    }
+
+    /// `ordinary_own_property` of a string key, interned as `atom`.
+    fn ordinary_own_string_property(
+        &mut self,
+        p: &ResidualProgram,
+        target: Value,
+        key: &crate::vm::wtf16::JsString,
+        atom: Atom,
+    ) -> Result<Option<(Value, PropertyAttributes)>, JsError> {
         self.evaluate_deferred_namespace_for_key(p, target, Some(PropertyKey::string(atom)))?;
         if atom == self.length_atom
             && let Some(length) = self.own_array_length(target)
@@ -565,7 +580,6 @@ impl<H: Host> Vm<H> {
         if let Some(index) =
             super::object_static::array_index(key.host_string()).map(|index| index as usize)
         {
-            let atom = self.intern_js_atom(&key);
             let attributes = self
                 .property_attributes(target, PropertyKey::string(atom))
                 .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);

@@ -2822,10 +2822,11 @@ impl<H: Host> Vm<H> {
             .into_iter()
             .flat_map(|plan| plan.hoisted_functions.iter())
             .filter_map(|(binding, function_name)| {
-                let slot = root
-                    .local_atoms
-                    .iter()
-                    .position(|atom| self.atom_name(*atom) == binding)?;
+                // Matched by atom id: the program's atoms are the VM's, so each name is hashed
+                // once instead of every local's and function's text compared to it.
+                let binding = self.lookup_atom(binding)?;
+                let function_name = self.lookup_atom(function_name)?;
+                let slot = root.local_atoms.iter().position(|atom| *atom == binding)?;
                 let function = p
                     .functions
                     .iter()
@@ -2833,10 +2834,7 @@ impl<H: Host> Vm<H> {
                     .skip(1)
                     .find(|(_, function)| {
                         let header = function.header();
-                        header.parent == Some(super::ROOT_FUNCTION_ID)
-                            && header
-                                .name
-                                .is_some_and(|atom| self.atom_name(atom) == function_name)
+                        header.parent == Some(super::ROOT_FUNCTION_ID) && header.name == Some(function_name)
                     })
                     .map(|(id, _)| id as u32)?;
                 Some((slot, function))
@@ -3957,6 +3955,14 @@ impl<H: Host> Vm<H> {
             self.invalidate_method_caches_for_atom(atom);
         }
         Ok(())
+    }
+
+    /// Whether module advancement after a job has work: the queues the advancement drains.
+    pub(super) fn module_jobs_pending(&self) -> bool {
+        let promise = &self.realm.promise;
+        !promise.dynamic_import_jobs.is_empty()
+            || !promise.waiting_static_modules.is_empty()
+            || !promise.async_module_order.is_empty()
     }
 
     pub(super) fn advance_static_module_jobs(
