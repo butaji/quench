@@ -2984,7 +2984,7 @@ pub(crate) struct ZonedInstant {
 #[derive(Clone, Debug)]
 pub(crate) struct RegExpMeta {
     pub(crate) source: JsString,
-    pub(crate) flags: String,
+    pub(crate) flags: crate::vm::RegExpFlags,
     // One constructor identity owns creation realm and legacy eligibility.
     pub(crate) legacy_constructor: RegExpLegacyOwner,
 }
