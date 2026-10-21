@@ -459,8 +459,55 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         value: Value,
     ) -> Option<()> {
+        if !self.plain_named_key(atom) {
+            return None;
+        }
+        self.set_plain_key_property(object, atom, value)
+    }
+
+    /// `[[Get]]` of array index `index` along a chain of ordinary objects, which hold an index
+    /// key as any other string key: its atom, found without spelling it
+    /// (`lookup_array_index_atom`), read as `plain_property_lookup` reads a name. `None` for a
+    /// chain through an exotic or arguments object, whose indices live outside the shape, an
+    /// index no atom spells yet, or what that walk declines.
+    pub(super) fn plain_index_get(&self, object: Value, index: usize) -> Option<Value> {
+        if !self.ordinary_index_chain(object) {
+            return None;
+        }
+        self.plain_property_get(object, PropertyKey::string(self.lookup_array_index_atom(index)?))
+    }
+
+    /// `set_plain_named_property` of array index `index` on a chain `plain_index_get` reads.
+    pub(super) fn set_plain_index_property(&mut self, object: Value, index: usize, value: Value) -> Option<()> {
+        if !self.ordinary_index_chain(object) {
+            return None;
+        }
+        let atom = self.lookup_array_index_atom(index)?;
+        self.set_plain_key_property(object, atom, value)
+    }
+
+    /// Whether every object from `object` up its prototype chain is ordinary and no arguments
+    /// object, so an index key is a string key of its shape like any other.
+    fn ordinary_index_chain(&self, object: Value) -> bool {
+        let mut current = object;
+        loop {
+            let Some(data) = self.heap.ordinary_object(current) else {
+                return false;
+            };
+            if data.is_arguments_object() {
+                return false;
+            }
+            current = data.proto();
+            if current.is_null() {
+                return true;
+            }
+        }
+    }
+
+    /// The chain walk and store of `set_plain_named_property` for a key the caller admitted.
+    fn set_plain_key_property(&mut self, object: Value, atom: Atom, value: Value) -> Option<()> {
         // A global object's bindings carry declaration state beside its shape.
-        if !self.plain_named_key(atom) || self.is_global_object(object) {
+        if self.is_global_object(object) {
             return None;
         }
         let key = PropertyKey::string(atom);
@@ -494,6 +541,9 @@ impl<H: Host> Vm<H> {
     /// plain chain walk answers: what `get_index` returns for it before any lookup that can
     /// run guest code. `None` leaves the read to `get_index`.
     pub(super) fn plain_keyed_get(&mut self, object: Value, key: Value) -> Option<Value> {
+        if let Some(index) = key.as_int() {
+            return self.plain_index_get(object, usize::try_from(index).ok()?);
+        }
         if let Some(text) = self.heap.string(key) {
             return self.plain_named_get(object, self.lookup_js_atom(text)?);
         }

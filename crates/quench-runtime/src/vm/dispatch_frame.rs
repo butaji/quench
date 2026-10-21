@@ -1385,6 +1385,32 @@ impl<H: Host> Vm<H> {
                         let kind = base.and_then(|base| self.heap.get(base)).map_or("immediate", |cell| cell.profile_variant_name());
                         super::lane_exits::record_detail(format!("GetField {names} on {kind}"));
                     }
+                    if matches!(instruction.op(), Op::GetIndex | Op::SetIndex | Op::DefineArrayElement) {
+                        let registers = &self.frames[frame].registers;
+                        let describe = |value: Option<Value>| match value {
+                            None => "?".to_string(),
+                            Some(v) if v.as_int().is_some() => "int".into(),
+                            Some(v) if v.as_number().is_some() => "num".into(),
+                            Some(v) if !v.is_heap() => "immediate".into(),
+                            Some(v) if self.heap.is_string(v) => "str".into(),
+                            Some(v) => self.heap.get(v).map_or("record", |cell| cell.profile_variant_name()).into(),
+                        };
+                        let (base, key) = match instruction.op() {
+                            Op::GetIndex => {
+                                let constants = self.programs.constants(cursor.program);
+                                let operand = |operand: crate::bytecode::Operand| match operand.kind() {
+                                    Some(crate::bytecode::OperandKind::Register) => registers.get(usize::from(operand.payload())).copied(),
+                                    Some(crate::bytecode::OperandKind::Constant) => constants.get(usize::from(operand.payload())).copied(),
+                                    _ => None,
+                                };
+                                (operand(instruction.operand_b()), operand(instruction.operand_c()))
+                            }
+                            Op::SetIndex => (registers.get(usize::from(instruction.register_b())).copied(), registers.get(usize::from(instruction.c())).copied()),
+                            _ => (registers.get(usize::from(instruction.a())).copied(), registers.get(usize::from(instruction.register_b())).copied()),
+                        };
+                        let dense = base.and_then(|base| self.heap.array(base)).map(|array| (array.elements().len(), array.has_indexed_descriptors(), array.is_frozen()));
+                        super::lane_exits::record_detail(format!("{:?} base={} key={} array={dense:?}", instruction.op(), describe(base), describe(key)));
+                    }
                     if matches!(instruction.op(), Op::JumpBinaryFalse | Op::Binary) {
                         let constants = self.programs.constants(cursor.program);
                         let registers = &self.frames[frame].registers;
