@@ -69,33 +69,36 @@ impl<H: Host> Vm<H> {
     fn intact_array_iteration(&self, source: Value) -> Option<Vec<Value>> {
         let array = self.heap.array(source)?;
         let elements = array.elements();
-        if array.is_arguments_object()
-            || array.proto() != self.array_proto
-            || self.heap.sparse_length(source).is_some()
-            || elements.iter().any(|value| value.is_deleted())
+        if self.heap.sparse_length(source).is_some() || elements.iter().any(|value| value.is_deleted())
+            || !self.array_values_method_intact(source)
         {
             return None;
         }
-        let iterator = self.well_known_symbols.get(WellKnownSymbol::Iterator)?;
-        let key = PropertyKey::symbol(iterator);
-        if self.property_shape_slot(array.shape(), key).is_some() {
-            return None;
-        }
-        let realm_native = |value: Option<Value>, native: Native| {
-            matches!(
-                value.and_then(|value| self.heap.function(value)),
-                Some(FunctionRecord { kind: FunctionKind::Native(kind), realm, .. })
-                    if *kind == native && *realm == self.realm.globals
-            )
-        };
         let next = self.lookup_atom("next")?;
-        (realm_native(self.own_data_value(self.array_proto, key), Native::ArrayValues)
-            && realm_native(
-                self.own_data_value(self.array_iterator_proto, PropertyKey::string(next)),
-                Native::ArrayIteratorNext,
-            ))
-        .then(|| elements.to_vec())
+        self.own_data_value(self.array_iterator_proto, PropertyKey::string(next))
+            .is_some_and(|next| self.is_current_realm_native(next, Native::ArrayIteratorNext))
+            .then(|| elements.to_vec())
     }
+
+    /// Whether `source` is an ordinary Array whose `@@iterator` lookup reaches the realm's
+    /// intrinsic `Array.prototype.values` data property, so GetIterator on it is calling that
+    /// method: no own `@@iterator`, `Array.prototype` its prototype, and no getter met.
+    fn array_values_method_intact(&self, source: Value) -> bool {
+        let Some(array) = self.heap.array(source) else {
+            return false;
+        };
+        let Some(iterator) = self.well_known_symbols.get(WellKnownSymbol::Iterator) else {
+            return false;
+        };
+        let key = PropertyKey::symbol(iterator);
+        !array.is_arguments_object()
+            && array.proto() == self.array_proto
+            && self.property_shape_slot(array.shape(), key).is_none()
+            && self
+                .own_data_value(self.array_proto, key)
+                .is_some_and(|method| self.is_current_realm_native(method, Native::ArrayValues))
+    }
+
 
     /// An own data property's value, read without running a getter; `None` when `key` is
     /// absent or an accessor.
@@ -912,6 +915,10 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         source: Value,
     ) -> Result<Value, JsError> {
+        // The intrinsic method's iterator, made without looking it up or calling it.
+        if self.array_values_method_intact(source) {
+            return self.array_iterator_native(p, Native::ArrayValues, source);
+        }
         let root = self.heap.root(source);
         let outcome = (|| {
             let source = self.heap.root_value(root).unwrap();

@@ -1939,7 +1939,12 @@ pub(super) const UV_DIRENT_FIFO: i32 = 4;
 pub(super) const UV_DIRENT_SOCKET: i32 = 5;
 pub(super) const UV_DIRENT_CHAR: i32 = 6;
 pub(super) const UV_DIRENT_BLOCK: i32 = 7;
+/// libuv's Windows-only open flags, which are no bits elsewhere.
 const UV_FS_O_FILEMAP: i32 = 0;
+const UV_FS_O_TEMPORARY: i32 = 0;
+const UV_FS_O_SHORT_LIVED: i32 = 0;
+const UV_FS_O_SEQUENTIAL: i32 = 0;
+const UV_FS_O_RANDOM: i32 = 0;
 const UV_FS_COPYFILE_EXCL: i32 = 1;
 const UV_FS_COPYFILE_FICLONE: i32 = 2;
 const UV_FS_COPYFILE_FICLONE_FORCE: i32 = 4;
@@ -1974,6 +1979,10 @@ const FS_CONSTANT_VALUES: &[(&str, i32)] = &[
     ("O_CREAT", libc::O_CREAT),
     ("O_EXCL", libc::O_EXCL),
     ("UV_FS_O_FILEMAP", UV_FS_O_FILEMAP),
+    ("UV_FS_O_TEMPORARY", UV_FS_O_TEMPORARY),
+    ("UV_FS_O_SHORT_LIVED", UV_FS_O_SHORT_LIVED),
+    ("UV_FS_O_SEQUENTIAL", UV_FS_O_SEQUENTIAL),
+    ("UV_FS_O_RANDOM", UV_FS_O_RANDOM),
     ("O_NOCTTY", libc::O_NOCTTY),
     ("O_TRUNC", libc::O_TRUNC),
     ("O_APPEND", libc::O_APPEND),
@@ -2023,6 +2032,10 @@ const FS_CONSTANT_VALUES: &[(&str, i32)] = &[
     ("S_IRUSR", S_IRUSR),
     ("S_IWUSR", S_IWUSR),
     ("UV_FS_O_FILEMAP", UV_FS_O_FILEMAP),
+    ("UV_FS_O_TEMPORARY", UV_FS_O_TEMPORARY),
+    ("UV_FS_O_SHORT_LIVED", UV_FS_O_SHORT_LIVED),
+    ("UV_FS_O_SEQUENTIAL", UV_FS_O_SEQUENTIAL),
+    ("UV_FS_O_RANDOM", UV_FS_O_RANDOM),
     ("UV_FS_COPYFILE_EXCL", UV_FS_COPYFILE_EXCL),
     ("COPYFILE_EXCL", UV_FS_COPYFILE_EXCL),
     ("UV_FS_COPYFILE_FICLONE", UV_FS_COPYFILE_FICLONE),

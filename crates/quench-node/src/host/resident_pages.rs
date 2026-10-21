@@ -89,9 +89,38 @@ static TRACKED_MAPPINGS: std::sync::Mutex<Vec<(usize, usize)>> = std::sync::Mute
 /// before unmapping it.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub fn track_read_only_mapping(start: usize, length: usize) {
+    // A mapping aligned to a huge page maps a whole huge folio of a cached file on one fault
+    // (a 5 MB startup snapshot was 4 MB resident after its records were first read).
+    // SAFETY: advice on a live mapping the caller owns; it changes only how faults map.
+    unsafe {
+        libc::madvise(start as *mut libc::c_void, length, libc::MADV_NOHUGEPAGE);
+    }
     register_touched_pages_only(start, length);
     if let Ok(mut mappings) = TRACKED_MAPPINGS.lock() {
         mappings.push((start, length));
+    }
+}
+
+/// Releases the whole pages of `bytes` when they lie in a mapping `track_read_only_mapping`
+/// tracked; other bytes are left alone.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+pub fn release_tracked_bytes(bytes: &[u8]) {
+    let page = page_size();
+    let start = (bytes.as_ptr() as usize).next_multiple_of(page);
+    let end = (bytes.as_ptr() as usize + bytes.len()) / page * page;
+    if start >= end {
+        return;
+    }
+    // Held while releasing, so the mapping is not unmapped meanwhile.
+    let Ok(mappings) = TRACKED_MAPPINGS.lock() else {
+        return;
+    };
+    if mappings.iter().any(|&(mapping, length)| mapping <= start && end <= mapping + length) {
+        // SAFETY: the range lies in a live, read-only private file mapping, whose discarded
+        // pages fault back in from the file.
+        unsafe {
+            libc::madvise(start as *mut libc::c_void, end - start, libc::MADV_DONTNEED);
+        }
     }
 }
 
@@ -127,6 +156,39 @@ pub fn release_read_only_code_and_data() {
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
 pub fn release_read_only_code_and_data() {}
+
+/// The host's action at a compilation's phase boundaries (`set_compile_phase_boundary`).
+/// Code generation pages code and data out (`release_read_only_code_and_data`). A first
+/// call releases the read-only pages at most once per `LOAD_RELEASE_INTERVAL` of first
+/// calls, timed apart from the collections' releases, which come far more often: a run that
+/// reports its result once at the end first calls its reporting code then, at its heap's
+/// peak, with the code it ran since the last collection resident (V8-v7 RegExp).
+pub fn at_compile_phase(phase: quench_runtime::CompilePhase) {
+    match phase {
+        quench_runtime::CompilePhase::CodeGeneration => release_read_only_code_and_data(),
+        quench_runtime::CompilePhase::FirstCall => release_read_only_pages_at_first_call(),
+    }
+}
+
+/// When a first call last released the read-only pages (`at_compile_phase`).
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+static LAST_FIRST_CALL_RELEASE: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn release_read_only_pages_at_first_call() {
+    let Ok(mut last) = LAST_FIRST_CALL_RELEASE.lock() else {
+        return;
+    };
+    if last.is_some_and(|last| last.elapsed() < LOAD_RELEASE_INTERVAL) {
+        return;
+    }
+    *last = Some(std::time::Instant::now());
+    drop(last);
+    release_read_only_pages();
+}
+
+#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+fn release_read_only_pages_at_first_call() {}
 
 /// The page-aligned address ranges of the segments above, from the loader's own table: every
 /// non-writable segment of the executable, which the table lists without a name, and every
@@ -304,9 +366,14 @@ static TOUCHED_PAGES_ONLY: std::sync::atomic::AtomicI32 = std::sync::atomic::Ato
 const NO_FD: libc::c_int = -1;
 
 /// Registers the mapping at `start` for write protection, which turns off fault-around in it
-/// (`map_touched_pages_only`); nothing when no descriptor is open.
+/// (`map_touched_pages_only`); nothing when no descriptor is open. The kernel registers whole
+/// pages only, and a mapping spans its last partial page, so `length` is rounded up to it: a
+/// compile-cache entry is mapped at its file's length, and with that length every
+/// registration had failed, so reading one record faulted in the whole entry (V8-v7 RegExp's
+/// 266 KiB, while its heap was at its peak).
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 fn register_touched_pages_only(start: usize, length: usize) {
+    let length = length.next_multiple_of(page_size());
     /// `struct uffdio_register` from `<linux/userfaultfd.h>`.
     #[repr(C)]
     struct UffdioRegister {
@@ -322,6 +389,9 @@ fn register_touched_pages_only(start: usize, length: usize) {
     if fd == NO_FD {
         return;
     }
+    // A mapping covers whole pages, and the kernel refuses a range that does not: a file whose
+    // length is no page multiple ends its mapping on a partial page.
+    let length = length.next_multiple_of(page_size());
     let mut range = UffdioRegister { start: start as u64, len: length as u64, mode: UFFDIO_REGISTER_MODE_WP, ioctls: 0 };
     // SAFETY: the ioctl reads and writes only `range`; a failed registration leaves the
     // mapping with fault-around.
@@ -346,6 +416,9 @@ pub fn unmap_tracked_mapping(start: usize, length: usize) {
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
 pub fn release_read_only_pages() {}
+
+#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+pub fn release_tracked_bytes(_bytes: &[u8]) {}
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
 pub fn release_read_only_pages_after_load() {}

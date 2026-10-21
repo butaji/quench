@@ -232,6 +232,34 @@ decoder's and bootstrap's pages resident until its first collection. Bootstrap's
 decode back to back without that release, which there only refaulted the same loader code. Package modules (`node_modules`) still compile on every run, so their
 functions keep compiling again on first call.
 
+## Startup snapshot
+
+`quench-node` restores a process's bootstrapped realm from a startup snapshot instead of
+running the bootstrap: Node's bootstrap up to the point before the process's options,
+preloads and entry are installed, with the builtins nearly every program loads already
+loaded (`PRELOADED_BUILTINS`: events, buffer, util, path, fs, url, timers, querystring,
+async_hooks, diagnostics_channel, stream, module, child_process and http), as Node's own
+startup snapshot holds them. The runtime writes the VM (`Runtime::build_snapshot`) with
+every identity space at its indices, so values keep their bits, and the host adds the state
+the heap is bound to (`NodeHost::write_snapshot`); a field of either that is neither written
+nor the restoring process's own must be empty at the snapshot point, or the snapshot is
+refused. A restored host continues the bootstrap (`Host::resume`) after replacing what the
+snapshot holds of the builder's process: `process.argv`, `execArgv`, `execPath`, `argv0`,
+`pid`, `ppid`, the process streams' `isTTY`, the performance time origins and the
+`Math.random` seed. While a snapshot is built, reading `process.env`, `process.cwd()` or
+`perf_hooks` fails the build, since the snapshot would keep the builder's.
+
+A process uses a snapshot when it runs a file entry on the main thread with no CLI options
+and no IPC channel (`NODE_CHANNEL_FD`). Snapshots live in a `snapshot` directory beside the
+compile cache's, one directory per build, keyed by the library root and the variables the
+bootstrap reads (`HOME`, `NODE_OPTIONS`, `NODE_PENDING_DEPRECATION`, `NODE_DEBUG`,
+`NODE_PATH`, `QUENCH_PLATFORM`). When an eligible process finds none it starts the
+executable with `QUENCH_BUILD_STARTUP_SNAPSHOT=<file>`, detached and holding a lock file, which
+builds it for later runs and removes other builds' snapshots. A snapshot that does not
+restore boots the process as if there were none. `QUENCH_STARTUP_SNAPSHOT=off` boots every
+process without one; `QUENCH_STARTUP_SNAPSHOT=trace` reports on stderr whether one was
+restored.
+
 ## Shared runtime host roots
 
 The development `quench_runtime::Runtime` exposes `global_root`, `string_rooted`,

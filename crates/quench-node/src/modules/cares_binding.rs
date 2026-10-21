@@ -174,3 +174,16 @@ pub(crate) fn cleanup(runtime: &mut quench_runtime::Runtime<NodeHost>) {
     }
     if let Some(factory) = factory { runtime.release_root(factory); }
 }
+
+impl State {
+    pub(crate) fn write_snapshot(&self, writer: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> {
+        use crate::host::startup_snapshot::{require_quiescent, HostSnap};
+        let Self { array_factory, pending } = self;
+        require_quiescent(pending.is_empty(), "a DNS query")?;
+        array_factory.write(writer)
+    }
+    pub(crate) fn read_snapshot(&mut self, reader: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<(), String> {
+        self.array_factory = crate::host::startup_snapshot::HostSnap::read(reader)?;
+        Ok(())
+    }
+}

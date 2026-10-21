@@ -286,3 +286,5 @@ pub(crate) fn cleanup(runtime: &mut Runtime<NodeHost>) {
         runtime.release_root(root);
     }
 }
+
+crate::host::startup_snapshot::host_snap_empty!(State { tcp } "a TCP handle");
