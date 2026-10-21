@@ -2,24 +2,6 @@
 
 use crate::{Error, Module};
 
-/// A body's operators with an upper bound on their count: every operator
-/// takes at least one byte of the body.
-struct BoundedOperators<'a> {
-    bound: usize,
-    operators: wasmparser::OperatorsIterator<'a>,
-}
-
-impl<'a> Iterator for BoundedOperators<'a> {
-    type Item = wasmparser::Result<wasmparser::Operator<'a>>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.operators.next()
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        (0, Some(self.bound))
-    }
-}
 use quench_runtime::{
     Engine, WasmData, WasmDataMode, WasmFunction, WasmFunctionBody, WasmGlobal,
     WasmGlobalInitializer, WasmI32Function, WasmMemory, WasmModule, WasmType, WasmTypes,
@@ -91,6 +73,7 @@ impl Module {
         let mut start = None;
         let mut tags = Vec::new();
         let mut exports = Vec::new();
+        let mut custom_sections = Vec::new();
         for payload in Parser::new(0).parse_all(self.bytes()) {
             match payload.map_err(parse_error)? {
                 Payload::Version {
@@ -98,8 +81,13 @@ impl Module {
                     ..
                 }
                 | Payload::CodeSectionStart { .. }
-                | Payload::CustomSection(_)
                 | Payload::End(_) => {}
+                Payload::CustomSection(reader) => {
+                    custom_sections.push(quench_runtime::WasmCustomSection {
+                        name: reader.name().into(),
+                        bytes: reader.data().into(),
+                    });
+                }
                 Payload::TypeSection(reader) => {
                     types = WasmTypes::from_groups(
                         reader
@@ -286,10 +274,7 @@ impl Module {
             inputs.push(WasmFunctionBody {
                 ty: quench_runtime::WasmCallableType::Declared(type_index),
                 locals,
-                operators: BoundedOperators {
-                    bound: body.range().len(),
-                    operators: body.get_operators_reader().map_err(parse_error)?.into_iter(),
-                },
+                operators: body.get_operators_reader().map_err(parse_error)?,
             });
         }
         Engine::lower_wasm_module_for(
@@ -309,7 +294,7 @@ impl Module {
             Some(index) => module.with_start(index),
             None => Ok(module),
         })
-        .map(|module| module.with_exports(exports))
+        .map(|module| module.with_exports(exports).with_custom_sections(custom_sections))
         .map(|module| (module, selected))
         .map_err(|error| Error::Unsupported(error.to_string()))
     }

@@ -9,19 +9,21 @@ use super::rewrite::{fixed_width, relocate};
 /// The binding legacy argument reflection looks for.
 const ARGUMENTS_NAME: &str = "arguments";
 
+use crate::bytecode::initialization;
 use crate::bytecode::{
     WITH_ENTER_BINDING, EvalBindingLocation, FieldLayout, Function, ImmediateRole, Instr, InstructionField, Op,
     Operand, OperandKind, REGISTER_MASK, Register, Superinstruction, ThrownValueSlot, WideInstruction,
 };
 
+/// `plain_slots` are `function`'s plain local slots (`Function::plain_local_slots`);
 /// `undefined_constant` is the program's constant index of `undefined`.
 pub(super) fn promote<'a>(
     function: &mut Function,
+    mut eligible: Vec<bool>,
     superinstructions: &[Superinstruction],
     undefined_constant: u32,
     atom_name: impl Fn(usize) -> Option<&'a str>,
 ) {
-    let mut eligible = function.plain_local_slots(superinstructions);
     // A by-name read inside `with` resolves a local through its frame slot.
     if !eligible.contains(&true)
         || function.contains_with_statement(|atom| atom_name(atom) == Some(WITH_ENTER_BINDING))
@@ -167,7 +169,7 @@ pub(super) fn promote<'a>(
     // A frame slot starts undefined, a register only once written (`prepare_registers_for`):
     // a promoted slot some read can reach before any store gets `undefined` on entry.
     let promoted: Vec<bool> = registers.iter().map(Option::is_some).collect();
-    let written_first = crate::bytecode::initialization::initialized_before_reads(
+    let written_first = initialization::initialized_before_reads(
         function,
         superinstructions,
         &promoted,

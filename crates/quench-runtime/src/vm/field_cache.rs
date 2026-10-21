@@ -27,7 +27,26 @@ impl<H: Host> Vm<H> {
             }
             return self.shape_answers(object, atom, ReceiverKind::Exotic);
         }
+        if let Some(function) = self.heap.function(value) {
+            return self.shape_property_lookup_function(function, atom);
+        }
+        if let Some(iterator) = self.heap.iterator(value) {
+            return self.shape_answers(&iterator.object, atom, ReceiverKind::Exotic);
+        }
         self.shape_property_lookup_cell(self.heap.get(value)?, atom)
+    }
+
+    /// A function's shape answers what it stores, but not its restricted `caller` and
+    /// `arguments`, which reflection computes (`AtomClass::RESTRICTED_FUNCTION_PROPERTY`).
+    pub(super) fn shape_property_lookup_function<'a>(
+        &self,
+        function: &'a FunctionRecord,
+        atom: Atom,
+    ) -> Option<&'a Object> {
+        if self.atom_class(atom).contains(AtomClass::RESTRICTED_FUNCTION_PROPERTY) {
+            return None;
+        }
+        self.shape_answers(&function.object, atom, ReceiverKind::Exotic)
     }
 
     pub(super) fn shape_property_lookup_cell<'a>(
@@ -37,15 +56,13 @@ impl<H: Host> Vm<H> {
     ) -> Option<&'a Object> {
         let class = self.atom_class(atom);
         let kind = match cell {
-            Cell::Object(_) => ReceiverKind::Ordinary,
+            Cell::Object(_) | Cell::Promise(_) => ReceiverKind::Ordinary,
             Cell::Proxy { .. } => return None,
             Cell::Array { .. } if class.contains(AtomClass::ARRAY_INDEX) => return None,
             Cell::TypedArray { .. } if class.contains(AtomClass::TYPED_ARRAY_INDEX) => {
                 return None;
             }
-            Cell::Function { .. } if class.contains(AtomClass::RESTRICTED_FUNCTION_PROPERTY) => {
-                return None;
-            }
+            Cell::Function(function) => return self.shape_property_lookup_function(function, atom),
             _ => ReceiverKind::Exotic,
         };
         self.shape_answers(cell.object()?, atom, kind)

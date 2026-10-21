@@ -1,0 +1,24 @@
+v8/crypto                        speed x1.123 wins 2/3  RSS     4.9 ->     5.4 MB  wall 5.1s
+v8/deltablue                     speed x1.179 wins 3/3  RSS     4.3 ->     4.6 MB  wall 2.0s
+v8/earley-boyer                  speed x1.772 wins 3/3  RSS     9.1 ->     9.6 MB  wall 6.2s
+v8/navier-stokes                 speed x1.033 wins 2/3  RSS     5.0 ->     5.6 MB  wall 3.1s
+v8/raytrace                      speed x3.721 wins 3/3  RSS     4.4 ->     4.6 MB  wall 4.2s
+v8/regexp                        speed x3.649 wins 3/3  RSS     7.5 ->     9.0 MB  wall 13.2s
+v8/richards                      speed x1.038 wins 2/3  RSS     4.3 ->     4.8 MB  wall 2.0s
+v8/splay                         speed x1.027 wins 2/3  RSS    38.8 ->    38.7 MB  wall 2.2s
+fw/express                       speed x1.071 wins 2/3  RSS    28.3 ->    28.0 MB  wall 0.8s
+fw/koa                           speed x1.023 wins 2/3  RSS    34.9 ->    34.7 MB  wall 1.0s
+fw/fastify                       speed x0.956 wins 0/3  RSS    30.6 ->    30.2 MB  wall 1.0s
+fw/hono                          speed x1.010 wins 2/3  RSS    30.8 ->    30.2 MB  wall 0.9s
+fw/h3                            speed x1.075 wins 3/3  RSS    29.4 ->    29.5 MB  wall 0.9s
+js3/doxbee-async                 speed x0.983 wins 1/3  RSS    52.2 ->    51.5 MB  wall 2.4s
+js3/doxbee-promise               speed x1.029 wins 2/3  RSS    63.6 ->    63.3 MB  wall 5.1s
+js3/web-ssr                      speed x1.102 wins 3/3  RSS    54.0 ->    56.4 MB  wall 5.9s
+js3/json-parse-inspector         speed x0.933 wins 1/3  RSS    88.1 ->    88.1 MB  wall 1.9s
+js3/async-fs                     speed x2.043 wins 3/3  RSS    19.9 ->    18.6 MB  wall 16.8s
+js3/lazy-collections             speed x2.600 wins 3/3  RSS    15.0 ->    15.1 MB  wall 18.2s
+js3/babel-wtb                    speed x1.272 wins 3/3  RSS    94.7 ->    94.7 MB  wall 17.9s
+js3/hash-map                     speed x1.378 wins 3/3  RSS    29.6 ->    29.9 MB  wall 17.1s
+== fw        speed geomean x1.026  RSS ratio geomean x0.990  (5 workloads)
+== js3       speed geomean x1.328  RSS ratio geomean x0.997  (8 workloads)
+== v8        speed geomean x1.560  RSS ratio geomean x1.088  (8 workloads)

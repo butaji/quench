@@ -121,7 +121,7 @@ pub(super) fn shape_function_length_reconfigured(shapes: &[Shape], shape: u32) -
 
 impl<H: Host> Vm<H> {
     pub(super) fn capture_function_name(&mut self, function: Value, name: Value) {
-        let Some(Cell::String(name)) = self.heap.get(name) else {
+        let Some(name) = self.heap.string(name) else {
             return;
         };
         let name = name.clone();
@@ -158,20 +158,23 @@ impl<H: Host> Vm<H> {
     }
 
     fn append_function_name(&mut self, function: Value, shape: u32, name: Atom) {
-        let shape = match self.function_name_shapes.get(shape, name) {
-            Some(named) => named,
-            None => {
-                let named =
-                    self.append_cached_shape_transition(shape, ShapeTransition::FunctionName { name });
-                self.function_name_shapes.record(shape, name, named);
-                named
-            }
-        };
-        self.object_data_mut(function).expect("function object").set_shape(shape);
+        let named = self.function_name_shape(shape, name);
+        self.object_data_mut(function).expect("function object").set_shape(named);
+    }
+
+    /// `shape` with the original function name `name` recorded (`ShapeTransition::FunctionName`),
+    /// through the transitions it remembers (`function_name_shapes`).
+    pub(super) fn function_name_shape(&mut self, shape: u32, name: Atom) -> u32 {
+        if let Some(named) = self.function_name_shapes.get(shape, name) {
+            return named;
+        }
+        let named = self.append_cached_shape_transition(shape, ShapeTransition::FunctionName { name });
+        self.function_name_shapes.record(shape, name, named);
+        named
     }
 
     pub(super) fn set_function_debug_name(&mut self, function: Value, name: Atom) {
-        if matches!(self.heap.get(function), Some(Cell::Function { kind: FunctionKind::User(..) | FunctionKind::NumericUser(..), .. }))
+        if matches!(self.heap.function(function), Some(FunctionRecord { kind: FunctionKind::User(..), .. }))
             && self.original_function_name(function).is_some_and(|original| self.atom_units_equal_str(original, ""))
         {
             self.capture_function_name_atom(function, name);
@@ -180,7 +183,7 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn default_function_name_info(&self, function: Value, key: PropertyKey) -> bool {
         if !matches!(key, PropertyKey::String(atom) if self.atom_units_equal_str(atom, "name"))
-            || !matches!(self.heap.get(function), Some(Cell::Function { .. }))
+            || !self.heap.is_function_value(function)
         { return false; }
         let Some(object) = self.object_data(function) else { return false; };
         let (name, _, reconfigured) = shape_names(&self.shapes, object.shape());
@@ -191,7 +194,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn reconfigure_function_name(&mut self, function: Value, key: PropertyKey) {
-        if !matches!(self.heap.get(function), Some(Cell::Function { .. })) { return; }
+        if !self.heap.is_function_value(function) { return; }
         let Some(object) = self.object_data(function) else { return; };
         let (name, _, reconfigured) = shape_names(&self.shapes, object.shape());
         if name.is_none() { return; }
@@ -235,7 +238,7 @@ impl<H: Host> Vm<H> {
         while let Some(data) = self.object_data(object) {
             if self.proxy_parts(object).is_some() { return; }
             if self.own_property(object, atom).is_some() {
-                if matches!(self.heap.get(object), Some(Cell::Function { .. })) {
+                if self.heap.is_function_value(object) {
                     let (original, _, reconfigured) = shape_names(&self.shapes, data.shape());
                     let default = original.is_some() && if name { !reconfigured }
                         else { !shape_function_length_reconfigured(&self.shapes, data.shape()) };
@@ -264,7 +267,7 @@ impl<H: Host> Vm<H> {
     /// The source/debug name can differ from the public creation name: dynamic
     /// Function constructors expose "anonymous" while their source name is empty.
     pub(super) fn original_debug_name(&self, function: Value) -> Option<JsString> {
-        if let Some(Cell::Function { kind: FunctionKind::User(program, id) | FunctionKind::NumericUser(program, id), .. }) = self.heap.get(function) {
+        if let Some(FunctionRecord { kind: FunctionKind::User(program, id), .. }) = self.heap.function(function) {
             if self.programs.is_function_constructor_body(*program, *id) { return None; }
         }
         self.original_function_name(function).map(|name| self.atom_value(name))
@@ -276,9 +279,9 @@ impl<H: Host> Vm<H> {
             self.atom_units_equal_str(atom, "name")
         });
         if let Some(name_key) = name_key {
-            if let Some(Cell::String(name)) = self
+            if let Some(name) = self
                 .diagnostic_data_property(function, PropertyKey::string(name_key))
-                .and_then(|value| self.heap.get(value))
+                .and_then(|value| self.heap.string(value))
             {
                 return Some(name.clone());
             }
@@ -352,7 +355,7 @@ impl<H: Host> Vm<H> {
         root: RootId,
     ) -> Result<Option<JsString>, JsError> {
         let value = self.embedding_value(root)?;
-        if !matches!(self.heap.get(value), Some(Cell::Function { kind, .. }) if !matches!(kind, FunctionKind::Native(Native::FunctionBoundCall)))
+        if !matches!(self.heap.function(value), Some(FunctionRecord { kind, .. }) if !matches!(kind, FunctionKind::Native(Native::FunctionBoundCall)))
         {
             return Ok(None);
         }
@@ -364,13 +367,11 @@ impl<H: Host> Vm<H> {
     /// A function's existing code kind and creation realm own its factory origin.
     /// Bound functions have no such ordinary-function constructor projection.
     fn function_factory_constructor(&self, value: Value) -> Option<Value> {
-        let Cell::Function { object, kind, .. } = self.heap.get(value)? else {
-            return None;
-        };
+        let FunctionRecord { realm, kind, .. } = self.heap.function(value)?;
         let intrinsic = match *kind {
-            FunctionKind::User(program, id) | FunctionKind::NumericUser(program, id) => {
+            FunctionKind::User(program, id) => {
                 let program = self.programs.get(program)?;
-                let function = program.functions.get(id as usize)?;
+                let function = program.functions.get(id as usize)?.header();
                 match (function.is_async, function.is_generator) {
                     (true, true) => Native::AsyncGeneratorFunction,
                     (false, true) => Native::GeneratorFunction,
@@ -384,7 +385,7 @@ impl<H: Host> Vm<H> {
         self.realm
             .intrinsics
             .function_constructors
-            .get(&(object.realm, intrinsic))
+            .get(&(*realm, intrinsic))
             .copied()
     }
 
@@ -410,16 +411,16 @@ impl<H: Host> Vm<H> {
         }
         // These iterator maps have inaccessible intrinsic constructors. Their
         // immutable names derive from the existing iterator kind.
-        let name = match self.heap.get(value) {
-            Some(Cell::Iterator {
+        let name = match self.heap.iterator(value) {
+            Some(IteratorRecord {
                 kind: IteratorKind::MapKeys | IteratorKind::MapValues | IteratorKind::MapEntries,
                 ..
             }) => "MapIterator",
-            Some(Cell::Iterator {
+            Some(IteratorRecord {
                 kind: IteratorKind::SetValues | IteratorKind::SetEntries,
                 ..
             }) => "SetIterator",
-            Some(Cell::Iterator {
+            Some(IteratorRecord {
                 kind: IteratorKind::String,
                 ..
             }) => "StringIterator",

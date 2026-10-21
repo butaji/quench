@@ -1558,7 +1558,7 @@ fn project_sync_output(
     Ok(())
 }
 
-fn string_array(
+pub(crate) fn string_array(
     context: &mut NativeContext<'_, NodeHost>,
     array: RootId,
 ) -> Result<Vec<String>, RootedError> {

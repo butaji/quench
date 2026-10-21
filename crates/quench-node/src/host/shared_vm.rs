@@ -6,6 +6,7 @@ use quench_runtime::{HostFunction, HostFunctionId, NativeContext, RootedError, S
 pub(crate) mod commonjs;
 mod commonjs_exports;
 mod esm_errors;
+pub(crate) mod esm_wasm;
 pub(crate) mod policy_projection;
 pub(crate) use commonjs::source_kind;
 
@@ -30,6 +31,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "workerPoll" (0) => crate::modules::worker_threads_shared_vm::poll_native,
 
         method "nodeLibraryRequire" (1) => commonjs::require_node_library,
+        method "primordialsCopy" (7) => crate::modules::primordials_shared_vm::copy,
         method "nodeTestMock" (0) => crate::modules::test_shared_vm::mock,
         method "nodeTestNamespace" (0) => crate::modules::test_shared_vm::namespace,
         method "contextifyScript" (0) => crate::modules::contextify_shared_vm::script,
@@ -37,6 +39,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "contextifyCompileFunction" (0) => crate::modules::contextify_shared_vm::compile_function,
         method "nodePrintEvalScript" (1) => crate::shared_run::print_eval_script,
         method "builtinExportValues" (2) => commonjs::builtin_export_values,
+        method "esmWasmInstantiate" (6) => esm_wasm::instantiate,
         method "callbackify" (1) => crate::modules::util_callbackify_shared_vm::callbackify,
         method "gc" (0) => crate::modules::process_shared_vm::collect_garbage,
         method "utilCallbackified" (2) => crate::modules::util_callbackify_shared_vm::callbackified,
@@ -72,6 +75,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         #[cfg(target_os = "linux")]
         method "processMetricsRss" (0) => crate::modules::process_metrics_shared_vm::rss,
         method "processMetricsMemoryUsage" (1) => crate::modules::process_metrics_shared_vm::memory_usage,
+        #[cfg(unix)]
+        method "processExecve" (3) => crate::modules::process_execve_shared_vm::execve,
         method "processExitCodeGet" (0) => crate::modules::process_shared_vm::exit_code_get,
         method "processExitCodeSet" (1) => crate::modules::process_shared_vm::exit_code_set,
         method "processDefaultFatalException" (2) => crate::modules::process_fatal_exception_route::default_handler,
@@ -105,6 +110,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "processKillNative" (2) => crate::modules::process_shared_vm::kill_native,
         method "processKill" (2) => crate::modules::process_shared_vm::kill,
         method "bufferConstructor" (0) => crate::modules::buffer_shared_vm::constructor,
+        method "bufferPrototypeInitialize" (0) => crate::modules::buffer_shared_vm::initialize_prototype,
         method "encodingToAscii" (0) => crate::modules::encoding_binding_shared_vm::to_ascii,
         method "encodingToUnicode" (0) => crate::modules::encoding_binding_shared_vm::to_unicode,
         method "urlBindingDomainToAscii" (0) => crate::modules::url_binding_shared_vm::domain_to_ascii,
@@ -168,6 +174,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "webApisInitialize" (0) => commonjs::initialize_web_apis,
         method "webFetchInitialize" (0) => commonjs::initialize_fetch_apis,
         method "processSurfaceInitialize" (0) => commonjs::initialize_process_surface,
+        method "processReleaseInitialize" (0) => commonjs::initialize_process_release,
         method "processRawDebug" (0) => crate::modules::process_shared_vm::raw_debug,
         method "processReport" (0) => crate::modules::report_configuration_shared_vm::report,
         method "reportConfigGet" (0) => crate::modules::report_configuration_shared_vm::get,
@@ -209,6 +216,11 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "consoleLog" (0) => crate::modules::console_shared_vm::log,
         method "consoleLoad" (0) => crate::modules::console_shared_vm::load,
         method "processWarningListener" (0) => crate::modules::process_shared_vm::warning_listener,
+        method "processWarningLibrary" (1) => crate::modules::process_warning_shared_vm::library,
+        method "processWarningOption" (1) => crate::modules::process_warning_shared_vm::option,
+        method "processWarningBasename" (2) => crate::modules::process_warning_shared_vm::path_basename,
+        method "consoleWarningWriter" (0) => crate::modules::console_shared_vm::warning_writer,
+        method "consoleWarningWrite" (1) => crate::modules::console_shared_vm::warning_write,
         method "processMethodsInitialize" (0) => crate::modules::process_metrics_shared_vm::initialize_methods,
         method "processEmitWarningInitialize" (0) => crate::modules::process_shared_vm::initialize_emit_warning,
         method "processEnvInitialize" (0) => crate::modules::process_shared_vm::initialize_env,
@@ -558,6 +570,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "httpResponseFinish" (7) => crate::modules::http_shared_vm::response_finish,
         method "httpResponseWriteHead" (6) => crate::modules::http_shared_vm::response_write_head,
         method "httpResponseInitialize" (2) => crate::modules::http_shared_vm::response_initialize,
+        method "httpResponseRelease" (1) => crate::modules::http_shared_vm::response_release,
         method "httpResponseSend" (4) => crate::modules::http_shared_vm::response_send,
         method "assertStrictEqual" (2) => crate::modules::assert_shared_vm::strict_equal,
         method "assertNotStrictEqual" (2) => crate::modules::assert_shared_vm::not_strict_equal,
@@ -704,6 +717,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "fsBindingReaddirRecursive" (0) => crate::modules::fs_directory_shared_vm::readdir_recursive,
         method "fsPromisesGlobInitialize" (0) => crate::modules::fs_shared_vm::initialize_promises_glob_policy,
         method "fsReadStreamInitialize" (0) => crate::modules::fs_shared_vm::initialize_read_stream,
+        method "fsModuleInitialize" (0) => crate::modules::fs_shared_vm::initialize_module,
         method "perfHooksObserversInitialize" (0) => crate::modules::perf_hooks::initialize_observers,
         method "fsLibraryPolicyInitialize" (0) => crate::modules::fs_shared_vm::initialize_library_policy,
         method "fsWriteStreamInitialize" (0) => crate::modules::fs_shared_vm::write_stream::initialize,
@@ -1018,12 +1032,36 @@ impl quench_runtime::Host for NodeHost {
         self.shared_state.borrow().async_hooks.tracks_promises()
     }
 
-    /// The code a long run touched once (start-up, set-up, one-time paths) leaves the
-    /// resident set at each full collection; what still runs comes back from the page cache.
-    fn after_full_collection(&mut self) {
+    /// The code a run touched since the last collection leaves the resident set after each
+    /// collection, and before a full one; what still runs comes back from the page cache. The
+    /// collector's code and the program's are then resident one at a time, and the program's
+    /// only as much of it as ran since the last collection (V8-v7 RegExp max RSS, static
+    /// x86_64 unbolted, 2026-10-18: 7244-7500 -> 7136-7328 KiB at every collection's end;
+    /// Splay 39800 -> 38988 KiB with the release before full collections).
+    /// The allocator's free pages, which the collection's sweep just freed, leave with them
+    /// (V8-v7 max RSS, static x86_64 unbolted, 2026-10-19: RegExp 6772-7044 -> 6664-6772 KiB,
+    /// EarleyBoyer 9048-9088 -> 8536-8576, the rest unchanged).
+    fn at_collection_boundary(&mut self) {
+        crate::host::resident_pages::release_read_only_pages();
+        crate::host::resident_pages::release_free_heap_pages();
+        crate::host::resident_pages::note_collection();
+    }
+
+    /// The pages loading, linking and instantiating the module touched leave the resident set
+    /// before the code generator's join it, as compiling the module's bytecode does
+    /// (`compile_wasm`).
+    fn before_wasm_native_compilation(&mut self) {
         crate::host::resident_pages::release_read_only_pages();
     }
 
+    fn kept_compiled_program(&mut self, name: &str, parts: &[&str]) -> Option<quench_runtime::KeptBytes> {
+        self.compile_cache.entry(name, parts)?.load()
+    }
+    fn keep_compiled_program(&mut self, name: &str, parts: &[&str], bytes: &[u8]) {
+        if let Some(entry) = self.compile_cache.entry(name, parts) {
+            entry.store(bytes);
+        }
+    }
     fn proper_tail_calls(&self) -> bool {
         false
     }
@@ -1065,10 +1103,17 @@ impl quench_runtime::Host for NodeHost {
         bytes: &[u8],
         mode: quench_runtime::ExecutionMode,
     ) -> Result<quench_runtime::WasmModule, String> {
-        quench_wasm::Engine::new()
-            .compile(bytes)
+        // Decoding with validation, and lowering, each run once per module and touch code
+        // the other does not, nor what ran before them: each phase's pages leave the
+        // resident set before the next phase, and the module runs.
+        crate::host::resident_pages::release_read_only_pages();
+        let module = quench_wasm::Engine::new().compile(bytes);
+        crate::host::resident_pages::release_read_only_pages();
+        let module = module
             .and_then(|module| module.lower_shared_module_for(mode))
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string());
+        crate::host::resident_pages::release_read_only_pages();
+        module
     }
 
     fn resolve_dynamic_import(
@@ -1078,9 +1123,13 @@ impl quench_runtime::Host for NodeHost {
     ) -> Result<Option<quench_runtime::ModuleSource>, quench_runtime::ModuleLoadError> {
         use std::path::Path;
 
-        let builtin_exports: std::collections::BTreeMap<String, Vec<String>> =
+        // Parsed once: every import resolves through here, and the table is 21 KB of JSON.
+        static BUILTIN_EXPORTS: std::sync::OnceLock<std::collections::BTreeMap<String, Vec<String>>> =
+            std::sync::OnceLock::new();
+        let builtin_exports = BUILTIN_EXPORTS.get_or_init(|| {
             serde_json::from_str(include_str!("builtin_esm_exports.json"))
-                .expect("generated Node builtin export names are valid JSON");
+                .expect("generated Node builtin export names are valid JSON")
+        });
         let builtin_name = specifier.strip_prefix("node:").unwrap_or(specifier);
         let builtin = crate::host::shared_vm::commonjs::is_builtin_specifier(specifier);
         if !builtin && specifier.starts_with("node:") {
@@ -1100,21 +1149,27 @@ impl quench_runtime::Host for NodeHost {
                 serde_json::to_string(require_specifier).map_err(|error| error.to_string())?
             );
             // lib/internal/bootstrap/realm.js `syncExports`: each name is read with `getOwn`,
-            // in the order the module lists its own keys (`builtin_export_values`).
+            // in the order the module lists its own keys (`builtin_export_values`). A member
+            // still a pending lazy data property is bound to its pending value instead, and
+            // the listener gives the binding the member's value when its group materializes.
+            let assignments: String = exports
+                .iter()
+                .enumerate()
+                .map(|(index, name)| format!("case {index}: {name} = value; break; "))
+                .collect();
             source.push_str(&format!(
-                "const __quenchExports = globalThis[{}](__quenchModule, {});\n",
+                "const __quenchExports = globalThis[{}](__quenchModule, {}, (index, value) => {{ switch (index) {{ {assignments}}} }});\n",
                 serde_json::to_string(crate::host::shared_vm::commonjs::BUILTIN_EXPORT_VALUES)
                     .map_err(|error| error.to_string())?,
                 serde_json::to_string(exports).map_err(|error| error.to_string())?
             ));
             for (index, name) in exports.iter().enumerate() {
-                source.push_str(&format!("export const {name} = __quenchExports[{index}];\n"));
+                source.push_str(&format!("export let {name} = __quenchExports[{index}];\n"));
             }
-            return Ok(Some(quench_runtime::ModuleSource {
-                name: format!("node:quench-builtin/{builtin_name}"),
-                bytes: source.as_bytes().to_vec(),
+            return Ok(Some(quench_runtime::ModuleSource::text(
+                format!("node:quench-builtin/{builtin_name}"),
                 source,
-            }));
+            )));
         }
 
         // Node resolves filesystem specifiers as URLs before accessing a file.
@@ -1233,12 +1288,17 @@ impl quench_runtime::Host for NodeHost {
         } else {
             path.to_string_lossy().into_owned()
         };
+        if extension == "wasm" {
+            // Node's `wasm` format: the module record is a facade over the instance.
+            let source = esm_wasm::facade(&name, &path, &bytes)?;
+            return Ok(Some(quench_runtime::ModuleSource::text(name, source)));
+        }
         let source = if extension == "json" {
             String::from_utf8_lossy(&bytes).into_owned()
         } else {
             let kind = Self::source_kind(&path)?;
             if kind == quench_runtime::SourceKind::Module {
-                String::from_utf8(bytes.clone())
+                String::from_utf8(bytes)
                     .map_err(|error| format!("module {} is not UTF-8: {error}", path.display()))?
             } else {
                 let filename = serde_json::to_string(&path.to_string_lossy())
@@ -1271,13 +1331,10 @@ impl quench_runtime::Host for NodeHost {
                 source
             }
         };
-        // Keep original bytes for import.meta/source APIs while compiling the
-        // generated CJS/JSON interop wrapper when one is required.
-        Ok(Some(quench_runtime::ModuleSource {
-            name,
-            bytes,
-            source,
-        }))
+        // Node exposes no module's bytes: it rejects `type: "bytes"` and has source-phase
+        // objects only for WebAssembly. So a CommonJS or JSON interop wrapper keeps only the
+        // text it compiles, never the file it wraps.
+        Ok(Some(quench_runtime::ModuleSource::text(name, source)))
     }
 
     fn validate_module_type(

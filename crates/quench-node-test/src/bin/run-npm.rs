@@ -49,14 +49,17 @@ fn serialize_observation<S: serde::Serializer>(
         Err(_) => Output::Bytes(bytes),
     };
     use serde::ser::SerializeStruct;
-    let mut record = serializer.serialize_struct("Observation", 7)?;
+    let mut record = serializer.serialize_struct("Observation", 9)?;
     record.serialize_field("exit_code", &observation.exit_code)?;
     record.serialize_field("signal", &observation.signal)?;
     record.serialize_field("timed_out", &observation.timed_out)?;
     record.serialize_field("worker", &observation.worker)?;
     record.serialize_field("stdout", &output(&observation.stdout))?;
     record.serialize_field("stderr", &output(&observation.stderr))?;
-    record.serialize_field("peak_rss_bytes", &observation.peak_rss_bytes)?;
+    let usage = observation.usage;
+    record.serialize_field("peak_rss_bytes", &usage.map(|usage| usage.peak_rss_bytes))?;
+    record.serialize_field("cpu_nanos", &usage.map(|usage| usage.cpu.as_nanos()))?;
+    record.serialize_field("wall_nanos", &observation.wall.as_nanos())?;
     record.end()
 }
 

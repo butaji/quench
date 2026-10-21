@@ -1,8 +1,9 @@
 use super::object_descriptors::PropertyDescriptorRecord;
+use super::atom_keys::AtomText;
 use super::wtf16::{JsString, Units};
 use super::*;
 use crate::unicode;
-use std::fmt::Write as _;
+use std::io::Write as _;
 
 const JSON_NULL_INITIAL: u16 = b'n' as u16;
 const JSON_TRUE_INITIAL: u16 = b't' as u16;
@@ -26,20 +27,10 @@ enum JsonValue {
     Bool(bool),
     Number(f64),
     String(JsString),
-    Raw(String),
     Source(Box<JsonValue>, JsString),
     Array(Vec<JsonValue>),
     Object(Vec<(JsString, JsonValue)>),
 }
-
-/// Nesting `json_write_plain` follows before leaving a value to the full algorithm, which
-/// guards the native stack itself.
-const JSON_PLAIN_MAX_DEPTH: usize = 64;
-
-/// The most keys a parsed object takes its literal shape for (`JsonHeapBuilder::object`);
-/// larger objects add their properties one by one, which bounds the shapes a document can
-/// make and lets a wide object become a dictionary.
-const JSON_LITERAL_SHAPE_MAX_KEYS: usize = 32;
 
 struct JsonSerialization {
     replacer: Option<Value>,
@@ -47,6 +38,44 @@ struct JsonSerialization {
     gap: String,
     ancestors: Vec<Value>,
     to_json: Atom,
+    /// The text written so far, and the nesting depth of the value being written.
+    output: JsonText,
+    depth: usize,
+    /// Member plans of the plain objects serialized so far, by shape and prototype
+    /// (`Vm::json_object_plan`). They are shape facts, so they hold only while no guest code
+    /// runs: the property steps (`Vm::json_serialize_property`) drop them all.
+    plans: rustc_hash::FxHashMap<(u32, Value), Option<JsonObjectPlan>>,
+    /// Counts the property steps taken, each of which drops `plans`: a plan read under one
+    /// count holds until it changes.
+    steps: u64,
+}
+
+/// An object's enumerable own data members, as keys with their slots, when it is an ordinary
+/// object of a non-dictionary shape that no `toJSON` reaches: serializing it reads each slot,
+/// which runs no guest code.
+type JsonObjectPlan = std::rc::Rc<[(Atom, usize)]>;
+
+impl JsonSerialization {
+    /// Starts a member of an array or object that already holds `written` members: the
+    /// separator, then the line break and indentation a gap asks for.
+    fn begin_member(&mut self, written: usize) {
+        if written != 0 {
+            self.output.push(b',');
+        }
+        if !self.gap.is_empty() {
+            self.output.push(b'\n');
+            write_indent(&mut self.output, &self.gap, self.depth);
+        }
+    }
+
+    /// Closes an array or object of `written` members with `close`.
+    fn end_container(&mut self, written: usize, close: u8) {
+        if written != 0 && !self.gap.is_empty() {
+            self.output.push(b'\n');
+            write_indent(&mut self.output, &self.gap, self.depth);
+        }
+        self.output.push(close);
+    }
 }
 
 /// The key SerializeJSONProperty reads from its holder: an array index, or a property name.
@@ -57,23 +86,14 @@ enum JsonKey {
     Name(Atom),
 }
 
-fn write_json_string(value: &JsString, output: &mut String) {
-    output.push('"');
+/// The JSON text a stringification writes: UTF-8 bytes, decoded once when it completes.
+type JsonText = Vec<u8>;
+
+fn write_json_string(value: &JsString, output: &mut JsonText) {
     match value.units() {
-        // ASCII runs that need no escape are copied whole.
-        Units::Ascii(bytes) => {
-            let mut run = 0;
-            for (index, byte) in bytes.iter().enumerate() {
-                let scalar = char::from(*byte);
-                if json_escape_needed(scalar) {
-                    output.push_str(ascii_text(&bytes[run..index]));
-                    write_json_scalar(scalar, output);
-                    run = index + 1;
-                }
-            }
-            output.push_str(ascii_text(&bytes[run..]));
-        }
+        Units::Ascii(bytes) => write_json_utf8(bytes, output),
         Units::Wide(units) => {
+            output.push(b'"');
             let mut index = 0;
             while index < units.len() {
                 let unit = units[index];
@@ -89,94 +109,97 @@ fn write_json_string(value: &JsString, output: &mut String) {
                 };
                 match scalar {
                     Some(scalar) => write_json_scalar(scalar, output),
-                    None => {
-                        let _ = write!(output, "\\u{unit:04x}");
-                    }
+                    None => write_unicode_escape(u32::from(unit), output),
                 }
             }
+            output.push(b'"');
         }
     }
-    output.push('"');
+}
+
+/// QuoteJSONString of UTF-8 `text`. Every byte QuoteJSONString escapes is ASCII and no
+/// multi-byte sequence contains one, so the runs between escapes are copied whole.
+fn write_json_utf8(text: &[u8], output: &mut JsonText) {
+    output.push(b'"');
+    let mut run = 0;
+    let mut index = 0;
+    while index < text.len() {
+        // A word of bytes none of which needs an escape is skipped whole.
+        if let Some(word) = text.get(index..index + WORD_BYTES)
+            && !word_needs_json_escape(u64::from_le_bytes(word.try_into().expect("word bytes")))
+        {
+            index += WORD_BYTES;
+            continue;
+        }
+        let end = (index + WORD_BYTES).min(text.len());
+        for (offset, byte) in text[index..end].iter().enumerate() {
+            if json_escape_needed(*byte) {
+                output.extend_from_slice(&text[run..index + offset]);
+                write_json_scalar(char::from(*byte), output);
+                run = index + offset + 1;
+            }
+        }
+        index = end;
+    }
+    output.extend_from_slice(&text[run..]);
+    output.push(b'"');
+}
+
+/// Bytes scanned at once by `word_needs_json_escape`.
+const WORD_BYTES: usize = size_of::<u64>();
+/// One in each byte of a word, and each byte's high bit.
+const BYTE_ONES: u64 = u64::MAX / u8::MAX as u64;
+const BYTE_HIGHS: u64 = BYTE_ONES << (u8::BITS - 1);
+
+/// Whether any byte of `word` needs an escape (`json_escape_needed`): a byte below
+/// `LAST_CONTROL_CHARACTER + 1`, or equal to a quote or backslash. Each test borrows into
+/// a byte's high bit only from such a byte or from a lower one that already passed, so the
+/// word test is exact even though its per-byte bits are not.
+fn word_needs_json_escape(word: u64) -> bool {
+    let below = |bound: u8| word.wrapping_sub(BYTE_ONES * u64::from(bound)) & !word & BYTE_HIGHS;
+    let equal = |byte: u8| {
+        let difference = word ^ (BYTE_ONES * u64::from(byte));
+        difference.wrapping_sub(BYTE_ONES) & !difference & BYTE_HIGHS
+    };
+    below(LAST_CONTROL_CHARACTER + 1) | equal(b'"') | equal(b'\\') != 0
 }
 
 /// QuoteJSONString escapes every code point up to U+001F.
-const LAST_CONTROL_CHARACTER: char = '\u{1f}';
+const LAST_CONTROL_CHARACTER: u8 = 0x1f;
 
-fn ascii_text(bytes: &[u8]) -> &str {
-    std::str::from_utf8(bytes).expect("ASCII string units")
+/// Whether QuoteJSONString writes the ASCII `byte` as an escape rather than as itself.
+fn json_escape_needed(byte: u8) -> bool {
+    matches!(byte, b'"' | b'\\') || byte <= LAST_CONTROL_CHARACTER
 }
 
-/// Whether QuoteJSONString writes `scalar` as an escape rather than as itself.
-fn json_escape_needed(scalar: char) -> bool {
-    matches!(scalar, '"' | '\\') || scalar <= LAST_CONTROL_CHARACTER
-}
-
-fn write_json_scalar(scalar: char, output: &mut String) {
-    match scalar {
-        '"' => output.push_str("\\\""),
-        '\\' => output.push_str("\\\\"),
-        '\u{08}' => output.push_str("\\b"),
-        '\u{0c}' => output.push_str("\\f"),
-        '\n' => output.push_str("\\n"),
-        '\r' => output.push_str("\\r"),
-        '\t' => output.push_str("\\t"),
-        scalar if scalar <= LAST_CONTROL_CHARACTER => {
-            let _ = write!(output, "\\u{:04x}", scalar as u32);
+fn write_json_scalar(scalar: char, output: &mut JsonText) {
+    let escape: &[u8] = match scalar {
+        '"' => b"\\\"",
+        '\\' => b"\\\\",
+        '\u{08}' => b"\\b",
+        '\u{0c}' => b"\\f",
+        '\n' => b"\\n",
+        '\r' => b"\\r",
+        '\t' => b"\\t",
+        scalar if u32::from(scalar) <= u32::from(LAST_CONTROL_CHARACTER) => {
+            return write_unicode_escape(u32::from(scalar), output);
         }
-        scalar => output.push(scalar),
-    }
+        scalar => {
+            let mut buffer = [0; char::MAX_LEN_UTF8];
+            return output.extend_from_slice(scalar.encode_utf8(&mut buffer).as_bytes());
+        }
+    };
+    output.extend_from_slice(escape);
 }
 
-fn write_json(value: &JsonValue, output: &mut String, gap: &str, depth: usize) {
-    match value {
-        JsonValue::Null => output.push_str("null"),
-        JsonValue::Bool(value) => output.push_str(if *value { "true" } else { "false" }),
-        JsonValue::Number(value) => output.push_str(&crate::number_to_string::format(*value)),
-        JsonValue::String(value) => write_json_string(value, output),
-        JsonValue::Raw(value) => output.push_str(value),
-        JsonValue::Source(value, _) => write_json(value, output, gap, depth),
-        JsonValue::Array(values) => {
-            output.push('[');
-            for (index, value) in values.iter().enumerate() {
-                if index != 0 {
-                    output.push_str(if gap.is_empty() { "," } else { ",\n" });
-                } else if !values.is_empty() && !gap.is_empty() {
-                    output.push('\n');
-                }
-                write_indent(output, gap, depth + 1);
-                write_json(value, output, gap, depth + 1);
-            }
-            if !values.is_empty() && !gap.is_empty() {
-                output.push('\n');
-                write_indent(output, gap, depth);
-            }
-            output.push(']');
-        }
-        JsonValue::Object(values) => {
-            output.push('{');
-            for (index, (key, value)) in values.iter().enumerate() {
-                if index != 0 {
-                    output.push_str(if gap.is_empty() { "," } else { ",\n" });
-                } else if !values.is_empty() && !gap.is_empty() {
-                    output.push('\n');
-                }
-                write_indent(output, gap, depth + 1);
-                write_json_string(key, output);
-                output.push_str(if gap.is_empty() { ":" } else { ": " });
-                write_json(value, output, gap, depth + 1);
-            }
-            if !values.is_empty() && !gap.is_empty() {
-                output.push('\n');
-                write_indent(output, gap, depth);
-            }
-            output.push('}');
-        }
-    }
+/// The `\uXXXX` escape of `code`.
+fn write_unicode_escape(code: u32, output: &mut JsonText) {
+    let _ = write!(output, "\\u{code:04x}");
 }
 
-fn write_indent(output: &mut String, gap: &str, depth: usize) {
+fn write_indent(output: &mut JsonText, gap: &str, depth: usize) {
     for _ in 0..depth {
-        output.push_str(gap);
+        output.extend_from_slice(gap.as_bytes());
     }
 }
 
@@ -264,6 +287,11 @@ struct JsonHeapBuilder<'v, H: Host> {
     object_prototype: Value,
     /// The first property store that failed; the parse finishes and then reports it.
     error: Option<JsError>,
+    /// The shape each (shape, key) add made, so objects of one layout, which a JSON text
+    /// repeats, take their shapes without a transition search. Valid within one collection
+    /// epoch, since a full collection may renumber shapes.
+    transitions: rustc_hash::FxHashMap<(u32, Atom), u32>,
+    transitions_epoch: u64,
 }
 
 enum JsonBuildError {
@@ -277,8 +305,10 @@ impl<'v, H: Host> JsonHeapBuilder<'v, H> {
         Self {
             array_prototype: vm.array_prototype_for_realm(globals),
             object_prototype: vm.realm_object_prototype(globals),
+            transitions_epoch: vm.heap.collection_epoch(),
             vm,
             error: None,
+            transitions: Default::default(),
         }
     }
 
@@ -297,8 +327,7 @@ impl<'v, H: Host> JsonHeapBuilder<'v, H> {
             JsonValue::Bool(true) => self.literal(JsonLiteral::True),
             JsonValue::Bool(false) => self.literal(JsonLiteral::False),
             JsonValue::Number(value) => self.number(*value),
-            JsonValue::String(value) => self.vm.heap.alloc(Cell::String(value.clone())),
-            JsonValue::Raw(_) => unreachable!("raw JSON fragments are not parser values"),
+            JsonValue::String(value) => self.vm.heap.alloc_string(value.clone()),
             JsonValue::Source(value, _) => self.materialize(value)?,
             JsonValue::Array(values) => {
                 let values = values
@@ -337,7 +366,7 @@ impl<H: Host> JsonBuilder for JsonHeapBuilder<'_, H> {
     fn string(&mut self, units: &[u16]) -> Value {
         self.vm
             .heap
-            .alloc(Cell::String(JsString::from_units(units)))
+            .alloc_string(JsString::from_units(units))
     }
     fn key(&mut self, units: &[u16]) -> Atom {
         self.vm.intern_unit_run_atom(Units::Wide(units))
@@ -351,27 +380,36 @@ impl<H: Host> JsonBuilder for JsonHeapBuilder<'_, H> {
         })
     }
     fn object(&mut self, entries: Vec<(Atom, Value)>) -> Value {
-        // Distinct plain names are CreateDataProperty in order onto an empty object: the
-        // object an object literal with those keys makes, allocated with its final shape.
-        let literal = entries.len() <= JSON_LITERAL_SHAPE_MAX_KEYS
-            && entries.iter().enumerate().all(|(index, (atom, _))| {
-                !self.vm.atom_class(*atom).contains(AtomClass::ARRAY_INDEX)
-                    && entries[..index].iter().all(|(earlier, _)| earlier != atom)
-            });
-        if literal {
-            let atoms = entries.iter().map(|(atom, _)| *atom).collect::<Vec<_>>();
-            let values = entries.iter().map(|(_, value)| *value).collect::<Vec<_>>();
-            let shape = self.vm.literal_shape(&atoms);
-            return self.vm.heap.alloc_object_with_properties(self.object_prototype, shape, &values);
-        }
         let object = self
             .vm
             .heap
             .alloc(Cell::Object(Vm::<H>::empty_object(self.object_prototype)));
+        let shape_of = |vm: &Vm<H>| vm.object_data(object).map(|data| data.shape());
+        let mut shape = shape_of(self.vm);
         for (atom, value) in entries {
+            let epoch = self.vm.heap.collection_epoch();
+            if epoch != self.transitions_epoch {
+                self.transitions.clear();
+                self.transitions_epoch = epoch;
+            }
+            if let Some(from) = shape
+                && let Some(&to) = self.transitions.get(&(from, atom))
+            {
+                self.vm.heap.property_add(object, value, to);
+                shape = Some(to);
+                continue;
+            }
             if let Err(error) = self.vm.set_property(object, atom, value) {
                 self.error.get_or_insert(error);
             }
+            let after = shape_of(self.vm);
+            if let (Some(from), Some(to)) = (shape, after)
+                && self.vm.heap.collection_epoch() == self.transitions_epoch
+                && self.vm.shape_appends_one_slot(from, to)
+            {
+                self.transitions.insert((from, atom), to);
+            }
+            shape = after;
         }
         object
     }
@@ -685,12 +723,12 @@ impl<H: Host> Vm<H> {
             data.set_raw_json();
         }
         let raw_atom = self.intern_atom("rawJSON");
-        let raw_text_value = self.heap.alloc(Cell::String(text));
+        let raw_text_value = self.heap.alloc_string(text);
         let raw_text_root = self.heap.root(raw_text_value);
         let result = (|| {
             let key = self
                 .heap
-                .alloc(Cell::String(self.atom_name(raw_atom).into()));
+                .alloc_string(self.atom_name(raw_atom).into());
             let raw_text = self.heap.root_value(raw_text_root).unwrap();
             let descriptor = PropertyDescriptorRecord {
                 writable: Some(false),
@@ -775,7 +813,7 @@ impl<H: Host> Vm<H> {
             JsonValue::Bool(expected) => current.as_bool() == Some(*expected),
             JsonValue::Number(expected) => self.same_value(current, Value::number(*expected)),
             JsonValue::String(expected) => {
-                matches!(self.heap.get(current), Some(Cell::String(actual)) if actual == expected)
+                self.heap.string(current).is_some_and(|actual| actual == expected)
             }
             _ => false,
         };
@@ -843,7 +881,7 @@ impl<H: Host> Vm<H> {
                     self.json_update_property(p, value_handle, &child_key, child)?;
                 }
             }
-            let key_value = self.heap.alloc(Cell::String(key.clone()));
+            let key_value = self.heap.alloc_string(key.clone());
             let key_handle = self.heap.root(key_value);
             key_root = Some(key_handle);
             let context = self.json_object();
@@ -851,7 +889,7 @@ impl<H: Host> Vm<H> {
             context_root = Some(context_handle);
             if let Some(source) = source_text {
                 let source_atom = self.intern_atom("source");
-                let source_value = self.heap.alloc(Cell::String(source));
+                let source_value = self.heap.alloc_string(source);
                 let source_root = self.heap.root(source_value);
                 let context = self.heap.root_value(context_handle).unwrap();
                 let source_value = self.heap.root_value(source_root).unwrap();
@@ -890,7 +928,7 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> Result<(), JsError> {
         let value_root = self.heap.root(value);
-        let key = self.heap.alloc(Cell::String(key.clone()));
+        let key = self.heap.alloc_string(key.clone());
         let key_root = self.heap.root(key);
         let holder = self.heap.root_value(holder).unwrap();
         let key = self.heap.root_value(key_root).unwrap();
@@ -914,13 +952,6 @@ impl<H: Host> Vm<H> {
         let value = args.first().copied().unwrap_or(Value::UNDEFINED);
         let replacer = args.get(1).copied().unwrap_or(Value::UNDEFINED);
         let space = args.get(2).copied().unwrap_or(Value::UNDEFINED);
-        if replacer.is_undefined() && space.is_undefined() {
-            let to_json = self.intern_atom("toJSON");
-            let mut text = String::new();
-            if self.json_write_plain(value, to_json, &mut Vec::new(), &mut text) == Some(true) {
-                return Ok(self.heap.alloc(Cell::String(text.into())));
-            }
-        }
         let (replacer, property_list) = self.json_replacer(p, replacer)?;
         let space_root = self.heap.root(space);
         let gap = self.json_gap(p, space);
@@ -932,6 +963,10 @@ impl<H: Host> Vm<H> {
             gap,
             ancestors: Vec::new(),
             to_json: self.intern_atom("toJSON"),
+            output: JsonText::new(),
+            depth: 0,
+            plans: Default::default(),
+            steps: 0,
         };
         let holder = self.json_object();
         let holder_root = self.heap.root(holder);
@@ -940,161 +975,11 @@ impl<H: Host> Vm<H> {
         let holder = self.heap.root_value(holder_root).unwrap_or(holder);
         let serialized = self.json_serialize_property(p, holder, JsonKey::Name(empty), &mut state);
         self.heap.release_root(holder_root);
-        let Some(value) = serialized? else {
+        if !serialized? {
             return Ok(Value::UNDEFINED);
-        };
-        let mut text = String::new();
-        write_json(&value, &mut text, &state.gap, 0);
-        Ok(self.heap.alloc(Cell::String(text.into())))
-    }
-
-    /// SerializeJSONProperty without a replacer or gap for a value whose serialization reads
-    /// only data: primitives, and plain objects and hole-free arrays whose properties are
-    /// data and which reach no `toJSON`, written straight to `output`. Each read it makes is
-    /// one the full algorithm makes and none runs guest code, so `None`, for anything else
-    /// (a cycle included), leaves the whole value to the full algorithm, which repeats it.
-    /// `Some(false)` is a value the serialization skips.
-    fn json_write_plain(
-        &self,
-        value: Value,
-        to_json: Atom,
-        ancestors: &mut Vec<Value>,
-        output: &mut String,
-    ) -> Option<bool> {
-        if value.is_undefined() || value.is_deleted() {
-            return Some(false);
         }
-        if value.is_null() {
-            output.push_str("null");
-            return Some(true);
-        }
-        if let Some(value) = value.as_bool() {
-            output.push_str(if value { "true" } else { "false" });
-            return Some(true);
-        }
-        if let Some(number) = value.as_number() {
-            if number.is_finite() {
-                output.push_str(&crate::number_to_string::format(number));
-            } else {
-                output.push_str("null");
-            }
-            return Some(true);
-        }
-        // An arguments object keeps array storage but serializes as an object; the full
-        // algorithm takes it.
-        let array = self.heap.array(value);
-        if array.is_some_and(|array| array.is_arguments_object()) {
-            return None;
-        }
-        let object = self.heap.object_record(value).is_some()
-            || matches!(self.heap.get(value), Some(Cell::Object(_)));
-        if array.is_none() && !object {
-            return match self.heap.get(value)? {
-                Cell::String(text) => {
-                    write_json_string(text, output);
-                    Some(true)
-                }
-                Cell::Symbol(_) | Cell::Function { .. } => Some(false),
-                _ => None,
-            };
-        }
-        if ancestors.len() == JSON_PLAIN_MAX_DEPTH
-            || ancestors.contains(&value)
-            || self.object_data(value)?.is_raw_json()
-            || self.boxed_primitive_data(value).is_some()
-            || self.json_reaches_property(value, to_json)?
-        {
-            return None;
-        }
-        ancestors.push(value);
-        if let Some(array) = array {
-            if array.has_indexed_descriptors() || self.heap.sparse_length(value).is_some() {
-                return None;
-            }
-            let elements = array.elements();
-            output.push('[');
-            for (index, element) in elements.iter().enumerate() {
-                if index != 0 {
-                    output.push(',');
-                }
-                if element.is_deleted() {
-                    return None;
-                }
-                if !self.json_write_plain(*element, to_json, ancestors, output)? {
-                    output.push_str("null");
-                }
-            }
-            output.push(']');
-        } else {
-            let data = self.object_data(value)?;
-            let accessors = self.shape_may_have_accessors(data.shape());
-            let keys = self.shape_enumerable_slots(value)?;
-            output.push('{');
-            let mut first = true;
-            for &(key, slot) in keys.iter() {
-                let slot = slot as usize;
-                if accessors && self.slot_attributes(data, slot)?.accessor {
-                    return None;
-                }
-                let property = self.heap.property_get(data, slot)?;
-                let mark = output.len();
-                if !first {
-                    output.push(',');
-                }
-                self.json_write_key(key, output);
-                output.push(':');
-                if self.json_write_plain(property, to_json, ancestors, output)? {
-                    first = false;
-                } else {
-                    output.truncate(mark);
-                }
-            }
-            output.push('}');
-        }
-        ancestors.pop();
-        Some(true)
-    }
-
-    /// Whether `value`'s chain, arrays included, has a property named `key`, where shapes
-    /// alone answer it: `None` leaves exotic, namespace and side-described links to the full
-    /// algorithm.
-    fn json_reaches_property(&self, value: Value, key: Atom) -> Option<bool> {
-        let key = PropertyKey::string(key);
-        let mut current = value;
-        loop {
-            let data = self.object_data(current)?;
-            if data.is_module_namespace() || data.deferred_module().is_some() {
-                return None;
-            }
-            if self.property_shape_slot(data.shape(), key).is_some() {
-                return Some(true);
-            }
-            if data.has_side_descriptors() && self.descriptors.contains_key(&(current, key)) {
-                return None;
-            }
-            let proto = data.proto();
-            if proto.is_null() {
-                return Some(false);
-            }
-            current = proto;
-        }
-    }
-
-    /// A property name as QuoteJSONString writes it.
-    fn json_write_key(&self, key: Atom, output: &mut String) {
-        let index = key as usize;
-        if index < self.atom_text.len() {
-            let text = &self.atom_text[index];
-            output.push('"');
-            if text.chars().any(json_escape_needed) {
-                text.chars().for_each(|scalar| write_json_scalar(scalar, output));
-            } else {
-                output.push_str(text);
-            }
-            output.push('"');
-        } else {
-            write_json_string(self.dynamic_atom(index), output);
-        }
+        let text = String::from_utf8(state.output).expect("JSON text is written as UTF-8");
+        Ok(self.heap.alloc_string(text.into()))
     }
 
     fn json_replacer(
@@ -1119,7 +1004,7 @@ impl<H: Host> Vm<H> {
                 let item_root = self.heap.root(item);
                 let item = self.heap.root_value(item_root).unwrap_or(item);
                 let accepted = item.as_number().is_some()
-                    || matches!(self.heap.get(item), Some(Cell::String(_)))
+                    || self.heap.is_string(item)
                     || self.json_boxed_string_or_number(item).is_some();
                 if accepted {
                     let name = match self.coerce_js_string(p, item) {
@@ -1156,7 +1041,7 @@ impl<H: Host> Vm<H> {
             Value::number(self.to_number(p, value)?)
         } else if string_box {
             let text = self.to_string(p, value)?;
-            self.heap.alloc(Cell::String(text.into()))
+            self.heap.alloc_string(text.into())
         } else {
             value
         };
@@ -1168,7 +1053,7 @@ impl<H: Host> Vm<H> {
             };
             return Ok(" ".repeat(count));
         }
-        if let Some(Cell::String(text)) = self.heap.get(value) {
+        if let Some(text) = self.heap.string(value) {
             return Ok(String::from_utf16_lossy(
                 &text.units().slice(0..text.units().len().min(10)).wide(),
             ));
@@ -1182,8 +1067,11 @@ impl<H: Host> Vm<H> {
         holder: Value,
         key: JsonKey,
         state: &mut JsonSerialization,
-    ) -> Result<Option<JsonValue>, JsError> {
+    ) -> Result<bool, JsError> {
         let _stack = self.enter_stack()?;
+        // The steps may run guest code, which can change the shapes plans describe.
+        state.plans.clear();
+        state.steps += 1;
         let holder_root = self.heap.root(holder);
         let result = (|| {
             let holder = self.heap.root_value(holder_root).unwrap_or(holder);
@@ -1242,13 +1130,115 @@ impl<H: Host> Vm<H> {
         result
     }
 
+    /// SerializeJSONProperty of a container's member, given the member's value when reading
+    /// it runs no guest code (`plain_named_get`, a present dense element). With no replacer,
+    /// a value that is no object or BigInt, or one that no `toJSON` reaches
+    /// (`plain_property_lookup`), serializes as it is: the property steps would call nothing.
+    /// Any other member takes them (`json_serialize_property`).
+    fn json_member(
+        &mut self,
+        p: &ResidualProgram,
+        holder: Value,
+        key: JsonKey,
+        value: Option<Value>,
+        state: &mut JsonSerialization,
+    ) -> Result<bool, JsError> {
+        if state.replacer.is_none()
+            && let Some(value) = value
+        {
+            let calls_nothing = if self.is_object_like(value) {
+                self.json_object_plan(value, state).is_some()
+                    || self.json_lacks_to_json(value, state.to_json)
+            } else {
+                !matches!(self.heap.get(value), Some(Cell::BigInt(_)))
+            };
+            if calls_nothing {
+                // A nested container recurses here, as the property steps would.
+                let _stack = self.enter_stack()?;
+                return self.json_serialize_value(p, value, state);
+            }
+        }
+        self.json_serialize_property(p, holder, key, state)
+    }
+
+    /// The member plan of `object` (`JsonObjectPlan`), derived once per shape and prototype
+    /// while no guest code runs; `None` for any object the plan does not describe.
+    fn json_object_plan(
+        &self,
+        object: Value,
+        state: &mut JsonSerialization,
+    ) -> Option<JsonObjectPlan> {
+        let data = self.heap.object_record(object)?;
+        let shape_key = (data.shape(), data.proto());
+        if let Some(plan) = state.plans.get(&shape_key) {
+            return plan.clone();
+        }
+        let plan = self.derive_json_object_plan(object, data, state.to_json);
+        state.plans.insert(shape_key, plan.clone());
+        plan
+    }
+
+    fn derive_json_object_plan(
+        &self,
+        object: Value,
+        data: &Object,
+        to_json: Atom,
+    ) -> Option<JsonObjectPlan> {
+        let shape = data.shape();
+        if self.shape_is_dictionary(shape)
+            || data.has_side_descriptors()
+            || data.is_raw_json()
+            || self.boxed_primitive_data(object).is_some()
+            || !self.json_lacks_to_json(object, to_json)
+        {
+            return None;
+        }
+        let accessors = self.shape_may_have_accessors(shape);
+        self.shape_enumerable_keys(object)?
+            .into_iter()
+            .map(|key| {
+                let slot = self.property_shape_slot(shape, PropertyKey::string(key))?;
+                let accessor = accessors && self.slot_attributes(data, slot)?.accessor;
+                (self.plain_named_key(key) && !accessor).then_some((key, slot))
+            })
+            .collect()
+    }
+
+    /// Whether `Get(value, "toJSON")` finds nothing, decided without running guest code, for
+    /// an object the serializer reads as it is, along a chain of arrays (such as
+    /// `Array.prototype`) whose own shapes lack the key and of ordinary objects
+    /// (`plain_property_lookup`). A boxed primitive, whose serialization coerces it, and any
+    /// other object answer `false`.
+    fn json_lacks_to_json(&self, value: Value, to_json: Atom) -> bool {
+        let key = PropertyKey::string(to_json);
+        if self.boxed_primitive_data(value).is_some() {
+            return false;
+        }
+        let mut current = value;
+        loop {
+            let Some(array) = self.heap.array(current) else {
+                return self.plain_property_lookup(current, key) == Some(None);
+            };
+            if array.is_arguments_object()
+                || array.has_side_descriptors()
+                || self.property_shape_slot(array.shape(), key).is_some()
+            {
+                return false;
+            }
+            current = array.proto();
+            if current.is_null() {
+                return true;
+            }
+        }
+    }
+
     /// A key's string value, allocated last before the call that receives it.
     fn json_key_value(&mut self, key: JsonKey) -> Value {
         let text = match key {
             JsonKey::Index(index) => JsString::from(index.to_string()),
             JsonKey::Name(atom) => self.atom_value(atom),
         };
-        self.heap.alloc(Cell::String(text))
+        self.heap.alloc_string(text)
     }
 
     fn json_serialize_value(
@@ -1256,21 +1246,25 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         value: Value,
         state: &mut JsonSerialization,
-    ) -> Result<Option<JsonValue>, JsError> {
+    ) -> Result<bool, JsError> {
         if value.is_undefined() || value.is_deleted() || self.is_function(value) {
-            return Ok(None);
+            return Ok(false);
         }
         if value.is_null() {
-            return Ok(Some(JsonValue::Null));
+            state.output.extend_from_slice(b"null");
+            return Ok(true);
         }
         if let Some(value) = value.as_bool() {
-            return Ok(Some(JsonValue::Bool(value)));
+            state.output.extend_from_slice(if value { b"true" } else { b"false" });
+            return Ok(true);
         }
         if let Some(value) = value.as_number() {
-            if !value.is_finite() {
-                return Ok(Some(JsonValue::Null));
+            if value.is_finite() {
+                state.output.extend_from_slice(crate::number_to_string::format(value).as_bytes());
+            } else {
+                state.output.extend_from_slice(b"null");
             }
-            return Ok(Some(JsonValue::Number(value)));
+            return Ok(true);
         }
         let unboxed = self.json_unbox(p, value)?;
         if unboxed != value {
@@ -1278,34 +1272,40 @@ impl<H: Host> Vm<H> {
         }
         let value = unboxed;
         if let Some(raw) = self.json_raw_text(value) {
-            return Ok(Some(JsonValue::Raw(raw)));
+            state.output.extend_from_slice(raw.as_bytes());
+            return Ok(true);
         }
-        if self.heap.object_record(value).is_some() {
-            return self.json_serialize_object(p, value, state).map(Some);
+        if self.heap.object_record(value).is_some() || self.heap.promise(value).is_some() {
+            return self.json_serialize_object(p, value, state).map(|()| true);
         }
-        // An arguments object keeps array storage but is no Array: it serializes as an object.
         if let Some(array) = self.heap.array(value) {
+            // An arguments object is an ordinary object to IsArray, so it serializes as one.
             return if array.is_arguments_object() {
-                self.json_serialize_object(p, value, state).map(Some)
+                self.json_serialize_object(p, value, state)
             } else {
-                self.json_serialize_array(p, value, state).map(Some)
-            };
+                self.json_serialize_array(p, value, state)
+            }
+            .map(|()| true);
         }
         match self.heap.get(value).cloned() {
-            Some(Cell::String(value)) => Ok(Some(JsonValue::String(value))),
-            Some(Cell::Symbol(_)) => Ok(None),
+            _ if let Some(text) = self.heap.string(value).cloned()  => {
+                write_json_string(&text, &mut state.output);
+                Ok(true)
+            }
+            Some(Cell::Symbol(_)) => Ok(false),
             Some(Cell::BigInt(_)) => {
                 Err(self.type_error(p, "Do not know how to serialize a BigInt".into()))
             }
-            Some(Cell::Function { .. }) | None => Ok(None),
-            Some(Cell::Array { .. }) => {
-                unreachable!("heap.array classifies live arrays before this match")
+            Some(Cell::Function(_)) | None => Ok(false),
+            Some(Cell::Array { .. } | Cell::Promise(_)) => {
+                unreachable!("heap.array and heap.promise classify their values before this match")
             }
-            _ if self.json_raw_text(value).is_some() => {
-                Ok(self.json_raw_text(value).map(JsonValue::Raw))
+            _ if self.is_array(p, value)? => {
+                self.json_serialize_array(p, value, state).map(|()| true)
             }
-            _ if self.is_array(p, value)? => self.json_serialize_array(p, value, state).map(Some),
-            Some(Cell::Object(_)) => self.json_serialize_object(p, value, state).map(Some),
+            Some(Cell::Object(_)) => {
+                self.json_serialize_object(p, value, state).map(|()| true)
+            }
             Some(Cell::Proxy { .. })
             | Some(Cell::Date { .. })
             | Some(Cell::Error(_))
@@ -1331,11 +1331,12 @@ impl<H: Host> Vm<H> {
             | Some(Cell::WasmGlobal { .. })
             | Some(Cell::WasmMemory { .. })
             | Some(Cell::WasmTable { .. }) => {
-                self.json_serialize_object(p, value, state).map(Some)
+                self.json_serialize_object(p, value, state).map(|()| true)
             }
             Some(Cell::Environment { .. })
-            | Some(Cell::Iterator { .. })
+            | Some(Cell::Iterator(_))
             | Some(Cell::ArrayFromAsyncState(_))
+            | Some(Cell::AwaitState(_))
             | Some(Cell::PromiseResolvingState { .. })
             | Some(Cell::WasmElements(_))
             | Some(Cell::WasmBits64(_))
@@ -1345,7 +1346,7 @@ impl<H: Host> Vm<H> {
             | Some(Cell::WasmException { .. })
             | Some(Cell::WasmV128(_))
             | Some(Cell::BindingReference { .. })
-            | Some(Cell::WasmHostFunction { .. }) => Ok(None),
+            | Some(Cell::WasmHostFunction { .. }) => Ok(false),
         }
     }
 
@@ -1354,7 +1355,7 @@ impl<H: Host> Vm<H> {
         match self.boxed_primitive_data(value) {
             Some((B::StringObject, _)) => {
                 let text = self.to_string(p, value)?;
-                Ok(self.heap.alloc(Cell::String(text.into())))
+                Ok(self.heap.alloc_string(text.into()))
             }
             Some((B::NumberObject, _)) => Ok(Value::number(self.to_number(p, value)?)),
             Some((B::BooleanObject | B::BigIntObject, payload)) => Ok(payload),
@@ -1367,10 +1368,7 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let raw = self.lookup_atom("rawJSON")?;
-        match self.heap.get(self.own_property(value, raw)?) {
-            Some(Cell::String(text)) => Some(text.host_string().to_owned()),
-            _ => None,
-        }
+        self.heap.string(self.own_property(value, raw)?).map(|text| text.host_string().to_owned())
     }
 
     fn json_serialize_array(
@@ -1378,21 +1376,27 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         array: Value,
         state: &mut JsonSerialization,
-    ) -> Result<JsonValue, JsError> {
+    ) -> Result<(), JsError> {
         self.json_push_ancestor(p, array, state)?;
         let array_root = self.heap.root(array);
         let result = (|| {
             let array = self.heap.root_value(array_root).unwrap_or(array);
             let length = self.array_like_length(p, array)?;
-            let mut output = Vec::with_capacity(length);
+            state.output.push(b'[');
+            state.depth += 1;
             for index in 0..length {
                 let array = self.heap.root_value(array_root).unwrap_or(array);
-                output.push(
-                    self.json_serialize_property(p, array, JsonKey::Index(index), state)?
-                        .unwrap_or(JsonValue::Null),
-                );
+                state.begin_member(index);
+                let element = self
+                    .present_dense_elements(array, index..index + 1)
+                    .map(|element| element[0]);
+                if !self.json_member(p, array, JsonKey::Index(index), element, state)? {
+                    state.output.extend_from_slice(b"null");
+                }
             }
-            Ok(JsonValue::Array(output))
+            state.depth -= 1;
+            state.end_container(length, b']');
+            Ok(())
         })();
         self.heap.release_root(array_root);
         state.ancestors.pop();
@@ -1404,30 +1408,63 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         object: Value,
         state: &mut JsonSerialization,
-    ) -> Result<JsonValue, JsError> {
+    ) -> Result<(), JsError> {
         self.json_push_ancestor(p, object, state)?;
         let object_root = self.heap.root(object);
         let result = (|| {
             let object = self.heap.root_value(object_root).unwrap_or(object);
-            let keys = if let Some(property_list) = &state.property_list {
+            let plan = if state.property_list.is_none() && state.replacer.is_none() {
+                self.json_object_plan(object, state)
+            } else {
+                None
+            };
+            let planned_steps = state.steps;
+            let keys = if let Some(plan) = &plan {
+                plan.iter().map(|(key, _)| *key).collect()
+            } else if let Some(property_list) = &state.property_list {
                 property_list.clone()
             } else {
                 self.json_enumerable_keys(p, object)?
             };
-            let mut output = Vec::new();
-            for key in keys {
+            state.output.push(b'{');
+            state.depth += 1;
+            let mut written = 0;
+            for (index, key) in keys.into_iter().enumerate() {
                 let object = self.heap.root_value(object_root).unwrap_or(object);
-                if let Some(value) =
-                    self.json_serialize_property(p, object, JsonKey::Name(key), state)?
-                {
-                    output.push((self.atom_value(key), value));
+                // The member is written before its value is known; an omitted value
+                // takes it back.
+                let member = state.output.len();
+                state.begin_member(written);
+                self.write_json_key(key, &mut state.output);
+                state.output.extend_from_slice(if state.gap.is_empty() { b":" } else { b": " });
+                // A plan read for this object holds while no member took the property steps.
+                let planned = plan.as_ref().filter(|_| state.steps == planned_steps).and_then(|plan| {
+                    self.heap
+                        .ordinary_object(object)
+                        .and_then(|data| self.heap.property_get(data, plan[index].1))
+                });
+                let value = planned.or_else(|| self.plain_named_get(object, key));
+                if self.json_member(p, object, JsonKey::Name(key), value, state)? {
+                    written += 1;
+                } else {
+                    state.output.truncate(member);
                 }
             }
-            Ok(JsonValue::Object(output))
+            state.depth -= 1;
+            state.end_container(written, b'}');
+            Ok(())
         })();
         self.heap.release_root(object_root);
         state.ancestors.pop();
         result
+    }
+
+    /// QuoteJSONString of the property name `atom`, written from the atom's own text.
+    fn write_json_key(&self, atom: Atom, output: &mut JsonText) {
+        match self.atom_text(atom) {
+            AtomText::Host(text) => write_json_utf8(text.as_bytes(), output),
+            AtomText::Js(text) => write_json_string(text, output),
+        }
     }
 
     fn json_push_ancestor(
@@ -1436,11 +1473,8 @@ impl<H: Host> Vm<H> {
         value: Value,
         state: &mut JsonSerialization,
     ) -> Result<(), JsError> {
-        if state
-            .ancestors
-            .iter()
-            .any(|ancestor| self.same_value(*ancestor, value))
-        {
+        // Every ancestor and `value` is an object, whose SameValue is its identity.
+        if state.ancestors.contains(&value) {
             return Err(self.type_error(p, "Converting circular structure to JSON".into()));
         }
         state.ancestors.push(value);
@@ -1475,7 +1509,7 @@ impl<H: Host> Vm<H> {
                     .array_elements(keys)
                     .map(|elements| elements[index])
                     .expect("rooted own-key projection");
-                if !matches!(self.heap.get(key), Some(Cell::String(_))) {
+                if !self.heap.is_string(key) {
                     continue;
                 }
                 let key_root = self.heap.root(key);
@@ -1485,7 +1519,7 @@ impl<H: Host> Vm<H> {
                     let descriptor = self.object_get_own_property_descriptor(p, &[object, key])?;
                     if self.descriptor_flag(descriptor, "enumerable") {
                         let key = self.heap.root_value(key_root).unwrap();
-                        if let Some(Cell::String(name)) = self.heap.get(key).cloned() {
+                        if let Some(name) = self.heap.string(key).cloned() {
                             names.push(self.intern_js_atom(&name));
                         }
                     }
@@ -1511,17 +1545,17 @@ mod tests {
     #[test]
     fn json_string_writer_preserves_lone_surrogates() {
         let value = JsString::from_units(&[0xD800, b'a' as u16, 0xDC00]);
-        let mut output = String::new();
+        let mut output = Vec::new();
         write_json_string(&value, &mut output);
-        assert_eq!(output, "\"\\ud800a\\udc00\"");
+        assert_eq!(output, b"\"\\ud800a\\udc00\"");
     }
 
     #[test]
     fn json_string_writer_keeps_surrogate_pairs_as_scalars() {
         let value = JsString::from_units(&[0xD83E, 0xDD80]);
-        let mut output = String::new();
+        let mut output = Vec::new();
         write_json_string(&value, &mut output);
-        assert_eq!(output, "\"🦀\"");
+        assert_eq!(output, "\"🦀\"".as_bytes());
     }
 
     #[test]

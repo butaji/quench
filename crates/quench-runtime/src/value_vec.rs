@@ -9,11 +9,19 @@ const SHAPE_MASK: u32 = !DICTIONARY_STORAGE;
 const EMPTY_START: u32 = START_MASK;
 const INLINE_PROPERTY_START: u32 = EMPTY_START - 1;
 const MAX_ARENA_START: usize = INLINE_PROPERTY_START as usize;
+/// Properties an object keeps in its record. The Score lane (`v2-cloud-c`, a2deff57a) runs
+/// three for RayTrace's vectors at the cost of max RSS (Splay 162 -> 204 MB); the integration
+/// branch keeps memory-first defaults (the owner's direction, 2026-10-17 and 2026-10-18).
 pub(crate) const INLINE_PROPERTY_COUNT: usize = 2;
 const MIN_CAPACITY: usize = 2;
 const BUCKETS: usize = 32;
 const DENSE_ARENA_RESERVE_THRESHOLD: usize = 65_536;
 const DENSE_ARENA_GROWTH_DIVISOR: usize = 3;
+/// Released values on the free lists, as a share (`1 / divisor`) of the arena's length, that
+/// make a full collection compact the arena. Freed ranges are reused within their size class,
+/// so compaction recovers only what other classes leave idle; rewriting every live object's
+/// storage on each full collection cost source-map-wtb 3 s of 27 (TOD-137).
+const COMPACTION_RELEASED_SHARE_DIVISOR: usize = 4;
 
 /// Compact per-object shape, integrity, and property-storage metadata.
 #[derive(Clone, Copy, Debug)]
@@ -56,6 +64,13 @@ impl ValueVec {
         self.auxiliary & SHAPE_MASK
     }
 
+    /// The auxiliary word with its dictionary bit: equal to `auxiliary` exactly when the
+    /// vector is not in dictionary storage, so one comparison with a recorded shape, which
+    /// is never a dictionary's, proves both.
+    pub(crate) const fn exact_auxiliary(self) -> u32 {
+        self.auxiliary
+    }
+
     pub(crate) fn has_inline_property_storage(self) -> bool {
         self.start() as u32 == INLINE_PROPERTY_START
     }
@@ -67,7 +82,9 @@ impl ValueVec {
     }
 
     pub(crate) fn set_auxiliary(&mut self, value: u32) {
-        assert!(value <= SHAPE_MASK, "object shape table exhausted");
+        // The last shape stays unused, so a dictionary vector's exact auxiliary
+        // (`exact_auxiliary`) never equals the all-ones sentinel caches record as "none".
+        assert!(value < SHAPE_MASK, "object shape table exhausted");
         self.auxiliary = (self.auxiliary & DICTIONARY_STORAGE) | value;
     }
 
@@ -140,6 +157,8 @@ impl Default for ValueVec {
 pub(crate) struct ValueArena {
     values: Vec<Value>,
     free: [Vec<u32>; BUCKETS],
+    /// Values held by the ranges on `free`.
+    released_values: usize,
     shape_lengths: Vec<u32>,
     dictionaries: FxHashMap<u32, FxHashMap<u32, Value>>,
     free_dictionaries: Vec<u32>,
@@ -151,6 +170,7 @@ impl Default for ValueArena {
         Self {
             values: vec![],
             free: Default::default(),
+            released_values: 0,
             shape_lengths: vec![0],
             dictionaries: FxHashMap::default(),
             free_dictionaries: Vec::new(),
@@ -165,6 +185,7 @@ impl ValueArena {
         for bucket in &mut self.free {
             bucket.clear();
         }
+        self.released_values = 0;
         self.shape_lengths.truncate(1);
         self.shape_lengths[0] = 0;
         self.dictionaries.clear();
@@ -216,6 +237,19 @@ impl ValueArena {
         }
         // SAFETY: caller provides the initialized-range invariant; every
         // vector range was allocated from `values` and remains reserved.
+        unsafe { *self.values.get_unchecked(vector.start() + index) }
+    }
+
+    /// `get_unchecked` of a vector known to be outside dictionary mode (`exact_auxiliary`
+    /// matched a recorded shape).
+    ///
+    /// # Safety
+    /// As for `get_unchecked`, and the vector is not a dictionary.
+    #[inline(always)]
+    pub(crate) unsafe fn get_flat(&self, vector: ValueVec, index: usize) -> Value {
+        debug_assert!(!vector.has_inline_property_storage() && !vector.is_dictionary());
+        debug_assert!(index < self.len(vector));
+        // SAFETY: as for `get_unchecked`.
         unsafe { *self.values.get_unchecked(vector.start() + index) }
     }
 
@@ -405,11 +439,15 @@ impl ValueArena {
         let capacity = self.capacity(vector);
         if capacity != 0 {
             self.free[Self::bucket(capacity)].push(vector.start & START_MASK);
+            self.released_values += capacity;
         }
     }
 
-    pub(crate) fn has_released_ranges(&self) -> bool {
-        self.free.iter().any(|bucket| !bucket.is_empty())
+    /// Whether released ranges have grown enough that compaction is worth rewriting every
+    /// live object's storage.
+    pub(crate) fn compaction_due(&self) -> bool {
+        self.released_values > 0
+            && self.released_values >= self.values.len() / COMPACTION_RELEASED_SHARE_DIVISOR
     }
 
     pub(crate) fn has_compact_range(&self, vector: ValueVec) -> bool {
@@ -439,6 +477,7 @@ impl ValueArena {
         for bucket in &mut self.free {
             bucket.clear();
         }
+        self.released_values = 0;
     }
 
     pub(crate) fn memory_bytes(&self) -> usize {
@@ -535,6 +574,7 @@ impl ValueArena {
     fn allocate(&mut self, capacity: usize, max_start: usize) -> Option<usize> {
         let bucket = Self::bucket(capacity);
         if let Some(start) = self.free[bucket].pop() {
+            self.released_values -= capacity;
             return Some(start as usize);
         }
         let start = self.values.len();
@@ -628,6 +668,26 @@ mod tests {
         assert_ne!(dictionary_copy.dictionary_id(), source.dictionary_id());
         arena.set(source, 0, Value::number(4.0));
         assert_eq!(arena.get(dictionary_copy, 0).unwrap().as_number(), Some(3.0));
+    }
+
+    #[test]
+    fn compaction_is_due_once_released_ranges_hold_a_share_of_the_arena() {
+        let mut arena = ValueArena::default();
+        arena.register_shape(1, 2);
+        let pair = [Value::number(1.0), Value::number(2.0)];
+        let vectors: Vec<_> = (0..2 * COMPACTION_RELEASED_SHARE_DIVISOR)
+            .map(|_| arena.with_values(1, &pair))
+            .collect();
+        assert!(!arena.compaction_due());
+        arena.release(vectors[0]);
+        assert!(!arena.compaction_due(), "one range of eight stays for reuse");
+        arena.release(vectors[1]);
+        assert!(arena.compaction_due(), "a quarter of the arena is released");
+        // Reusing a released range takes it off the free lists.
+        arena.with_values(1, &pair);
+        assert!(!arena.compaction_due());
+        arena.finish_compaction(arena.stats().0);
+        assert!(!arena.compaction_due());
     }
 
     #[test]

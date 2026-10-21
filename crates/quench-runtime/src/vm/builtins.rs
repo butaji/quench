@@ -597,11 +597,12 @@ const NATIVES: &[Native] = &[
     Native::PromiseAll, Native::PromiseAllKeyed, Native::PromiseRace, Native::PromiseAllSettled, Native::PromiseAllSettledKeyed, Native::PromiseAny,
     Native::PromiseThenableJob,
     Native::PromiseAggregateJob,
-    Native::PromiseAsyncResumeJob, Native::DynamicImport, Native::AsyncFromSyncValue,
+    Native::DynamicImport, Native::AsyncFromSyncValue,
     Native::AsyncFromSyncValueRejected, Native::AsyncGeneratorDelegateFulfilled,
     Native::AsyncGeneratorDelegateRejected,
     Native::WebAssemblyValidate, Native::WebAssemblyCompile, Native::WebAssemblyInstantiate,
     Native::WasmModule, Native::WasmModuleExports, Native::WasmModuleImports,
+    Native::WasmModuleCustomSections,
     Native::WasmInstance, Native::WasmInstanceExportsGetter,
     Native::WasmMemory, Native::WasmMemoryGrow, Native::WasmMemoryBufferGetter,
     Native::WasmTable, Native::WasmTableLengthGetter, Native::WasmTableGrow, Native::WasmTableGet,
@@ -697,28 +698,12 @@ impl<H: Host> Vm<H> {
         self.set_builtin_function_name(symbol, "Symbol")?;
         self.set_builtin_named(program, symbol, "for", Native::SymbolFor)?;
         self.set_builtin_named(program, symbol, "keyFor", Native::SymbolKeyFor)?;
-        for name in [
-            "asyncDispose",
-            "asyncIterator",
-            "dispose",
-            "hasInstance",
-            "isConcatSpreadable",
-            "iterator",
-            "match",
-            "matchAll",
-            "metadata",
-            "replace",
-            "search",
-            "species",
-            "split",
-            "toPrimitive",
-            "toStringTag",
-            "unscopables",
-        ] {
+        for well_known in WellKnownSymbol::ALL {
+            let name = well_known.name();
             let value = self
                 .heap
                 .alloc(Cell::Symbol(crate::heap::SymbolData::public(Some(format!("Symbol.{name}").into()))));
-            self.well_known_symbols.insert(name.into(), value);
+            self.well_known_symbols.insert(well_known, value);
             self.set_named_constant(program, symbol, name, value)?;
         }
         self.install_typed_array_iterator_symbol(program)?;
@@ -727,7 +712,7 @@ impl<H: Host> Vm<H> {
         self.realm.intrinsics.builtin_prototypes.insert((self.realm.globals, Native::Symbol), symbol_prototype);
         let symbol_to_primitive = self.native_value(Native::SymbolToPrimitive);
         self.set_builtin_function_name(symbol_to_primitive, "[Symbol.toPrimitive]")?;
-        let to_primitive = self.well_known_symbols["toPrimitive"];
+        let to_primitive = self.well_known_symbols[WellKnownSymbol::ToPrimitive];
         self.set_symbol_property(symbol_prototype, to_primitive, symbol_to_primitive)?;
         self.set_property_attributes(
             symbol_prototype,
@@ -741,8 +726,8 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
-        let to_string_tag = self.well_known_symbols["toStringTag"];
-        let symbol_tag = self.heap.alloc(Cell::String(JsString::from_str("Symbol")));
+        let to_string_tag = self.well_known_symbols[WellKnownSymbol::ToStringTag];
+        let symbol_tag = self.heap.alloc_string(JsString::from_str("Symbol"));
         self.set_symbol_property(symbol_prototype, to_string_tag, symbol_tag)?;
         self.set_property_attributes(
             symbol_prototype,
@@ -770,7 +755,7 @@ impl<H: Host> Vm<H> {
             self.regexp_proto,
             self.realm.globals,
         )?;
-        let has_instance_symbol = self.well_known_symbols["hasInstance"];
+        let has_instance_symbol = self.well_known_symbols[WellKnownSymbol::HasInstance];
         let has_instance = self.native_value(Native::FunctionPrototypeHasInstance);
         self.set_builtin_function_name(has_instance, "[Symbol.hasInstance]")?;
         self.set_symbol_property(self.function_proto, has_instance_symbol, has_instance)?;
@@ -802,7 +787,7 @@ impl<H: Host> Vm<H> {
         let date_prototype = self.get_property(program, date, prototype_atom)?;
         let date_to_primitive = self.native_value(Native::DateToPrimitive);
         self.set_builtin_function_name(date_to_primitive, "[Symbol.toPrimitive]")?;
-        if let Some(symbol) = self.well_known_symbols.get("toPrimitive").copied() {
+        if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::ToPrimitive) {
             self.set_symbol_property(date_prototype, symbol, date_to_primitive)?;
             self.set_property_attributes(
                 date_prototype,
@@ -886,9 +871,19 @@ impl<H: Host> Vm<H> {
         // it, so it is a lazy data property built on first use.
         let initializer = self.native_with_env(Native::TemporalInitialize, Value::NULL);
         let atom = self.intern_atom("Temporal");
-        let key = self.heap.alloc(Cell::String(self.atom_value(atom)));
+        let key = self.heap.alloc_string(self.atom_value(atom));
         self.with_call_roots([initializer, key], |vm| {
-            vm.define_lazy_data_properties(program, vm.realm.globals, &[(key, false)], false, initializer)
+            vm.define_lazy_data_properties(
+                program,
+                vm.realm.globals,
+                &[super::lazy_data_property::LazyMember {
+                    key,
+                    enumerable: false,
+                    redefined: false,
+                }],
+                false,
+                initializer,
+            )
         })?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_temporal");
@@ -898,11 +893,9 @@ impl<H: Host> Vm<H> {
         self.object_proto = self
             .heap
             .alloc(Cell::Object(Self::empty_object(Value::NULL)));
-        self.function_proto = self.heap.alloc(Cell::Function {
-            object: Box::new(crate::heap::FunctionObject {
-                object: Self::empty_object(self.object_proto),
-                realm: self.realm.globals,
-            }),
+        self.function_proto = self.heap.alloc_function(FunctionRecord {
+            object: Self::empty_object(self.object_proto),
+            realm: self.realm.globals,
             kind: FunctionKind::Native(Native::FunctionPrototype),
             env: Value::NULL,
         });
@@ -998,10 +991,9 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         let symbol = self
             .well_known_symbols
-            .get("toStringTag")
-            .copied()
+            .get(WellKnownSymbol::ToStringTag)
             .ok_or_else(|| JsError("Symbol.toStringTag is not initialized".into()))?;
-        let value = self.heap.alloc(Cell::String(tag.into()));
+        let value = self.heap.alloc_string(tag.into());
         self.set_symbol_property(object, symbol, value)?;
         self.set_property_attributes(
             object,
@@ -1242,7 +1234,7 @@ impl<H: Host> Vm<H> {
         let atom = self.intern_atom("name");
         let current = self.own_property(function, atom);
         if current.is_some_and(|value| {
-            !matches!(self.heap.get(value), Some(Cell::String(text)) if text.units().is_empty())
+            !self.heap.string(value).is_some_and(|text| text.units().is_empty())
         }) {
             return Ok(());
         }
@@ -1276,7 +1268,7 @@ impl<H: Host> Vm<H> {
         // A builtin's name usually spells the key it is installed under, whose interned
         // string the name then shares instead of copying the text for every function.
         let name_atom = self.intern_atom(name);
-        let value = self.heap.alloc(Cell::String(self.atom_value(name_atom)));
+        let value = self.heap.alloc_string(self.atom_value(name_atom));
         self.set_property(function, atom, value)?;
         self.set_property_attributes(
             function,

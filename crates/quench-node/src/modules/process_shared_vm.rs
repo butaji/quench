@@ -1107,16 +1107,39 @@ fn throw_os_process_error(
     error: std::io::Error,
 ) -> Result<RootedError, RootedError> {
     let errno = error.raw_os_error().unwrap_or(libc::EINVAL);
-    let code = errno_name(errno);
-    let message = unsafe {
+    let error = errno_exception(context, errno, syscall, None)?;
+    Ok(context.throw(error))
+}
+
+/// Node's C++ `ErrnoException`: `"<code>, <strerror>"`, then ` '<path>'` when a path is
+/// given, with `errno` (positive), `code`, `path` and `syscall` set in that order.
+pub(crate) fn errno_exception(
+    context: &mut NativeContext<'_, NodeHost>,
+    errno: i32,
+    syscall: &str,
+    path: Option<&str>,
+) -> Result<RootId, RootedError> {
+    let code = super::util_system_error_shared_vm::system_error_code(-f64::from(errno))
+        .unwrap_or("UNKNOWN");
+    // libc's message is copied before any other host operation can overwrite it.
+    let description = unsafe {
         std::ffi::CStr::from_ptr(libc::strerror(errno))
             .to_string_lossy()
             .into_owned()
     };
-    let error = context.error_rooted(&format!("{code}, {message}"))?;
+    let message = match path {
+        Some(path) => format!("{code}, {description} '{path}'"),
+        None => format!("{code}, {description}"),
+    };
+    let error = context.error_rooted(&message)?;
+    let errno = context.number(f64::from(errno));
+    install(context, error, "errno", errno)?;
     set_text(context, error, "code", code)?;
+    if let Some(path) = path {
+        set_text(context, error, "path", path)?;
+    }
     set_text(context, error, "syscall", syscall)?;
-    Ok(context.throw(error))
+    Ok(error)
 }
 
 fn groups_type_error(
@@ -3530,7 +3553,7 @@ pub(crate) fn initialize_warning_policy(context: &mut NativeContext<'_, NodeHost
         // Node's listener, or, unless a script can reach Node's own to compare, a listener of
         // its name and length that loads Node's on the first warning: most runs never warn.
         let callback = if options.enabled("--expose-internals") {
-            warning_listener(context, process, &[])?
+            warning_export(context, "onWarning")?
         } else {
             let factory = context.evaluate_script_rooted(
                 "(load) => function onWarning(warning) { return load()(warning); }",
@@ -3665,17 +3688,17 @@ const ENV_PROXY_SOURCE: &str = r#"(target, setEnv, deleteEnv) => new Proxy(targe
   }
 })"#;
 
-/// Defines `process.emitWarning` as Node's.
+/// Defines `process.emitWarning` (`process_warning_shared_vm`).
 pub(crate) fn initialize_emit_warning(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     let process = context.host_mut().shared_state().borrow().process_module.ok_or_else(|| RootedError::host("process is not initialized"))?;
-    let emit_warning = warning_export(context, "emitWarning")?;
+    let emit_warning = crate::modules::process_warning_shared_vm::emit_warning(context)?;
     let key = context.string_rooted("emitWarning");
     context.define_data_property_rooted(process, key, emit_warning, true, true, true)?;
     Ok(context.undefined())
 }
 
-/// The Console module owns initialization; the SDK owns this public callback.
-/// Node's `onWarning`.
+/// The default `warning` listener's implementation: Node's `onWarning`
+/// (`process_warning_shared_vm`).
 pub(crate) fn warning_listener(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
-    warning_export(context, "onWarning")
+    crate::modules::process_warning_shared_vm::on_warning(context)
 }

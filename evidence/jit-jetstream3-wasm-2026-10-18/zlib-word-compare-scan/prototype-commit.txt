@@ -1,0 +1,10 @@
+commit ab37930e6c1fa8cb22b8458197ca9f9afdd4e6da
+Author:     Vitaly Baum <vitaly.baum@gmail.com>
+AuthorDate: Sun Oct 18 21:31:47 2026 +0000
+Commit:     Vitaly Baum <vitaly.baum@gmail.com>
+CommitDate: Sun Oct 18 21:31:47 2026 +0000
+
+    feat(wasm): fuse zlib longest-match compare scan
+
+ crates/quench-runtime/src/vm/compiled.rs | 173 ++++++++++++++++++++++++++++++-
+ 1 file changed, 172 insertions(+), 1 deletion(-)

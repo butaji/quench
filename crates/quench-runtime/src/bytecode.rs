@@ -7,7 +7,7 @@ pub(crate) const LEXICAL_THIS_BINDING: &str = "\0quench:lexical-this";
 /// The `Unary` operator a template literal substitution compiles to: ToString (ECMA-262
 /// 13.15.5.1 step 5), which no source operator spells. It extends oxc's operator numbering.
 pub(crate) const UNARY_TO_STRING: u32 = oxc_ast::ast::UnaryOperator::Delete as u32 + 1;
-/// The names `typeof` yields (ECMA-262 13.5.3.1), indexed as `Vm::typeof_index` classifies
+/// The names `typeof` yields (ECMA-262 13.5.3.1), indexed as `typeof_name_index` (vm/coercion.rs) classifies
 /// values.
 pub(crate) const TYPEOF_NAMES: [&str; 8] =
     ["undefined", "object", "boolean", "number", "string", "bigint", "symbol", "function"];
@@ -53,15 +53,15 @@ pub(crate) const SELF_BINDING_MARKER: &str = "\0quench:self-binding:";
 /// same-named binding of its function: `{BLOCK_BINDING_MARKER}{name}`.
 pub(crate) const BLOCK_BINDING_MARKER: &str = "\0quench:block-binding:";
 
-/// Whether a local named `name` must live in its function's environment whatever its
-/// captures: other hidden bindings (lexical `this`, `new.target`, home objects, private
-/// names, ...) are reached by name, not only through capture slots. A renamed block binding
-/// is reached only through its slot.
 /// The name a hidden renamed block binding has in source; other names are unchanged.
 pub(crate) fn source_binding_name(name: &str) -> &str {
     name.strip_prefix(BLOCK_BINDING_MARKER).unwrap_or(name)
 }
 
+/// Whether a local named `name` must live in its function's environment whatever its
+/// captures: other hidden bindings (lexical `this`, `new.target`, home objects, private
+/// names, ...) are reached by name, not only through capture slots. A renamed block binding
+/// is reached only through its slot.
 pub(crate) fn local_name_requires_environment(name: &str) -> bool {
     name.starts_with('\0') && !name.starts_with(BLOCK_BINDING_MARKER)
 }
@@ -103,7 +103,7 @@ pub enum Constant {
     Number(f64),
     String(String),
     StringUnits(Vec<u16>),
-    BigInt(String),
+    BigInt(num_bigint::BigInt),
     WasmBits64(u64),
     WasmV128([u8; crate::wasm::V128_BYTES]),
     Boolean(bool),
@@ -315,6 +315,7 @@ pub(crate) enum ImmediateRole {
     WasmF64UnaryOperator,
     TemplateSiteIndex,
     RegExpLiteralSiteIndex,
+    LiteralTemplateIndex,
     JumpTarget,
     BranchTableCases,
     MethodSiteIndex,
@@ -361,6 +362,19 @@ pub(crate) enum FieldLookup {
         cache_site: u16,
     },
     Site(usize),
+}
+
+impl Op {
+    /// Whether an instruction of this op with field `b` names an atom by its immediate: an
+    /// atom index, or a field lookup by name (`FieldLookup::Atom`; through a nested field
+    /// site it names the site).
+    pub(crate) fn immediate_names_atom(self, b: u16) -> bool {
+        match self.immediate_role() {
+            ImmediateRole::AtomIndex => true,
+            ImmediateRole::FieldLookup => b != FieldBase::NESTED,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -459,6 +473,15 @@ impl ImmediateLayout {
             } else {
                 0
             })
+    }
+
+    /// A lane `Call` record whose result register is dead after the call (`derive_lane_view`).
+    /// Lane call records carry no eval flags (`lane_call_fits`), so the flag reuses the
+    /// direct-eval bit; a callee whose result is unobservable may skip building it.
+    pub(crate) const LANE_CALL_RESULT_UNUSED_FLAG: u32 = Self::DIRECT_EVAL_FLAG;
+
+    pub(crate) const fn lane_call_result_used(imm: u32) -> bool {
+        imm & Self::LANE_CALL_RESULT_UNUSED_FLAG == 0
     }
 
     pub(crate) const fn direct_eval(imm: u32) -> bool {
@@ -634,6 +657,7 @@ opcodes!(
     MakeClosure => CALL_EFFECT; layout Scalar; meaning ClosureFunctionIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
     MakeArray => CALL_EFFECT; layout Scalar; meaning ArrayLength, @ Register, @ fields(ResultRegister, Unused, Unused),
     MakeConstArray => CALL_EFFECT; layout Scalar; meaning ConstantIndex, @ Register, @ fields(ResultRegister, ElementCount, Unused),
+    MakeLiteralTemplate => CALL_EFFECT; layout Scalar; meaning LiteralTemplateIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
     MakeObject => CALL_EFFECT; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Unused, Unused),
     MakeObject2 => CALL_EFFECT; layout Scalar; meaning ObjectSiteIndex, @ Returnable, @ fields(ResultRegister, Register, Register),
     MakeObjectLiteral => CALL_EFFECT; layout Scalar; meaning ObjectSiteIndex, @ Returnable, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
@@ -691,7 +715,7 @@ opcodes!(
     InitializeThis => CALL_EFFECT.union(Effect::CONTROL); layout Scalar; meaning Unused, @ Register, @ fields(Register, Unused, Unused),
     CacheTemplateObject => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning TemplateSiteIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
     LoadCachedTemplateObject => Effect::READS_HEAP; layout Scalar; meaning TemplateSiteIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
-    DefineField => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Register, Unused),
+    DefineField => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Register, CacheSiteIndex),
     ValidateClassHeritage => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(Register, Unused, Unused),
     SetFieldStrict => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Register, CacheSiteIndex),
     SetThisFieldStrict => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Unused, CacheSiteIndex),
@@ -880,6 +904,12 @@ opcodes!(
     WasmAtomicAccess => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmAtomicOperator, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
     WasmAtomicFence => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning Unused, @ Register, @ fields(Unused, Unused, Unused),
     SetFunctionDebugName => Effect::WRITES_HEAP; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Unused, Unused),
+    // `arguments.length` and `arguments[key]` of the `arguments` binding in the local slot:
+    // an unmaterialized binding answers from the values its activation kept
+    // (`Function::forwards_arguments_only`); any other value is read as `GetField` and
+    // `GetIndex` read it.
+    ArgumentsLength => READ_THROW; layout Scalar; meaning LocalSlot, @ Register, @ fields(ResultRegister, Unused, Unused),
+    ArgumentGet => READ_THROW; layout Scalar; meaning LocalSlot, @ Register, @ fields(ResultRegister, Register, Unused),
 
 );
 
@@ -1049,6 +1079,18 @@ pub(crate) struct DeclaredAtomSets {
 }
 
 /// Whether a local slot's name is among `global_var_atoms` and `global_lexical_atoms`.
+/// What a root environment slot holds for the reads through it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RootSlotRule {
+    /// The binding itself.
+    Binding,
+    /// A Script's global lexical binding: the slot itself outside a dynamic script's
+    /// evaluation, the realm's record during one.
+    GlobalLexical,
+    /// A global var or module import, which reads go through.
+    Projection,
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct SlotDeclaration {
     pub(crate) global_var: bool,
@@ -1095,7 +1137,7 @@ pub struct Function {
     pub params: u16,
     pub length: u16,
     pub parameter_end_pc: u32,
-    pub parameter_atoms: crate::heap::ThinBoxSlice<Atom>,
+    pub(crate) parameter_atoms: crate::heap::ThinBoxSlice<Atom>,
     pub rest: bool,
     pub is_async: bool,
     pub is_generator: bool,
@@ -1112,9 +1154,9 @@ pub struct Function {
     pub simple_parameters: bool,
     pub strict: bool,
     pub locals: u16,
-    pub local_atoms: crate::heap::ThinBoxSlice<Atom>,
+    pub(crate) local_atoms: crate::heap::ThinBoxSlice<Atom>,
     /// Names visible through this function's captured declarative environment.
-    pub environment_atoms: crate::heap::ThinBoxSlice<Atom>,
+    pub(crate) environment_atoms: crate::heap::ThinBoxSlice<Atom>,
     /// Source local slots owned by a closure environment when this activation
     /// escapes. `None` retains legacy whole-frame promotion; `Some` is the
     /// selective layout, including an empty set for closure-only activations.
@@ -1124,7 +1166,7 @@ pub struct Function {
     /// The function was created while an enclosing `with` scope was active,
     /// so unresolved names in descendants can still observe its outer locals.
     pub(crate) inherited_with_scope: bool,
-    pub lexical_atoms: crate::heap::ThinBoxSlice<Atom>,
+    pub(crate) lexical_atoms: crate::heap::ThinBoxSlice<Atom>,
     /// What a Script or eval body declares in the global scope; `None` for every other
     /// function, which declares nothing there.
     pub global_declarations: Option<Box<GlobalDeclarations>>,
@@ -1165,6 +1207,114 @@ pub struct Function {
     pub(crate) initial_register: InitialRegister,
 }
 
+/// The facts about a function that are read before its first call: when its closure is
+/// made, by `IsConstructor` and brand checks, by `Function.prototype.toString`, and by an
+/// enclosing activation that asks whether a closure it makes is an arrow. A projection of
+/// the compiled record (`FunctionHeader::of`), so a slot answers them without its body.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct FunctionHeader {
+    pub(crate) parent: Option<u32>,
+    pub(crate) name: Option<Atom>,
+    pub(crate) inferred_name: Option<Atom>,
+    pub(crate) source_span: Option<SourceSpan>,
+    pub(crate) length: u16,
+    pub(crate) dispatch: DispatchClass,
+    pub(crate) is_arrow: bool,
+    pub(crate) is_async: bool,
+    pub(crate) is_generator: bool,
+    pub(crate) is_class_constructor: bool,
+    pub(crate) constructible: bool,
+    pub(crate) inherited_with_scope: bool,
+}
+
+impl FunctionHeader {
+    pub(crate) fn of(function: &Function) -> Self {
+        Self {
+            parent: function.parent,
+            name: function.name,
+            inferred_name: function.inferred_name,
+            source_span: function.source_span,
+            length: function.length,
+            dispatch: function.dispatch,
+            is_arrow: function.is_arrow,
+            is_async: function.is_async,
+            is_generator: function.is_generator,
+            is_class_constructor: function.is_class_constructor,
+            constructible: function.constructible,
+            inherited_with_scope: function.inherited_with_scope,
+        }
+    }
+}
+
+/// One entry of a program's function table: the header, always present, and the compiled
+/// record, written once. Reading the record through `Deref` requires that it was compiled.
+/// Clones of a program share its records (installing an entry clones it into the VM); a
+/// change through `DerefMut` copies a shared record first.
+#[derive(Clone, Debug)]
+pub struct FunctionSlot {
+    header: FunctionHeader,
+    record: std::cell::OnceCell<std::rc::Rc<Function>>,
+}
+
+impl FunctionSlot {
+    pub(crate) fn compiled(function: Function) -> Self {
+        Self {
+            header: FunctionHeader::of(&function),
+            record: std::cell::OnceCell::from(std::rc::Rc::new(function)),
+        }
+    }
+
+    /// A function whose record its program compiles again on the function's first read.
+    pub(crate) fn released(header: FunctionHeader) -> Self {
+        Self {
+            header,
+            record: std::cell::OnceCell::new(),
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn header(&self) -> &FunctionHeader {
+        &self.header
+    }
+
+    /// The compiled record, when it exists.
+    #[inline(always)]
+    pub(crate) fn record(&self) -> Option<&Function> {
+        self.record.get().map(|function| &**function)
+    }
+
+    /// Drops the record, which its program compiles again on the function's next read.
+    fn release(&mut self) {
+        self.record.take();
+    }
+}
+
+impl std::ops::Deref for FunctionSlot {
+    type Target = Function;
+
+    #[inline(always)]
+    fn deref(&self) -> &Function {
+        self.record()
+            .expect("a function's record is read only once it is compiled")
+    }
+}
+
+impl std::ops::DerefMut for FunctionSlot {
+    fn deref_mut(&mut self) -> &mut Function {
+        std::rc::Rc::make_mut(
+            self.record
+                .get_mut()
+                .expect("a function's record is changed only once it is compiled"),
+        )
+    }
+}
+
+impl From<Function> for FunctionSlot {
+    fn from(function: Function) -> Self {
+        Self::compiled(function)
+    }
+}
+
 /// Call-setup facts derived once per function from its static layout, so an activation reads
 /// one cached word instead of re-testing each flag.
 #[derive(Clone, Copy, Debug)]
@@ -1194,6 +1344,13 @@ pub(crate) struct CallPlan {
     /// reflection, if any, reads its parameter registers or the forwarded values. A lane
     /// may run such a body without a frame.
     pub(crate) registers_only: bool,
+    /// The activation's state is its registers, its frame locals and the environment its
+    /// closures capture, which it may make on entry: an ordinary body but for the closures
+    /// it makes, with no `arguments`, self binding, handler, binding site, environment clone,
+    /// dynamic scope access or superinstruction, whose every local access is a plain or
+    /// environment load, store or dead-zone opening of a selectively captured layout. A lane
+    /// may run such a body without a frame (`CallEntry::Environment`).
+    pub(crate) environment_activation: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1224,16 +1381,17 @@ impl RegisterRoots {
         Self { covered, masks: std::cell::OnceCell::new() }
     }
 
-    /// The bytes of the masks derived so far (`QUENCH_MEMORY`).
-    #[cfg(feature = "profile-memory")]
-    pub(crate) fn bytes(&self) -> usize {
-        self.masks.get().map_or(0, |masks| size_of_val(&**masks))
-    }
-
     pub(crate) fn covered(&self) -> bool {
         self.covered
     }
+
+    /// The masks a collection derived so far; none until one finds the function running.
+    #[cfg(feature = "profile-memory")]
+    pub(crate) fn capacity_bytes(&self) -> usize {
+        self.masks.get().map_or(0, |masks| size_of_val::<[u64]>(masks))
+    }
 }
+
 
 /// A function's source positions in increasing pc order, each delta-coded against the one
 /// before it as LEB128 varints: the pc advance, the line change (zigzag), then the column,
@@ -1574,14 +1732,18 @@ impl Function {
     /// its own name lookups (`activation_binding_reads`) or by an arrow function it makes,
     /// which inherits them. Any other closure has its own. `functions` is the owning
     /// program's table.
-    pub(crate) fn activation_bindings_observable(&self, atoms: &AtomTable, functions: &[Function]) -> bool {
+    pub(crate) fn activation_bindings_observable(
+        &self,
+        atoms: &AtomTable,
+        functions: &[FunctionSlot],
+    ) -> bool {
         *self.activation_bindings.get_or_init(|| {
             self.activation_binding_reads(atoms)
                 || self.instructions().any(|instruction| {
                     instruction.op() == Op::MakeClosure
                         && functions
                             .get(instruction.closure_function_index() as usize)
-                            .is_none_or(|closure| closure.is_arrow)
+                            .is_none_or(|closure| closure.header().is_arrow)
                 })
         })
     }
@@ -1714,6 +1876,9 @@ impl Function {
                 && !self.activation_binding_reads(atoms)
                 // A plain activation makes no closure, whichever bindings it would see.
                 && !self.instructions().any(|instruction| instruction.op() == Op::MakeClosure);
+            // A field initializer is an ordinary method call on the instance whose
+            // activation keeps its implicit bindings (`activation_binding_reads`); only the
+            // derived instance initializer, which `super()` runs, is entered natively.
             let in_loop = !self.is_async
                 && !self.is_generator
                 && !self.is_class_constructor
@@ -1732,7 +1897,40 @@ impl Function {
                         .addressed_local_slots()
                         .all(|slot| Some(slot) == self.arguments_slot)
                 });
+            let environment_activation = in_loop
+                && self.parent.is_some()
+                && !self.is_arrow
+                && !self.is_class_constructor
+                && !self.rest
+                && self.simple_parameters
+                && self.self_binding_slot.is_none()
+                && !self.inherited_with_scope
+                && self.local_registers.is_empty()
+                && self.arguments_slot.is_none()
+                && self.handlers.is_empty()
+                && self.binding_sites.is_empty()
+                && self.selective_capture_slots.is_some()
+                && self.initial_register == InitialRegister::Undefined
+                && !self.has_dynamic_scope_access()
+                && !self.activation_binding_reads(atoms)
+                && self.instructions().all(|instruction| {
+                    let op = instruction.op();
+                    op.immediate_role() != ImmediateRole::SuperinstructionIndex
+                        && op != Op::CloneEnv
+                        && (instruction.addressed_local_slots().next().is_none()
+                            || matches!(
+                                op,
+                                Op::LoadLocal
+                                    | Op::LoadLocalPlain
+                                    | Op::LoadEnvLocal
+                                    | Op::StoreLocal
+                                    | Op::StoreLocalPlain
+                                    | Op::StoreEnvLocal
+                                    | Op::InitializeTdz
+                            ))
+                });
             CallPlan {
+                environment_activation,
                 plain: ordinary && self.arguments_slot.is_none(),
                 in_loop,
                 legacy_reflection,
@@ -1790,6 +1988,53 @@ impl Function {
             }
     }
 
+    /// The method a constructor body forwards its construction to, when the body is exactly
+    /// `this.<method>.apply(this, arguments)` and the return of `undefined` (Prototype's
+    /// `Class.create` constructor): its seven records read `this.<method>`, read `apply` from
+    /// it, load `this` and the forwarded `arguments` binding into the call window, make the
+    /// forwarding call, then return `undefined`. No handler covers them.
+    pub(crate) fn forwarded_this_method(&self, constants: &[Constant]) -> Option<ForwardedThisMethod> {
+        if !self.handlers.is_empty() {
+            return None;
+        }
+        let arguments_slot = self.arguments_slot?;
+        let records = self.instructions().collect::<SmallVec<[WideInstruction; 8]>>();
+        let [method, apply, this, arguments, call, undefined, completion] = records.as_slice() else {
+            return None;
+        };
+        let window = ImmediateLayout::call_window_base(call.imm());
+        let plain_result = |record: &WideInstruction| record.result_flags() == 0;
+        let shaped = method.op() == Op::GetField
+            && method.b() == FieldBase::THIS.0
+            && plain_result(method)
+            && apply.op() == Op::GetField
+            && apply.b() == method.result_register()
+            && plain_result(apply)
+            && this.op() == Op::LoadThis
+            && plain_result(this)
+            && this.result_register() == window
+            && arguments.op() == Op::LoadLocalPlain
+            && plain_result(arguments)
+            && arguments.result_register() == window + 1
+            && arguments.local_slot() == usize::from(arguments_slot)
+            && call.op() == Op::CallForwardingArguments
+            && call.b() == apply.result_register()
+            && call.c() == method.result_register()
+            && ImmediateLayout::argument_count(call.imm()) == FORWARDED_APPLY_ARGUMENTS
+            && plain_result(call)
+            && undefined.op() == Op::LoadConst
+            && plain_result(undefined)
+            && matches!(constants.get(undefined.constant_index()), Some(Constant::Undefined))
+            && completion.op() == Op::Return
+            && completion.register_a() == undefined.result_register();
+        shaped.then(|| ForwardedThisMethod {
+            method: (method.imm(), method.c()),
+            apply: (apply.imm(), apply.c()),
+            call_pc: FORWARDED_THIS_METHOD_CALL,
+            call_result: call.a(),
+        })
+    }
+
     /// The `SetThisField` records a body opens with (`only_initializes_this_fields`), in their
     /// packed form: each holds its value register in `a`, its cache site in `c` and its atom
     /// in `imm`.
@@ -1800,10 +2045,12 @@ impl Function {
     }
 
     /// Whether every read of the `arguments` binding loads it into the last argument of the
-    /// `CallForwardingArguments` right after, and nothing else can reach the binding: no
+    /// `CallForwardingArguments` right after, or reads its length or an element
+    /// (`ArgumentsLength`, `ArgumentGet`), and nothing else can reach the binding: no
     /// closure, environment clone, dynamic scope access or promoted register, and no
     /// suspension. An object it later materializes must equal one made on entry: unmapped,
-    /// or mapped onto no parameters.
+    /// or mapped onto no parameters. The activation then keeps the values it was passed, from
+    /// which those reads are answered.
     pub(crate) fn forwards_arguments_only(&self) -> bool {
         let Some(slot) = self.arguments_slot else {
             return false;
@@ -1834,7 +2081,9 @@ impl Function {
                         next.op() == Op::CallForwardingArguments
                             && next.call_window().last() == Some(instruction.result_register())
                     });
-            if !feeds_forwarding_call {
+            let reads_kept_values =
+                matches!(instruction.op(), Op::ArgumentsLength | Op::ArgumentGet);
+            if !feeds_forwarding_call && !reads_kept_values {
                 return false;
             }
             forwarded = true;
@@ -1871,7 +2120,7 @@ impl Function {
     /// names, so a by-name load in it can only denote a global binding.
     pub(crate) fn names_resolve_statically(
         &self,
-        functions: &[Function],
+        functions: &[FunctionSlot],
         atoms: &AtomTable,
     ) -> bool {
         *self.static_name_scope.get_or_init(|| {
@@ -2050,6 +2299,19 @@ pub(crate) struct ObjectSite {
     pub atoms: SmallVec<[Atom; INLINE_OBJECT_SITE_ATOMS]>,
 }
 
+/// One step of a nested literal of constants (`MakeLiteralTemplate`), run in order over a
+/// stack of values: a constant pushes its value, and an array or an object replaces the
+/// element or property values on top of the stack with a fresh container of them. A
+/// template's steps leave exactly one value, the literal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LiteralStep {
+    Constant(u32),
+    /// An array of the given number of elements.
+    Array(u32),
+    /// An object of an object site's keys, one value each.
+    Object(u32),
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct RegExpLiteralSite {
     pub pattern_constant: u32,
@@ -2089,6 +2351,24 @@ pub(crate) struct Handler {
     pub return_target: Option<u32>,
     pub return_slot: Option<u16>,
     pub with_depth: u16,
+}
+
+/// The argument count of a forwarding `apply` call: the receiver and `arguments`.
+pub(crate) const FORWARDED_APPLY_ARGUMENTS: u16 = 2;
+
+/// The record index of a `ForwardedThisMethod` body's forwarding call: after the reads of
+/// the method and `apply` and the loads of `this` and `arguments`.
+pub(crate) const FORWARDED_THIS_METHOD_CALL: u32 = 4;
+
+/// A constructor body that forwards its construction to a method of `this`
+/// (`Function::forwarded_this_method`): the atom and cache site of each read, and the
+/// forwarding call's record index and result register.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ForwardedThisMethod {
+    pub(crate) method: (Atom, u16),
+    pub(crate) apply: (Atom, u16),
+    pub(crate) call_pc: u32,
+    pub(crate) call_result: u16,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2409,14 +2689,32 @@ pub(crate) struct ProgramSource {
     pub(crate) base: u32,
     pub(crate) line_offset: u32,
     pub(crate) column_offset: u32,
+    /// `source_line_starts(text)`, indexed on the first line read: error source positions
+    /// read a line per throw, which a scan from the top would make linear in the source.
+    pub(crate) line_starts: std::cell::OnceCell<Box<[u32]>>,
 }
 
 /// Starts of JavaScript source lines, including an empty line after a final terminator.
 pub(crate) fn source_line_starts(text: &str) -> impl Iterator<Item = usize> + '_ {
-    std::iter::once(0).chain(text.char_indices().filter_map(|(index, character)| {
-        let crlf_prefix = character == '\r' && text.as_bytes().get(index + 1) == Some(&b'\n');
-        (matches!(character, '\n' | '\r' | '\u{2028}' | '\u{2029}') && !crlf_prefix)
-            .then_some(index + character.len_utf8())
+    const LINE_SEPARATOR: &[u8] = "\u{2028}".as_bytes();
+    const PARAGRAPH_SEPARATOR: &[u8] = "\u{2029}".as_bytes();
+    // Scanned as bytes: every terminator but LS and PS is ASCII, and those two share their
+    // UTF-8 lead byte, so no other byte needs decoding.
+    let bytes = text.as_bytes();
+    std::iter::once(0).chain(bytes.iter().enumerate().filter_map(move |(index, &byte)| {
+        let width = match byte {
+            b'\n' => 1,
+            // CR LF ends one line, after the LF.
+            b'\r' if bytes.get(index + 1) != Some(&b'\n') => 1,
+            lead if lead == LINE_SEPARATOR[0]
+                && (bytes[index..].starts_with(LINE_SEPARATOR)
+                    || bytes[index..].starts_with(PARAGRAPH_SEPARATOR)) =>
+            {
+                LINE_SEPARATOR.len()
+            }
+            _ => return None,
+        };
+        Some(index + width)
     }))
 }
 
@@ -2435,10 +2733,14 @@ impl ProgramSource {
         } else {
             (0, 0)
         };
-        let compiled_line = line.checked_add(line_offset)?.checked_sub(1)?;
-        let mut starts = source_line_starts(&self.text);
-        let start = starts.nth(compiled_line as usize)?;
-        let end = starts.next().unwrap_or(self.text.len());
+        let compiled_line = line.checked_add(line_offset)?.checked_sub(1)? as usize;
+        let starts = self.line_starts.get_or_init(|| {
+            source_line_starts(&self.text)
+                .map(|start| u32::try_from(start).unwrap_or(u32::MAX))
+                .collect()
+        });
+        let start = *starts.get(compiled_line)? as usize;
+        let end = starts.get(compiled_line + 1).map_or(self.text.len(), |&end| end as usize);
         let text = self.text.get(start..end)?
             .trim_end_matches(['\r', '\n', '\u{2028}', '\u{2029}']);
         if line != 1 {
@@ -2466,14 +2768,76 @@ pub struct ResidualProgram {
     pub(crate) source: Option<ProgramSource>,
     pub(crate) atoms: AtomTable,
     pub(crate) constants: Vec<Constant>,
-    pub(crate) functions: Vec<Function>,
+    pub(crate) functions: Vec<FunctionSlot>,
     pub(crate) cache_sites: u16,
     pub(crate) method_sites: Vec<MethodSite>,
     pub(crate) method_arguments: Vec<Register>,
     pub(crate) field_sites: Vec<FieldSite>,
     pub(crate) object_sites: Vec<ObjectSite>,
     pub(crate) regexp_literal_sites: Vec<RegExpLiteralSite>,
+    pub(crate) literal_templates: Vec<Box<[LiteralStep]>>,
     pub(crate) superinstructions: Vec<Superinstruction>,
+    /// How its functions can be compiled again from source, when they can.
+    pub(crate) replay: Option<std::rc::Rc<crate::compile::replay::ProgramReplay>>,
+    /// The records a decoded program keeps encoded until their functions' first read.
+    pub(crate) encoded_records: Option<std::rc::Rc<EncodedRecords>>,
+    /// Whether the program is known to be valid (`ValidationProof`).
+    pub(crate) validated: ValidationProof,
+}
+
+/// The encoded records of a decoded program's deferred functions (`binary::decode_program`):
+/// each decodes on its function's first read, as a released record compiles again. A program
+/// loaded from the compile cache runs a small part of its functions, and decoding every
+/// record had been most of its load.
+pub(crate) struct EncodedRecords {
+    /// The program's whole encoding, as the host handed it over: its records stay in place,
+    /// in pages that a mapped file keeps out of memory until a record is read.
+    pub(crate) bytes: KeptBytes,
+    /// A compact encoding's atom ids, by table position (`binary::BinaryReader`).
+    pub(crate) atoms: Option<std::rc::Rc<[u32]>>,
+    /// Per function, its record in `bytes`, when it is deferred.
+    pub(crate) ranges: Box<[Option<DeferredRecord>]>,
+}
+
+impl std::fmt::Debug for EncodedRecords {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("EncodedRecords").field("ranges", &self.ranges.len()).finish_non_exhaustive()
+    }
+}
+
+/// Where a deferred record lies in its program's encoding, and its checksum, which decoding
+/// it checks: the load checked only the encoding's body.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct DeferredRecord {
+    pub(crate) start: u32,
+    pub(crate) length: u32,
+    pub(crate) checksum: u64,
+}
+
+/// Bytes a host kept for a compiled program (`Host::kept_compiled_program`), which the program
+/// decoded from them keeps for as long as it lives.
+pub type KeptBytes = std::rc::Rc<dyn AsRef<[u8]>>;
+
+/// That a program is valid without validating it: this build's compiler output, compiled and
+/// validated or decoded from its checksummed form by `Runtime::compile_entry`, which hands it
+/// to its embedder unchanged. A clone, which its owner may change, starts unproven.
+#[derive(Debug, Default)]
+pub(crate) struct ValidationProof(std::cell::Cell<bool>);
+
+impl ValidationProof {
+    pub(crate) fn holds(&self) -> bool {
+        self.0.get()
+    }
+
+    pub(crate) fn establish(&self) {
+        self.0.set(true);
+    }
+}
+
+impl Clone for ValidationProof {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
 }
 
 #[cold]
@@ -2493,6 +2857,69 @@ fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16) 
 }
 
 impl ResidualProgram {
+    /// The record of function `index`, compiled again from source on its first read when
+    /// the program released it.
+    #[inline(always)]
+    pub(crate) fn function(&self, index: usize) -> &Function {
+        let slot = &self.functions[index];
+        match slot.record() {
+            Some(function) => function,
+            None => self.recompile_function(index),
+        }
+    }
+
+    /// `function`, for an index that may lie outside the table.
+    #[inline(always)]
+    pub(crate) fn function_get(&self, index: usize) -> Option<&Function> {
+        (index < self.functions.len()).then(|| self.function(index))
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn recompile_function(&self, index: usize) -> &Function {
+        self.functions[index].record.get_or_init(|| {
+            let deferred = self
+                .encoded_records
+                .as_deref()
+                .and_then(|records| binary::decode_deferred_function(records, index));
+            let function = match deferred {
+                Some(decoded) => decoded.unwrap_or_else(|error| {
+                    panic!("function {index} of {} does not decode: {error}", self.source_name)
+                }),
+                None => crate::compile::replay::recompile(self, index as u32)
+                    .unwrap_or_else(|error| {
+                        panic!("function {index} of {} does not compile again: {error}", self.source_name)
+                    })
+                    .function,
+            };
+            // As `prime_loop_decoding` primes the functions of an installed program.
+            function.decoded.prime_loop(&function.code, &function.wide);
+            std::rc::Rc::new(function)
+        })
+    }
+
+    /// Compiles every released record again.
+    pub(crate) fn compile_released(&self) {
+        for index in 0..self.functions.len() {
+            self.function(index);
+        }
+    }
+
+    /// Drops the record of every function the program can compile again from its source,
+    /// which then compiles on its first read. A program whose source keeps only part of
+    /// its compiled text, as host builtins do, keeps its records.
+    pub(crate) fn release_replayable_records(&mut self) {
+        let Some(replay) = self.replay.clone() else {
+            return;
+        };
+        if self.source.as_ref().is_none_or(|source| source.base != 0) {
+            return;
+        }
+        for &id in replay.replayable() {
+            self.functions[id as usize].release();
+        }
+    }
+
     /// The registers live at `pc` in `function`, when liveness covers it.
     pub(crate) fn register_root_mask(&self, function: u32, pc: usize) -> Option<u64> {
         self.register_root_masks(function)?.get(pc).copied()
@@ -2501,7 +2928,7 @@ impl ResidualProgram {
     /// `function`'s live register masks by pc, one past its last instruction included, when
     /// liveness covers it.
     pub(crate) fn register_root_masks(&self, function: u32) -> Option<&[u64]> {
-        let function = self.functions.get(function as usize)?;
+        let function = self.function_get(function as usize)?;
         if !function.register_roots.covered {
             return None;
         }
@@ -2522,7 +2949,7 @@ impl ResidualProgram {
     }
 
     pub(crate) fn source_position(&self, function: u32, pc: u32) -> Option<SourcePosition> {
-        let position = self.functions.get(function as usize)?.source_positions.at(pc)?;
+        let position = self.function_get(function as usize)?.source_positions.at(pc)?;
         self.adjust_source_position(position)
     }
 
@@ -2542,7 +2969,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 98;
+    pub const FORMAT_VERSION: u8 = 101;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;
@@ -2559,13 +2986,19 @@ impl ResidualProgram {
                 && self.functions.first().is_some_and(|root| root.strict))
     }
 
-    /// The root function's slots project no global var or global lexical binding, so each
-    /// slot of its environment is the binding itself.
-    pub(crate) fn root_slots_are_bindings(&self) -> bool {
-        self.functions.first().is_some_and(|root| {
-            (self.root_variables_are_local() || root.global_var_atoms().is_empty())
-                && (self.kind != ProgramKind::Script || root.global_lexical_atoms().is_empty())
-        })
+    /// What root `slot` of this program holds (`RootSlotRule`), from its declaration.
+    pub(crate) fn root_slot_rule(&self, slot: usize) -> RootSlotRule {
+        let Some(root) = self.functions.first() else {
+            return RootSlotRule::Binding;
+        };
+        let declaration = root.slot_declaration(slot);
+        if declaration.global_var && !self.root_variables_are_local() {
+            RootSlotRule::Projection
+        } else if declaration.global_lexical && self.kind == ProgramKind::Script {
+            RootSlotRule::GlobalLexical
+        } else {
+            RootSlotRule::Binding
+        }
     }
 
     pub fn function_count(&self) -> usize {
@@ -2583,6 +3016,36 @@ impl ResidualProgram {
 
     pub fn read_binary(path: &std::path::Path) -> Result<Self, String> {
         binary::read_program(path)
+    }
+
+    /// The compile-cache form of this program (`binary::encode_compact_program`) and the atom
+    /// ids its table names, in order.
+    pub(crate) fn encode_compact(&self) -> (Vec<u8>, Vec<u32>) {
+        binary::encode_compact_program(self)
+    }
+
+    /// This program as an application entry's cached form: its own atom ids, its source and a
+    /// checksum (`binary::encode_trusted_program`). Every released record compiles first.
+    pub(crate) fn encode_trusted(&self) -> Vec<u8> {
+        binary::encode_trusted_program(self)
+    }
+
+    /// Decodes `encode_trusted`'s bytes into a program proven valid: this build's compiler
+    /// output, which the host keys by build and whose checksum held.
+    pub(crate) fn decode_trusted(bytes: KeptBytes) -> Result<Self, String> {
+        let program = binary::decode_trusted_program(bytes)?;
+        program.validated.establish();
+        Ok(program)
+    }
+
+    /// Decodes `encode_compact`'s bytes with `intern`'s ids and `text` as the source; the
+    /// caller sets the atom table and validates.
+    pub(crate) fn decode_compact(
+        bytes: KeptBytes,
+        intern: &mut dyn FnMut(&str) -> u32,
+        text: SourceText,
+    ) -> Result<Self, String> {
+        binary::decode_compact_program(bytes, intern, text)
     }
 }
 mod binary;

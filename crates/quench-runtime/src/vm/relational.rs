@@ -1,4 +1,5 @@
 use std::cmp::Ordering;
+use crate::heap::ProtoLink;
 
 use crate::bigint::{
     IEEE754_EXPONENT_BIAS, IEEE754_FRACTION_BITS, IEEE754_MAX_EXPONENT_BITS,
@@ -23,8 +24,7 @@ impl<H: Host> Vm<H> {
             left,
             right,
             |vm, left, right| {
-                if let (Some(Cell::String(left)), Some(Cell::String(right))) =
-                    (vm.heap.get(left), vm.heap.get(right))
+                if let (Some(left), Some(right)) = (vm.heap.string(left), vm.heap.string(right))
                 {
                     return Ok(operator.matches(left.units().cmp(&right.units())));
                 }
@@ -105,12 +105,9 @@ impl<H: Host> Vm<H> {
                     Ok(false)
                 });
             }
-            let key_atom = match vm.heap.get(key).cloned() {
-                Some(Cell::String(name)) => Some(vm.intern_js_atom(&name)),
-                _ => None,
-            };
+            let key_atom = vm.heap.string(key).cloned().map(|name| vm.intern_js_atom(&name));
             if matches!(vm.heap.get(object), Some(Cell::TypedArray { .. }))
-                && let Some(Cell::String(name)) = vm.heap.get(key).cloned()
+                && let Some(name) = vm.heap.string(key).cloned()
             {
                 match Self::typed_array_index_key(name.host_string()) {
                     super::object_descriptors::TypedArrayIndexKey::Index(index) => {
@@ -177,7 +174,7 @@ impl<H: Host> Vm<H> {
             if !vm.is_object_like(constructor) {
                 return Err(vm.type_error(p, "right-hand side of 'instanceof' is not an object".into()));
             }
-            if let Some(has_instance) = vm.well_known_symbols.get("hasInstance").copied() {
+            if let Some(has_instance) = vm.well_known_symbols.get(WellKnownSymbol::HasInstance) {
                 let method = vm.get_index(p, constructor, has_instance)?;
                 if !method.is_undefined() && !method.is_null() {
                     if !vm.is_function(method) {
@@ -206,46 +203,63 @@ impl<H: Host> Vm<H> {
         value: Value,
         constructor: Value,
     ) -> Option<bool> {
-        // The steady case first: the remembered constructor layout and `@@hasInstance`
-        // holder, and a chain of object records.
-        if let Some(Cell::Function { kind, object, .. }) = self.heap.get(constructor)
-            && !matches!(kind, FunctionKind::Native(Native::FunctionBoundCall))
-            && let Some((shape, slot)) = self.instanceof_constructor_layout
-            && shape == object.shape()
-            && object.proto() == self.instanceof_has_instance_holder
-            // SAFETY: the memo names the slot of `prototype` in the shape it holds, which is
-            // never a dictionary's, so the slot exists.
-            && let Some(prototype) = unsafe { self.heap.property_get_shaped(object, slot) }
-                .filter(|prototype| !prototype.is_deleted())
-            && prototype.direct_object_index().is_some()
-        {
-            let Some(record) = value.direct_object_index() else {
-                if !self.is_object_like(value) {
-                    return Some(false);
-                }
-                return self.ordinary_instanceof_walk(value, constructor);
-            };
-            let mut link = self.heap.object_record_by_id(record).proto();
-            loop {
-                if link == prototype {
-                    return Some(true);
-                }
-                if link.is_null() {
-                    return Some(false);
-                }
-                match self.heap.object_record(link) {
-                    Some(object) => link = object.proto(),
-                    None => break,
-                }
-            }
+        match self.steady_instanceof(value, constructor) {
+            Some(holds) => Some(holds),
+            None => self.ordinary_instanceof_walk(value, constructor),
         }
-        self.ordinary_instanceof_walk(value, constructor)
+    }
+
+    /// `ordinary_instanceof`'s steady case, which calls nothing: the remembered constructor
+    /// layout and `@@hasInstance` holder, and a primitive or a value whose chain is object
+    /// records up to the prototype or `null`. `None` leaves the rest to
+    /// `ordinary_instanceof_walk`.
+    #[inline(always)]
+    pub(super) fn steady_instanceof(&self, value: Value, constructor: Value) -> Option<bool> {
+        let Some(FunctionRecord { kind, object, .. }) = self.heap.function(constructor) else {
+            return None;
+        };
+        if matches!(kind, FunctionKind::Native(Native::FunctionBoundCall)) {
+            return None;
+        }
+        let (shape, slot) = self.instanceof_constructor_layout?;
+        if shape != object.shape() || object.proto_link() != self.instanceof_has_instance_link {
+            return None;
+        }
+        // SAFETY: the memo names the slot of `prototype` in the shape it holds, which is
+        // never a dictionary's, so the slot exists.
+        let prototype = unsafe { self.heap.property_get_shaped(object, slot) }?;
+        if prototype.is_deleted() {
+            return None;
+        }
+        let target = ProtoLink::object_record(prototype.direct_object_index()?);
+        let Some(record) = value.direct_object_index() else {
+            // A primitive has no prototype chain to hold the prototype: a value outside the
+            // heap, or a string. Any other value takes the walk, whose object test makes a
+            // call this steady case leaves out.
+            return (value.heap_index().is_none() || self.heap.is_string(value))
+                .then_some(false);
+        };
+        // The walk compares encoded links; only a link outside the object records decodes.
+        let mut object = self.heap.object_record_by_id(record);
+        loop {
+            let link = object.proto_link();
+            if link == target {
+                return Some(true);
+            }
+            if link == ProtoLink::NULL {
+                return Some(false);
+            }
+            object = match link.object_record_id() {
+                Some(id) => self.heap.object_record_by_id(id),
+                None => self.heap.object_record(object.proto())?,
+            };
+        }
     }
 
     /// `ordinary_instanceof` in full: whatever its steady case leaves.
     #[inline(never)]
     fn ordinary_instanceof_walk(&mut self, value: Value, constructor: Value) -> Option<bool> {
-        let Some(Cell::Function { kind, object, .. }) = self.heap.get(constructor) else {
+        let Some(FunctionRecord { kind, object, .. }) = self.heap.function(constructor) else {
             return None;
         };
         if matches!(kind, FunctionKind::Native(Native::FunctionBoundCall)) {
@@ -308,7 +322,7 @@ impl<H: Host> Vm<H> {
 
     /// The slot of `constructor`'s own data `prototype` when it has no own `@@hasInstance`.
     fn instanceof_constructor_slot(&mut self, constructor: Value) -> Option<usize> {
-        let has_instance = PropertyKey::symbol(*self.well_known_symbols.get("hasInstance")?);
+        let has_instance = PropertyKey::symbol(self.well_known_symbols.get(WellKnownSymbol::HasInstance)?);
         if self.property_attributes(constructor, has_instance).is_some() {
             return None;
         }
@@ -326,7 +340,7 @@ impl<H: Host> Vm<H> {
     /// with an own `@@hasInstance` holds it, and no proxy precedes it. A subclass constructor
     /// inherits it through its parent constructors.
     fn inherits_native_has_instance(&mut self, holder: Value) -> bool {
-        let Some(&symbol) = self.well_known_symbols.get("hasInstance") else {
+        let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::HasInstance) else {
             return false;
         };
         let mut current = holder;
@@ -354,7 +368,7 @@ impl<H: Host> Vm<H> {
     }
 
     fn verify_has_instance_holder(&mut self, holder: Value) -> bool {
-        let Some(&symbol) = self.well_known_symbols.get("hasInstance") else {
+        let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::HasInstance) else {
             return false;
         };
         let Some(attributes) = self.property_attributes(holder, PropertyKey::symbol(symbol))
@@ -364,17 +378,22 @@ impl<H: Host> Vm<H> {
         let native = !attributes.accessor
             && self.symbol_property(holder, symbol).is_some_and(|method| {
                 matches!(
-                    self.heap.get(method),
-                    Some(Cell::Function {
+                    self.heap.function(method),
+                    Some(FunctionRecord {
                         kind: FunctionKind::Native(Native::FunctionPrototypeHasInstance),
                         ..
                     })
                 )
             });
         if native && !attributes.writable && !attributes.configurable {
-            self.instanceof_has_instance_holder = holder;
+            self.set_instanceof_has_instance_holder(holder);
         }
         native
+    }
+
+    pub(super) fn set_instanceof_has_instance_holder(&mut self, holder: Value) {
+        self.instanceof_has_instance_holder = holder;
+        self.instanceof_has_instance_link = ProtoLink::of(holder);
     }
 
     pub(super) fn ordinary_has_instance(
@@ -388,8 +407,8 @@ impl<H: Host> Vm<H> {
             if !vm.is_function(constructor) {
                 return Ok(false);
             }
-            let bound_env = match vm.heap.get(constructor) {
-                Some(Cell::Function {
+            let bound_env = match vm.heap.function(constructor) {
+                Some(FunctionRecord {
                     kind: FunctionKind::Native(Native::FunctionBoundCall),
                     env,
                     ..
@@ -443,13 +462,13 @@ fn compare_numbers(left: f64, right: f64, operator: super::operations::Relationa
 
 fn compare_bigint_string(heap: &Heap, left: Value, right: Value) -> Option<Option<Ordering>> {
     match (heap.get(left), heap.get(right)) {
-        (Some(Cell::BigInt(bigint)), Some(Cell::String(string))) => Some(
+        (Some(Cell::BigInt(bigint)), None) if let Some(string) = heap.string(right) => Some(
             crate::bigint::parse_string(string.host_string())
-                .and_then(|right| Some(bigint.parse::<BigInt>().ok()?.cmp(&right))),
+                .map(|right| bigint.as_ref().cmp(&right)),
         ),
-        (Some(Cell::String(string)), Some(Cell::BigInt(bigint))) => Some(
+        (None, Some(Cell::BigInt(bigint))) if let Some(string) = heap.string(left) => Some(
             crate::bigint::parse_string(string.host_string())
-                .and_then(|left| Some(left.cmp(&bigint.parse::<BigInt>().ok()?))),
+                .map(|left| left.cmp(bigint)),
         ),
         _ => None,
     }
@@ -462,11 +481,7 @@ fn compare_bigint_values(heap: &Heap, left: Value, right: Value) -> Option<Optio
         left.as_number(),
         right.as_number(),
     ) {
-        (Some(Cell::BigInt(left)), Some(Cell::BigInt(right)), _, _) => Some(Some(
-            left.parse::<BigInt>()
-                .ok()?
-                .cmp(&right.parse::<BigInt>().ok()?),
-        )),
+        (Some(Cell::BigInt(left)), Some(Cell::BigInt(right)), _, _) => Some(Some(left.cmp(right))),
         (Some(Cell::BigInt(bigint)), _, _, Some(number)) => {
             Some(bigint_number_ordering(bigint, number))
         }
@@ -477,11 +492,10 @@ fn compare_bigint_values(heap: &Heap, left: Value, right: Value) -> Option<Optio
     }
 }
 
-fn bigint_number_ordering(bigint: &str, number: f64) -> Option<Ordering> {
+fn bigint_number_ordering(integer: &BigInt, number: f64) -> Option<Ordering> {
     if number.is_nan() {
         return None;
     }
-    let integer = bigint.parse::<BigInt>().ok()?;
     if number == f64::INFINITY {
         return Some(Ordering::Less);
     }
@@ -490,7 +504,7 @@ fn bigint_number_ordering(bigint: &str, number: f64) -> Option<Ordering> {
     }
     let sign = integer.sign();
     if number == 0.0 {
-        return Some(integer.cmp(&BigInt::from(0)));
+        return Some(integer.cmp(&BigInt::ZERO));
     }
     if sign == Sign::Minus && number.is_sign_positive() {
         return Some(Ordering::Less);
@@ -498,12 +512,7 @@ fn bigint_number_ordering(bigint: &str, number: f64) -> Option<Ordering> {
     if sign != Sign::Minus && number.is_sign_negative() {
         return Some(Ordering::Greater);
     }
-    let magnitude = if sign == Sign::Minus {
-        -integer
-    } else {
-        integer
-    };
-    let ordering = compare_positive_bigint_number(magnitude, number.abs());
+    let ordering = compare_positive_bigint_number(BigInt::from(integer.magnitude().clone()), number.abs());
     Some(if number.is_sign_negative() {
         ordering.reverse()
     } else {

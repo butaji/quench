@@ -74,24 +74,31 @@ impl<H: Host> Vm<H> {
 /// CreateDataPropertyOrThrow of a class field adds an ordinary data property and nothing
     /// else when the target is an extensible ordinary object (not a Proxy, array, arguments
     /// or other exotic object) that lacks the key and the key is no array index.
-    fn class_field_is_plain_add(&self, target: Value, key: PropertyKey) -> bool {
+    pub(super) fn class_field_is_plain_add(&self, target: Value, key: PropertyKey) -> bool {
         let index_key = match key {
             PropertyKey::String(atom) => self.atom_class(atom).contains(AtomClass::ARRAY_INDEX),
             PropertyKey::Symbol(_) => false,
             PropertyKey::Private(_) => return false,
         };
-        let Some(object) = self.heap.ordinary_object(target) else {
-            return false;
-        };
-        // Wrapper, error and arguments objects carry exotic or virtual own properties.
         !index_key
-            && object.is_extensible()
+            && self
+                .class_field_define_target(target)
+                .is_some_and(|shape| self.property_shape_slot(shape, key).is_none())
+            && !self.descriptors.contains_key(&(target, key))
+    }
+
+    /// The shape of `target` when it is an extensible ordinary object whose own properties
+    /// are all shape properties: wrapper, error and arguments objects carry exotic or virtual
+    /// own properties. A non-index descriptor kept outside a shape belongs to one of those
+    /// exotic objects, and recording one clears every field cache.
+    pub(super) fn class_field_define_target(&self, target: Value) -> Option<u32> {
+        let object = self.heap.ordinary_object(target)?;
+        (object.is_extensible()
             && !object.is_arguments_object()
             && object.boxed_primitive().is_none()
             && object.stack_data().is_none()
-            && !object.has_error_data()
-            && self.property_shape_slot(object.shape(), key).is_none()
-            && !self.descriptors.contains_key(&(target, key))
+            && !object.has_error_data())
+        .then(|| object.shape())
     }
 
     pub(super) fn define_class_field(
@@ -108,7 +115,7 @@ impl<H: Host> Vm<H> {
         let value = self.heap.root(value);
         let outcome = (|| {
             let key = match key {
-                PropertyKey::String(atom) => self.heap.alloc(Cell::String(self.atom_value(atom))),
+                PropertyKey::String(atom) => self.heap.alloc_string(self.atom_value(atom)),
                 PropertyKey::Symbol(symbol) => symbol,
                 PropertyKey::Private(_) => {
                     return Err(JsError::validation(
@@ -133,11 +140,11 @@ impl<H: Host> Vm<H> {
         self.require_object_coercible(p, this)?;
         if this.as_number().is_some() || matches!(self.heap.get(this), Some(Cell::BigInt(_))) {
             let text = self.to_string(p, this)?;
-            return Ok(self.heap.alloc(Cell::String(text.into())));
+            return Ok(self.heap.alloc_string(text.into()));
         }
         if let Some((crate::BuiltinBrand::NumberObject | crate::BuiltinBrand::BigIntObject, value)) = self.boxed_primitive_data(this) {
             let text = self.to_string(p, value)?;
-            return Ok(self.heap.alloc(Cell::String(text.into())));
+            return Ok(self.heap.alloc_string(text.into()));
         }
         let to_string = self.intern_atom("toString");
         let method = self.get_property(p, this, to_string)?;
@@ -176,15 +183,16 @@ impl<H: Host> Vm<H> {
             } else {
                 "Array"
             }
+        } else if self.heap.is_function_value(value) {
+            "Function"
         } else {
             match self.heap.get(value) {
                 Some(Cell::Proxy { .. }) if proxy_array => "Array",
                 Some(Cell::Proxy { .. }) if self.is_function(value) => "Function",
-                Some(Cell::String(_)) => "String",
+                _ if self.heap.is_string(value)  => "String",
                 Some(Cell::BigInt(_) | Cell::Symbol(_)) => "Object",
                 Some(Cell::Date { .. }) => "Date",
                 Some(Cell::RegExp { .. }) => "RegExp",
-                Some(Cell::Function { .. }) => "Function",
                 Some(Cell::ArrayBuffer { .. }) => "ArrayBuffer",
                 Some(Cell::DataView { .. }) => "DataView",
                 Some(Cell::TypedArray { kind, .. }) => match kind {
@@ -211,20 +219,16 @@ impl<H: Host> Vm<H> {
             None
         } else {
             self.well_known_symbols
-                .get("toStringTag")
-                .copied()
+                .get(WellKnownSymbol::ToStringTag)
                 .map(|symbol| self.get_index(p, value, symbol))
                 .transpose()?
         };
         let brand = tag
-            .and_then(|tag| match self.heap.get(tag) {
-                Some(Cell::String(text)) => Some(text.to_string()),
-                _ => None,
-            })
+            .and_then(|tag| self.heap.string(tag).map(|text| text.to_string()))
             .unwrap_or_else(|| brand.to_owned());
         Ok(self
             .heap
-            .alloc(Cell::String(format!("[object {brand}]").into())))
+            .alloc_string(format!("[object {brand}]").into()))
     }
 
     pub(super) fn descriptor_field(
@@ -240,7 +244,7 @@ impl<H: Host> Vm<H> {
         let descriptor_root = self.heap.root(descriptor);
         let result = (|| {
             let descriptor = self.heap.root_value(descriptor_root).unwrap_or(descriptor);
-            let key = self.heap.alloc(Cell::String(self.atom_value(atom)));
+            let key = self.heap.alloc_string(self.atom_value(atom));
             let descriptor = self.heap.root_value(descriptor_root).unwrap_or(descriptor);
             if !self.has_property(p, descriptor, key)? {
                 return Ok(None);
@@ -323,8 +327,7 @@ impl<H: Host> Vm<H> {
                     .map(|key| self.heap.root(key))
                     .collect();
                 for key in &own_keys {
-                    let Some(Cell::String(name)) =
-                        self.heap.get(self.heap.root_value(*key).unwrap())
+                    let Some(name) = self.heap.string(self.heap.root_value(*key).unwrap())
                     else {
                         continue;
                     };
@@ -692,7 +695,7 @@ impl<H: Host> Vm<H> {
         let mut next_root = None;
         let mut result_root = None;
         let outcome = (|| {
-            let next_atom = self.intern_atom("next");
+            let next_atom = self.runtime_atoms.next;
             let receiver = self.heap.root_value(iterator).unwrap();
             let next = self.get_property(p, receiver, next_atom)?;
             let next = self.heap.root(next);
@@ -733,7 +736,7 @@ impl<H: Host> Vm<H> {
                     self.heap.update_root(key, property_key);
                     let key = match self.heap.get(property_key).cloned() {
                         Some(Cell::Symbol(_)) => PropertyKey::symbol(property_key),
-                        Some(Cell::String(name)) => PropertyKey::string(self.intern_js_atom(&name)),
+                        _ if let Some(name) = self.heap.string(property_key).cloned()  => PropertyKey::string(self.intern_js_atom(&name)),
                         _ => unreachable!("ToPropertyKey returns a string or symbol"),
                     };
                     let object = self.heap.root_value(result).unwrap();
@@ -765,8 +768,10 @@ impl<H: Host> Vm<H> {
             return (a.is_nan() && b.is_nan())
                 || (a == b && (a != 0.0 || a.is_sign_negative() == b.is_sign_negative()));
         }
+        if let (Some(a), Some(b)) = (self.heap.string(left), self.heap.string(right)) {
+            return a == b;
+        }
         match (self.heap.get(left), self.heap.get(right)) {
-            (Some(Cell::String(a)), Some(Cell::String(b))) => a == b,
             (Some(Cell::BigInt(a)), Some(Cell::BigInt(b))) => a == b,
             _ => left == right,
         }
