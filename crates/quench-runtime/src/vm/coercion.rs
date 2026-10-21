@@ -43,23 +43,36 @@ impl<H: Host> Vm<H> {
     pub(super) fn typeof_value(&mut self, value: Value) -> Value {
         use crate::ValueType as T;
         let kind = if self.is_html_dda(value) { T::Undefined } else { self.value_type(value) };
+        self.typeof_name(kind)
+    }
+
+    /// The one string `typeof` yields for values of `kind`: every result and every string
+    /// constant spelling one (`Vm::materialize_constant`) is this value, so `===` between two
+    /// of them is identity (`Vm::is_typeof_name`).
+    fn typeof_name(&mut self, kind: crate::ValueType) -> Value {
+        // `null` and objects share one name, kept in the object kind's slot.
+        let kind = if kind == crate::ValueType::Null { crate::ValueType::Object } else { kind };
         let cached = self.typeof_names[kind as usize];
         if !cached.is_undefined() {
             return cached;
         }
-        let text = match kind {
-            T::Undefined => "undefined",
-            T::Null | T::Object => "object",
-            T::Boolean => "boolean",
-            T::Number => "number",
-            T::String => "string",
-            T::BigInt => "bigint",
-            T::Symbol => "symbol",
-            T::Function => "function",
-        };
-        let name = self.intern_dynamic_ascii(text);
+        let name = self.intern_dynamic_ascii(typeof_text(kind));
         self.typeof_names[kind as usize] = name;
         name
+    }
+
+    /// The `typeof` name spelled by `text`, if it spells one (`Vm::typeof_name`).
+    pub(super) fn typeof_constant(&mut self, text: &str) -> Option<Value> {
+        TYPEOF_KINDS
+            .into_iter()
+            .find(|kind| typeof_text(*kind) == text)
+            .map(|kind| self.typeof_name(kind))
+    }
+
+    /// Whether `value` is one of the `typeof` names (`Vm::typeof_name`).
+    #[inline(always)]
+    pub(super) fn is_typeof_name(&self, value: Value) -> bool {
+        self.typeof_names.contains(&value)
     }
 
     pub(super) fn to_numeric(
@@ -403,5 +416,26 @@ impl<H: Host> Vm<H> {
                 ..
             })
         )
+    }
+}
+
+/// The kinds whose `typeof` names differ: `null` reads as an object.
+const TYPEOF_KINDS: [crate::ValueType; 8] = {
+    use crate::ValueType as T;
+    [T::Undefined, T::Object, T::Boolean, T::Number, T::String, T::BigInt, T::Symbol, T::Function]
+};
+
+/// The text `typeof` yields for a value of `kind`.
+fn typeof_text(kind: crate::ValueType) -> &'static str {
+    use crate::ValueType as T;
+    match kind {
+        T::Undefined => "undefined",
+        T::Null | T::Object => "object",
+        T::Boolean => "boolean",
+        T::Number => "number",
+        T::String => "string",
+        T::BigInt => "bigint",
+        T::Symbol => "symbol",
+        T::Function => "function",
     }
 }
