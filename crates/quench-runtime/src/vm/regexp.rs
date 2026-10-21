@@ -877,9 +877,7 @@ impl<H: Host> Vm<H> {
             return None;
         };
         let shape = object.shape();
-        if let Some((cached, slot)) = self.regexp_last_index_layout
-            && cached == shape
-        {
+        if let Some(&(_, slot)) = self.regexp_last_index_layouts.iter().find(|(cached, _)| *cached == shape) {
             return Some((slot as usize, self.heap.property_get(object, slot as usize)?));
         }
         let slot = self.regexp_last_index_slot_miss(receiver, shape)?;
