@@ -1338,6 +1338,7 @@ impl<H: Host> Vm<H> {
                 continue;
             }
             if Self::lane_runs(cursor.lane, pc) {
+                let mut executing = ExecutingProgram { id: executing_program, retained: current_program.take() };
                 pc = self.run_fast_lane(
                     p,
                     cursor.program,
@@ -1345,8 +1346,17 @@ impl<H: Host> Vm<H> {
                     &mut frame,
                     pc,
                     &mut pending_calls,
+                    &mut executing,
                     allow_inline_calls,
                 );
+                // The lane may leave in a frame of another program, its activations' calls
+                // having set the loop's executing program aside as the loop's pushes do.
+                executing_program = executing.id;
+                current_program = executing.retained;
+                executing_residual = current_program.as_deref().unwrap_or(entry_program);
+                // SAFETY: as for `p` at the top of the loop; the lane may have left in another program.
+                #[cfg(feature = "profile-lane-exits")]
+                let p = unsafe { &*executing_residual };
                 #[cfg(feature = "profile-lane-exits")]
                 if let Some(instruction) = p
                     .functions
@@ -1356,20 +1366,25 @@ impl<H: Host> Vm<H> {
                     super::lane_exits::record(instruction.op());
                     if matches!(instruction.op(), Op::Call | Op::Construct) {
                         let callee = self.frames[frame].registers.get(usize::from(instruction.register_b())).copied();
-                        let detail = match callee.and_then(|callee| self.heap.get(callee)) {
-                            Some(Cell::Function { kind: FunctionKind::Native(native), .. }) => format!("native {native:?}"),
-                            Some(Cell::Function { kind: FunctionKind::User(program, id), .. }) => {
+                        let detail = match callee.and_then(|callee| self.heap.function(callee)) {
+                            Some(crate::heap::FunctionRecord { kind: FunctionKind::Native(native), .. }) => format!("native {native:?}"),
+                            Some(crate::heap::FunctionRecord { kind: FunctionKind::User(program, id), .. }) => {
                                 let plan = self.programs.residual(*program).and_then(|code| {
                                     let body = code.function_get(*id as usize)?;
-                                    Some(format!("user registers_only={} async={} gen={} class={} self={} args={:?}", body.call_plan(code).registers_only, body.is_async, body.is_generator, body.is_class_constructor, body.self_binding_slot.is_some(), body.arguments_slot.is_some()))
+                                    Some(format!("user {} same_program={} pc={pc} registers_only={} async={} gen={} class={} self={} args={:?}", body.name.map(|a| code.atoms[a as usize].to_string()).unwrap_or_default(), *program == cursor.program, body.call_plan(code).registers_only, body.is_async, body.is_generator, body.is_class_constructor, body.self_binding_slot.is_some(), body.arguments_slot.is_some()))
                                 });
                                 plan.unwrap_or_else(|| "user ?".into())
                             }
-                            Some(Cell::Function { kind, .. }) => format!("function {}", std::any::type_name_of_val(kind)),
-                            Some(_) => "other cell".into(),
-                            None => "not a cell".into(),
+                            None => "not a function".into(),
                         };
-                        super::lane_exits::record_detail(format!("{:?} {detail}", instruction.op()));
+                        let caller = p.function_get(self.frames[frame].function as usize).map(|f| (f.is_async, Self::lane_runs(cursor.lane, pc), self.frames.len() - 1 - frame, pending_calls.len()));
+                        super::lane_exits::record_detail(format!("{:?} {detail} caller(async,arrow,depth,pending)={caller:?}", instruction.op()));
+                    }
+                    if matches!(instruction.op(), Op::CloneEnv | Op::Return | Op::GetField | Op::GetIndex | Op::SetIndex | Op::LoadName) {
+                        let function = p.function_get(self.frames[frame].function as usize);
+                        let name = function.and_then(|f| f.name).map(|a| p.atoms[a as usize].to_string()).unwrap_or_default();
+                        let span = function.map(|f| format!("{:?}", f.source_span)).unwrap_or_default();
+                        super::lane_exits::record_detail(format!("{:?} in {name} {span} pc={pc} lane={}", instruction.op(), Self::lane_runs(cursor.lane, pc)));
                     }
                     if matches!(instruction.op(), Op::JumpBinaryFalse | Op::Binary) {
                         let constants = self.programs.constants(cursor.program);
@@ -1407,10 +1422,11 @@ impl<H: Host> Vm<H> {
                 // same frame slot; the active frame's PC slot and register file follow it.
                 published_pc = &mut self.frames[frame].pc;
                 self.active_registers = self.frames[frame].registers.as_mut_ptr();
-                if self.frames[frame].function != cursor.function {
+                if self.frames[frame].function != cursor.function || executing_program != cursor.program {
                     cursor = self.general_cursor(
-                        cursor.program,
-                        p,
+                        executing_program,
+                        // SAFETY: as for `p` at the top of the loop.
+                        unsafe { &*executing_residual },
                         self.frames[frame].function,
                         fast_lane,
                     );
@@ -1444,6 +1460,9 @@ impl<H: Host> Vm<H> {
                     continue;
                 }
             }
+            // The lane may have left in another program's frame (above).
+            // SAFETY: as for `p` at the top of the loop.
+            let p = unsafe { &*executing_residual };
             if STOPS && stop_pc == Some(pc) {
                 self.frames[frame].pc = pc;
                 self.frames[frame].pc_is_resume = true;

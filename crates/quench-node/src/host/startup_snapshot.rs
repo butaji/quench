@@ -208,9 +208,13 @@ const KEYED_VARIABLES: &[&str] = &[
     "NODE_PATH",
     "QUENCH_PLATFORM",
 ];
-/// `off` boots every process without a snapshot; `trace` reports why one was not used.
+/// `on` boots an eligible process from a snapshot; `trace` does, and reports why one was not
+/// used. Otherwise processes boot without one: a restored `Preloaded` realm keeps every
+/// preloaded builtin resident, which a script that loads none of them would pay for (V8-v7
+/// max RSS, bolted static x86_64, 2026-10-21, before `SnapshotKind`: Richards 2200 -> 7040
+/// KiB, RegExp 6160 -> 10484).
 pub(crate) const SNAPSHOT_ENV: &str = "QUENCH_STARTUP_SNAPSHOT";
-const SNAPSHOT_OFF: &str = "off";
+const SNAPSHOT_ON: &str = "on";
 const SNAPSHOT_TRACE: &str = "trace";
 /// Set in the environment of the process that builds a snapshot, to the file it writes.
 pub(crate) const BUILD_ENV: &str = "QUENCH_BUILD_STARTUP_SNAPSHOT";
@@ -310,7 +314,7 @@ pub(crate) fn snapshot_path(
         return None;
     }
     if REFUSED_VARIABLES.iter().any(|name| std::env::var_os(name).is_some())
-        || std::env::var_os(SNAPSHOT_ENV).is_some_and(|value| value == SNAPSHOT_OFF)
+        || !std::env::var_os(SNAPSHOT_ENV).is_some_and(|value| value == SNAPSHOT_ON || value == SNAPSHOT_TRACE)
     {
         return None;
     }

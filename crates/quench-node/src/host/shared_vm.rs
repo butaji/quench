@@ -10,14 +10,19 @@ pub(crate) mod esm_wasm;
 pub(crate) mod policy_projection;
 pub(crate) use commonjs::source_kind;
 
-/// The resolver of an ES module's imports.
-pub(crate) fn esm_resolver() -> oxc_resolver::Resolver {
-    oxc_resolver::Resolver::new(oxc_resolver::ResolveOptions {
+thread_local! {
+    /// The import resolver, kept as `commonjs::with_commonjs_resolver` keeps the require one.
+    static IMPORT_RESOLVER: oxc_resolver::Resolver = oxc_resolver::Resolver::new(oxc_resolver::ResolveOptions {
         extensions: vec![".mjs".into(), ".js".into(), ".json".into(), ".cjs".into()],
         main_files: vec!["index".into()],
         condition_names: vec!["node".into(), "import".into(), "default".into()],
         ..Default::default()
-    })
+    });
+}
+
+/// Runs `use_resolver` with the resolver of an ES module's imports.
+pub(crate) fn with_import_resolver<R>(use_resolver: impl FnOnce(&oxc_resolver::Resolver) -> R) -> R {
+    IMPORT_RESOLVER.with(use_resolver)
 }
 
 pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
@@ -1042,6 +1047,13 @@ impl quench_runtime::Host for NodeHost {
         self.shared_state.borrow().async_hooks.tracks_promises()
     }
 
+    /// A job boundary prunes tracked Promise resources and runs before/after hooks; with
+    /// no Promise tracked and no hook tracking them, it does neither
+    /// (`async_hooks_shared_vm::promise_job_boundary`).
+    fn observes_promise_job_boundaries(&self) -> bool {
+        self.shared_state.borrow().async_hooks.observes_job_boundaries()
+    }
+
     /// The code a run touched since the last collection leaves the resident set after each
     /// collection, and before a full one; what still runs comes back from the page cache. The
     /// collector's code and the program's are then resident one at a time, and the program's
@@ -1272,21 +1284,25 @@ impl quench_runtime::Host for NodeHost {
         let path = match path {
             Some(path) => path,
             None => {
-                let resolver = esm_resolver();
                 let resolution_specifier = if internal {
                     format!("./{specifier}")
                 } else {
                     specifier.to_owned()
                 };
-                let resolution = match resolver.resolve(&base, &resolution_specifier) {
-                    Ok(resolution) => resolution,
-                    Err(oxc_resolver::ResolveError::Specifier(_)) => return Ok(None),
-                    Err(error) => return Err(esm_errors::unresolved(&resolver, error, specifier, &base, &referrer_path)),
+                let resolved = with_import_resolver(|resolver| {
+                    match commonjs::resolve_kept(resolver, |resolver| resolver.resolve(&base, &resolution_specifier)) {
+                        Ok(resolution) => Ok(Some(resolution.full_path())),
+                        Err(oxc_resolver::ResolveError::Specifier(_)) => Ok(None),
+                        Err(error) => Err(esm_errors::unresolved(resolver, error, specifier, &base, &referrer_path)),
+                    }
+                })?;
+                let Some(path) = resolved else {
+                    return Ok(None);
                 };
-                resolution.full_path()
+                path
             }
         };
-        let path = std::fs::canonicalize(&path).unwrap_or(path);
+        let path = self.real_path(path);
         if !internal {
             if let Some(error) = esm_errors::unloadable(&path) {
                 return Err(error);
@@ -1320,7 +1336,7 @@ impl quench_runtime::Host for NodeHost {
         let source = if extension == "json" {
             commonjs::source_text(&bytes).into_owned()
         } else {
-            let kind = Self::source_kind(&path)?;
+            let kind = commonjs::source_kind_of_real(&path)?;
             if kind == quench_runtime::SourceKind::Module {
                 String::from_utf8(bytes)
                     .map_err(|error| format!("module {} is not UTF-8: {error}", path.display()))?

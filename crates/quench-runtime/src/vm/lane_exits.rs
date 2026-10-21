@@ -8,6 +8,8 @@ static EXITS: [AtomicU64; Op::COUNT] = [const { AtomicU64::new(0) }; Op::COUNT];
 static REPORT: std::sync::Once = std::sync::Once::new();
 /// Opcodes the report lists, most frequent first.
 const REPORTED_OPCODES: usize = 30;
+/// Detail lines reported, most frequent first.
+const REPORTED_DETAILS: usize = 200;
 
 static DETAILS: std::sync::Mutex<Option<std::collections::HashMap<String, u64>>> =
     std::sync::Mutex::new(None);
@@ -42,7 +44,7 @@ extern "C" fn report() {
     if let Some(details) = DETAILS.lock().expect("lane exit details").as_ref() {
         let mut details: Vec<_> = details.iter().collect();
         details.sort_unstable_by(|a, b| b.1.cmp(a.1));
-        for (detail, count) in details.into_iter().take(REPORTED_OPCODES) {
+        for (detail, count) in details.into_iter().take(REPORTED_DETAILS) {
             eprintln!("  {count:>12} {detail}");
         }
     }

@@ -28,7 +28,6 @@ pub(super) fn snapshot_kind(entry: &Path) -> SnapshotKind {
         pending: vec![entry.to_owned()],
         seen: HashSet::new(),
         bytes: 0,
-        resolver: crate::host::shared_vm::esm_resolver(),
     };
     match scan.run() {
         Some(()) => SnapshotKind::Bootstrap,
@@ -40,7 +39,6 @@ struct Scan {
     pending: Vec<PathBuf>,
     seen: HashSet<PathBuf>,
     bytes: usize,
-    resolver: oxc_resolver::Resolver,
 }
 
 impl Scan {
@@ -69,7 +67,10 @@ impl Scan {
                 if crate::host::shared_vm::commonjs::is_builtin_specifier(&specifier) {
                     return None;
                 }
-                let resolved = self.resolver.resolve(directory, &specifier).ok()?.full_path();
+                let resolved =
+                    crate::host::shared_vm::with_import_resolver(|resolver| resolver.resolve(directory, &specifier))
+                        .ok()?
+                        .full_path();
                 self.pending.push(std::fs::canonicalize(resolved).ok()?);
             }
         }

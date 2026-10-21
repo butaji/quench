@@ -33,10 +33,7 @@ impl Default for SymbolWriteProofs {
 
 impl SymbolWriteProofs {
     fn index(prototype: Value, key: Value) -> usize {
-        use std::hash::{Hash, Hasher};
-        let mut hasher = rustc_hash::FxHasher::default();
-        (prototype, key).hash(&mut hasher);
-        hasher.finish() as usize & (SYMBOL_WRITE_PROOF_ENTRIES - 1)
+        super::shape_memo::direct_mapped_index((prototype, key), SYMBOL_WRITE_PROOF_ENTRIES)
     }
 
     /// Whether a proof for `key` through the chain from `prototype` holds under `epoch`.

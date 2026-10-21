@@ -2215,7 +2215,7 @@ fn drain_checkpoint(
                     .map(|due| due.saturating_duration_since(std::time::Instant::now()))
                     .map_or(poll_interval, |delay| delay.min(poll_interval));
                 if !wait.is_zero() {
-                    std::thread::sleep(wait);
+                    crate::modules::net_shared_vm::wait_ready(&shared_state.borrow().tcp, wait);
                 }
                 continue;
             }
@@ -2274,7 +2274,7 @@ fn drain_checkpoint(
                     .map(|due| due.saturating_duration_since(std::time::Instant::now()))
                     .map_or(poll_interval, |delay| delay.min(poll_interval));
                 if !wait.is_zero() {
-                    std::thread::sleep(wait);
+                    crate::modules::net_shared_vm::wait_ready(&shared_state.borrow().tcp, wait);
                 }
                 continue;
             }

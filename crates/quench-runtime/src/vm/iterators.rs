@@ -21,6 +21,20 @@ impl From<JsError> for IteratorHelperFailure {
     }
 }
 
+/// Where arrays of one shape, whose prototype is `Array.prototype`, find what their
+/// iteration calls (`Vm::array_iteration_intact`) under one `prototype_layout_epoch`: no own
+/// `@@iterator`, that method in a data slot of `Array.prototype` and `next` in a data slot of
+/// `%ArrayIteratorPrototype%`. Both prototypes were marked when the proof was made, so a
+/// change to either's layout advances the epoch; every collection advances it too, so a proof
+/// never names a reused shape. The slots' values may change in place, so each use reads them.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) struct ArrayIterationProof {
+    shape: u32,
+    epoch: u64,
+    method_slot: usize,
+    next_slot: usize,
+}
+
 impl<H: Host> Vm<H> {
     /// ArrayAccumulation of a spread element: every value `source` iterates is appended to the
     /// literal `array`.
@@ -30,7 +44,10 @@ impl<H: Host> Vm<H> {
         array: Value,
         source: Value,
     ) -> Result<(), JsError> {
-        if let Some(values) = self.spread_elements_directly(source) {
+        if let Some(values) = self.array_iteration_values(source) {
+            if self.append_literal_elements(array, &values) {
+                return Ok(());
+            }
             return self.with_call_roots([array, source], |vm| {
                 vm.append_array_literal_elements(p, array, values)
             });
@@ -54,64 +71,100 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         source: Value,
     ) -> Result<Vec<RootId>, JsError> {
-        if let Some(values) = self.intact_array_iteration(source) {
+        if let Some(values) = self.array_iteration_values(source) {
             return Ok(values.into_iter().map(|value| self.heap.root(value)).collect());
         }
         let iterator = self.get_iterator(p, source)?;
         self.rooted_iterator_values(p, iterator)
     }
 
-    /// The values iterating `source` yields where no step can run guest code: an ordinary
-    /// hole-free Array whose `@@iterator` lookup reaches the realm's intrinsic
-    /// `Array.prototype.values` data property and whose iterator prototype's `next` is the
-    /// intrinsic data property. Every Get the protocol makes then reads a data property, so
+    /// The values iterating `source` yields where no step can run guest code: iterating it
+    /// runs the intrinsics (`array_iteration_intact`) over present own data elements
+    /// (`present_dense_elements`), so every Get the protocol makes reads a data property, and
     /// copying the elements is observably the same and creates no iterator or result object.
-    fn intact_array_iteration(&self, source: Value) -> Option<Vec<Value>> {
-        let array = self.heap.array(source)?;
-        let elements = array.elements();
-        if self.heap.sparse_length(source).is_some() || elements.iter().any(|value| value.is_deleted())
-            || !self.array_values_method_intact(source)
-        {
+    fn array_iteration_values(&mut self, source: Value) -> Option<Vec<Value>> {
+        if !self.array_iteration_intact(source) {
             return None;
         }
-        let next = self.lookup_atom("next")?;
-        self.own_data_value(self.array_iterator_proto, PropertyKey::string(next))
-            .is_some_and(|next| self.is_current_realm_native(next, Native::ArrayIteratorNext))
-            .then(|| elements.to_vec())
+        let length = self.heap.array(source)?.elements().len();
+        self.present_dense_elements(source, 0..length).map(<[Value]>::to_vec)
     }
 
-    /// Whether `source` is an ordinary Array whose `@@iterator` lookup reaches the realm's
-    /// intrinsic `Array.prototype.values` data property, so GetIterator on it is calling that
-    /// method: no own `@@iterator`, `Array.prototype` its prototype, and no getter met.
-    fn array_values_method_intact(&self, source: Value) -> bool {
+    /// Whether neither `iterator` nor any prototype in its chain has `key`, which the shapes
+    /// alone decide: a built-in iterator record, or an ordinary object, with no own `key` (in
+    /// its shape or side table) above a chain of ordinary objects (`Vm::plain_property_lookup`).
+    /// `false` when they cannot, as for a Proxy, whose `get` trap observes the lookup.
+    fn iterator_lacks_property(&self, iterator: Value, key: PropertyKey) -> bool {
+        let Some(record) = self.heap.iterator(iterator) else {
+            return self.plain_property_lookup(iterator, key) == Some(None);
+        };
+        let data = &record.object;
+        if self.property_shape_slot(data.shape(), key).is_some()
+            || (data.has_side_descriptors() && self.descriptors.contains_key(&(iterator, key)))
+        {
+            return false;
+        }
+        let proto = data.proto();
+        proto.is_null() || self.plain_property_lookup(proto, key) == Some(None)
+    }
+
+    /// Whether GetIterator on `source` calls the realm's intrinsic `Array.prototype.values`
+    /// and each step of the iterator it makes calls the intrinsic
+    /// `%ArrayIteratorPrototype%.next`, every Get on the way reading a data property: an
+    /// ordinary Array with no own `@@iterator` whose prototype is `Array.prototype`, which
+    /// holds that method as an own data property, as `%ArrayIteratorPrototype%` holds `next`.
+    /// A proof for the receiver's shape under the current `prototype_layout_epoch` names the
+    /// slots to read (`ArrayIterationProof`).
+    pub(super) fn array_iteration_intact(&mut self, source: Value) -> bool {
         let Some(array) = self.heap.array(source) else {
             return false;
         };
-        let Some(iterator) = self.well_known_symbols.get(WellKnownSymbol::Iterator) else {
+        if array.is_arguments_object() || array.has_side_descriptors() || array.proto() != self.array_proto {
             return false;
+        }
+        let (shape, epoch) = (array.shape(), crate::heap::prototype_layout_epoch());
+        let proof = match self.array_iteration_proof {
+            Some(proof) if proof.shape == shape && proof.epoch == epoch => proof,
+            _ => match self.prove_array_iteration(shape, epoch) {
+                Some(proof) => proof,
+                None => return false,
+            },
         };
-        let key = PropertyKey::symbol(iterator);
-        !array.is_arguments_object()
-            && array.proto() == self.array_proto
-            && self.property_shape_slot(array.shape(), key).is_none()
-            && self
-                .own_data_value(self.array_proto, key)
-                .is_some_and(|method| self.is_current_realm_native(method, Native::ArrayValues))
+        let intrinsic = |vm: &Self, holder: Value, slot: usize, native: Native| {
+            vm.object_data(holder)
+                .and_then(|data| vm.heap.property_get(data, slot))
+                .is_some_and(|value| vm.is_current_realm_native(value, native))
+        };
+        intrinsic(self, self.array_proto, proof.method_slot, Native::ArrayValues)
+            && intrinsic(self, self.array_iterator_proto, proof.next_slot, Native::ArrayIteratorNext)
     }
 
-
-    /// An own data property's value, read without running a getter; `None` when `key` is
-    /// absent or an accessor.
-    fn own_data_value(&self, object: Value, key: PropertyKey) -> Option<Value> {
-        let data = self.object_data(object)?;
-        let slot = self.property_shape_slot(data.shape(), key)?;
-        if self
-            .slot_attributes(data, slot)
-            .is_some_and(|attributes| attributes.accessor)
-        {
+    /// `array_iteration_intact`'s lookups past its proof, recording where they found the
+    /// properties once both prototypes they read are marked prototypes, so a later change to
+    /// either's layout advances the epoch and retires the proof.
+    #[cold]
+    #[inline(never)]
+    fn prove_array_iteration(&mut self, shape: u32, epoch: u64) -> Option<ArrayIterationProof> {
+        let method = PropertyKey::symbol(self.well_known_symbols.get(WellKnownSymbol::Iterator)?);
+        let next = PropertyKey::string(self.runtime_atoms.next);
+        let data_slot = |vm: &Self, holder: Value, key: PropertyKey| {
+            let data = vm.object_data(holder)?;
+            let slot = vm.property_shape_slot(data.shape(), key)?;
+            (!vm.slot_attributes(data, slot)?.accessor).then_some(slot)
+        };
+        if self.property_shape_slot(shape, method).is_some() {
             return None;
         }
-        self.heap.property_get(data, slot)
+        let method_slot = data_slot(self, self.array_proto, method)?;
+        let next_slot = data_slot(self, self.array_iterator_proto, next)?;
+        let proof = ArrayIterationProof { shape, epoch, method_slot, next_slot };
+        self.heap.mark_prototype(self.array_proto);
+        self.heap.mark_prototype(self.array_iterator_proto);
+        // Marking an object that was no prototype yet leaves the epoch where it was.
+        if crate::heap::prototype_layout_epoch() == epoch {
+            self.array_iteration_proof = Some(proof);
+        }
+        Some(proof)
     }
 
     pub(super) fn iterator_step_value(
@@ -140,7 +193,13 @@ impl<H: Host> Vm<H> {
             {
                 return vm.iterator_close(p, *source);
             }
-            let atom = vm.intern_atom("return");
+            let atom = vm.runtime_atoms.iterator_return;
+            // GetMethod of an absent `return` yields undefined and the close ends (ECMA-262
+            // 7.4.11 steps 3-5); the shapes of a built-in iterator's chain decide that without
+            // the general lookup.
+            if vm.iterator_lacks_property(iterator, PropertyKey::string(atom)) {
+                return Ok(Value::UNDEFINED);
+            }
             let method = vm.get_property(p, iterator, atom)?;
             if method.is_undefined() || method.is_null() {
                 return Ok(Value::UNDEFINED);
@@ -916,7 +975,7 @@ impl<H: Host> Vm<H> {
         source: Value,
     ) -> Result<Value, JsError> {
         // The intrinsic method's iterator, made without looking it up or calling it.
-        if self.array_values_method_intact(source) {
+        if self.array_iteration_intact(source) {
             return self.array_iterator_native(p, Native::ArrayValues, source);
         }
         let root = self.heap.root(source);
@@ -3212,55 +3271,6 @@ impl<H: Host> Vm<H> {
             }) if *kind == native
                 && (*realm == self.realm.globals || self.shared_natives.contains(&value))
         )
-    }
-
-    /// The own data property `key` of `object` when it has one, `None` when it has no such
-    /// own property, and `Some(None)` when the own property is an accessor or lives outside
-    /// the shape (so reading it is not a plain slot read).
-    fn own_data_slot_value(&self, object: Value, key: PropertyKey) -> Option<Option<Value>> {
-        let data = self.object_data(object)?;
-        let Some(slot) = self.property_shape_slot(data.shape(), key) else {
-            return self.property_attributes(object, key).map(|_| None);
-        };
-        let attributes = self.slot_attributes(data, slot)?;
-        Some((!attributes.accessor).then(|| self.heap.property_get(data, slot)).flatten())
-    }
-
-    /// The elements spreading `source` yields, when that is a copy of them: `source` is a
-    /// plain array of present elements (`take_present_array_values`' conditions), its
-    /// @@iterator resolves through data properties to the current realm's
-    /// %Array.prototype.values%, and the array iterators that makes step with the current
-    /// realm's %ArrayIteratorPrototype%.next as an own data property. Then GetIterator and
-    /// every step are unobservable. `None` leaves the spread to the iterator protocol.
-    pub(super) fn spread_elements_directly(&self, source: Value) -> Option<Vec<Value>> {
-        let array = self.heap.array(source)?;
-        if array.has_indexed_descriptors()
-            || array.is_arguments_object()
-            || self.heap.sparse_length(source).is_some()
-            || array.elements().iter().any(|value| value.is_deleted())
-        {
-            return None;
-        }
-        let iterator_key = PropertyKey::symbol(self.well_known_symbols.get(WellKnownSymbol::Iterator)?);
-        let mut holder = source;
-        let method = loop {
-            if matches!(self.heap.get(holder), Some(Cell::Proxy { .. })) {
-                return None;
-            }
-            if let Some(value) = self.own_data_slot_value(holder, iterator_key) {
-                break value?;
-            }
-            holder = self.object_data(holder)?.proto();
-            if holder.is_null() {
-                return None;
-            }
-        };
-        let next_key = PropertyKey::string(self.lookup_atom("next")?);
-        let next = self.own_data_slot_value(self.array_iterator_proto, next_key)??;
-        (self.is_current_realm_native(method, Native::ArrayValues)
-            && self.is_current_realm_native(next, Native::ArrayIteratorNext))
-        .then(|| self.heap.array(source).map(|array| array.elements().to_vec()))
-        .flatten()
     }
 
     /// Every value a values iterator over a plain array would still yield, taken at once and

@@ -154,10 +154,7 @@ impl UnitSet {
     }
 
     fn new(beyond: Beyond) -> Self {
-        let ascii = (0..ASCII_UNITS)
-            .filter(|value| beyond.matches(*value))
-            .fold(0u128, |bits, value| bits | 1 << value);
-        Self::of(ascii, beyond)
+        Self::of(beyond.ascii_mask(), beyond)
     }
 
     /// Whether no unit is in the set.
@@ -211,6 +208,28 @@ impl Beyond {
         Self::Ranges {
             ranges: merged.into_boxed_slice(),
             negative: class.negative,
+        }
+    }
+
+    /// The ASCII units the test admits, one bit per unit: derived from the ranges where the
+    /// test is exact ranges, and by testing each ASCII unit otherwise.
+    fn ascii_mask(&self) -> u128 {
+        match self {
+            Self::Never => 0,
+            Self::Either(either) => either.iter().fold(0, |bits, beyond| bits | beyond.ascii_mask()),
+            Self::Ranges { ranges, negative } => {
+                let members = ranges
+                    .iter()
+                    .take_while(|(min, _)| *min < ASCII_UNITS)
+                    .fold(0u128, |bits, &(min, max)| {
+                        let max = max.min(ASCII_UNITS - 1);
+                        bits | (u128::MAX >> (ASCII_UNITS - 1 - max)) & (u128::MAX << min)
+                    });
+                if *negative { !members } else { members }
+            }
+            _ => (0..ASCII_UNITS)
+                .filter(|value| self.matches(*value))
+                .fold(0u128, |bits, value| bits | 1 << value),
         }
     }
 
@@ -1160,6 +1179,37 @@ impl Program {
         sticky: bool,
         budget: Option<usize>,
     ) -> Result<Option<Found>, Exhausted> {
+        self.search(text, first, sticky, budget, |registers| {
+            registers[..2 * self.capture_count]
+                .chunks_exact(2)
+                .map(|bounds| (bounds[0] != UNSET).then(|| bounds[0]..bounds[1]))
+                .collect()
+        })
+    }
+
+    /// `find`'s match bounds alone: its captures are never collected.
+    pub(crate) fn find_bounds<T: Text + ?Sized>(
+        &self,
+        text: &T,
+        first: usize,
+        sticky: bool,
+        budget: Option<usize>,
+    ) -> Result<Option<Range<usize>>, Exhausted> {
+        Ok(self
+            .search(text, first, sticky, budget, |_| Vec::new())?
+            .map(|found| found.start..found.end))
+    }
+
+    /// `find`, with the captures of a match built from its registers by `captures`.
+    #[inline(always)]
+    fn search<T: Text + ?Sized>(
+        &self,
+        text: &T,
+        first: usize,
+        sticky: bool,
+        budget: Option<usize>,
+        captures: impl FnOnce(&[usize]) -> Vec<Option<Range<usize>>>,
+    ) -> Result<Option<Found>, Exhausted> {
         if let (Some(length), Some(_)) = (self.literal_length, text.bytes()) {
             let last = if sticky { first } else { text.len() };
             return Ok(self.next_start(text, first, last).map(|start| Found {
@@ -1197,10 +1247,7 @@ impl Program {
             let Some((start, end)) = found else {
                 return Ok(None);
             };
-            let captures = registers[..2 * self.capture_count]
-                .chunks_exact(2)
-                .map(|bounds| (bounds[0] != UNSET).then(|| bounds[0]..bounds[1]))
-                .collect();
+            let captures = captures(registers);
             Ok(Some(Found {
                 start,
                 end,
@@ -1672,6 +1719,31 @@ fn assertion_holds<T: Text + ?Sized>(test: AssertionTest, text: &T, position: us
 #[cfg(test)]
 mod tests {
     use super::super::{units_from_str, Flags, Regex};
+    use super::{Beyond, ASCII_UNITS};
+
+    /// A ranges test's derived ASCII mask: the units its per-unit test admits.
+    #[test]
+    fn ranges_ascii_mask_matches_each_unit() {
+        let cases: [&[(u32, u32)]; 5] = [
+            &[],
+            &[(0, 0)],
+            &[(0x30, 0x39), (0x41, 0x5a), (0x61, 0x7a)],
+            &[(0x7f, 0x7f), (0x80, 0x10ffff)],
+            &[(0x20, 0x2000)],
+        ];
+        for ranges in cases {
+            for negative in [false, true] {
+                let beyond = Beyond::Ranges {
+                    ranges: ranges.into(),
+                    negative,
+                };
+                let each = (0..ASCII_UNITS)
+                    .filter(|value| beyond.matches(*value))
+                    .fold(0u128, |bits, value| bits | 1 << value);
+                assert_eq!(beyond.ascii_mask(), each, "{ranges:?} negative={negative}");
+            }
+        }
+    }
 
     /// Every pattern, flag set and subject: the compiled program's match against the
     /// repository matcher's, from each start position.

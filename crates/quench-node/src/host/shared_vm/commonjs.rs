@@ -17,7 +17,7 @@ fn is_bare_specifier(specifier: &str) -> bool {
 }
 
 /// The require resolver: each ancestor's `node_modules`, then Node's global paths.
-pub(super) fn commonjs_resolver() -> oxc_resolver::Resolver {
+fn new_commonjs_resolver() -> oxc_resolver::Resolver {
     let modules = std::iter::once(NODE_MODULES.to_owned())
         .chain(
             crate::modules::module_shared_vm::global_paths()
@@ -31,6 +31,31 @@ pub(super) fn commonjs_resolver() -> oxc_resolver::Resolver {
         condition_names: vec!["node".into(), "require".into(), "default".into()],
         modules,
         ..Default::default()
+    })
+}
+
+thread_local! {
+    /// The CommonJS resolver, kept for the thread as Node keeps `Module._pathCache` and its
+    /// package config reader for the process: its cache holds each path's metadata and
+    /// `package.json`, which a resolver made per require read again (undici: its
+    /// `package.json` 309 times).
+    static COMMONJS_RESOLVER: oxc_resolver::Resolver = new_commonjs_resolver();
+}
+
+pub(super) fn with_commonjs_resolver<R>(use_resolver: impl FnOnce(&oxc_resolver::Resolver) -> R) -> R {
+    COMMONJS_RESOLVER.with(use_resolver)
+}
+
+/// Resolves through a kept resolver. One that finds nothing clears its cache and resolves
+/// again, so a file created since a lookup cached its absence is found: Node keeps resolved
+/// requests, never failed ones.
+pub(super) fn resolve_kept<T, E>(
+    resolver: &oxc_resolver::Resolver,
+    resolve: impl Fn(&oxc_resolver::Resolver) -> Result<T, E>,
+) -> Result<T, E> {
+    resolve(resolver).or_else(|_| {
+        resolver.clear_cache();
+        resolve(resolver)
     })
 }
 
@@ -69,8 +94,7 @@ pub(crate) fn entry_path(path: &Path) -> Result<PathBuf, String> {
     if let Some(path) = exact_file_path(&cwd, &path.to_string_lossy()) {
         return std::fs::canonicalize(path).map_err(|error| error.to_string());
     }
-    commonjs_resolver()
-        .resolve(&cwd, &path.to_string_lossy())
+    with_commonjs_resolver(|resolver| resolve_kept(resolver, |resolver| resolver.resolve(&cwd, &path.to_string_lossy())))
         .map(|resolution| resolution.full_path())
         .map_err(|error| error.to_string())
 }
@@ -92,15 +116,23 @@ fn inline_directory(context: &mut Context<'_>) -> Result<PathBuf, RootedError> {
 
 /// Node's explicit extension/package parse-goal policy, before guest execution.
 pub(crate) fn source_kind(path: &Path) -> Result<quench_runtime::SourceKind, String> {
+    // Only a `.js` or extensionless file asks its package scope, which is its real path's.
+    if matches!(path.extension().and_then(|extension| extension.to_str()), Some("js") | None) {
+        let path = std::fs::canonicalize(path).map_err(|error| error.to_string())?;
+        return source_kind_of_real(&path);
+    }
+    source_kind_of_real(path)
+}
+
+/// `source_kind` of a path that is already its real path, as a module the loader resolved.
+pub(crate) fn source_kind_of_real(path: &Path) -> Result<quench_runtime::SourceKind, String> {
     match path.extension().and_then(|extension| extension.to_str()) {
         // Node's `wasm` format is an ES module (`esm_wasm`).
         Some("mjs" | "wasm") => return Ok(quench_runtime::SourceKind::Module),
-        Some("cjs") => return Ok(quench_runtime::SourceKind::Script),
-        Some("json" | "node") => return Ok(quench_runtime::SourceKind::Script),
+        Some("cjs" | "json" | "node") => return Ok(quench_runtime::SourceKind::Script),
         Some(extension) if extension != "js" => return detect_source_kind(path),
         _ => {}
     }
-    let path = std::fs::canonicalize(path).map_err(|error| error.to_string())?;
     // Package scope is a filesystem/JSON question, not another resolution of
     // this already-resolved file. In particular, do not build a resolver cache
     // (with parsed exports maps) for every source-kind query.
@@ -185,7 +217,7 @@ fn detect_source_kind(path: &Path) -> Result<quench_runtime::SourceKind, String>
     // The goal follows from the text alone, which parsing it (twice, for a module) costs a
     // whole compilation of: typescript.js (9 MB) was parsed on every load. It is kept in the
     // compile cache, keyed by the exact text, as a compiled program is.
-    let entry = detected_kinds().entry(DETECTED_KIND_NAME, &[text]);
+    let entry = text_facts_cache().entry(DETECTED_KIND_NAME, &[text]);
     if let Some(kind) = entry.as_ref().and_then(|entry| entry.load()).and_then(|bytes| detected_kind_of(bytes.as_ref().as_ref())) {
         return Ok(kind);
     }
@@ -199,9 +231,10 @@ fn detect_source_kind(path: &Path) -> Result<quench_runtime::SourceKind, String>
 /// The compile-cache name a detected parse goal is kept under.
 const DETECTED_KIND_NAME: &str = "\0quench:detected-source-kind";
 
-/// The cache detected parse goals are kept in: this build's compile cache, read from the
-/// environment as the host's own is, since detection runs where no host is reachable.
-fn detected_kinds() -> &'static crate::host::compile_cache::CompileCache {
+/// The cache facts derived from a file's text alone are kept in (its detected parse goal,
+/// its static CommonJS exports): this build's compile cache, read from the environment as
+/// the host's own is, since they are derived where no host is reachable.
+pub(super) fn text_facts_cache() -> &'static crate::host::compile_cache::CompileCache {
     static CACHE: std::sync::OnceLock<crate::host::compile_cache::CompileCache> = std::sync::OnceLock::new();
     CACHE.get_or_init(crate::host::compile_cache::CompileCache::from_environment)
 }
@@ -2166,23 +2199,47 @@ fn resolve_filename_in(
     } else {
         (lookup.map_or_else(|| vec![directory], <[PathBuf]>::to_vec), specifier.to_owned())
     };
-    let resolver = commonjs_resolver();
-    let mut outcome = Err(oxc_resolver::ResolveError::NotFound(resolved_specifier.clone()));
-    let mut base = bases.first().map_or(Path::new("."), PathBuf::as_path);
-    for directory in &bases {
-        base = directory;
-        if let Some(path) = exact_file_path(base, &resolved_specifier) {
-            return std::fs::canonicalize(path).map_err(|error| RootedError::host(error.to_string()));
+    // Each base in order: an existing explicit file, else the resolver's answer. The first
+    // that is not "not found" decides, as does the last base's; a failure keeps its base.
+    let resolve_in_bases = |resolver: &oxc_resolver::Resolver| {
+        let mut failure = (
+            bases.first().map_or_else(|| PathBuf::from("."), PathBuf::clone),
+            oxc_resolver::ResolveError::NotFound(resolved_specifier.clone()),
+        );
+        for directory in &bases {
+            if let Some(path) = exact_file_path(directory, &resolved_specifier) {
+                return Ok(Err(path));
+            }
+            match resolver.resolve(directory, &resolved_specifier) {
+                Ok(resolution) => return Ok(Ok(resolution)),
+                Err(error @ oxc_resolver::ResolveError::NotFound(_)) => failure = (directory.clone(), error),
+                Err(error) => return Err((directory.clone(), error)),
+            }
         }
-        outcome = resolver.resolve(base, &resolved_specifier);
-        if !matches!(outcome, Err(oxc_resolver::ResolveError::NotFound(_))) {
-            break;
+        Err(failure)
+    };
+    let (outcome, missing_package) = with_commonjs_resolver(|resolver| match resolve_kept(resolver, resolve_in_bases) {
+        Ok(found) => (Ok(found), None),
+        Err((base, error)) => {
+            let missing_package = (matches!(error, oxc_resolver::ResolveError::NotFound(_))
+                && !node_internal
+                && is_bare_specifier(specifier))
+            .then(|| super::esm_errors::missing_package_file(resolver, &base, specifier))
+            .flatten();
+            (Err(error), missing_package)
         }
-    }
+    });
+    let outcome = match outcome {
+        Ok(Err(exact)) => {
+            return std::fs::canonicalize(exact).map_err(|error| RootedError::host(error.to_string()));
+        }
+        Ok(Ok(resolution)) => Ok(resolution),
+        Err(error) => Err(error),
+    };
     match outcome {
         Ok(resolution) => Ok(resolution.full_path()),
-        Err(oxc_resolver::ResolveError::NotFound(_)) if !node_internal && is_bare_specifier(specifier) && let Some(super::esm_errors::MissingPackageFile::ExportsTarget { target, package }) =
-            super::esm_errors::missing_package_file(&resolver, base, specifier) =>
+        Err(oxc_resolver::ResolveError::NotFound(_)) if let Some(super::esm_errors::MissingPackageFile::ExportsTarget { target, package }) =
+            missing_package =>
         {
             // `finalizeEsmResolution`: the missing target, with the package as `path`.
             let error = context.error_rooted(&format!("Cannot find module '{}'", target.display()))?;
