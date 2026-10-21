@@ -1873,7 +1873,26 @@ impl<H: Host> Vm<H> {
             return;
         };
         let (receiver_shape, prototype) = (receiver.shape(), receiver.proto());
-        if self.shape_slot(receiver_shape, atom).is_some() {
+        if let Some(slot) = self.shape_slot(receiver_shape, atom) {
+            // An own accessor, as `debug`'s `enabled` on each logger function: every receiver
+            // of the shape holds its own getter in the slot, read from it at each hit.
+            let own_getter = slot < FIELD_CACHE_SLOT_CAPACITY
+                && !receiver.has_side_descriptors()
+                && self
+                    .slot_attributes(receiver, slot)
+                    .is_some_and(|attributes| attributes.accessor && attributes.getter.is_some());
+            if own_getter {
+                self.accessor_field_caches.insert(
+                    site,
+                    AccessorFieldCache {
+                        receiver: receiver_shape,
+                        prototype,
+                        holder: OWN_ACCESSOR_HOLDER,
+                        slot: slot as u16,
+                        epoch,
+                    },
+                );
+            }
             return;
         }
         let mut link = prototype;
@@ -1936,8 +1955,15 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
-        self.slot_attributes(self.heap.ordinary_object(cache.holder)?, usize::from(cache.slot))?
-            .getter
+        let holder = if cache.holder == OWN_ACCESSOR_HOLDER {
+            if receiver.has_side_descriptors() {
+                return None;
+            }
+            receiver
+        } else {
+            self.heap.ordinary_object(cache.holder)?
+        };
+        self.slot_attributes(holder, usize::from(cache.slot))?.getter
     }
 
     /// The part of `get_field_miss` that reads a data property of a shaped receiver or its
