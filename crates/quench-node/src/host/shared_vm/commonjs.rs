@@ -92,15 +92,23 @@ fn inline_directory(context: &mut Context<'_>) -> Result<PathBuf, RootedError> {
 
 /// Node's explicit extension/package parse-goal policy, before guest execution.
 pub(crate) fn source_kind(path: &Path) -> Result<quench_runtime::SourceKind, String> {
+    // Only a `.js` or extensionless file asks its package scope, which is its real path's.
+    if matches!(path.extension().and_then(|extension| extension.to_str()), Some("js") | None) {
+        let path = std::fs::canonicalize(path).map_err(|error| error.to_string())?;
+        return source_kind_of_real(&path);
+    }
+    source_kind_of_real(path)
+}
+
+/// `source_kind` of a path that is already its real path, as a module the loader resolved.
+pub(crate) fn source_kind_of_real(path: &Path) -> Result<quench_runtime::SourceKind, String> {
     match path.extension().and_then(|extension| extension.to_str()) {
         // Node's `wasm` format is an ES module (`esm_wasm`).
         Some("mjs" | "wasm") => return Ok(quench_runtime::SourceKind::Module),
-        Some("cjs") => return Ok(quench_runtime::SourceKind::Script),
-        Some("json" | "node") => return Ok(quench_runtime::SourceKind::Script),
+        Some("cjs" | "json" | "node") => return Ok(quench_runtime::SourceKind::Script),
         Some(extension) if extension != "js" => return detect_source_kind(path),
         _ => {}
     }
-    let path = std::fs::canonicalize(path).map_err(|error| error.to_string())?;
     // Package scope is a filesystem/JSON question, not another resolution of
     // this already-resolved file. In particular, do not build a resolver cache
     // (with parsed exports maps) for every source-kind query.
