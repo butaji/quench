@@ -2998,14 +2998,26 @@ pub(crate) struct ZonedInstant {
     pub(crate) time_zone: String,
 }
 
-/// A RegExp's source text, flags and legacy-constructor owner: read when a pattern is
-/// recompiled, reflected or matched through legacy statics, not on every match.
-#[derive(Clone, Debug)]
+/// A RegExp's source text, flags, legacy-constructor owner and compiled matcher: all fixed
+/// at creation and replaced together by `RegExp.prototype.compile`.
+#[derive(Clone)]
 pub(crate) struct RegExpMeta {
     pub(crate) source: JsString,
     pub(crate) flags: crate::vm::RegExpFlags,
     // One constructor identity owns creation realm and legacy eligibility.
     pub(crate) legacy_constructor: RegExpLegacyOwner,
+    pub(crate) matcher: Rc<quench_regexp::Regex>,
+}
+
+impl std::fmt::Debug for RegExpMeta {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("RegExpMeta")
+            .field("source", &self.source)
+            .field("flags", &self.flags)
+            .field("legacy_constructor", &self.legacy_constructor)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -3166,10 +3178,11 @@ pub(crate) enum Cell {
     BigInt(Box<num_bigint::BigInt>),
     Symbol(SymbolData),
     Date { milliseconds: f64, object: Box<Object> },
+    /// `meta` is shared: every evaluation of one literal site takes the site's record
+    /// (`ProgramStore::regexp_literal_meta`), and `compile` replaces the receiver's copy.
     RegExp {
         object: Box<Object>,
-        meta: Box<RegExpMeta>,
-        matcher: Rc<quench_regexp::Regex>,
+        meta: Rc<RegExpMeta>,
     },
     Error(String),
     /// A promise: an ordinary object with its [[PromiseState]] and reactions.
