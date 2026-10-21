@@ -586,6 +586,30 @@ impl<H: Host> Vm<H> {
         true
     }
 
+    /// Whether no prototype of `object` holds array index `index` or could answer it outside
+    /// its storage (a proxy, typed array, module namespace, arguments object or boxed
+    /// primitive): HasProperty of the index, where `object` holds none, is then false.
+    pub(super) fn inherited_index_absent(&self, object: Value, index: usize) -> bool {
+        let mut current = self.object_data(object).map(|data| data.proto());
+        while let Some(holder) = current.filter(|value| !value.is_null()) {
+            if matches!(self.heap.get(holder), Some(Cell::Proxy { .. } | Cell::TypedArray { .. })) {
+                return false;
+            }
+            let Some(data) = self.object_data(holder) else {
+                return false;
+            };
+            if data.is_module_namespace()
+                || data.is_arguments_object()
+                || data.boxed_primitive().is_some()
+                || !self.lacks_own_index(holder, index)
+            {
+                return false;
+            }
+            current = Some(data.proto());
+        }
+        true
+    }
+
     /// Whether storing each index of `indices`, none of them own, on `array` is a plain
     /// data definition (`inherited_index_unclaimed`).
     pub(super) fn array_indices_store_plainly(
