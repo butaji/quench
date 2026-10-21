@@ -353,9 +353,6 @@ impl<H: Host> Vm<H> {
     pub(super) fn collect_slow(&mut self, _program: &ResidualProgram, full: bool) {
         self.invalidate_wasm_reference_caches();
         let full = self.heap.collection_is_full(full);
-        if full {
-            self.host.at_collection_boundary();
-        }
         #[cfg(feature = "profile-memory")]
         if std::env::var_os("QUENCH_FUNCTION_USE").is_some() {
             self.report_function_use();
@@ -363,6 +360,7 @@ impl<H: Host> Vm<H> {
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         let mut phase_started = std::time::Instant::now();
         self.constructed_shapes.fill(super::provenance::ConstructedShape::EMPTY);
+        self.enumerable_keys.clear();
         #[cfg(feature = "profile-aggregate")]
         for (index, frame) in self.frames.iter().enumerate() {
             self.profile.gc_frame(

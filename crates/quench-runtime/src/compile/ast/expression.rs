@@ -751,6 +751,9 @@ impl FunctionCompiler<'_, '_> {
     }
 
     pub(super) fn binary(&mut self, value: &BinaryExpression<'_>) -> Register {
+        if let Some(test) = self.typeof_test(value) {
+            return test;
+        }
         let left = if let Some(constant) = binding_time::expression(&value.left).static_value() {
             self.constant_operand(constant)
         } else {
@@ -791,6 +794,9 @@ impl FunctionCompiler<'_, '_> {
 
     pub(super) fn condition(&mut self, value: &Expression<'_>) -> usize {
         if let Expression::BinaryExpression(binary) = value {
+            if let Some(test) = self.typeof_test(binary) {
+                return self.emit(Op::JumpFalse, test, 0, 0, 0);
+            }
             let left = if let Some(constant) = binding_time::expression(&binary.left).static_value()
             {
                 self.constant_operand(constant)
