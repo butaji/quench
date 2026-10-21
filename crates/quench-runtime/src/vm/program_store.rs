@@ -205,6 +205,9 @@ pub(crate) struct ProgramStore {
     jit_mapped_bytes: usize,
     /// Allocated only when opt-in JavaScript JIT diagnostics are requested.
     js_jit_diagnostics: Option<FxHashMap<(u32, u32), JsJitCounters>>,
+    /// Last matched numeric loop shape; hot entries keep reusing the same artifact.
+    js_jit_numeric_find_candidate:
+        Option<(ProgramId, u32, super::js_compiled::JsJitNumericFind)>,
 }
 
 impl Default for ProgramStore {
@@ -226,11 +229,29 @@ impl Default for ProgramStore {
             js_jit_diagnostics: std::env::var_os("QUENCH_JS_JIT_STATS")
                 .is_some_and(|value| value == "1")
                 .then(FxHashMap::default),
+            js_jit_numeric_find_candidate: None,
         }
     }
 }
 
 impl ProgramStore {
+    pub(super) fn js_jit_numeric_find_candidate(
+        &mut self,
+        id: ProgramId,
+        function_id: u32,
+        function: &crate::bytecode::Function,
+    ) -> Option<super::js_compiled::JsJitNumericFind> {
+        if let Some((cached_id, cached_function, candidate)) = self.js_jit_numeric_find_candidate
+            && cached_id == id
+            && cached_function == function_id
+        {
+            return Some(candidate);
+        }
+        let candidate = super::js_compiled::numeric_find_candidate(function)?;
+        self.js_jit_numeric_find_candidate = Some((id, function_id, candidate));
+        Some(candidate)
+    }
+
     pub(super) fn cached_global_eval(&self, source: &JsString) -> Option<ProgramId> {
         let program = *self.global_eval_programs.get(source)?;
         self.entry(program).map(|_| program)
