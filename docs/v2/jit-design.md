@@ -996,3 +996,11 @@ The hottest rows include `forEach`, `checkSourceElement`, `findSourceFile`, and
 counted 28.9M entries but only 3.93M native entries, with 43 successful
 compilations. These are diagnostic results from one round. The raw profile is
 `evidence/jit-jetstream3-2026-10-21/full-suite-screen/typescript-lib-diagnostic-1round.json`.
+
+Increasing the instruction cap from 256 to 512 compiled two additional
+TypeScript helpers and raised native-entry counts by about 10%, but left the
+one-round score at 0.05. In three rounds the 512-cap screen scored 0.07 /
+565 MiB versus 0.08 / 564 MiB for the 256-cap binary. The cap increase was
+reverted: this additional native coverage did not improve score or RSS.
+Reports are in
+`evidence/jit-jetstream3-2026-10-21/typescript-jit-instruction-cap/`.
