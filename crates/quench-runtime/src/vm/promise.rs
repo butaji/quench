@@ -1127,6 +1127,8 @@ impl PromiseRuntime {
 /// Names a static module's parse goal in its compile-cache key, apart from an application
 /// entry's (`Runtime::compile_entry`), whose cached form differs.
 const STATIC_MODULE_GOAL: &str = "static-module";
+/// The compile-cache part naming a static module's analysis (`Vm::static_module_analysis`).
+const STATIC_MODULE_ANALYSIS_GOAL: &str = "static-module-analysis";
 
 impl<H: Host> Vm<H> {
     pub(super) fn abstract_module_source_to_string_tag(&mut self, receiver: Value) -> Value {
@@ -1838,7 +1840,7 @@ impl<H: Host> Vm<H> {
                             vm.evaluate_static_module_source(p, dependency, &mut active)?;
                         }
                         let entry_has_tla =
-                            crate::Engine::static_module_plan(&module.source, &module.name)
+                            vm.static_module_plan(&module.source, &module.name)
                                 .is_some_and(|plan| plan.has_top_level_await);
                         if !entry_has_tla {
                             let namespace = vm.deferred_module_namespace(p, &module)?;
@@ -2308,10 +2310,10 @@ impl<H: Host> Vm<H> {
         module: &ModuleSource,
     ) -> Result<Value, JsError> {
         self.instantiate_static_module_graph(p, module, None)?;
-        if let Some(message) = crate::Engine::static_module_early_error(&module.source) {
+        if let Some(message) = self.static_module_early_error(&module.source, &module.name) {
             return self.syntax_error_result(p, &message);
         }
-        if let Some(plan) = crate::Engine::static_module_plan(&module.source, &module.name) {
+        if let Some(plan) = self.static_module_plan(&module.source, &module.name) {
             let mut active = ModuleEvaluationStack::default();
             active.enter(crate::module_identity::normalize(std::path::Path::new(
                 &module.name,
@@ -2341,7 +2343,7 @@ impl<H: Host> Vm<H> {
         }) {
             return Ok(());
         }
-        let Some(plan) = crate::Engine::static_module_plan(&module.source, &module.name) else {
+        let Some(plan) = self.static_module_plan(&module.source, &module.name) else {
             return Err(self.type_error(p, "deferred module metadata is unavailable".into()));
         };
         if plan.has_top_level_await {
@@ -2367,7 +2369,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         module: &ModuleSource,
     ) -> Result<Value, JsError> {
-        let Some(plan) = crate::Engine::static_module_plan(&module.source, &module.name) else {
+        let Some(plan) = self.static_module_plan(&module.source, &module.name) else {
             return Err(self.type_error(p, "deferred module metadata is unavailable".into()));
         };
         let mut names = plan
@@ -2512,7 +2514,7 @@ impl<H: Host> Vm<H> {
             Some(ModuleOutcome::Pending(_)) => return Ok(false),
             _ => {}
         }
-        let Some(plan) = crate::Engine::static_module_plan(&module.source, &module.name) else {
+        let Some(plan) = self.static_module_plan(&module.source, &module.name) else {
             return Ok(false);
         };
         if plan.has_top_level_await {
@@ -2588,7 +2590,7 @@ impl<H: Host> Vm<H> {
         if let Some(reason) = crate::Engine::static_module_throw(&module.source) {
             return self.evaluate_static_module_throw(p, reason);
         }
-        if crate::Engine::static_module_plan(&module.source, &module.name).is_some_and(|plan| {
+        if self.static_module_plan(&module.source, &module.name).is_some_and(|plan| {
             plan.link_plan
                 .is_some_and(|link_plan| link_plan.reexports.is_empty())
         }) && let Some(exports) =
@@ -2820,10 +2822,11 @@ impl<H: Host> Vm<H> {
             .into_iter()
             .flat_map(|plan| plan.hoisted_functions.iter())
             .filter_map(|(binding, function_name)| {
-                let slot = root
-                    .local_atoms
-                    .iter()
-                    .position(|atom| self.atom_name(*atom) == binding)?;
+                // Matched by atom id: the program's atoms are the VM's, so each name is hashed
+                // once instead of every local's and function's text compared to it.
+                let binding = self.lookup_atom(binding)?;
+                let function_name = self.lookup_atom(function_name)?;
+                let slot = root.local_atoms.iter().position(|atom| *atom == binding)?;
                 let function = p
                     .functions
                     .iter()
@@ -2831,10 +2834,7 @@ impl<H: Host> Vm<H> {
                     .skip(1)
                     .find(|(_, function)| {
                         let header = function.header();
-                        header.parent == Some(super::ROOT_FUNCTION_ID)
-                            && header
-                                .name
-                                .is_some_and(|atom| self.atom_name(atom) == function_name)
+                        header.parent == Some(super::ROOT_FUNCTION_ID) && header.name == Some(function_name)
                     })
                     .map(|(id, _)| id as u32)?;
                 Some((slot, function))
@@ -3208,7 +3208,7 @@ impl<H: Host> Vm<H> {
         if record.and_then(ModuleRecord::deferred_namespace).is_some() {
             return Ok(());
         }
-        if record.is_none() && let Some(message) = crate::Engine::static_module_early_error(&module.source) {
+        if record.is_none() && let Some(message) = self.static_module_early_error(&module.source, &module.name) {
             return self
                 .syntax_error_result(p, &message)
                 .map(|_| ());
@@ -3490,6 +3490,33 @@ impl<H: Host> Vm<H> {
         Ok(graph)
     }
 
+    /// `Engine::static_module_analysis` of a module, kept across runs in the host's compile
+    /// cache for its exact text, as its compiled program is: a process otherwise parses every
+    /// static module it links once more than it compiles it.
+    pub(super) fn static_module_analysis(&mut self, source: &str, name: &str) -> Rc<crate::compile::StaticModuleAnalysis> {
+        let host = &mut self.host;
+        crate::Engine::static_module_analysis_with(source, name, |analyze| {
+            let parts = [STATIC_MODULE_ANALYSIS_GOAL, source];
+            if let Some(analysis) = host
+                .kept_compiled_program(name, &parts)
+                .and_then(|bytes| crate::bytecode::decode_static_module_analysis((*bytes).as_ref()).ok())
+            {
+                return analysis;
+            }
+            let analysis = analyze();
+            host.keep_compiled_program(name, &parts, &crate::bytecode::encode_static_module_analysis(&analysis));
+            analysis
+        })
+    }
+
+    fn static_module_plan(&mut self, source: &str, name: &str) -> Option<crate::compile::StaticModulePlan> {
+        self.static_module_analysis(source, name).plan.clone()
+    }
+
+    fn static_module_early_error(&mut self, source: &str, name: &str) -> Option<String> {
+        self.static_module_analysis(source, name).early_error.clone()
+    }
+
     /// A static module's program kept by the host's compile cache
     /// (`Host::kept_compiled_program`) for its exact text: compiled as this VM specializes,
     /// after its early errors were ruled out, so neither repeats.
@@ -3544,7 +3571,7 @@ impl<H: Host> Vm<H> {
                 .store_module_program(program)
                 .ok_or_else(|| self.type_error(p, "module program store is full".into()))?,
             None => {
-                if let Some(message) = crate::Engine::static_module_early_error(&module.source) {
+                if let Some(message) = self.static_module_early_error(&module.source, &module.name) {
                     return self
                         .syntax_error_result(p, &message)
                         .map(|_| ());
@@ -3709,12 +3736,12 @@ impl<H: Host> Vm<H> {
             }
             None => {}
         }
-        if let Some(message) = crate::Engine::static_module_early_error(&module.source) {
+        if let Some(message) = self.static_module_early_error(&module.source, &module.name) {
             return self
                 .syntax_error_result(p, &message)
                 .map(|_| ());
         }
-        let Some(plan) = crate::Engine::static_module_plan(&module.source, &module.name) else {
+        let Some(plan) = self.static_module_plan(&module.source, &module.name) else {
             return Err(self.type_error(p, "static module metadata is unavailable".into()));
         };
         if !resuming_waiting && !self.realm.promise.modules.contains_key(&cache_key) {
@@ -3882,7 +3909,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<bool, JsError> {
         let waiting = self.realm.promise.waiting_static_modules.clone();
         for parent in waiting {
-            let Some(plan) = crate::Engine::static_module_plan(&parent.source, &parent.name) else {
+            let Some(plan) = self.static_module_plan(&parent.source, &parent.name) else {
                 return Err(self.type_error(p, "static module metadata is unavailable".into()));
             };
             for request in plan.requests.iter().filter(|request| {
@@ -3928,6 +3955,14 @@ impl<H: Host> Vm<H> {
             self.invalidate_method_caches_for_atom(atom);
         }
         Ok(())
+    }
+
+    /// Whether module advancement after a job has work: the queues the advancement drains.
+    pub(super) fn module_jobs_pending(&self) -> bool {
+        let promise = &self.realm.promise;
+        !promise.dynamic_import_jobs.is_empty()
+            || !promise.waiting_static_modules.is_empty()
+            || !promise.async_module_order.is_empty()
     }
 
     pub(super) fn advance_static_module_jobs(
@@ -4006,7 +4041,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         module: &ModuleSource,
     ) -> Result<bool, JsError> {
-        let Some(plan) = crate::Engine::static_module_plan(&module.source, &module.name) else {
+        let Some(plan) = self.static_module_plan(&module.source, &module.name) else {
             return Err(self.type_error(p, "static module metadata is unavailable".into()));
         };
         for request in plan
@@ -4346,7 +4381,7 @@ impl<H: Host> Vm<H> {
             nodes.insert(identity, StaticModuleNode::new(exports, Vec::new()));
             return Ok(true);
         }
-        let Some(plan) = crate::Engine::static_module_plan(&module.source, &module.name) else {
+        let Some(plan) = self.static_module_plan(&module.source, &module.name) else {
             return Ok(false);
         };
         let Some(link_plan) = plan.link_plan else {
@@ -4814,7 +4849,7 @@ impl<H: Host> Vm<H> {
                 incomplete: true,
             });
         }
-        if crate::Engine::static_module_plan(&module.source, &module.name).is_some_and(|plan| {
+        if self.static_module_plan(&module.source, &module.name).is_some_and(|plan| {
             plan.link_plan
                 .is_some_and(|link_plan| !link_plan.reexports.is_empty())
         }) && let Some(graph) = self.resolve_static_module_plan_graph(p, module.clone())?
@@ -4861,7 +4896,7 @@ impl<H: Host> Vm<H> {
                 incomplete: false,
             });
         }
-        if let Some(plan) = crate::Engine::static_module_plan(&module.source, &module.name)
+        if let Some(plan) = self.static_module_plan(&module.source, &module.name)
             && plan
                 .link_plan
                 .as_ref()
