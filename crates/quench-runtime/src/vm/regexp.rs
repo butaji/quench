@@ -679,10 +679,7 @@ impl<H: Host> Vm<H> {
             return None;
         }
         if !global {
-            let slot = self.regexp_last_index_slot(receiver)?;
-            self.heap
-                .property_get(self.object_data(receiver)?, slot)?
-                .as_number()?;
+            self.regexp_last_index_value(receiver)?.1.as_number()?;
         }
         let Some(Cell::RegExp { meta, .. }) = self.heap.get(receiver) else {
             return None;
@@ -859,6 +856,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// The slot of `receiver`'s own writable data `lastIndex`, proven once per receiver shape.
+    #[inline(always)]
     fn regexp_last_index_slot(&mut self, receiver: Value) -> Option<usize> {
         let shape = self.object_data(receiver)?.shape();
         if let Some(&(_, slot)) = self
@@ -868,6 +866,31 @@ impl<H: Host> Vm<H> {
         {
             return Some(slot as usize);
         }
+        self.regexp_last_index_slot_miss(receiver, shape)
+    }
+
+    /// The own writable data `lastIndex` of the RegExp `receiver`: its slot
+    /// (`regexp_last_index_slot`) and value, read through one lookup of the RegExp's cell.
+    #[inline(always)]
+    fn regexp_last_index_value(&mut self, receiver: Value) -> Option<(usize, Value)> {
+        let Some(Cell::RegExp { object, .. }) = self.heap.get(receiver) else {
+            return None;
+        };
+        let shape = object.shape();
+        if let Some((cached, slot)) = self.regexp_last_index_layout
+            && cached == shape
+        {
+            return Some((slot as usize, self.heap.property_get(object, slot as usize)?));
+        }
+        let slot = self.regexp_last_index_slot_miss(receiver, shape)?;
+        Some((slot, self.heap.property_get(self.object_data(receiver)?, slot)?))
+    }
+
+    /// `regexp_last_index_slot` of a shape the layout cache does not hold: the slot of an own
+    /// writable data `lastIndex`, cached for `shape`. Out of line, so the hit saves nothing.
+    #[cold]
+    #[inline(never)]
+    fn regexp_last_index_slot_miss(&mut self, receiver: Value, shape: u32) -> Option<usize> {
         let key = PropertyKey::string(self.runtime_atoms.last_index);
         let (_, slot) = self.object_property_slot(receiver, key)?;
         let attributes = self.property_attributes(receiver, key)?;
@@ -1123,7 +1146,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// Every match of a global builtin exec loop from index 0, as RegExpBuiltinExec leaves
-    /// them: lastIndex reset before and after, sticky matches contiguous, and an empty
+    /// them: lastIndex 0 before and after, sticky matches contiguous, and an empty
     /// match advancing the search by one string index.
     fn regexp_global_matches<T>(
         &mut self,
@@ -1151,7 +1174,9 @@ impl<H: Host> Vm<H> {
             };
             matches.push(found);
         }
-        self.store_regexp_last_index(p, receiver, Value::number(0.0))?;
+        // The exec loop leaves lastIndex 0 after its failing match, the value stored above:
+        // the matcher runs no guest code, and lastIndex is an own data property (a
+        // non-writable one made that store throw), so a second store observes nothing.
         Ok(matches)
     }
 
@@ -2559,10 +2584,7 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
-        let slot = self.regexp_last_index_slot(receiver)?;
-        let last_index = self
-            .object_data(receiver)
-            .and_then(|object| self.heap.property_get(object, slot))?;
+        let (slot, last_index) = self.regexp_last_index_value(receiver)?;
         if last_index.as_number().is_none()
             || (native == Native::RegExpTest && self.regexp_builtin_exec_matcher(receiver).is_none())
         {
