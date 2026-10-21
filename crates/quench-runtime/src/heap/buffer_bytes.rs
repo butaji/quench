@@ -200,6 +200,18 @@ impl BufferBytes {
         }
     }
 
+    /// A non-allocating mutable view for fast-lane operations. Shared,
+    /// address-pinned, Wasm and atomic backing stores stay on the general path.
+    pub(crate) fn lane_mut(&mut self) -> Option<&mut [u8]> {
+        match Rc::get_mut(&mut self.0)? {
+            BufferStore::Owned(bytes) => Some(bytes),
+            BufferStore::AddressPinned(_)
+            | BufferStore::Shared(_)
+            | BufferStore::Wasm(_)
+            | BufferStore::AtomicShared(_) => None,
+        }
+    }
+
     /// The bytes as one owned vector, without a copy when this is their only owner.
     pub(crate) fn into_vec(self) -> Vec<u8> {
         match Rc::try_unwrap(self.0) {
