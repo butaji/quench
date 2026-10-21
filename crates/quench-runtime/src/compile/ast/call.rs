@@ -62,29 +62,63 @@ impl FunctionCompiler<'_, '_> {
             return self.literal(constant);
         }
         let input = if value.operator == UnaryOperator::Typeof {
-            let mut operand = &value.argument;
-            while let Expression::ParenthesizedExpression(parenthesized) = operand {
-                operand = &parenthesized.expression;
-            }
-            if let Expression::Identifier(identifier) = operand {
-                let atom = self.owner.atom(identifier.name.as_str());
-                if self.binds_name(atom) {
-                    self.expression(operand)
-                } else {
-                    let input = self.reg();
-                    let cache = self.owner.cache_site();
-                    self.emit(Op::LoadNameTypeof, input, 0, cache, atom);
-                    input
-                }
-            } else {
-                self.expression(operand)
-            }
+            self.typeof_operand(&value.argument)
         } else {
             self.expression(&value.argument)
         };
         let dst = self.reg();
         self.emit(Op::Unary, dst, input, 0, value.operator as u32);
         dst
+    }
+
+    /// The value `typeof` examines: an unresolvable name reads as undefined rather than
+    /// throwing (ECMA-262 13.5.3.1 step 2), which `LoadNameTypeof` does.
+    fn typeof_operand(&mut self, argument: &Expression<'_>) -> Register {
+        let mut operand = argument;
+        while let Expression::ParenthesizedExpression(parenthesized) = operand {
+            operand = &parenthesized.expression;
+        }
+        if let Expression::Identifier(identifier) = operand {
+            let atom = self.owner.atom(identifier.name.as_str());
+            if !self.binds_name(atom) {
+                let input = self.reg();
+                let cache = self.owner.cache_site();
+                self.emit(Op::LoadNameTypeof, input, 0, cache, atom);
+                return input;
+            }
+        }
+        self.expression(operand)
+    }
+
+    /// `typeof x === "name"` and its `!==`, `==` and `!=` forms, either way round, for a name
+    /// some value's `typeof` yields: the boolean of a `UNARY_TYPEOF_IS` test of `x`. Both
+    /// operands are strings, so loose and strict equality agree, and the literal side has
+    /// no effects to order. `None` for any other comparison.
+    pub(super) fn typeof_test(&mut self, value: &BinaryExpression<'_>) -> Option<Register> {
+        let negated = match value.operator {
+            BinaryOperator::StrictEquality | BinaryOperator::Equality => false,
+            BinaryOperator::StrictInequality | BinaryOperator::Inequality => true,
+            _ => return None,
+        };
+        fn unparenthesized<'e, 'a>(mut expression: &'e Expression<'a>) -> &'e Expression<'a> {
+            while let Expression::ParenthesizedExpression(parenthesized) = expression {
+                expression = &parenthesized.expression;
+            }
+            expression
+        }
+        let (typeof_argument, operator) = match (unparenthesized(&value.left), unparenthesized(&value.right)) {
+            (Expression::UnaryExpression(unary), Expression::StringLiteral(name))
+            | (Expression::StringLiteral(name), Expression::UnaryExpression(unary))
+                if unary.operator == UnaryOperator::Typeof =>
+            {
+                (&unary.argument, crate::bytecode::typeof_test_operator(name.value.as_str(), negated)?)
+            }
+            _ => return None,
+        };
+        let input = self.typeof_operand(typeof_argument);
+        let dst = self.reg();
+        self.emit(Op::Unary, dst, input, 0, operator);
+        Some(dst)
     }
 
     fn delete_expression(&mut self, argument: &Expression<'_>) -> Register {

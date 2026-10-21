@@ -2,6 +2,7 @@ mod compiled;
 mod js_compiled;
 mod jit_backend;
 mod shape_transitions;
+mod snapshot;
 mod startup_intrinsics;
 mod wasm;
 pub use compiled::ExecutionMode;
@@ -9,6 +10,7 @@ mod wasm_exception;
 mod wasm_gc;
 mod wasm_host;
 mod wasm_js;
+pub(crate) use wasm_js::{js_tag_cell, js_tag_type};
 mod wasm_table;
 use crate::Value;
 use crate::bytecode::{
@@ -32,7 +34,13 @@ use std::cell::OnceCell;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
-const DEFAULT_RANDOM_SEED: u64 = 0x4d59_5df4_d0f3_3173;
+/// A fresh seed for `Math.random`'s xorshift state, from the process's random hash keys (which
+/// the standard library draws from the OS): each VM, like each Node process, has its own
+/// sequence. The state must not be zero, which xorshift never leaves.
+fn fresh_random_seed() -> u64 {
+    use std::hash::BuildHasher as _;
+    std::collections::hash_map::RandomState::new().hash_one(std::time::SystemTime::now()) | 1
+}
 pub(super) const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
 pub(super) const MAX_ARRAY_LENGTH: usize = u32::MAX as usize;
 pub(super) const ROOT_FUNCTION_ID: u32 = 0;
@@ -59,6 +67,13 @@ struct RuntimeAtoms {
     /// An iterator result's keys, in its literal order.
     value: Atom,
     done: Atom,
+    /// A property descriptor object's other keys (`value` above), which
+    /// `Object.getOwnPropertyDescriptor` writes on every call.
+    writable: Atom,
+    enumerable: Atom,
+    configurable: Atom,
+    get: Atom,
+    set: Atom,
     /// The internal keys a bound function's environment holds its parts under
     /// (`Vm::bound_function_parts`).
     bound_target: Atom,
@@ -137,6 +152,7 @@ mod object;
 mod shape_memo;
 mod symbol_write_proof;
 mod symbol_load_proof;
+mod enumerable_key_memo;
 mod name_atom_memo;
 mod object_assignment;
 mod object_array;
@@ -1634,6 +1650,7 @@ pub(crate) struct Vm<H> {
     function_name_shapes: provenance::FunctionNameShapes,
     symbol_write_proofs: symbol_write_proof::SymbolWriteProofs,
     symbol_load_proofs: symbol_load_proof::SymbolLoadProofs,
+    enumerable_keys: enumerable_key_memo::EnumerableKeyMemo,
     shape_attribute_memo: shape_memo::ShapeAttributeMemo,
     name_atom_memo: name_atom_memo::NameAtomMemo,
     atom_text: AtomTable,
@@ -1780,7 +1797,7 @@ impl<H: Host> Vm<H> {
                 if total == 0 {
                     continue;
                 }
-                let Some(code) = residual.functions.get(function) else { continue };
+                let Some(code) = residual.function_get(function) else { continue };
                 rows.push((total, code.registers, code.local_atoms.len(), program, function));
             }
         }
@@ -2135,6 +2152,30 @@ impl<H: Host> Vm<H> {
         for (source, name) in scripts {
             self.eval_script_source(program, source, name)?;
         }
+        self.run_main(program, drain_jobs)
+    }
+
+    /// Installs the realm and the host as `execute_deferred_jobs` does, without running the
+    /// program: the state a startup snapshot is taken from (`write_snapshot`).
+    pub(crate) fn initialize_for_snapshot(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
+        if program.functions.is_empty() {
+            return Err(JsError::validation("program has no entry function".into()));
+        }
+        self.check_execution_interrupt()?;
+        self.initialize(program)
+    }
+
+    /// `execute_deferred_jobs` in a VM `restore_snapshot` restored, whose main program is
+    /// `program`: the host resumes its installation where the snapshot left it.
+    pub(crate) fn execute_restored(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
+        self.check_execution_interrupt()?;
+        self.resume_host()?;
+        self.run_main(program, false)
+    }
+
+    /// Runs the main program of an installed realm: its module graph, its declarations and
+    /// its body, then optionally its jobs.
+    fn run_main(&mut self, program: &ResidualProgram, drain_jobs: bool) -> Result<Value, JsError> {
         if program.is_module() {
             self.instantiate_main_module(program)?;
             self.evaluate_program_module_requests(program)?;
@@ -2502,6 +2543,7 @@ impl<H: Host> Vm<H> {
         self.function_name_shapes.clear();
         self.symbol_write_proofs.clear();
         self.symbol_load_proofs.clear();
+        self.enumerable_keys.clear();
         self.shape_attribute_memo.clear();
         self.atom_strings.clear();
         // The sealed holders and their shapes belong to the discarded heap.
@@ -2546,6 +2588,11 @@ impl<H: Host> Vm<H> {
             empty: self.intern_atom(""),
             value: self.intern_atom("value"),
             done: self.intern_atom("done"),
+            writable: self.intern_atom("writable"),
+            enumerable: self.intern_atom("enumerable"),
+            configurable: self.intern_atom("configurable"),
+            get: self.intern_atom("get"),
+            set: self.intern_atom("set"),
             bound_target: self.intern_atom(BOUND_TARGET_KEY),
             bound_this: self.intern_atom(BOUND_THIS_KEY),
             bound_args: self.intern_atom(BOUND_ARGS_KEY),
@@ -2594,7 +2641,7 @@ impl<H: Host> Vm<H> {
         self.temporal_plain_time_proto = Value::NULL;
         self.temporal_plain_month_day_proto = Value::NULL;
         self.temporal_plain_year_month_proto = Value::NULL;
-        self.random_state = DEFAULT_RANDOM_SEED;
+        self.random_state = fresh_random_seed();
         self.realm.globals = self
             .heap
             .alloc(Cell::Object(Self::empty_object(Value::NULL)));
@@ -2616,7 +2663,9 @@ impl<H: Host> Vm<H> {
             Constant::Number(v) => Value::number(*v),
             Constant::WasmBits64(bits) => self.encode_bits64(*bits),
             Constant::WasmV128(bits) => self.heap.alloc(Cell::WasmV128(*bits)),
-            Constant::String(v) => self.heap.alloc_string(v.clone().into()),
+            Constant::String(v) => self
+                .typeof_constant(v)
+                .unwrap_or_else(|| self.heap.alloc_string(v.clone().into())),
             Constant::StringUnits(v) => self.heap.alloc_string(JsString::from_units(v)),
             Constant::BigInt(v) => self.heap.alloc(Cell::bigint(v.clone())),
             Constant::Boolean(true) => Value::TRUE,

@@ -401,6 +401,9 @@ impl<H: Host> Vm<H> {
         self.check_execution_interrupt()?;
         let result = self.with_call_roots(std::iter::once(this).chain(args.iter().copied()), |vm| {
             let receiver = vm.string_method_receiver(p, native, this)?;
+            if receiver == this {
+                return vm.call_native_dispatch(p, native, receiver, args);
+            }
             vm.with_call_roots([receiver], |vm| {
                 vm.call_native_dispatch(p, native, receiver, args)
             })

@@ -748,6 +748,7 @@ impl<H: Host> Vm<H> {
         }
         self.symbol_write_proofs.clear();
         self.symbol_load_proofs.clear();
+        self.enumerable_keys.clear();
         self.field_add_sets.clear();
         self.megamorphic_fields.clear();
         self.inherited_field_caches.clear();
@@ -2375,7 +2376,7 @@ impl<H: Host> Vm<H> {
                 return Ok(false);
             }
             let current = self
-                .descriptor_field(p, descriptor, "value")?
+                .descriptor_field(p, descriptor, self.runtime_atoms.value)?
                 .unwrap_or(Value::UNDEFINED);
             return Ok(self.same_value(current, value));
         }
@@ -2515,8 +2516,8 @@ impl<H: Host> Vm<H> {
                     self.heap.root_value(value).unwrap(),
                 )
             } else {
-                if self.descriptor_field(p, current, "get")?.is_some()
-                    || self.descriptor_field(p, current, "set")?.is_some()
+                if self.descriptor_field(p, current, self.runtime_atoms.get)?.is_some()
+                    || self.descriptor_field(p, current, self.runtime_atoms.set)?.is_some()
                     || !self.descriptor_flag(current, "writable")
                 {
                     return Ok(false);
@@ -2651,6 +2652,33 @@ impl<H: Host> Vm<H> {
         };
         self.profile.field_cache_hit(0, 0);
         true
+    }
+
+    /// Increment or decrement a cached own writable Number field without
+    /// falling through the ordinary get/coerce/set bytecodes. The successful
+    /// own-field load and strict-store caches prove the shape, data descriptor,
+    /// and writability; the value is checked as Number before the store helper
+    /// runs. Any miss leaves guest-visible state untouched.
+    #[inline(always)]
+    pub(super) fn cached_field_increment_hit(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        atom: Atom,
+        read_site: u16,
+        write_site: u16,
+        decrement: bool,
+    ) -> bool {
+        let Some(old) = self.primary_own_field_hit(p, object, read_site) else {
+            return false;
+        };
+        let Some(number) = old.as_number() else {
+            return false;
+        };
+        let next = Value::number(if decrement { number - 1.0 } else { number + 1.0 });
+        // A matching successful strict store cache proves this same shape has an own
+        // writable data property at the field slot. The store helper rechecks that guard.
+        self.cached_field_store_hit(p, object, atom, next, write_site)
     }
 
     /// A cached own-data store or a cached property add to an ordinary object: neither runs

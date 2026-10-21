@@ -100,6 +100,7 @@ impl<H: Host> Vm<H> {
             function_name_shapes: Default::default(),
             symbol_write_proofs: Default::default(),
             symbol_load_proofs: Default::default(),
+            enumerable_keys: Default::default(),
             shape_attribute_memo: Default::default(),
             name_atom_memo: Default::default(),
             shapes: Shape::table(),
@@ -165,7 +166,7 @@ impl<H: Host> Vm<H> {
             eval_script_context: false,
             deferred_dependency_batch: false,
             construct_target: None,
-            random_state: DEFAULT_RANDOM_SEED,
+            random_state: fresh_random_seed(),
         }
     }
 }

@@ -1696,6 +1696,40 @@ impl<H: Host> Vm<H> {
         self.owned_capture(unsafe { &*slots }, root, slot)
     }
 
+    /// A capture that can be read from an owned or shared environment slot after applying the same
+    /// functionless-layer skipping as `capture`, without projected property lookup.
+    pub(super) fn jit_owned_capture(
+        &mut self,
+        frame: usize,
+        depth: u16,
+        slot: u16,
+    ) -> Option<Value> {
+        if let Some(value) = self.cached_direct_capture(frame, depth, slot) {
+            return Some(value);
+        }
+        let env = self.capture_env(frame, depth)?;
+        let Some(Cell::Environment {
+            function,
+            scope,
+            ..
+        }) = self.heap.get(env)
+        else {
+            return None;
+        };
+        let root = *function == super::ROOT_FUNCTION_ID;
+        if root && !self.root_environment_slot_is_binding(scope.program(), slot) {
+            return None;
+        }
+        let Some(value) = self
+            .heap
+            .environment_slot(env, usize::from(slot))
+            .filter(|value| !value.is_deleted())
+        else {
+            return None;
+        };
+        Some(value)
+    }
+
     #[cold]
     #[inline(never)]
     fn walked_capture(
@@ -2144,7 +2178,7 @@ impl<H: Host> Vm<H> {
             frame.function != super::ROOT_FUNCTION_ID
                 && self.programs.runs_in_global_scope(frame.program)
                 && p.function_get(frame.function as usize)
-                    .is_some_and(|function| function.names_resolve_statically(&p.functions, &p.atoms))
+                    .is_some_and(|function| function.names_resolve_statically(p))
         })
     }
 
@@ -2556,14 +2590,16 @@ fn direct_store_owner<'p>(
     program: super::ProgramId,
     function: u32,
     scope: &crate::heap::EnvironmentScopeRef,
-) -> Option<&'p crate::bytecode::FunctionSlot> {
+) -> Option<&'p crate::bytecode::Function> {
     if function == super::ROOT_FUNCTION_ID
         || function == u32::MAX
         || scope.program().is_some_and(|owner| owner != program.raw())
     {
         return None;
     }
-    p.functions.get(function as usize)
+    // Read on demand: an environment restored from a startup snapshot can outlive its
+    // function's record in this process.
+    p.function_get(function as usize)
 }
 
 /// The `Vm::capture_walks` entry a walk from `env` to `depth` uses.

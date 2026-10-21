@@ -575,3 +575,19 @@ pub(crate) fn cleanup_requests(runtime: &mut quench_runtime::Runtime<NodeHost>) 
         runtime.release_root(reader);
     }
 }
+
+impl State {
+    pub(crate) fn write_snapshot(&self, writer: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> {
+        use crate::host::startup_snapshot::{require_quiescent, HostSnap};
+        let Self { readers, requests, identities, array, buffer_getter } = self;
+        require_quiescent(readers.is_empty() && requests.is_empty() && identities.is_empty(), "a stream request")?;
+        array.write(writer)?;
+        buffer_getter.write(writer)
+    }
+    pub(crate) fn read_snapshot(&mut self, reader: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<(), String> {
+        use crate::host::startup_snapshot::HostSnap;
+        self.array = HostSnap::read(reader)?;
+        self.buffer_getter = HostSnap::read(reader)?;
+        Ok(())
+    }
+}
