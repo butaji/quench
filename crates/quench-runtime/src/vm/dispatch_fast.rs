@@ -1417,6 +1417,9 @@ unsafe fn lane_unary_value<H: Host>(
     if operator == super::coercion::LOGICAL_NOT {
         return Some(vm.logical_not(operand));
     }
+    if let Some((index, negated)) = crate::bytecode::typeof_test(operator) {
+        return Some(vm.typeof_test_value(operand, index, negated));
+    }
     if operator == super::coercion::TYPEOF {
         let name = vm.typeof_value(operand);
         // Interning the type's name can allocate.
