@@ -173,6 +173,10 @@ pub trait Host {
         Vec::new()
     }
 
+    /// Finish a batch of contexts released by one full collection. Hosts can
+    /// use this point to reclaim storage after removing many dead contexts.
+    fn finish_promise_context_collection(&mut self, _live_contexts: &[HostExecutionContext]) {}
+
     fn call_wasm(
         &mut self,
         _function: WasmHostFunctionId,

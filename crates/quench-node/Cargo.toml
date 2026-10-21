@@ -11,6 +11,7 @@ path = "src/bin/quench-node.rs"
 [features]
 default = []
 profile-memory = ["quench-runtime/profile-memory"]
+profile-allocator = ["quench-runtime/profile-allocator"]
 
 [dependencies]
 quench-js-check = { path = "../quench-js-check" }
