@@ -1026,3 +1026,23 @@ default for eligible inputs; `QUENCH_JS_JIT_NUMERIC_FIND=0` retains the
 interpreter for A/B screens. The result is a fixture-specific screen, not
 qualification against Node/Bun or a suite-wide win. Raw reports and method
 are in `evidence/jit-jetstream3-2026-10-21/hash-map-numeric-find-screen/`.
+
+A separate matched three-round peer screen on this fixture measured Quench at
+2.83 Score / 73.99 MiB, Bun 1.4.3 at 165.97 / 83.56 MiB, and Node 24.19.0 at
+124.87 / 222.77 MiB. The numeric lookup change preserves the RSS advantage
+but does not close the score gap (Quench reaches 1.7% of Bun and 2.3% of
+Node). The next target is the interpreted `run` body: 58 instructions, 120
+entries and 111.7 seconds inclusive in the opt-in diagnostic, containing
+allocation, throwing, call and loop behavior. Boolean guard rewriting is not
+justified by its census. The report is in
+`evidence/jit-jetstream3-2026-10-21/hash-map-numeric-find-screen/peers-3round.json`.
+
+A second, twelve-round A/B tried caching and directly invoking the compiled
+Boolean `equals` entry inside `_findKeyEntry`, while retaining the code mapping
+owner. The raw entry lost overall: median Score 2.385 vs 2.515 through the
+existing `js_jit_compiled_call`, median wall time 174.9 vs 169.0 s, and RSS
+74.23 vs 74.19 MiB; only 3/6 adjacent score pairs favored it. The code path
+was reverted. This points away from per-equality dispatch lookup as the main
+score limit; next focus remains the interpreted `run` loop and its calls,
+allocations and collection behavior. The six-pair raw data are stored in
+`evidence/jit-jetstream3-2026-10-21/hash-map-numeric-find-screen/`.
