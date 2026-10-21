@@ -415,6 +415,14 @@ impl<H: Host> Vm<H> {
         let entry = &self.shapes[shape as usize];
         entry.dictionary_trigger.is_some() || entry.facts.accessors()
     }
+    /// Whether a property of `shape` may be an accessor whose functions `shape_accessors`
+    /// holds: a dictionary shape keeps its attributes outside its transitions, any other knows
+    /// from its chain (`ShapeFacts`).
+    #[inline(always)]
+    pub(super) fn shape_may_have_table_accessors(&self, shape: u32) -> bool {
+        let entry = &self.shapes[shape as usize];
+        entry.dictionary_trigger.is_some() || entry.facts.table_accessors()
+    }
     pub(super) fn mark_object_dictionary(&mut self, object: Value, trigger: DictionaryTrigger) {
         let Some(shape) = self.object_data(object).map(Object::shape) else {
             return;
@@ -758,6 +766,7 @@ impl<H: Host> Vm<H> {
         self.closure_templates.fill(None);
         self.iterator_result_shape = None;
         self.descriptor_shapes = [None; 2];
+        self.descriptor_layout = None;
         self.regexp_object_shapes = None;
         self.regexp_last_index_layouts.clear();
         self.regexp_builtin_layouts.clear();
