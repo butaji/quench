@@ -3523,6 +3523,8 @@ fn lane_cached_field_miss<H: Host>(
             .array_length_field(object, atom)
             .or_else(|| vm.cached_string_field_hit(code, object, atom, site)),
     }
+    // A collection's `size`, which no cache records (`AtomClass::VIRTUAL_FIELD`).
+    .or_else(|| vm.collection_size_field(object, atom))
 }
 
 script_handler! {

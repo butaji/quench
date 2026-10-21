@@ -71,10 +71,13 @@ fn finish(
 ) -> Result<RootId, RootedError> {
     // The same Core-owned bytes exposed by lastChar/lastNeed/lastTotal are the
     // decoder state; there is no second WeakMap or synthetic field ledger.
-    for (index, byte) in state.0.iter().enumerate() {
-        let key = c.string_rooted(&index.to_string());
-        let value = c.number(f64::from(*byte));
-        c.set_property_rooted(root, key, value, root)?;
+    // `state` read these bytes from the view, so the view holds them: they are written back
+    // in place, as stores of its elements would.
+    let written = c.with_buffer_bytes_mut_rooted(root, |bytes| {
+        bytes.get_mut(..state.0.len()).map(|target| target.copy_from_slice(&state.0))
+    });
+    if written.flatten().is_none() {
+        return Err(invalid_state(c)?);
     }
     match result {
         Ok(units) => Ok(c.string_units_rooted(&units)),
