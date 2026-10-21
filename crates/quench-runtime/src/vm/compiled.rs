@@ -6399,7 +6399,9 @@ impl<H: Host> Vm<H> {
         let program_id = self.frames[frame].program;
         let function_id = self.frames[frame].function;
         let function = program.functions.get(function_id as usize)?;
-        let numeric_find_candidate = super::js_compiled::numeric_find_candidate(function);
+        let numeric_find_candidate =
+            self.programs
+                .js_jit_numeric_find_candidate(program_id, function_id, function);
         if let Some(candidate) = numeric_find_candidate
             && let Some(result) = self.js_jit_numeric_find_at_entry(program, frame, candidate)
         {

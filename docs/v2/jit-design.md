@@ -836,3 +836,9 @@ seconds. Quench used less RSS, but the score remains far behind and the single
 round is not a matched comparison. This is coverage evidence, not a benchmark
 win. Reports are in
 `evidence/jit-jetstream3-2026-10-21/numeric-find-loop/`.
+
+The matcher now caches its last positive program/function result, avoiding a
+bytecode rescan at every hot entry. A later one-round screen was directionally
+faster (4.52 / 74.17 MiB / 111.36 s), but Node and Bun scores moved from 124.44
+and 108.18 to 155.13 and 175.49 as well. The screens are unpaired and do not
+establish a score win.
