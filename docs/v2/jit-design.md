@@ -845,6 +845,18 @@ directional screen, not qualification. Quench still trails Bun and Node by a
 wide margin. Details and reports are in
 `evidence/jit-jetstream3-2026-10-21/sync-fs-getter/`.
 
+The `async-fs` memory profile exposed a separate host allocation problem:
+`NodeHost` created a VM `WeakRef` and host weak root for each Promise even when
+no async-hooks `init` or `destroy` callback was enabled. I kept Promise IDs and
+job-context propagation intact, while omitting that weakly tracked lifecycle
+record when neither hook kind has listeners. A clean production one-round JIT
+screen validated output and reported 3.44 Score / 891 MiB RSS for Quench, versus
+73.60 / 210 MiB for Node and 128.96 / 67 MiB for Bun. The earlier Quench
+production one-round screen was 1.31 / 7.26 GiB. This is a large memory
+reduction but still loses on both metrics; the samples are diagnostic, not a
+paired qualification. Raw reports and the reproduction command are in
+`evidence/jit-jetstream3-2026-10-21/async-fs-promise-lifecycle/`.
+
 ## Numeric hash-map entry loop
 
 The observed 23-instruction `_findKeyEntry` loop has an opt-in bounded JIT-mode
