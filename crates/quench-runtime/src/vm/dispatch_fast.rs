@@ -7424,8 +7424,7 @@ fn lane_script_target<H: Host>(cx: *mut LaneContext<H>, callee: Value) -> Option
 /// functions makes it the general loop's executing one: the residual, lane views and
 /// constants its records read, and the VM's active program, whose cache layout its sites
 /// index.
-#[cold]
-#[inline(never)]
+#[inline(always)]
 fn lane_enter_program<H: Host>(cx: *mut LaneContext<H>, program: ProgramId) {
     let vm = unsafe { vm(cx) };
     let Some(code) = vm.programs.residual(program) else {
