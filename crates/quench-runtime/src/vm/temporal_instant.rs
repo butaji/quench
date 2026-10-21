@@ -171,8 +171,7 @@ impl<H: Host> Vm<H> {
         if epoch.unsigned_abs() > MAX_INSTANT_EPOCH_NANOSECONDS as u128 {
             return Err(self.range_error(p, "epochNanoseconds outside supported range".into()));
         }
-        let prototype_atom = self.prototype_atom();
-        let prototype = self.get_property(p, new_target, prototype_atom)?;
+        let prototype = self.constructor_prototype_value(p, new_target)?;
         let prototype = if self.is_object_like(prototype) {
             prototype
         } else {
@@ -407,8 +406,7 @@ impl<H: Host> Vm<H> {
         if epoch.unsigned_abs() > MAX_INSTANT_EPOCH_NANOSECONDS as u128 {
             return Err(self.range_error(p, "epochNanoseconds outside supported range".into()));
         }
-        let prototype_atom = self.prototype_atom();
-        let prototype = self.get_property(p, new_target, prototype_atom)?;
+        let prototype = self.constructor_prototype_value(p, new_target)?;
         let prototype = if self.is_object_like(prototype) {
             prototype
         } else {
