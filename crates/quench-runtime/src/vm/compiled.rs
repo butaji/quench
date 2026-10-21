@@ -300,6 +300,7 @@ const JIT_DIRECT_COMPARE_BRANCHES_ENV: &str = "QUENCH_WASM_JIT_DIRECT_COMPARE_BR
 const JIT_AFFINE_PAIR_ENV: &str = "QUENCH_WASM_JIT_AFFINE_PAIR";
 const JIT_REFERENCE_BODY_CACHE_ENV: &str = "QUENCH_WASM_JIT_REFERENCE_BODY_CACHE";
 const JIT_EMSCRIPTEN_MEMCPY_LEAF_ENV: &str = "QUENCH_WASM_JIT_EMSCRIPTEN_MEMCPY_LEAF";
+const JIT_NUMERIC_FIND_ENV: &str = "QUENCH_JS_JIT_NUMERIC_FIND";
 const JIT_NATIVE_ENTRY_SAMPLE_INTERVAL: u64 = 256;
 const MAX_JIT_ROOT_FUNCTIONS: usize = 128;
 const MAX_JIT_ROOT_BYTECODES_PER_FUNCTION: usize = 80_000;
@@ -353,6 +354,16 @@ fn jit_reference_body_cache_enabled() -> bool {
 fn jit_emscripten_memcpy_leaf_enabled() -> bool {
     std::env::var(JIT_EMSCRIPTEN_MEMCPY_LEAF_ENV)
         .is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+}
+
+/// Keep the numeric hash-map loop as an opt-in experiment until it has a
+/// matched score win.
+fn jit_numeric_find_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var(JIT_NUMERIC_FIND_ENV)
+            .is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+    })
 }
 
 fn jit_wasm_root_only_enabled() -> bool {
@@ -6275,19 +6286,7 @@ impl<H: Host> Vm<H> {
         let Some(mut entry) = self.direct_array_index_data(array, index_value) else {
             return None;
         };
-        let Some(equals) = self.jit_owned_capture(
-            frame,
-            candidate.equals_depth,
-            candidate.equals_slot,
-        ) else {
-            return None;
-        };
-        let Some((equals_program, equals_function, _)) = self.in_loop_call_target(program, equals) else {
-            return None;
-        };
-        if equals_program != program_id {
-            return None;
-        }
+        let mut cached_equals_function = None;
         let mut equal_arguments = [Value::UNDEFINED; 2];
         equal_arguments[0] = key_value;
 
@@ -6327,6 +6326,22 @@ impl<H: Host> Vm<H> {
                 }
             };
             if entry_hash == key_hash {
+                let equals_function = if let Some(equals_function) = cached_equals_function {
+                    equals_function
+                } else {
+                    let equals = self.jit_owned_capture(
+                        frame,
+                        candidate.equals_depth,
+                        candidate.equals_slot,
+                    )?;
+                    let (equals_program, equals_function, _) =
+                        self.in_loop_call_target(program, equals)?;
+                    if equals_program != program_id {
+                        return None;
+                    }
+                    equals_function
+                };
+                cached_equals_function = Some(equals_function);
                 let entry_key = match self.cached_field_hit(program, entry, candidate.key_cache) {
                     super::object::FieldCacheProbe::Hit(value) => value,
                     super::object::FieldCacheProbe::Ineligible => {
@@ -6399,9 +6414,12 @@ impl<H: Host> Vm<H> {
         let program_id = self.frames[frame].program;
         let function_id = self.frames[frame].function;
         let function = program.functions.get(function_id as usize)?;
-        let numeric_find_candidate =
+        let numeric_find_candidate = if jit_numeric_find_enabled() {
             self.programs
-                .js_jit_numeric_find_candidate(program_id, function_id, function);
+                .js_jit_numeric_find_candidate(program_id, function_id, function)
+        } else {
+            None
+        };
         if let Some(candidate) = numeric_find_candidate
             && let Some(result) = self.js_jit_numeric_find_at_entry(program, frame, candidate)
         {
