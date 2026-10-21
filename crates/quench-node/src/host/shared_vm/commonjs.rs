@@ -338,8 +338,8 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
         }
         context.seal_startup_intrinsics();
     }
-    if context.host_mut().building_snapshot {
-        return crate::host::startup_snapshot::preload(context);
+    if let Some(kind) = context.host_mut().building_snapshot {
+        return crate::host::startup_snapshot::preload(context, kind);
     }
     finish_initialize(context)
 }

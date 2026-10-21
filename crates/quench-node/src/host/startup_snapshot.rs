@@ -8,6 +8,8 @@
 //! empty at the snapshot point (sockets, timers, pending work), so a field added later does
 //! not compile until it is given one of those places.
 
+mod entry_graph;
+
 use quench_runtime::{HostWeakRoot, RootId, SnapshotReader, SnapshotWriter};
 use std::collections::HashMap;
 use std::hash::Hash;
@@ -221,12 +223,49 @@ const LOCK_EXTENSION: &str = "lock";
 const KEPT_BUILDS: usize = 3;
 /// A build lock older than this belongs to a builder that died: another may start.
 const STALE_BUILD: std::time::Duration = std::time::Duration::from_secs(60);
-/// The Node builtins a snapshot loads, as Node's own startup snapshot does: the modules
-/// nearly every program loads, whose loading is most of a short run.
+/// The Node builtins a `Preloaded` snapshot loads, as Node's own startup snapshot does: the
+/// modules nearly every program that loads modules loads, whose loading is most of its run.
 const PRELOADED_BUILTINS: &[&str] = &[
     "events", "buffer", "util", "path", "fs", "url", "timers", "querystring", "async_hooks",
     "diagnostics_channel", "stream", "module", "child_process", "http",
 ];
+
+/// What a snapshot holds beyond the bootstrap. A restore decodes everything a snapshot holds
+/// (heap, programs, shapes, atoms), so the builtins cost every process that restores them
+/// whether it loads them or not: a process whose entry can load none restores without them
+/// (`entry_graph::snapshot_kind`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SnapshotKind {
+    /// The bootstrap alone.
+    Bootstrap,
+    /// The bootstrap with `PRELOADED_BUILTINS` loaded.
+    Preloaded,
+}
+
+impl SnapshotKind {
+    const ALL: [Self; 2] = [Self::Bootstrap, Self::Preloaded];
+
+    /// The kind's part of its snapshot's file name, from which its builder reads it back.
+    fn name(self) -> &'static str {
+        match self {
+            Self::Bootstrap => "bootstrap",
+            Self::Preloaded => "preloaded",
+        }
+    }
+
+    fn builtins(self) -> &'static [&'static str] {
+        match self {
+            Self::Bootstrap => &[],
+            Self::Preloaded => PRELOADED_BUILTINS,
+        }
+    }
+
+    /// The kind of the snapshot `snapshot_path` named `path`.
+    fn of_path(path: &std::path::Path) -> Option<Self> {
+        let name = std::path::Path::new(path.file_stem()?).extension()?;
+        Self::ALL.into_iter().find(|kind| name == kind.name())
+    }
+}
 
 /// Refuses a read of the process's own state while a snapshot is built: what the snapshot
 /// keeps must not depend on the process that built it.
@@ -234,21 +273,22 @@ pub(crate) fn refuse_process_state(
     context: &mut quench_runtime::NativeContext<'_, crate::host::NodeHost>,
     what: &str,
 ) -> Result<(), quench_runtime::RootedError> {
-    if context.host_mut().building_snapshot {
+    if context.host_mut().building_snapshot.is_some() {
         return Err(quench_runtime::RootedError::host(format!("a startup snapshot cannot keep {what}")));
     }
     Ok(())
 }
 
-/// Loads the builtins a snapshot keeps (`PRELOADED_BUILTINS`), at the snapshot point.
+/// Loads the builtins a snapshot of `kind` keeps, at the snapshot point.
 pub(crate) fn preload(
     context: &mut quench_runtime::NativeContext<'_, crate::host::NodeHost>,
+    kind: SnapshotKind,
 ) -> Result<(), quench_runtime::RootedError> {
     let global = context.global_root()?;
     let key = context.string_rooted("\0quench:require");
     let require = context.get_property_rooted(global, key)?;
     let undefined = context.undefined();
-    for name in PRELOADED_BUILTINS {
+    for name in kind.builtins() {
         context.scoped(|context| {
             let specifier = context.string_rooted(name);
             context.call_rooted(require, undefined, &[specifier]).map(drop)
@@ -260,8 +300,13 @@ pub(crate) fn preload(
 /// Where a process with these inputs finds its snapshot, when it may use one: the main
 /// thread of a file entry run without options, under an environment that changes nothing
 /// the bootstrap reads.
-pub(crate) fn snapshot_path(host: &crate::host::NodeHost, file_entry: bool, worker: bool) -> Option<std::path::PathBuf> {
-    if !file_entry || worker || host.eval_builtin_globals || !host.shared_state.borrow().exec_argv.is_empty() {
+pub(crate) fn snapshot_path(
+    host: &crate::host::NodeHost,
+    entry: Option<&std::path::Path>,
+    worker: bool,
+) -> Option<std::path::PathBuf> {
+    let entry = entry?;
+    if worker || host.eval_builtin_globals || !host.shared_state.borrow().exec_argv.is_empty() {
         return None;
     }
     if REFUSED_VARIABLES.iter().any(|name| std::env::var_os(name).is_some())
@@ -281,7 +326,12 @@ pub(crate) fn snapshot_path(host: &crate::host::NodeHost, file_entry: bool, work
     for name in KEYED_VARIABLES {
         std::hash::Hash::hash(&std::env::var_os(name), &mut hasher);
     }
-    Some(directory.join(format!("{:016x}.{SNAPSHOT_EXTENSION}", std::hash::Hasher::finish(&hasher))))
+    let kind = entry_graph::snapshot_kind(entry);
+    Some(directory.join(format!(
+        "{:016x}.{}.{SNAPSHOT_EXTENSION}",
+        std::hash::Hasher::finish(&hasher),
+        kind.name()
+    )))
 }
 
 /// The snapshot at `path`, mapped; when there is none, starts a process that builds it for
@@ -320,11 +370,12 @@ pub(crate) fn load_or_schedule(path: &std::path::Path) -> Option<quench_runtime:
 }
 
 /// Reports whether a snapshot was restored, and why not, when `SNAPSHOT_ENV` asks for it.
-pub(crate) fn report(outcome: Result<(), &str>) {
+pub(crate) fn report(path: Option<&std::path::Path>, outcome: Result<(), &str>) {
     if std::env::var_os(SNAPSHOT_ENV).is_some_and(|value| value == SNAPSHOT_TRACE) {
+        let kind = path.and_then(SnapshotKind::of_path).map_or("", SnapshotKind::name);
         match outcome {
-            Ok(()) => eprintln!("quench: startup snapshot restored"),
-            Err(error) => eprintln!("quench: startup snapshot not restored: {error}"),
+            Ok(()) => eprintln!("quench: startup snapshot restored ({kind})"),
+            Err(error) => eprintln!("quench: startup snapshot ({kind}) not restored: {error}"),
         }
     }
 }
@@ -334,8 +385,9 @@ pub(crate) fn report(outcome: Result<(), &str>) {
 pub(crate) fn build(path: &std::path::Path) -> Result<(), String> {
     let result = (|| {
         let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+        let kind = SnapshotKind::of_path(path).ok_or_else(|| format!("{} names no snapshot kind", path.display()))?;
         let mut host = crate::host::NodeHost::new(vec![executable.to_string_lossy().into_owned()]);
-        host.building_snapshot = true;
+        host.building_snapshot = Some(kind);
         let mut runtime = quench_runtime::Runtime::new(host);
         let program = runtime
             .compile_entry(quench_runtime::ExecutionRequest {
