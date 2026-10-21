@@ -1912,7 +1912,7 @@ impl<H: Host> Vm<H> {
         if let Some(values) = self.dense_apply_arguments(list)
             && (matches!(element_kind, ArrayLikeElementKind::Any)
                 || values.iter().all(|value| {
-                    matches!(self.heap.get(*value), Some(Cell::String(_) | Cell::Symbol(_)))
+                    self.heap.is_string(*value) || matches!(self.heap.get(*value), Some(Cell::Symbol(_)))
                 }))
         {
             return Ok(values);
@@ -1920,7 +1920,7 @@ impl<H: Host> Vm<H> {
         let object = self.heap.root(list);
         let mut elements = Vec::new();
         let outcome = (|| {
-            let length_atom = self.intern_atom("length");
+            let length_atom = self.length_atom;
             let length_value =
                 self.get_property(p, self.heap.root_value(object).unwrap(), length_atom)?;
             let length_value = self.heap.root(length_value);

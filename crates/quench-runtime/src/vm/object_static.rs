@@ -695,7 +695,7 @@ impl<H: Host> Vm<H> {
         let mut next_root = None;
         let mut result_root = None;
         let outcome = (|| {
-            let next_atom = self.intern_atom("next");
+            let next_atom = self.runtime_atoms.next;
             let receiver = self.heap.root_value(iterator).unwrap();
             let next = self.get_property(p, receiver, next_atom)?;
             let next = self.heap.root(next);

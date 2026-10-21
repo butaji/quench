@@ -74,7 +74,7 @@ impl<H: Host> Vm<H> {
     }
 
     fn set_agent_function_length(&mut self, function: Value, length: f64) {
-        let atom = self.intern_atom("length");
+        let atom = self.length_atom;
         let _ = self.set_property_with_attributes(
             function,
             atom,

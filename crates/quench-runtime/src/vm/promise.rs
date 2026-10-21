@@ -1250,7 +1250,7 @@ impl<H: Host> Vm<H> {
             .then_some(1.0)
             .or_else(|| native_length(kind));
         if let Some(length) = length {
-            let atom = self.intern_atom("length");
+            let atom = self.length_atom;
             let _ = self.set_property_with_attributes(
                 function,
                 atom,
