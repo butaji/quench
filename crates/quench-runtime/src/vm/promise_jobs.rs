@@ -462,14 +462,15 @@ impl<H: Host> Vm<H> {
             }));
     }
 
-    /// NewPromiseReactionJob's body for a reaction the queue holds directly.
+    /// NewPromiseReactionJob's body for a reaction the queue holds directly. The job's realm
+    /// stays current after it: the job queue decides when to leave it.
     pub(super) fn run_promise_reaction(
         &mut self,
         p: &ResidualProgram,
         reaction: PromiseJob,
     ) -> Result<(), JsError> {
         let value = reaction.value;
-        let previous_global = self.switch_realm_global(reaction.realm);
+        self.switch_realm_global(reaction.realm);
         let previous_context = reaction
             .execution_context
             .map(|context| self.host.enter_job_context(context))
@@ -518,7 +519,6 @@ impl<H: Host> Vm<H> {
         if let Some(context) = reaction.execution_context {
             self.release_job_context(context);
         }
-        self.switch_realm_global(previous_global);
         outcome.and(after).map(|_| ())
     }
 

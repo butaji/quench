@@ -353,6 +353,9 @@ impl<H: Host> Vm<H> {
     pub(super) fn collect_slow(&mut self, _program: &ResidualProgram, full: bool) {
         self.invalidate_wasm_reference_caches();
         let full = self.heap.collection_is_full(full);
+        if full {
+            self.host.at_collection_boundary();
+        }
         #[cfg(feature = "profile-memory")]
         if std::env::var_os("QUENCH_FUNCTION_USE").is_some() {
             self.report_function_use();
@@ -992,12 +995,7 @@ impl<H: Host> Vm<H> {
         let previous = std::mem::replace(&mut self.native_microtask_running, true);
         let result = (|| {
             self.check_execution_interrupt()?;
-            while let Some(job) = self.realm.jobs.pop_front() {
-                self.check_execution_interrupt()?;
-                self.run_pending_job(program, job)?;
-                self.advance_static_module_jobs(program)?;
-                self.advance_dynamic_import_jobs(program, true)?;
-            }
+            self.run_job_queue(program, |_| true)?;
             Ok(Value::UNDEFINED)
         })();
         self.native_microtask_running = previous;
@@ -1015,12 +1013,40 @@ impl<H: Host> Vm<H> {
         self.drain_pending_microtasks(program)
     }
 
-    /// Runs a job already taken off the queue: a finished job roots nothing, so a drain
-    /// whose jobs keep enqueueing more holds only the jobs still pending.
+    /// Runs queued jobs while `more` holds. A job runs in its realm, and the queue stays
+    /// there until work of another realm comes: consecutive jobs of one realm share one
+    /// realm entry, and the drain's own realm returns for module advancement, a host job,
+    /// and the drain's end, however it ends.
+    fn run_job_queue(
+        &mut self,
+        program: &ResidualProgram,
+        mut more: impl FnMut(&Self) -> bool,
+    ) -> Result<(), JsError> {
+        let home = self.realm.globals;
+        let result = (|| {
+            while more(self) && let Some(job) = self.realm.jobs.pop_front() {
+                self.check_execution_interrupt()?;
+                self.run_pending_job(program, job, home)?;
+                if self.module_jobs_pending() {
+                    self.switch_realm_global(home);
+                }
+                self.advance_static_module_jobs(program)?;
+                self.advance_dynamic_import_jobs(program, true)?;
+            }
+            Ok(())
+        })();
+        self.switch_realm_global(home);
+        result
+    }
+
+    /// Runs a job already taken off the queue, leaving its realm current: a finished job
+    /// roots nothing, so a drain whose jobs keep enqueueing more holds only the jobs still
+    /// pending. A host job runs in the drain's realm `home`.
     fn run_pending_job(
         &mut self,
         program: &ResidualProgram,
         job: PendingJob,
+        home: Value,
     ) -> Result<(), JsError> {
         let start = self.active_call_roots.len();
         job.push_roots(&mut self.active_call_roots);
@@ -1035,7 +1061,10 @@ impl<H: Host> Vm<H> {
                 callback,
                 this,
                 args,
-            } => self.call_value(program, callback, this, &args).map(|_| ()),
+            } => {
+                self.switch_realm_global(home);
+                self.call_value(program, callback, this, &args).map(|_| ())
+            }
             PendingJob::Reaction(reaction) => self.run_promise_reaction(program, reaction),
         };
         self.native_microtask_running = previous;
@@ -1055,16 +1084,10 @@ impl<H: Host> Vm<H> {
         program: &ResidualProgram,
         promise: Value,
     ) -> Result<(), JsError> {
-        while self
-            .promise_record(promise)
-            .is_some_and(|record| record.state == PromiseState::Pending)
-            && let Some(job) = self.realm.jobs.pop_front()
-        {
-            self.run_pending_job(program, job)?;
-            self.advance_static_module_jobs(program)?;
-            self.advance_dynamic_import_jobs(program, true)?;
-        }
-        Ok(())
+        self.run_job_queue(program, |vm| {
+            vm.promise_record(promise)
+                .is_some_and(|record| record.state == PromiseState::Pending)
+        })
     }
 }
 
