@@ -3163,25 +3163,32 @@ script_handler! {
         let Some(length) = (unsafe { vm(cx) }).own_array_length(r.get(i.b)) else {
             sibling!(lane_get_length_other::<H>, r, ip, Carried::script(cx))
         };
-        r.set(i.a, Value::number(length as f64));
+        r.set(i.a, Value::length(length));
         next!(cx, r, following(ip), Carried::script(cx))
     }
 }
 
 script_handler! {
     /// `lane_get_length` of a receiver other than an array, which the general cached read
-    /// does not answer: a string primitive's length (`Vm::string_length`), and an
-    /// arguments object's own data `length` in its creation layout
-    /// (`Vm::arguments_object_length`). Any other receiver takes `lane_get_field`.
+    /// does not answer: a string primitive's length (`Vm::string_length`) here, and any
+    /// other receiver past `lane_get_length_arguments`.
     #[inline(never)]
     fn lane_get_length_other<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let base = r.get(i.b);
-        let length = vm
-            .string_length(base)
-            .map(|length| Value::number(length as f64))
-            .or_else(|| vm.arguments_object_length(base));
-        let Some(length) = length else {
+        let Some(length) = (unsafe { vm(cx) }).string_length(r.get(i.b)) else {
+            sibling!(lane_get_length_arguments::<H>, r, ip, Carried::script(cx))
+        };
+        r.set(i.a, Value::length(length));
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// `lane_get_length_other` of a receiver other than a string: an arguments object's own
+    /// data `length` in its creation layout (`Vm::arguments_object_length`). Any other
+    /// receiver takes `lane_get_field`.
+    #[inline(never)]
+    fn lane_get_length_arguments<>(cx, r, ip, i, view) {
+        let Some(length) = (unsafe { vm(cx) }).arguments_object_length(r.get(i.b)) else {
             sibling!(lane_get_field::<H>, r, ip, Carried::script(cx))
         };
         r.set(i.a, length);
@@ -3934,8 +3941,25 @@ lane_handler! {
 lane_handler! {
     /// `lane_jump_binary_false` of a register and an integer constant small enough for the
     /// record's `c` field, both decoded when the view was derived
-    /// (`specialize_register_operands`).
+    /// (`specialize_register_operands`): Number comparison of an integer register
+    /// (`integer_relation`); any other takes `lane_jump_binary_false_small_other`.
     fn lane_jump_binary_false_small<BACKWARD: bool>(cx, r, ip, i, view) {
+        let right = Value::integer(i32::from(i.c as i16));
+        let Some(holds) = super::operations::integer_relation(u32::from(i.a), r.get(i.b), right) else {
+            sibling!(lane_jump_binary_false_small_other::<H, BACKWARD>, r, ip, view)
+        };
+        if !holds {
+            return lane_jump(cx, r, ip, BACKWARD, view, None);
+        }
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    /// `lane_jump_binary_false_small` of an operator or register value other than an integer
+    /// comparison. Out of line, so the integer case keeps few values live.
+    #[inline(never)]
+    fn lane_jump_binary_false_small_other<BACKWARD: bool>(cx, r, ip, i, view) {
         let right = Value::integer(i32::from(i.c as i16));
         // Past a comparison, the truth of a Number operator's result (`if (x & MASK)`).
         let Some(holds) = super::operations::number_relation(u32::from(i.a), r.get(i.b), right)
@@ -6316,14 +6340,16 @@ script_handler! {
         }
         // A site calling a native takes the native handler from now on, which hands any other
         // callee back.
-        if matches!(
-            vm.heap.function(callee),
-            Some(FunctionRecord {
-                kind: FunctionKind::Native(_),
-                ..
-            })
-        ) {
-            requicken(ip, lane_native_call::<H>);
+        match vm.heap.function(callee) {
+            Some(FunctionRecord { kind: FunctionKind::Native(Native::StringCharCodeAt), .. })
+                if i.a & crate::bytecode::RETURN_REGISTER == 0 =>
+            {
+                requicken(ip, lane_call_char_code_at::<H>);
+            }
+            Some(FunctionRecord { kind: FunctionKind::Native(_), .. }) => {
+                requicken(ip, lane_native_call::<H>);
+            }
+            _ => {}
         }
         sibling!(lane_native_call::<H>, r, ip, Carried::script(cx))
     }
@@ -6582,17 +6608,8 @@ fn lane_native_value<H: Host>(
         FunctionKind::Native(Native::ArrayPush) => vm.array_push_dense(receiver, args),
         FunctionKind::Native(Native::ArrayPop) => vm.array_pop_dense(receiver),
         FunctionKind::Native(Native::StringCharCodeAt) if !args.is_empty() => {
-            // `charCodeAt` of a string at an integer index: the unit there, or NaN outside
-            // the string. Any other receiver or index takes the native's coercions.
-            match (vm.heap.string(receiver), args[0].as_int()) {
-                (Some(text), Some(index)) => Some(
-                    usize::try_from(index)
-                        .ok()
-                        .and_then(|index| text.units().get(index))
-                        .map_or(Value::number(f64::NAN), |unit| Value::number(unit.into())),
-                ),
-                _ => lane_string_or_native_call(cx, ip, callee, receiver, args),
-            }
+            string_char_code_at(vm, receiver, args[0])
+                .or_else(|| lane_string_or_native_call(cx, ip, callee, receiver, args))
         }
         FunctionKind::Native(native @ (Native::MapGet | Native::MapHas | Native::SetHas)) => {
             let key = args.first().copied().unwrap_or(Value::UNDEFINED);
@@ -6603,6 +6620,43 @@ fn lane_native_value<H: Host>(
             native @ (Native::RegExpExec | Native::RegExpTest | Native::StringReplace),
         ) => lane_regexp_call(cx, ip, i, native, callee, receiver, args),
         _ => lane_string_or_native_call(cx, ip, callee, receiver, args),
+    }
+}
+
+/// `charCodeAt` of a flat string at an integer index: the unit there, or NaN outside the
+/// string. `None` for any other receiver or index, which the native coerces, and for a
+/// rope, which it flattens.
+#[inline(always)]
+fn string_char_code_at<H: Host>(vm: &Vm<H>, receiver: Value, index: Value) -> Option<Value> {
+    let (units, index) = (vm.heap.string(receiver)?.existing_flat()?, index.as_int()?);
+    Some(
+        usize::try_from(index)
+            .ok()
+            .and_then(|index| units.unit(index))
+            .map_or(Value::NAN, |unit| Value::integer(i32::from(unit))),
+    )
+}
+
+script_handler! {
+    /// A `Call` site whose callee was `String.prototype.charCodeAt` (`lane_script_call_resolve`):
+    /// that call of a string at an integer index in place (`string_char_code_at`). Any other
+    /// callee, receiver or index, or a call returning its result, takes `lane_native_call`.
+    fn lane_call_char_code_at<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let is_char_code_at = matches!(
+            vm.heap.function(r.get(i.b)),
+            Some(FunctionRecord { kind: FunctionKind::Native(Native::StringCharCodeAt), .. })
+        );
+        // SAFETY: the call's window is registers of the running function.
+        let index = unsafe { lane_call_window(r, i) }.first().copied();
+        let Some(value) = index
+            .filter(|_| is_char_code_at && i.a & crate::bytecode::RETURN_REGISTER == 0)
+            .and_then(|index| string_char_code_at(vm, r.get(i.c), index))
+        else {
+            sibling!(lane_native_call::<H>, r, ip, Carried::script(cx))
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::script(cx))
     }
 }
 

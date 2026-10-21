@@ -137,6 +137,8 @@ impl Value {
     pub const FALSE: Self = Self(TAG_BOOL);
     pub const TRUE: Self = Self(TAG_BOOL | 1);
     pub(crate) const DELETED: Self = Self(TAG_DELETED);
+    /// The canonical NaN `number` stores every NaN as.
+    pub(crate) const NAN: Self = Self(CANONICAL_NAN);
     /// An activation's `arguments` binding whose object does not exist yet
     /// (`CallPlan::forwards_arguments`). Not a heap reference, and distinct from every value a
     /// guest operation produces.
@@ -198,6 +200,13 @@ impl Value {
     #[inline(always)]
     pub(crate) fn integer(value: i32) -> Self {
         IntegerEncoding::TAG.encode(value)
+    }
+
+    /// A count or index as a Number, as `number` stores it: an integer within `i32`, without
+    /// the float round trip `number` makes to find that out.
+    #[inline(always)]
+    pub(crate) fn length(value: usize) -> Self {
+        i32::try_from(value).map_or_else(|_| Self::number(value as f64), Self::integer)
     }
 
     /// A 64-bit Wasm payload held in place. Every payload outside the tag
