@@ -20,7 +20,7 @@ pub(super) enum StoreContext { Resource(u64), Job(u64) }
 impl From<u64> for StoreContext {
     fn from(id: u64) -> Self { Self::Resource(id) }
 }
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) struct JobContext {
     pub resource: Option<u64>,
     pub execution: u64,
@@ -103,7 +103,9 @@ pub(crate) struct SharedAsyncHooksState {
     /// died when a collection ran since.
     pub(crate) promise_resources_pruned_epoch: u64,
     pub(super) scoped_resource: Option<(u64, RootId)>,
-    pub(super) local_stores: FxHashMap<(StoreContext, u64), RootId>,
+    /// Each context's AsyncLocalStorage values, by storage ID: a context's frame is found,
+    /// copied and dropped whole, without scanning the other contexts'.
+    pub(super) local_stores: FxHashMap<StoreContext, Vec<(u64, RootId)>>,
     pub(super) store_references: FxHashMap<RootId, usize>,
     pub(super) destroyed_resources: FxHashSet<u64>,
     /// The AsyncLocalStorage instances entered since their last `disable()`. Like Node's
@@ -141,6 +143,12 @@ impl SharedAsyncHooksState {
     /// Node gives Promises async resources only while its promise hook is installed.
     pub(crate) fn tracks_promises(&self) -> bool {
         self.registry.tracks_promises()
+    }
+
+    /// Whether a Promise job boundary has work: Promise resources to prune or hooks that
+    /// track Promises.
+    pub(crate) fn observes_job_boundaries(&self) -> bool {
+        self.tracks_promises() || !self.promise_resources.is_empty()
     }
 
     pub(super) fn default_trigger_async_id(&self) -> f64 {

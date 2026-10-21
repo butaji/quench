@@ -127,8 +127,8 @@ impl<H: Host> Vm<H> {
                 return self.define_proxy_property_record(p, target, key, &descriptor);
             }
             let property = self.heap.root_value(key).unwrap();
-            let property = match self.heap.string(property).cloned() {
-                Some(name) => PropertyKey::string(self.intern_js_atom(&name)),
+            let property = match self.string_key_atom(property) {
+                Some(atom) => PropertyKey::string(atom),
                 None if matches!(self.heap.get(property), Some(Cell::Symbol(_))) => {
                     PropertyKey::symbol(property)
                 }

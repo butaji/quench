@@ -247,6 +247,32 @@ pub(crate) struct StaticModulePlan {
     pub(crate) has_top_level_await: bool,
 }
 pub(crate) use crate::bytecode::ModuleReexport as StaticModuleReexport;
+
+/// `Engine::static_module_analysis`: a static module text's early error, or else its plan
+/// (none when the stack does not bound its syntax).
+pub(crate) struct StaticModuleAnalysis {
+    pub(crate) early_error: Option<String>,
+    pub(crate) plan: Option<StaticModulePlan>,
+}
+
+/// The key `static_module_analysis` memoizes a text under: the module's name, the text's
+/// length and its hash. Texts are the process's own module files, not adversarial input, and
+/// a module is looked up about fifteen times, so one fast hash of its text serves.
+#[derive(PartialEq, Eq, Hash)]
+struct StaticModuleTextKey {
+    length: usize,
+    hash: u64,
+    name: Box<str>,
+}
+
+impl StaticModuleTextKey {
+    fn of(source: &str, module_name: &str) -> Self {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = rustc_hash::FxHasher::default();
+        source.hash(&mut hasher);
+        Self { length: source.len(), hash: hasher.finish(), name: module_name.into() }
+    }
+}
 impl Engine {
     /// V8 excludes tagged templates from eval's compilation cache because each
     /// evaluation owns distinct template objects, including nested function sites.
@@ -312,46 +338,67 @@ impl Engine {
     }
 
     /// The SyntaxError message of a module source's first early error, if it has one.
-    pub(crate) fn static_module_early_error(source: &str) -> Option<String> {
-        let normalized = early::normalize_hashbang(source);
-        let allocator = Allocator::with_capacity(normalized.len().saturating_mul(6));
-        let parsed = Parser::new(&allocator, &normalized, SourceType::mjs()).parse();
-        if stack::validate_parsed(&parsed).is_err() {
-            return None;
-        }
-        if let Some(error) = parsed.diagnostics.first() {
-            return Some(syntax_message::parse_failure(&normalized, error));
-        }
-        oxc_semantic::SemanticBuilder::new()
-            .with_check_syntax_error(true)
-            .build(&parsed.program)
-            .diagnostics
-            .first()
-            .map(|error| error.message.to_string())
+    /// A static module's link plan, when its text has no early error and the stack bounds
+    /// its syntax (`static_module_analysis`).
+    pub(crate) fn static_module_plan(source: &str, module_name: &str) -> Option<StaticModulePlan> {
+        Self::static_module_analysis(source, module_name).plan.clone()
     }
 
-    pub(crate) fn static_module_plan(source: &str, module_name: &str) -> Option<StaticModulePlan> {
+    /// What a static module's text says before it links, from one parse and semantic check,
+    /// memoized for the thread by the text and name: linking and evaluating a module asks for
+    /// it several times (a module graph parsed each module three times, 12% of a Babel run).
+    pub(crate) fn static_module_analysis(source: &str, module_name: &str) -> Rc<StaticModuleAnalysis> {
+        Self::static_module_analysis_with(source, module_name, |analyze| analyze())
+    }
+
+    /// `static_module_analysis`, whose memo misses `obtain`, which analyzes the text with the
+    /// function it is given or finds the analysis elsewhere (a host's compile cache).
+    pub(crate) fn static_module_analysis_with(
+        source: &str,
+        module_name: &str,
+        obtain: impl FnOnce(&dyn Fn() -> StaticModuleAnalysis) -> StaticModuleAnalysis,
+    ) -> Rc<StaticModuleAnalysis> {
+        thread_local! {
+            static ANALYSES: std::cell::RefCell<FxHashMap<StaticModuleTextKey, Rc<StaticModuleAnalysis>>> =
+                std::cell::RefCell::default();
+        }
+        let key = StaticModuleTextKey::of(source, module_name);
+        if let Some(analysis) = ANALYSES.with(|analyses| analyses.borrow().get(&key).cloned()) {
+            return analysis;
+        }
+        let analysis = Rc::new(obtain(&|| Self::analyze_static_module(source, module_name)));
+        ANALYSES.with(|analyses| analyses.borrow_mut().insert(key, analysis.clone()));
+        analysis
+    }
+
+    fn analyze_static_module(source: &str, module_name: &str) -> StaticModuleAnalysis {
+        let unbounded = StaticModuleAnalysis { early_error: None, plan: None };
         let normalized = early::normalize_hashbang(source);
         let allocator = Allocator::with_capacity(normalized.len().saturating_mul(6));
         let parsed = Parser::new(&allocator, &normalized, SourceType::mjs()).parse();
         if stack::validate_parsed(&parsed).is_err() {
-            return None;
+            return unbounded;
         }
-        if !parsed.diagnostics.is_empty() {
-            return None;
+        if let Some(error) = parsed.diagnostics.first() {
+            return StaticModuleAnalysis {
+                early_error: Some(syntax_message::parse_failure(&normalized, error)),
+                plan: None,
+            };
         }
         let semantic = oxc_semantic::SemanticBuilder::new()
             .with_check_syntax_error(true)
             .build(&parsed.program);
-        if !semantic.diagnostics.is_empty() {
-            return None;
+        if let Some(error) = semantic.diagnostics.first() {
+            return StaticModuleAnalysis { early_error: Some(error.message.to_string()), plan: None };
         }
-        let link_plan = Self::module_link_plan(&parsed.program.body, module_name);
-        Some(StaticModulePlan {
-            link_plan,
-            requests: module_requests(&parsed.program.body),
-            has_top_level_await: has_top_level_await(&parsed.program.body),
-        })
+        StaticModuleAnalysis {
+            early_error: None,
+            plan: Some(StaticModulePlan {
+                link_plan: Self::module_link_plan(&parsed.program.body, module_name),
+                requests: module_requests(&parsed.program.body),
+                has_top_level_await: has_top_level_await(&parsed.program.body),
+            }),
+        }
     }
 
     fn module_link_plan(statements: &[Statement<'_>], module_name: &str) -> Option<ModuleLinkPlan> {
