@@ -1026,6 +1026,12 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         let start = self.active_call_roots.len();
         job.push_roots(&mut self.active_call_roots);
+        // A job boundary is a safepoint, as a back edge is: a job may run no loop, so a due
+        // collection would otherwise wait while job after job allocates, and the lane, which
+        // admits no frameless call while one is due, would push a frame for every call. The
+        // job's own values are call roots, and a collection inside its callback, which any
+        // back edge makes, is no less possible.
+        self.maybe_collect(program);
         let previous = std::mem::replace(&mut self.native_microtask_running, true);
         let result = match job {
             PendingJob::Call {

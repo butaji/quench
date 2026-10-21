@@ -1356,20 +1356,19 @@ impl<H: Host> Vm<H> {
                     super::lane_exits::record(instruction.op());
                     if matches!(instruction.op(), Op::Call | Op::Construct) {
                         let callee = self.frames[frame].registers.get(usize::from(instruction.register_b())).copied();
-                        let detail = match callee.and_then(|callee| self.heap.get(callee)) {
-                            Some(Cell::Function { kind: FunctionKind::Native(native), .. }) => format!("native {native:?}"),
-                            Some(Cell::Function { kind: FunctionKind::User(program, id), .. }) => {
+                        let detail = match callee.and_then(|callee| self.heap.function(callee)) {
+                            Some(crate::heap::FunctionRecord { kind: FunctionKind::Native(native), .. }) => format!("native {native:?}"),
+                            Some(crate::heap::FunctionRecord { kind: FunctionKind::User(program, id), .. }) => {
                                 let plan = self.programs.residual(*program).and_then(|code| {
-                                    let body = code.functions.get(*id as usize)?;
-                                    Some(format!("user registers_only={} async={} gen={} class={} self={} args={:?}", body.call_plan(code).registers_only, body.is_async, body.is_generator, body.is_class_constructor, body.self_binding_slot.is_some(), body.arguments_slot.is_some()))
+                                    let body = code.function_get(*id as usize)?;
+                                    Some(format!("user {} pc={pc} registers_only={} async={} gen={} class={} self={} args={:?}", body.name.map(|a| code.atoms[a as usize].to_string()).unwrap_or_default(), body.call_plan(code).registers_only, body.is_async, body.is_generator, body.is_class_constructor, body.self_binding_slot.is_some(), body.arguments_slot.is_some()))
                                 });
                                 plan.unwrap_or_else(|| "user ?".into())
                             }
-                            Some(Cell::Function { kind, .. }) => format!("function {}", std::any::type_name_of_val(kind)),
-                            Some(_) => "other cell".into(),
-                            None => "not a cell".into(),
+                            None => "not a function".into(),
                         };
-                        super::lane_exits::record_detail(format!("{:?} {detail}", instruction.op()));
+                        let caller = p.function_get(self.frames[frame].function as usize).map(|f| (f.is_async, Self::lane_runs(cursor.lane, pc), self.frames.len() - 1 - frame, pending_calls.len()));
+                        super::lane_exits::record_detail(format!("{:?} {detail} caller(async,arrow,depth,pending)={caller:?}", instruction.op()));
                     }
                     if matches!(instruction.op(), Op::JumpBinaryFalse | Op::Binary) {
                         let constants = self.programs.constants(cursor.program);
