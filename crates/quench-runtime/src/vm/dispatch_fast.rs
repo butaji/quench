@@ -1638,6 +1638,20 @@ lane_handler! {
 }
 
 lane_handler! {
+    /// `CloneEnv` in the lane's own frame while that frame holds no captured environment:
+    /// nothing to copy, as the general path finds (`Vm::clone_frame_environment`). A
+    /// captured frame's copy replaces the environment the lane reads through, and an
+    /// activation's would be its window's, so both take the general path.
+    fn lane_clone_env<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        if !vm.lane_stack.activations.is_empty() || vm.frames[unsafe { (*cx).frame }].captured {
+            return exit(ip);
+        }
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
     /// Numbers convert to themselves; other values take the general path.
     fn lane_to_numeric<>(cx, r, ip, i, view) {
         let value = r.get(i.b);
@@ -3010,6 +3024,7 @@ script_handler! {
             _ if string_base => Some(lane_get_field_string::<H>),
             FieldSiteTier::Nested => Some(lane_get_field_nested::<H>),
             FieldSiteTier::General => Some(lane_get_field::<H>),
+            FieldSiteTier::Getter => Some(lane_get_field_getter::<H>),
             FieldSiteTier::Polymorphic => Some(single_base_handler(
                 i.b,
                 lane_get_field_polymorphic::<H, true>,
@@ -3057,6 +3072,8 @@ enum FieldSiteTier {
     Nested,
     /// A nested read with another step, which only the general cached read makes.
     General,
+    /// A read that met an accessor the site cached (`Vm::field_site_getter`).
+    Getter,
     /// Past one shape (`Vm::field_site_polymorphic`).
     Polymorphic,
     /// A primary entry naming a prototype holder (`Vm::field_site_holder`).
@@ -3082,6 +3099,8 @@ fn lane_field_site_tier<H: Host>(
                 })
         });
         if nested_own { FieldSiteTier::Nested } else { FieldSiteTier::General }
+    } else if vm.field_site_getter(i.c) {
+        FieldSiteTier::Getter
     } else if vm.field_site_polymorphic(i.c) {
         FieldSiteTier::Polymorphic
     } else if vm.field_site_holder(i.c) {
@@ -3159,6 +3178,19 @@ script_handler! {
         };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// `lane_get_field` at a site whose reads met a getter (`FieldSiteTier::Getter`): the
+    /// getter activation first, whose cache check fails without effect, so a data read the
+    /// cached probes answer stays `lane_get_field`'s.
+    #[inline(never)]
+    fn lane_get_field_getter<>(cx, r, ip, i, view) {
+        match lane_getter_activation(cx, r, ip, i) {
+            Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
+            Err(_) => sibling!(lane_get_field::<H>, r, ip, Carried::script(cx)),
+        }
     }
 }
 
@@ -3256,7 +3288,8 @@ fn lane_cached_field<H: Host>(
     vm.prepare_named_function_info_lookup(object, atom);
     match vm.cached_field_hit(code, object, site) {
         super::object::FieldCacheProbe::Hit(value) => Some(value),
-        probe => lane_cached_field_miss(vm, code, object, atom, site, probe),
+        // SAFETY: the context outlives the lane run.
+        probe => lane_cached_field_miss(vm, code, object, atom, site, probe, unsafe { (*cx).env }),
     }
 }
 
@@ -3270,17 +3303,20 @@ fn lane_cached_field_miss<H: Host>(
     atom: crate::bytecode::Atom,
     site: u16,
     probe: super::object::FieldCacheProbe,
+    environment: Value,
 ) -> Option<Value> {
     // A private field reads from the object's private elements before any cache, as the
-    // general loop's `GetField` does. Its home follows the running frame's environment, which
-    // is the lane's frame only while no frameless activation runs.
+    // general loop's `GetField` does. Its home follows the running function and the
+    // environment its frame would capture from: the lane's frame, or a frameless activation's
+    // function and environment, whose frame would hold that environment as its closure's.
     if vm.is_private_name(atom) {
-        return vm
-            .lane_stack
-            .activations
-            .is_empty()
-            .then(|| vm.private_field_value(code, object, atom))
-            .flatten();
+        return match vm.lane_stack.activations.last() {
+            None => vm.private_field_value(code, object, atom),
+            Some(activation) => {
+                let function = activation.script().map(|_| activation.function)?;
+                vm.memoized_private_field_value(code, environment, function, object, atom)
+            }
+        };
     }
     match probe {
         super::object::FieldCacheProbe::Hit(value) => Some(value),
@@ -8024,7 +8060,7 @@ lane_handler! {
                 Some(lane_returning::<H, RETURNING_FIELD>)
             }
             FieldSiteTier::Nested => Some(lane_returning::<H, RETURNING_FIELD_NESTED>),
-            FieldSiteTier::General => Some(lane_returning::<H, RETURNING_FIELD>),
+            FieldSiteTier::General | FieldSiteTier::Getter => Some(lane_returning::<H, RETURNING_FIELD>),
             FieldSiteTier::Polymorphic => Some(lane_returning::<H, RETURNING_FIELD_POLYMORPHIC>),
             FieldSiteTier::Holder => Some(lane_returning::<H, RETURNING_FIELD_HOLDER>),
             FieldSiteTier::Inherited => Some(lane_returning::<H, RETURNING_FIELD_INHERITED>),
@@ -8317,6 +8353,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::StoreLocal | Op::StoreEnvLocal => Some(lane_store_local::<H>),
         Op::LoadThis => Some(lane_load_this::<H>),
         Op::InitializeTdz => Some(lane_initialize_tdz::<H>),
+        Op::CloneEnv => Some(lane_clone_env::<H>),
         Op::GetField => Some(lane_get_field_first::<H>),
         Op::SetField | Op::SetFieldStrict => Some(lane_set_object_field_own::<H>),
         Op::SetThisField | Op::SetThisFieldStrict => Some(lane_set_this_field_own::<H>),
