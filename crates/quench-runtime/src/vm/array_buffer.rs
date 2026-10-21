@@ -512,8 +512,7 @@ impl<H: Host> Vm<H> {
         new_target: Value,
         shared: bool,
     ) -> Result<Value, JsError> {
-        let prototype_atom = self.prototype_atom();
-        let prototype = self.get_property(p, new_target, prototype_atom)?;
+        let prototype = self.constructor_prototype_value(p, new_target)?;
         if self.object_data(prototype).is_some() {
             return Ok(prototype);
         }
