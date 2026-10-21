@@ -759,8 +759,8 @@ impl<H: Host> Vm<H> {
         self.iterator_result_shape = None;
         self.descriptor_shapes = [None; 2];
         self.regexp_object_shapes = None;
-        self.regexp_last_index_layout = None;
-        self.regexp_builtin_layout = None;
+        self.regexp_last_index_layouts.clear();
+        self.regexp_builtin_layouts.clear();
         self.regexp_symbol_layouts.clear();
     }
     /// Notes that `site`'s per-site cache entries change (`field_cache_writes`).
