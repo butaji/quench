@@ -2947,6 +2947,7 @@ impl ResidualProgram {
     #[inline(never)]
     fn recompile_function(&self, index: usize) -> &Function {
         self.functions[index].record.get_or_init(|| {
+            crate::compile::compile_phase_boundary(crate::compile::CompilePhase::FirstCall);
             let deferred = self
                 .encoded_records
                 .as_deref()
