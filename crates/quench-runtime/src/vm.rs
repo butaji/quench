@@ -654,6 +654,7 @@ struct AccessorFieldCache {
     receiver: u32,
     /// The receiver's prototype, where the chain to `holder` starts.
     prototype: Value,
+    /// The object holding the accessor, or `OWN_ACCESSOR` for the receiver itself.
     holder: Value,
     slot: u16,
     /// The `prototype_layout_epoch` the chain was proved under.
