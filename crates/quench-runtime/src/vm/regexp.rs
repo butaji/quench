@@ -2589,14 +2589,14 @@ impl<H: Host> Vm<H> {
             Some(Cell::RegExp { meta, .. }) => meta.legacy_constructor,
             _ => return Err(JsError("RegExp instance unavailable after match".into())),
         };
+        let state = self
+            .realm
+            .intrinsics
+            .regexp_intrinsics
+            .get_mut(&self.realm.globals)
+            .expect("active realm has RegExp intrinsics");
         // Constructors are objects, whose SameValue is identity.
-        if owner.constructor() == self.regexp_intrinsic_constructor() {
-            let state = self
-                .realm
-                .intrinsics
-                .regexp_intrinsics
-                .get_mut(&self.realm.globals)
-                .expect("active realm has RegExp intrinsics");
+        if owner.constructor() == state.constructor {
             match owner {
                 crate::heap::RegExpLegacyOwner::Enabled(_) => {
                     state.legacy_input = Some(input.clone());
