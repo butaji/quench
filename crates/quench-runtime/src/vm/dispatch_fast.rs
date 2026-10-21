@@ -814,17 +814,24 @@ impl ConstructPlan {
         }
     }
 
-    /// The receiver this plan allocates for `values`, its fields in order and `undefined`
-    /// past them, which is how unused inline slots start.
+    /// The receiver this plan allocates with its fields `field(k)` in order and `undefined`
+    /// past them, which is how unused inline slots start: gathered into the receiver's inline
+    /// slots where they fit, else into the arena run's values.
     #[inline(always)]
-    fn allocate(&self, heap: &mut crate::heap::Heap, values: [Value; CONSTRUCT_PLAN_FIELDS]) -> Value {
-        let fields = usize::from(self.fields);
-        if fields <= INLINE_PROPERTY_COUNT {
-            debug_assert!(values[fields..].iter().all(|value| *value == Value::UNDEFINED));
-            let inline = std::array::from_fn(|slot| values[slot]);
+    fn allocate(&self, heap: &mut crate::heap::Heap, field: impl Fn(u16) -> Value) -> Value {
+        let parameters = &self.parameters[..usize::from(self.fields)];
+        if parameters.len() <= INLINE_PROPERTY_COUNT {
+            let mut inline = [Value::UNDEFINED; INLINE_PROPERTY_COUNT];
+            for (slot, parameter) in inline.iter_mut().zip(parameters) {
+                *slot = field(*parameter);
+            }
             return heap.alloc_object_from_header(self.header, self.prototype, inline);
         }
-        heap.alloc_object_with_properties(self.prototype, self.shape, &values[..fields])
+        let mut values = [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS];
+        for (value, parameter) in values.iter_mut().zip(parameters) {
+            *value = field(*parameter);
+        }
+        heap.alloc_object_with_properties(self.prototype, self.shape, &values[..parameters.len()])
     }
 }
 
@@ -7859,14 +7866,10 @@ fn lane_planned_construction<H: Host>(
 ) -> Option<Value> {
     let plan = holding_construct_plan(vm, callee)?;
     let argc = ImmediateLayout::argument_count(i.imm());
-    let mut values = [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS];
-    for (value, parameter) in values.iter_mut().zip(&plan.parameters[..usize::from(plan.fields)]) {
-        // Parameter `k` is argument `k`, or undefined when not passed.
-        if *parameter < argc {
-            *value = r.get(i.c + parameter);
-        }
-    }
-    Some(plan.allocate(&mut vm.heap, values))
+    // Parameter `k` is argument `k`, or undefined when not passed.
+    Some(plan.allocate(&mut vm.heap, |parameter| {
+        if parameter < argc { r.get(i.c + parameter) } else { Value::UNDEFINED }
+    }))
 }
 
 /// The construct plan cache entry `callee` owns, when it names a heap cell.
@@ -7897,7 +7900,7 @@ fn lane_planned_receiver<H: Host>(
     plan: Option<&ConstructPlan>,
 ) -> Option<Value> {
     if let Some(plan) = plan.filter(|plan| plan.fields == 0) {
-        return Some(plan.allocate(&mut vm.heap, [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS]));
+        return Some(plan.allocate(&mut vm.heap, |_| Value::UNDEFINED));
     }
     let template = vm.inline_construct_template(callee)?;
     let (prototype, shape) = (template.proto(), template.shape());
