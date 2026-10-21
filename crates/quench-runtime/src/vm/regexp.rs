@@ -949,14 +949,13 @@ impl<H: Host> Vm<H> {
                 {
                     return Rc::clone(subject);
                 }
-                let subject = quench_regexp::Subject::short_ascii(text.as_str());
                 if let Some(slot) = self.regexp_short_subject.as_mut()
                     && let Some(reused) = Rc::get_mut(slot)
                 {
-                    *reused = subject;
+                    reused.respell_short_ascii(text.as_str());
                     return Rc::clone(slot);
                 }
-                let subject = Rc::new(subject);
+                let subject = Rc::new(quench_regexp::Subject::short_ascii(text.as_str()));
                 self.regexp_short_subject = Some(Rc::clone(&subject));
                 return subject;
             }
@@ -968,22 +967,30 @@ impl<H: Host> Vm<H> {
                 .shared_ascii()
                 .is_some_and(|(text, range)| subject.is_ascii_text_of(text, &range)),
         });
-        let subject = match cached {
-            // The most recent subject again: the cache keeps its order.
-            Some(0) => return Rc::clone(&self.regexp_subjects[0]),
-            Some(position) => self.regexp_subjects.remove(position),
-            None => Rc::new(match text {
-                FlatUnits::Wide(units) => quench_regexp::Subject::new(Rc::clone(units)),
-                ascii => {
-                    let (text, range) =
-                        ascii.shared_ascii().expect("short subjects returned above");
-                    quench_regexp::Subject::from_ascii(Rc::clone(text), range)
-                }
-            }),
+        // The cache is ordered by recency: a hit moves to the front, and a miss takes the
+        // least recent entry's place, reusing its allocation when no match holds it.
+        if let Some(position) = cached {
+            self.regexp_subjects[..=position].rotate_right(1);
+            return Rc::clone(&self.regexp_subjects[0]);
+        }
+        let fresh = match text {
+            FlatUnits::Wide(units) => quench_regexp::Subject::new(Rc::clone(units)),
+            ascii => {
+                let (text, range) = ascii.shared_ascii().expect("short subjects returned above");
+                quench_regexp::Subject::from_ascii(Rc::clone(text), range)
+            }
         };
-        self.regexp_subjects.insert(0, Rc::clone(&subject));
-        self.regexp_subjects.truncate(REGEXP_SUBJECT_CACHE_ENTRIES);
-        subject
+        if self.regexp_subjects.len() < REGEXP_SUBJECT_CACHE_ENTRIES {
+            self.regexp_subjects.push(Rc::new(fresh));
+        } else {
+            let least_recent = self.regexp_subjects.last_mut().expect("the cache is full");
+            match Rc::get_mut(least_recent) {
+                Some(reused) => *reused = fresh,
+                None => *least_recent = Rc::new(fresh),
+            }
+        }
+        self.regexp_subjects.rotate_right(1);
+        Rc::clone(&self.regexp_subjects[0])
     }
 
     /// `RegExp.prototype[@@replace]` for a receiver whose exec, flags and lastIndex are its
