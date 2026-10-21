@@ -1338,6 +1338,7 @@ impl<H: Host> Vm<H> {
                 continue;
             }
             if Self::lane_runs(cursor.lane, pc) {
+                let mut executing = ExecutingProgram { id: executing_program, retained: current_program.take() };
                 pc = self.run_fast_lane(
                     p,
                     cursor.program,
@@ -1345,8 +1346,14 @@ impl<H: Host> Vm<H> {
                     &mut frame,
                     pc,
                     &mut pending_calls,
+                    &mut executing,
                     allow_inline_calls,
                 );
+                // The lane may leave in a frame of another program, its activations' calls
+                // having set the loop's executing program aside as the loop's pushes do.
+                executing_program = executing.id;
+                current_program = executing.retained;
+                executing_residual = current_program.as_deref().unwrap_or(entry_program);
                 #[cfg(feature = "profile-lane-exits")]
                 if let Some(instruction) = p
                     .functions
@@ -1406,10 +1413,11 @@ impl<H: Host> Vm<H> {
                 // same frame slot; the active frame's PC slot and register file follow it.
                 published_pc = &mut self.frames[frame].pc;
                 self.active_registers = self.frames[frame].registers.as_mut_ptr();
-                if self.frames[frame].function != cursor.function {
+                if self.frames[frame].function != cursor.function || executing_program != cursor.program {
                     cursor = self.general_cursor(
-                        cursor.program,
-                        p,
+                        executing_program,
+                        // SAFETY: as for `p` at the top of the loop.
+                        unsafe { &*executing_residual },
                         self.frames[frame].function,
                         fast_lane,
                     );
@@ -1443,6 +1451,9 @@ impl<H: Host> Vm<H> {
                     continue;
                 }
             }
+            // The lane may have left in another program's frame (above).
+            // SAFETY: as for `p` at the top of the loop.
+            let p = unsafe { &*executing_residual };
             if STOPS && stop_pc == Some(pc) {
                 self.frames[frame].pc = pc;
                 self.frames[frame].pc_is_resume = true;
