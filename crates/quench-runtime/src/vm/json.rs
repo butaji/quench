@@ -1205,28 +1205,31 @@ impl<H: Host> Vm<H> {
     }
 
     /// Whether `Get(value, "toJSON")` finds nothing, decided without running guest code, for
-    /// an object the serializer reads as it is: an ordinary object, or a plain array whose own
-    /// shape lacks the key, along a chain of ordinary objects. A boxed primitive, whose
-    /// serialization coerces it, and any other object answer `false`.
+    /// an object the serializer reads as it is, along a chain of arrays (such as
+    /// `Array.prototype`) whose own shapes lack the key and of ordinary objects
+    /// (`plain_property_lookup`). A boxed primitive, whose serialization coerces it, and any
+    /// other object answer `false`.
     fn json_lacks_to_json(&self, value: Value, to_json: Atom) -> bool {
         let key = PropertyKey::string(to_json);
         if self.boxed_primitive_data(value).is_some() {
             return false;
         }
-        let start = match self.heap.array(value) {
-            Some(array) if !array.has_indexed_descriptors() && !array.is_arguments_object() => {
-                let data = &**array;
-                if self.property_shape_slot(data.shape(), key).is_some()
-                    || data.has_side_descriptors()
-                {
-                    return false;
-                }
-                data.proto()
+        let mut current = value;
+        loop {
+            let Some(array) = self.heap.array(current) else {
+                return self.plain_property_lookup(current, key) == Some(None);
+            };
+            if array.is_arguments_object()
+                || array.has_side_descriptors()
+                || self.property_shape_slot(array.shape(), key).is_some()
+            {
+                return false;
             }
-            Some(_) => return false,
-            None => value,
-        };
-        start.is_null() || self.plain_property_lookup(start, key) == Some(None)
+            current = array.proto();
+            if current.is_null() {
+                return true;
+            }
+        }
     }
 
     /// A key's string value, allocated last before the call that receives it.
@@ -1275,8 +1278,14 @@ impl<H: Host> Vm<H> {
         if self.heap.object_record(value).is_some() || self.heap.promise(value).is_some() {
             return self.json_serialize_object(p, value, state).map(|()| true);
         }
-        if self.heap.array(value).is_some() {
-            return self.json_serialize_array(p, value, state).map(|()| true);
+        if let Some(array) = self.heap.array(value) {
+            // An arguments object is an ordinary object to IsArray, so it serializes as one.
+            return if array.is_arguments_object() {
+                self.json_serialize_object(p, value, state)
+            } else {
+                self.json_serialize_array(p, value, state)
+            }
+            .map(|()| true);
         }
         match self.heap.get(value).cloned() {
             _ if let Some(text) = self.heap.string(value).cloned()  => {
