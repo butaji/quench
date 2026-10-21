@@ -1672,9 +1672,10 @@ pub(crate) struct Vm<H> {
     /// `NO_INHERITED_FIELD`.
     inherited_field_indices: Vec<u32>,
     inherited_field_caches: Vec<InheritedFieldCache>,
-    /// Accessor reads by field-cache index (`AccessorFieldCache`); cleared with the field
-    /// caches.
-    accessor_field_caches: FxHashMap<usize, AccessorFieldCache>,
+    /// Accessor reads by field-cache index (`AccessorFieldCache`), up to
+    /// `INHERITED_FIELD_CACHE_WAYS` receiver shapes a site, oldest first, as an inherited
+    /// method's site sees one shape per subclass; cleared with the field caches.
+    accessor_field_caches: FxHashMap<usize, Vec<AccessorFieldCache>>,
     field_add_indices: Vec<u32>,
     field_add_sets: Vec<FieldAddCacheSet>,
     megamorphic_field_indices: Vec<u32>,
