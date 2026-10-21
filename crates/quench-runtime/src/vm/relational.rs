@@ -105,7 +105,7 @@ impl<H: Host> Vm<H> {
                     Ok(false)
                 });
             }
-            let key_atom = vm.heap.string(key).cloned().map(|name| vm.intern_js_atom(&name));
+            let key_atom = vm.string_key_atom(key);
             if matches!(vm.heap.get(object), Some(Cell::TypedArray { .. }))
                 && let Some(name) = vm.heap.string(key).cloned()
             {

@@ -5,6 +5,17 @@ use crate::bytecode::PropertyDefinitionMode;
 /// The fields of a property descriptor object (ECMA-262 PropertyDescriptor's six).
 const DESCRIPTOR_FIELDS: usize = 6;
 
+/// Where an ordinary descriptor object of `shape`, whose prototype has `prototype_shape` and no
+/// prototype of its own, finds each `descriptor_field_atoms` field: an own data property's slot,
+/// or `None` where neither shape names the field. Shapes are immutable and hold their
+/// attributes (dictionary shapes are left out), so the layout holds for every such object.
+#[derive(Clone, Copy)]
+pub(in crate::vm) struct DescriptorLayout {
+    shape: u32,
+    prototype_shape: u32,
+    slots: [Option<u32>; DESCRIPTOR_FIELDS],
+}
+
 pub(super) enum TypedArrayIndexKey {
     NotCanonical,
     Invalid,
@@ -225,6 +236,9 @@ impl<H: Host> Vm<H> {
         if !self.is_object_like(descriptor) {
             return Err(self.type_error(p, "property descriptor is not an object".into()));
         }
+        if let Some(fields) = self.laid_out_descriptor_fields(descriptor) {
+            return self.descriptor_record(p, fields);
+        }
         let keys = self.descriptor_field_atoms();
         // A descriptor whose fields, present or not, are all found without running code (an
         // object literal, nearly always) is read without rooting: nothing allocates.
@@ -253,6 +267,63 @@ impl<H: Host> Vm<H> {
             self.heap.release_root(root);
         }
         result
+    }
+
+    /// The fields of `descriptor` read through its shape's `DescriptorLayout`, or `None` when
+    /// it is not an ordinary object whose prototype ends the chain, or its shapes have none.
+    fn laid_out_descriptor_fields(&mut self, descriptor: Value) -> Option<[Option<Value>; DESCRIPTOR_FIELDS]> {
+        let plain = |object: &Object| {
+            !object.is_module_namespace()
+                && object.deferred_module().is_none()
+                && !object.has_side_descriptors()
+        };
+        let data = self.heap.ordinary_object(descriptor).filter(|data| plain(data))?;
+        let shape = data.shape();
+        let prototype = self.heap.ordinary_object(data.proto()).filter(|data| plain(data))?;
+        if !prototype.proto().is_null() {
+            return None;
+        }
+        let prototype_shape = prototype.shape();
+        let layout = match self.descriptor_layout {
+            Some(layout) if layout.shape == shape && layout.prototype_shape == prototype_shape => layout,
+            _ => {
+                let layout = self.descriptor_layout_of(descriptor, shape, prototype_shape)?;
+                self.descriptor_layout = Some(layout);
+                layout
+            }
+        };
+        let data = self.heap.ordinary_object(descriptor)?;
+        let mut fields = [None; DESCRIPTOR_FIELDS];
+        for (field, slot) in fields.iter_mut().zip(layout.slots) {
+            if let Some(slot) = slot {
+                *field = Some(self.heap.property_get(data, slot as usize)?);
+            }
+        }
+        Some(fields)
+    }
+
+    /// The `DescriptorLayout` of `descriptor`'s shape: `None` when a shape is a dictionary,
+    /// a field is an own accessor, or the prototype names a field.
+    fn descriptor_layout_of(&self, descriptor: Value, shape: u32, prototype_shape: u32) -> Option<DescriptorLayout> {
+        if self.shape_is_dictionary(shape) || self.shape_is_dictionary(prototype_shape) {
+            return None;
+        }
+        let data = self.heap.ordinary_object(descriptor)?;
+        let mut slots = [None; DESCRIPTOR_FIELDS];
+        for (slot, atom) in slots.iter_mut().zip(self.descriptor_field_atoms()) {
+            let key = PropertyKey::string(atom);
+            match self.property_shape_slot(shape, key) {
+                Some(own) => {
+                    if self.shape_may_have_accessors(shape) && self.slot_attributes(data, own)?.accessor {
+                        return None;
+                    }
+                    *slot = Some(u32::try_from(own).ok()?);
+                }
+                None if self.property_shape_slot(prototype_shape, key).is_some() => return None,
+                None => {}
+            }
+        }
+        Some(DescriptorLayout { shape, prototype_shape, slots })
     }
 
     /// An accessor field that is absent, undefined or callable.
@@ -501,8 +572,17 @@ impl<H: Host> Vm<H> {
         target: Value,
         key: Value,
     ) -> Result<Option<(Value, PropertyAttributes)>, JsError> {
-        if let Some(name) = self.heap.string(key).cloned() {
-            let atom = self.intern_js_atom(&name);
+        if let (Some(atom), Some(name)) = (self.string_key_atom(key), self.heap.string(key).cloned()) {
+            // A lazy data property is an accessor whose getter is its member: only a property
+            // found as one needs its group materialized and the lookup made again.
+            let found = self.ordinary_own_string_property(p, target, &name, atom)?;
+            let lazy = found.is_some_and(|(_, attributes)| {
+                attributes.accessor
+                    && attributes.getter.is_some_and(|getter| self.lazy_member(getter).is_some())
+            });
+            if !lazy {
+                return Ok(found);
+            }
             self.materialize_lazy_data_property(p, target, PropertyKey::string(atom))?;
             return self.ordinary_own_string_property(p, target, &name, atom);
         }
@@ -529,10 +609,10 @@ impl<H: Host> Vm<H> {
                 .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
             return Ok(Some((value, attributes)));
         }
-        let Some(key) = self.heap.string(key).cloned() else {
+        let (Some(atom), Some(key)) = (self.string_key_atom(key), self.heap.string(key).cloned())
+        else {
             unreachable!("ToPropertyKey returns a string or symbol")
         };
-        let atom = self.intern_js_atom(&key);
         self.ordinary_own_string_property(p, target, &key, atom)
     }
 

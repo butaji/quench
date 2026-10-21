@@ -59,4 +59,28 @@ impl<H: Host> Vm<H> {
         };
         Some(value)
     }
+
+    /// The atom of the string `key`, interned as `intern_js_atom` does. A string value names
+    /// one immutable text until a collection, which empties the cache, so a key used again
+    /// (a `for-in` key passed to `getOwnPropertyDescriptor`, `in` and `defineProperty`, as
+    /// TypeScript's `__createBinding` does for each re-exported name) is not hashed and
+    /// compared again. `None` when `key` is not a string.
+    pub(super) fn string_key_atom(&mut self, key: Value) -> Option<Atom> {
+        let slot = key.heap_index().map(|index| {
+            (index as usize).wrapping_mul(STRING_CONCAT_HASH_MULTIPLIER) & (STRING_ATOM_CACHE_SIZE - 1)
+        });
+        if let (Some(slot), Some(atoms)) = (slot, &self.string_atoms)
+            && atoms[slot].0 == key
+        {
+            return Some(atoms[slot].1);
+        }
+        let name = self.heap.string(key)?.clone();
+        let atom = self.intern_js_atom(&name);
+        if let Some(slot) = slot {
+            self.string_atoms
+                .get_or_insert_with(|| Box::new([(Value::UNDEFINED, 0); STRING_ATOM_CACHE_SIZE]))[slot] =
+                (key, atom);
+        }
+        Some(atom)
+    }
 }

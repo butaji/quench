@@ -186,7 +186,17 @@ impl<H: Host> Vm<H> {
         {
             return Err(self.reference_error(p, "this binding is unavailable".into()));
         }
-        for index in 0..=frame {
+        // The owning constructor's callers resolve none of its bindings: only its own
+        // activation and those above it (arrows and eval code it encloses) can inherit the
+        // update. Without a running owner, every activation is considered.
+        let first = owner
+            .and_then(|(program, function, _)| {
+                (0..=frame).rev().find(|&index| {
+                    self.frames[index].program == program && self.frames[index].function == function
+                })
+            })
+            .unwrap_or(0);
+        for index in first..=frame {
             // An ordinary activation's receiver is authoritative even when it
             // omits unobservable lexical-this bindings. Only activations that
             // resolve this through an environment can inherit super()'s update.
