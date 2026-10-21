@@ -6220,6 +6220,26 @@ fn lane_call_native<H: Host>(
             }
         };
     }
+    if argc >= 2
+        && let Some(result) = vm.steady_string_replace(
+            // SAFETY: the context's program outlives the lane run.
+            unsafe { &*(*cx).code },
+            native,
+            r.get(i.c),
+            // SAFETY: the call's window is registers of the running function.
+            unsafe { std::slice::from_raw_parts(r.0.add(usize::from(window)), usize::from(argc)) },
+            ImmediateLayout::lane_call_result_used(i.imm()),
+        )
+    {
+        note_allocation(vm);
+        return match result {
+            Ok(value) => Some(value),
+            Err(error) => {
+                vm.lane_raised = Some(error);
+                None
+            }
+        };
+    }
     if !unsafe { (*cx).script_calls } {
         return None;
     }
