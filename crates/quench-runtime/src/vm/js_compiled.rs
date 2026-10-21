@@ -42,6 +42,21 @@ pub(super) struct JsJitFieldReturn {
     pub(super) return_register: crate::bytecode::Register,
 }
 
+/// A bounded numeric-only lowering of a linked entry lookup loop. Heap reads
+/// remain guarded by VM field caches and present own dense or sparse array
+/// data; any miss leaves the original frame at bytecode zero.
+#[derive(Clone, Copy)]
+pub(super) struct JsJitNumericFind {
+    pub(super) list_cache: u16,
+    pub(super) hash_cache: u16,
+    pub(super) key_cache: u16,
+    pub(super) next_cache: u16,
+    pub(super) equals_depth: u16,
+    pub(super) equals_slot: u16,
+    pub(super) return_pc: usize,
+    pub(super) return_register: crate::bytecode::Register,
+}
+
 #[derive(Clone, Copy)]
 pub(super) struct JsJitCaptureArgument {
     pub(super) depth: u16,
@@ -690,6 +705,160 @@ pub(super) fn cached_this_field_return_candidate(
     Some(JsJitFieldReturn {
         cache_site,
         return_pc,
+        return_register: ret.register_a(),
+    })
+}
+
+/// Match a narrow linked-list lookup loop. The runtime path further guards
+/// numeric operands and every heap read, and falls back before observable work.
+pub(super) fn numeric_find_candidate(function: &Function) -> Option<JsJitNumericFind> {
+    if function.params != 3
+        || function.code.len() != 23
+        || !function.handlers.is_empty()
+        || function.is_async
+        || function.is_generator
+        || function.is_class_constructor
+        || function.derived_constructor
+        || function.rest
+        || !function.simple_parameters
+    {
+        return None;
+    }
+    let field_site = |pc: usize, expected_base: FieldBase, expected_result| {
+        let instruction = function_instruction(function, pc)?;
+        if instruction.op() != Op::GetField
+            || instruction.result_register() != expected_result
+            || instruction.result_flags() != 0
+            || instruction.writes_current_this()
+        {
+            return None;
+        }
+        let FieldLookup::Atom {
+            base,
+            cache_site,
+            ..
+        } = instruction.field_lookup()?
+        else {
+            return None;
+        };
+        (base == expected_base).then_some(cache_site)
+    };
+    let is_register = |operand: Operand, register| operand.register_index() == Some(register);
+
+    let list_cache = field_site(0, FieldBase::THIS, 5)?;
+    let get_index = function_instruction(function, 1)?;
+    if get_index.op() != Op::GetIndex
+        || get_index.result_register() != 6
+        || !is_register(get_index.operand_b(), 5)
+        || !is_register(get_index.operand_c(), 1)
+    {
+        return None;
+    }
+    let moves = [function_instruction(function, 2)?, function_instruction(function, 3)?];
+    if moves[0].op() != Op::Move
+        || moves[0].register_a() != 3
+        || moves[0].register_b() != 6
+        || moves[1].op() != Op::Move
+        || moves[1].register_a() != 5
+        || moves[1].register_b() != 3
+    {
+        return None;
+    }
+    let empty_test = function_instruction(function, 4)?;
+    if empty_test.op() != Op::JumpFalse
+        || empty_test.register_a() != 3
+        || empty_test.jump_target() != 16
+    {
+        return None;
+    }
+    let hash_cache = field_site(5, FieldBase::register(3), 6)?;
+    let hash_compare = function_instruction(function, 6)?;
+    if hash_compare.op() != Op::Binary
+        || hash_compare.register_a() != 7
+        || hash_compare.binary_operator() != BinaryOperator::Inequality as u32
+        || !is_register(hash_compare.operand_b(), 6)
+        || !is_register(hash_compare.operand_c(), 2)
+    {
+        return None;
+    }
+    let move_hash = function_instruction(function, 7)?;
+    let hash_branch = function_instruction(function, 8)?;
+    if move_hash.op() != Op::Move
+        || move_hash.register_a() != 8
+        || move_hash.register_b() != 7
+        || hash_branch.op() != Op::JumpTrue
+        || hash_branch.register_a() != 7
+        || hash_branch.jump_target() != 15
+    {
+        return None;
+    }
+    let equals = function_instruction(function, 9)?;
+    if equals.op() != Op::LoadCapture || equals.register_a() != 9 {
+        return None;
+    }
+    let key_cache = field_site(10, FieldBase::register(3), 10)?;
+    let move_key = function_instruction(function, 11)?;
+    if move_key.op() != Op::Move || move_key.register_a() != 11 || move_key.register_b() != 0 {
+        return None;
+    }
+    let move_key_field = function_instruction(function, 12)?;
+    if move_key_field.op() != Op::Move
+        || move_key_field.register_a() != 12
+        || move_key_field.register_b() != 10
+    {
+        return None;
+    }
+    let call = function_instruction(function, 13)?;
+    let call_window = call.call_window();
+    if call.op() != Op::Call
+        || call.register_a() != 13
+        || call.register_b() != 9
+        || call.returns_from_frame()
+        || call.direct_eval()
+        || call.parameter_eval()
+        || call_window.base != 11
+        || call_window.count != 2
+    {
+        return None;
+    }
+    let invert = function_instruction(function, 14)?;
+    let move_result = function_instruction(function, 15)?;
+    let key_branch = function_instruction(function, 16)?;
+    if invert.op() != Op::Unary
+        || invert.register_a() != 8
+        || invert.register_b() != 13
+        || invert.unary_operator() != oxc_ast::ast::UnaryOperator::LogicalNot as u32
+        || move_result.op() != Op::Move
+        || move_result.register_a() != 5
+        || move_result.register_b() != 8
+        || key_branch.op() != Op::JumpFalse
+        || key_branch.register_a() != 5
+        || key_branch.jump_target() != 20
+    {
+        return None;
+    }
+    let next_cache = field_site(17, FieldBase::register(3), 15)?;
+    let next_move = function_instruction(function, 18)?;
+    let back_edge = function_instruction(function, 19)?;
+    let ret = function_instruction(function, 20)?;
+    if next_move.op() != Op::Move || next_move.register_a() != 3 || next_move.register_b() != 15 {
+        return None;
+    }
+    if back_edge.op() != Op::Jump
+        || back_edge.jump_target() != 3
+        || ret.op() != Op::Return
+        || ret.register_a() != 3
+    {
+        return None;
+    }
+    Some(JsJitNumericFind {
+        list_cache,
+        hash_cache,
+        key_cache,
+        next_cache,
+        equals_depth: equals.capture_depth(),
+        equals_slot: equals.capture_slot(),
+        return_pc: 20,
         return_register: ret.register_a(),
     })
 }
