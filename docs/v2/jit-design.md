@@ -894,6 +894,21 @@ rewriting. Keep ISOP as a bounded offline experiment until a matched fixture
 shows an actual score gain. Full reports and reproduction commands are in
 `evidence/jit-jetstream3-2026-10-21/full-suite-screen/`.
 
+## SQLite Wasm execution profile
+
+The `sqlite3-wasm` diagnostic scored 0.25 / 162.4 MiB RSS for Quench, versus
+25.96 / 67.6 MiB for Node and 12.26 / 89.4 MiB for Bun. This agrees with the
+full-suite screen's 0.27 score. The instrumented workload compiled 2,517 of
+2,533 functions in its largest module, emitting 8.04 MB of code in 24.7 s;
+across module instances it recorded 23,033 native functions, 28.0 MB of code,
+69.7 s cumulative compilation, 26.0 million native entry requests, and 2.23
+million compiled-to-VM reference callouts. It reports zero compiled import
+callouts. This points toward generated-code throughput, module compilation,
+and reference-call boundaries as the next Wasm-side diagnostics. It does not
+justify changing the existing tier or cache policy without a matched A/B.
+Report and reproduction details are in
+`evidence/jit-jetstream3-2026-10-21/sqlite-wasm-screen/`.
+
 ## Numeric hash-map entry loop
 
 The observed 23-instruction `_findKeyEntry` loop has an opt-in bounded JIT-mode
