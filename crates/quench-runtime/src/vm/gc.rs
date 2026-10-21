@@ -798,7 +798,7 @@ impl<H: Host> Vm<H> {
         );
         self.descriptors
             .retain(|(object, _), _| self.heap.is_live(*object));
-        let mut abandoned_job_contexts = Vec::new();
+        let mut abandoned_job_contexts = FxHashSet::default();
         self.realm.promise.records.retain(|promise, record| {
             let live = self.heap.is_live(*promise);
             if !live {
@@ -818,8 +818,40 @@ impl<H: Host> Vm<H> {
             }
             live
         });
+        let mut retained_job_contexts = FxHashSet::default();
+        for record in self.realm.promise.records.values() {
+            retained_job_contexts.extend(
+                record
+                    .reactions
+                    .iter()
+                    .filter_map(|reaction| reaction.execution_context),
+            );
+        }
+        retained_job_contexts.extend(
+            self.realm
+                .promise
+                .thenable_jobs
+                .values()
+                .filter_map(|job| job.execution_context),
+        );
+        retained_job_contexts.extend(self.realm.jobs.iter().filter_map(|job| match job {
+            PendingJob::Reaction(job) => job.execution_context,
+            PendingJob::Call { .. } => None,
+        }));
         for context in abandoned_job_contexts {
-            self.release_job_context(context);
+            if !retained_job_contexts.contains(&context) {
+                self.release_job_context(context);
+            }
+        }
+        if full {
+            let live_contexts = self
+                .realm
+                .promise
+                .records
+                .values()
+                .filter_map(|record| record.host_context)
+                .collect::<Vec<_>>();
+            self.host.finish_promise_context_collection(&live_contexts);
         }
         self.realm
             .promise

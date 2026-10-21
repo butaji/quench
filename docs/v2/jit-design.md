@@ -955,3 +955,19 @@ An interleaved same-binary three-pair screen compared the path enabled and
 disabled. Disabled was faster in every pair (105.48 vs 126.62 s, 110.01 vs
 117.55 s, and 114.85 vs 127.91 s) with effectively unchanged RSS. The
 high-coverage loop therefore stays opt-in rather than shipping as the default.
+
+## Promise async-hooks context retention
+
+An allocation trace found a ~544 MiB async-hooks trigger map on Doxbee
+Promise workloads. Promise trigger contexts were retained after their Promise
+objects became unreachable. Promise async IDs and private reaction-job tokens
+share a numeric representation, so full GC now tracks their liveness
+separately, drops dead trigger entries, and shrinks an oversized sparse map.
+
+An uninstrumented three-round JetStream 3 run validated output and reduced
+median Quench peak RSS from 1,012 MB to 170 MB on `doxbee-promise`, and from
+1,053 MB to 258 MB on `doxbee-async`. Scores were 4.35 and 5.83. The older
+scores were 3.69 and 4.69, but sequential peer drift means the score changes
+are inconclusive; Quench remains much slower than Node and Bun. Raw data and
+method are in
+`evidence/jit-jetstream3-2026-10-21/async-hooks-promise-context-cleanup/`.
