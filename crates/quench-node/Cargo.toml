@@ -15,10 +15,7 @@ path = "src/bin/quench-node.rs"
 # (v2-cloud-c) and the npm lane (v2-npm) link it by default: on npm scenarios it left peak
 # RSS unchanged and cut wall time 4-15% (x86_64 Linux VM, 4 cores, 2026-10-20: ms 105 -> 99
 # ms, chalk 125 -> 107, typescript 576 -> 505; harness imports 238M -> 229M instructions).
-# On the Score lane, paired V8-v7 rounds against glibc, Linux x86_64 4 vCPU, five pairs:
-# RegExp 1174 -> 1301, EarleyBoyer 2281 -> 2515, DeltaBlue 1039 -> 1112, Richards 1344 ->
-# 1364; merges from the trunk keep it linked here.
-default = ["quench-alloc"]
+default = []
 profile-memory = ["quench-runtime/profile-memory"]
 verify-replay = ["quench-runtime/verify-replay"]
 # Quench's size-classed small-object allocator as the global allocator (TOD-137).
