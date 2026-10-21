@@ -20,11 +20,12 @@ collection epoch change cleared the map.
 | Frameworks | 5 | ×1.007 | ×1.032 |
 | npm top 300 | 1 | — | ×1.0028, 5 packages worse by 5% |
 
-json-parse-inspector peak RSS did not move (84.7 → 84.7 MB). The dedupe census counted
-duplicates across the whole heap, and most of those duplicates come from separate
-`JSON.parse` calls on the same text. A per-parse cache cannot reach them. Sharing across
-calls would need a global weak intern table, which costs lookups on every string
-allocation. No further work is queued on this.
+json-parse-inspector peak RSS did not move (84.7 → 84.7 MB). The benchmark parses the
+same payload in each of 20 iterations, and the dedupe census counted duplicates across the
+whole heap. Most of the 2.8 MB of duplicates probably come from different iterations, which
+a per-parse cache cannot share. The peak is also likely set by the payload source and the
+decompression rather than by the parsed strings. This was not separated further.
+No further work is queued on this.
 
 The unit tests did not run because the disk filled during the debug build. That does not
 change the decision.
