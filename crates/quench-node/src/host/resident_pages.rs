@@ -128,6 +128,39 @@ pub fn release_read_only_code_and_data() {
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
 pub fn release_read_only_code_and_data() {}
 
+/// The host's action at a compilation's phase boundaries (`set_compile_phase_boundary`).
+/// Code generation pages code and data out (`release_read_only_code_and_data`). A first
+/// call releases the read-only pages at most once per `LOAD_RELEASE_INTERVAL` of first
+/// calls, timed apart from the collections' releases, which come far more often: a run that
+/// reports its result once at the end first calls its reporting code then, at its heap's
+/// peak, with the code it ran since the last collection resident (V8-v7 RegExp).
+pub fn at_compile_phase(phase: quench_runtime::CompilePhase) {
+    match phase {
+        quench_runtime::CompilePhase::CodeGeneration => release_read_only_code_and_data(),
+        quench_runtime::CompilePhase::FirstCall => release_read_only_pages_at_first_call(),
+    }
+}
+
+/// When a first call last released the read-only pages (`at_compile_phase`).
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+static LAST_FIRST_CALL_RELEASE: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn release_read_only_pages_at_first_call() {
+    let Ok(mut last) = LAST_FIRST_CALL_RELEASE.lock() else {
+        return;
+    };
+    if last.is_some_and(|last| last.elapsed() < LOAD_RELEASE_INTERVAL) {
+        return;
+    }
+    *last = Some(std::time::Instant::now());
+    drop(last);
+    release_read_only_pages();
+}
+
+#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+fn release_read_only_pages_at_first_call() {}
+
 /// The page-aligned address ranges of the segments above, from the loader's own table: every
 /// non-writable segment of the executable, which the table lists without a name, and every
 /// library's non-writable code segment. The kernel's vDSO, whose name is not a path, is left
@@ -304,9 +337,14 @@ static TOUCHED_PAGES_ONLY: std::sync::atomic::AtomicI32 = std::sync::atomic::Ato
 const NO_FD: libc::c_int = -1;
 
 /// Registers the mapping at `start` for write protection, which turns off fault-around in it
-/// (`map_touched_pages_only`); nothing when no descriptor is open.
+/// (`map_touched_pages_only`); nothing when no descriptor is open. The kernel registers whole
+/// pages only, and a mapping spans its last partial page, so `length` is rounded up to it: a
+/// compile-cache entry is mapped at its file's length, and with that length every
+/// registration had failed, so reading one record faulted in the whole entry (V8-v7 RegExp's
+/// 266 KiB, while its heap was at its peak).
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 fn register_touched_pages_only(start: usize, length: usize) {
+    let length = length.next_multiple_of(page_size());
     /// `struct uffdio_register` from `<linux/userfaultfd.h>`.
     #[repr(C)]
     struct UffdioRegister {
