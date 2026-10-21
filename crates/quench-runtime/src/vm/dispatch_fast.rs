@@ -1929,6 +1929,27 @@ script_handler! {
 }
 
 script_handler! {
+    /// `IncDec` of a Number whose result the next record, a register `GetIndex`
+    /// (`lane_get_index_registers`), reads as its index, the `a[++i]` of compiled loops
+    /// (`specialize_updated_index_reads`): the update, then that read of a record array's
+    /// dense element, as one record. A read the pair's fast path leaves runs the `GetIndex`
+    /// record itself; another value takes the general path at the update.
+    fn lane_update_get_index<DECREMENT: bool>(cx, r, ip, i, view) {
+        let Some(index) = super::dispatch::number_increment(r.get(i.b), DECREMENT) else {
+            return exit(ip);
+        };
+        r.set(i.a, index);
+        // SAFETY: the pair is two records, the second never the view's last.
+        let read = unsafe { &*following(ip) };
+        let Some(value) = (unsafe { vm(cx) }).direct_dense_element(r.get(read.b), index) else {
+            next!(cx, r, following(ip), Carried::script(cx))
+        };
+        r.set(read.a, value);
+        next!(cx, r, following(following(ip)), Carried::script(cx))
+    }
+}
+
+script_handler! {
     /// A postfix update of a Number: `ToNumeric` into `a` and the `IncDec` of its result into
     /// `c` that follows it (`specialize_updates`). Other values take the general path at the
     /// conversion.
@@ -10363,6 +10384,7 @@ fn derive_lane_view<H: Host>(
     }
     specialize_register_operands::<H>(function, kind, constants, &mut records);
     specialize_updates::<H>(&mut records);
+    specialize_updated_index_reads::<H>(&mut records);
     specialize_negated_instanceof::<H>(&mut records);
     specialize_frame_locals::<H>(function, &mut records);
     specialize_outer_captures::<H>(&mut records);
@@ -10634,6 +10656,30 @@ fn specialize_updates<H: Host>(records: &mut [LaneInstruction]) {
             b: conversion.b,
             c: update.a,
         };
+    }
+}
+
+/// Gives each `IncDec` whose result the next record, a register `GetIndex`, reads as its
+/// index the fused update and read (`lane_update_get_index`). The `GetIndex` record stays as
+/// it is, for a jump that enters it and for a read the fused record leaves to it.
+fn specialize_updated_index_reads<H: Host>(records: &mut [LaneInstruction]) {
+    let read = lane_get_index_registers::<H> as Handler as *const ();
+    let increment = lane_inc_dec::<H, false> as Handler as *const ();
+    let decrement = lane_inc_dec::<H, true> as Handler as *const ();
+    for pc in 0..records.len().saturating_sub(1) {
+        let (update, next) = (&records[pc], &records[pc + 1]);
+        if (update.handler != increment && update.handler != decrement)
+            || next.handler != read
+            || next.c != update.a
+        {
+            continue;
+        }
+        let handler: Handler = if update.handler == decrement {
+            lane_update_get_index::<H, true>
+        } else {
+            lane_update_get_index::<H, false>
+        };
+        records[pc].handler = handler as *const ();
     }
 }
 
