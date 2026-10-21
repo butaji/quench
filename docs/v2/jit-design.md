@@ -849,13 +849,27 @@ The `async-fs` memory profile exposed a separate host allocation problem:
 `NodeHost` created a VM `WeakRef` and host weak root for each Promise even when
 no async-hooks `init` or `destroy` callback was enabled. I kept Promise IDs and
 job-context propagation intact, while omitting that weakly tracked lifecycle
-record when neither hook kind has listeners. A clean production one-round JIT
+record when neither hook kind has listeners. An uninstrumented production one-round JIT
 screen validated output and reported 3.44 Score / 891 MiB RSS for Quench, versus
 73.60 / 210 MiB for Node and 128.96 / 67 MiB for Bun. The earlier Quench
 production one-round screen was 1.31 / 7.26 GiB. This is a large memory
 reduction but still loses on both metrics; the samples are diagnostic, not a
 paired qualification. Raw reports and the reproduction command are in
 `evidence/jit-jetstream3-2026-10-21/async-fs-promise-lifecycle/`.
+
+The async-fs diagnostic also found 259,198 hot `CountVisitor` method entries
+that update one own numeric field and return `undefined`. I added a guarded
+JIT-mode fast entry for that exact bytecode shape; it uses the existing
+successful own-field load/store caches, and only skips interpretation for a
+fixed receiver with a Number value. The iteration diagnostic confirmed 59,119
+fast `visitFile` returns and 200,079 fast `visitDir` returns, with one cold
+interpreter entry per method. A seven-sample microbenchmark measured median
+57.86 ms for one million guarded calls versus 193.68 ms for the interpreted
+shape. The production async-fs screen scored 3.09 at 891 MiB; one earlier
+screen scored 3.44 at the same RSS, with substantial peer-score variation.
+This confirms a local speed path but not a JetStream Score gain. Quench remains
+well behind Node and Bun. Details and reports are in
+`evidence/jit-jetstream3-2026-10-21/async-fs-field-increment/`.
 
 ## Numeric hash-map entry loop
 

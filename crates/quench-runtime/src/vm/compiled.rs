@@ -6425,9 +6425,49 @@ impl<H: Host> Vm<H> {
         {
             return Some(result);
         }
+        let field_increment_candidate =
+            super::js_compiled::cached_this_field_increment_candidate(program, function);
+        let mut field_increment_diagnostic_entry_recorded = false;
+        if let Some(candidate) = field_increment_candidate {
+            let fixed_this = self.frames[frame].fixed_this;
+            if self.programs.js_jit_diagnostics_enabled() {
+                self.programs.record_js_jit_entry(
+                    program_id,
+                    function_id,
+                    false,
+                    function.params,
+                );
+                self.programs.record_js_jit_field_increment_candidate(
+                    program_id,
+                    function_id,
+                    fixed_this,
+                );
+                field_increment_diagnostic_entry_recorded = true;
+            }
+            if fixed_this
+                && self.cached_field_increment_hit(
+                    program,
+                    self.frames[frame].this,
+                    candidate.atom,
+                    candidate.read_cache_site,
+                    candidate.write_cache_site,
+                    candidate.decrement,
+                )
+            {
+                if self.programs.js_jit_diagnostics_enabled() {
+                    self.programs
+                        .record_js_jit_field_increment_entry(program_id, function_id);
+                }
+                return Some((
+                    candidate.return_pc,
+                    candidate.return_register,
+                    Value::UNDEFINED,
+                ));
+            }
+        }
         let field_return_candidate =
             super::js_compiled::cached_this_field_return_candidate(function);
-        let mut field_return_diagnostic_entry_recorded = false;
+        let mut field_return_diagnostic_entry_recorded = field_increment_diagnostic_entry_recorded;
         if let Some(candidate) = field_return_candidate {
             let fixed_this = self.frames[frame].fixed_this;
             if self.programs.js_jit_diagnostics_enabled() {
