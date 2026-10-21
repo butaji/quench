@@ -1,8 +1,26 @@
+use std::mem::MaybeUninit;
 use std::borrow::Cow;
 use std::cell::{OnceCell, UnsafeCell};
 use std::hash::{Hash, Hasher};
 use std::ops::Range;
 use std::rc::Rc;
+
+thread_local! {
+    /// Bytes of text made on demand (a rope's flat units, a wide string's host text) since
+    /// the collector last took them. A string is charged its flat bytes when allocated; text
+    /// made later is charged here, so collections follow the memory programs materialize.
+    static MATERIALIZED_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+fn charge_materialized(bytes: usize) {
+    MATERIALIZED_BYTES.with(|total| total.set(total.get().saturating_add(bytes)));
+}
+
+/// Text bytes made on demand and not yet charged, which the caller now charges.
+#[inline(always)]
+pub(crate) fn take_materialized_bytes() -> usize {
+    MATERIALIZED_BYTES.with(|total| total.replace(0))
+}
 
 /// Heap-owned JavaScript string. Its code units are authoritative: one byte each when every
 /// unit is ASCII, UTF-16 otherwise. `host` is the explicit lossy Rust-text view used at
@@ -26,15 +44,25 @@ enum Repr {
 #[cfg(target_pointer_width = "64")]
 const _: () = assert!(size_of::<JsString>() == size_of::<FlatUnits>());
 
-/// Flat code units. A string whose units are all ASCII is always stored `Short` when they
-/// fit and `Ascii` otherwise (`FlatUnits::ascii`), so equal strings share a representation.
+/// Flat code units. A string whose units are all ASCII is stored `Short` when they fit;
+/// longer ASCII text is `Ascii`, or an `AsciiSlice` of another string's `Ascii` storage.
 #[derive(Clone)]
 pub(crate) enum FlatUnits {
     /// ASCII text held in the string's own allocation: most property names and tokens fit,
     /// and need no second allocation.
     Short(ShortAscii),
     Ascii(Rc<str>),
+    /// A run of longer ASCII storage, shared instead of copied, as V8's sliced strings are:
+    /// taking the rest of a scanned text costs one small record, not a copy of the rest.
+    AsciiSlice(Rc<AsciiSlice>),
     Wide(Rc<[u16]>),
+}
+
+/// The bytes `range` of shared ASCII storage; never shorter than `SHORT_ASCII_CAPACITY`
+/// allows inline, and never a slice of a slice.
+pub(crate) struct AsciiSlice {
+    text: Rc<str>,
+    range: Range<usize>,
 }
 
 /// ASCII text of at most `SHORT_ASCII_CAPACITY` bytes, stored inline.
@@ -61,32 +89,84 @@ impl FlatUnits {
     /// ASCII `text` in its canonical storage.
     fn ascii(text: &str) -> Self {
         debug_assert!(text.is_ascii());
-        if text.len() <= SHORT_ASCII_CAPACITY {
-            let mut bytes = [0; SHORT_ASCII_CAPACITY];
-            bytes[..text.len()].copy_from_slice(text.as_bytes());
+        Self::ascii_with(text.len(), |bytes| {
+            bytes.write_copy_of_slice(text.as_bytes());
+        })
+    }
+
+    /// The canonical storage of `length` ASCII bytes that `fill` writes in place: short text
+    /// inline, longer text straight into its shared allocation, with no staging copy or
+    /// zeroing. `fill` must write every byte of the slice it is given.
+    fn ascii_with(length: usize, fill: impl FnOnce(&mut [MaybeUninit<u8>])) -> Self {
+        if length <= SHORT_ASCII_CAPACITY {
+            let mut bytes = [MaybeUninit::new(0); SHORT_ASCII_CAPACITY];
+            fill(&mut bytes[..length]);
+            // SAFETY: every byte started initialized, and `fill` writes only bytes.
+            let bytes = bytes.map(|byte| unsafe { byte.assume_init() });
+            debug_assert!(bytes.is_ascii());
             return Self::Short(ShortAscii {
-                length: text.len() as u8,
+                length: length as u8,
                 bytes,
             });
         }
-        Self::Ascii(Rc::from(text))
+        let mut storage = Rc::<[u8]>::new_uninit_slice(length);
+        fill(Rc::get_mut(&mut storage).expect("a new allocation is unshared"));
+        // SAFETY: `fill` wrote every byte.
+        let storage = unsafe { storage.assume_init() };
+        debug_assert!(storage.is_ascii());
+        // SAFETY: `str` and `[u8]` share a layout, and ASCII bytes are UTF-8.
+        Self::Ascii(unsafe { Rc::from_raw(Rc::into_raw(storage) as *const str) })
     }
 
     fn view(&self) -> Units<'_> {
         match self {
             Self::Short(text) => Units::Ascii(text.as_str().as_bytes()),
-            Self::Ascii(text) => Units::Ascii(text.as_bytes()),
+            Self::Ascii(_) | Self::AsciiSlice(_) => {
+                let (text, range) = self.shared_ascii().expect("shared ASCII storage");
+                Units::Ascii(&text.as_bytes()[range])
+            }
             Self::Wide(units) => Units::Wide(units),
         }
     }
 
     pub(crate) fn is_ascii(&self) -> bool {
-        matches!(self, Self::Short(_) | Self::Ascii(_))
+        !matches!(self, Self::Wide(_))
+    }
+
+    /// The shared ASCII storage these units view and the bytes they cover.
+    pub(crate) fn shared_ascii(&self) -> Option<(&Rc<str>, Range<usize>)> {
+        match self {
+            Self::Ascii(text) => Some((text, 0..text.len())),
+            Self::AsciiSlice(slice) => Some((&slice.text, slice.range.clone())),
+            Self::Short(_) | Self::Wide(_) => None,
+        }
+    }
+
+    /// The units `range` of these, sharing ASCII storage when the run is too long to hold
+    /// inline. `range` must lie within the units.
+    fn run(&self, range: Range<usize>) -> Self {
+        if range.len() > SHORT_ASCII_CAPACITY
+            && let Some((text, own)) = self.shared_ascii()
+        {
+            if range.len() == own.len() {
+                return self.clone();
+            }
+            return Self::AsciiSlice(Rc::new(AsciiSlice {
+                text: Rc::clone(text),
+                range: own.start + range.start..own.start + range.end,
+            }));
+        }
+        match self.view().slice(range) {
+            // SAFETY: ASCII units are UTF-8.
+            Units::Ascii(bytes) => Self::ascii(unsafe { std::str::from_utf8_unchecked(bytes) }),
+            Units::Wide(units) => flat_units(units),
+        }
     }
 
     fn same_storage(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Ascii(left), Self::Ascii(right)) => Rc::ptr_eq(left, right),
+            (Self::AsciiSlice(left), Self::AsciiSlice(right)) => Rc::ptr_eq(left, right),
             (Self::Wide(left), Self::Wide(right)) => Rc::ptr_eq(left, right),
             _ => false,
         }
@@ -297,8 +377,11 @@ fn is_ascii_unit(unit: u16) -> bool {
 /// `units` in their canonical storage.
 fn flat_units(units: &[u16]) -> FlatUnits {
     if units.iter().all(|unit| is_ascii_unit(*unit)) {
-        let text: String = units.iter().map(|unit| char::from(*unit as u8)).collect();
-        FlatUnits::ascii(&text)
+        FlatUnits::ascii_with(units.len(), |bytes| {
+            for (byte, unit) in bytes.iter_mut().zip(units) {
+                byte.write(*unit as u8);
+            }
+        })
     } else {
         FlatUnits::Wide(Rc::from(units))
     }
@@ -380,7 +463,9 @@ impl JsStringInner {
         unsafe {
             let slot = self.aside.get();
             if (*slot).is_none() {
-                *slot = Some(Rc::new(Aside::Host(make())));
+                let host = make();
+                charge_materialized(host.len());
+                *slot = Some(Rc::new(Aside::Host(host)));
             }
             match (*slot).as_deref() {
                 Some(Aside::Host(host)) => host,
@@ -415,9 +500,17 @@ impl JsStringInner {
     }
 }
 
-/// A concatenation this short is copied flat instead of becoming a rope: a rope node and the
-/// halves it keeps alive cost more than the copied units.
-const FLAT_CONCAT_MAX_UNITS: usize = 256;
+/// Concatenation copies a piece at most this long into its flat neighbor instead of making a
+/// rope node: a node and the separate halves it keeps alive cost more than copying a short
+/// piece, and a rope's leaves then hold at least this many units each.
+const ROPE_LEAF_MAX_UNITS: usize = 512;
+/// A flat left side at most this long takes a short right side by copy, so text built by
+/// appends stays flat until it is long; past it, an append copies at most a leaf. Each such
+/// append copies the whole prefix, so the bound is the most an append copies: from 8192,
+/// pdfjs 12.67G -> 9.42G instructions with max RSS 84.8 -> 86.8 MB, and web-ssr's built
+/// text 89.8 -> 100.9 MB (Bun without its JIT: 88.8 and 124.3 MB; 512 saved 2% more on
+/// pdfjs for 3.5 MB more on web-ssr; JetStream, Linux x86_64, 2026-10-19).
+const FLAT_PREFIX_MAX_UNITS: usize = 2048;
 
 /// Flat UTF-16 strings retain the existing Node-compatible length policy.
 /// V8's public String::kMaxLength on the supported 64-bit host is this limit;
@@ -437,6 +530,10 @@ fn checked_string_length(current: usize, additional: usize) -> Result<usize, Str
         .ok_or(StringBuildError::InvalidLength)
 }
 
+/// Parts a builder holds before it allocates: a replacement's prefix, substitution and
+/// rest, or a short join, need no allocation beside the result.
+const BUILDER_INLINE_PARTS: usize = 4;
+
 struct StringPart {
     units: FlatUnits,
     range: Range<usize>,
@@ -446,14 +543,14 @@ struct StringPart {
 /// canonical storage. Overflow stops storage growth, but callers still
 /// perform all replacement effects before finish reports the error.
 pub(super) struct JsStringBuilder {
-    parts: Vec<StringPart>,
+    parts: smallvec::SmallVec<[StringPart; BUILDER_INLINE_PARTS]>,
     length: Result<usize, StringBuildError>,
 }
 
 impl Default for JsStringBuilder {
     fn default() -> Self {
         Self {
-            parts: Vec::new(),
+            parts: smallvec::SmallVec::new(),
             length: Ok(0),
         }
     }
@@ -499,53 +596,52 @@ impl JsStringBuilder {
     pub(super) fn finish(self) -> Result<JsString, StringBuildError> {
         let length = self.length?;
         if self.parts.iter().all(|part| part.units.is_ascii()) {
-            let ascii_parts = || {
-                self.parts.iter().filter_map(|part| match part.units.view().slice(part.range.clone()) {
-                    Units::Ascii(bytes) => Some(bytes),
-                    Units::Wide(_) => None,
-                })
-            };
-            if length <= SHORT_ASCII_CAPACITY {
-                // Short text is the string's own bytes: no buffer to allocate or copy.
-                let mut bytes = [0; SHORT_ASCII_CAPACITY];
-                let mut end = 0;
-                for part in ascii_parts() {
-                    bytes[end..end + part.len()].copy_from_slice(part);
-                    end += part.len();
+            return Ok(JsString::from_flat(FlatUnits::ascii_with(length, |output| {
+                let mut written = 0;
+                for part in &self.parts {
+                    if let Units::Ascii(bytes) = part.units.view().slice(part.range.clone()) {
+                        output[written..written + bytes.len()].write_copy_of_slice(bytes);
+                        written += bytes.len();
+                    }
                 }
-                return Ok(JsString::from_flat(FlatUnits::Short(ShortAscii {
-                    length: end as u8,
-                    bytes,
-                })));
-            }
-            let mut output = String::new();
-            output
-                .try_reserve_exact(length)
-                .map_err(|_| StringBuildError::Allocation)?;
-            for part in ascii_parts() {
-                // SAFETY: every part is ASCII, which is UTF-8 on its own.
-                output.push_str(unsafe { std::str::from_utf8_unchecked(part) });
-            }
-            return Ok(JsString::from_flat(FlatUnits::Ascii(Rc::from(output))));
+                assert_eq!(written, output.len(), "the parts fill the string's length");
+            })));
         }
-        let mut output = Vec::new();
-        output
-            .try_reserve_exact(length)
-            .map_err(|_| StringBuildError::Allocation)?;
+        let mut storage = Rc::<[u16]>::new_uninit_slice(length);
+        let output = Rc::get_mut(&mut storage).expect("a new allocation is unshared");
+        let mut written = 0;
         for part in &self.parts {
-            part.units
-                .view()
-                .slice(part.range.clone())
-                .extend_into(&mut output);
+            let units = part.units.view().slice(part.range.clone());
+            let target = &mut output[written..written + units.len()];
+            match units {
+                Units::Ascii(bytes) => {
+                    for (unit, byte) in target.iter_mut().zip(bytes) {
+                        unit.write(u16::from(*byte));
+                    }
+                }
+                Units::Wide(units) => {
+                    target.write_copy_of_slice(units);
+                }
+            }
+            written += units.len();
         }
-        Ok(JsString::from_units(&output))
+        assert_eq!(written, length, "the parts fill the string's length");
+        // SAFETY: the parts wrote every unit.
+        let storage = unsafe { storage.assume_init() };
+        // Wide parts can contribute only ASCII units; such text is stored narrow.
+        if storage.iter().all(|unit| is_ascii_unit(*unit)) {
+            return Ok(JsString::from_units(&storage));
+        }
+        Ok(JsString::from_flat(FlatUnits::Wide(storage)))
     }
 }
 
 impl JsString {
     fn from_flat(units: FlatUnits) -> Self {
         let repr = match units {
-            FlatUnits::Short(_) | FlatUnits::Ascii(_) => Repr::Flat(units),
+            FlatUnits::Short(_) | FlatUnits::Ascii(_) | FlatUnits::AsciiSlice(_) => {
+                Repr::Flat(units)
+            }
             FlatUnits::Wide(_) => Repr::Shared(Rc::new(JsStringInner::flat(units))),
         };
         Self { repr }
@@ -553,6 +649,34 @@ impl JsString {
 
     fn shared(inner: JsStringInner) -> Self {
         Self { repr: Repr::Shared(Rc::new(inner)) }
+    }
+
+    /// The string a rope node holds.
+    fn from_node(node: Rc<JsStringInner>) -> Self {
+        match node.flat.get() {
+            Some(units @ (FlatUnits::Short(_) | FlatUnits::Ascii(_) | FlatUnits::AsciiSlice(_))) => Self {
+                repr: Repr::Flat(units.clone()),
+            },
+            Some(FlatUnits::Wide(_)) | None => Self { repr: Repr::Shared(node) },
+        }
+    }
+
+    /// The halves of a string that is still a rope.
+    fn rope_halves(&self) -> Option<(Self, Self)> {
+        match &self.repr {
+            Repr::Flat(_) => None,
+            Repr::Shared(inner) => inner
+                .halves()
+                .map(|(left, right)| (Self::from_node(left), Self::from_node(right))),
+        }
+    }
+
+    /// Whether the units are flat: not a rope, or a rope already flattened.
+    fn is_flat(&self) -> bool {
+        match &self.repr {
+            Repr::Flat(_) => true,
+            Repr::Shared(inner) => inner.flat.get().is_some(),
+        }
     }
 
     /// The string as a node a rope can hold.
@@ -579,6 +703,12 @@ impl JsString {
         }
     }
 
+    /// The units `range` of this string (`String.prototype.slice` and its kin). A long ASCII
+    /// result shares this string's storage; any other result is copied.
+    pub(crate) fn substring(&self, range: Range<usize>) -> Self {
+        Self::from_flat(self.flat().run(range))
+    }
+
     pub(crate) fn from_str(text: &str) -> Self {
         if text.is_ascii() {
             return Self::from_flat(FlatUnits::ascii(text));
@@ -599,22 +729,47 @@ impl JsString {
             Repr::Shared(inner) => inner,
         };
         inner.flat.get_or_init(|| {
-            let units = if inner.ascii {
-                let mut output = String::with_capacity(self.len());
-                inner.for_each_run(|run| {
-                    if let Units::Ascii(bytes) = run {
-                        output.push_str(std::str::from_utf8(bytes).expect("ASCII units are UTF-8"));
-                    }
-                });
-                FlatUnits::ascii(&output)
-            } else {
-                let mut output = Vec::with_capacity(self.len());
-                inner.for_each_run(|run| run.extend_into(&mut output));
-                FlatUnits::Wide(Rc::from(output))
-            };
+            let units = Self::flattened(inner);
             inner.release_halves();
+            charge_materialized(match units.view() {
+                Units::Ascii(bytes) => bytes.len(),
+                Units::Wide(units) => std::mem::size_of_val(units),
+            });
             units
         })
+    }
+
+    /// The flat units without making a rope flat: a reader that needs the text only while it
+    /// runs leaves the rope's halves, which share their storage with the strings they were
+    /// cut from, in place of a copy kept for the string's life. Regular-expression matching
+    /// flattens V8-v7 RegExp's input variants this way (306 ropes, 995K units).
+    pub(crate) fn flat_unkept(&self) -> std::borrow::Cow<'_, FlatUnits> {
+        match &self.repr {
+            Repr::Flat(units) => std::borrow::Cow::Borrowed(units),
+            Repr::Shared(inner) => match inner.flat.get() {
+                Some(units) => std::borrow::Cow::Borrowed(units),
+                None => std::borrow::Cow::Owned(Self::flattened(inner)),
+            },
+        }
+    }
+
+    /// The units of a rope's runs, in one canonical allocation.
+    fn flattened(inner: &Rc<JsStringInner>) -> FlatUnits {
+        let length = inner.length as usize;
+        if inner.ascii {
+            return FlatUnits::ascii_with(length, |output| {
+                let mut written = 0;
+                inner.for_each_run(|run| {
+                    if let Units::Ascii(bytes) = run {
+                        output[written..written + bytes.len()].write_copy_of_slice(bytes);
+                        written += bytes.len();
+                    }
+                });
+            });
+        }
+        let mut output = Vec::with_capacity(length);
+        inner.for_each_run(|run| run.extend_into(&mut output));
+        FlatUnits::Wide(Rc::from(output))
     }
 
     /// The host text a `Wide` string made, if any.
@@ -630,6 +785,7 @@ impl JsString {
         match self.flat() {
             FlatUnits::Short(text) => text.as_str(),
             FlatUnits::Ascii(text) => text,
+            FlatUnits::AsciiSlice(slice) => &slice.text[slice.range.clone()],
             FlatUnits::Wide(units) => match &self.repr {
                 Repr::Shared(inner) => inner.host(|| Rc::<str>::from(String::from_utf16_lossy(units))),
                 Repr::Flat(_) => unreachable!("a flat string held by value is ASCII"),
@@ -661,6 +817,8 @@ impl JsString {
         match self.flat() {
             FlatUnits::Short(_) => 0,
             FlatUnits::Ascii(text) => text.len(),
+            // The storage belongs to the string sliced; the slice owns its record.
+            FlatUnits::AsciiSlice(_) => std::mem::size_of::<AsciiSlice>(),
             FlatUnits::Wide(units) => {
                 std::mem::size_of_val(&**units)
                     + self.existing_host().map_or(0, |host| host.len())
@@ -676,6 +834,11 @@ impl JsString {
             FlatUnits::Ascii(text) => (
                 Rc::as_ptr(text) as *const u8 as usize,
                 RC_HEADER_BYTES + text.len(),
+            ),
+            // Shared storage is reported once by its address, whichever string holds it.
+            FlatUnits::AsciiSlice(slice) => (
+                Rc::as_ptr(&slice.text) as *const u8 as usize,
+                RC_HEADER_BYTES + slice.text.len(),
             ),
             FlatUnits::Wide(units) => (
                 Rc::as_ptr(units) as *const u16 as usize,
@@ -699,16 +862,33 @@ impl JsString {
         if text.len() == 0 {
             return;
         }
-        if self.len() + text.len() <= FLAT_CONCAT_MAX_UNITS {
+        let short = |piece: &Self| piece.len() <= ROPE_LEAF_MAX_UNITS;
+        let joined = |left: &Self, right: &Self| {
             let mut flat = JsStringBuilder::default();
-            flat.append(self);
-            flat.append(text);
-            *self = flat
-                .finish()
-                .expect("a short concatenation is within the string length limit");
-            return;
-        }
-        *self = Self::shared(JsStringInner::concat(self.node(), text.node()));
+            flat.append(left);
+            flat.append(right);
+            flat.finish()
+                .expect("a copied concatenation is within the string length limit")
+        };
+        let rope = |left: &Self, right: &Self| {
+            Self::shared(JsStringInner::concat(left.node(), right.node()))
+        };
+        // The QuickJS policy: a short flat piece joins the flat side it meets, whether that
+        // is the other operand or the facing half of a rope operand.
+        *self = match (self.rope_halves(), text.rope_halves()) {
+            (None, None) if short(text) && self.len() <= FLAT_PREFIX_MAX_UNITS => {
+                joined(self, text)
+            }
+            (Some((left, right)), None) if short(text) && right.is_flat() && short(&right) => {
+                rope(&left, &joined(&right, text))
+            }
+            (None, Some((left, right)))
+                if self.len() <= FLAT_PREFIX_MAX_UNITS && left.is_flat() && short(&left) =>
+            {
+                rope(&joined(self, &left), &right)
+            }
+            _ => rope(self, text),
+        };
     }
 
     pub(crate) fn repeat(&self, count: usize) -> Self {
@@ -752,7 +932,14 @@ impl JsString {
 
 impl PartialEq for JsString {
     fn eq(&self, other: &Self) -> bool {
-        self.units() == other.units()
+        if let (Repr::Flat(FlatUnits::Short(left)), Repr::Flat(FlatUnits::Short(right))) =
+            (&self.repr, &other.repr)
+        {
+            // Inline text pads its unused bytes with zero, so whole records compare.
+            return left.length == right.length && left.bytes == right.bytes;
+        }
+        // Strings of different lengths differ without flattening a rope or reading units.
+        self.len() == other.len() && self.units() == other.units()
     }
 }
 
@@ -760,7 +947,7 @@ impl Eq for JsString {}
 
 impl Hash for JsString {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        // Canonical storage makes equal strings share a representation.
+        // Hashed by units, so a slice and a copy of the same text agree.
         match self.units() {
             Units::Ascii(bytes) => bytes.hash(state),
             Units::Wide(units) => units.hash(state),

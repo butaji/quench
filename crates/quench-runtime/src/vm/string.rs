@@ -218,11 +218,11 @@ impl<H: Host> Vm<H> {
             return Ok(receiver);
         }
         self.require_object_coercible(p, receiver)?;
-        if matches!(self.heap.get(receiver), Some(Cell::String(_))) {
+        if self.heap.is_string(receiver) {
             return Ok(receiver);
         }
         let text = self.coerce_js_string(p, receiver)?;
-        Ok(self.heap.alloc(Cell::String(text)))
+        Ok(self.heap.alloc_string(text))
     }
 
     pub(super) fn install_string(
@@ -275,7 +275,7 @@ impl<H: Host> Vm<H> {
         realm: Value,
     ) -> Result<Value, JsError> {
         self.set_builtin_function_name(constructor, "String")?;
-        let empty = self.heap.alloc(Cell::String(JsString::from_str("")));
+        let empty = self.heap.alloc_string(JsString::from_str(""));
         let prototype = self
             .heap
             .alloc(Cell::Object(Self::empty_object(object_proto)));
@@ -321,7 +321,7 @@ impl<H: Host> Vm<H> {
         }
         let iterator = self.native_with_realm(Native::StringValues, realm, realm);
         self.set_builtin_function_name(iterator, "[Symbol.iterator]")?;
-        let symbol = self.well_known_symbols["iterator"];
+        let symbol = self.well_known_symbols[WellKnownSymbol::Iterator];
         self.set_symbol_property(prototype, symbol, iterator)?;
         self.set_property_attributes(
             prototype,
@@ -368,7 +368,7 @@ impl<H: Host> Vm<H> {
             }
             receiver.units().extend_into(&mut units);
             units.extend(format!("</{}>", method.tag).encode_utf16());
-            Ok(self.heap.alloc(Cell::String(JsString::from_units(&units))))
+            Ok(self.heap.alloc_string(JsString::from_units(&units)))
         })())
     }
 
@@ -423,7 +423,7 @@ impl<H: Host> Vm<H> {
                         }
                     }
                 }
-                Ok(vm.heap.alloc(Cell::String(output)))
+                Ok(vm.heap.alloc_string(output))
             })
         })
     }
@@ -435,35 +435,39 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let Some(Cell::String(receiver)) = self.heap.get(this).cloned() else {
+        if matches!(native, Native::StringAt | Native::StringCodePointAt) {
+            let raw = self
+                .to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?
+                .trunc() as i64;
+            // Strings are immutable: the receiver's units are read in place.
+            let Some(receiver) = self.heap.string(this) else {
+                return Err(JsError("string method receiver is not a string".into()));
+            };
+            let units = receiver.units();
+            let index = if native == Native::StringAt && raw < 0 {
+                units.len() as i64 + raw
+            } else {
+                raw
+            };
+            let Some((index, first)) = usize::try_from(index)
+                .ok()
+                .and_then(|index| units.get(index).map(|unit| (index, unit)))
+            else {
+                return Ok(Value::UNDEFINED);
+            };
+            if native == Native::StringAt {
+                return self.string_from_units(&[first]);
+            }
+            let code_point = units
+                .get(index + 1)
+                .and_then(|low| crate::unicode::decode_surrogate_pair(first, low))
+                .unwrap_or_else(|| u32::from(first));
+            return Ok(Value::number(code_point as f64));
+        }
+        let Some(receiver) = self.heap.string(this).cloned() else {
             return Err(JsError("string method receiver is not a string".into()));
         };
         match native {
-            Native::StringAt | Native::StringCodePointAt => {
-                let raw = self
-                    .to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?
-                    .trunc() as i64;
-                let units = receiver.units();
-                let index = if native == Native::StringAt && raw < 0 {
-                    units.len() as i64 + raw
-                } else {
-                    raw
-                };
-                let Some((index, first)) = usize::try_from(index)
-                    .ok()
-                    .and_then(|index| units.get(index).map(|unit| (index, unit)))
-                else {
-                    return Ok(Value::UNDEFINED);
-                };
-                if native == Native::StringAt {
-                    return self.string_from_units(&[first]);
-                }
-                let code_point = units
-                    .get(index + 1)
-                    .and_then(|low| crate::unicode::decode_surrogate_pair(first, low))
-                    .unwrap_or_else(|| u32::from(first));
-                Ok(Value::number(code_point as f64))
-            }
             Native::StringToUpperCase
             | Native::StringToLowerCase
             | Native::StringToLocaleUpperCase
@@ -486,7 +490,7 @@ impl<H: Host> Vm<H> {
                     }
                     let bytes: Vec<u8> = bytes.iter().map(mapped).collect();
                     let text = std::str::from_utf8(&bytes).expect("ASCII units are UTF-8");
-                    return Ok(self.heap.alloc(Cell::String(JsString::from_str(text))));
+                    return Ok(self.heap.alloc_string(JsString::from_str(text)));
                 }
                 let text = if matches!(
                     native,
@@ -503,25 +507,16 @@ impl<H: Host> Vm<H> {
                 } else {
                     map_case(units, str::to_lowercase)
                 };
-                Ok(self.heap.alloc(Cell::String(text)))
+                Ok(self.heap.alloc_string(text))
             }
             Native::StringLocaleCompare => {
                 let other = self.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-                let collator_args = [
+                let collation = self.locale_compare_collation(
+                    p,
                     args.get(1).copied().unwrap_or(Value::UNDEFINED),
                     args.get(2).copied().unwrap_or(Value::UNDEFINED),
-                ];
-                let constructor = self
-                    .realm
-                    .intrinsics
-                    .intl_collator_constructors
-                    .get(&self.realm.globals)
-                    .copied()
-                    .ok_or_else(|| JsError("Intl.Collator intrinsic is not installed".into()))?;
-                let collator = self.intl_collator_construct(p, &collator_args, constructor)?;
-                let left = self.heap.alloc(Cell::String(receiver));
-                let right = self.heap.alloc(Cell::String(other.into()));
-                self.intl_collator_native(p, Native::IntlCollatorCompare, collator, &[left, right])
+                )?;
+                Ok(Value::number(collation.compare(&receiver.to_string(), &other)))
             }
             Native::StringConcat => {
                 let mut text = receiver;
@@ -529,7 +524,7 @@ impl<H: Host> Vm<H> {
                     let value = self.coerce_js_string(p, *value)?;
                     text.push_js_string(&value);
                 }
-                Ok(self.heap.alloc(Cell::String(text)))
+                Ok(self.heap.alloc_string(text))
             }
             Native::StringNormalize => {
                 use unicode_normalization::UnicodeNormalization;
@@ -541,7 +536,7 @@ impl<H: Host> Vm<H> {
                     "NFKD" => receiver.host_string().nfkd().collect(),
                     _ => return Err(self.range_error(p, "invalid normalization form".into())),
                 };
-                Ok(self.heap.alloc(Cell::String(text)))
+                Ok(self.heap.alloc_string(text))
             }
             _ => unreachable!(),
         }
@@ -554,26 +549,26 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         self.require_object_coercible(p, this)?;
         let source = match self.heap.get(this) {
-            Some(Cell::String(_)) => this,
+            _ if self.heap.is_string(this)  => this,
             _ => {
                 let text = self.to_string(p, this)?;
-                self.heap.alloc(Cell::String(text.into()))
+                self.heap.alloc_string(text.into())
             }
         };
-        Ok(self.heap.alloc(Cell::Iterator {
-            object: Box::new(Self::empty_object(self.string_iterator_proto)),
+        Ok(self.heap.alloc_iterator(IteratorRecord {
+            object: Self::empty_object(self.string_iterator_proto),
             source,
             kind: IteratorKind::String,
             index: 0,
             done: false,
-            ext: Box::new(crate::heap::IteratorExt {
+            ext: crate::heap::IteratorExt {
                 position_high: 0,
                 next_method: None,
                 helper: None,
                 helper_running: false,
                 helper_started: false,
                 generator: None,
-            }),
+            },
         }))
     }
 
@@ -604,7 +599,7 @@ impl<H: Host> Vm<H> {
             let limit = args.get(1).copied();
             if vm.is_object_like(separator) {
                 let symbol =
-                    vm.well_known_symbols.get("split").copied().ok_or_else(|| {
+                    vm.well_known_symbols.get(WellKnownSymbol::Split).ok_or_else(|| {
                         vm.type_error(p, "RegExp split symbol is unavailable".into())
                     })?;
                 let method = vm.string_protocol_method(p, separator, symbol)?;
@@ -612,7 +607,7 @@ impl<H: Host> Vm<H> {
                     if !vm.is_function(method) {
                         return Err(vm.type_error(p, "String split method is not callable".into()));
                     }
-                    return vm.call_value(
+                    return vm.call_protocol_method(
                         p,
                         method,
                         separator,
@@ -634,7 +629,7 @@ impl<H: Host> Vm<H> {
             let values = parts
                 .into_iter()
                 .take(limit)
-                .map(|part| vm.heap.alloc(Cell::String(part)))
+                .map(|part| vm.heap.alloc_string(part))
                 .collect();
             Ok(vm.heap.alloc(Cell::Array {
                 object: crate::heap::ArrayObject::new(
@@ -661,7 +656,7 @@ impl<H: Host> Vm<H> {
             vm.require_object_coercible(p, this)?;
             let pattern = args.first().copied().unwrap_or(Value::UNDEFINED);
             let symbol =
-                vm.well_known_symbols.get(name).copied().ok_or_else(|| {
+                vm.well_known_symbols.named(name).ok_or_else(|| {
                     vm.type_error(p, "RegExp method symbol is unavailable".into())
                 })?;
             if vm.is_object_like(pattern) {
@@ -670,7 +665,7 @@ impl<H: Host> Vm<H> {
                     if !vm.is_function(method) {
                         return Err(vm.type_error(p, "RegExp method is not callable".into()));
                     }
-                    return vm.call_value(p, method, pattern, &[this]);
+                    return vm.call_protocol_method(p, method, pattern, &[this]);
                 }
             }
             vm.string_regexp_fallback(p, this, pattern, symbol, Value::UNDEFINED)
@@ -688,8 +683,7 @@ impl<H: Host> Vm<H> {
             let pattern = args.first().copied().unwrap_or(Value::UNDEFINED);
             let symbol = vm
                 .well_known_symbols
-                .get("matchAll")
-                .copied()
+                .get(WellKnownSymbol::MatchAll)
                 .ok_or_else(|| vm.type_error(p, "RegExp matchAll symbol is unavailable".into()))?;
             if vm.is_object_like(pattern) {
                 if vm.regexp_is_regexp(p, pattern)? {
@@ -709,10 +703,10 @@ impl<H: Host> Vm<H> {
                     if !vm.is_function(method) {
                         return Err(vm.type_error(p, "@@matchAll is not callable".into()));
                     }
-                    return vm.call_value(p, method, pattern, &[this]);
+                    return vm.call_protocol_method(p, method, pattern, &[this]);
                 }
             }
-            let flags = vm.heap.alloc(Cell::String(MATCH_ALL_FLAGS.into()));
+            let flags = vm.heap.alloc_string(MATCH_ALL_FLAGS.into());
             vm.string_regexp_fallback(p, this, pattern, symbol, flags)
         })
     }
@@ -727,7 +721,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         self.with_call_roots([receiver, pattern, flags], |vm| {
             let input = vm.coerce_js_string(p, receiver)?;
-            let input = vm.heap.alloc(Cell::String(input));
+            let input = vm.heap.alloc_string(input);
             vm.with_call_roots([input], |vm| {
                 let matcher = vm.regexp_create(p, pattern, flags)?;
                 vm.with_call_roots([matcher], |vm| {
@@ -767,8 +761,7 @@ impl<H: Host> Vm<H> {
                 }
                 let symbol = vm
                     .well_known_symbols
-                    .get("replace")
-                    .copied()
+                    .get(WellKnownSymbol::Replace)
                     .ok_or_else(|| {
                         vm.type_error(p, "RegExp replace symbol is unavailable".into())
                     })?;
@@ -779,7 +772,7 @@ impl<H: Host> Vm<H> {
                             vm.type_error(p, "String replace method is not callable".into())
                         );
                     }
-                    return vm.call_value(p, method, search_value, &[this, replacement_value]);
+                    return vm.call_protocol_method(p, method, search_value, &[this, replacement_value]);
                 }
             }
             let input = vm.coerce_js_string(p, this)?;
@@ -790,12 +783,12 @@ impl<H: Host> Vm<H> {
                 StringReplacement::Template(vm.coerce_js_string(p, replacement_value)?)
             };
             let Some(first) = input.find_units(search.units(), 0) else {
-                return Ok(vm.heap.alloc(Cell::String(input)));
+                return Ok(vm.heap.alloc_string(input));
             };
             let callback_inputs = match replacement {
                 StringReplacement::Callable(_) => Some([
-                    vm.heap.alloc(Cell::String(search.clone())),
-                    vm.heap.alloc(Cell::String(input.clone())),
+                    vm.heap.alloc_string(search.clone()),
+                    vm.heap.alloc_string(input.clone()),
                 ]),
                 StringReplacement::Template(_) => None,
             };
@@ -842,7 +835,7 @@ impl<H: Host> Vm<H> {
                 }
                 output.append_slice(&input, cursor..input.units().len());
                 let output = vm.string_build_result(p, output.finish())?;
-                Ok(vm.heap.alloc(Cell::String(output)))
+                Ok(vm.heap.alloc_string(output))
             })
         })
     }

@@ -2040,3 +2040,115 @@ fn host_functions_called_from_lane_frames_keep_reentry_errors_and_roots() {
         Some("0:0:true:0,2:1:true:1,4:2:true:2,6:3:true:3")
     );
 }
+
+struct DescriptorFieldsHost;
+impl Host for DescriptorFieldsHost {
+    fn write_line(&mut self, _: &str) {}
+    fn clock_millis(&mut self) -> f64 { 0.0 }
+    fn functions(&self) -> &[HostFunction<Self>] {
+        crate::host_functions![
+            global "nativeCopyProperty" (4) => native_copy_property,
+            global "nativeDefineValue" (3) => native_define_value,
+            global "nativeDefineMixed" (2) => native_define_mixed
+        ]
+    }
+}
+/// `nativeCopyProperty(source, key, target, targetKey)`: whether [[GetOwnProperty]] found the
+/// property, after defining it on `target` from the fields it reported.
+fn native_copy_property(context: &mut NativeContext<'_, DescriptorFieldsHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let [source, key, target, target_key] = args else { unreachable!("four arguments") };
+    let Some(fields) = context.own_property_fields_rooted(*source, *key)? else {
+        return Ok(context.boolean(false));
+    };
+    context.collect()?;
+    let defined = context.define_property_fields_rooted(*target, *target_key, fields)?;
+    Ok(context.boolean(defined))
+}
+/// `nativeDefineValue(target, key, value)`: `Reflect.defineProperty(target, key, { value })`.
+fn native_define_value(context: &mut NativeContext<'_, DescriptorFieldsHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let [target, key, value] = args else { unreachable!("three arguments") };
+    let fields = DescriptorFields { value: Some(*value), ..DescriptorFields::default() };
+    let defined = context.define_property_fields_rooted(*target, *key, fields)?;
+    Ok(context.boolean(defined))
+}
+/// `nativeDefineMixed(target, key)`: a descriptor with both a value and a getter.
+fn native_define_mixed(context: &mut NativeContext<'_, DescriptorFieldsHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let [target, key] = args else { unreachable!("two arguments") };
+    let undefined = context.undefined();
+    let fields = DescriptorFields { value: Some(undefined), get: Some(undefined), ..DescriptorFields::default() };
+    let defined = context.define_property_fields_rooted(*target, *key, fields)?;
+    Ok(context.boolean(defined))
+}
+#[test]
+fn native_descriptor_fields_match_get_own_property_and_define_property() {
+    let source = r#"
+      const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b)&&(a===undefined||(a.get===b.get&&a.set===b.set&&Object.is(a.value,b.value)));
+      const symbol=Symbol('s');
+      const source={plain:1,[symbol]:2,get g(){return 3},set s(v){}};
+      Object.defineProperty(source,'fixed',{value:4,writable:false,enumerable:false,configurable:false});
+      const target={};
+      for(const key of Reflect.ownKeys(source)){
+        if(!nativeCopyProperty(source,key,target,key))throw Error('copy failed');
+        if(!same(Object.getOwnPropertyDescriptor(source,key),Object.getOwnPropertyDescriptor(target,key)))throw Error('descriptor differs');
+      }
+      if(nativeCopyProperty(source,'missing',target,'missing')||'missing' in target)throw Error('missing property');
+      const traps=[];
+      const proxy=new Proxy({p:5},{getOwnPropertyDescriptor(t,k){traps.push(k);return Reflect.getOwnPropertyDescriptor(t,k)}});
+      if(!nativeCopyProperty(proxy,'p',target,'fromProxy')||traps.join()!=='p'||target.fromProxy!==5)throw Error('proxy trap');
+      if(!nativeDefineValue(target,'fresh',6))throw Error('fresh value');
+      if(!same(Object.getOwnPropertyDescriptor(target,'fresh'),{value:6,writable:false,enumerable:false,configurable:false}))throw Error('absent fields default');
+      Object.defineProperty(target,'kept',{value:7,writable:true,enumerable:true,configurable:true});
+      nativeDefineValue(target,'kept',8);
+      if(!same(Object.getOwnPropertyDescriptor(target,'kept'),{value:8,writable:true,enumerable:true,configurable:true}))throw Error('absent fields keep');
+      if(nativeDefineValue(target,'fixed',9)||target.fixed!==4)throw Error('rejected redefinition');
+      let caught;try{nativeDefineMixed(target,'mixed')}catch(error){caught=error}
+      if(!(caught instanceof TypeError))throw Error('mixed fields');
+    "#;
+    for program in [Engine::compile(crate::ExecutionRequest{source,name:"native-descriptor-fields.js",kind:crate::SourceKind::Script}).unwrap(),Engine::specialize(source,"native-descriptor-fields.js").unwrap()] {
+        Runtime::new(DescriptorFieldsHost).execute(&program).unwrap();
+    }
+}
+
+/// Keeps compiled programs in memory, shared by the runtimes of one test.
+struct EntryCacheHost {
+    kept: Rc<RefCell<std::collections::HashMap<(String, Vec<String>), Vec<u8>>>>,
+    lines: Rc<RefCell<Vec<String>>>,
+}
+impl Host for EntryCacheHost {
+    fn write_line(&mut self, line: &str) {
+        self.lines.borrow_mut().push(line.to_owned());
+    }
+    fn clock_millis(&mut self) -> f64 { 0.0 }
+    fn kept_compiled_program(&mut self, name: &str, parts: &[&str]) -> Option<crate::KeptBytes> {
+        let key = (name.to_owned(), parts.iter().map(|part| (*part).to_owned()).collect());
+        self.kept.borrow().get(&key).cloned().map(|bytes: Vec<u8>| Rc::new(bytes) as crate::KeptBytes)
+    }
+    fn keep_compiled_program(&mut self, name: &str, parts: &[&str], bytes: &[u8]) {
+        let key = (name.to_owned(), parts.iter().map(|part| (*part).to_owned()).collect());
+        self.kept.borrow_mut().insert(key, bytes.to_vec());
+    }
+}
+#[test]
+fn compiled_entry_is_kept_and_decodes_to_the_same_program() {
+    let kept = Rc::new(RefCell::new(std::collections::HashMap::new()));
+    let source = "function outer(n){const inner=k=>k*n;return [1,2,3].map(inner).join()}\nprint(`${outer(2)} ${typeof outer} ${outer.toString().length}`);";
+    let mut outputs = Vec::new();
+    for _ in 0..2 {
+        let lines = Rc::new(RefCell::new(Vec::new()));
+        let mut runtime = Runtime::new(EntryCacheHost { kept: kept.clone(), lines: lines.clone() });
+        let program = runtime
+            .compile_entry(crate::ExecutionRequest { source, name: "entry.js", kind: crate::SourceKind::Script })
+            .unwrap();
+        assert!(program.validated.holds(), "an entry compiled or decoded here is proven valid");
+        runtime.execute(&program).unwrap();
+        outputs.push(lines.borrow().clone());
+    }
+    assert_eq!(kept.borrow().len(), 1, "the second runtime decodes the kept entry");
+    assert_eq!(outputs[0], outputs[1]);
+    assert_eq!(outputs[0], ["2,4,6 function 70"]);
+    // A different goal or text is a different entry.
+    let lines = Rc::new(RefCell::new(Vec::new()));
+    let mut runtime = Runtime::new(EntryCacheHost { kept: kept.clone(), lines });
+    runtime.compile_entry(crate::ExecutionRequest { source, name: "entry.js", kind: crate::SourceKind::Module }).unwrap();
+    assert_eq!(kept.borrow().len(), 2);
+}

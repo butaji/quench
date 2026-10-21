@@ -16,7 +16,7 @@ fn derive(profile: &Profile, program_id: u32, program: &ResidualProgram) -> Matr
         if site_program != program_id {
             continue;
         }
-        let function = &program.functions[function_id as usize];
+        let function = &program.function(function_id as usize);
         let class = usize::from(function.dispatch == DispatchClass::Numeric);
         let first = function.code[pc as usize];
         let second = function.code[pc as usize + 1];
@@ -189,6 +189,7 @@ mod tests {
             field_sites: Vec::new(),
             object_sites: Vec::new(),
             regexp_literal_sites: Vec::new(),
+            literal_templates: Vec::new(),
             superinstructions: Vec::new(),
         };
         let mut pairs = vec![0; PAIRS];

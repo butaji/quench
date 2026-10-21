@@ -55,7 +55,7 @@ fn atom_in_bounds(atom: u32, atoms: usize) -> bool {
 fn eval_binding_is_valid(
     binding: &super::EvalBinding,
     function: &super::Function,
-    functions: &[super::Function],
+    functions: &[super::FunctionSlot],
     atoms: usize,
 ) -> bool {
     let target = match binding.location {
@@ -67,7 +67,7 @@ fn eval_binding_is_valid(
                     .and_then(|id| functions.get(id as usize))
                     .and_then(|function| function.parent);
             }
-            parent.and_then(|id| functions.get(id as usize))
+            parent.and_then(|id| functions.get(id as usize).map(|slot| &**slot))
         }
     };
     let slot = match binding.location {
@@ -84,7 +84,7 @@ fn eval_binding_is_valid(
 /// of the function it resolves to.
 fn name_bindings_are_valid(
     function: &super::Function,
-    functions: &[super::Function],
+    functions: &[super::FunctionSlot],
     atoms: usize,
     checked_captured: &mut rustc_hash::FxHashSet<(usize, u16, Option<u32>)>,
 ) -> bool {
@@ -162,7 +162,6 @@ fn promoted_local_layout_is_valid(function: &super::Function, atoms: &super::Ato
     let eligible_function = function.parent.is_some()
         && !function.is_async
         && !function.is_generator
-        && !function.is_class_constructor
         && !function.derived_constructor
         && !function.class_initializer
         && function.simple_parameters
@@ -225,6 +224,7 @@ struct ValidationBounds {
     method_sites: usize,
     object_sites: usize,
     regexp_literal_sites: usize,
+    literal_templates: usize,
     superinstructions: usize,
     code_len: u32,
 }
@@ -410,6 +410,9 @@ fn immediate_domains_in_bounds(
         super::ImmediateRole::RegExpLiteralSiteIndex => {
             instruction.regexp_literal_site_index() < bounds.regexp_literal_sites
         }
+        super::ImmediateRole::LiteralTemplateIndex => {
+            instruction.literal_template_index() < bounds.literal_templates
+        }
         super::ImmediateRole::SuperinstructionIndex => {
             (instruction.superinstruction_index() as usize) < bounds.superinstructions
         }
@@ -490,10 +493,20 @@ fn object_site_instruction_valid(
 
 impl ResidualProgram {
     /// Validate all cross-table references before a VM can observe the program.
+    /// `validate`, unless the program is proven valid (`ValidationProof`).
+    pub(crate) fn validate_unless_proven(&self) -> Result<(), String> {
+        if self.validated.holds() {
+            return Ok(());
+        }
+        self.validate()
+    }
+
     pub(crate) fn validate(&self) -> Result<(), String> {
         if self.functions.is_empty() && self.kind != super::ProgramKind::Wasm {
             return Err("program has no entry function".into());
         }
+        // Validation reads every record, and the cross-function checks read their parents'.
+        self.compile_released();
         let selective_capture_scope_unsafe =
             selective_capture_scope_unsafe(&self.functions, &self.atoms);
         // Captured name scopes are shared by sibling functions: each is checked once per
@@ -666,6 +679,7 @@ function.plain_local_slots(&self.superinstructions)
                 method_sites: self.method_sites.len(),
                 object_sites: self.object_sites.len(),
                 regexp_literal_sites: self.regexp_literal_sites.len(),
+                literal_templates: self.literal_templates.len(),
                 superinstructions: self.superinstructions.len(),
                 code_len,
             };
@@ -880,6 +894,11 @@ function.plain_local_slots(&self.superinstructions)
                 return Err("invalid object site".into());
             }
         }
+        for template in &self.literal_templates {
+            if !self.literal_template_is_valid(template) {
+                return Err("invalid literal template".into());
+            }
+        }
         for site in &self.regexp_literal_sites {
             if !matches!(
                 self.constants.get(site.pattern_constant as usize),
@@ -899,6 +918,29 @@ function.plain_local_slots(&self.superinstructions)
             return Err("invalid method argument register".into());
         }
         Ok(())
+    }
+
+    /// Whether `steps` name only this program's constants and object sites and, run over
+    /// a stack, never take more values than it holds and leave exactly one.
+    fn literal_template_is_valid(&self, steps: &[super::LiteralStep]) -> bool {
+        let mut depth = 0usize;
+        for step in steps {
+            let (taken, valid) = match *step {
+                super::LiteralStep::Constant(index) => {
+                    (0, (index as usize) < self.constants.len())
+                }
+                super::LiteralStep::Array(count) => (count as usize, true),
+                super::LiteralStep::Object(site) => match self.object_sites.get(site as usize) {
+                    Some(site) => (site.atoms.len(), true),
+                    None => (0, false),
+                },
+            };
+            if !valid || taken > depth {
+                return false;
+            }
+            depth = depth - taken + 1;
+        }
+        depth == 1
     }
 
     fn validate_selective_capture_owners(&self) -> Result<(), String> {
@@ -952,7 +994,7 @@ function.plain_local_slots(&self.superinstructions)
 }
 
 fn selective_capture_scope_unsafe(
-    functions: &[super::Function],
+    functions: &[super::FunctionSlot],
     atoms: &super::AtomTable,
 ) -> Vec<bool> {
     let is_with_enter =
@@ -1218,14 +1260,18 @@ mod tests {
             source: None,
             atoms: AtomTable::default(),
             constants: vec![],
-            functions: vec![function],
+            functions: vec![function.into()],
             cache_sites: 0,
             method_sites: vec![],
             method_arguments: vec![],
             field_sites: vec![],
             object_sites: vec![],
             regexp_literal_sites: vec![],
+            literal_templates: Vec::new(),
             superinstructions: vec![],
+            replay: None,
+            encoded_records: None,
+            validated: Default::default(),
         }
     }
 

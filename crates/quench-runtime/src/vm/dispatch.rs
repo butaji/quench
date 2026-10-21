@@ -68,7 +68,7 @@ impl<H: Host> Vm<H> {
             || self.frames[f].function == super::ROOT_FUNCTION_ID
             || (self.host.proper_tail_calls()
                 && i.returns_from_frame()
-                && p.functions[self.frames[f].function as usize].strict)
+                && p.function(self.frames[f].function as usize).strict)
         {
             return None;
         }
@@ -76,12 +76,19 @@ impl<H: Host> Vm<H> {
         let target = self.in_loop_call_target(p, callee)?;
         self.profile.call_source(0);
         let window = i.call_window();
-        let this = self.read(f, i.register_c());
-        self.profile.call_target(1, usize::from(window.count));
         // Collection happens only at back edges, tail calls and explicit host safepoints, none
         // of which can run while a frame is pushed; afterwards the new frame itself roots the
         // callee, receiver and arguments.
         let arguments: *const [Value] = self.register_window(f, window);
+        // SAFETY: the window lies in the caller frame, which the tier's direct call only reads.
+        if let Some(value) =
+            self.js_jit_compiled_call(p, (target.0, target.1), i.returns_from_frame(), unsafe { &*arguments })
+        {
+            self.write(f, i.result_register(), value);
+            return Some(Ok(StepResult::Continue));
+        }
+        let this = self.read(f, i.register_c());
+        self.profile.call_target(1, usize::from(window.count));
         // SAFETY: see `push_general_user_frame`; the window outlives callee setup.
         self.push_in_loop_call(p, f, pc, target, callee, this, unsafe { &*arguments }, i.result_register())
     }
@@ -115,7 +122,7 @@ impl<H: Host> Vm<H> {
     /// its program, which the loop executes from the push (`StepResult::PushFrame`) until the
     /// return restores the caller's.
     #[allow(clippy::too_many_arguments)]
-    fn push_in_loop_call(
+    pub(super) fn push_in_loop_call(
         &mut self,
         p: &ResidualProgram,
         f: usize,
@@ -159,7 +166,7 @@ impl<H: Host> Vm<H> {
     /// JavaScript program in the current realm that the loop may push in place: a non-root
     /// ordinary body (`CallPlan::in_loop`). Resolved targets are cached (`InLoopCallTarget`).
     #[inline(always)]
-    fn in_loop_call_target(
+    pub(super) fn in_loop_call_target(
         &mut self,
         p: &ResidualProgram,
         callee: Value,
@@ -190,8 +197,7 @@ impl<H: Host> Vm<H> {
         if function == super::ROOT_FUNCTION_ID
             || owner.kind == crate::bytecode::ProgramKind::Wasm
             || !owner
-                .functions
-                .get(function as usize)
+                .function_get(function as usize)
                 .is_some_and(|function| function.call_plan(owner).in_loop)
         {
             return None;
@@ -228,7 +234,7 @@ impl<H: Host> Vm<H> {
             || p.kind == crate::bytecode::ProgramKind::Wasm
             || f + 1 != self.frames.len()
             || self.frames[f].function == super::ROOT_FUNCTION_ID
-            || (i.returns_from_frame() && p.functions[self.frames[f].function as usize].strict)
+            || (i.returns_from_frame() && p.function(self.frames[f].function as usize).strict)
         {
             return None;
         }
@@ -249,56 +255,56 @@ impl<H: Host> Vm<H> {
                 (target, this) = (forwarded_target, forwarded_this);
                 forwarded_arguments
             }
-            None => match self.heap.get(callee) {
-            // A bound function calls its target with its bound `this`, its bound arguments
-            // and then the call's, and takes no observable step of its own.
-            Some(Cell::Function {
-                kind: FunctionKind::Native(Native::FunctionBoundCall),
-                env,
-                ..
-            }) => {
-                // A forwarded `arguments` reaches here unmaterialized, which only `apply`
-                // takes as its list.
-                if i.op() != Op::Call {
-                    return None;
+            None => match self.heap.function(callee) {
+                // A bound function calls its target with its bound `this`, its bound arguments
+                // and then the call's, and takes no observable step of its own.
+                Some(FunctionRecord {
+                    kind: FunctionKind::Native(Native::FunctionBoundCall),
+                    env,
+                    ..
+                }) => {
+                    // A forwarded `arguments` reaches here unmaterialized, which only `apply`
+                    // takes as its list.
+                    if i.op() != Op::Call {
+                        return None;
+                    }
+                    let (bound_target, bound_this, bound) = self.bound_function_parts(*env)?;
+                    (target, this) = (bound_target, bound_this);
+                    bound_arguments = bound.iter().chain(window).copied().collect::<Vec<_>>();
+                    bound_arguments.as_slice()
                 }
-                let (bound_target, bound_this, bound) = self.bound_function_parts(*env)?;
-                (target, this) = (bound_target, bound_this);
-                bound_arguments = bound.iter().chain(window).copied().collect::<Vec<_>>();
-                bound_arguments.as_slice()
-            }
-            // `Reflect.apply` takes its target and receiver as arguments and requires a list
-            // object, which only a dense array answers here.
-            Some(Cell::Function {
-                kind: FunctionKind::Native(Native::ReflectApply),
-                ..
-            }) => {
-                let list = window.get(2).copied().unwrap_or(Value::UNDEFINED);
-                if i.op() != Op::Call || self.heap.array(list).is_none() {
-                    return None;
-                }
-                target = window.first().copied().unwrap_or(Value::UNDEFINED);
-                this = window.get(1).copied().unwrap_or(Value::UNDEFINED);
-                apply_arguments = self.dense_apply_arguments(list)?;
-                apply_arguments.as_slice()
-            }
-            Some(Cell::Function {
-                kind: FunctionKind::Native(Native::FunctionApply),
-                ..
-            }) => match window.get(1).copied().unwrap_or(Value::UNDEFINED) {
-                // The caller's unmaterialized `arguments`: the values its frame kept.
-                Value::UNMATERIALIZED_ARGUMENTS => {
-                    let kept: *const [Value] = self.frames[f].original_arguments.as_slice();
-                    // SAFETY: the caller's frame stays on the stack and is not mutated while
-                    // the callee is set up; its buffer does not move when `frames` grows.
-                    unsafe { &*kept }
-                }
-                list => {
+                // `Reflect.apply` takes its target and receiver as arguments and requires a list
+                // object, which only a dense array answers here.
+                Some(FunctionRecord {
+                    kind: FunctionKind::Native(Native::ReflectApply),
+                    ..
+                }) => {
+                    let list = window.get(2).copied().unwrap_or(Value::UNDEFINED);
+                    if i.op() != Op::Call || self.heap.array(list).is_none() {
+                        return None;
+                    }
+                    target = window.first().copied().unwrap_or(Value::UNDEFINED);
+                    this = window.get(1).copied().unwrap_or(Value::UNDEFINED);
                     apply_arguments = self.dense_apply_arguments(list)?;
                     apply_arguments.as_slice()
                 }
-            },
-            _ => return None,
+                Some(FunctionRecord {
+                    kind: FunctionKind::Native(Native::FunctionApply),
+                    ..
+                }) => match window.get(1).copied().unwrap_or(Value::UNDEFINED) {
+                    // The caller's unmaterialized `arguments`: the values its frame kept.
+                    Value::UNMATERIALIZED_ARGUMENTS => {
+                        let kept: *const [Value] = self.frames[f].original_arguments.as_slice();
+                        // SAFETY: the caller's frame stays on the stack and is not mutated while
+                        // the callee is set up; its buffer does not move when `frames` grows.
+                        unsafe { &*kept }
+                    }
+                    list => {
+                        apply_arguments = self.dense_apply_arguments(list)?;
+                        apply_arguments.as_slice()
+                    }
+                },
+                _ => return None,
             },
         };
         let resolved = self.in_loop_call_target(p, target)?;
@@ -376,7 +382,7 @@ impl<H: Host> Vm<H> {
         match i.op() {
             Op::Nop => {}
             Op::CloneEnv => {
-                let plan = &p.functions[self.frames[f].function as usize].environment_clones
+                let plan = &p.function(self.frames[f].function as usize).environment_clones
                     [i.environment_clone_index()];
                 self.clone_frame_environment(f, &plan.fresh, &plan.reset)?;
             }
@@ -408,7 +414,7 @@ impl<H: Host> Vm<H> {
             Op::StoreLocal => {
                 let value = self.read(f, i.register_a());
                 let slot = i.local_slot();
-                let function = &p.functions[self.frames[f].function as usize];
+                let function = &p.function(self.frames[f].function as usize);
                 if function.is_self_binding_slot(slot) {
                     if function.strict {
                         return Err(
@@ -458,7 +464,7 @@ impl<H: Host> Vm<H> {
             Op::StoreEnvLocal => {
                 let value = self.read(f, i.register_a());
                 let slot = i.local_slot();
-                let function = &p.functions[self.frames[f].function as usize];
+                let function = &p.function(self.frames[f].function as usize);
                 let atom = function.local_atoms.get(slot).copied();
                 if let Some(atom) = atom
                     && self.store_with_binding(p, f, atom, value, function.strict)?
@@ -505,7 +511,7 @@ impl<H: Host> Vm<H> {
                         value,
                         self.realm.globals,
                     )?;
-                    if !written && p.functions[self.frames[f].function as usize].strict {
+                    if !written && p.function(self.frames[f].function as usize).strict {
                         return Err(
                             self.type_error(p, "cannot assign to read-only global binding".into())
                         );
@@ -599,7 +605,7 @@ impl<H: Host> Vm<H> {
                     if let Some(source_name) = self.programs.source_name(program).map(str::to_owned)
                     {
                         let url = self.host.import_meta_url(&source_name);
-                        let url = self.heap.alloc(Cell::String(url.into()));
+                        let url = self.heap.alloc_string(url.into());
                         let url_atom = self.intern_atom("url");
                         self.set_property(value, url_atom, url)?;
                     }
@@ -721,6 +727,10 @@ impl<H: Host> Vm<H> {
                 });
                 self.write(f, i.result_register(), v);
             }
+            Op::MakeLiteralTemplate => {
+                let v = self.literal_template(p, f, i.literal_template_index())?;
+                self.write(f, i.result_register(), v);
+            }
             Op::GetField => {
                 let lookup = i.field_lookup().ok_or_else(|| {
                     JsError::validation("invalid nested field lookup encoding".into())
@@ -758,7 +768,7 @@ impl<H: Host> Vm<H> {
                     let sink = p.field_sites[site].sink.expect("fused field sink");
                     self.with_field_source(f, site, crate::bytecode::FieldPart::Sink, |vm| vm.set_field_cached(
                         p, vm.frames[f].this, sink.0, v, sink.1,
-                        p.functions[vm.frames[f].function as usize].strict,
+                        p.function(vm.frames[f].function as usize).strict,
                     ))?;
                 }
                 if i.returns_from_frame() {
@@ -937,6 +947,12 @@ impl<H: Host> Vm<H> {
             Op::SetFunctionDebugName => {
                 self.set_function_debug_name(self.read(f, i.register_a()), i.atom_index());
             }
+            Op::ArgumentsLength | Op::ArgumentGet => {
+                let binding = self.load_local_binding(p, f, i.local_slot(), None)?;
+                let key = (i.op() == Op::ArgumentGet).then(|| self.read(f, i.register_b()));
+                let value = self.read_arguments_binding(p, f, binding, key)?;
+                self.write(f, i.result_register(), value);
+            }
             Op::SetFunctionName => {
                 self.set_function_name(p, self.read(f, i.register_a()), i.atom_index())?;
             }
@@ -976,7 +992,7 @@ impl<H: Host> Vm<H> {
             }
             Op::Yield => {
                 let value = self.read(f, i.register_b());
-                let value = if p.functions[self.frames[f].function as usize].is_async {
+                let value = if p.function(self.frames[f].function as usize).is_async {
                     self.promise_for_value(p, value)?
                 } else {
                     value
@@ -991,7 +1007,7 @@ impl<H: Host> Vm<H> {
                 let iterator = self.read(f, i.register_c());
                 let iterator = if iterator.is_undefined() {
                     let source = self.read(f, i.register_b());
-                    let asynchronous = p.functions[self.frames[f].function as usize].is_async;
+                    let asynchronous = p.function(self.frames[f].function as usize).is_async;
                     let iterator = if asynchronous {
                         self.get_async_iterator(p, source)?
                     } else {
@@ -1005,15 +1021,15 @@ impl<H: Host> Vm<H> {
                 let (state_register, next_method_register) = i.register_pair();
                 let next_method = self.read(f, next_method_register);
                 let next_method = if next_method.is_undefined() {
-                    let receiver = match self.heap.get(iterator) {
-                        Some(Cell::Iterator {
+                    let receiver = match self.heap.iterator(iterator) {
+                        Some(IteratorRecord {
                             source,
                             kind: IteratorKind::AsyncFromSync,
                             ..
                         }) => *source,
                         _ => iterator,
                     };
-                    let atom = self.intern_atom("next");
+                    let atom = self.runtime_atoms.next;
                     let method = self.get_property(p, receiver, atom)?;
                     if !self.is_function(method) {
                         return Err(
@@ -1026,7 +1042,7 @@ impl<H: Host> Vm<H> {
                     next_method
                 };
                 let awaited_result = self.read(f, state_register);
-                let asynchronous = p.functions[self.frames[f].function as usize].is_async;
+                let asynchronous = p.function(self.frames[f].function as usize).is_async;
                 let result = if asynchronous && !awaited_result.is_undefined() {
                     self.write(f, state_register, Value::UNDEFINED);
                     awaited_result
@@ -1044,10 +1060,10 @@ impl<H: Host> Vm<H> {
                     }
                     result
                 };
-                let done_atom = self.intern_atom("done");
+                let done_atom = self.runtime_atoms.done;
                 let done = self.get_property(p, result, done_atom)?;
                 if self.truthy(done) {
-                    let value_atom = self.intern_atom("value");
+                    let value_atom = self.runtime_atoms.value;
                     let value = self.get_property(p, result, value_atom)?;
                     self.write(f, i.result_register(), value);
                 } else {
@@ -1056,7 +1072,7 @@ impl<H: Host> Vm<H> {
                         self.write(f, state_register, Value::UNDEFINED);
                     }
                     let value = if asynchronous {
-                        let value_atom = self.intern_atom("value");
+                        let value_atom = self.runtime_atoms.value;
                         self.get_property(p, result, value_atom)?
                     } else {
                         Value::UNDEFINED
@@ -1099,14 +1115,14 @@ impl<H: Host> Vm<H> {
             Op::DefineField => {
                 let object = self.read(f, i.register_b());
                 let value = self.read(f, i.register_a());
-                self.define_class_field(p, object, PropertyKey::string(i.atom_index()), value)?;
+                self.define_field_cached(p, object, i.atom_index(), value, i.cache_site_index())?;
             }
             Op::DefineComputedField => {
                 let object = self.read(f, i.register_b());
                 let key = self.read(f, i.register_c());
                 let key = self.to_property_key(p, key)?;
                 let key = match self.heap.get(key).cloned() {
-                    Some(Cell::String(text)) => PropertyKey::string(self.intern_js_atom(&text)),
+                    _ if let Some(text) = self.heap.string(key).cloned()  => PropertyKey::string(self.intern_js_atom(&text)),
                     Some(Cell::Symbol(_)) => PropertyKey::symbol(key),
                     _ => return Err(JsError::validation("invalid class field key".into())),
                 };
@@ -1131,7 +1147,7 @@ impl<H: Host> Vm<H> {
                     self.read(f, i.register_b()),
                     self.read(f, i.register_c()),
                     self.read(f, i.register_a()),
-                    p.functions[self.frames[f].function as usize].strict
+                    p.function(self.frames[f].function as usize).strict
                         || i.boolean_flag().expect("validated boolean immediate"),
                 )?
             }
@@ -1218,7 +1234,7 @@ impl<H: Host> Vm<H> {
                     self.read(f, i.register_c()),
                 )?;
                 if !self.truthy(result)
-                    && (p.functions[self.frames[f].function as usize].strict
+                    && (p.function(self.frames[f].function as usize).strict
                         || i.boolean_flag().expect("validated boolean immediate"))
                 {
                     return Err(self.type_error(p, "Cannot delete property in strict mode".into()));
@@ -1289,12 +1305,12 @@ impl<H: Host> Vm<H> {
                 debug_assert_eq!(caller.program, self.active_program);
                 let direct_eval = i.direct_eval()
                     && matches!(
-                        self.heap.get(callee),
-                        Some(Cell::Function {
+                        self.heap.function(callee),
+                        Some(FunctionRecord {
                             kind: FunctionKind::Native(Native::Eval),
-                            object,
+                            realm,
                             ..
-                        }) if object.realm == self.realm.globals
+                        }) if *realm == self.realm.globals
                     );
                 let previous_binding_site_pc = if direct_eval {
                     Some(std::mem::replace(
@@ -1325,10 +1341,10 @@ impl<H: Host> Vm<H> {
                     let program = self.programs.get(program_id).ok_or_else(|| {
                         JsError::validation("missing Wasm tail-call program".into())
                     })?;
-                    let realm = match self.heap.get(callee) {
-                        Some(Cell::Function { object, .. }) => object.realm,
-                        _ => self.realm.globals,
-                    };
+                    let realm = self
+                        .heap
+                        .function(callee)
+                        .map_or(self.realm.globals, |function| function.realm);
                     let result = self.with_call_roots(
                         [callee, this].into_iter().chain(args.iter().copied()),
                         |vm| {
@@ -1354,14 +1370,14 @@ impl<H: Host> Vm<H> {
                 if terminal
                     && self.host.proper_tail_calls()
                     && p.kind != crate::bytecode::ProgramKind::Wasm
-                    && p.functions[self.frames[f].function as usize]
+                    && p.function(self.frames[f].function as usize)
                         .permits_js_tail_call_at(pc.saturating_sub(1) as u32)
                     && !matches!(self.heap.get(callee), Some(Cell::Proxy { .. }))
                     && let Some(CallTarget::User(program_id, id, env)) =
                         self.call_target(callee).ok()
                     && program_id == self.frames[f].program
-                    && !p.functions[id as usize].is_async
-                    && !p.functions[id as usize].is_generator
+                    && !p.function(id as usize).is_async
+                    && !p.function(id as usize).is_generator
                 {
                     self.with_call_roots(
                         [callee, this].into_iter().chain(args.iter().copied()),
@@ -1469,6 +1485,22 @@ impl<H: Host> Vm<H> {
                 self.profile.call_source(1);
                 let window = i.call_window();
                 let function_index = i.known_function_index();
+                let argument_start = usize::from(window.base);
+                let argument_end = argument_start + usize::from(window.count);
+                let call_arguments: *const [Value] =
+                    &self.frames[f].registers[argument_start..argument_end];
+                // SAFETY: the window lies in the caller frame, which the tier's direct call
+                // only reads.
+                if let Some(value) = self.js_jit_compiled_call(
+                    p,
+                    (self.active_program, u32::from(function_index)),
+                    i.returns_from_frame(),
+                    unsafe { &*call_arguments },
+                ) {
+                    self.profile.call_target(1, usize::from(window.count));
+                    self.write(f, i.result_register(), value);
+                    return Ok(StepResult::Continue);
+                }
                 let arguments = CallArguments::from_slice(self.register_window(f, window));
                 let args = arguments.as_slice();
                 let parent = self.capture_env(f, 0).unwrap_or(self.frames[f].env);
@@ -1480,10 +1512,10 @@ impl<H: Host> Vm<H> {
                     || (p.kind != crate::bytecode::ProgramKind::Wasm
                         && self.host.proper_tail_calls()
                         && terminal
-                        && p.functions[self.frames[f].function as usize]
+                        && p.function(self.frames[f].function as usize)
                             .permits_js_tail_call_at(pc.saturating_sub(1) as u32)))
-                    && !p.functions[function_index as usize].is_async
-                    && !p.functions[function_index as usize].is_generator
+                    && !p.function(function_index as usize).is_async
+                    && !p.function(function_index as usize).is_generator
                 {
                     self.prepare_user_tail(
                         p,
@@ -1637,7 +1669,7 @@ impl<H: Host> Vm<H> {
             Some(crate::bytecode::OperandKind::Local) => {
                 let slot = operand.payload() as usize;
                 // A plain slot is exactly what `LoadLocalPlain` reads.
-                if p.functions[self.frames[frame].function as usize].plain_local(p, slot) {
+                if p.function(self.frames[frame].function as usize).plain_local(p, slot) {
                     return Ok(self.frames[frame].locals[slot]);
                 }
                 self.load_local_binding(p, frame, slot, None)

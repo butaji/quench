@@ -22,22 +22,17 @@ pub(super) fn is_ecma_whitespace_character(character: char) -> bool {
 
 impl<H: Host> Vm<H> {
     pub(super) fn call_target(&self, callee: Value) -> Result<CallTarget, JsError> {
-        match self.heap.get(callee) {
-            Some(Cell::Function {
+        match self.heap.function(callee) {
+            Some(FunctionRecord {
                 kind: FunctionKind::User(program, id),
                 env,
                 ..
             }) => Ok(CallTarget::User(*program, *id, *env)),
-            Some(Cell::Function {
-                kind: FunctionKind::NumericUser(program, id),
-                env,
-                ..
-            }) => Ok(CallTarget::NumericUser(*program, *id, *env)),
-            Some(Cell::Function {
+            Some(FunctionRecord {
                 kind: FunctionKind::Native(native),
                 ..
             }) => Ok(CallTarget::Native(*native)),
-            other => self.non_callable_target(callee, other),
+            None => self.non_callable_target(callee, self.heap.get(callee)),
         }
     }
 
@@ -48,15 +43,29 @@ impl<H: Host> Vm<H> {
         &self,
         callee: Value,
     ) -> Option<(super::ProgramId, u32, Value)> {
-        match self.heap.get(callee) {
-            Some(Cell::Function {
+        match self.heap.function(callee) {
+            Some(FunctionRecord {
                 kind: FunctionKind::User(program, id),
                 env,
-                object,
+                realm,
                 ..
-            }) if object.realm == self.realm.globals => Some((*program, *id, *env)),
+            }) if *realm == self.realm.globals => Some((*program, *id, *env)),
             _ => None,
         }
+    }
+
+    /// `same_realm_user_target`, and whether its body is numeric (`DispatchClass::Numeric`).
+    pub(super) fn same_realm_script_target(
+        &self,
+        callee: Value,
+    ) -> Option<(super::ProgramId, u32, Value, bool)> {
+        let (program, id, env) = self.same_realm_user_target(callee)?;
+        let numeric = self
+            .programs
+            .residual(program)
+            .and_then(|code| code.function_get(id as usize).map(|body| body.dispatch))
+            == Some(crate::bytecode::DispatchClass::Numeric);
+        Some((program, id, env, numeric))
     }
 
     pub(super) fn non_callable_target(
@@ -79,21 +88,24 @@ impl<H: Host> Vm<H> {
         receiver: Value,
         args: &[Value],
     ) -> Option<Value> {
-        let Some(Cell::Function {
+        let Some(FunctionRecord {
             kind: FunctionKind::Native(native),
             ..
-        }) = self.heap.get(callee)
+        }) = self.heap.function(callee)
         else {
             return None;
         };
         let native = *native;
         if !native.is_pure_string_method()
-            || !matches!(self.heap.get(receiver), Some(Cell::String(_)))
+            || !self.heap.is_string(receiver)
             || args.iter().any(|argument| self.is_object_like(*argument))
         {
             return None;
         }
-        self.call_primitive_native(p, native, receiver, args).ok()
+        let result = self.call_primitive_native(p, native, receiver, args).ok();
+        // A string method reads its receiver as text, which it may make on demand.
+        self.heap.charge_materialized_text();
+        result
     }
 
     pub(super) fn call_primitive_native(
@@ -156,10 +168,10 @@ impl<H: Host> Vm<H> {
             }
             Native::BigIntValueOf => self.bigint_value_of(p, this),
             Native::StringToString | Native::StringValueOf => {
-                if matches!(self.heap.get(this), Some(Cell::String(_))) {
+                if self.heap.is_string(this) {
                     Ok(this)
                 } else {
-                    self.boxed_primitive_value(this).filter(|value| matches!(self.heap.get(*value), Some(Cell::String(_)))).ok_or_else(|| {
+                    self.boxed_primitive_value(this).filter(|value| self.heap.is_string(*value)).ok_or_else(|| {
                         self.type_error(p, "String method called on incompatible receiver".into())
                     })
                 }
@@ -194,11 +206,11 @@ impl<H: Host> Vm<H> {
                 } else {
                     "false"
                 };
-                Ok(self.heap.alloc(Cell::String(text.into())))
+                Ok(self.heap.alloc_string(text.into()))
             }
             Native::StringCharCodeAt => {
                 let index = self.argument_integer(p, args, 0, 0)?;
-                let Some(Cell::String(text)) = self.heap.get(this) else {
+                let Some(text) = self.heap.string(this) else {
                     return Err(JsError("string method receiver is not a string".into()));
                 };
                 let unit = index
@@ -212,20 +224,20 @@ impl<H: Host> Vm<H> {
             }
             Native::StringCharAt => {
                 let index = self.argument_integer(p, args, 0, 0)?;
-                let Some(Cell::String(receiver)) = self.heap.get(this).cloned() else {
+                let Some(receiver) = self.heap.string(this).cloned() else {
                     return Err(JsError("string method receiver is not a string".into()));
                 };
                 let Some(index) = usize::try_from(index).ok() else {
                     return Ok(self
                         .heap
-                        .alloc(Cell::String(super::wtf16::JsString::from_units(&[]))));
+                        .alloc_string(super::wtf16::JsString::from_units(&[])));
                 };
                 let units = receiver.units();
                 let value = units.get_range(index..index + 1).map_or_else(
                     || super::wtf16::JsString::from_units(&[]),
                     super::wtf16::JsString::from_unit_run,
                 );
-                Ok(self.heap.alloc(Cell::String(value)))
+                Ok(self.heap.alloc_string(value))
             }
             Native::StringSlice => {
                 let text = self.string_receiver_text(this)?;
@@ -243,7 +255,7 @@ impl<H: Host> Vm<H> {
                 if start >= end {
                     return self.string_from_units(&[]);
                 }
-                self.string_from_unit_run(units.slice(start as usize..end as usize))
+                self.string_substring(&text, start as usize..end as usize)
             }
             Native::StringSubstring => {
                 let text = self.string_receiver_text(this)?;
@@ -254,7 +266,7 @@ impl<H: Host> Vm<H> {
                 if start > end {
                     std::mem::swap(&mut start, &mut end);
                 }
-                self.string_from_unit_run(units.slice(start as usize..end as usize))
+                self.string_substring(&text, start as usize..end as usize)
             }
             Native::StringSubstr => {
                 let text = self.string_receiver_text(this)?;
@@ -268,10 +280,10 @@ impl<H: Host> Vm<H> {
                 };
                 let count = self.argument_integer(p, args, 1, length - start)?.max(0);
                 let end = start.saturating_add(count).min(length);
-                self.string_from_unit_run(units.slice(start as usize..end as usize))
+                self.string_substring(&text, start as usize..end as usize)
             }
             Native::StringIncludes | Native::StringStartsWith | Native::StringEndsWith => {
-                let Some(Cell::String(receiver)) = self.heap.get(this).cloned() else {
+                let Some(receiver) = self.heap.string(this).cloned() else {
                     return Err(JsError("string method receiver is not a string".into()));
                 };
                 let search_value = args.first().copied().unwrap_or(Value::UNDEFINED);
@@ -311,7 +323,7 @@ impl<H: Host> Vm<H> {
                 Ok(if matched { Value::TRUE } else { Value::FALSE })
             }
             Native::StringIndexOf | Native::StringLastIndexOf => {
-                let Some(Cell::String(receiver)) = self.heap.get(this).cloned() else {
+                let Some(receiver) = self.heap.string(this).cloned() else {
                     return Err(JsError("string method receiver is not a string".into()));
                 };
                 let search =
@@ -343,7 +355,7 @@ impl<H: Host> Vm<H> {
             Native::StringReplaceAll => self.string_replace_native(p, this, args, true),
             Native::StringSplit => self.string_split_native(p, this, args),
             Native::StringTrim | Native::StringTrimStart | Native::StringTrimEnd => {
-                let Some(Cell::String(receiver)) = self.heap.get(this).cloned() else {
+                let Some(receiver) = self.heap.string(this).cloned() else {
                     return Err(JsError("string method receiver is not a string".into()));
                 };
                 let units = receiver.units();
@@ -363,7 +375,7 @@ impl<H: Host> Vm<H> {
                         .rposition(|unit| !is_ecma_whitespace(unit))
                         .map_or(start, |i| i + 1)
                 };
-                self.string_from_unit_run(units.slice(start..end))
+                self.string_substring(&receiver, start..end)
             }
             Native::StringMatch | Native::StringSearch => {
                 self.string_match_or_search_native(p, native, this, args)
@@ -379,7 +391,7 @@ impl<H: Host> Vm<H> {
             | Native::StringConcat
             | Native::StringNormalize => self.string_basic_native(p, native, this, args),
             Native::StringRepeat => {
-                let Some(Cell::String(receiver)) = self.heap.get(this).cloned() else {
+                let Some(receiver) = self.heap.string(this).cloned() else {
                     return Err(JsError("string method receiver is not a string".into()));
                 };
                 let count = self.to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
@@ -398,21 +410,21 @@ impl<H: Host> Vm<H> {
                 if size > super::wtf16::MAX_STRING_UNITS {
                     return Err(self.range_error(p, "Invalid string length".into()));
                 }
-                Ok(self.heap.alloc(Cell::String(receiver.repeat(count))))
+                Ok(self.heap.alloc_string(receiver.repeat(count)))
             }
             Native::StringPadStart | Native::StringPadEnd => {
-                let Some(Cell::String(receiver)) = self.heap.get(this).cloned() else {
+                let Some(receiver) = self.heap.string(this).cloned() else {
                     return Err(JsError("string method receiver is not a string".into()));
                 };
                 let target =
                     self.to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 if !target.is_finite() || target <= 0.0 {
-                    return Ok(self.heap.alloc(Cell::String(receiver)));
+                    return Ok(self.heap.alloc_string(receiver));
                 }
                 let target = target.trunc().min(64.0 * 1024.0 * 1024.0) as usize;
                 let receiver_units = receiver.units().to_vec();
                 if receiver_units.len() >= target {
-                    return Ok(self.heap.alloc(Cell::String(receiver)));
+                    return Ok(self.heap.alloc_string(receiver));
                 }
                 let fill = match args.get(1).copied() {
                     None | Some(Value::UNDEFINED) => super::wtf16::JsString::from_str(" "),
@@ -420,7 +432,7 @@ impl<H: Host> Vm<H> {
                 };
                 let fill_units = fill.units();
                 if fill_units.is_empty() {
-                    return Ok(self.heap.alloc(Cell::String(receiver)));
+                    return Ok(self.heap.alloc_string(receiver));
                 }
                 let fill_len = target - receiver_units.len();
                 let mut padding = Vec::with_capacity(fill_len);
@@ -444,7 +456,7 @@ impl<H: Host> Vm<H> {
                 let encoded =
                     super::string_extra::encode_uri(&value, native == Native::EncodeUriComponent)
                         .map_err(|message| self.uri_error(p, message.into()))?;
-                Ok(self.heap.alloc(Cell::String(encoded.into())))
+                Ok(self.heap.alloc_string(encoded.into()))
             }
             Native::GlobalEscape | Native::GlobalUnescape => {
                 let value =
@@ -454,7 +466,7 @@ impl<H: Host> Vm<H> {
                 } else {
                     super::string_extra::unescape(&value)
                 };
-                Ok(self.heap.alloc(Cell::String(result)))
+                Ok(self.heap.alloc_string(result))
             }
             Native::DecodeUri | Native::DecodeUriComponent => {
                 let value =
@@ -462,7 +474,7 @@ impl<H: Host> Vm<H> {
                 let decoded =
                     super::string_extra::decode_uri(&value, native == Native::DecodeUriComponent)
                         .map_err(|message| self.uri_error(p, message.into()))?;
-                Ok(self.heap.alloc(Cell::String(decoded)))
+                Ok(self.heap.alloc_string(decoded))
             }
             Native::StringFromCharCode => {
                 let mut units = Vec::with_capacity(args.len());
@@ -518,11 +530,8 @@ impl<H: Host> Vm<H> {
                 let text = self.to_string(p, value)?;
                 Ok(Value::number(super::number::parse_float(&text)))
             }
-            Native::MathFloor => {
-                let value = args.first().copied().unwrap_or(Value::UNDEFINED);
-                Ok(Value::number(self.to_number(p, value)?.floor()))
-            }
-            Native::MathAbs
+            Native::MathFloor
+            | Native::MathAbs
             | Native::MathCeil
             | Native::MathRound
             | Native::MathTrunc
@@ -550,7 +559,9 @@ impl<H: Host> Vm<H> {
             | Native::MathClz32
             | Native::MathF16Round => {
                 let value = self.to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-                Ok(Value::number(super::number::math_unary(native, value)))
+                Ok(Value::number(
+                    super::number::math_unary(native, value).expect("a unary Math native"),
+                ))
             }
             Native::MathAtan2 => {
                 let y = args.first().copied().unwrap_or(Value::UNDEFINED);
@@ -627,13 +638,13 @@ impl<H: Host> Vm<H> {
                     return Err(self.range_error(p, "Invalid radix".into()));
                 }
                 if radix == 10 || !number.is_finite() {
-                    return Ok(self.heap.alloc(Cell::String(
+                    return Ok(self.heap.alloc_string(
                         super::number::number_to_decimal(number).into(),
-                    )));
+                    ));
                 }
-                Ok(self.heap.alloc(Cell::String(
+                Ok(self.heap.alloc_string(
                     super::string_extra::number_to_radix(number, radix).into(),
-                )))
+                ))
             }
             _ => unreachable!("non-primitive native routed to primitive library"),
         }
@@ -663,23 +674,23 @@ impl<H: Host> Vm<H> {
     /// The receiver string, sharing its units rather than copying them.
     fn string_receiver_text(&self, value: Value) -> Result<super::wtf16::JsString, JsError> {
         match self.heap.get(value) {
-            Some(Cell::String(text)) => Ok(text.clone()),
+            _ if let Some(text) = self.heap.string(value)  => Ok(text.clone()),
             _ => Err(JsError("string method receiver is not a string".into())),
         }
     }
 
-    pub(super) fn string_from_unit_run(
+    /// The string value of `text`'s units `range`, sharing long ASCII storage.
+    pub(super) fn string_substring(
         &mut self,
-        units: super::wtf16::Units<'_>,
+        text: &super::wtf16::JsString,
+        range: std::ops::Range<usize>,
     ) -> Result<Value, JsError> {
-        Ok(self
-            .heap
-            .alloc(Cell::String(super::wtf16::JsString::from_unit_run(units))))
+        Ok(self.heap.alloc_string(text.substring(range)))
     }
 
     pub(super) fn string_from_units(&mut self, units: &[u16]) -> Result<Value, JsError> {
         Ok(self
             .heap
-            .alloc(Cell::String(super::wtf16::JsString::from_units(units))))
+            .alloc_string(super::wtf16::JsString::from_units(units)))
     }
 }

@@ -9,13 +9,16 @@ const MMAP_THRESHOLD_BYTES: libc::c_int = 128 * 1024;
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
 const MMAP_THRESHOLD_VARIABLE: &str = "MALLOC_MMAP_THRESHOLD_";
 
-/// glibc's per-thread cache keeps freed small chunks, up to seven of each size class, out of
-/// its bins, where they neither merge with free neighbours nor serve other sizes, so the heap
-/// grows past them; two of each keep the cache's fast path for the VM's allocate-and-free
-/// pairs. glibc reads its tunables once, at the C runtime's first allocation, which precedes
-/// any code of ours, so the setting has to be in the environment a run starts with.
+/// glibc's per-thread cache keeps freed small chunks out of its bins, where they neither merge
+/// with free neighbours nor serve other sizes, so the heap grows past them; it is turned off
+/// (V8-v7 max RSS, static x86_64, 2026-10-18: RegExp 7344 -> 6868-7056 KiB, Crypto 3372 ->
+/// 3104-3152 KiB with `top_pad` below; two entries per class kept 7024 and 3368). glibc
+/// grows and trims its heap with `top_pad` bytes of slack beyond each request; none is kept.
+/// glibc reads its tunables once, at the C runtime's first allocation, which precedes any
+/// code of ours, so the setting has to be in the environment a run starts with.
 #[cfg(all(target_os = "linux", target_env = "gnu", target_feature = "crt-static"))]
-const THREAD_CACHE_SETTING: &std::ffi::CStr = c"GLIBC_TUNABLES=glibc.malloc.tcache_count=2";
+const THREAD_CACHE_SETTING: &std::ffi::CStr =
+    c"GLIBC_TUNABLES=glibc.malloc.tcache_count=0:glibc.malloc.top_pad=0";
 
 /// Marks the environment of a run re-executed with `THREAD_CACHE_SETTING`.
 #[cfg(all(target_os = "linux", target_env = "gnu", target_feature = "crt-static"))]
@@ -100,6 +103,9 @@ static LIMIT_THREAD_CACHE: extern "C" fn(
 extern "C" fn fault_only_touched_pages() {
     quench_node::host::resident_pages::map_touched_pages_only();
     quench_node::host::resident_pages::release_read_only_pages();
+    quench_runtime::set_compile_phase_boundary(
+        quench_node::host::resident_pages::release_read_only_code_and_data,
+    );
 }
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]

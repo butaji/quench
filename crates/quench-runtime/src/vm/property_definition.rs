@@ -127,9 +127,11 @@ impl<H: Host> Vm<H> {
                 return self.define_proxy_property_record(p, target, key, &descriptor);
             }
             let property = self.heap.root_value(key).unwrap();
-            let property = match self.heap.get(property).cloned() {
-                Some(Cell::Symbol(_)) => PropertyKey::symbol(property),
-                Some(Cell::String(name)) => PropertyKey::string(self.intern_js_atom(&name)),
+            let property = match self.heap.string(property).cloned() {
+                Some(name) => PropertyKey::string(self.intern_js_atom(&name)),
+                None if matches!(self.heap.get(property), Some(Cell::Symbol(_))) => {
+                    PropertyKey::symbol(property)
+                }
                 _ => unreachable!("DefineOwnProperty receives a property key"),
             };
             if let PropertyKey::String(atom) = property {
@@ -187,6 +189,15 @@ impl<H: Host> Vm<H> {
                         && !record.has_accessor_fields()
                         && record.value.is_none_or(|v| self.same_value(current, v)));
                 }
+            }
+            let object = self.heap.root_value(target).unwrap();
+            // A watched member (one a binding stands for, or one its initializer redefines)
+            // materializes before any definition, as before a write.
+            if self.watched_lazy_member(object, property)
+                || (matches!(property, PropertyKey::Symbol(_))
+                    && !descriptor.resolve(&self.heap).replaces_kind_fields())
+            {
+                self.materialize_lazy_data_property(p, object, property)?;
             }
             let object = self.heap.root_value(target).unwrap();
             self.define_ordinary_property_key(object, property, descriptor.resolve(&self.heap))

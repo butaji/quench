@@ -6,7 +6,11 @@ use std::ptr::NonNull;
 /// The header every empty slice shares: an empty slice owns no allocation, so making one and
 /// dropping it cost nothing.
 static EMPTY_HEADER: usize = 0;
+/// The header's top bit: a mark its owner may set on a non-empty slice (`ThinBoxSlice::mark`)
+/// to tell two layouts of its elements apart; the length is the rest of the header.
+const MARK_BIT: usize = 1 << (usize::BITS - 1);
 
+#[repr(transparent)]
 pub(crate) struct ThinBoxSlice<T> {
     /// Points at the header; the elements follow at `elements_offset`.
     header: NonNull<usize>,
@@ -41,9 +45,53 @@ impl<T> ThinBoxSlice<T> {
         unsafe { self.header.as_ptr().cast::<u8>().add(Self::ELEMENTS_OFFSET).cast::<T>() }
     }
 
+    #[inline(always)]
     pub(crate) fn len(&self) -> usize {
-        // SAFETY: the header was initialized at allocation and never changes.
+        self.header() & !MARK_BIT
+    }
+
+    #[inline(always)]
+    fn header(&self) -> usize {
+        // SAFETY: the header was initialized at allocation; only `mark` changes it, and only
+        // in an allocation this slice owns.
         unsafe { *self.header.as_ptr() }
+    }
+
+    /// Whether `mark` was set.
+    #[inline(always)]
+    pub(crate) fn marked(&self) -> bool {
+        self.header() & MARK_BIT != 0
+    }
+
+    /// Sets the mark of a non-empty slice, whose header it owns.
+    pub(crate) fn mark(&mut self) {
+        assert!(self.len() != 0, "an empty slice shares the static header");
+        // SAFETY: a non-empty slice owns its allocation, header included.
+        unsafe { *self.header.as_ptr() |= MARK_BIT };
+    }
+
+    /// Words a slice laid out in place (`lay_out_in_place`) takes before its elements: the
+    /// slice itself, then its header.
+    pub(crate) const IN_PLACE_WORDS: usize = 2;
+
+    /// Lays out at `words` a slice of the `len` elements that follow its `IN_PLACE_WORDS`,
+    /// and returns it: a view that owns nothing, which its caller must never drop, valid
+    /// while the words stay put and hold their layout.
+    ///
+    /// # Safety
+    /// `words` is valid for writes of `IN_PLACE_WORDS` words and the `len` initialized
+    /// elements follow them.
+    pub(crate) unsafe fn lay_out_in_place(words: *mut usize, len: usize) -> *const Self {
+        const { assert!(Self::ELEMENTS_OFFSET == size_of::<usize>()) };
+        debug_assert_eq!(len & MARK_BIT, 0);
+        // SAFETY: as the caller guarantees; the header word precedes the elements by
+        // `ELEMENTS_OFFSET`, as an allocated slice's does.
+        unsafe {
+            let header = words.add(1);
+            header.write(len);
+            words.write(header as usize);
+        }
+        words.cast::<Self>()
     }
 
     /// A slice of `len` elements made in place by `element(index)`, or `None` when one is
@@ -199,7 +247,11 @@ impl<T> Drop for ThinBoxSlice<T> {
 
 impl<T: Clone> Clone for ThinBoxSlice<T> {
     fn clone(&self) -> Self {
-        Self::from_exact_iter(self.iter().cloned())
+        let mut clone = Self::from_exact_iter(self.iter().cloned());
+        if self.marked() {
+            clone.mark();
+        }
+        clone
     }
 }
 

@@ -256,15 +256,14 @@ impl State {
 // branch. Memory is finite for a finite input/pattern (though the fallback can
 // still be exponentially large); it is no longer silently result-changing.
 const MAX_BACKTRACK_STATES: usize = usize::MAX;
-const ASCII_MAX: u16 = 0x7F;
-const BMP_MAX: u32 = u16::MAX as u32;
+mod canonical;
+use canonical::{ASCII_MAX, canonical};
 
 pub struct Regex {
     /// The complete matcher's program, lowered when it first runs. A pattern the byte
     /// backend serves matches ASCII subjects without it, so it may never be needed.
     complete: OnceCell<CompleteMatcher>,
-    /// The normalized source `complete` lowers from; empty once `complete` is lowered at
-    /// construction, for a pattern the byte backend does not serve.
+    /// The normalized source `complete` and its tree lower from.
     source: Box<str>,
     flags: Flags,
     capture_names: Vec<String>,
@@ -294,45 +293,77 @@ pub struct Regex {
 
 /// The repository matcher's form of a pattern.
 struct CompleteMatcher {
-    program: Expr,
+    /// The lowered tree `match_expr` walks. Kept when no backtracking program compiles;
+    /// otherwise the program serves every search, and the tree is lowered again only for
+    /// a path that walks it.
+    tree: OnceCell<Expr>,
     /// Literal units every match consumes contiguously (`required_literal`); empty if none.
     required_literal: Box<[u32]>,
     /// The compiled backtracking matcher (`backtrack::Program`), for every pattern without
     /// lookbehind or multi-unit classes.
     backtracking: Option<backtrack::Program>,
     /// `required_literal` as bytes, when every unit is ASCII.
-    required_bytes: Option<memchr::memmem::Finder<'static>>,
+    required_bytes: Option<LiteralFinder>,
+    /// `required_literal` as the native-endian bytes of its code units, which a UTF-16
+    /// subject's search looks for (`contains_code_unit_bytes`); `None` when it is empty or a
+    /// unit lies past UTF-16, where it occurs in no code-unit text.
+    required_wide: Option<LiteralFinder>,
     /// The fewest code points any match consumes (`min_length`). A code point is at least
     /// one unit of any subject, so a search with fewer units left has no match.
     min_length: usize,
 }
 
+/// A searcher for a literal byte run. The searcher is several hundred bytes, so it is boxed:
+/// most patterns have no such literal, and theirs need not carry the space.
+pub(crate) type LiteralFinder = Box<memchr::memmem::Finder<'static>>;
+
+pub(crate) fn literal_finder(bytes: &[u8]) -> LiteralFinder {
+    Box::new(memchr::memmem::Finder::new(bytes).into_owned())
+}
+
 impl CompleteMatcher {
     /// Lowers a parsed pattern whose capture names are `names`.
     fn lower(pattern: &ast::Pattern<'_>, source: &str, names: &[String], flags: Flags) -> Self {
-        let mut lowering = Lowering {
-            source,
-            names: names.to_vec(),
-            next_capture: 0,
-        };
-        let program = lower_disjunction(&pattern.body, &mut lowering);
-        let backtracking = backtrack::Program::compile(&program, flags, lowering.names.len());
+        let program = lower_tree(pattern, source, names);
+        let backtracking = backtrack::Program::compile(&program, flags, names.len());
         let required_literal = required_literal(&program, flags);
+        // A program that starts every ASCII search at its prefix finds the same literal
+        // there, so the run's own search answers a subject without it; an anchored one tries
+        // a single position, which costs less than scanning the subject for the literal.
         let required_bytes = (!required_literal.is_empty()
             && required_literal.iter().all(|unit| *unit <= u32::from(ASCII_MAX)))
-        .then(|| {
-            let bytes = required_literal.iter().map(|unit| *unit as u8).collect::<Vec<_>>();
-            memchr::memmem::Finder::new(&bytes).into_owned()
-        });
+        .then(|| required_literal.iter().map(|unit| *unit as u8).collect::<Vec<_>>())
+        .filter(|bytes| {
+            !backtracking
+                .as_ref()
+                .is_some_and(|program| program.searches_prefix(bytes) || program.anchored_at_start())
+        })
+        .map(|bytes| literal_finder(&bytes));
+        let required_wide = code_unit_bytes(&required_literal).map(|bytes| literal_finder(&bytes));
         let min_length = min_length(&program);
+        let tree = OnceCell::new();
+        if backtracking.is_none() {
+            let _ = tree.set(program);
+        }
         Self {
-            program,
+            tree,
             required_literal,
             backtracking,
             required_bytes,
+            required_wide,
             min_length,
         }
     }
+}
+
+/// Lowers a parsed pattern whose capture names are `names` to the tree `match_expr` walks.
+fn lower_tree(pattern: &ast::Pattern<'_>, source: &str, names: &[String]) -> Expr {
+    let mut lowering = Lowering {
+        source,
+        names: names.to_vec(),
+        next_capture: 0,
+    };
+    lower_disjunction(&pattern.body, &mut lowering)
 }
 
 /// The byte matcher that answers range-only queries (`Regex::range_matcher`).
@@ -378,9 +409,14 @@ impl Regex {
         // mode modifiers).  Keep compilation behind a source-shape guard so
         // those patterns use the repository matcher instead of silently
         // changing observable match results.
+        // Since the compiled backtracking matcher (`backtrack::Program`), the automata cost
+        // more than they save: on V8-v7 RegExp (static x86_64, 2026-10-18) leaving them out
+        // takes max RSS from 9544 to 8660 KiB and Score from 869 to 971, and on the npm top
+        // 300 they add up to 5 MiB (semver 20.5 -> 25.4). They stay available, as a
+        // linear-time bound on backtracking, for embedders that ask for them.
         let backend_enabled = !flags.unicode_sets
             && !flags.unicode
-            && std::env::var_os("QUENCH_DISABLE_COMPILED_REGEXP").is_none();
+            && std::env::var_os("QUENCH_COMPILED_REGEXP").is_some();
         let compiled_serves_matches = backend_enabled
             && compiled_source_syntax_is_safe(source, NonCapturingGroups::Allowed)
             && compiled_structure_is_safe(&parsed.body);
@@ -391,20 +427,19 @@ impl Regex {
             Box::default()
         };
         let complete = OnceCell::new();
-        let complete_source = if compiled_serves_matches {
-            normalized_source.as_ref().into()
-        } else {
+        // The source stays kept either way: `tree` lowers it again when the backtracking
+        // program let construction drop the tree.
+        if !compiled_serves_matches {
             let _ = complete.set(CompleteMatcher::lower(
                 &parsed,
                 &normalized_source,
                 &names,
                 flags,
             ));
-            Box::default()
-        };
+        }
         Ok(Self {
             complete,
-            source: complete_source,
+            source: normalized_source.as_ref().into(),
             flags,
             capture_names: names,
             has_named_groups,
@@ -420,18 +455,27 @@ impl Regex {
     /// The repository matcher, lowered from the kept source on first use.
     fn complete(&self) -> &CompleteMatcher {
         self.complete.get_or_init(|| {
-            let allocator = oxc::allocator::Allocator::default();
-            let flags_text = flag_text(self.flags);
-            let parsed = LiteralParser::new(
-                &allocator,
-                &self.source,
-                Some(&flags_text),
-                Options::default(),
-            )
+            self.with_parsed_source(|parsed| {
+                CompleteMatcher::lower(parsed, &self.source, &self.capture_names, self.flags)
+            })
+        })
+    }
+
+    /// The tree `match_expr` walks, lowered again from the kept source when the backtracking
+    /// program let construction drop it.
+    fn tree(&self) -> &Expr {
+        self.complete().tree.get_or_init(|| {
+            self.with_parsed_source(|parsed| lower_tree(parsed, &self.source, &self.capture_names))
+        })
+    }
+
+    fn with_parsed_source<R>(&self, lower: impl FnOnce(&ast::Pattern<'_>) -> R) -> R {
+        let allocator = oxc::allocator::Allocator::default();
+        let flags_text = flag_text(self.flags);
+        let parsed = LiteralParser::new(&allocator, &self.source, Some(&flags_text), Options::default())
             .parse()
             .expect("a constructed pattern parses again");
-            CompleteMatcher::lower(&parsed, &self.source, &self.capture_names, self.flags)
-        })
+        lower(&parsed)
     }
 
     /// The byte backend's automaton, built on first use (`compiled`).
@@ -606,7 +650,9 @@ impl Regex {
                 return Some(None);
             }
             // Every match consumes the required literal, so a subject without it has none.
-            if let Some(literal) = &complete.required_bytes {
+            // A sticky search tries the one start, whose start-set check costs less than
+            // scanning the whole remainder for the literal at every split position.
+            if let Some(literal) = complete.required_bytes.as_ref().filter(|_| !sticky) {
                 if literal.find(&bytes[start..]).is_none() {
                     return Some(None);
                 }
@@ -630,7 +676,13 @@ impl Regex {
         if let (false, Some(units)) = (unicode, subject.wide()) {
             // Outside unicode mode a code unit is a pattern unit: no decoding, and
             // positions are offsets.
-            if !contains_code_units(&units[start..], &complete.required_literal) {
+            if !sticky
+                && !complete.required_literal.is_empty()
+                && !complete
+                    .required_wide
+                    .as_ref()
+                    .is_some_and(|literal| contains_code_unit_bytes(&units[start..], literal.as_ref()))
+            {
                 return Some(None);
             }
             let found = program.find(units, start, sticky, None).ok()?;
@@ -642,7 +694,8 @@ impl Regex {
         }
         let units = subject.decoded(unicode);
         let first = first_unit_at(units, start);
-        if !complete.required_literal.is_empty()
+        if !sticky
+            && !complete.required_literal.is_empty()
             && !contains_literal(&units[first..], &complete.required_literal)
         {
             return Some(None);
@@ -713,7 +766,7 @@ impl Regex {
                 position,
                 captures: std::rc::Rc::clone(&unset),
             };
-            if let Some(found) = match_expr(&self.complete().program, input, state, self.flags) {
+            if let Some(found) = match_expr(self.tree(), input, state, self.flags) {
                 let captures = found.captures.iter().cloned().collect();
                 return Some(self.unit_match(input, position, found.position, captures));
             }
@@ -779,7 +832,11 @@ pub const INLINE_SUBJECT_BYTES: usize = 4 * size_of::<usize>() - 1;
 /// The text a subject matches: a string's own one-byte ASCII storage, a short ASCII copy,
 /// or its UTF-16 units.
 enum SubjectText {
-    Ascii(std::rc::Rc<str>),
+    /// The bytes `range` of shared ASCII storage: a whole string, or a slice of one.
+    Ascii {
+        text: std::rc::Rc<str>,
+        range: std::ops::Range<usize>,
+    },
     Inline {
         length: u8,
         bytes: [u8; INLINE_SUBJECT_BYTES],
@@ -820,11 +877,11 @@ impl Subject {
         }
     }
 
-    /// A subject over ASCII text, matched in place without a copy.
-    pub fn from_ascii(text: std::rc::Rc<str>) -> Self {
-        debug_assert!(text.is_ascii());
+    /// A subject over the bytes `range` of ASCII text, matched in place without a copy.
+    pub fn from_ascii(text: std::rc::Rc<str>, range: std::ops::Range<usize>) -> Self {
+        debug_assert!(text.is_ascii() && range.end <= text.len());
         Self {
-            text: SubjectText::Ascii(text),
+            text: SubjectText::Ascii { text, range },
             carriage_return: std::cell::OnceCell::new(),
             decoded: Default::default(),
         }
@@ -855,7 +912,7 @@ impl Subject {
 
     fn len(&self) -> usize {
         match &self.text {
-            SubjectText::Ascii(text) => text.len(),
+            SubjectText::Ascii { range, .. } => range.len(),
             SubjectText::Inline { length, .. } => usize::from(*length),
             SubjectText::Wide { units, .. } => units.len(),
         }
@@ -863,7 +920,7 @@ impl Subject {
 
     fn ascii(&self) -> Option<&[u8]> {
         match &self.text {
-            SubjectText::Ascii(text) => Some(text.as_bytes()),
+            SubjectText::Ascii { text, range } => Some(&text.as_bytes()[range.clone()]),
             SubjectText::Inline { length, bytes } => Some(&bytes[..usize::from(*length)]),
             SubjectText::Wide { ascii, .. } => ascii.as_deref(),
         }
@@ -871,7 +928,7 @@ impl Subject {
 
     fn decoded(&self, unicode: bool) -> &[Unit] {
         self.decoded[usize::from(unicode)].get_or_init(|| match &self.text {
-            SubjectText::Ascii(_) | SubjectText::Inline { .. } => {
+            SubjectText::Ascii { .. } | SubjectText::Inline { .. } => {
                 let ascii = self.ascii().expect("ASCII text has bytes");
                 let units = ascii.iter().copied().map(u16::from).collect::<Vec<_>>();
                 units_from_utf16(&units, unicode)
@@ -892,8 +949,10 @@ impl Subject {
         matches!(&self.text, SubjectText::Wide { units: own, .. } if std::rc::Rc::ptr_eq(own, units))
     }
 
-    pub fn is_ascii_text_of(&self, text: &std::rc::Rc<str>) -> bool {
-        matches!(&self.text, SubjectText::Ascii(own) if std::rc::Rc::ptr_eq(own, text))
+    /// Whether this subject is the bytes `range` of the same ASCII storage as `text`.
+    pub fn is_ascii_text_of(&self, text: &std::rc::Rc<str>, range: &std::ops::Range<usize>) -> bool {
+        matches!(&self.text, SubjectText::Ascii { text: own, range: own_range }
+            if std::rc::Rc::ptr_eq(own, text) && own_range == range)
     }
 
     /// Whether this subject spells exactly the ASCII `text`, compared by content.
@@ -1451,27 +1510,28 @@ fn required_literal(program: &Expr, flags: Flags) -> Box<[u32]> {
     best.into()
 }
 
-/// Whether `literal` occurs in UTF-16 `input`; an empty literal occurs everywhere. The search
-/// runs over the units' bytes, where an occurrence must start at a unit boundary.
-fn contains_code_units(input: &[u16], literal: &[u32]) -> bool {
+/// The native-endian bytes of `literal`'s code units, which a search of a UTF-16 text's bytes
+/// looks for; `None` when it is empty or a unit lies past UTF-16.
+fn code_unit_bytes(literal: &[u32]) -> Option<Vec<u8>> {
     if literal.is_empty() {
-        return true;
+        return None;
     }
-    let Some(needle) = literal
+    literal
         .iter()
         .map(|unit| u16::try_from(*unit).ok().map(u16::to_ne_bytes))
         .collect::<Option<Vec<_>>>()
-    else {
-        // A unit past UTF-16 occurs in no code-unit text.
-        return false;
-    };
-    let needle = needle.concat();
+        .map(|units| units.concat())
+}
+
+/// Whether the code units `needle` searches for (`code_unit_bytes`) occur in `input`: at an
+/// occurrence in its bytes that starts on a unit boundary.
+fn contains_code_unit_bytes(input: &[u16], needle: &memchr::memmem::Finder<'_>) -> bool {
     // SAFETY: the bytes of initialized `u16` values, which any `u8` view may read.
     let haystack = unsafe {
         std::slice::from_raw_parts(input.as_ptr().cast::<u8>(), std::mem::size_of_val(input))
     };
     let unit = std::mem::size_of::<u16>();
-    memchr::memmem::find_iter(haystack, &needle).any(|offset| offset % unit == 0)
+    needle.find_iter(haystack).any(|offset| offset % unit == 0)
 }
 
 /// Whether `literal` occurs in `input`.
@@ -2466,9 +2526,7 @@ fn class_item_matches(item: &ClassItem, value: u32, ignore_case: bool, unicode: 
             // The range matches when one of its members has `value`'s canonical form.
             let key = canonical(value, unicode);
             (canonical(key, unicode) == key && in_range(key))
-                || canonical_preimages(unicode)
-                    .get(&key)
-                    .is_some_and(|members| members.iter().copied().any(in_range))
+                || canonical_preimages_of(key, unicode).any(in_range)
         }
         ClassItem::Escape(escape) => escape_matches(*escape, value, ignore_case, unicode),
         ClassItem::Property {
@@ -3019,43 +3077,30 @@ fn equal(left: u32, right: u32, ignore_case: bool, unicode: bool) -> bool {
     }
 }
 /// For each canonicalization mode, the code points whose canonical form is another code point,
-/// grouped by that form: the inverse of `canonical`, which case-insensitive class ranges need.
-fn canonical_preimages(unicode: bool) -> &'static std::collections::HashMap<u32, Vec<u32>> {
-    static TABLES: [std::sync::OnceLock<std::collections::HashMap<u32, Vec<u32>>>; 2] =
-        [std::sync::OnceLock::new(), std::sync::OnceLock::new()];
-    TABLES[usize::from(unicode)].get_or_init(|| {
-        let last = if unicode { u32::from(char::MAX) } else { BMP_MAX };
-        let mut preimages = std::collections::HashMap::<u32, Vec<u32>>::new();
-        for member in 0..=last {
-            let key = canonical(member, unicode);
-            if key != member {
-                preimages.entry(key).or_default().push(member);
-            }
-        }
-        preimages
-    })
+/// as `(form, member)` pairs ordered by form: the inverse of `canonical`, which
+/// case-insensitive class ranges need. The build computes both from `canonical` itself
+/// (`build.rs`): scanning every code point had cost each process about 14M instructions at
+/// its first case-insensitive class.
+fn canonical_preimages(unicode: bool) -> &'static [(u32, u32)] {
+    if unicode {
+        &CANONICAL_PREIMAGES_UNICODE
+    } else {
+        &CANONICAL_PREIMAGES_BMP
+    }
 }
 
-fn canonical(value: u32, unicode: bool) -> u32 {
-    let Some(character) = char::from_u32(value) else {
-        return value;
-    };
-    if unicode {
-        return u32::from(icu_casemap::CaseMapper::new().simple_fold(character));
-    }
-    let mut uppercase = character.to_uppercase();
-    let Some(canonical) = uppercase.next() else {
-        return value;
-    };
-    if uppercase.next().is_some()
-        || u32::from(canonical) > BMP_MAX
-        || (value > u32::from(ASCII_MAX) && u32::from(canonical) <= u32::from(ASCII_MAX))
-    {
-        value
-    } else {
-        u32::from(canonical)
-    }
+include!(concat!(env!("OUT_DIR"), "/canonical_preimages.rs"));
+
+/// The code points other than `key` itself whose canonical form is `key`.
+fn canonical_preimages_of(key: u32, unicode: bool) -> impl Iterator<Item = u32> {
+    let table = canonical_preimages(unicode);
+    let first = table.partition_point(|(form, _)| *form < key);
+    table[first..]
+        .iter()
+        .take_while(move |(form, _)| *form == key)
+        .map(|(_, member)| *member)
 }
+
 fn is_word(value: u32) -> bool {
     char::from_u32(value)
         .is_some_and(|character| character.is_ascii_alphanumeric() || character == '_')
@@ -3070,9 +3115,17 @@ fn is_line_terminator(value: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        contains_code_units, normalize_new_unicode_scripts, Flags, Regex, Subject,
-        NEW_UNICODE_SCRIPTS,
+        code_unit_bytes, contains_code_unit_bytes, literal_finder, normalize_new_unicode_scripts,
+        Flags, Regex, Subject, NEW_UNICODE_SCRIPTS,
     };
+
+    /// The wide search's required-literal check: an empty literal occurs everywhere, one with a
+    /// unit past UTF-16 nowhere.
+    fn contains_code_units(input: &[u16], literal: &[u32]) -> bool {
+        literal.is_empty()
+            || code_unit_bytes(literal)
+                .is_some_and(|needle| contains_code_unit_bytes(input, &literal_finder(&needle)))
+    }
 
     #[test]
     fn code_unit_literals_match_whole_units() {
@@ -3134,7 +3187,7 @@ mod tests {
     #[test]
     fn sticky_matches_only_at_the_start_position() {
         let regex = Regex::with_flags(r"y|\d+", Flags::default()).unwrap();
-        let subject = super::Subject::from_ascii("ab12y".into());
+        let subject = super::Subject::from_ascii("ab12y".into(), 0.."ab12y".len());
         assert!(regex.find_sticky_in_subject(&subject, 0).next().is_none());
         let digits = regex.find_sticky_in_subject(&subject, 2).next().unwrap();
         assert_eq!(digits.range, 2..4);
@@ -3206,13 +3259,14 @@ mod tests {
     #[test]
     fn byte_backend_is_built_on_first_match_and_keeps_its_results() {
         // A pattern the byte backend serves builds no automaton until a match needs it, and
-        // matching through it, before and after, gives the same results.
+        // matching through it, before and after, gives the same results. The backend is
+        // opt-in (`QUENCH_COMPILED_REGEXP`), so without it no automaton is ever built.
         let host = r"^(?:[a-z][a-z0-9+\-.]*:)?\/\/(?:[a-z0-9\-._~]|%[0-9a-f]{2})+(?::\d{1,5})?$";
         let regex = Regex::with_flags(host, Flags::from("i")).unwrap();
         assert!(regex.compiled.get().is_none());
         let found = |text: &str| regex.find_from(text, 0).next().map(|m| m.range);
         assert_eq!(found("HTTP://Example.COM:8080"), Some(0..23));
-        assert!(regex.compiled.get().is_some());
+        assert_eq!(regex.compiled.get().is_some(), regex.compiled_serves_matches);
         assert_eq!(found("http://exa mple"), None);
         let captures = Regex::with_flags(r"(\w+)-(\d+)", Flags::from("")).unwrap();
         let matched = captures.find_from("id: abc-42", 0).next().unwrap();
@@ -3247,5 +3301,15 @@ mod tests {
         // One astral code point is two units of the subject.
         assert_eq!(find("\u{1F600}", "u", "x\u{1F600}", 1), (Some(1..3), Some(1..3)));
         assert_eq!(find(".", "u", "\u{1F600}", 0), (Some(0..2), Some(0..2)));
+    }
+}
+
+#[cfg(test)]
+mod canonical_preimage_tests {
+    #[test]
+    fn built_tables_are_the_inverse_of_canonical() {
+        for unicode in [false, true] {
+            assert_eq!(super::canonical_preimages(unicode), &*super::canonical::preimages(unicode));
+        }
     }
 }

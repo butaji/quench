@@ -43,7 +43,7 @@ impl<H: Host> Vm<H> {
                 let units = meta.source.units();
                 Some(Metadata::RegExp(
                     (0..units.len()).map(|i| units.at(i)).collect(),
-                    meta.flags.clone(),
+                    meta.flags.text(),
                 ))
             }
             Some(Cell::ArrayBuffer {
@@ -98,7 +98,10 @@ impl<H: Host> Vm<H> {
         {
             return Err(self.type_error(&program, "Invalid owned clone BigInt".into()));
         }
-        Ok(self.heap.alloc(Cell::BigInt(text.to_owned())))
+        let Ok(value) = text.parse() else {
+            return Err(self.type_error(&program, "Invalid owned clone BigInt".into()));
+        };
+        Ok(self.heap.alloc(Cell::bigint(value)))
     }
     pub(crate) fn embedding_clone_allocate(
         &mut self,
@@ -165,9 +168,9 @@ impl<H: Host> Vm<H> {
                 self.box_primitive_object(value)?
             }
             Node::RegExp(source, flags) => {
-                let source = self.heap.alloc(Cell::String(JsString::from_units(source)));
+                let source = self.heap.alloc_string(JsString::from_units(source));
                 let source = self.heap.root(source);
-                let flags = self.heap.alloc(Cell::String(flags.clone().into()));
+                let flags = self.heap.alloc_string(flags.clone().into());
                 let source_value = self.heap.root_value(source).unwrap();
                 let result = self.regexp_create(&p, source_value, flags);
                 self.heap.release_root(source);

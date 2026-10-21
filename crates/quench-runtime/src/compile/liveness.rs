@@ -20,6 +20,12 @@ impl MethodArguments for [MethodSite] {
     }
 }
 
+impl MethodArguments for super::SiteTable<'_, MethodSite> {
+    fn arguments(&self, site: usize) -> u64 {
+        self.as_slice().arguments(site)
+    }
+}
+
 impl MethodArguments for crate::bytecode::ResidualProgram {
     fn arguments(&self, site: usize) -> u64 {
         let site = &self.method_sites[site];
@@ -33,8 +39,8 @@ impl MethodArguments for crate::bytecode::ResidualProgram {
 
 /// Records which functions liveness covers; the collector derives a covered function's
 /// per-pc root masks when it first finds one on the stack (`ResidualProgram::register_root_mask`).
-pub(crate) fn mark_register_roots(
-    functions: &mut [Function],
+pub(crate) fn mark_register_roots<'a>(
+    functions: impl IntoIterator<Item = &'a mut Function>,
     methods: &(impl MethodArguments + ?Sized),
     fields: &[FieldSite],
     superinstructions: &[Superinstruction],

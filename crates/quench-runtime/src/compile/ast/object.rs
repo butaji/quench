@@ -226,13 +226,14 @@ impl FunctionCompiler<'_, '_> {
             if Self::anonymous_function_definition(&property.value) {
                 self.emit_function_name(item, atom);
             }
-            self.emit(Op::DefineField, item, dst, 0, atom);
+            let cache = self.owner.cache_site();
+            self.emit(Op::DefineField, item, dst, cache, atom);
         }
         self.next_reg = temporaries;
         dst
     }
 
-    fn static_object_data_properties<'property, 'ast>(
+    pub(super) fn static_object_data_properties<'property, 'ast>(
         value: &'property ObjectExpression<'ast>,
     ) -> Option<Vec<(&'property ObjectProperty<'ast>, &'property str)>> {
         value
@@ -288,36 +289,15 @@ impl FunctionCompiler<'_, '_> {
         let Expression::FunctionExpression(function) = value else {
             return self.expression(value);
         };
-        let params = Self::params_from_formals(&function.params, self.owner);
-        let body = function
-            .body
-            .as_ref()
-            .map_or(&[][..], |body| body.statements.as_slice());
-        let scopes = self.capture_scopes();
-        let id = self.owner.compile_function(
-            None,
-            &params,
-            FunctionBody::Statements(body),
-            &scopes,
-            Some(self.function_id),
-            FunctionOptions {
-                defaults: Some(&function.params),
-                source_span: self.owner.source_span(source_span),
-                async_function: function.r#async,
-                generator: function.generator,
-                with_depth: self.with_depth,
-                non_constructible: true,
-                super_home: true,
-                super_home_atom: Some(super_atom),
-                strict: self.strict
-                    || function.body.as_ref().is_some_and(|body| {
-                        body.directives
-                            .iter()
-                            .any(|directive| directive.directive == "use strict")
-                    }),
-                ..FunctionOptions::default()
-            },
-        );
+        let context = super::super::replay::ObjectMethodContext {
+            property_span: source_span,
+            home_atom: super_atom,
+            scopes: self.capture_scopes(),
+            parent: self.function_id,
+            with_depth: self.with_depth,
+            inherited_strict: self.strict,
+        };
+        let id = self.owner.compile_replayable_object_method(function, context);
         let dst = self.reg();
         self.emit(Op::MakeClosure, dst, 0, 0, id);
         dst

@@ -4,19 +4,24 @@ impl Compiler<'_> {
     pub(super) fn compile_arrow_function(
         &mut self,
         value: &oxc_ast::ast::ArrowFunctionExpression<'_>,
-        scopes: &[Rc<FxHashMap<Atom, u16>>],
-        parent: Option<u32>,
-        super_static: bool,
-        super_home: bool,
-        super_home_atom: Option<Atom>,
-        inherited_strict: bool,
-        class_initializer: bool,
-        lexical_this_atom: Option<Atom>,
-        super_call_binds_this: bool,
-        with_depth: u16,
+        context: &super::replay::ArrowContext,
     ) -> u32 {
-        let id = self.functions.len() as u32;
-        self.functions.push(None);
+        let super::replay::ArrowContext {
+            ref scopes,
+            parent,
+            super_static,
+            super_home,
+            super_home_atom,
+            inherited_strict,
+            class_initializer,
+            lexical_this_atom,
+            super_call_binds_this,
+            with_depth,
+        } = *context;
+        if let Some(id) = self.skip_replayed_child() {
+            return id;
+        }
+        let id = self.functions.reserve();
         let source_span = self.source_span(value.span);
         let body_lexicals = if let oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) = &value.body
         {
@@ -87,12 +92,20 @@ impl Compiler<'_> {
             &lexical_atoms,
             None,
         );
+        let binds_dynamically = dynamic_eval
+            || match &value.body {
+                oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) => {
+                    early::body_may_bind_dynamically(&body.statements, None)
+                }
+                body => early::body_may_bind_dynamically(&[], body.as_expression()),
+            };
+        self.dynamic_binding_scopes += u32::from(binds_dynamically);
         let mut function = FunctionCompiler::new(
             self,
             locals,
             function_scope,
             annex_b_collisions,
-            scopes.to_vec(),
+            scopes.clone(),
             id,
             (false, false),
             value.r#async,
@@ -131,6 +144,9 @@ impl Compiler<'_> {
                 function.emit(Op::Return, result, 0, 0, 0);
             }
         }
+        // As in `Compiler::compile_function`: no doubling slack beside the syntax tree.
+        function.code.shrink_to_fit();
+        function.source_positions.shrink_to_fit();
         let name_bindings = function.name_bindings();
         let undefined_register = function.used_undefined_register();
         let environment_clones = function.per_site_environment_clones();
@@ -192,7 +208,9 @@ impl Compiler<'_> {
             parameter_registers: None,
             initial_register: Default::default(),
         };
-        self.functions[id as usize] = Some(result);
+        self.functions.set(id, result);
+        self.dynamic_binding_scopes -= u32::from(binds_dynamically);
+        self.record_function_exit(id);
         id
     }
 }

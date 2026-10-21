@@ -606,11 +606,11 @@ pub(crate) enum Native {
     PromiseAny,
     PromiseThenableJob,
     PromiseAggregateJob,
-    PromiseAsyncResumeJob, AsyncFromSyncValue, AsyncFromSyncValueRejected, AsyncGeneratorDelegateFulfilled, AsyncGeneratorDelegateRejected,
+    AsyncFromSyncValue, AsyncFromSyncValueRejected, AsyncGeneratorDelegateFulfilled, AsyncGeneratorDelegateRejected,
     WithEnter, WithExit,
     WasmHost,
     WebAssemblyValidate, WebAssemblyCompile, WebAssemblyInstantiate,
-    WasmModule, WasmModuleExports, WasmModuleImports,
+    WasmModule, WasmModuleExports, WasmModuleImports, WasmModuleCustomSections,
     WasmInstance, WasmInstanceExportsGetter,
     WasmMemory, WasmMemoryGrow, WasmMemoryBufferGetter,
     WasmTable, WasmTableLengthGetter, WasmTableGrow, WasmTableGet, WasmTableSet,
@@ -656,10 +656,20 @@ impl std::fmt::Debug for WasmObjectSlot {
 
 /// What a Wasm host function runs: an embedder operation, or a JavaScript callable
 /// imported through the `WebAssembly` namespace.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub(crate) enum WasmHostTarget {
     Host(crate::WasmHostFunctionId),
     Js(Value),
+    /// Exact Emscripten `HEAPU8.copyWithin(dest, src, src + num)` body, with the
+    /// mutable captured view location retained so each call observes memory growth.
+    JsEmscriptenMemcpy(Box<WasmHostMemcpyTarget>),
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct WasmHostMemcpyTarget {
+    pub(crate) function: Value,
+    pub(crate) view_environment: Value,
+    pub(crate) view_slot: usize,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TypedArrayKind {
@@ -694,6 +704,38 @@ pub(crate) struct ArrayFromAsyncState {
     pub(crate) index: usize,
     pub(crate) array_like: Option<(Value, usize)>,
     pub(crate) awaiting: ArrayFromAsyncAwait,
+}
+
+/// One `await`'s suspended activation. The cell is both handlers of the await's promise
+/// reaction, so the continuation is traced while the reaction can still run, and the run
+/// takes it. The continuation is boxed apart so taking it frees its storage at once: the
+/// spent state waits for a sweep.
+#[derive(Clone, Debug)]
+pub(crate) struct AwaitState {
+    pub(crate) continuation: Option<Box<crate::vm::activation::Continuation>>,
+    /// The realm global that awaited, which the continuation resumes in.
+    pub(crate) realm: Value,
+    /// The async function's promise, or the async generator request's promise.
+    pub(crate) promise: Value,
+    pub(crate) generator: Option<Value>,
+    /// The await of an async generator's `yield`, which settles the request with the value.
+    pub(crate) yielded: bool,
+}
+impl AwaitState {
+    /// The program its suspended continuation resumes in, which stays alive with it.
+    pub(crate) fn program_references(&self, mut visit: impl FnMut(ProgramId)) {
+        if let Some(continuation) = &self.continuation {
+            visit(continuation.program);
+        }
+    }
+
+    /// Its edges: the realm and promise it resumes, the generator, the suspended frame.
+    pub(crate) fn roots(&self) -> impl Iterator<Item = Value> + '_ {
+        [self.realm, self.promise]
+            .into_iter()
+            .chain(self.generator)
+            .chain(self.continuation.iter().flat_map(|continuation| continuation.roots()))
+    }
 }
 impl TypedArrayKind {
     pub(crate) const fn is_bigint(self) -> bool {
@@ -832,9 +874,9 @@ impl Native {
 
     /// Natives a lane `Call` makes in place from the running frame (`lane_call_native`):
     /// the string, RegExp and `Math` functions, the Array, Object, Reflect and JSON
-    /// functions, the primitive conversions, the keyed collection methods and embedder host
-    /// functions, which read no caller state beyond the frame's published PC and run guest
-    /// code only through ordinary nested calls.
+    /// functions, `String.fromCharCode` and `fromCodePoint`, the primitive conversions, the
+    /// keyed collection methods and embedder host functions, which read no caller state
+    /// beyond the frame's published PC and run guest code only through ordinary nested calls.
     pub(crate) fn runs_from_lane(self) -> bool {
         self.is_string_regexp_or_math()
             || matches!(
@@ -882,6 +924,8 @@ impl Native {
                     | Self::JsonParse
                     | Self::NumberIsInteger
                     | Self::ParseInt
+                    | Self::StringFromCharCode
+                    | Self::StringFromCodePoint
                     | Self::String
                     | Self::Number
                     | Self::Boolean
@@ -909,7 +953,48 @@ impl Native {
                     | Self::WeakSetAdd
                     | Self::WeakSetHas
                     | Self::WeakSetDelete
+                    | Self::ReflectGetPrototypeOf
+                    | Self::ForInKeyIsEnumerable
+                    | Self::PromiseThen
+                    | Self::PromiseCatch
+                    | Self::PromiseResolve
+                    | Self::GeneratorNext
+                    | Self::GeneratorReturn
+                    | Self::GeneratorThrow
+                    | Self::AsyncGeneratorNext
+                    | Self::IteratorNext
+                    | Self::StringIteratorNext
             )
+            || self.is_data_view_element_method()
+    }
+
+    /// `DataView.prototype`'s element reads and writes (`getUint8` through `setBigUint64`).
+    pub(crate) fn is_data_view_element_method(self) -> bool {
+        matches!(
+            self,
+            Self::DataViewGetUint8
+                | Self::DataViewSetUint8
+                | Self::DataViewGetInt8
+                | Self::DataViewSetInt8
+                | Self::DataViewGetUint16
+                | Self::DataViewSetUint16
+                | Self::DataViewGetInt16
+                | Self::DataViewSetInt16
+                | Self::DataViewGetUint32
+                | Self::DataViewSetUint32
+                | Self::DataViewGetInt32
+                | Self::DataViewSetInt32
+                | Self::DataViewGetFloat32
+                | Self::DataViewSetFloat32
+                | Self::DataViewGetFloat64
+                | Self::DataViewSetFloat64
+                | Self::DataViewGetFloat16
+                | Self::DataViewSetFloat16
+                | Self::DataViewGetBigInt64
+                | Self::DataViewSetBigInt64
+                | Self::DataViewGetBigUint64
+                | Self::DataViewSetBigUint64
+        )
     }
 
     pub(crate) fn is_host_control_native(self) -> bool {
@@ -1099,7 +1184,6 @@ impl Native {
                 | Self::PromiseAny
                 | Self::PromiseThenableJob
                 | Self::PromiseAggregateJob
-                | Self::PromiseAsyncResumeJob
                 | Self::ArrayFromAsyncFulfilled
                 | Self::ArrayFromAsyncRejected
                 | Self::DynamicImport
@@ -1111,7 +1195,6 @@ impl Native {
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum FunctionKind {
     User(ProgramId, u32),
-    NumericUser(ProgramId, u32),
     Native(Native),
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1216,6 +1299,35 @@ pub(crate) enum IteratorConsumer {
     Find,
     Some,
 }
+/// The header words of an object with prototype `proto` and inline storage of `shape`, as
+/// `Object::with_property_storage` sets them: derived once by a construct plan, so each
+/// planned construction allocates without encoding the prototype or the storage again.
+#[derive(Clone, Copy)]
+pub(crate) struct InlineObjectHeader {
+    meta: u32,
+    auxiliary: u32,
+}
+
+impl InlineObjectHeader {
+    /// No receiver's header: an unplanned entry's, which no construction reads.
+    pub(crate) const EMPTY: Self = Self {
+        meta: 0,
+        auxiliary: 0,
+    };
+
+    pub(crate) fn of(proto: Value, shape: u32) -> Self {
+        let object = Object::with_property_storage(
+            proto,
+            ValueVec::inline_property_storage(shape),
+            [Value::UNDEFINED; INLINE_PROPERTY_COUNT],
+        );
+        Self {
+            meta: object.meta,
+            auxiliary: object.auxiliary,
+        }
+    }
+}
+
 pub(crate) struct Object {
     /// The prototype's heap index (`PROTO_INDEX_BITS`, with null and undefined sentinels) and
     /// the `OBJECT_*` flags: array, inline storage, and the integrity bits `ValueVec` keeps.
@@ -1242,8 +1354,41 @@ const PROTO_UNDEFINED: u32 = PROTO_INDEX_BITS - 1;
 pub(crate) const MAX_HEAP_CELLS: usize = 1 << 27;
 const PROTO_OBJECT_RECORD_BASE: u32 = MAX_HEAP_CELLS as u32;
 const PROTO_ARRAY_RECORD_BASE: u32 = PROTO_OBJECT_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
-const PROTO_RECORD_END: u32 = PROTO_ARRAY_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
+const PROTO_FUNCTION_RECORD_BASE: u32 = PROTO_ARRAY_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
+const PROTO_PROMISE_RECORD_BASE: u32 = PROTO_FUNCTION_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
+const PROTO_ITERATOR_RECORD_BASE: u32 = PROTO_PROMISE_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
+const PROTO_RECORD_END: u32 = PROTO_ITERATOR_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
 const _: () = assert!(PROTO_RECORD_END <= PROTO_UNDEFINED);
+
+/// An object's encoded prototype reference (`PROTO_INDEX_BITS`). Equal links name the same
+/// prototype, so a chain walk compares links instead of decoding each to a `Value`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct ProtoLink(u32);
+
+impl ProtoLink {
+    pub(crate) const NULL: Self = Self(PROTO_NULL);
+
+    /// The link naming `prototype`, an object or null (`Object::encode_proto`).
+    #[inline(always)]
+    pub(crate) fn of(prototype: Value) -> Self {
+        Self(Object::encode_proto(prototype))
+    }
+
+    /// The link naming object record `id`.
+    #[inline(always)]
+    pub(crate) fn object_record(id: u32) -> Self {
+        Self(PROTO_OBJECT_RECORD_BASE + id)
+    }
+
+    /// The object record this link names, if it names one.
+    #[inline(always)]
+    pub(crate) fn object_record_id(self) -> Option<u32> {
+        (PROTO_OBJECT_RECORD_BASE..PROTO_ARRAY_RECORD_BASE)
+            .contains(&self.0)
+            .then(|| self.0 - PROTO_OBJECT_RECORD_BASE)
+    }
+}
+
 const OBJECT_ARRAY: u32 = 1 << 28;
 const OBJECT_INLINE_STORAGE: u32 = 1 << 29;
 const _: () = assert!(
@@ -1270,6 +1415,8 @@ union ObjectPayload {
 struct ArrayPayload {
     extras: u64,
     elements: std::mem::ManuallyDrop<Rc<Vec<Value>>>,
+    /// The words past the two an array uses, so the payload spans the inline values.
+    _unused: [u64; INLINE_PROPERTY_COUNT - 2],
 }
 
 const _: () = assert!(size_of::<ArrayPayload>() == size_of::<[Value; INLINE_PROPERTY_COUNT]>());
@@ -1486,6 +1633,9 @@ struct ObjectExtras {
     stack_data: Option<StackData>,
     /// An index-keyed property descriptor has been recorded for this object; never cleared.
     indexed_descriptors: bool,
+    /// A `length` descriptor has been recorded for this object, as a non-writable array
+    /// length is; never cleared.
+    length_descriptor: bool,
     /// Any property descriptor beside the shape has been recorded for this object
     /// (`Vm::insert_descriptor`); never cleared.
     side_descriptors: bool,
@@ -1512,7 +1662,9 @@ impl ObjectExtras {
                 .map_or(0, |mapping| mapping.capacity() * std::mem::size_of::<u16>())
             + self.module_bindings.capacity() * std::mem::size_of::<(Atom, ProgramId, u16)>()
             + self.deferred_module.as_ref().map_or(0, |module| {
-                module.name.capacity() + module.source.capacity() + module.bytes.capacity()
+                module.name.capacity()
+                    + module.source.capacity()
+                    + module.original_bytes.as_ref().map_or(0, Vec::capacity)
             })
             + self.private_elements.capacity() * std::mem::size_of::<PrivateElement>()
             + self
@@ -1592,6 +1744,11 @@ impl Object {
             }
             Some(HeapReference::ObjectRecord(id)) => PROTO_OBJECT_RECORD_BASE + id,
             Some(HeapReference::ArrayRecord(id)) => PROTO_ARRAY_RECORD_BASE + id,
+            Some(HeapReference::FunctionRecord(id)) => PROTO_FUNCTION_RECORD_BASE + id,
+            Some(HeapReference::PromiseRecord(id)) => PROTO_PROMISE_RECORD_BASE + id,
+            Some(HeapReference::IteratorRecord(id)) => PROTO_ITERATOR_RECORD_BASE + id,
+            Some(HeapReference::AwaitRecord(_)) => unreachable!("an await state is never a prototype"),
+            Some(HeapReference::StringRecord(_)) => unreachable!("a string is never a prototype"),
             None if proto.is_null() => PROTO_NULL,
             None => {
                 debug_assert!(proto.is_undefined(), "a prototype is an object or null");
@@ -1600,6 +1757,13 @@ impl Object {
         }
     }
 
+    /// The prototype reference as stored (`ProtoLink`), undecoded.
+    #[inline(always)]
+    pub(crate) fn proto_link(&self) -> ProtoLink {
+        ProtoLink(self.meta & PROTO_INDEX_BITS)
+    }
+
+    #[inline(always)]
     pub(crate) fn proto(&self) -> Value {
         match self.meta & PROTO_INDEX_BITS {
             PROTO_NULL => Value::NULL,
@@ -1608,9 +1772,18 @@ impl Object {
             index if index < PROTO_ARRAY_RECORD_BASE => {
                 Value::direct_object(index - PROTO_OBJECT_RECORD_BASE)
             }
+            index if index < PROTO_FUNCTION_RECORD_BASE => {
+                Value::direct_array(index - PROTO_ARRAY_RECORD_BASE)
+            }
+            index if index < PROTO_PROMISE_RECORD_BASE => {
+                Value::direct_function(index - PROTO_FUNCTION_RECORD_BASE)
+            }
+            index if index < PROTO_ITERATOR_RECORD_BASE => {
+                Value::direct_promise(index - PROTO_PROMISE_RECORD_BASE)
+            }
             index => {
                 debug_assert!(index < PROTO_RECORD_END);
-                Value::direct_array(index - PROTO_ARRAY_RECORD_BASE)
+                Value::direct_iterator(index - PROTO_ITERATOR_RECORD_BASE)
             }
         }
     }
@@ -1783,6 +1956,20 @@ impl Object {
         object
     }
 
+    /// An object of `header`'s prototype and inline shape holding `inline`: what
+    /// `with_property_storage` makes, from header words derived once.
+    #[inline(always)]
+    pub(crate) fn from_inline_header(
+        header: InlineObjectHeader,
+        inline: [Value; INLINE_PROPERTY_COUNT],
+    ) -> Self {
+        Self {
+            meta: header.meta,
+            auxiliary: header.auxiliary,
+            payload: ObjectPayload { inline },
+        }
+    }
+
     pub(crate) fn inline_properties(&self) -> Option<&[Value; INLINE_PROPERTY_COUNT]> {
         (self.meta & OBJECT_INLINE_STORAGE != 0).then(|| self.inline_property_values())
     }
@@ -1912,6 +2099,14 @@ impl Object {
     pub(crate) fn shape(&self) -> u32 {
         ValueVec::from_parts(0, self.auxiliary).auxiliary()
     }
+    /// The shape with its dictionary bit (`ValueVec::exact_auxiliary`): a cache entry,
+    /// which records only non-dictionary shapes, matches it exactly when it matches the
+    /// shape of an object outside dictionary storage.
+    #[inline(always)]
+    pub(crate) fn exact_shape(&self) -> u32 {
+        ValueVec::from_parts(0, self.auxiliary).exact_auxiliary()
+    }
+    #[inline(always)]
     pub(crate) fn set_shape(&mut self, shape: u32) {
         self.note_prototype_layout_change();
         let mut properties = ValueVec::from_parts(0, self.auxiliary);
@@ -1963,6 +2158,12 @@ impl Object {
     }
     pub(crate) fn mark_indexed_descriptors(&mut self) {
         self.extras_mut().indexed_descriptors = true;
+    }
+    pub(crate) fn has_length_descriptor(&self) -> bool {
+        self.extras().is_some_and(|extras| extras.length_descriptor)
+    }
+    pub(crate) fn mark_length_descriptor(&mut self) {
+        self.extras_mut().length_descriptor = true;
     }
     /// Whether the VM's descriptor table may hold an entry for this object: lookups of an
     /// object without one need not probe the table.
@@ -2047,28 +2248,24 @@ impl Object {
     }
 }
 
-const _: () = assert!(std::mem::size_of::<Object>() == 3 * std::mem::size_of::<Value>());
+const _: () = assert!(std::mem::size_of::<Object>() == (1 + INLINE_PROPERTY_COUNT) * std::mem::size_of::<Value>());
 
 #[cfg(test)]
 mod object_payload_tests {
     use super::Object;
     use crate::value::Value;
-    use crate::value_vec::ValueVec;
+    use crate::value_vec::{INLINE_PROPERTY_COUNT, ValueVec};
 
     #[test]
     fn out_of_line_extras_preserve_inline_values_and_clone_state() {
-        let mut object = Object::with_property_storage(
-            Value::NULL,
-            ValueVec::inline_property_storage(7),
-            [Value::integer(11), Value::integer(13)],
-        );
+        let inline: [Value; INLINE_PROPERTY_COUNT] =
+            std::array::from_fn(|slot| Value::integer(11 + 2 * slot as i32));
+        let mut object =
+            Object::with_property_storage(Value::NULL, ValueVec::inline_property_storage(7), inline);
         object.set_arguments_object();
         assert!(object.is_arguments_object());
         assert_eq!(object.shape(), 7);
-        assert_eq!(
-            object.inline_properties().copied(),
-            Some([Value::integer(11), Value::integer(13)])
-        );
+        assert_eq!(object.inline_properties().copied(), Some(inline));
 
         let mut cloned = object.clone();
         cloned.set_inline_property(0, Value::integer(17));
@@ -2106,7 +2303,7 @@ mod object_payload_tests {
         let mut properties = ValueVec::new();
         properties.set_extensible(false);
         let mut object =
-            Object::with_property_storage(Value::NULL, properties, [Value::UNDEFINED; 2]);
+            Object::with_property_storage(Value::NULL, properties, [Value::UNDEFINED; INLINE_PROPERTY_COUNT]);
         object.set_module_namespace();
         assert!(object.is_module_namespace());
         assert!(!object.properties().has_inline_property_storage());
@@ -2201,6 +2398,20 @@ impl EnvironmentScopeRef {
             return inline;
         }
         Self::boxed(scope)
+    }
+
+    /// The scope of a function's activation, which names only its `program`: `new` of that
+    /// scope, without building it first.
+    pub(crate) fn of_program(program: u32) -> Self {
+        Self::inline(Some(program)).unwrap_or_else(|| {
+            Self::boxed(EnvironmentScope {
+                program: Some(program),
+                root_eval_scope: false,
+                binding_site_pc: None,
+                dynamic_bindings: EnvironmentBindings::Owned(Vec::new()),
+                with_objects: Box::default(),
+            })
+        })
     }
 
     fn inline(program: Option<u32>) -> Option<Self> {
@@ -2301,36 +2512,289 @@ impl std::fmt::Debug for EnvironmentScopeRef {
 #[derive(Clone, Debug)]
 /// An environment's slots behind a one-word pointer, which keeps the environment cell within
 /// the common cell size.
+///
+/// Storage is dense, one `EnvironmentSlot` per slot, or sparse for a per-iteration copy of a
+/// wide environment (`SPARSE_CLONE_MIN_SLOTS`): `[environment_index(len), shared(owner),
+/// (environment_index(slot), slot)...]`. The listed slots are those that differ from sharing
+/// with the default owner, sorted by index; every other slot is shared with that owner. The
+/// slice header's mark tells the two apart, so a dense read tests one bit it loads anyway.
+#[repr(transparent)]
 pub(crate) struct EnvironmentSlots(pub(super) super::thin_slice::ThinBoxSlice<EnvironmentSlot>);
 
+/// Words an `EnvironmentSlots::lay_out_in_place` storage takes before its slots.
+pub(crate) const IN_PLACE_SLOTS_WORDS: usize =
+    super::thin_slice::ThinBoxSlice::<EnvironmentSlot>::IN_PLACE_WORDS;
+
+/// A per-iteration copy of an environment with at least this many slots stores only the
+/// slots it does not share with one owner. A module root with thousands of bindings would
+/// otherwise copy every one into each loop iteration's environment a closure keeps; smaller
+/// environments stay dense, whose slot reads need no search.
+pub(crate) const SPARSE_CLONE_MIN_SLOTS: usize = 64;
+/// Where a sparse storage's listed pairs start: after its length and default owner.
+const SPARSE_ENTRIES_START: usize = 2;
+/// Words per listed sparse slot: its index, then the slot.
+const SPARSE_ENTRY_WORDS: usize = 2;
+
 impl EnvironmentSlots {
+    /// The logical length and default owner of sparse storage.
+    #[inline(always)]
+    fn sparse(&self) -> Option<(usize, Value)> {
+        if !self.0.marked() {
+            return None;
+        }
+        let length = self.0.first()?.0.as_environment_index()?;
+        let owner = self.0.get(1)?.0.shared_environment_owner()?;
+        Some((length as usize, owner))
+    }
+
+    /// The listed sparse entry for `slot`, as its storage position.
+    fn sparse_position(&self, slot: usize) -> Option<usize> {
+        let slot = u32::try_from(slot).ok()?;
+        let entries = self.0.len().saturating_sub(SPARSE_ENTRIES_START) / SPARSE_ENTRY_WORDS;
+        let position = |entry: usize| SPARSE_ENTRIES_START + entry * SPARSE_ENTRY_WORDS;
+        let (mut low, mut high) = (0, entries);
+        while low < high {
+            let middle = (low + high) / 2;
+            match self.0[position(middle)].0.cmp_environment_index(slot) {
+                std::cmp::Ordering::Equal => return Some(position(middle) + 1),
+                std::cmp::Ordering::Less => low = middle + 1,
+                std::cmp::Ordering::Greater => high = middle,
+            }
+        }
+        None
+    }
+
     pub(crate) fn len(&self) -> usize {
-        self.0.len()
+        self.sparse().map_or(self.0.len(), |(length, _)| length)
     }
     pub(crate) fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.len() == 0
     }
-    /// The state of `slot`: its value when this environment owns it, else its owner.
+    /// What `slot` holds: a value this environment owns, or the owner it shares the slot with.
     #[inline(always)]
-    pub(crate) fn slot(&self, slot: usize) -> Option<EnvironmentSlotState> {
-        self.0.get(slot).map(|slot| slot.state())
+    pub(crate) fn state(&self, slot: usize) -> Option<EnvironmentSlotState> {
+        if self.0.marked() {
+            return self.sparse_state(slot);
+        }
+        Some(self.0.get(slot)?.state())
+    }
+    /// `state` of sparse storage, kept out of the dense read's line.
+    #[inline(never)]
+    fn sparse_state(&self, slot: usize) -> Option<EnvironmentSlotState> {
+        let (length, owner) = self.sparse()?;
+        if slot >= length {
+            return None;
+        }
+        Some(match self.sparse_position(slot) {
+            Some(position) => self.0[position].state(),
+            None => EnvironmentSlotState::Shared(owner),
+        })
+    }
+    /// This storage when it is dense, which a caller may then read with `dense_plain`.
+    #[inline(always)]
+    pub(crate) fn dense(&self) -> Option<&Self> {
+        (!self.0.marked()).then_some(self)
+    }
+    /// A dense slot's ordinary value (storage `dense` returned): `None` past the storage or
+    /// for any internal marker it holds (`Value::is_internal_marker`: a shared slot, an
+    /// uninitialized binding), which the caller resolves the long way. One tag test answers
+    /// both the shared-slot and the initialization check.
+    #[inline(always)]
+    pub(crate) fn dense_plain(&self, slot: usize) -> Option<Value> {
+        debug_assert!(!self.0.marked());
+        let value = self.0.get(slot)?.0;
+        (!value.is_internal_marker()).then_some(value)
+    }
+    /// `dense` for writing.
+    #[inline(always)]
+    pub(crate) fn dense_mut(&mut self) -> Option<&mut Self> {
+        (!self.0.marked()).then_some(self)
+    }
+    /// `dense_plain`'s slot to write: an ordinary value's place, which a store replaces.
+    #[inline(always)]
+    pub(crate) fn dense_plain_mut(&mut self, slot: usize) -> Option<&mut Value> {
+        debug_assert!(!self.0.marked());
+        let value = &mut self.0.get_mut(slot)?.0;
+        (!value.is_internal_marker()).then_some(value)
     }
     /// The value of a slot this environment owns; a shared slot lives in its owner.
+    #[inline(always)]
     pub(crate) fn owned(&self, slot: usize) -> Option<Value> {
-        match self.slot(slot)? {
+        match self.state(slot)? {
             EnvironmentSlotState::Owned(value) => Some(value),
             EnvironmentSlotState::Shared(_) => None,
         }
     }
+    pub(crate) fn owned_mut(&mut self, slot: usize) -> Option<&mut Value> {
+        let position = match self.sparse() {
+            None => slot,
+            Some((length, _)) if slot < length => self.sparse_position(slot)?,
+            Some(_) => return None,
+        };
+        self.0.get_mut(position)?.owned_mut()
+    }
     pub(crate) fn roots(&self) -> impl Iterator<Item = Value> + '_ {
-        self.0.iter().map(|slot| match slot.state() {
-            EnvironmentSlotState::Owned(value) | EnvironmentSlotState::Shared(value) => value,
+        // A sparse storage's index words are not values; its owner and slots are.
+        let sparse = self.0.marked();
+        self.0
+            .iter()
+            .filter(move |slot| !sparse || slot.0.as_environment_index().is_none())
+            .map(|slot| match slot.state() {
+                EnvironmentSlotState::Owned(value) | EnvironmentSlotState::Shared(value) => value,
+            })
+    }
+
+    /// The indexes a sparse storage lists, ascending.
+    fn sparse_indexes(&self) -> impl Iterator<Item = usize> + '_ {
+        let entries = if self.0.marked() {
+            self.0.len().saturating_sub(SPARSE_ENTRIES_START) / SPARSE_ENTRY_WORDS
+        } else {
+            0
+        };
+        (0..entries).filter_map(move |entry| {
+            self.0[SPARSE_ENTRIES_START + entry * SPARSE_ENTRY_WORDS]
+                .0
+                .as_environment_index()
+                .map(|index| index as usize)
         })
     }
-}
 
-impl EnvironmentSlots {
+    /// `dense` stored sparsely around the owner most of its slots share, when it reaches
+    /// `SPARSE_CLONE_MIN_SLOTS` and the sparse words are fewer; a copy that owns most of its
+    /// slots stays dense, whose reads need no search.
+    fn compacted(dense: super::thin_slice::ThinBoxSlice<EnvironmentSlot>) -> Option<Self> {
+        let len = dense.len();
+        if len < SPARSE_CLONE_MIN_SLOTS {
+            return Some(Self(dense));
+        }
+        let mut owners: Vec<(Value, usize)> = Vec::new();
+        for slot in dense.iter() {
+            if let EnvironmentSlotState::Shared(owner) = slot.state() {
+                match owners.iter_mut().find(|(candidate, _)| *candidate == owner) {
+                    Some((_, count)) => *count += 1,
+                    None => owners.push((owner, 1)),
+                }
+            }
+        }
+        let Some((owner, sharing)) = owners.into_iter().max_by_key(|(_, count)| *count) else {
+            return Some(Self(dense));
+        };
+        let listed = len - sharing;
+        if SPARSE_ENTRIES_START + listed * SPARSE_ENTRY_WORDS >= len {
+            return Some(Self(dense));
+        }
+        let shared = Value::shared_environment_slot(owner);
+        let mut words = Vec::with_capacity(SPARSE_ENTRIES_START + listed * SPARSE_ENTRY_WORDS);
+        words.push(EnvironmentSlot(Value::environment_index(u32::try_from(len).ok()?)));
+        words.push(EnvironmentSlot(shared));
+        for (index, slot) in dense.iter().enumerate() {
+            if slot.0 != shared {
+                words.push(EnvironmentSlot(Value::environment_index(u32::try_from(index).ok()?)));
+                words.push(*slot);
+            }
+        }
+        let mut storage = super::thin_slice::ThinBoxSlice::from_exact_iter(words.into_iter());
+        storage.mark();
+        Some(Self(storage))
+    }
+
+    /// The slots of a per-iteration copy of `environment`, which holds these slots: a `reset`
+    /// slot is `undefined`, a `fresh` slot owns its current value (`owned_value` reads a
+    /// shared slot from its owner), and every other slot shares with the slot's current
+    /// owner. The copy's default owner is the one most slots share, so a copy of a copy
+    /// stays sparse, and a sparse source is copied through the slots it lists and the
+    /// fresh and reset ones alone. `fresh` and `reset` are sorted.
+    pub(crate) fn iteration_copy(
+        &self,
+        environment: Value,
+        fresh: &[u16],
+        reset: &[u16],
+        owned_value: impl Fn(Value, usize) -> Option<Value>,
+    ) -> Option<Self> {
+        let len = self.len();
+        let copy_slot = |index: usize| -> Option<EnvironmentSlot> {
+            let slot = u16::try_from(index).ok()?;
+            if reset.binary_search(&slot).is_ok() {
+                return Some(EnvironmentSlot::owned(Value::UNDEFINED));
+            }
+            let fresh = fresh.binary_search(&slot).is_ok();
+            Some(match self.state(index)? {
+                EnvironmentSlotState::Owned(value) if fresh => EnvironmentSlot::owned(value),
+                EnvironmentSlotState::Owned(_) => EnvironmentSlot::shared(environment),
+                EnvironmentSlotState::Shared(owner) if fresh => {
+                    EnvironmentSlot::owned(owned_value(owner, index)?)
+                }
+                EnvironmentSlotState::Shared(owner) => EnvironmentSlot::shared(owner),
+            })
+        };
+        let Some((_, owner)) = self.sparse() else {
+            // Every slot shares with its current owner, then the fresh and reset ones own.
+            let mut copy = super::thin_slice::ThinBoxSlice::from_exact_iter(self.0.iter().map(
+                |slot| match slot.state() {
+                    EnvironmentSlotState::Owned(_) => EnvironmentSlot::shared(environment),
+                    EnvironmentSlotState::Shared(owner) => EnvironmentSlot::shared(owner),
+                },
+            ));
+            for &slot in fresh {
+                let index = usize::from(slot);
+                let Some(source) = self.0.get(index) else {
+                    continue;
+                };
+                copy[index] = EnvironmentSlot::owned(match source.state() {
+                    EnvironmentSlotState::Owned(value) => value,
+                    EnvironmentSlotState::Shared(owner) => owned_value(owner, index)?,
+                });
+            }
+            for &slot in reset {
+                if let Some(target) = copy.get_mut(usize::from(slot)) {
+                    *target = EnvironmentSlot::owned(Value::UNDEFINED);
+                }
+            }
+            return Self::compacted(copy);
+        };
+        // Every slot the source does not list shares with `owner`, as the copy's do unless
+        // they are fresh or reset.
+        let mut indexes: Vec<usize> = self
+            .sparse_indexes()
+            .chain(fresh.iter().chain(reset).map(|&slot| usize::from(slot)))
+            .filter(|&index| index < len)
+            .collect();
+        indexes.sort_unstable();
+        indexes.dedup();
+        let shared = Value::shared_environment_slot(owner);
+        let mut listed = Vec::with_capacity(indexes.len());
+        for index in indexes {
+            let slot = copy_slot(index)?;
+            if slot.0 != shared {
+                listed.push((index, slot));
+            }
+        }
+        if SPARSE_ENTRIES_START + listed.len() * SPARSE_ENTRY_WORDS >= len {
+            return super::thin_slice::ThinBoxSlice::try_from_fn(len, copy_slot).map(Self);
+        }
+        let mut words = Vec::with_capacity(SPARSE_ENTRIES_START + listed.len() * SPARSE_ENTRY_WORDS);
+        words.push(EnvironmentSlot(Value::environment_index(u32::try_from(len).ok()?)));
+        words.push(EnvironmentSlot(shared));
+        for (index, slot) in listed {
+            words.push(EnvironmentSlot(Value::environment_index(u32::try_from(index).ok()?)));
+            words.push(slot);
+        }
+        let mut storage = super::thin_slice::ThinBoxSlice::from_exact_iter(words.into_iter());
+        storage.mark();
+        Some(Self(storage))
+    }
+
     /// Slots that own `values`, in order.
+    /// Dense storage of the `len` owned slots that follow its `IN_PLACE_SLOTS_WORDS` words
+    /// at `words`, as `ThinBoxSlice::lay_out_in_place`: a view its caller never drops.
+    ///
+    /// # Safety
+    /// As `ThinBoxSlice::lay_out_in_place`; each slot is an owned value.
+    pub(crate) unsafe fn lay_out_in_place(words: *mut Value, len: usize) -> *const Self {
+        // SAFETY: as the caller guarantees; a slot is a `Value`, a word.
+        unsafe { super::thin_slice::ThinBoxSlice::<EnvironmentSlot>::lay_out_in_place(words.cast(), len).cast() }
+    }
+
     pub(crate) fn from_values(values: impl ExactSizeIterator<Item = Value>) -> Self {
         Self(super::thin_slice::ThinBoxSlice::from_exact_iter(
             values.map(EnvironmentSlot::owned),
@@ -2393,24 +2857,54 @@ impl IteratorExt {
     }
 }
 
-/// A function's ordinary object and creation realm. The realm rides in the box, which
-/// calls already reach through property and prototype reads, so the cell keeps four words.
+/// An iterator object: built-in iterators, iterator helpers and generators. The heap keeps
+/// it in the iterator record family (`Heap::iterator`); a heap whose record range is
+/// unavailable boxes it in a `Cell::Iterator` slot.
 #[derive(Clone, Debug)]
-pub(crate) struct FunctionObject {
+pub(crate) struct IteratorRecord {
     pub(crate) object: Object,
-    pub(crate) realm: Value,
+    pub(crate) source: Value,
+    pub(crate) kind: IteratorKind,
+    /// Low half of the position within `source`; `IteratorExt::position` joins it with
+    /// the upper half.
+    pub(crate) index: u32,
+    pub(crate) done: bool,
+    pub(crate) ext: IteratorExt,
 }
 
-impl std::ops::Deref for FunctionObject {
-    type Target = Object;
-    fn deref(&self) -> &Object {
-        &self.object
+impl IteratorRecord {
+    /// A suspended generator's program, which stays alive with it.
+    pub(crate) fn program_references(&self, mut visit: impl FnMut(ProgramId)) {
+        if let Some(continuation) = self
+            .ext
+            .generator
+            .as_ref()
+            .and_then(|generator| generator.continuation.as_ref())
+        {
+            visit(continuation.program);
+        }
     }
 }
 
-impl std::ops::DerefMut for FunctionObject {
-    fn deref_mut(&mut self) -> &mut Object {
-        &mut self.object
+/// A function: its ordinary object, creation realm, code and closure environment. The
+/// heap keeps it in the function record family (`Heap::function`), where a dead closure
+/// costs its occupancy bit; a heap whose record range is unavailable boxes it in a
+/// `Cell::Function` slot.
+#[derive(Clone, Debug)]
+pub(crate) struct FunctionRecord {
+    pub(crate) object: Object,
+    pub(crate) realm: Value,
+    pub(crate) env: Value,
+    pub(crate) kind: FunctionKind,
+}
+
+impl FunctionRecord {
+    /// The program whose code this function runs, which keeps that program alive.
+    pub(crate) fn program(&self) -> Option<ProgramId> {
+        match self.kind {
+            FunctionKind::User(program, _) => Some(program),
+            FunctionKind::Native(_) => None,
+        }
     }
 }
 
@@ -2490,7 +2984,7 @@ pub(crate) struct ZonedInstant {
 #[derive(Clone, Debug)]
 pub(crate) struct RegExpMeta {
     pub(crate) source: JsString,
-    pub(crate) flags: String,
+    pub(crate) flags: crate::vm::RegExpFlags,
     // One constructor identity owns creation realm and legacy eligibility.
     pub(crate) legacy_constructor: RegExpLegacyOwner,
 }
@@ -2591,28 +3085,18 @@ pub(crate) enum Cell {
         callback: Value,
         entries: Box<FinalizationEntries>,
     },
-    Iterator {
-        object: Box<Object>,
-        source: Value,
-        kind: IteratorKind,
-        /// Low half of the position within `source`; `IteratorExt::position` joins it with
-        /// the upper half.
-        index: u32,
-        done: bool,
-        ext: Box<IteratorExt>,
-    },
+    /// An iterator where no iterator record is available (`IteratorRecord`).
+    Iterator(Box<IteratorRecord>),
     ArrayFromAsyncState(Box<ArrayFromAsyncState>),
+    AwaitState(Box<AwaitState>),
     Proxy {
         object: Box<Object>,
         kind: ProxyKind,
         target: Value,
         handler: Value,
     },
-    Function {
-        object: Box<FunctionObject>,
-        kind: FunctionKind,
-        env: Value,
-    },
+    /// A function where no function record is available (`FunctionRecord`).
+    Function(Box<FunctionRecord>),
     BindingReference {
         environment: Value,
         slot: u16,
@@ -2638,7 +3122,7 @@ pub(crate) enum Cell {
     /// The native callable's immutable host operation and structural signature.
     WasmHostFunction {
         target: WasmHostTarget,
-        signature: Rc<crate::WasmSignature>,
+        signature: Rc<crate::wasm::WasmHostSignature>,
     },
     /// Immutable references available until an element segment drops.
     WasmElements(Vec<Value>),
@@ -2659,7 +3143,8 @@ pub(crate) enum Cell {
         element_type: wasmparser::RefType,
         declarations: Box<crate::WasmTypes>,
     },
-    String(JsString), BigInt(String),
+    /// Boxed so a slot stays one tag word plus the object layout (`cells_stay_compact`).
+    BigInt(Box<num_bigint::BigInt>),
     Symbol(SymbolData),
     Date { milliseconds: f64, object: Box<Object> },
     RegExp {
@@ -2668,6 +3153,8 @@ pub(crate) enum Cell {
         matcher: Rc<quench_regexp::Regex>,
     },
     Error(String),
+    /// A promise: an ordinary object with its [[PromiseState]] and reactions.
+    Promise(Box<super::PromiseCell>),
     PromiseResolvingState {
         promise: Value,
         already_resolved: bool,
@@ -2714,6 +3201,10 @@ pub(crate) enum Cell {
 }
 
 impl Cell {
+    pub(crate) fn bigint(value: num_bigint::BigInt) -> Self {
+        Self::BigInt(Box::new(value))
+    }
+
     /// Whether a collection prunes this cell's entries by the liveness of their targets
     /// (`Heap::prune_weak_cell`).
     pub(crate) fn has_weak_entries(&self) -> bool {
@@ -2741,10 +3232,11 @@ impl Cell {
             Self::WeakSet { .. } => "weak_set",
             Self::WeakRef { .. } => "weak_ref",
             Self::FinalizationRegistry { .. } => "finalization_registry",
-            Self::Iterator { .. } => "iterator",
+            Self::Iterator(_) => "iterator",
             Self::ArrayFromAsyncState(_) => "array_from_async_state",
+            Self::AwaitState(_) => "await_state",
             Self::Proxy { .. } => "proxy",
-            Self::Function { .. } => "function",
+            Self::Function(_) => "function",
             Self::BindingReference { .. } => "binding_reference",
             Self::Environment { .. } => "environment",
             Self::WasmBits64(_) => "wasm_bits64",
@@ -2758,13 +3250,13 @@ impl Cell {
             Self::WasmGlobal { .. } => "wasm_global",
             Self::WasmMemory { .. } => "wasm_memory",
             Self::WasmTable { .. } => "wasm_table",
-            Self::String(_) => "string",
             Self::BigInt(_) => "bigint",
             Self::Symbol(_) => "symbol",
             Self::Date { .. } => "date",
             Self::RegExp { .. } => "regexp",
             Self::Error(_) => "error",
             Self::PromiseResolvingState { .. } => "promise_resolving_state",
+            Self::Promise(_) => "promise",
             Self::TemporalDuration { .. } => "temporal_duration",
             Self::TemporalPlainDate { .. } => "temporal_plain_date",
             Self::TemporalPlainDateTime { .. } => "temporal_plain_date_time",
@@ -2781,24 +3273,14 @@ impl Cell {
     /// a user function's code, an environment's scope, a suspended generator.
     pub(crate) fn program_references(&self, mut visit: impl FnMut(ProgramId)) {
         match self {
-            Self::Function {
-                kind: FunctionKind::User(program, _) | FunctionKind::NumericUser(program, _),
-                ..
-            } => visit(*program),
+            Self::Function(function) => function.program().into_iter().for_each(&mut visit),
             Self::Environment { scope, .. } => {
                 if let Some(program) = scope.program() {
                     visit(ProgramId::from_raw(program));
                 }
             }
-            Self::Iterator { ext, .. } => {
-                if let Some(continuation) = ext
-                    .generator
-                    .as_ref()
-                    .and_then(|generator| generator.continuation.as_ref())
-                {
-                    visit(continuation.program);
-                }
-            }
+            Self::Iterator(iterator) => iterator.program_references(&mut visit),
+            Self::AwaitState(state) => state.program_references(&mut visit),
             _ => {}
         }
     }

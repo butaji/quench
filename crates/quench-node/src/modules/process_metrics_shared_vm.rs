@@ -51,6 +51,11 @@ fn create_binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
                 c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
             put(c, module, name, function)?;
         }
+        #[cfg(unix)]
+        {
+            let function = c.host_function_named(crate::host::shared_vm::operation("processExecve"), "execve")?;
+            put(c, module, "execve", function)?;
+        }
         for (name,operation) in [("cwd","processCwd"),("umask","workerRawUmask")] {
             let function=c.host_function_named(crate::host::shared_vm::operation(operation),name)?;
             put(c,module,name,function)?;
@@ -228,7 +233,7 @@ pub(crate) fn install(c: &mut Context<'_>) -> Result<(), RootedError> {
 }
 
 /// The process methods Node's `wrapProcessMethods` makes over the native binding.
-const WRAPPED_METHODS: [&str; 4] = ["cpuUsage", "threadCpuUsage", "memoryUsage", "resourceUsage"];
+const WRAPPED_METHODS: [&str; 5] = ["cpuUsage", "threadCpuUsage", "memoryUsage", "resourceUsage", "execve"];
 
 fn process(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     c.host_mut()

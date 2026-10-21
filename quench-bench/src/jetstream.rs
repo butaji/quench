@@ -61,12 +61,23 @@ const PRELUDE: &str = r#""use strict";
 // JetStream shell surface on node:vm. argv: <prelude> <jetstream-root> <cli args...>
 const fs = require("fs");
 const path = require("path");
+const zlib = require("zlib");
 const vm = require("vm");
 const host = process;
 const root = host.argv[2];
 const resolve = (file) => path.resolve(root, file);
-const readFile = (file, mode) =>
-  mode === "binary" ? new Uint8Array(fs.readFileSync(resolve(file))) : fs.readFileSync(resolve(file), "utf8");
+const readFile = (file, mode) => {
+  const location = resolve(file);
+  let bytes;
+  if (fs.existsSync(location)) {
+    bytes = fs.readFileSync(location);
+  } else if (fs.existsSync(`${location}.z`)) {
+    bytes = zlib.inflateSync(fs.readFileSync(`${location}.z`));
+  } else {
+    bytes = fs.readFileSync(location);
+  }
+  return mode === "binary" ? new Uint8Array(bytes) : bytes.toString("utf8");
+};
 // Dynamic import() resolves through the main context loader, relative to the script;
 // loadString sources are named inside the corpus root for that.
 const importModuleDynamically = vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER;
@@ -256,8 +267,10 @@ mod tests {
             source_path(&fixture_path("typescript-lib")),
             Path::new(SUITE_DIR)
         );
-        assert!(workspace
-            .join(source_path(&fixture_path("typescript-lib")))
-            .is_dir());
+        assert!(
+            workspace
+                .join(source_path(&fixture_path("typescript-lib")))
+                .is_dir()
+        );
     }
 }

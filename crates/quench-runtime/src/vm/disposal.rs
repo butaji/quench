@@ -94,7 +94,7 @@ impl<H: Host> Vm<H> {
         ] {
             self.set_builtin_named(p, prototype, name, native)?;
         }
-        if let Some(symbol) = self.well_known_symbols.get("dispose").copied() {
+        if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::Dispose) {
             let method = self.native_value(Native::DisposableStackDispose);
             self.set_index(
                 p,
@@ -115,7 +115,7 @@ impl<H: Host> Vm<H> {
                 },
             );
         }
-        if let Some(symbol) = self.well_known_symbols.get("asyncDispose").copied() {
+        if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::AsyncDispose) {
             self.set_index(
                 p,
                 prototype,
@@ -198,7 +198,7 @@ impl<H: Host> Vm<H> {
             constructor,
         )?;
         self.install_builtin_to_string_tag(prototype, "AsyncDisposableStack")?;
-        if let Some(symbol) = self.well_known_symbols.get("asyncDispose").copied() {
+        if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::AsyncDispose) {
             let method = self.native_value(Native::AsyncDisposableStackDisposeAsync);
             self.set_index(
                 p,
@@ -266,10 +266,10 @@ impl<H: Host> Vm<H> {
         let prototype = if self.object_data(candidate).is_some() {
             candidate
         } else {
-            let realm = match self.heap.get(new_target) {
-                Some(Cell::Function { object, .. }) => object.realm,
-                _ => self.realm.globals,
-            };
+            let realm = self
+                .heap
+                .function(new_target)
+                .map_or(self.realm.globals, |function| function.realm);
             let constructor_atom = self.intern_atom(if async_stack {
                 "AsyncDisposableStack"
             } else {
@@ -580,8 +580,7 @@ impl<H: Host> Vm<H> {
         }
         let symbol = self
             .well_known_symbols
-            .get("dispose")
-            .copied()
+            .get(WellKnownSymbol::Dispose)
             .ok_or_else(|| JsError("Symbol.dispose is unavailable".into()))?;
         let callback = self.get_index(p, value, symbol)?;
         if !self.is_function(callback) {
@@ -613,13 +612,11 @@ impl<H: Host> Vm<H> {
         }
         let async_symbol = self
             .well_known_symbols
-            .get("asyncDispose")
-            .copied()
+            .get(WellKnownSymbol::AsyncDispose)
             .ok_or_else(|| JsError("Symbol.asyncDispose is unavailable".into()))?;
         let dispose_symbol = self
             .well_known_symbols
-            .get("dispose")
-            .copied()
+            .get(WellKnownSymbol::Dispose)
             .ok_or_else(|| JsError("Symbol.dispose is unavailable".into()))?;
         let callback = self.get_index(p, value, async_symbol)?;
         let (callback, mode) = if is_nullish(callback) {

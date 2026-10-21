@@ -262,19 +262,19 @@ impl<H: Host> Vm<H> {
         let mut element = [0; size_of::<u64>()];
         let start = offset + index * kind.width();
         {
-            let store = bytes.read();
-            let Some(source) = store.get(start..start + kind.width()) else {
+            let bytes = bytes.read();
+            let Some(source) = bytes.get(start..start + kind.width()) else {
                 return Some(Value::UNDEFINED);
             };
             element[..source.len()].copy_from_slice(source);
         }
         let bytes = &element;
         Some(match kind {
-            TypedArrayKind::BigInt64 => self.heap.alloc(Cell::BigInt(
-                i64::from_ne_bytes(bytes[..8].try_into().unwrap()).to_string(),
+            TypedArrayKind::BigInt64 => self.heap.alloc(Cell::bigint(
+                i64::from_ne_bytes(bytes[..8].try_into().unwrap()).into(),
             )),
-            TypedArrayKind::BigUint64 => self.heap.alloc(Cell::BigInt(
-                u64::from_ne_bytes(bytes[..8].try_into().unwrap()).to_string(),
+            TypedArrayKind::BigUint64 => self.heap.alloc(Cell::bigint(
+                u64::from_ne_bytes(bytes[..8].try_into().unwrap()).into(),
             )),
             _ => Value::number(match kind {
                 TypedArrayKind::Uint8 | TypedArrayKind::Uint8Clamped => bytes[0] as f64,
@@ -429,7 +429,7 @@ impl<H: Host> Vm<H> {
             .parse::<usize>()
             .ok()
             .filter(|index| index.to_string() == name && number == *index as f64);
-        let key = self.heap.alloc(Cell::String(name.into()));
+        let key = self.heap.alloc_string(name.into());
         let mut current = self
             .object_data(receiver)
             .map_or(Value::NULL, |data| data.proto());

@@ -85,6 +85,14 @@ impl BufferBytes {
         matches!(*self.0, BufferStore::Wasm(_))
     }
 
+    /// Whether these bytes are a view of this exact unshared Wasm memory.
+    pub(crate) fn is_wasm_view_of(&self, memory: &Rc<MemoryStorage>) -> bool {
+        matches!(
+            &*self.0,
+            BufferStore::Wasm(view) if Rc::ptr_eq(&view._memory, memory)
+        )
+    }
+
     /// Whether the store holds a reference counted outside its own allocation (shared
     /// bytes or a memory), which the striped drop locks do not cover.
     pub(crate) fn holds_external_rc(&self) -> bool {

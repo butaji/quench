@@ -12,6 +12,225 @@ use crate::heap::{WasmHostTarget, WasmObjectSlot};
 use crate::{WasmType, WasmValue};
 use wasmparser::ExternalKind;
 
+const DIRECT_EMSCRIPTEN_COPY_ENV: &str = "QUENCH_WASM_EMSCRIPTEN_MEMCPY_DIRECT";
+const RAW_I32_EMSCRIPTEN_COPY_ENV: &str = "QUENCH_WASM_EMSCRIPTEN_MEMCPY_RAW_I32";
+const EARLY_IMPORT_EMSCRIPTEN_COPY_ENV: &str = "QUENCH_WASM_EMSCRIPTEN_MEMCPY_EARLY_IMPORT";
+
+static DIRECT_EMSCRIPTEN_COPY_SWITCH: std::sync::OnceLock<Option<bool>> =
+    std::sync::OnceLock::new();
+static RAW_I32_EMSCRIPTEN_COPY_SWITCH: std::sync::OnceLock<Option<bool>> =
+    std::sync::OnceLock::new();
+static EARLY_IMPORT_EMSCRIPTEN_COPY_SWITCH: std::sync::OnceLock<Option<bool>> =
+    std::sync::OnceLock::new();
+
+#[cfg(test)]
+thread_local! {
+    static DIRECT_EMSCRIPTEN_COPY_TEST_OVERRIDE: std::cell::Cell<Option<bool>> =
+        const { std::cell::Cell::new(None) };
+    static RAW_I32_EMSCRIPTEN_COPY_TEST_OVERRIDE: std::cell::Cell<Option<bool>> =
+        const { std::cell::Cell::new(None) };
+    static EARLY_IMPORT_EMSCRIPTEN_COPY_TEST_OVERRIDE: std::cell::Cell<Option<bool>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Whether the guarded direct-copy path is enabled in this process. Separate
+/// processes can use this switch for an on/off A/B without rebuilding.
+pub(super) fn emscripten_memcpy_direct_copy_enabled() -> bool {
+    #[cfg(test)]
+    if let Some(enabled) = DIRECT_EMSCRIPTEN_COPY_TEST_OVERRIDE.with(std::cell::Cell::get) {
+        return enabled;
+    }
+
+    DIRECT_EMSCRIPTEN_COPY_SWITCH
+        .get_or_init(
+            || match std::env::var(DIRECT_EMSCRIPTEN_COPY_ENV).as_deref() {
+                Ok("0") => Some(false),
+                Ok("1") => Some(true),
+                _ => None,
+            },
+        )
+        .unwrap_or(true)
+}
+
+pub(super) fn emscripten_memcpy_direct_copy_switch() -> &'static str {
+    #[cfg(test)]
+    if let Some(enabled) = DIRECT_EMSCRIPTEN_COPY_TEST_OVERRIDE.with(std::cell::Cell::get) {
+        return if enabled { "1" } else { "0" };
+    }
+
+    match DIRECT_EMSCRIPTEN_COPY_SWITCH.get_or_init(|| {
+        match std::env::var(DIRECT_EMSCRIPTEN_COPY_ENV).as_deref() {
+            Ok("0") => Some(false),
+            Ok("1") => Some(true),
+            _ => None,
+        }
+    }) {
+        Some(false) => "0",
+        Some(true) => "1",
+        None => "default",
+    }
+}
+
+/// The raw-argument import path is opt-in so the late-bound path remains the
+/// control arm unless an experiment explicitly selects it.
+pub(super) fn emscripten_memcpy_raw_i32_enabled() -> bool {
+    #[cfg(test)]
+    if let Some(enabled) = RAW_I32_EMSCRIPTEN_COPY_TEST_OVERRIDE.with(std::cell::Cell::get) {
+        return enabled;
+    }
+
+    RAW_I32_EMSCRIPTEN_COPY_SWITCH
+        .get_or_init(
+            || match std::env::var(RAW_I32_EMSCRIPTEN_COPY_ENV).as_deref() {
+                Ok("0") => Some(false),
+                Ok("1") => Some(true),
+                _ => None,
+            },
+        )
+        .unwrap_or(false)
+}
+
+pub(super) fn emscripten_memcpy_raw_i32_switch() -> &'static str {
+    #[cfg(test)]
+    if let Some(enabled) = RAW_I32_EMSCRIPTEN_COPY_TEST_OVERRIDE.with(std::cell::Cell::get) {
+        return if enabled { "1" } else { "0" };
+    }
+
+    match RAW_I32_EMSCRIPTEN_COPY_SWITCH.get_or_init(|| {
+        match std::env::var(RAW_I32_EMSCRIPTEN_COPY_ENV).as_deref() {
+            Ok("0") => Some(false),
+            Ok("1") => Some(true),
+            _ => None,
+        }
+    }) {
+        Some(false) => "0",
+        Some(true) => "1",
+        None => "default",
+    }
+}
+
+/// Whether compiled import callouts may try the raw memcpy guard before the
+/// general Wasm import dispatcher. The exact-import and current-view checks
+/// remain mandatory; this switch only selects where they run.
+pub(super) fn emscripten_memcpy_early_import_enabled() -> bool {
+    #[cfg(test)]
+    if let Some(enabled) = EARLY_IMPORT_EMSCRIPTEN_COPY_TEST_OVERRIDE.with(std::cell::Cell::get) {
+        return enabled;
+    }
+
+    EARLY_IMPORT_EMSCRIPTEN_COPY_SWITCH
+        .get_or_init(
+            || match std::env::var(EARLY_IMPORT_EMSCRIPTEN_COPY_ENV).as_deref() {
+                Ok("0") => Some(false),
+                Ok("1") => Some(true),
+                _ => None,
+            },
+        )
+        .unwrap_or(false)
+}
+
+pub(super) fn emscripten_memcpy_early_import_switch() -> &'static str {
+    #[cfg(test)]
+    if let Some(enabled) = EARLY_IMPORT_EMSCRIPTEN_COPY_TEST_OVERRIDE.with(std::cell::Cell::get) {
+        return if enabled { "1" } else { "0" };
+    }
+
+    match EARLY_IMPORT_EMSCRIPTEN_COPY_SWITCH.get_or_init(|| {
+        match std::env::var(EARLY_IMPORT_EMSCRIPTEN_COPY_ENV).as_deref() {
+            Ok("0") => Some(false),
+            Ok("1") => Some(true),
+            _ => None,
+        }
+    }) {
+        Some(false) => "0",
+        Some(true) => "1",
+        None => "default",
+    }
+}
+
+pub(super) fn copy_within_relative_index(index: i64, length: usize) -> usize {
+    if index < 0 {
+        let magnitude = usize::try_from(index.unsigned_abs()).unwrap_or(usize::MAX);
+        length.saturating_sub(magnitude)
+    } else {
+        usize::try_from(index).unwrap_or(usize::MAX).min(length)
+    }
+}
+
+fn note_emscripten_memcpy_fast_path(counter: *mut u64) {
+    if !counter.is_null() {
+        // SAFETY: diagnostics allocate this counter for the duration of the
+        // compiled invocation; normal execution passes a null pointer.
+        unsafe {
+            *counter = (*counter).saturating_add(1);
+        }
+    }
+}
+
+fn note_emscripten_memcpy_raw_i32_hit(counter: *mut u64) {
+    if !counter.is_null() {
+        // SAFETY: the diagnostic counter lives for the compiled invocation.
+        unsafe {
+            *counter = (*counter).saturating_add(1);
+        }
+    }
+}
+
+#[cfg(test)]
+pub(super) fn with_emscripten_memcpy_direct_copy_for_test<R>(
+    enabled: bool,
+    run: impl FnOnce() -> R,
+) -> R {
+    struct Restore(Option<bool>);
+
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            DIRECT_EMSCRIPTEN_COPY_TEST_OVERRIDE.with(|value| value.set(self.0));
+        }
+    }
+
+    let previous = DIRECT_EMSCRIPTEN_COPY_TEST_OVERRIDE.with(|value| value.replace(Some(enabled)));
+    let _restore = Restore(previous);
+    run()
+}
+
+#[cfg(test)]
+pub(super) fn with_emscripten_memcpy_raw_i32_for_test<R>(
+    enabled: bool,
+    run: impl FnOnce() -> R,
+) -> R {
+    struct Restore(Option<bool>);
+
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            RAW_I32_EMSCRIPTEN_COPY_TEST_OVERRIDE.with(|value| value.set(self.0));
+        }
+    }
+
+    let previous = RAW_I32_EMSCRIPTEN_COPY_TEST_OVERRIDE.with(|value| value.replace(Some(enabled)));
+    let _restore = Restore(previous);
+    run()
+}
+
+#[cfg(test)]
+pub(super) fn with_emscripten_memcpy_early_import_for_test<R>(
+    enabled: bool,
+    run: impl FnOnce() -> R,
+) -> R {
+    struct Restore(Option<bool>);
+
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            EARLY_IMPORT_EMSCRIPTEN_COPY_TEST_OVERRIDE.with(|value| value.set(self.0));
+        }
+    }
+
+    let previous =
+        EARLY_IMPORT_EMSCRIPTEN_COPY_TEST_OVERRIDE.with(|value| value.replace(Some(enabled)));
+    let _restore = Restore(previous);
+    run()
+}
+
 /// The main realm's interface prototypes, which every new Wasm object of the matching kind
 /// receives. Null until the namespace is installed.
 #[derive(Clone, Copy, Debug)]
@@ -21,6 +240,9 @@ pub(crate) struct WasmJsIntrinsics {
     pub(crate) memory: Value,
     pub(crate) table: Value,
     pub(crate) global: Value,
+    /// `WebAssembly.JSTag`: the tag whose one `externref` parameter carries a JavaScript
+    /// exception through Wasm.
+    pub(crate) js_tag: Value,
 }
 
 impl Default for WasmJsIntrinsics {
@@ -31,18 +253,20 @@ impl Default for WasmJsIntrinsics {
             memory: Value::NULL,
             table: Value::NULL,
             global: Value::NULL,
+            js_tag: Value::NULL,
         }
     }
 }
 
 impl WasmJsIntrinsics {
-    pub(crate) fn roots(&self) -> [Value; 5] {
+    pub(crate) fn roots(&self) -> [Value; 6] {
         [
             self.module,
             self.instance,
             self.memory,
             self.table,
             self.global,
+            self.js_tag,
         ]
     }
 }
@@ -63,6 +287,7 @@ const INTERFACES: &[Interface] = &[
         statics: &[
             ("exports", Native::WasmModuleExports),
             ("imports", Native::WasmModuleImports),
+            ("customSections", Native::WasmModuleCustomSections),
         ],
         methods: &[],
         getters: &[],
@@ -129,6 +354,7 @@ pub(super) fn is_wasm_js_native(native: Native) -> bool {
             | Native::WasmModule
             | Native::WasmModuleExports
             | Native::WasmModuleImports
+            | Native::WasmModuleCustomSections
             | Native::WasmInstance
             | Native::WasmInstanceExportsGetter
             | Native::WasmMemory
@@ -183,6 +409,7 @@ pub(super) fn wasm_js_native_length(native: Native) -> Option<f64> {
         | Native::WasmTableLengthGetter
         | Native::WasmGlobalValueGetter
         | Native::WasmGlobalValueOf => 0.0,
+        Native::WasmModuleCustomSections => 2.0,
         _ => return None,
     })
 }
@@ -288,6 +515,28 @@ impl<H: Host> Vm<H> {
             self.set_builtin_value_named(namespace, interface.name, constructor)?;
         }
         self.install_wasm_errors(program, namespace)?;
+        let js_tag = self.heap.alloc(Cell::WasmTag {
+            declarations: crate::WasmTypes::from_functions([wasmparser::FuncType::new(
+                [wasmparser::ValType::EXTERNREF],
+                [],
+            )]),
+            ty: 0,
+        });
+        self.wasm_js.js_tag = js_tag;
+        let atom = self.intern_atom("JSTag");
+        self.set_property_with_attributes(
+            namespace,
+            atom,
+            js_tag,
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        )?;
         self.global(program, "WebAssembly", namespace)
     }
 
@@ -333,7 +582,7 @@ impl<H: Host> Vm<H> {
         native: Native,
         text: String,
     ) -> JsError {
-        let message = self.heap.alloc(Cell::String(JsString::from_str(&text)));
+        let message = self.heap.alloc_string(JsString::from_str(&text));
         let object = self
             .construct_error_native(program, native, &[message])
             .unwrap_or(Value::UNDEFINED);
@@ -378,6 +627,28 @@ impl<H: Host> Vm<H> {
                     values.push(
                         self.wasm_descriptor(p, &[("name", &name), ("kind", kind_name(kind))])?,
                     );
+                }
+                Ok(self.new_array(values))
+            }
+            Native::WasmModuleCustomSections => {
+                let module = self.wasm_module_of(p, arg(0))?;
+                // `sectionName` is a required DOMString.
+                if args.len() < 2 {
+                    return Err(self.type_error(
+                        p,
+                        "WebAssembly.Module.customSections(): Argument 1 must be a string".into(),
+                    ));
+                }
+                let name = self.to_string(p, arg(1))?;
+                let name = String::from(name);
+                let sections = module
+                    .custom_sections_named(&name)
+                    .map(<[u8]>::to_vec)
+                    .collect::<Vec<_>>();
+                let mut values = Vec::with_capacity(sections.len());
+                for bytes in sections {
+                    let length = bytes.len();
+                    values.push(self.new_array_buffer_cell(bytes.into(), false, length, false, false));
                 }
                 Ok(self.new_array(values))
             }
@@ -450,6 +721,7 @@ impl<H: Host> Vm<H> {
                 if let Some(Cell::WasmTable { elements, .. }) = self.heap.get_mut(this) {
                     elements[index] = value;
                 }
+                self.invalidate_wasm_reference_caches();
                 Ok(Value::UNDEFINED)
             }
             Native::WasmTableGrow => {
@@ -477,6 +749,7 @@ impl<H: Host> Vm<H> {
                         .range_error(p, "WebAssembly.Table.grow(): failed to grow table".into()));
                 };
                 elements.resize(grown, value);
+                self.invalidate_wasm_reference_caches();
                 Ok(Value::number(length as f64))
             }
             Native::WasmGlobalValueGetter | Native::WasmGlobalValueOf => {
@@ -809,7 +1082,141 @@ impl<H: Host> Vm<H> {
             .get(index)
             .cloned()
             .ok_or_else(|| JsError::validation("invalid Wasm import signature".into()))?;
-        self.create_wasm_host_function(&name.name, WasmHostTarget::Js(value), signature)
+        let target = self
+            .emscripten_memcpy_view_capture(value, &signature)
+            .map_or(
+                WasmHostTarget::Js(value),
+                |(view_environment, view_slot)| {
+                    WasmHostTarget::JsEmscriptenMemcpy(Box::new(
+                        crate::heap::WasmHostMemcpyTarget {
+                            function: value,
+                            view_environment,
+                            view_slot,
+                        },
+                    ))
+                },
+            );
+        self.create_owned_wasm_host_function(
+            &name.name,
+            target,
+            signature,
+            Some(module.signatures.clone()),
+        )
+    }
+
+    /// Recognizes only the canonical Emscripten helper body and its real mutable
+    /// lexical `HEAPU8` binding. The capture location is retained; the view itself
+    /// is deliberately re-read on every call because Emscripten replaces it after
+    /// `WebAssembly.Memory.grow()`.
+    pub(super) fn emscripten_memcpy_view_capture(
+        &self,
+        function: Value,
+        signature: &crate::WasmSignature,
+    ) -> Option<(Value, usize)> {
+        use crate::WasmType::I32;
+
+        if signature.params.as_slice() != [I32, I32, I32] {
+            return None;
+        }
+        let FunctionRecord {
+            kind: FunctionKind::User(program_id, function_id),
+            env,
+            ..
+        } = self.heap.function(function)?
+        else {
+            return None;
+        };
+        let program = self.programs.get(*program_id)?;
+        let metadata = program.function_get(*function_id as usize)?;
+        if metadata.params != 3
+            || metadata.inherited_with_scope
+            || !metadata.binding_sites.is_empty()
+            || metadata
+                .parameter_atoms
+                .iter()
+                .map(|atom| &program.atoms[*atom as usize])
+                .ne(["dest", "src", "num"].iter().copied())
+        {
+            return None;
+        }
+        let span = metadata.source_span?;
+        let source = program
+            .source
+            .as_ref()?
+            .text
+            .get(span.start as usize..span.end as usize)?;
+        if source != "(dest, src, num) => HEAPU8.copyWithin(dest, src, src + num)" {
+            return None;
+        }
+        // Free-name atoms need not appear in `environment_atoms` (which describes
+        // bindings owned by this function); the complete program atom table includes
+        // both local and captured names.
+        let view_atom = program
+            .atoms
+            .iter()
+            .position(|atom| atom == "HEAPU8")?
+            .try_into()
+            .ok()?;
+        // The exact source reads one captured name, HEAPU8, so its one capture load names the
+        // binding's depth and slot; name bindings are kept only for functions that resolve
+        // names dynamically.
+        let mut captures = metadata
+            .instructions()
+            .filter(|instruction| instruction.op() == crate::bytecode::Op::LoadCapture);
+        let load = captures.next()?;
+        if captures.next().is_some() {
+            return None;
+        }
+        let (depth, slot) = (load.capture_depth(), load.capture_slot());
+        let owner_environment = self.environment_capture_env(*env, false, depth)?;
+
+        // Verify that the statically resolved binding still names this slot in a
+        // plain lexical environment. Captured with/eval scopes can shadow a static
+        // outer declaration even though their parent chain also contains that slot.
+        let mut environment = *env;
+        loop {
+            let Cell::Environment {
+                parent,
+                function: owner_function,
+                slots,
+                scope,
+            } = self.heap.get(environment)?
+            else {
+                return None;
+            };
+            if scope.root_eval_scope()
+                || scope.binding_site_pc().is_some()
+                || !scope.with_objects().is_empty()
+                || self
+                    .heap
+                    .environment_bindings(environment)?
+                    .iter()
+                    .any(|(atom, _)| *atom == view_atom)
+            {
+                return None;
+            }
+            if environment == owner_environment {
+                let owner_program_id = super::program_store::ProgramId::from_raw(scope.program()?);
+                let owner_program = self.programs.get(owner_program_id)?;
+                let owner_metadata = owner_program.function_get(*owner_function as usize)?;
+                let owns_atom = if *owner_function == super::ROOT_FUNCTION_ID {
+                    owner_metadata.declares_global_lexical(view_atom)
+                        || (owner_program.root_variables_are_local()
+                            && owner_metadata.global_var_atoms().contains(&view_atom))
+                } else {
+                    owner_metadata.declares_environment_atom(view_atom)
+                };
+                if !owns_atom
+                    || self.local_binding_slot(&owner_program, *owner_function, view_atom)?
+                        != usize::from(slot)
+                    || usize::from(slot) >= slots.len()
+                {
+                    return None;
+                }
+                return Some((environment, usize::from(slot)));
+            }
+            environment = *parent;
+        }
     }
 
     fn wasm_import_global(
@@ -895,7 +1302,7 @@ impl<H: Host> Vm<H> {
                 let exports = self.heap.root_value(exports_root).expect("rooted exports");
                 let key = self
                     .heap
-                    .alloc(Cell::String(JsString::from_str(&export.name)));
+                    .alloc_string(JsString::from_str(&export.name));
                 let key = self.to_property_key(p, key)?;
                 let record = super::object_descriptors::PropertyDescriptorRecord::data(value);
                 self.define_own_property_record(p, exports, key, record)?;
@@ -944,8 +1351,8 @@ impl<H: Host> Vm<H> {
 
     /// The Wasm closure behind an exported-function wrapper.
     fn wasm_exported_closure(&self, value: Value) -> Option<Value> {
-        match self.heap.get(value)? {
-            Cell::Function {
+        match self.heap.function(value)? {
+            FunctionRecord {
                 kind: FunctionKind::Native(Native::WasmExportedFunction),
                 env,
                 ..
@@ -982,8 +1389,8 @@ impl<H: Host> Vm<H> {
             .into_iter()
             .map(|value| self.encode_wasm_value(value))
             .collect::<Vec<_>>();
-        let (result, declarations) = match self.heap.get(function) {
-            Some(Cell::Function {
+        let (result, declarations) = match self.heap.function(function) {
+            Some(FunctionRecord {
                 kind: FunctionKind::User(program, index),
                 env,
                 ..
@@ -1046,19 +1453,57 @@ impl<H: Host> Vm<H> {
     /// Wasm `args`, returning the encoded result.
     pub(super) fn call_wasm_js_import(
         &mut self,
-        target: Value,
+        function: Value,
+        memcpy_capture: Option<(Value, usize)>,
         signature: &crate::WasmSignature,
         args: &[Value],
+        current_memory: Value,
+        memcpy_fast_path_hits: *mut u64,
     ) -> Result<Value, JsError> {
         let program = self
             .programs
             .get(self.active_program)
             .ok_or_else(|| JsError::validation("missing host caller program".into()))?;
-        let mut arguments = Vec::with_capacity(args.len());
+        let mut arguments: smallvec::SmallVec<[Value; 8]> = smallvec::SmallVec::new();
         for (&value, &ty) in args.iter().zip(&signature.params) {
             arguments.push(self.wasm_to_js(&program, value, ty)?);
         }
-        let result = self.call_value(&program, target, Value::UNDEFINED, &arguments)?;
+        let result = if let Some((view_environment, view_slot)) = memcpy_capture {
+            let view = self
+                .heap
+                .environment_slot(view_environment, view_slot)
+                .unwrap_or(Value::UNDEFINED);
+            let copy_within_atom = self.intern_atom("copyWithin");
+            let direct_copy = emscripten_memcpy_direct_copy_enabled()
+                && self.try_emscripten_memcpy_same_memory(
+                    view,
+                    current_memory,
+                    signature,
+                    args,
+                    copy_within_atom,
+                )?;
+            if direct_copy {
+                note_emscripten_memcpy_fast_path(memcpy_fast_path_hits);
+                Value::UNDEFINED
+            } else if self.can_inline_emscripten_memcpy(view, copy_within_atom) {
+                let _stack = self.enter_stack()?;
+                self.check_execution_interrupt()?;
+                let end = Value::number(
+                    arguments[1].as_number().unwrap_or_default()
+                        + arguments[2].as_number().unwrap_or_default(),
+                );
+                self.typed_array_native(
+                    &program,
+                    Native::Uint8ArrayCopyWithin,
+                    view,
+                    &[arguments[0], arguments[1], end],
+                )?
+            } else {
+                self.call_value(&program, function, Value::UNDEFINED, &arguments)?
+            }
+        } else {
+            self.call_value(&program, function, Value::UNDEFINED, &arguments)?
+        };
         match signature.results.as_slice() {
             [] => Ok(Value::UNDEFINED),
             [ty] => self.js_to_wasm(&program, result, *ty),
@@ -1095,6 +1540,196 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// Copy the canonical Emscripten helper's bytes directly only when its
+    /// current captured view is the full, live view of the active unshared
+    /// Wasm memory. All other cases retain the existing JS/typed-array path.
+    fn try_emscripten_memcpy_same_memory(
+        &mut self,
+        view: Value,
+        current_memory: Value,
+        signature: &crate::WasmSignature,
+        args: &[Value],
+        copy_within_atom: crate::bytecode::Atom,
+    ) -> Result<bool, JsError> {
+        if signature.params.as_slice() != [WasmType::I32, WasmType::I32, WasmType::I32]
+            || !signature.results.is_empty()
+            || args.len() != 3
+        {
+            return Ok(false);
+        }
+
+        let mut indices = [0i32; 3];
+        for (index, argument) in args.iter().copied().enumerate() {
+            let WasmValue::I32(value) = self.decode_wasm_value(argument, WasmType::I32)? else {
+                return Ok(false);
+            };
+            indices[index] = value;
+        }
+        Ok(self.try_emscripten_memcpy_same_memory_raw(
+            view,
+            current_memory,
+            indices,
+            copy_within_atom,
+        ))
+    }
+
+    /// The compiled callout's opt-in raw-i32 admission path. It reloads the
+    /// captured view here on every call and shares W-08's complete memory guard.
+    pub(super) fn try_emscripten_memcpy_same_memory_raw_capture(
+        &mut self,
+        view_environment: Value,
+        view_slot: usize,
+        current_memory: Value,
+        indices: [i32; 3],
+        raw_i32_fast_path_hits: *mut u64,
+    ) -> bool {
+        let view = self
+            .heap
+            .environment_slot(view_environment, view_slot)
+            .unwrap_or(Value::UNDEFINED);
+        let copy_within_atom = self.intern_atom("copyWithin");
+        let hit = self.try_emscripten_memcpy_same_memory_raw(
+            view,
+            current_memory,
+            indices,
+            copy_within_atom,
+        );
+        if hit {
+            note_emscripten_memcpy_raw_i32_hit(raw_i32_fast_path_hits);
+        }
+        hit
+    }
+
+    fn try_emscripten_memcpy_same_memory_raw(
+        &mut self,
+        view: Value,
+        current_memory: Value,
+        indices: [i32; 3],
+        copy_within_atom: crate::bytecode::Atom,
+    ) -> bool {
+        if !self.can_inline_emscripten_memcpy(view, copy_within_atom) {
+            return false;
+        }
+
+        let (view_buffer, view_offset) = match self.heap.get(view) {
+            Some(Cell::TypedArray {
+                buffer,
+                kind: crate::heap::TypedArrayKind::Uint8,
+                object,
+                ..
+            }) => (*buffer, object.offset),
+            _ => return false,
+        };
+        if view_offset != 0 {
+            return false;
+        }
+
+        let (memory_bytes, memory_buffer) = match self.heap.get(current_memory) {
+            Some(Cell::WasmMemory { bytes, buffer, .. }) => (bytes, *buffer),
+            _ => return false,
+        };
+        if memory_buffer.is_undefined() || view_buffer != memory_buffer {
+            return false;
+        }
+
+        let buffer_bytes = match self.heap.get(view_buffer) {
+            Some(Cell::ArrayBuffer {
+                bytes,
+                shared: false,
+                detached: false,
+                immutable: false,
+                ..
+            }) if bytes.is_wasm_view_of(memory_bytes) => bytes,
+            _ => return false,
+        };
+        let Some((base, memory_length)) =
+            super::dispatch_fast::unshared_memory(self, current_memory)
+        else {
+            return false;
+        };
+        if self.typed_array_length(view) != Some(memory_length)
+            || buffer_bytes.len() != memory_length
+        {
+            return false;
+        }
+        let target = copy_within_relative_index(i64::from(indices[0]), memory_length);
+        let start = copy_within_relative_index(i64::from(indices[1]), memory_length);
+        let raw_end = i64::from(indices[1]) + i64::from(indices[2]);
+        let end = copy_within_relative_index(raw_end, memory_length);
+        let count = end.saturating_sub(start).min(memory_length - target);
+        if count > 0 {
+            // SAFETY: the active memory is unshared; the current live view
+            // names that exact allocation, and target/start/count are clamped
+            // to its current length. The compiled caller is suspended here.
+            unsafe {
+                std::ptr::copy(base.add(start), base.add(target), count);
+            }
+        }
+        true
+    }
+
+    /// Whether the exact Emscripten helper call can be inlined without running any
+    /// JavaScript during property lookup. Accessors, proxies and customized methods
+    /// stay on the ordinary JS call path, which also preserves their caller frames.
+    fn can_inline_emscripten_memcpy(
+        &self,
+        view: Value,
+        copy_within_atom: crate::bytecode::Atom,
+    ) -> bool {
+        let Some(Cell::TypedArray { buffer, kind, .. }) = self.heap.get(view) else {
+            return false;
+        };
+        if *kind != crate::heap::TypedArrayKind::Uint8
+            || self.typed_array_out_of_bounds(view)
+            || self.array_buffer_detached(*buffer)
+            || matches!(
+                self.heap.get(*buffer),
+                Some(Cell::ArrayBuffer {
+                    immutable: true,
+                    ..
+                })
+            )
+        {
+            return false;
+        }
+        self.data_property_without_getter(view, copy_within_atom)
+            .is_some_and(|method| {
+                matches!(
+                    self.heap.function(method),
+                    Some(FunctionRecord {
+                        kind: FunctionKind::Native(Native::Uint8ArrayCopyWithin),
+                        ..
+                    })
+                )
+            })
+    }
+
+    /// Looks up an own data property through ordinary object prototypes without
+    /// invoking accessors. A proxy or any accessor makes the result unknown.
+    fn data_property_without_getter(
+        &self,
+        object: Value,
+        atom: crate::bytecode::Atom,
+    ) -> Option<Value> {
+        let key = PropertyKey::string(atom);
+        let mut holder = object;
+        loop {
+            if matches!(self.heap.get(holder), Some(Cell::Proxy { .. })) {
+                return None;
+            }
+            if let Some(attributes) = self.property_attributes(holder, key) {
+                if attributes.accessor {
+                    return None;
+                }
+                return self.own_property(holder, atom);
+            }
+            holder = self.object_data(holder)?.proto();
+            if holder.is_null() {
+                return None;
+            }
+        }
+    }
+
     /// ToJSValue of an encoded Wasm value of type `ty`.
     fn wasm_to_js(
         &mut self,
@@ -1113,7 +1748,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         Ok(match value {
             WasmValue::I32(value) => Value::number(f64::from(value)),
-            WasmValue::I64(value) => self.heap.alloc(Cell::BigInt(value.to_string())),
+            WasmValue::I64(value) => self.heap.alloc(Cell::bigint(value.into())),
             WasmValue::F32(bits) => Value::number(f64::from(f32::from_bits(bits))),
             WasmValue::F64(bits) => Value::number(f64::from_bits(bits)),
             WasmValue::FuncRef(function) => self.wasm_js_function(function, None)?,
@@ -1205,7 +1840,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let descriptor = self.object();
         for &(name, text) in fields {
-            let value = self.heap.alloc(Cell::String(JsString::from_str(text)));
+            let value = self.heap.alloc_string(JsString::from_str(text));
             self.set_named(p, descriptor, name, value)?;
         }
         Ok(descriptor)

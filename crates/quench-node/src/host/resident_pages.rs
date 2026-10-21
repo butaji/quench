@@ -1,19 +1,13 @@
 //! Read-only file pages are clean: bootstrap and compilation fault in code and constant data
 //! that a script's run never touches again. Releasing them from the process after compilation
 //! keeps only what the run touches resident; a released page that is used again refaults from
-//! the page cache. Two ranges qualify: the executable's own read-only segments (headers,
-//! `.rodata`, `.eh_frame` and `.text`, from `__executable_start` to `etext`, linked at a fixed
-//! address with nothing relocated in them) and every library's code mapping. A library's
-//! read-only data mappings do not: their RELRO pages hold relocations the loader wrote.
+//! the page cache. Two kinds of segment qualify: the executable's read-only segments (headers,
+//! `.rodata`, `.eh_frame` and `.text`, linked at a fixed address with nothing relocated in
+//! them) and every library's code segment. A library's read-only data does not: its RELRO
+//! pages hold relocations the loader wrote.
 //!
 //! Faults on these mappings map only the touched page (`map_touched_pages_only`), so what stays
 //! resident is what bootstrap, compilation and the run touch, without their cached neighbours.
-
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-unsafe extern "C" {
-    static __executable_start: u8;
-    static etext: u8;
-}
 
 /// Marks the point where the entry has compiled and its run begins. It does nothing: profiling
 /// splits there (`valgrind --tool=callgrind --dump-before=quench_entry_compiled`), so the trained
@@ -32,27 +26,200 @@ const MAPS_PATH: &str = "/proc/self/maps";
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const CODE_MAPPING: &str = "r-xp";
 
+/// A release and the refaults of the code a run touches again after it cost about 1.2 ms
+/// (about 730 pages at 1.7 µs, the lodash npm scenario, x86_64 VM, 2026-10-19). Releases after
+/// library loads (`release_read_only_pages_after_load`) come at most once per this interval,
+/// which bounds that cost to about 1% of a run's time: loads that follow each other faster run
+/// the same loader and compiler code, which a release would only refault (semver scenario
+/// 926 -> 741 ms). Collections keep releasing at each boundary (`at_collection_boundary`):
+/// even a 10 ms interval there raised V8-v7 NavierStokes max RSS 5236 -> 5516 KiB.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const LOAD_RELEASE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// When the read-only pages were last released.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+static LAST_RELEASE: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+
+/// Releases the read-only pages after a library load unless they were released less than
+/// `LOAD_RELEASE_INTERVAL` ago.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+pub fn release_read_only_pages_after_load() {
+    let recent = LAST_RELEASE
+        .lock()
+        .ok()
+        .and_then(|last| *last)
+        .is_some_and(|last| last.elapsed() < LOAD_RELEASE_INTERVAL);
+    if !recent {
+        release_read_only_pages();
+    }
+}
+
 /// Unmaps the read-only pages above from the resident set; the next touch of each refaults it
 /// from its file.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub fn release_read_only_pages() {
-    // SAFETY: the linker defines both symbols at the bounds of the read-only segments, which
-    // are never written, so discarding their pages loses nothing.
-    unsafe {
-        let page = libc::sysconf(libc::_SC_PAGESIZE) as usize;
-        let start = &raw const __executable_start as usize;
-        let end = &raw const etext as usize;
-        let start = start - start % page;
-        let length = (end - start) - (end - start) % page;
-        libc::madvise(start as *mut libc::c_void, length, libc::MADV_DONTNEED);
+    if let Ok(mut last) = LAST_RELEASE.lock() {
+        *last = Some(std::time::Instant::now());
     }
-    for (start, end) in file_mappings(&[CODE_MAPPING]) {
-        // SAFETY: a private, read-only, executable file mapping is never written.
+    for (start, end) in read_only_segments() {
+        // SAFETY: each segment is a private file mapping that is never written, so discarding
+        // its pages loses nothing.
         unsafe {
             libc::madvise(start as *mut libc::c_void, end - start, libc::MADV_DONTNEED);
         }
     }
+    // Held while releasing, so no tracked mapping is unmapped meanwhile.
+    if let Ok(mappings) = TRACKED_MAPPINGS.lock() {
+        for &(start, length) in mappings.iter() {
+            // SAFETY: a tracked mapping is a live, read-only private file mapping.
+            unsafe {
+                libc::madvise(start as *mut libc::c_void, length, libc::MADV_DONTNEED);
+            }
+        }
+    }
 }
+
+/// Read-only file mappings the host made after start-up (compile-cache entries), as start
+/// and length, released with the segments above.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+static TRACKED_MAPPINGS: std::sync::Mutex<Vec<(usize, usize)>> = std::sync::Mutex::new(Vec::new());
+
+/// Treats the read-only private file mapping at `start` as the segments above: faults map
+/// only the touched page, and releases discard its pages. Call `untrack_read_only_mapping`
+/// before unmapping it.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+pub fn track_read_only_mapping(start: usize, length: usize) {
+    register_touched_pages_only(start, length);
+    if let Ok(mut mappings) = TRACKED_MAPPINGS.lock() {
+        mappings.push((start, length));
+    }
+}
+
+/// Unmaps a mapping `track_read_only_mapping` tracked, once no release can reach it.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+pub fn unmap_tracked_mapping(start: usize, length: usize) {
+    let mut mappings = TRACKED_MAPPINGS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    mappings.retain(|&mapping| mapping != (start, length));
+    // SAFETY: the caller owns the mapping, and the held lock keeps releases off it.
+    unsafe {
+        libc::munmap(start as *mut libc::c_void, length);
+    }
+}
+
+/// Releases the read-only pages and, besides them, the clean pages of the read-only data
+/// mappings, for a compilation's phase boundaries: a small program's peak is its entry
+/// compilation, when the parser's constants and the code generator's would be resident
+/// together (V8-v7 max RSS, bolted static x86_64, 2026-10-20: Crypto 3096 -> 2956 KiB,
+/// Richards 2512 -> 2368, RayTrace 2968 -> 2824). Collections do not page data out: a long
+/// run refaults its data between them, at its heap's peak (RegExp +60-150 KiB). A data page
+/// a relocation or an early write made private stays: `MADV_PAGEOUT` reclaims only what
+/// it can drop or swap.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+pub fn release_read_only_code_and_data() {
+    release_read_only_pages();
+    for (start, end) in file_mappings(&[DATA_MAPPING]) {
+        // SAFETY: paging out never changes a mapping's contents.
+        unsafe {
+            libc::madvise(start as *mut libc::c_void, end - start, libc::MADV_PAGEOUT);
+        }
+    }
+}
+
+#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+pub fn release_read_only_code_and_data() {}
+
+/// The page-aligned address ranges of the segments above, from the loader's own table: every
+/// non-writable segment of the executable, which the table lists without a name, and every
+/// library's non-writable code segment. The kernel's vDSO, whose name is not a path, is left
+/// out. Each segment is released on its own: one range across the executable's segments spans
+/// the unmapped page between them, and the kernel then rejects it. Releases run at every
+/// collection, and reading `MAPS_PATH` for them made the kernel format, and the host parse,
+/// the whole mapping table each time (about 4% of a `require('util')` run).
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn read_only_segments() -> Vec<(usize, usize)> {
+    unsafe extern "C" fn visit(
+        info: *mut libc::dl_phdr_info,
+        _size: libc::size_t,
+        segments: *mut libc::c_void,
+    ) -> libc::c_int {
+        // SAFETY: the loader passes a valid record for each object, and `segments` is the
+        // vector below for the duration of the call.
+        let (info, segments) = unsafe { (&*info, &mut *segments.cast::<Vec<(usize, usize)>>()) };
+        // SAFETY: a non-null name is a NUL-terminated string the loader owns.
+        let first = (!info.dlpi_name.is_null()).then(|| unsafe { *info.dlpi_name });
+        let executable = first == Some(0);
+        let library = first == Some(b'/' as libc::c_char);
+        if !(executable || library) || info.dlpi_phdr.is_null() {
+            return 0;
+        }
+        // SAFETY: `dlpi_phdr` points at `dlpi_phnum` program headers.
+        let headers = unsafe { std::slice::from_raw_parts(info.dlpi_phdr, info.dlpi_phnum.into()) };
+        let page = page_size();
+        segments.extend(
+            headers
+                .iter()
+                .filter(|header| {
+                    header.p_type == libc::PT_LOAD
+                        && header.p_flags & libc::PF_W == 0
+                        && (executable || header.p_flags & libc::PF_X != 0)
+                })
+                .map(|header| {
+                    let start = info.dlpi_addr as usize + header.p_vaddr as usize;
+                    let end = start + header.p_memsz as usize;
+                    (start - start % page, end.next_multiple_of(page))
+                }),
+        );
+        0
+    }
+    let mut segments = Vec::new();
+    // SAFETY: `visit` only reads the records and pushes onto `segments`.
+    unsafe {
+        libc::dl_iterate_phdr(Some(visit), (&raw mut segments).cast());
+    }
+    segments
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn page_size() -> usize {
+    // SAFETY: `sysconf` reads a constant of the system.
+    unsafe { libc::sysconf(libc::_SC_PAGESIZE) as usize }
+}
+
+/// Collections the host has seen, and the count at the last release before output.
+static COLLECTIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static COLLECTIONS_AT_OUTPUT_RELEASE: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(u64::MAX);
+
+/// Records a collection boundary, after which the next output releases the read-only pages.
+pub fn note_collection() {
+    COLLECTIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Releases the read-only pages before console output when a collection has run since the
+/// last such release: a run that prints its result once at the end touches the output code
+/// while its own code is resident, at the peak of its heap (V8-v7 RegExp max RSS, bolted
+/// static x86_64, 2026-10-19: 6316-6524 -> 6244-6300 KiB). Output in a loop that allocates
+/// little releases nothing more.
+pub fn release_before_output() {
+    use std::sync::atomic::Ordering::Relaxed;
+    let collections = COLLECTIONS.load(Relaxed);
+    if COLLECTIONS_AT_OUTPUT_RELEASE.swap(collections, Relaxed) != collections {
+        release_read_only_pages();
+    }
+}
+
+/// Returns the allocator's free pages to the system: a compilation frees its syntax tree
+/// and passes, whose pages would otherwise stay resident beside the program.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+pub fn release_free_heap_pages() {
+    // SAFETY: `malloc_trim` only advises the kernel about free allocator memory.
+    unsafe {
+        libc::malloc_trim(0);
+    }
+}
+
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+pub fn release_free_heap_pages() {}
 
 /// The address ranges of the process's file mappings (not the kernel's bracketed ones) whose
 /// permissions are one of `permissions`.
@@ -91,32 +258,21 @@ const DATA_MAPPING: &str = "r--p";
 /// without the feature the mappings keep fault-around.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub fn map_touched_pages_only() {
-    /// `struct uffdio_api` and `struct uffdio_register` from `<linux/userfaultfd.h>`.
+    /// The registration is per process; a second one would only open another descriptor.
+    static REGISTERED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if REGISTERED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    const UFFD_API: u64 = 0xaa;
+    const UFFD_USER_MODE_ONLY: libc::c_int = 1;
+    const UFFD_FEATURE_WP_ASYNC: u64 = 1 << 15;
+    /// `_IOWR(UFFDIO, _UFFDIO_API, struct uffdio_api)`.
+    const UFFDIO_API: libc::c_ulong = 0xc018_aa3f;
     #[repr(C)]
     struct UffdioApi {
         api: u64,
         features: u64,
         ioctls: u64,
-    }
-    #[repr(C)]
-    struct UffdioRegister {
-        start: u64,
-        len: u64,
-        mode: u64,
-        ioctls: u64,
-    }
-    const UFFD_API: u64 = 0xaa;
-    const UFFD_USER_MODE_ONLY: libc::c_int = 1;
-    const UFFD_FEATURE_WP_ASYNC: u64 = 1 << 15;
-    const UFFDIO_REGISTER_MODE_WP: u64 = 1 << 1;
-    /// `_IOWR(UFFDIO, _UFFDIO_API, struct uffdio_api)` and
-    /// `_IOWR(UFFDIO, _UFFDIO_REGISTER, struct uffdio_register)`.
-    const UFFDIO_API: libc::c_ulong = 0xc018_aa3f;
-    const UFFDIO_REGISTER: libc::c_ulong = 0xc020_aa00;
-    /// The registration is per process; a second one would only open another descriptor.
-    static REGISTERED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-    if REGISTERED.swap(true, std::sync::atomic::Ordering::Relaxed) {
-        return;
     }
     // SAFETY: the descriptor is fresh; both ioctls read and write only the structs passed.
     unsafe {
@@ -132,15 +288,45 @@ pub fn map_touched_pages_only() {
             libc::close(fd);
             return;
         }
-        for (start, end) in file_mappings(&[CODE_MAPPING, DATA_MAPPING]) {
-            let mut range = UffdioRegister {
-                start: start as u64,
-                len: (end - start) as u64,
-                mode: UFFDIO_REGISTER_MODE_WP,
-                ioctls: 0,
-            };
-            libc::ioctl(fd, UFFDIO_REGISTER, &mut range);
-        }
+        TOUCHED_PAGES_ONLY.store(fd, std::sync::atomic::Ordering::Relaxed);
+    }
+    for (start, end) in file_mappings(&[CODE_MAPPING, DATA_MAPPING]) {
+        register_touched_pages_only(start, end - start);
+    }
+}
+
+/// The userfaultfd descriptor `map_touched_pages_only` registers mappings with, or `NO_FD`.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+static TOUCHED_PAGES_ONLY: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(NO_FD);
+
+/// No userfaultfd descriptor: the kernel lacks it or start-up has not opened it.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const NO_FD: libc::c_int = -1;
+
+/// Registers the mapping at `start` for write protection, which turns off fault-around in it
+/// (`map_touched_pages_only`); nothing when no descriptor is open.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn register_touched_pages_only(start: usize, length: usize) {
+    /// `struct uffdio_register` from `<linux/userfaultfd.h>`.
+    #[repr(C)]
+    struct UffdioRegister {
+        start: u64,
+        len: u64,
+        mode: u64,
+        ioctls: u64,
+    }
+    const UFFDIO_REGISTER_MODE_WP: u64 = 1 << 1;
+    /// `_IOWR(UFFDIO, _UFFDIO_REGISTER, struct uffdio_register)`.
+    const UFFDIO_REGISTER: libc::c_ulong = 0xc020_aa00;
+    let fd = TOUCHED_PAGES_ONLY.load(std::sync::atomic::Ordering::Relaxed);
+    if fd == NO_FD {
+        return;
+    }
+    let mut range = UffdioRegister { start: start as u64, len: length as u64, mode: UFFDIO_REGISTER_MODE_WP, ioctls: 0 };
+    // SAFETY: the ioctl reads and writes only `range`; a failed registration leaves the
+    // mapping with fault-around.
+    unsafe {
+        libc::ioctl(fd, UFFDIO_REGISTER, &mut range);
     }
 }
 
@@ -148,4 +334,18 @@ pub fn map_touched_pages_only() {
 pub fn map_touched_pages_only() {}
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+pub fn track_read_only_mapping(_start: usize, _length: usize) {}
+
+#[cfg(all(unix, not(all(target_os = "linux", target_arch = "x86_64"))))]
+pub fn unmap_tracked_mapping(start: usize, length: usize) {
+    // SAFETY: the caller owns the mapping.
+    unsafe {
+        libc::munmap(start as *mut libc::c_void, length);
+    }
+}
+
+#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
 pub fn release_read_only_pages() {}
+
+#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+pub fn release_read_only_pages_after_load() {}

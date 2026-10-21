@@ -1,4 +1,4 @@
-use super::{Host, JsError, ResidualProgram, RootId, Value, Vm};
+use super::{Host, JsError, ResidualProgram, Value, Vm};
 use std::cmp::Ordering;
 
 const INITIAL_RUN_WIDTH: usize = 1;
@@ -59,22 +59,16 @@ where
 }
 
 impl<H: Host> Vm<H> {
+    /// The comparator's order of `left` and `right`, which the caller keeps reachable.
     pub(super) fn compare_sort_callback(
         &mut self,
         p: &ResidualProgram,
-        comparator: RootId,
-        left: RootId,
-        right: RootId,
+        comparator: Value,
+        left: Value,
+        right: Value,
     ) -> Result<Ordering, JsError> {
-        let comparator = self.heap.root_value(comparator).unwrap();
-        let left = self.heap.root_value(left).unwrap();
-        let right = self.heap.root_value(right).unwrap();
         let result = self.call_value(p, comparator, Value::UNDEFINED, &[left, right])?;
-        let result = self.heap.root(result);
-        let value = self.heap.root_value(result).unwrap();
-        let number = self.to_number(p, value);
-        self.heap.release_root(result);
-        let number = number?;
+        let number = self.with_call_roots([result], |vm| vm.to_number(p, result))?;
         Ok(if number < 0.0 {
             Ordering::Less
         } else if number > 0.0 {
