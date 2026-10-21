@@ -952,11 +952,12 @@ impl<H: Host> Vm<H> {
         &mut self,
         source: &JsString,
         flags: &str,
+        pattern: PatternValidity,
     ) -> Result<Rc<quench_regexp::Regex>, JsError> {
         if let Some(matcher) = self.regexp_matchers.find(source, flags) {
             return Ok(matcher);
         }
-        let matcher = Rc::new(Self::compile_regexp(source, flags)?);
+        let matcher = Rc::new(Self::compile_regexp(source, flags, pattern)?);
         self.regexp_matchers
             .insert(source, flags, Rc::clone(&matcher));
         Ok(matcher)
@@ -2130,7 +2131,7 @@ impl<H: Host> Vm<H> {
         flags: String,
         legacy_constructor: crate::heap::RegExpLegacyOwner,
     ) -> Result<Value, JsError> {
-        let matcher = self.cached_regexp_matcher(&source, &flags)?;
+        let matcher = self.cached_regexp_matcher(&source, &flags, PatternValidity::Unchecked)?;
         let flags = RegExpFlags::validated(&flags);
         self.regexp_from_matcher(prototype, source, flags, matcher, legacy_constructor)
     }
@@ -2161,7 +2162,7 @@ impl<H: Host> Vm<H> {
             None => {
                 let flags = self.heap.string(flags_text).expect("checked above").host_string().to_owned();
                 let matcher = self
-                    .cached_regexp_matcher(&source, &flags)
+                    .cached_regexp_matcher(&source, &flags, PatternValidity::EarlyChecked)
                     .map_err(|error| Rc::<str>::from(error.to_string()));
                 if !self
                     .programs
@@ -2276,7 +2277,7 @@ impl<H: Host> Vm<H> {
                     vm.regexp_initialization_strings(p, pattern, flags)?
                 };
 
-                let matcher = match vm.cached_regexp_matcher(&source, &flags) {
+                let matcher = match vm.cached_regexp_matcher(&source, &flags, PatternValidity::Unchecked) {
                     Ok(matcher) => matcher,
                     Err(error) => {
                         let message = error.to_string();
@@ -2837,13 +2838,18 @@ impl<H: Host> Vm<H> {
     pub(super) fn compile_regexp(
         source: &JsString,
         flags: &str,
+        pattern: PatternValidity,
     ) -> Result<quench_regexp::Regex, JsError> {
         quench_regexp::validate_flags(flags)
             .map_err(|error| JsError(format!("SyntaxError: {error}").into()))?;
         let parser_source =
             regexp_parser_source(source, flags.contains('u') || flags.contains('v'))?;
-        crate::compile::regexp::validate_pattern(&parser_source, flags)
-            .map_err(|error| JsError(format!("SyntaxError: {error}").into()))?;
+        // The matcher's compilation parses the pattern with the checks
+        // `validate_property_escapes` would parse it for.
+        if pattern == PatternValidity::Unchecked {
+            crate::compile::regexp::validate_pattern_text(&parser_source, flags)
+                .map_err(|error| JsError(format!("SyntaxError: {error}").into()))?;
+        }
         let regex = catch_unwind(AssertUnwindSafe(|| {
             quench_regexp::Regex::with_flags(&parser_source, quench_regexp::Flags::from(flags))
         }))
@@ -3244,4 +3250,13 @@ impl crate::snapshot::Snap for RegExpIntrinsics {
         };
         Ok(Self { constructor, prototype, legacy_input, legacy_match, result_template })
     }
+}
+
+/// What is known of a pattern's validity when its matcher is compiled. A literal's pattern
+/// passed its program's early errors (`compile::early::regexp_early_error`), and a snapshot's
+/// was compiled once already, so neither is validated again; any other pattern is.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum PatternValidity {
+    EarlyChecked,
+    Unchecked,
 }
