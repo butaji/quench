@@ -262,7 +262,7 @@ impl<H: Host> Vm<H> {
         let async_stack = native == Native::AsyncDisposableStack;
         let constructor = self.native_value(native);
         let prototype_atom = self.prototype_atom();
-        let candidate = self.get_property(p, new_target, prototype_atom)?;
+        let candidate = self.constructor_prototype_value(p, new_target)?;
         let prototype = if self.object_data(candidate).is_some() {
             candidate
         } else {

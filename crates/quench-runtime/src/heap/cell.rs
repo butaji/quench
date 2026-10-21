@@ -877,8 +877,9 @@ impl Native {
 
     /// Natives a lane `Call` makes in place from the running frame (`lane_call_native`):
     /// the string, RegExp and `Math` functions, the Array, Object, Reflect and JSON
-    /// functions, `String.fromCharCode` and `fromCodePoint`, the primitive conversions, the
-    /// keyed collection methods and embedder host functions, which read no caller state
+    /// functions, `String.fromCharCode` and `fromCodePoint`, the primitive conversions and
+    /// Number tests, `Function.prototype[@@hasInstance]`, the buffer and typed array views'
+    /// getters, the keyed collection methods and embedder host functions, which read no caller state
     /// beyond the frame's published PC and run guest code only through ordinary nested calls.
     pub(crate) fn runs_from_lane(self) -> bool {
         self.is_string_regexp_or_math()
@@ -918,6 +919,7 @@ impl Native {
                     | Self::ObjectGetOwnPropertyDescriptor
                     | Self::ObjectPrototypeHasOwnProperty
                     | Self::ReflectGet
+                    | Self::ReflectHas
                     | Self::ReflectSet
                     | Self::ReflectOwnKeys
                     | Self::ReflectDefineProperty
@@ -926,6 +928,22 @@ impl Native {
                     | Self::JsonStringify
                     | Self::JsonParse
                     | Self::NumberIsInteger
+                    | Self::NumberIsNaN
+                    | Self::NumberIsFinite
+                    | Self::NumberIsSafeInteger
+                    | Self::GlobalIsNaN
+                    | Self::GlobalIsFinite
+                    | Self::ObjectIs
+                    | Self::FunctionPrototypeHasInstance
+                    | Self::ArrayBufferIsView
+                    | Self::ArrayBufferSlice
+                    | Self::ArrayBufferTransfer
+                    | Self::ArrayBufferByteLengthGetter
+                    | Self::TypedArrayBufferGetter
+                    | Self::TypedArrayByteLengthGetter
+                    | Self::TypedArrayByteOffsetGetter
+                    | Self::TypedArrayLengthGetter
+                    | Self::TypedArrayToStringTag
                     | Self::ParseInt
                     | Self::StringFromCharCode
                     | Self::StringFromCodePoint
@@ -1005,6 +1023,61 @@ impl Native {
             self,
             Self::HostDone | Self::CreateRealm | Self::Boolean | Self::BigInt
         ) || self.is_function_native()
+    }
+
+    /// Natives a lane `new` constructs in place from the running frame
+    /// (`lane_construct_native`): the keyed collections, `Date`, `Promise`, `Object`,
+    /// `RegExp`, the buffers, typed arrays and errors and the primitive wrappers, whose
+    /// [[Construct]] reads no caller state beyond the frame's published PC and runs guest
+    /// code only through ordinary nested calls.
+    pub(crate) fn constructs_from_lane(self) -> bool {
+        self.is_typed_array_constructor()
+            || self.is_error_constructor()
+            || matches!(
+                self,
+                Self::Map
+                    | Self::Set
+                    | Self::WeakMap
+                    | Self::WeakSet
+                    | Self::Date
+                    | Self::Promise
+                    | Self::Object
+                    | Self::RegExp
+                    | Self::ArrayBuffer
+                    | Self::DataView
+                    | Self::Boolean
+                    | Self::Number
+                    | Self::String
+            )
+    }
+
+    /// Whether its [[Construct]] makes the object from the newTarget it is passed
+    /// (GetPrototypeFromConstructor), so the construction leaves its prototype as made.
+    pub(crate) fn constructs_from_new_target(self) -> bool {
+        self.is_typed_array_constructor()
+            || self.is_error_constructor()
+            || matches!(
+                self,
+                Self::Array
+                    | Self::ArrayBuffer
+                    | Self::SharedArrayBuffer
+                    | Self::RegExp
+                    | Self::Map
+                    | Self::Set
+                    | Self::WeakMap
+                    | Self::WeakSet
+                    | Self::WeakRef
+                    | Self::FinalizationRegistry
+                    | Self::DisposableStack
+                    | Self::AsyncDisposableStack
+                    | Self::ShadowRealm
+                    | Self::TemporalPlainDate
+                    | Self::TemporalPlainDateTime
+                    | Self::TemporalPlainMonthDay
+                    | Self::TemporalPlainYearMonth
+                    | Self::TemporalZonedDateTime
+                    | Self::TemporalInstant
+            )
     }
 
     pub(crate) fn is_error_constructor(self) -> bool {
@@ -2238,7 +2311,7 @@ impl Object {
         self.extras()?.private_elements.iter().find(|element| element.brand == brand)?.data
     }
     pub(crate) fn set_private_field(&mut self, brand: PrivateBrand, value: Value) -> bool {
-        let Some(element) = self.extras_mut().private_elements.iter_mut().find(|element| element.brand == brand && element.data.is_some()) else { return false; };
+        let Some(element) = self.extras_mut_existing().and_then(|extras| extras.private_elements.iter_mut().find(|element| element.brand == brand && element.data.is_some())) else { return false; };
         element.data = Some(value);
         true
     }

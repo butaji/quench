@@ -428,7 +428,20 @@ pub(crate) fn module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     let incoming_constructor = crate::host::shared_vm::commonjs::node_library_export(
         context, "http.js", "_http_incoming.js", "IncomingMessage",
     )?;
-    let incoming_data = context.array_rooted(&[incoming_constructor, emitter])?;
+    // One `_read` and `_destroy` serve every message: each finds its exchange under the
+    // host-private key its side records (`incoming::create`).
+    let server_exchange = context.private_symbol_rooted(Some("node:http:serverExchange"));
+    let client_exchange = context.private_symbol_rooted(Some("node:http:clientExchange"));
+    let exchange_keys = context.array_rooted(&[server_exchange, client_exchange])?;
+    let incoming_read = context.host_function_named_with_data(
+        crate::host::shared_vm::operation("httpIncomingRead"), "_read", exchange_keys,
+    )?;
+    let incoming_destroy = context.host_function_named_with_data(
+        crate::host::shared_vm::operation("httpIncomingDestroy"), "_destroy", exchange_keys,
+    )?;
+    let incoming_data = context.array_rooted(&[
+        incoming_constructor, emitter, incoming_read, incoming_destroy, server_exchange, client_exchange,
+    ])?;
     let incoming_factory = context.host_function_with_data(
         crate::host::shared_vm::operation("httpIncomingCreate"), incoming_data,
     )?;
@@ -1553,20 +1566,28 @@ pub(crate) fn response_finish(
         args.get(5).copied(),
         args.get(6).copied(),
     ) {
-        let message = context.object_rooted()?;
-        set(context, message, "request", request)?;
-        set(context, message, "response", response)?;
-        set(context, message, "server", server)?;
-        set(context, message, "socket", socket)?;
         let shared_state = context.host_mut().shared_state();
-        let result = {
+        // The finish message is made only for a channel with subscribers, as Node's server
+        // publishes it only then (`hasSubscribers`).
+        let subscribed = crate::modules::diagnostics_channel_shared_vm::channel_has_subscribers(
+            &shared_state.borrow(),
+            RESPONSE_FINISH_CHANNEL,
+        );
+        let result = if subscribed {
+            let message = context.object_rooted()?;
+            set(context, message, "request", request)?;
+            set(context, message, "response", response)?;
+            set(context, message, "server", server)?;
+            set(context, message, "socket", socket)?;
             let _scope =
                 crate::modules::async_hooks_shared_vm::enter_context(&shared_state, async_id);
             crate::modules::diagnostics_channel_shared_vm::publish_named(
                 context,
-                "http.server.response.finish",
+                RESPONSE_FINISH_CHANNEL,
                 message,
             )
+        } else {
+            Ok(())
         };
         for root in
             crate::modules::async_hooks_shared_vm::take_context_stores(&shared_state, async_id)
@@ -1577,6 +1598,9 @@ pub(crate) fn response_finish(
     }
     Ok(context.undefined())
 }
+
+/// The diagnostics channel a server's response finish publishes to.
+const RESPONSE_FINISH_CHANNEL: &str = "http.server.response.finish";
 
 /// The finalization callback of a collected response object: a finished response's host
 /// entry goes with it. An unfinished one stays until its socket closes.
