@@ -190,6 +190,9 @@ impl<H: Host> Vm<H> {
         before: bool,
     ) -> Result<(), JsError> {
         let Some(resource) = resource else { return Ok(()); };
+        if !self.host.observes_promise_job_boundaries() {
+            return Ok(());
+        }
         let mut context = NativeContext::new(self);
         H::promise_job_boundary(&mut context, resource, before)
             .map_err(|error| context.finish_error(error))
