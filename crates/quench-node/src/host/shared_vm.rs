@@ -1298,7 +1298,7 @@ impl quench_runtime::Host for NodeHost {
             return Ok(Some(quench_runtime::ModuleSource::text(name, source)));
         }
         let source = if extension == "json" {
-            String::from_utf8_lossy(&bytes).into_owned()
+            commonjs::source_text(&bytes).into_owned()
         } else {
             let kind = Self::source_kind(&path)?;
             if kind == quench_runtime::SourceKind::Module {
@@ -1312,7 +1312,7 @@ impl quench_runtime::Host for NodeHost {
                 );
                 source.push_str("export { __quenchModule as 'module.exports' };\n");
                 for (index, export) in
-                    commonjs_exports::names(&path, &String::from_utf8_lossy(&bytes))
+                    commonjs_exports::names(&path, &commonjs::source_text(&bytes))
                         .into_iter()
                         .enumerate()
                 {

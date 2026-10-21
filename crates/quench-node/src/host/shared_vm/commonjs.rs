@@ -166,23 +166,71 @@ fn package_type(package: std::path::PathBuf) -> PackageType {
     known
 }
 
+/// A source file's text, replacing invalid UTF-8 as Node's decoder does. Valid text, nearly
+/// every file, is checked by the standard library's faster validation and borrowed.
+pub(crate) fn source_text(bytes: &[u8]) -> std::borrow::Cow<'_, str> {
+    match std::str::from_utf8(bytes) {
+        Ok(text) => std::borrow::Cow::Borrowed(text),
+        Err(_) => String::from_utf8_lossy(bytes),
+    }
+}
+
 fn detect_source_kind(path: &Path) -> Result<quench_runtime::SourceKind, String> {
     let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
-    let text = String::from_utf8_lossy(&bytes);
+    let text = source_text(&bytes);
     let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
     let text = if text.starts_with("#!") {
         text.find('\n').map_or("", |newline| &text[newline..])
     } else { text };
+    // The goal follows from the text alone, which parsing it (twice, for a module) costs a
+    // whole compilation of: typescript.js (9 MB) was parsed on every load. It is kept in the
+    // compile cache, keyed by the exact text, as a compiled program is.
+    let entry = detected_kinds().entry(DETECTED_KIND_NAME, &[text]);
+    if let Some(kind) = entry.as_ref().and_then(|entry| entry.load()).and_then(|bytes| detected_kind_of(bytes.as_ref().as_ref())) {
+        return Ok(kind);
+    }
+    let kind = detect_text_kind(text);
+    if let Some(entry) = entry {
+        entry.store(&[detected_kind_byte(kind)]);
+    }
+    Ok(kind)
+}
+
+/// The compile-cache name a detected parse goal is kept under.
+const DETECTED_KIND_NAME: &str = "\0quench:detected-source-kind";
+
+/// The cache detected parse goals are kept in: this build's compile cache, read from the
+/// environment as the host's own is, since detection runs where no host is reachable.
+fn detected_kinds() -> &'static crate::host::compile_cache::CompileCache {
+    static CACHE: std::sync::OnceLock<crate::host::compile_cache::CompileCache> = std::sync::OnceLock::new();
+    CACHE.get_or_init(crate::host::compile_cache::CompileCache::from_environment)
+}
+
+/// Each parse goal's one-byte cache record.
+const DETECTED_KIND_BYTES: [(quench_runtime::SourceKind, u8); 2] =
+    [(quench_runtime::SourceKind::Script, 0), (quench_runtime::SourceKind::Module, 1)];
+
+fn detected_kind_byte(kind: quench_runtime::SourceKind) -> u8 {
+    DETECTED_KIND_BYTES.iter().find(|(known, _)| *known == kind).map(|(_, byte)| *byte).expect("every parse goal has a record")
+}
+
+fn detected_kind_of(bytes: &[u8]) -> Option<quench_runtime::SourceKind> {
+    let [byte] = bytes else { return None };
+    DETECTED_KIND_BYTES.iter().find(|(_, known)| known == byte).map(|(kind, _)| *kind)
+}
+
+/// Node's syntax detection of `text`: the CommonJS wrapper first, then ES module syntax.
+fn detect_text_kind(text: &str) -> quench_runtime::SourceKind {
     let wrapper = [WRAPPER_PREFIX, text, WRAPPER_SUFFIX].concat();
     if valid_source(&wrapper, oxc_span::SourceType::cjs()) {
-        return Ok(quench_runtime::SourceKind::Script);
+        return quench_runtime::SourceKind::Script;
     }
     let allocator = oxc_allocator::Allocator::default();
     let parsed = oxc_parser::Parser::new(&allocator, text, oxc_span::SourceType::unambiguous()).parse();
     if parsed.program.source_type.is_module() || valid_source(text, oxc_span::SourceType::mjs()) {
-        Ok(quench_runtime::SourceKind::Module)
+        quench_runtime::SourceKind::Module
     } else {
-        Ok(quench_runtime::SourceKind::Script)
+        quench_runtime::SourceKind::Script
     }
 }
 
