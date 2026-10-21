@@ -118,7 +118,7 @@ pub(super) fn region_start(encoding: &[u8]) -> Result<usize, String> {
 /// program valid, as this build's compiler output.
 pub(super) fn decode_trusted_program(bytes: super::KeptBytes) -> Result<super::ResidualProgram, String> {
     let encoding = sealed_encoding_length(bytes.as_ref().as_ref())?;
-    decode_program(&bytes, encoding, None)
+    decode_program(&bytes, encoding, ReadAtoms::Program, None)
 }
 
 /// The length of a sealed encoding without its checksum, when the checksum holds over its
@@ -144,7 +144,8 @@ fn compact_checksum(bytes: &[u8]) -> u64 {
 }
 
 fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding) -> (Vec<u8>, Vec<u32>) {
-    let compact = matches!(atoms, AtomEncoding::Compact(_));
+    // A compact or shared encoding leaves the source out: its reader supplies the text.
+    let compact = matches!(atoms, AtomEncoding::Compact(_) | AtomEncoding::Shared);
     let mut out = BinaryWriter::new();
     out.bytes.extend_from_slice(RESIDUAL_MAGIC);
     out.u64(super::ResidualProgram::RUNTIME_ABI_FINGERPRINT);
@@ -160,12 +161,7 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding) -> (Vec
         out.u32(source.line_offset);
         out.u32(source.column_offset);
     }
-    out.u32(program.module_requests.len() as u32);
-    for request in &program.module_requests {
-        out.string(&request.source);
-        out.u8(request.phase.binary_tag());
-        write_optional_string(&mut out, request.module_type.as_deref());
-    }
+    write_module_requests(&mut out, &program.module_requests);
     out.u32(program.module_imports.len() as u32);
     for import in &program.module_imports {
         out.string(&import.source);
@@ -180,42 +176,7 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding) -> (Vec
         }
         out.string(&import.local);
     }
-    match &program.module_link_plan {
-        None => out.u8(MODULE_LINK_PLAN_NONE),
-        Some(plan) => {
-            out.u8(MODULE_LINK_PLAN_SOME);
-            out.u32(plan.locals.len() as u32);
-            for (local, exported) in &plan.locals {
-                out.string(local);
-                out.string(exported);
-            }
-            out.u32(plan.hoisted_functions.len() as u32);
-            for (binding, function) in &plan.hoisted_functions {
-                out.string(binding);
-                out.string(function);
-            }
-            out.u32(plan.reexports.len() as u32);
-            for reexport in &plan.reexports {
-                out.u8(reexport.kind().binary_tag());
-                match reexport {
-                    ModuleReexport::Named {
-                        source,
-                        imported,
-                        exported,
-                    } => {
-                        out.string(source);
-                        out.string(imported);
-                        out.string(exported);
-                    }
-                    ModuleReexport::Star { source } => out.string(source),
-                    ModuleReexport::Namespace { source, exported } => {
-                        out.string(source);
-                        out.string(exported);
-                    }
-                }
-            }
-        }
-    }
+    write_module_link_plan(&mut out, program.module_link_plan.as_ref());
     let mut header = out;
     let mut out = BinaryWriter::with_atoms(atoms);
     out.u32(program.constants.len() as u32);
@@ -338,6 +299,10 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding) -> (Vec
             }
             compact.order
         }
+        AtomEncoding::Shared => {
+            header.u32(program.atoms.len() as u32);
+            Vec::new()
+        }
     };
     header.bytes.extend_from_slice(&out.bytes);
     header.bytes.extend_from_slice(&region);
@@ -348,7 +313,7 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding) -> (Vec
 pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProgram, String> {
     let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
     let length = bytes.len();
-    let program = decode_program(&(std::rc::Rc::new(bytes) as super::KeptBytes), length, None)?;
+    let program = decode_program(&(std::rc::Rc::new(bytes) as super::KeptBytes), length, ReadAtoms::Program, None)?;
     program.validate()?;
     Ok(program)
 }
@@ -363,24 +328,51 @@ pub(super) fn decode_compact_program(
     text: super::SourceText,
 ) -> Result<super::ResidualProgram, String> {
     let encoding = sealed_encoding_length(bytes.as_ref().as_ref())?;
-    decode_program(&bytes, encoding, Some((intern, text)))
+    decode_program(&bytes, encoding, ReadAtoms::Compact(intern), Some(text))
+}
+
+/// A snapshot's encoding of `program` (`crate::snapshot`): the program's own atom ids, which
+/// its VM's restored atom table keeps, and no source text, which the snapshot writes apart.
+pub(super) fn encode_snapshot_program(program: &super::ResidualProgram) -> Vec<u8> {
+    sealed(encode_program(program, AtomEncoding::Shared).0)
+}
+
+/// `encode_snapshot_program`'s bytes, with `text` as the source; the caller gives the program
+/// its VM's atom table, as long as the returned count.
+pub(super) fn decode_snapshot_program(
+    bytes: super::KeptBytes,
+    text: Option<super::SourceText>,
+) -> Result<(super::ResidualProgram, usize), String> {
+    let encoding = sealed_encoding_length(bytes.as_ref().as_ref())?;
+    let mut atom_count = 0;
+    let program = decode_program(&bytes, encoding, ReadAtoms::Shared(&mut atom_count), text)?;
+    Ok((program, atom_count))
+}
+
+/// How a decoder reads atoms (`AtomEncoding`).
+enum ReadAtoms<'a> {
+    /// The table, in the program's ids.
+    Program,
+    /// A compact table, whose names `intern` gives the reader's ids.
+    Compact(&'a mut dyn FnMut(&str) -> u32),
+    /// Only the length of the table the program shares with its reader, written here.
+    Shared(&'a mut usize),
 }
 
 /// Decodes the encoding in the first `length` bytes of `encoded`, which a program with
-/// deferred records keeps: their region is read only as each decodes.
+/// deferred records keeps: their region is read only as each decodes. `elided` is the
+/// source text an encoding left out.
 fn decode_program(
     encoded: &super::KeptBytes,
     length: usize,
-    compact: Option<(&mut dyn FnMut(&str) -> u32, super::SourceText)>,
+    mut read_atoms: ReadAtoms<'_>,
+    elided: Option<super::SourceText>,
 ) -> Result<super::ResidualProgram, String> {
     let encoding = encoded.as_ref().as_ref().get(..length).ok_or("truncated residual")?;
     let region = region_start(encoding)?;
     let region_length = encoding.len() - size_of::<u32>() - region;
     let bytes = &encoding[..region];
-    let (mut intern, mut elided) = match compact {
-        Some((intern, text)) => (Some(intern), Some(text)),
-        None => (None, None),
-    };
+    let mut elided = elided;
     let mut input = BinaryReader::new(bytes);
     input.magic(RESIDUAL_MAGIC)?;
     let abi = input.u64()?;
@@ -411,17 +403,7 @@ fn decode_program(
         }),
         None => None,
     };
-    let module_requests = input.list(|input| {
-        let source = input.string()?;
-        let phase = ModuleRequestPhase::from_binary_tag(input.u8()?)
-            .ok_or_else(|| "invalid residual module request phase".to_string())?;
-        let module_type = read_optional_string(input)?;
-        Ok(ModuleRequest {
-            source,
-            phase,
-            module_type,
-        })
-    })?;
+    let module_requests = read_module_requests(&mut input)?;
     let module_imports = input.list(|input| {
         let source = input.string()?;
         let phase = ModuleRequestPhase::from_binary_tag(input.u8()?)
@@ -442,35 +424,14 @@ fn decode_program(
             local,
         })
     })?;
-    let module_link_plan = match input.u8()? {
-        MODULE_LINK_PLAN_NONE => None,
-        MODULE_LINK_PLAN_SOME => Some(ModuleLinkPlan {
-            locals: input.list(|input| Ok((input.string()?, input.string()?)))?,
-            hoisted_functions: input.list(|input| Ok((input.string()?, input.string()?)))?,
-            reexports: input.list(|input| {
-                let kind = ModuleReexportKind::from_binary_tag(input.u8()?)
-                    .ok_or_else(|| "invalid residual module re-export kind".to_string())?;
-                Ok(match kind {
-                    ModuleReexportKind::Named => ModuleReexport::Named {
-                        source: input.string()?,
-                        imported: input.string()?,
-                        exported: input.string()?,
-                    },
-                    ModuleReexportKind::Star => ModuleReexport::Star {
-                        source: input.string()?,
-                    },
-                    ModuleReexportKind::Namespace => ModuleReexport::Namespace {
-                        source: input.string()?,
-                        exported: input.string()?,
-                    },
-                })
-            })?,
-        }),
-        _ => return Err("invalid residual module link plan tag".into()),
-    };
-    let atoms = match intern.as_mut() {
-        None => input.strings()?,
-        Some(intern) => {
+    let module_link_plan = read_module_link_plan(&mut input)?;
+    let atoms = match &mut read_atoms {
+        ReadAtoms::Program => input.strings()?,
+        ReadAtoms::Shared(count) => {
+            **count = input.u32()? as usize;
+            AtomTable::default()
+        }
+        ReadAtoms::Compact(intern) => {
             let count = input.u32()? as usize;
             let mut ids = Vec::with_capacity(count);
             for _ in 0..count {
@@ -1155,6 +1116,9 @@ const ROOT_FUNCTION: usize = 0;
 enum AtomEncoding {
     Program,
     Compact(CompactAtoms),
+    /// The program's own ids, which name its reader's atoms too: a snapshot's programs share
+    /// their VM's atom table, so only its length is written (`encode_snapshot_program`).
+    Shared,
 }
 
 #[derive(Default)]
@@ -1169,7 +1133,7 @@ impl BinaryWriter {
     fn with_atoms(atoms: AtomEncoding) -> Self { Self { bytes: Vec::new(), atoms } }
     fn atom(&mut self, atom: u32) {
         let encoded = match &mut self.atoms {
-            AtomEncoding::Program => atom,
+            AtomEncoding::Program | AtomEncoding::Shared => atom,
             AtomEncoding::Compact(compact) => *compact.positions.entry(atom).or_insert_with(|| {
                 compact.order.push(atom);
                 compact.order.len() as u32 - 1
@@ -1312,4 +1276,128 @@ fn read_optional_string(input: &mut BinaryReader<'_>) -> Result<Option<String>, 
         OPTIONAL_STRING_SOME => input.string().map(Some),
         _ => Err("invalid optional residual string".into()),
     }
+}
+
+fn write_module_requests(out: &mut BinaryWriter, requests: &[ModuleRequest]) {
+    out.u32(requests.len() as u32);
+    for request in requests {
+        out.string(&request.source);
+        out.u8(request.phase.binary_tag());
+        write_optional_string(out, request.module_type.as_deref());
+    }
+}
+
+fn read_module_requests(input: &mut BinaryReader<'_>) -> Result<Vec<ModuleRequest>, String> {
+    input.list(|input| {
+        let source = input.string()?;
+        let phase = ModuleRequestPhase::from_binary_tag(input.u8()?)
+            .ok_or_else(|| "invalid residual module request phase".to_string())?;
+        let module_type = read_optional_string(input)?;
+        Ok(ModuleRequest { source, phase, module_type })
+    })
+}
+
+fn write_module_link_plan(out: &mut BinaryWriter, plan: Option<&ModuleLinkPlan>) {
+    let Some(plan) = plan else {
+        out.u8(MODULE_LINK_PLAN_NONE);
+        return;
+    };
+    out.u8(MODULE_LINK_PLAN_SOME);
+    out.u32(plan.locals.len() as u32);
+    for (local, exported) in &plan.locals {
+        out.string(local);
+        out.string(exported);
+    }
+    out.u32(plan.hoisted_functions.len() as u32);
+    for (binding, function) in &plan.hoisted_functions {
+        out.string(binding);
+        out.string(function);
+    }
+    out.u32(plan.reexports.len() as u32);
+    for reexport in &plan.reexports {
+        out.u8(reexport.kind().binary_tag());
+        match reexport {
+            ModuleReexport::Named { source, imported, exported } => {
+                out.string(source);
+                out.string(imported);
+                out.string(exported);
+            }
+            ModuleReexport::Star { source } => out.string(source),
+            ModuleReexport::Namespace { source, exported } => {
+                out.string(source);
+                out.string(exported);
+            }
+        }
+    }
+}
+
+fn read_module_link_plan(input: &mut BinaryReader<'_>) -> Result<Option<ModuleLinkPlan>, String> {
+    Ok(match input.u8()? {
+        MODULE_LINK_PLAN_NONE => None,
+        MODULE_LINK_PLAN_SOME => Some(ModuleLinkPlan {
+            locals: input.list(|input| Ok((input.string()?, input.string()?)))?,
+            hoisted_functions: input.list(|input| Ok((input.string()?, input.string()?)))?,
+            reexports: input.list(|input| {
+                let kind = ModuleReexportKind::from_binary_tag(input.u8()?)
+                    .ok_or_else(|| "invalid residual module re-export kind".to_string())?;
+                Ok(match kind {
+                    ModuleReexportKind::Named => ModuleReexport::Named {
+                        source: input.string()?,
+                        imported: input.string()?,
+                        exported: input.string()?,
+                    },
+                    ModuleReexportKind::Star => ModuleReexport::Star { source: input.string()? },
+                    ModuleReexportKind::Namespace => ModuleReexport::Namespace {
+                        source: input.string()?,
+                        exported: input.string()?,
+                    },
+                })
+            })?,
+        }),
+        _ => return Err("invalid residual module link plan tag".into()),
+    })
+}
+
+/// A `StaticModuleAnalysis`'s tag: what its text says.
+const ANALYSIS_UNBOUNDED: u8 = 0;
+const ANALYSIS_EARLY_ERROR: u8 = 1;
+const ANALYSIS_PLAN: u8 = 2;
+
+/// A static module analysis as bytes, which the host's compile cache keeps for its text.
+pub(crate) fn encode_static_module_analysis(analysis: &crate::compile::StaticModuleAnalysis) -> Vec<u8> {
+    let mut out = BinaryWriter::new();
+    match analysis {
+        crate::compile::StaticModuleAnalysis { early_error: Some(message), .. } => {
+            out.u8(ANALYSIS_EARLY_ERROR);
+            out.string(message);
+        }
+        crate::compile::StaticModuleAnalysis { early_error: None, plan: Some(plan) } => {
+            out.u8(ANALYSIS_PLAN);
+            write_module_requests(&mut out, &plan.requests);
+            write_module_link_plan(&mut out, plan.link_plan.as_ref());
+            out.u8(u8::from(plan.has_top_level_await));
+        }
+        crate::compile::StaticModuleAnalysis { early_error: None, plan: None } => out.u8(ANALYSIS_UNBOUNDED),
+    }
+    out.bytes
+}
+
+pub(crate) fn decode_static_module_analysis(bytes: &[u8]) -> Result<crate::compile::StaticModuleAnalysis, String> {
+    let mut input = BinaryReader::new(bytes);
+    let analysis = match input.u8()? {
+        ANALYSIS_UNBOUNDED => crate::compile::StaticModuleAnalysis { early_error: None, plan: None },
+        ANALYSIS_EARLY_ERROR => crate::compile::StaticModuleAnalysis { early_error: Some(input.string()?), plan: None },
+        ANALYSIS_PLAN => {
+            let requests = read_module_requests(&mut input)?;
+            let link_plan = read_module_link_plan(&mut input)?;
+            let has_top_level_await = input.flag("top-level await")?;
+            crate::compile::StaticModuleAnalysis {
+                early_error: None,
+                plan: Some(crate::compile::StaticModulePlan { link_plan, requests, has_top_level_await }),
+            }
+        }
+        _ => return Err("invalid static module analysis tag".into()),
+    };
+    input.finish()?;
+    Ok(analysis)
 }

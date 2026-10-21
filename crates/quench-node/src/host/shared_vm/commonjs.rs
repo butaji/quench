@@ -17,7 +17,7 @@ fn is_bare_specifier(specifier: &str) -> bool {
 }
 
 /// The require resolver: each ancestor's `node_modules`, then Node's global paths.
-pub(super) fn commonjs_resolver() -> oxc_resolver::Resolver {
+fn new_commonjs_resolver() -> oxc_resolver::Resolver {
     let modules = std::iter::once(NODE_MODULES.to_owned())
         .chain(
             crate::modules::module_shared_vm::global_paths()
@@ -31,6 +31,31 @@ pub(super) fn commonjs_resolver() -> oxc_resolver::Resolver {
         condition_names: vec!["node".into(), "require".into(), "default".into()],
         modules,
         ..Default::default()
+    })
+}
+
+thread_local! {
+    /// The CommonJS resolver, kept for the thread as Node keeps `Module._pathCache` and its
+    /// package config reader for the process: its cache holds each path's metadata and
+    /// `package.json`, which a resolver made per require read again (undici: its
+    /// `package.json` 309 times).
+    static COMMONJS_RESOLVER: oxc_resolver::Resolver = new_commonjs_resolver();
+}
+
+pub(super) fn with_commonjs_resolver<R>(use_resolver: impl FnOnce(&oxc_resolver::Resolver) -> R) -> R {
+    COMMONJS_RESOLVER.with(use_resolver)
+}
+
+/// Resolves through a kept resolver. One that finds nothing clears its cache and resolves
+/// again, so a file created since a lookup cached its absence is found: Node keeps resolved
+/// requests, never failed ones.
+pub(super) fn resolve_kept<T, E>(
+    resolver: &oxc_resolver::Resolver,
+    resolve: impl Fn(&oxc_resolver::Resolver) -> Result<T, E>,
+) -> Result<T, E> {
+    resolve(resolver).or_else(|_| {
+        resolver.clear_cache();
+        resolve(resolver)
     })
 }
 
@@ -69,8 +94,7 @@ pub(crate) fn entry_path(path: &Path) -> Result<PathBuf, String> {
     if let Some(path) = exact_file_path(&cwd, &path.to_string_lossy()) {
         return std::fs::canonicalize(path).map_err(|error| error.to_string());
     }
-    commonjs_resolver()
-        .resolve(&cwd, &path.to_string_lossy())
+    with_commonjs_resolver(|resolver| resolve_kept(resolver, |resolver| resolver.resolve(&cwd, &path.to_string_lossy())))
         .map(|resolution| resolution.full_path())
         .map_err(|error| error.to_string())
 }
@@ -92,15 +116,23 @@ fn inline_directory(context: &mut Context<'_>) -> Result<PathBuf, RootedError> {
 
 /// Node's explicit extension/package parse-goal policy, before guest execution.
 pub(crate) fn source_kind(path: &Path) -> Result<quench_runtime::SourceKind, String> {
+    // Only a `.js` or extensionless file asks its package scope, which is its real path's.
+    if matches!(path.extension().and_then(|extension| extension.to_str()), Some("js") | None) {
+        let path = std::fs::canonicalize(path).map_err(|error| error.to_string())?;
+        return source_kind_of_real(&path);
+    }
+    source_kind_of_real(path)
+}
+
+/// `source_kind` of a path that is already its real path, as a module the loader resolved.
+pub(crate) fn source_kind_of_real(path: &Path) -> Result<quench_runtime::SourceKind, String> {
     match path.extension().and_then(|extension| extension.to_str()) {
         // Node's `wasm` format is an ES module (`esm_wasm`).
         Some("mjs" | "wasm") => return Ok(quench_runtime::SourceKind::Module),
-        Some("cjs") => return Ok(quench_runtime::SourceKind::Script),
-        Some("json" | "node") => return Ok(quench_runtime::SourceKind::Script),
+        Some("cjs" | "json" | "node") => return Ok(quench_runtime::SourceKind::Script),
         Some(extension) if extension != "js" => return detect_source_kind(path),
         _ => {}
     }
-    let path = std::fs::canonicalize(path).map_err(|error| error.to_string())?;
     // Package scope is a filesystem/JSON question, not another resolution of
     // this already-resolved file. In particular, do not build a resolver cache
     // (with parsed exports maps) for every source-kind query.
@@ -133,13 +165,14 @@ type PackageType = Result<Option<Option<quench_runtime::SourceKind>>, String>;
 thread_local! {
     /// Each `package.json` is read once per thread, as Node's package config reader caches
     /// each file it reads; a package with many modules (date-fns: 316 imports under one
-    /// 199 KB `package.json`) otherwise parsed it again for every module.
-    static PACKAGE_TYPES: std::cell::RefCell<std::collections::HashMap<std::path::PathBuf, PackageType>> =
+    /// 199 KB `package.json`) otherwise parsed it again for every module. Keyed by the
+    /// path's text: `Path`'s own hash walks its components.
+    static PACKAGE_TYPES: std::cell::RefCell<rustc_hash::FxHashMap<std::ffi::OsString, PackageType>> =
         Default::default();
 }
 
 fn package_type(package: std::path::PathBuf) -> PackageType {
-    if let Some(known) = PACKAGE_TYPES.with(|types| types.borrow().get(&package).cloned()) {
+    if let Some(known) = PACKAGE_TYPES.with(|types| types.borrow().get(package.as_os_str()).cloned()) {
         return known;
     }
     let read = || -> PackageType {
@@ -162,27 +195,76 @@ fn package_type(package: std::path::PathBuf) -> PackageType {
         }
     };
     let known = read();
-    PACKAGE_TYPES.with(|types| types.borrow_mut().insert(package, known.clone()));
+    PACKAGE_TYPES.with(|types| types.borrow_mut().insert(package.into_os_string(), known.clone()));
     known
+}
+
+/// A source file's text, replacing invalid UTF-8 as Node's decoder does. Valid text, nearly
+/// every file, is checked by the standard library's faster validation and borrowed.
+pub(crate) fn source_text(bytes: &[u8]) -> std::borrow::Cow<'_, str> {
+    match std::str::from_utf8(bytes) {
+        Ok(text) => std::borrow::Cow::Borrowed(text),
+        Err(_) => String::from_utf8_lossy(bytes),
+    }
 }
 
 fn detect_source_kind(path: &Path) -> Result<quench_runtime::SourceKind, String> {
     let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
-    let text = String::from_utf8_lossy(&bytes);
+    let text = source_text(&bytes);
     let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
     let text = if text.starts_with("#!") {
         text.find('\n').map_or("", |newline| &text[newline..])
     } else { text };
+    // The goal follows from the text alone, which parsing it (twice, for a module) costs a
+    // whole compilation of: typescript.js (9 MB) was parsed on every load. It is kept in the
+    // compile cache, keyed by the exact text, as a compiled program is.
+    let entry = text_facts_cache().entry(DETECTED_KIND_NAME, &[text]);
+    if let Some(kind) = entry.as_ref().and_then(|entry| entry.load()).and_then(|bytes| detected_kind_of(bytes.as_ref().as_ref())) {
+        return Ok(kind);
+    }
+    let kind = detect_text_kind(text);
+    if let Some(entry) = entry {
+        entry.store(&[detected_kind_byte(kind)]);
+    }
+    Ok(kind)
+}
+
+/// The compile-cache name a detected parse goal is kept under.
+const DETECTED_KIND_NAME: &str = "\0quench:detected-source-kind";
+
+/// The cache facts derived from a file's text alone are kept in (its detected parse goal,
+/// its static CommonJS exports): this build's compile cache, read from the environment as
+/// the host's own is, since they are derived where no host is reachable.
+pub(super) fn text_facts_cache() -> &'static crate::host::compile_cache::CompileCache {
+    static CACHE: std::sync::OnceLock<crate::host::compile_cache::CompileCache> = std::sync::OnceLock::new();
+    CACHE.get_or_init(crate::host::compile_cache::CompileCache::from_environment)
+}
+
+/// Each parse goal's one-byte cache record.
+const DETECTED_KIND_BYTES: [(quench_runtime::SourceKind, u8); 2] =
+    [(quench_runtime::SourceKind::Script, 0), (quench_runtime::SourceKind::Module, 1)];
+
+fn detected_kind_byte(kind: quench_runtime::SourceKind) -> u8 {
+    DETECTED_KIND_BYTES.iter().find(|(known, _)| *known == kind).map(|(_, byte)| *byte).expect("every parse goal has a record")
+}
+
+fn detected_kind_of(bytes: &[u8]) -> Option<quench_runtime::SourceKind> {
+    let [byte] = bytes else { return None };
+    DETECTED_KIND_BYTES.iter().find(|(_, known)| known == byte).map(|(kind, _)| *kind)
+}
+
+/// Node's syntax detection of `text`: the CommonJS wrapper first, then ES module syntax.
+fn detect_text_kind(text: &str) -> quench_runtime::SourceKind {
     let wrapper = [WRAPPER_PREFIX, text, WRAPPER_SUFFIX].concat();
     if valid_source(&wrapper, oxc_span::SourceType::cjs()) {
-        return Ok(quench_runtime::SourceKind::Script);
+        return quench_runtime::SourceKind::Script;
     }
     let allocator = oxc_allocator::Allocator::default();
     let parsed = oxc_parser::Parser::new(&allocator, text, oxc_span::SourceType::unambiguous()).parse();
     if parsed.program.source_type.is_module() || valid_source(text, oxc_span::SourceType::mjs()) {
-        Ok(quench_runtime::SourceKind::Module)
+        quench_runtime::SourceKind::Module
     } else {
-        Ok(quench_runtime::SourceKind::Script)
+        quench_runtime::SourceKind::Script
     }
 }
 
@@ -290,6 +372,15 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
         }
         context.seal_startup_intrinsics();
     }
+    if let Some(kind) = context.host_mut().building_snapshot {
+        return crate::host::startup_snapshot::preload(context, kind);
+    }
+    finish_initialize(context)
+}
+
+/// The part of `initialize` after the startup snapshot point (`startup_snapshot`): what
+/// this process's options, preloads and entry install.
+pub(super) fn finish_initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     context.scoped(crate::modules::process_shared_vm::initialize_warning_policy)?;
     context.scoped(crate::modules::report_configuration_shared_vm::initialize_signal)?;
     context.scoped(crate::modules::worker_threads_shared_vm::initialize_process_owner)?;
@@ -1400,45 +1491,6 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ),
     ("_http_server", BuiltinModule::Internal("_http_server")),
     ("node:_http_server", BuiltinModule::Internal("_http_server")),
-    ("_stream_duplex", BuiltinModule::Internal("_stream_duplex")),
-    (
-        "node:_stream_duplex",
-        BuiltinModule::Internal("_stream_duplex"),
-    ),
-    (
-        "_stream_passthrough",
-        BuiltinModule::Internal("_stream_passthrough"),
-    ),
-    (
-        "node:_stream_passthrough",
-        BuiltinModule::Internal("_stream_passthrough"),
-    ),
-    (
-        "_stream_readable",
-        BuiltinModule::Internal("_stream_readable"),
-    ),
-    (
-        "node:_stream_readable",
-        BuiltinModule::Internal("_stream_readable"),
-    ),
-    (
-        "_stream_transform",
-        BuiltinModule::Internal("_stream_transform"),
-    ),
-    (
-        "node:_stream_transform",
-        BuiltinModule::Internal("_stream_transform"),
-    ),
-    ("_stream_wrap", BuiltinModule::Internal("_stream_wrap")),
-    ("node:_stream_wrap", BuiltinModule::Internal("_stream_wrap")),
-    (
-        "_stream_writable",
-        BuiltinModule::Internal("_stream_writable"),
-    ),
-    (
-        "node:_stream_writable",
-        BuiltinModule::Internal("_stream_writable"),
-    ),
     ("_tls_common", BuiltinModule::Internal("_tls_common")),
     ("node:_tls_common", BuiltinModule::Internal("_tls_common")),
     ("_tls_wrap", BuiltinModule::Internal("_tls_wrap")),
@@ -1851,7 +1903,16 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             load(context, &root.join("lib/_http_incoming.js"), Some(parent), EntryGoal::CommonJs)
         }
         BuiltinModule::Internal("dns/promises") => node_library_module(context, "dns.js", "dns/promises.js"),
-        BuiltinModule::Internal(_) => context.object_rooted(),
+        // Node's `_http_*` modules build on its `http_parser` binding, which the native `http`
+        // module does not use; until they are projected from it they stay empty.
+        BuiltinModule::Internal(
+            "_http_agent" | "_http_client" | "_http_common" | "_http_outgoing" | "_http_server",
+        ) => context.object_rooted(),
+        // Every other such builtin is Node's own library module of that name.
+        BuiltinModule::Internal(name) => {
+            let relative = format!("{}.js", name.strip_prefix("node:").unwrap_or(name));
+            node_library_module(context, &relative, &relative)
+        }
         BuiltinModule::Fs => crate::modules::fs_shared_vm::module(context),
         BuiltinModule::InternalUrl => {
             // Node's bootstrap (exposed-window-or-worker.js) installs `URL.createObjectURL`
@@ -2139,23 +2200,47 @@ fn resolve_filename_in(
     } else {
         (lookup.map_or_else(|| vec![directory], <[PathBuf]>::to_vec), specifier.to_owned())
     };
-    let resolver = commonjs_resolver();
-    let mut outcome = Err(oxc_resolver::ResolveError::NotFound(resolved_specifier.clone()));
-    let mut base = bases.first().map_or(Path::new("."), PathBuf::as_path);
-    for directory in &bases {
-        base = directory;
-        if let Some(path) = exact_file_path(base, &resolved_specifier) {
-            return std::fs::canonicalize(path).map_err(|error| RootedError::host(error.to_string()));
+    // Each base in order: an existing explicit file, else the resolver's answer. The first
+    // that is not "not found" decides, as does the last base's; a failure keeps its base.
+    let resolve_in_bases = |resolver: &oxc_resolver::Resolver| {
+        let mut failure = (
+            bases.first().map_or_else(|| PathBuf::from("."), PathBuf::clone),
+            oxc_resolver::ResolveError::NotFound(resolved_specifier.clone()),
+        );
+        for directory in &bases {
+            if let Some(path) = exact_file_path(directory, &resolved_specifier) {
+                return Ok(Err(path));
+            }
+            match resolver.resolve(directory, &resolved_specifier) {
+                Ok(resolution) => return Ok(Ok(resolution)),
+                Err(error @ oxc_resolver::ResolveError::NotFound(_)) => failure = (directory.clone(), error),
+                Err(error) => return Err((directory.clone(), error)),
+            }
         }
-        outcome = resolver.resolve(base, &resolved_specifier);
-        if !matches!(outcome, Err(oxc_resolver::ResolveError::NotFound(_))) {
-            break;
+        Err(failure)
+    };
+    let (outcome, missing_package) = with_commonjs_resolver(|resolver| match resolve_kept(resolver, resolve_in_bases) {
+        Ok(found) => (Ok(found), None),
+        Err((base, error)) => {
+            let missing_package = (matches!(error, oxc_resolver::ResolveError::NotFound(_))
+                && !node_internal
+                && is_bare_specifier(specifier))
+            .then(|| super::esm_errors::missing_package_file(resolver, &base, specifier))
+            .flatten();
+            (Err(error), missing_package)
         }
-    }
+    });
+    let outcome = match outcome {
+        Ok(Err(exact)) => {
+            return std::fs::canonicalize(exact).map_err(|error| RootedError::host(error.to_string()));
+        }
+        Ok(Ok(resolution)) => Ok(resolution),
+        Err(error) => Err(error),
+    };
     match outcome {
         Ok(resolution) => Ok(resolution.full_path()),
-        Err(oxc_resolver::ResolveError::NotFound(_)) if !node_internal && is_bare_specifier(specifier) && let Some(super::esm_errors::MissingPackageFile::ExportsTarget { target, package }) =
-            super::esm_errors::missing_package_file(&resolver, base, specifier) =>
+        Err(oxc_resolver::ResolveError::NotFound(_)) if let Some(super::esm_errors::MissingPackageFile::ExportsTarget { target, package }) =
+            missing_package =>
         {
             // `finalizeEsmResolution`: the missing target, with the package as `path`.
             let error = context.error_rooted(&format!("Cannot find module '{}'", target.display()))?;

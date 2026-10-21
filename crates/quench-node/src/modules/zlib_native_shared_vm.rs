@@ -710,3 +710,5 @@ pub(crate) fn cleanup(runtime: &mut Runtime<NodeHost>) {
         runtime.release_host_weak_root(entry.identity);
     }
 }
+
+crate::host::startup_snapshot::host_snap_empty!(State { entries } "a zlib stream");

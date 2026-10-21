@@ -7,6 +7,31 @@ pub(crate) const LEXICAL_THIS_BINDING: &str = "\0quench:lexical-this";
 /// The `Unary` operator a template literal substitution compiles to: ToString (ECMA-262
 /// 13.15.5.1 step 5), which no source operator spells. It extends oxc's operator numbering.
 pub(crate) const UNARY_TO_STRING: u32 = oxc_ast::ast::UnaryOperator::Delete as u32 + 1;
+/// The names `typeof` yields (ECMA-262 13.5.3.1), indexed as `typeof_name_index` (vm/coercion.rs) classifies
+/// values.
+pub(crate) const TYPEOF_NAMES: [&str; 8] =
+    ["undefined", "object", "boolean", "number", "string", "bigint", "symbol", "function"];
+/// The `Unary` operators that compare `typeof` of their operand with a name in
+/// `TYPEOF_NAMES` (`typeof x === "function"`): this plus the name's index tests equality,
+/// and that plus `TYPEOF_NAMES.len()` inequality. The comparison of two strings that
+/// `typeof` and a literal would make has no effects, so it needs neither string.
+pub(crate) const UNARY_TYPEOF_IS: u32 = UNARY_TO_STRING + 1;
+const UNARY_TYPEOF_TESTS: u32 = 2 * TYPEOF_NAMES.len() as u32;
+
+/// The `UNARY_TYPEOF_IS` operator testing `typeof x` against `name`, negated for an
+/// inequality; `None` when no value's `typeof` is `name`.
+pub(crate) fn typeof_test_operator(name: &str, negated: bool) -> Option<u32> {
+    let index = TYPEOF_NAMES.iter().position(|candidate| *candidate == name)? as u32;
+    Some(UNARY_TYPEOF_IS + index + if negated { TYPEOF_NAMES.len() as u32 } else { 0 })
+}
+
+/// The name index and negation a `UNARY_TYPEOF_IS` operator tests.
+#[inline(always)]
+pub(crate) fn typeof_test(operator: u32) -> Option<(usize, bool)> {
+    let offset = operator.checked_sub(UNARY_TYPEOF_IS).filter(|offset| *offset < UNARY_TYPEOF_TESTS)?;
+    let names = TYPEOF_NAMES.len() as u32;
+    Some(((offset % names) as usize, offset >= names))
+}
 pub(crate) const NEW_TARGET_BINDING: &str = "\0quench:new-target";
 
 pub type Atom = u32;
@@ -448,6 +473,15 @@ impl ImmediateLayout {
             } else {
                 0
             })
+    }
+
+    /// A lane `Call` record whose result register is dead after the call (`derive_lane_view`).
+    /// Lane call records carry no eval flags (`lane_call_fits`), so the flag reuses the
+    /// direct-eval bit; a callee whose result is unobservable may skip building it.
+    pub(crate) const LANE_CALL_RESULT_UNUSED_FLAG: u32 = Self::DIRECT_EVAL_FLAG;
+
+    pub(crate) const fn lane_call_result_used(imm: u32) -> bool {
+        imm & Self::LANE_CALL_RESULT_UNUSED_FLAG == 0
     }
 
     pub(crate) const fn direct_eval(imm: u32) -> bool {
@@ -1364,12 +1398,36 @@ impl RegisterRoots {
 /// as a change (zigzag) on the same line and absolute on a new one. Most entries take three
 /// bytes, a quarter of a `SourcePosition`, and a function keeps one per source location
 /// change while it compiles and for as long as it lives.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct SourcePositions {
     bytes: Vec<u8>,
     /// The final entry, which the next one is coded against.
     last: Option<SourcePosition>,
+    /// Where decoding may start, made on the first lookup of a table longer than one interval
+    /// (`SourcePositions::at`): a stack trace through a large function otherwise decoded its
+    /// table from the start for every frame (Babel: about 20K instructions a frame).
+    checkpoints: std::cell::OnceCell<Box<[SourcePositionCheckpoint]>>,
 }
+
+/// The entries between two `SourcePositions` checkpoints.
+const SOURCE_POSITION_CHECKPOINT_INTERVAL: usize = 32;
+
+/// A point decoding may resume from: the byte offset of an entry, the entry before it
+/// (which it is coded against) and the entry's own pc.
+#[derive(Clone, Copy, Debug)]
+struct SourcePositionCheckpoint {
+    offset: usize,
+    previous: SourcePosition,
+    pc: u32,
+}
+
+/// Two tables are equal when their entries are; the checkpoints are a memo of them.
+impl PartialEq for SourcePositions {
+    fn eq(&self, other: &Self) -> bool {
+        self.bytes == other.bytes && self.last == other.last
+    }
+}
+impl Eq for SourcePositions {}
 
 /// The payload bits of one LEB128 byte; the high bit marks a continuation.
 const LEB128_PAYLOAD_BITS: u32 = 7;
@@ -1393,6 +1451,7 @@ impl SourcePositions {
             u64::from(position.column)
         });
         self.last = Some(position);
+        self.checkpoints = std::cell::OnceCell::new();
     }
 
     fn write(&mut self, mut value: u64) {
@@ -1408,15 +1467,48 @@ impl SourcePositions {
     }
 
     pub(crate) fn iter(&self) -> SourcePositionIter<'_> {
-        SourcePositionIter {
-            bytes: &self.bytes,
-            previous: SourcePosition { pc: 0, line: 0, column: 0 },
-        }
+        self.iter_from(0, SourcePosition { pc: 0, line: 0, column: 0 })
     }
 
-    /// The position in effect at `pc`: the last entry at or before it.
+    fn iter_from(&self, offset: usize, previous: SourcePosition) -> SourcePositionIter<'_> {
+        SourcePositionIter { bytes: &self.bytes[offset..], previous }
+    }
+
+    /// The position in effect at `pc`: the last entry at or before it, decoded from the last
+    /// checkpoint at or before it.
     pub(crate) fn at(&self, pc: u32) -> Option<SourcePosition> {
-        self.iter().take_while(|position| position.pc <= pc).last()
+        let checkpoints = self.checkpoints.get_or_init(|| self.make_checkpoints());
+        let start = checkpoints.partition_point(|checkpoint| checkpoint.pc <= pc);
+        let mut iter = match start.checked_sub(1) {
+            Some(index) => self.iter_from(checkpoints[index].offset, checkpoints[index].previous),
+            None => self.iter(),
+        };
+        let mut found = None;
+        for position in iter.by_ref() {
+            if position.pc > pc {
+                break;
+            }
+            found = Some(position);
+        }
+        found
+    }
+
+    /// A checkpoint at every `SOURCE_POSITION_CHECKPOINT_INTERVAL`th entry after the first;
+    /// none for a table shorter than one interval, which decodes as fast from its start.
+    fn make_checkpoints(&self) -> Box<[SourcePositionCheckpoint]> {
+        let mut checkpoints = Vec::new();
+        let mut iter = self.iter();
+        let mut entry = 0;
+        loop {
+            let offset = self.bytes.len() - iter.bytes.len();
+            let previous = iter.previous;
+            let Some(position) = iter.next() else { break };
+            if entry > 0 && entry % SOURCE_POSITION_CHECKPOINT_INTERVAL == 0 {
+                checkpoints.push(SourcePositionCheckpoint { offset, previous, pc: position.pc });
+            }
+            entry += 1;
+        }
+        checkpoints.into_boxed_slice()
     }
 
     pub(crate) fn shrink_to_fit(&mut self) {
@@ -1527,6 +1619,28 @@ impl Function {
         self.global_declarations_or_none().map_or(&[], |declarations| &declarations.annex_b_var)
     }
 
+    /// The slots a module body's environment holds for its importers and linker: its imports
+    /// (whatever their phase), its exported locals and its hoisted functions, which `link_plan`
+    /// names and the linker addresses by slot. The body's other bindings are its own.
+    pub(crate) fn module_environment_slots<'a>(
+        &'a self,
+        link_plan: &'a ModuleLinkPlan,
+        imports: &'a [ModuleImportBinding],
+        atom_text: impl Fn(Atom) -> Option<&'a str> + 'a,
+    ) -> impl Iterator<Item = u16> + 'a {
+        // A set, once: a large module's locals against its whole link plan was quadratic.
+        let linked: rustc_hash::FxHashSet<&str> = imports
+            .iter()
+            .map(|import| import.local.as_str())
+            .chain(link_plan.locals.iter().chain(&link_plan.hoisted_functions).map(|(local, _)| local.as_str()))
+            .collect();
+        self.local_atoms
+            .iter()
+            .enumerate()
+            .filter(move |(_, atom)| atom_text(**atom).is_some_and(|name| linked.contains(name)))
+            .filter_map(|(slot, _)| u16::try_from(slot).ok())
+    }
+
     pub fn global_immutable_atoms(&self) -> &[Atom] {
         self.global_declarations_or_none().map_or(&[], |declarations| &declarations.immutable)
     }
@@ -1578,10 +1692,12 @@ impl Function {
     pub(crate) fn plain_local_context_ineligibility(
         &self,
     ) -> Option<PlainLocalContextIneligibility> {
-        if self.parent.is_none() {
+        let selective = self.selective_capture_slots.is_some();
+        // A root's locals are its script's global bindings, unless it is a module body whose
+        // activation splits (only a module body's may): then its uncaptured locals are its own.
+        if self.parent.is_none() && !selective {
             return Some(PlainLocalContextIneligibility::RootFunction);
         }
-        let selective = self.selective_capture_slots.is_some();
         let has_legacy_environment_access = self.code.iter().any(|instruction| {
             instruction.op() == Op::MakeClosure && !selective
                 || matches!(instruction.op(), Op::LoadEnvLocal | Op::StoreEnvLocal) && !selective
@@ -2084,20 +2200,19 @@ impl Function {
     /// Whether neither this function nor any enclosing one has dynamic scope access or
     /// contains a `with` statement. The compiler then resolved every lexical binding the body
     /// names, so a by-name load in it can only denote a global binding.
-    pub(crate) fn names_resolve_statically(
-        &self,
-        functions: &[FunctionSlot],
-        atoms: &AtomTable,
-    ) -> bool {
+    /// `program` holds this function; an enclosing function whose record it has not read yet
+    /// is read here.
+    pub(crate) fn names_resolve_statically(&self, program: &ResidualProgram) -> bool {
         *self.static_name_scope.get_or_init(|| {
+            let atoms = &program.atoms;
             !self.has_dynamic_scope_access()
                 && !self.contains_with_statement(|atom| {
                     atom < atoms.len() && &atoms[atom] == WITH_ENTER_BINDING
                 })
                 && self.parent.is_none_or(|parent| {
-                    functions
-                        .get(parent as usize)
-                        .is_some_and(|parent| parent.names_resolve_statically(functions, atoms))
+                    program
+                        .function_get(parent as usize)
+                        .is_some_and(|parent| parent.names_resolve_statically(program))
                 })
         })
     }
@@ -2660,6 +2775,79 @@ pub(crate) struct ProgramSource {
     pub(crate) line_starts: std::cell::OnceCell<Box<[u32]>>,
 }
 
+/// A static item at a fixed place in the executable image, from which a snapshot measures the
+/// embedded text a program retains (`SourceText::Static`): within one linked image the offset
+/// between two statics is fixed, and a snapshot is read only by the build that wrote it.
+static SNAPSHOT_TEXT_ANCHOR: u8 = 0;
+
+/// The bytes at each end of embedded text that a snapshot checks before using the text.
+const SNAPSHOT_TEXT_EDGE: usize = 32;
+
+impl SourceText {
+    pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
+        match self {
+            Self::Shared(text) => {
+                writer.u8(0);
+                writer.str(text);
+            }
+            Self::Static(text) => {
+                writer.u8(1);
+                let anchor = std::ptr::addr_of!(SNAPSHOT_TEXT_ANCHOR) as usize as i64;
+                writer.u64((text.as_ptr() as usize as i64).wrapping_sub(anchor) as u64);
+                writer.len(text.len());
+                let edge = SNAPSHOT_TEXT_EDGE.min(text.len());
+                writer.bytes(&text.as_bytes()[..edge]);
+                writer.bytes(&text.as_bytes()[text.len() - edge..]);
+            }
+        }
+    }
+
+    pub(crate) fn read_snapshot(reader: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::SnapshotResult<Self> {
+        Ok(match reader.u8()? {
+            0 => Self::Shared(std::sync::Arc::from(reader.str()?)),
+            1 => {
+                let offset = reader.u64()? as i64;
+                let len = reader.len()?;
+                let head = reader.bytes()?;
+                let tail = reader.bytes()?;
+                let anchor = std::ptr::addr_of!(SNAPSHOT_TEXT_ANCHOR) as usize as i64;
+                let address = anchor.wrapping_add(offset) as usize as *const u8;
+                // SAFETY: the snapshot was written by this build (its header names the runtime
+                // ABI and the host keys it by the executable's identity), whose image holds the
+                // embedded text at this offset from the anchor; its edges are checked below.
+                let bytes = unsafe { std::slice::from_raw_parts(address, len) };
+                if &bytes[..head.len()] != head || &bytes[len - tail.len()..] != tail {
+                    return Err(crate::snapshot::SnapshotError("snapshot embedded text moved".into()));
+                }
+                // SAFETY: the text was a `&'static str` of this image when written.
+                Self::Static(unsafe { std::str::from_utf8_unchecked(bytes) })
+            }
+            _ => return Err(crate::snapshot::SnapshotError("invalid snapshot source text".into())),
+        })
+    }
+}
+
+impl ProgramSource {
+    pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
+        // `line_starts` is a memo of `text`, made again on the first line read.
+        let Self { text, base, line_offset, column_offset, line_starts: _ } = self;
+        text.write_snapshot(writer);
+        writer.u32(*base);
+        writer.u32(*line_offset);
+        writer.u32(*column_offset);
+    }
+
+    pub(crate) fn read_snapshot(reader: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::SnapshotResult<Self> {
+        Ok(Self {
+            text: SourceText::read_snapshot(reader)?,
+            base: reader.u32()?,
+            line_offset: reader.u32()?,
+            column_offset: reader.u32()?,
+            line_starts: std::cell::OnceCell::new(),
+        })
+    }
+}
+
 /// Starts of JavaScript source lines, including an empty line after a final terminator.
 pub(crate) fn source_line_starts(text: &str) -> impl Iterator<Item = usize> + '_ {
     const LINE_SEPARATOR: &[u8] = "\u{2028}".as_bytes();
@@ -2844,6 +3032,7 @@ impl ResidualProgram {
     #[inline(never)]
     fn recompile_function(&self, index: usize) -> &Function {
         self.functions[index].record.get_or_init(|| {
+            crate::compile::compile_phase_boundary(crate::compile::CompilePhase::FirstCall);
             let deferred = self
                 .encoded_records
                 .as_deref()
@@ -2935,7 +3124,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 101;
+    pub const FORMAT_VERSION: u8 = 102;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;
@@ -3004,6 +3193,28 @@ impl ResidualProgram {
         Ok(program)
     }
 
+    /// This program as a snapshot keeps it (`crate::snapshot`): its own atom ids, which the
+    /// snapshot's atom table keeps, and its source written apart (`SourceText`).
+    pub(crate) fn encode_snapshot(&self) -> Vec<u8> {
+        binary::encode_snapshot_program(self)
+    }
+
+    /// `encode_snapshot`'s bytes, sharing `atoms` (the restored VM's) and with `text` as the
+    /// source; valid as the compiler output it was when written.
+    pub(crate) fn decode_snapshot(
+        bytes: KeptBytes,
+        text: Option<SourceText>,
+        atoms: &std::rc::Rc<AtomSequence>,
+    ) -> Result<Self, String> {
+        let (mut program, atom_count) = binary::decode_snapshot_program(bytes, text)?;
+        if atom_count > atoms.len() {
+            return Err("snapshot program names atoms its VM lacks".into());
+        }
+        program.atoms = AtomTable::shared(atoms.clone(), atom_count);
+        program.validated.establish();
+        Ok(program)
+    }
+
     /// Decodes `encode_compact`'s bytes with `intern`'s ids and `text` as the source; the
     /// caller sets the atom table and validates.
     pub(crate) fn decode_compact(
@@ -3015,6 +3226,7 @@ impl ResidualProgram {
     }
 }
 mod binary;
+pub(crate) use binary::{decode_static_module_analysis, encode_static_module_analysis};
 mod disassemble;
 #[cfg(test)]
 mod tests;

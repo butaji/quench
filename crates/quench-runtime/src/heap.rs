@@ -23,6 +23,7 @@ pub(crate) use promise_record::{PromiseCell, PromiseReaction, PromiseRecord, Pro
 mod records;
 mod root;
 mod slots;
+mod snapshot;
 mod thin_slice;
 pub(crate) use thin_slice::ThinBoxSlice;
 mod weak;
@@ -58,10 +59,17 @@ fn payload_unit() -> usize {
     #[cfg(not(feature = "gc-tuning"))]
     PAYLOAD_BYTES_PER_ALLOCATION
 }
-/// The fewest allocations after which a collection is full on a small heap.
+/// The fewest allocations after which a collection is full on a small heap: the first
+/// collection runs after the young minimum, and is full once the allocation cap has passed.
 #[cfg(test)]
-pub(crate) const FULL_COLLECTION_ALLOCATION_BOUND: usize =
-    pacing::PRODUCTION_PACING.minimum_allocation_cap;
+pub(crate) const FULL_COLLECTION_ALLOCATION_BOUND: usize = {
+    let pacing = pacing::PRODUCTION_PACING;
+    if pacing.minimum_young > pacing.minimum_allocation_cap {
+        pacing.minimum_young
+    } else {
+        pacing.minimum_allocation_cap
+    }
+};
 /// Payload bytes beside a cell (string units, array elements) that weigh as one more
 /// allocation toward the next collection.
 #[cfg(not(feature = "gc-tuning"))]
@@ -151,7 +159,7 @@ impl<'slots> ParallelSweepSlab<'slots> {
         }
     }
 
-    fn sweep(&mut self, marks: &[AtomicU64]) -> ParallelSweepResult {
+    fn sweep(&mut self, marks: &[AtomicU64], compacts: bool) -> ParallelSweepResult {
         let mut result = ParallelSweepResult {
             slab: (self.base / SLOTS_PER_SLAB) as u32,
             ..ParallelSweepResult::default()
@@ -170,7 +178,7 @@ impl<'slots> ParallelSweepSlab<'slots> {
                 result.live += 1;
                 result.live_payload_bytes += cell.payload_bytes();
                 if let Some(object) = cell.object() {
-                    if object.properties().has_compact_range() {
+                    if compacts && object.properties().has_compact_range() {
                         result
                             .property_owners
                             .push(pack_offset_owner(object.properties().start_offset(), index));
@@ -1051,9 +1059,24 @@ impl Heap {
         prototype: Value,
         inline: [Value; INLINE_PROPERTY_COUNT],
     ) -> Value {
-        let object = Object::from_inline_header(header, inline);
+        let Some(object) = Object::from_inline_header(header, inline) else {
+            return self.alloc_object_with_properties_of_header(header, prototype, inline);
+        };
         debug_assert!(object.proto() == prototype);
         self.alloc_object_of(object, prototype)
+    }
+
+    /// `alloc_object_from_header` of values the payload word cannot hold: arena storage.
+    #[cold]
+    fn alloc_object_with_properties_of_header(
+        &mut self,
+        header: InlineObjectHeader,
+        prototype: Value,
+        inline: [Value; INLINE_PROPERTY_COUNT],
+    ) -> Value {
+        let shape = header.shape();
+        let length = self.properties.len(ValueVec::inline_property_storage(shape));
+        self.alloc_object_with_properties(prototype, shape, &inline[..length])
     }
 
     /// `alloc_object` of `object`, whose prototype is `prototype`.
@@ -1261,9 +1284,41 @@ impl Heap {
         shape: u32,
         values: &[Value],
     ) -> Value {
-        let (properties, inline_properties) = self.initial_object_storage(shape, values, true);
-        self.alloc_object(Object::with_property_storage(proto, properties, inline_properties))
+        self.properties.assert_shape_length(shape, values.len());
+        if values.len() <= INLINE_PROPERTY_COUNT
+            && let Some(object) = Object::with_inline_values(proto, shape, values)
+        {
+            return self.alloc_object(object);
+        }
+        let properties = self.properties.with_values(shape, values);
+        self.alloc_object(Object::with_property_storage(
+            proto,
+            properties,
+            [Value::UNDEFINED; INLINE_PROPERTY_COUNT],
+        ))
     }
+    /// `alloc(Cell::Array { object: array })` of a fresh array, given its first named
+    /// properties `values` under `shape` first: the storage steps
+    /// `initialize_object_properties` takes on the published cell (arena storage, as an
+    /// array keeps its element backing in the payload; the replaced storage's integrity
+    /// carried over and its arena words released), taken before the array is published. No
+    /// collection runs in between, so the arena holds the values for their owner exactly as
+    /// after the two-step path.
+    pub(crate) fn alloc_array_with_properties(
+        &mut self,
+        mut array: ArrayObject,
+        shape: u32,
+        values: &[Value],
+    ) -> Value {
+        let (properties, inline_properties) = self.initial_object_storage(shape, values, false);
+        let previous = array.replace_property_storage(properties, inline_properties);
+        self.properties.release(previous);
+        let value = self.alloc(Cell::Array { object: array });
+        #[cfg(feature = "profile-memory")]
+        self.note_object_slots(value, values.len());
+        value
+    }
+
     pub(crate) fn initialize_object_properties(
         &mut self,
         owner: Value,
@@ -1294,7 +1349,7 @@ impl Heap {
         inline: bool,
     ) -> (ValueVec, [Value; INLINE_PROPERTY_COUNT]) {
         self.properties.assert_shape_length(shape, values.len());
-        if inline && values.len() <= INLINE_PROPERTY_COUNT {
+        if inline && values.len() <= INLINE_PROPERTY_COUNT && Object::inline_values_narrow(values) {
             // At most `INLINE_PROPERTY_COUNT` values: a loop over the fixed bound unrolls to
             // element moves, where one over `values` becomes a `memcpy` call.
             let inline = std::array::from_fn(|slot| values.get(slot).copied().unwrap_or(Value::UNDEFINED));
@@ -1704,6 +1759,10 @@ impl Heap {
         }
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         let sweep_started = std::time::Instant::now();
+        // Property-arena owners are listed only for a full collection that compacts: the
+        // lists hold an entry per live owner at the heap's peak. A compaction that this
+        // sweep's releases make due waits for the next full collection.
+        let compacts = full && self.properties.compaction_due();
         let sweep_pool = if full
             && !self.has_direct_records()
             && self.slots.len() >= PARALLEL_MARK_MINIMUM_SLOTS
@@ -1720,11 +1779,11 @@ impl Heap {
             freed_cells,
             swept_slots,
         } = if let Some(pool) = sweep_pool {
-            self.sweep_full_parallel(pool)
+            self.sweep_full_parallel(pool, compacts)
         } else {
-            self.sweep_serial(full)
+            self.sweep_serial(full, compacts)
         };
-        let mut direct_property_owners = Vec::with_capacity(if full {
+        let mut direct_property_owners = Vec::with_capacity(if compacts {
             self.property_owner_counts.1
         } else {
             0
@@ -1752,7 +1811,7 @@ impl Heap {
             let payload_bytes = &mut self.payload_bytes;
             let (object_live, object_freed) = self.object_records.sweep(full, |record| match record {
                 RecordSweep::Keep(record_id, object) => {
-                    if full && object.properties().has_compact_range() {
+                    if compacts && object.properties().has_compact_range() {
                         direct_property_owners.push((
                             object.properties().start_offset(),
                             Value::direct_object(record_id),
@@ -1770,7 +1829,7 @@ impl Heap {
             let (function_live, function_freed) =
                 self.function_records.sweep(full, |record| match record {
                     RecordSweep::Keep(record_id, function) => {
-                        if full && function.object.properties().has_compact_range() {
+                        if compacts && function.object.properties().has_compact_range() {
                             direct_property_owners.push((
                                 function.object.properties().start_offset(),
                                 Value::direct_function(record_id),
@@ -1789,7 +1848,7 @@ impl Heap {
             let (promise_live, promise_freed) =
                 self.promise_records.sweep(full, |record| match record {
                     RecordSweep::Keep(record_id, promise) => {
-                        if full && promise.object.properties().has_compact_range() {
+                        if compacts && promise.object.properties().has_compact_range() {
                             direct_property_owners.push((
                                 promise.object.properties().start_offset(),
                                 Value::direct_promise(record_id),
@@ -1811,7 +1870,7 @@ impl Heap {
             let (iterator_live, iterator_freed) =
                 self.iterator_records.sweep(full, |record| match record {
                     RecordSweep::Keep(record_id, iterator) => {
-                        if full && iterator.object.properties().has_compact_range() {
+                        if compacts && iterator.object.properties().has_compact_range() {
                             direct_property_owners.push((
                                 iterator.object.properties().start_offset(),
                                 Value::direct_iterator(record_id),
@@ -1842,7 +1901,7 @@ impl Heap {
                     if full {
                         live_payload_bytes += array_payload_bytes(array);
                     }
-                    if full && array.properties().has_compact_range() {
+                    if compacts && array.properties().has_compact_range() {
                         direct_property_owners.push((
                             array.properties().start_offset(),
                             Value::direct_array(record_id),
@@ -1911,6 +1970,8 @@ impl Heap {
             // A full sweep recounts the ledger from the survivors: shrinking a live array
             // (truncation, `pop`, `splice`) is not charged back between full collections.
             self.payload_bytes = live_payload_bytes;
+        }
+        if compacts {
             self.property_owner_counts = (property_owners.len(), direct_property_owners.len());
             self.compact_property_arena(property_owners, direct_property_owners);
         }
@@ -1996,7 +2057,7 @@ impl Heap {
         self.memory_profile.collection_finished();
         finalization_jobs
     }
-    fn sweep_full_parallel(&mut self, pool: &ThreadPool) -> SweepOutput {
+    fn sweep_full_parallel(&mut self, pool: &ThreadPool, compacts: bool) -> SweepOutput {
         self.collection_state = CollectionState::Sweeping;
         let slot_len = self.slots.len();
         let mut slabs = self
@@ -2012,7 +2073,7 @@ impl Heap {
                 pool.install(|| {
                     batch
                         .par_iter_mut()
-                        .map(|slab| slab.sweep(marks))
+                        .map(|slab| slab.sweep(marks, compacts))
                         .collect::<Vec<_>>()
                 })
             };
@@ -2064,13 +2125,13 @@ impl Heap {
         output
     }
 
-    fn sweep_serial(&mut self, full: bool) -> SweepOutput {
+    fn sweep_serial(&mut self, full: bool, compacts: bool) -> SweepOutput {
         let mut live = 0;
         let mut live_payload_bytes = 0;
         let mut freed_cells = 0;
         let mut swept_slots = 0;
         let properties = &mut self.properties;
-        let mut property_owners_for_sweep = Vec::with_capacity(if full {
+        let mut property_owners_for_sweep = Vec::with_capacity(if compacts {
             self.property_owner_counts.0
         } else {
             0
@@ -2124,7 +2185,7 @@ impl Heap {
                             live += 1;
                             live_payload_bytes += slot.cell.as_ref().map_or(0, Cell::payload_bytes);
                             if let Some(object) = slot.cell.as_ref().and_then(Cell::object) {
-                                if properties.has_compact_range(object.properties()) {
+                                if compacts && properties.has_compact_range(object.properties()) {
                                     property_owners_for_sweep.push(pack_offset_owner(
                                         object.properties().start_offset(),
                                         index,
@@ -2786,9 +2847,10 @@ impl Heap {
         }
     }
     pub(crate) fn property_get(&self, object: &Object, slot: usize) -> Option<Value> {
-        let value = match object.inline_properties() {
-            Some(values) => values.get(slot).copied(),
-            None => self.properties.get(object.properties(), slot),
+        let value = match object.properties().has_inline_property_storage() {
+            true if slot < INLINE_PROPERTY_COUNT => object.inline_property(slot),
+            true => None,
+            false => self.properties.get(object.properties(), slot),
         }?;
         (!value.is_deleted()).then_some(value)
     }
@@ -2799,10 +2861,8 @@ impl Heap {
     /// As for `property_get_unchecked`.
     #[inline(always)]
     pub(crate) unsafe fn property_get_shaped(&self, object: &Object, slot: usize) -> Option<Value> {
-        if let Some(values) = object.inline_properties() {
-            debug_assert!(slot < INLINE_PROPERTY_COUNT);
-            // SAFETY: the caller proves that the property slot exists.
-            Some(unsafe { *values.get_unchecked(slot) })
+        if let Some(value) = object.inline_property(slot) {
+            Some(value)
         } else {
             // SAFETY: the caller proves that the property slot exists.
             unsafe { self.properties.get_shaped(object.properties(), slot) }
@@ -2815,10 +2875,8 @@ impl Heap {
     /// The slot exists and the object is not in dictionary storage.
     #[inline(always)]
     pub(crate) unsafe fn property_get_flat(&self, object: &Object, slot: usize) -> Value {
-        if let Some(values) = object.inline_properties() {
-            debug_assert!(slot < INLINE_PROPERTY_COUNT);
-            // SAFETY: the caller proves that the property slot exists.
-            unsafe { *values.get_unchecked(slot) }
+        if let Some(value) = object.inline_property(slot) {
+            value
         } else {
             // SAFETY: the caller proves the slot exists outside dictionary storage.
             unsafe { self.properties.get_flat(object.properties(), slot) }
@@ -2826,10 +2884,8 @@ impl Heap {
     }
     #[inline(always)]
     pub(crate) unsafe fn property_get_unchecked(&self, object: &Object, slot: usize) -> Value {
-        if let Some(values) = object.inline_properties() {
-            debug_assert!(slot < INLINE_PROPERTY_COUNT);
-            // SAFETY: the caller proves that the property slot exists.
-            unsafe { *values.get_unchecked(slot) }
+        if let Some(value) = object.inline_property(slot) {
+            value
         } else {
             // SAFETY: the caller proves that the property slot exists.
             unsafe { self.properties.get_unchecked(object.properties(), slot) }
@@ -2840,13 +2896,30 @@ impl Heap {
             let data = self
                 .object_store_mut(object, value)
                 .expect("property owner is an object");
-            if data.inline_properties().is_some() {
-                data.set_inline_property(slot, value);
+            let vector = data.properties();
+            if !vector.has_inline_property_storage() {
+                Some(vector)
+            } else if data.store_inline_narrow(slot, value) {
                 return;
+            } else {
+                None
             }
-            data.properties()
         };
-        self.properties.set(vector, slot, value);
+        match vector {
+            Some(vector) => self.properties.set(vector, slot, value),
+            None => self.widen_inline_property(object, slot, value),
+        }
+    }
+
+    /// Stores `value` at inline `slot` of `object`, whose payload word cannot hold it: its
+    /// values move to the arena. The caller has applied the write barrier.
+    #[cold]
+    fn widen_inline_property(&mut self, object: Value, slot: usize, value: Value) {
+        let (data, properties) = self
+            .object_and_arena_mut(object)
+            .expect("property owner is an object");
+        let length = properties.len(data.properties());
+        widen_inline_storage(data, properties, data.shape(), length, slot, value);
     }
     #[inline(always)]
     pub(crate) unsafe fn property_set_unchecked(
@@ -2859,15 +2932,20 @@ impl Heap {
             let data = self
                 .object_store_mut(object, value)
                 .expect("property owner is an object");
-            if data.inline_properties().is_some() {
-                debug_assert!(slot < INLINE_PROPERTY_COUNT);
-                data.set_inline_property(slot, value);
+            let vector = data.properties();
+            if !vector.has_inline_property_storage() {
+                Some(vector)
+            } else if data.store_inline_narrow(slot, value) {
                 return;
+            } else {
+                None
             }
-            data.properties()
         };
-        // SAFETY: the caller proves that the property slot exists.
-        unsafe { self.properties.set_unchecked(vector, slot, value) };
+        match vector {
+            // SAFETY: the caller proves that the property slot exists.
+            Some(vector) => unsafe { self.properties.set_unchecked(vector, slot, value) },
+            None => self.widen_inline_property(object, slot, value),
+        }
     }
     /// `property_set_unchecked` for the direct object `record_id` names, decoded once: its
     /// values are inline or a flat arena run. Without `LOGS`, `false` leaves a store the
@@ -2896,9 +2974,11 @@ impl Heap {
                 self.object_records.get_live_mut_unbarriered(record_id)
             }
         };
-        if data.inline_properties().is_some() {
-            debug_assert!(slot < INLINE_PROPERTY_COUNT);
-            data.set_inline_property(slot, value);
+        if data.properties().has_inline_property_storage() {
+            if !data.store_inline_narrow(slot, value) {
+                let length = self.properties.len(data.properties());
+                widen_inline_storage(data, &mut self.properties, data.shape(), length, slot, value);
+            }
             return true;
         }
         let vector = data.properties();
@@ -3053,7 +3133,7 @@ impl Heap {
         object_roots(trace_kind, owner, object.shape(), object.was_used_as_prototype(), work);
         object.visit_extras_roots(|value| work.push(value));
         if let Some(values) = object.inline_properties() {
-            for &value in values {
+            for value in values {
                 if value.is_heap() && !value.is_deleted() {
                     work.push(value);
                 }
@@ -3468,7 +3548,7 @@ impl Heap {
                 Cell::TemporalZonedDateTime {
                     instant, calendar, ..
                 } => instant.time_zone.capacity() + calendar.capacity(),
-                Cell::RegExp { meta, .. } => meta.source.capacity() + meta.flags.capacity(),
+                Cell::RegExp { meta, .. } => meta.source.capacity(),
                 Cell::Array { object } => object.elements().capacity() * size_of::<Value>(),
                 Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),
                 Cell::WasmMemory { bytes, .. } => bytes.capacity(),
@@ -3578,27 +3658,44 @@ mod offset_order_tests {
     }
 }
 
+/// Moves `data`'s inline values into an arena range of `shape`, `length` values long, with
+/// `value` at `slot`: the store its payload word cannot hold (`Object::store_inline_narrow`).
+fn widen_inline_storage(
+    data: &mut Object,
+    properties: &mut ValueArena,
+    shape: u32,
+    length: usize,
+    slot: usize,
+    value: Value,
+) {
+    let mut values = data.inline_properties().expect("inline storage");
+    values[slot] = value;
+    let moved = properties.with_values(shape, &values[..length]);
+    let previous = data.replace_property_storage(moved, [Value::UNDEFINED; INLINE_PROPERTY_COUNT]);
+    properties.release(previous);
+}
+
 /// `Heap::property_add` on the owner's storage: writes `value` at `slot`, the owner's
 /// storage length, and moves the owner to `shape`.
 #[inline(always)]
 fn append_property(data: &mut Object, properties: &mut ValueArena, slot: usize, value: Value, shape: u32) {
-    let vector = data.properties();
-    match data.inline_properties().copied() {
-        Some(_) if slot < INLINE_PROPERTY_COUNT => data.set_inline_property(slot, value),
-        Some(inline) => {
-            debug_assert_eq!(slot, INLINE_PROPERTY_COUNT);
-            // One arena range sized for the grown shape, not one for the inline values that
-            // the add then outgrows at once.
-            let mut grown = [value; INLINE_PROPERTY_COUNT + 1];
-            grown[..INLINE_PROPERTY_COUNT].copy_from_slice(&inline);
-            let moved = properties.with_values(shape, &grown);
-            data.replace_property_storage(moved, [Value::UNDEFINED; INLINE_PROPERTY_COUNT]);
+    let mut vector = data.properties();
+    if !vector.has_inline_property_storage() {
+        properties.push(&mut vector, value);
+        data.set_properties(vector);
+    } else if slot < INLINE_PROPERTY_COUNT {
+        if !data.store_inline_narrow(slot, value) {
+            widen_inline_storage(data, properties, shape, slot + 1, slot, value);
         }
-        None => {
-            let mut vector = vector;
-            properties.push(&mut vector, value);
-            data.set_properties(vector);
-        }
+    } else {
+        debug_assert_eq!(slot, INLINE_PROPERTY_COUNT);
+        // One arena range sized for the grown shape, not one for the inline values that the
+        // add then outgrows at once.
+        let inline = data.inline_properties().expect("inline storage");
+        let mut grown = [value; INLINE_PROPERTY_COUNT + 1];
+        grown[..INLINE_PROPERTY_COUNT].copy_from_slice(&inline);
+        let moved = properties.with_values(shape, &grown);
+        data.replace_property_storage(moved, [Value::UNDEFINED; INLINE_PROPERTY_COUNT]);
     }
     data.set_shape(shape);
 }

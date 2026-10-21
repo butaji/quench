@@ -2,6 +2,7 @@ mod compiled;
 mod js_compiled;
 mod jit_backend;
 mod shape_transitions;
+mod snapshot;
 mod startup_intrinsics;
 mod wasm;
 pub use compiled::ExecutionMode;
@@ -9,6 +10,7 @@ mod wasm_exception;
 mod wasm_gc;
 mod wasm_host;
 mod wasm_js;
+pub(crate) use wasm_js::{js_tag_cell, js_tag_type};
 mod wasm_table;
 use crate::Value;
 use crate::bytecode::{
@@ -32,7 +34,13 @@ use std::cell::OnceCell;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
-const DEFAULT_RANDOM_SEED: u64 = 0x4d59_5df4_d0f3_3173;
+/// A fresh seed for `Math.random`'s xorshift state, from the process's random hash keys (which
+/// the standard library draws from the OS): each VM, like each Node process, has its own
+/// sequence. The state must not be zero, which xorshift never leaves.
+fn fresh_random_seed() -> u64 {
+    use std::hash::BuildHasher as _;
+    std::collections::hash_map::RandomState::new().hash_one(std::time::SystemTime::now()) | 1
+}
 pub(super) const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
 pub(super) const MAX_ARRAY_LENGTH: usize = u32::MAX as usize;
 pub(super) const ROOT_FUNCTION_ID: u32 = 0;
@@ -59,6 +67,15 @@ struct RuntimeAtoms {
     /// An iterator result's keys, in its literal order.
     value: Atom,
     done: Atom,
+    /// The iterator protocol's close method.
+    iterator_return: Atom,
+    /// A property descriptor object's other keys (`value` above), which
+    /// `Object.getOwnPropertyDescriptor` writes on every call.
+    writable: Atom,
+    enumerable: Atom,
+    configurable: Atom,
+    get: Atom,
+    set: Atom,
     /// The internal keys a bound function's environment holds its parts under
     /// (`Vm::bound_function_parts`).
     bound_target: Atom,
@@ -137,6 +154,7 @@ mod object;
 mod shape_memo;
 mod symbol_write_proof;
 mod symbol_load_proof;
+mod enumerable_key_memo;
 mod name_atom_memo;
 mod object_assignment;
 mod object_array;
@@ -153,6 +171,7 @@ mod property_key;
 use call_arguments::CallArguments;
 use object::AtomClass;
 pub(crate) use program_store::ProgramId;
+pub(crate) use regexp::RegExpFlags;
 use program_store::{ModuleImport, ProgramStore};
 use promise::PromiseRuntime;
 use property_key::PropertyKey;
@@ -627,15 +646,16 @@ const BOUND_TARGET_KEY: &str = "\0quench:bound-target";
 const BOUND_THIS_KEY: &str = "\0quench:bound-this";
 const BOUND_ARGS_KEY: &str = "\0quench:bound-args";
 const NO_FIELD_HOLDER: u32 = u32::MAX;
-/// A field site's read of an accessor on a prototype of a shaped receiver: it holds while
-/// the receiver keeps its shape and prototype and the chain to `holder` keeps the layout it
-/// was proved under, `holder`'s `slot` attributes carrying the getter.
+/// A field site's read of an accessor of a shaped receiver, its own or on a prototype: it
+/// holds while the receiver keeps its shape and prototype and the chain to `holder` keeps the
+/// layout it was proved under, `holder`'s `slot` attributes carrying the getter.
 #[derive(Clone, Copy)]
 struct AccessorFieldCache {
     receiver: u32,
     /// The receiver's prototype, where the chain to `holder` starts.
     prototype: Value,
-    /// The object holding the accessor, or `OWN_ACCESSOR` for the receiver itself.
+    /// The prototype holding the accessor, or `OWN_ACCESSOR` for the receiver itself, whose
+    /// own slot each receiver of the shape fills with its own accessor.
     holder: Value,
     slot: u16,
     /// The `prototype_layout_epoch` the chain was proved under.
@@ -961,6 +981,8 @@ const EMPTY_CALL_TARGET: InLoopCallTarget = InLoopCallTarget {
     env: Value::UNDEFINED,
 };
 const STRING_CONCAT_CACHE_SIZE: usize = 64;
+/// Slots of `Vm::string_atoms`, a power of two.
+const STRING_ATOM_CACHE_SIZE: usize = 256;
 #[derive(Clone, Copy)]
 struct StringConcatCache {
     left: Value,
@@ -1302,6 +1324,10 @@ impl ShapeFacts {
     /// one, as an add carries data attributes, so a chain without this fact holds data
     /// properties alone and a read of any slot is its value.
     const ACCESSORS: u8 = 1 << 2;
+    /// Some property of the chain was made an accessor whose functions
+    /// `Vm::shape_accessors` holds (`ShapeAttributes::table_accessors`): one with a setter, as
+    /// every lazy data property is, rather than a getter alone.
+    const TABLE_ACCESSORS: u8 = 1 << 3;
 
     fn extended_by(self, transition: ShapeTransition) -> Self {
         let introduced = |fact: bool, bit: u8| if fact { bit } else { 0 };
@@ -1312,8 +1338,13 @@ impl ShapeFacts {
             self.0
                 | introduced(transition.introduces_gc_roots(), Self::MAY_HAVE_GC_ROOTS)
                 | introduced(descriptor(ShapeAttributes::slot_getter), Self::SLOT_GETTERS)
-                | introduced(descriptor(|attributes| attributes.accessor), Self::ACCESSORS),
+                | introduced(descriptor(|attributes| attributes.accessor), Self::ACCESSORS)
+                | introduced(descriptor(ShapeAttributes::table_accessors), Self::TABLE_ACCESSORS),
         )
+    }
+
+    fn table_accessors(self) -> bool {
+        self.0 & Self::TABLE_ACCESSORS != 0
     }
 
     fn accessors(self) -> bool {
@@ -1636,6 +1667,8 @@ pub(crate) struct Vm<H> {
     function_name_shapes: provenance::FunctionNameShapes,
     symbol_write_proofs: symbol_write_proof::SymbolWriteProofs,
     symbol_load_proofs: symbol_load_proof::SymbolLoadProofs,
+    array_iteration_proof: Option<iterators::ArrayIterationProof>,
+    enumerable_keys: enumerable_key_memo::EnumerableKeyMemo,
     shape_attribute_memo: shape_memo::ShapeAttributeMemo,
     name_atom_memo: name_atom_memo::NameAtomMemo,
     atom_text: AtomTable,
@@ -1664,6 +1697,9 @@ pub(crate) struct Vm<H> {
     symbol_registry: FxHashMap<String, Value>,
     well_known_symbols: WellKnownSymbols,
     string_concats: Option<Box<[StringConcatCache]>>,
+    /// String values recently interned as property keys, and their atoms
+    /// (`Vm::string_key_atom`); collection empties it.
+    string_atoms: Option<Box<[(Value, Atom); STRING_ATOM_CACHE_SIZE]>>,
     call_targets: Box<[InLoopCallTarget; CALL_TARGET_CACHE_SIZE]>,
     field_caches: Vec<FieldCache>,
     /// Field load sites whose data property was found beyond the immediate prototype, by
@@ -1703,15 +1739,22 @@ pub(crate) struct Vm<H> {
     /// The shape of an iterator result `{ value, done }` (`Vm::iterator_result`); derived
     /// from shapes, so field-cache invalidation clears it.
     iterator_result_shape: Option<u32>,
+    /// The shapes of a complete data and accessor property descriptor object
+    /// (`Vm::property_descriptor_object`), indexed by `accessor`; derived from shapes, so
+    /// field-cache invalidation clears them.
+    descriptor_shapes: [Option<u32>; 2],
+    /// The field slots of the descriptor shape `ToPropertyDescriptor` last read
+    /// (`object_descriptors::DescriptorLayout`); derived from shapes.
+    descriptor_layout: Option<object_descriptors::DescriptorLayout>,
     /// The shape a new RegExp object starts in and the one its own `lastIndex` moves it to
     /// (`Vm::regexp_from_matcher`), as the first one recorded; derived from shapes, so
     /// field-cache invalidation clears it.
     regexp_object_shapes: Option<(u32, u32)>,
     /// A RegExp receiver shape verified to hold an own writable data `lastIndex` at the paired
     /// slot; derived from shapes, so field-cache invalidation clears it.
-    regexp_last_index_layout: Option<(u32, u32)>,
+    regexp_last_index_layouts: Vec<(u32, u32)>,
     /// Derived from shapes, so field-cache invalidation clears it.
-    regexp_builtin_layout: Option<regexp::RegExpBuiltinLayout>,
+    regexp_builtin_layouts: Vec<regexp::RegExpBuiltinLayout>,
     /// Derived from shapes, so field-cache invalidation clears it.
     regexp_symbol_layouts: Vec<regexp::RegExpSymbolLayout>,
     /// An object verified to hold the native `Function.prototype[@@hasInstance]` as a
@@ -1783,7 +1826,7 @@ impl<H: Host> Vm<H> {
                 if total == 0 {
                     continue;
                 }
-                let Some(code) = residual.functions.get(function) else { continue };
+                let Some(code) = residual.function_get(function) else { continue };
                 rows.push((total, code.registers, code.local_atoms.len(), program, function));
             }
         }
@@ -2138,6 +2181,30 @@ impl<H: Host> Vm<H> {
         for (source, name) in scripts {
             self.eval_script_source(program, source, name)?;
         }
+        self.run_main(program, drain_jobs)
+    }
+
+    /// Installs the realm and the host as `execute_deferred_jobs` does, without running the
+    /// program: the state a startup snapshot is taken from (`write_snapshot`).
+    pub(crate) fn initialize_for_snapshot(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
+        if program.functions.is_empty() {
+            return Err(JsError::validation("program has no entry function".into()));
+        }
+        self.check_execution_interrupt()?;
+        self.initialize(program)
+    }
+
+    /// `execute_deferred_jobs` in a VM `restore_snapshot` restored, whose main program is
+    /// `program`: the host resumes its installation where the snapshot left it.
+    pub(crate) fn execute_restored(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
+        self.check_execution_interrupt()?;
+        self.resume_host()?;
+        self.run_main(program, false)
+    }
+
+    /// Runs the main program of an installed realm: its module graph, its declarations and
+    /// its body, then optionally its jobs.
+    fn run_main(&mut self, program: &ResidualProgram, drain_jobs: bool) -> Result<Value, JsError> {
         if program.is_module() {
             self.instantiate_main_module(program)?;
             self.evaluate_program_module_requests(program)?;
@@ -2464,6 +2531,19 @@ impl<H: Host> Vm<H> {
         );
         crate::report_allocator_memory(phase);
     }
+    /// `Runtime::end_for_process_exit`: drops the host, and the program store when its drop
+    /// reports, and leaves every other field to the operating system.
+    pub(crate) fn end_for_process_exit(self) {
+        let vm = std::mem::ManuallyDrop::new(self);
+        // SAFETY: `vm` is never used or dropped again, so each field read here is dropped
+        // exactly once and the rest are never dropped.
+        unsafe {
+            if vm.programs.reports_on_drop() {
+                drop(std::ptr::read(&vm.programs));
+            }
+            drop(std::ptr::read(&vm.host));
+        }
+    }
     fn initialize(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         self.initialize_shared(&Rc::new(program.clone()), builtins::RealmScope::Complete)
     }
@@ -2504,6 +2584,8 @@ impl<H: Host> Vm<H> {
         self.function_name_shapes.clear();
         self.symbol_write_proofs.clear();
         self.symbol_load_proofs.clear();
+        self.array_iteration_proof = None;
+        self.enumerable_keys.clear();
         self.shape_attribute_memo.clear();
         self.atom_strings.clear();
         // The sealed holders and their shapes belong to the discarded heap.
@@ -2524,6 +2606,7 @@ impl<H: Host> Vm<H> {
         self.symbol_registry.clear();
         self.well_known_symbols.clear();
         self.string_concats = None;
+        self.string_atoms = None;
         *self.call_targets = [EMPTY_CALL_TARGET; CALL_TARGET_CACHE_SIZE];
         self.lane_stack.clear_script_targets();
         let atom_text = self.atom_text.clone();
@@ -2548,6 +2631,12 @@ impl<H: Host> Vm<H> {
             empty: self.intern_atom(""),
             value: self.intern_atom("value"),
             done: self.intern_atom("done"),
+            iterator_return: self.intern_atom("return"),
+            writable: self.intern_atom("writable"),
+            enumerable: self.intern_atom("enumerable"),
+            configurable: self.intern_atom("configurable"),
+            get: self.intern_atom("get"),
+            set: self.intern_atom("set"),
             bound_target: self.intern_atom(BOUND_TARGET_KEY),
             bound_this: self.intern_atom(BOUND_THIS_KEY),
             bound_args: self.intern_atom(BOUND_ARGS_KEY),
@@ -2579,9 +2668,11 @@ impl<H: Host> Vm<H> {
         self.function_name_shapes.clear();
         self.closure_templates.fill(None);
         self.iterator_result_shape = None;
+        self.descriptor_shapes = [None; 2];
+        self.descriptor_layout = None;
         self.regexp_object_shapes = None;
-        self.regexp_last_index_layout = None;
-        self.regexp_builtin_layout = None;
+        self.regexp_last_index_layouts.clear();
+        self.regexp_builtin_layouts.clear();
         self.regexp_symbol_layouts.clear();
         self.set_instanceof_has_instance_holder(Value::NULL);
         self.program_cache_layouts.clear();
@@ -2596,7 +2687,7 @@ impl<H: Host> Vm<H> {
         self.temporal_plain_time_proto = Value::NULL;
         self.temporal_plain_month_day_proto = Value::NULL;
         self.temporal_plain_year_month_proto = Value::NULL;
-        self.random_state = DEFAULT_RANDOM_SEED;
+        self.random_state = fresh_random_seed();
         self.realm.globals = self
             .heap
             .alloc(Cell::Object(Self::empty_object(Value::NULL)));
@@ -2634,22 +2725,21 @@ impl<H: Host> Vm<H> {
         // Equal string constants share one cell, as engines intern literals: a string is an
         // immutable primitive, so which cell holds it is unobservable, and `===` between
         // literals from different sites then decides by identity before comparing text.
-        let mut strings: std::collections::HashMap<StringConstantKey<'_>, Value> =
-            std::collections::HashMap::new();
+        let mut strings: FxHashMap<StringConstantKey<'_>, Value> = FxHashMap::default();
         for constant in &program.constants {
             let key = match constant {
-                Constant::String(text) => Some(StringConstantKey::Text(text)),
-                Constant::StringUnits(units) => Some(StringConstantKey::Units(units)),
-                _ => None,
-            };
-            let value = match key.and_then(|key| strings.get(&key).copied().map(Ok).or(Some(Err(key)))) {
-                Some(Ok(shared)) => shared,
-                Some(Err(key)) => {
-                    let value = self.materialize_constant(constant);
-                    strings.insert(key, value);
-                    value
+                Constant::String(text) => StringConstantKey::Text(text),
+                Constant::StringUnits(units) => StringConstantKey::Units(units),
+                _ => {
+                    constants.push(self.materialize_constant(constant));
+                    continue;
                 }
-                None => self.materialize_constant(constant),
+            };
+            let value = match strings.entry(key) {
+                std::collections::hash_map::Entry::Occupied(shared) => *shared.get(),
+                std::collections::hash_map::Entry::Vacant(slot) => {
+                    *slot.insert(self.materialize_constant(constant))
+                }
             };
             constants.push(value);
         }

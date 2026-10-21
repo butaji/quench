@@ -17,14 +17,26 @@ fn build(c:&mut Context<'_>)->Result<RootId,RootedError>{
  let counts=typed_array(c,"Uint32Array",ENTRIES.len())?;put(c,module,"observerCounts",counts)?;
  let milestones=typed_array(c,"Float64Array",MILESTONES.len())?;
  for&(_,index)in MILESTONES{let key=c.string_rooted(&index.to_string());let unknown=c.number(-1.0);c.set_property_rooted(milestones,key,unknown,milestones)?;}
- let shared=c.host_mut().shared_state();let origins=shared.borrow().process_control.performance_origins();
- let Some((monotonic_ns,unix_micros))=origins else{return unsupported(c,"Performance time origin requires native monotonic and wall clocks");};
- for(label,value)in[("timeOrigin",monotonic_ns),("timeOriginTimestamp",unix_micros),("environment",monotonic_ns)]{let key=c.string_rooted(&milestone(label).to_string());let value=c.number(value);c.set_property_rooted(milestones,key,value,milestones)?;}
+ set_time_origins(c,milestones)?;
+ let shared=c.host_mut().shared_state();
  put(c,module,"milestones",milestones)?;
  let retained_counts=c.retain(counts)?;let retained_milestones=match c.retain(milestones){Ok(root)=>root,Err(error)=>{c.release_root(retained_counts);return Err(error);}};
  {let mut state=shared.borrow_mut();state.performance_native.counts=Some(retained_counts);state.performance_native.milestones=Some(retained_milestones);}
  for(name,operation)in[("now","performanceNativeNow"),("setupObservers","performanceSetupObservers"),("updateGarbageCollectionTracking","performanceGcTracking"),("notify","performanceNotify"),("markBootstrapComplete","performanceBootstrapMark")]{let function=c.host_function_named(crate::host::shared_vm::operation(operation),name)?;put(c,module,name,function)?;}
  Ok(module)
+}
+/// The process's time origins in `milestones`: its own clocks' readings at its start.
+fn set_time_origins(c:&mut Context<'_>,milestones:RootId)->Result<(),RootedError>{
+ let origins=c.host_mut().shared_state().borrow().process_control.performance_origins();
+ let Some((monotonic_ns,unix_micros))=origins else{return unsupported(c,"Performance time origin requires native monotonic and wall clocks");};
+ for(label,value)in[("timeOrigin",monotonic_ns),("timeOriginTimestamp",unix_micros),("environment",monotonic_ns)]{let key=c.string_rooted(&milestone(label).to_string());let value=c.number(value);c.set_property_rooted(milestones,key,value,milestones)?;}
+ Ok(())
+}
+/// Replaces a restored snapshot's time origins, the builder's, with this process's, as
+/// Node's `refreshTimeOrigin` does after its own snapshot.
+pub(crate)fn refresh_time_origins(c:&mut Context<'_>)->Result<(),RootedError>{
+ let milestones=c.host_mut().shared_state().borrow().performance_native.milestones;
+ milestones.map_or(Ok(()),|milestones|set_time_origins(c,milestones))
 }
 pub(crate)fn now(c:&mut Context<'_>,_:RootId,_:&[RootId])->Result<RootId,RootedError>{{let undefined=c.undefined();super::perf_hooks::now(c,undefined,&[])}}
 pub(crate)fn setup(c:&mut Context<'_>,_:RootId,args:&[RootId])->Result<RootId,RootedError>{
@@ -44,3 +56,5 @@ pub(crate)fn notify(c:&mut Context<'_>,_:RootId,args:&[RootId])->Result<RootId,R
 }
 pub(crate)fn bootstrap_mark(c:&mut Context<'_>,_:RootId,_:&[RootId])->Result<RootId,RootedError>{let shared=c.host_mut().shared_state();let state=shared.borrow();let milestones=state.performance_native.milestones.ok_or_else(||RootedError::host("Performance milestones not initialized"))?;let(monotonic,_)=state.process_control.performance_origins().ok_or_else(||RootedError::host("Monotonic time origin unavailable"))?;let value=monotonic+state.process_control.uptime()*1_000_000_000.0;drop(state);let key=c.string_rooted(&milestone("bootstrapComplete").to_string());let value=c.number(value);c.set_property_rooted(milestones,key,value,milestones)?;Ok(c.undefined())}
 pub(crate)fn cleanup(runtime:&mut Runtime<NodeHost>){let shared=runtime.host_mut().shared_state();let state=std::mem::take(&mut shared.borrow_mut().performance_native);for root in[state.counts,state.milestones,state.callback].into_iter().flatten(){runtime.release_root(root);}}
+
+crate::host::startup_snapshot::host_snap_state!(State { counts, milestones, callback });
