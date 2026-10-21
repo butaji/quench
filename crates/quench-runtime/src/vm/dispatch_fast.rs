@@ -157,6 +157,45 @@ const fn fill_room<const BLOCK: usize>(count: usize) -> usize {
     if room < BLOCK { BLOCK } else { room }
 }
 
+/// The values of a call window to copy as one fixed-size move each; a longer window copies
+/// value by value.
+const FIXED_ARGUMENT_COPIES: u16 = 4;
+
+/// Copies the `count` values at `source` to `destination`: a window of at most
+/// `FIXED_ARGUMENT_COPIES` values as one move of its size, which needs no loop.
+///
+/// # Safety
+/// Both ranges hold `count` values and do not overlap.
+#[inline(always)]
+unsafe fn copy_arguments(destination: *mut Value, source: *const Value, count: u16) {
+    /// One move of `N` values.
+    #[inline(always)]
+    unsafe fn copy<const N: usize>(destination: *mut Value, source: *const Value) {
+        // SAFETY: the caller's contract, for `N` values.
+        unsafe { destination.cast::<[Value; N]>().write_unaligned(source.cast::<[Value; N]>().read_unaligned()) }
+    }
+    const _: () = assert!(FIXED_ARGUMENT_COPIES == 4);
+    // SAFETY: the function's contract.
+    unsafe {
+        // Compares, not a table, so the common windows of a value or two take a branch each.
+        if count <= 2 {
+            if count == 2 {
+                copy::<2>(destination, source);
+            } else if count == 1 {
+                copy::<1>(destination, source);
+            }
+        } else if count <= FIXED_ARGUMENT_COPIES {
+            if count == FIXED_ARGUMENT_COPIES {
+                copy::<4>(destination, source);
+            } else {
+                copy::<3>(destination, source);
+            }
+        } else {
+            std::ptr::copy_nonoverlapping(source, destination, usize::from(count));
+        }
+    }
+}
+
 /// Writes `initial` to the `count` registers at `registers`, as whole blocks of `BLOCK`: the
 /// first unconditionally, since most windows fit it.
 ///
@@ -816,17 +855,24 @@ impl ConstructPlan {
         }
     }
 
-    /// The receiver this plan allocates for `values`, its fields in order and `undefined`
-    /// past them, which is how unused inline slots start.
+    /// The receiver this plan allocates with its fields `field(k)` in order and `undefined`
+    /// past them, which is how unused inline slots start: gathered into the receiver's inline
+    /// slots where they fit, else into the arena run's values.
     #[inline(always)]
-    fn allocate(&self, heap: &mut crate::heap::Heap, values: [Value; CONSTRUCT_PLAN_FIELDS]) -> Value {
-        let fields = usize::from(self.fields);
-        if fields <= INLINE_PROPERTY_COUNT {
-            debug_assert!(values[fields..].iter().all(|value| *value == Value::UNDEFINED));
-            let inline = std::array::from_fn(|slot| values[slot]);
+    fn allocate(&self, heap: &mut crate::heap::Heap, field: impl Fn(u16) -> Value) -> Value {
+        let parameters = &self.parameters[..usize::from(self.fields)];
+        if parameters.len() <= INLINE_PROPERTY_COUNT {
+            let mut inline = [Value::UNDEFINED; INLINE_PROPERTY_COUNT];
+            for (slot, parameter) in inline.iter_mut().zip(parameters) {
+                *slot = field(*parameter);
+            }
             return heap.alloc_object_from_header(self.header, self.prototype, inline);
         }
-        heap.alloc_object_with_properties(self.prototype, self.shape, &values[..fields])
+        let mut values = [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS];
+        for (value, parameter) in values.iter_mut().zip(parameters) {
+            *value = field(*parameter);
+        }
+        heap.alloc_object_with_properties(self.prototype, self.shape, &values[..parameters.len()])
     }
 }
 
@@ -7709,11 +7755,7 @@ fn lane_push_activation<H: Host, const MAY_CROSS: bool>(
     let callee_registers = unsafe {
         let registers = stack.values.as_mut_ptr().add(window);
         fill_window::<SCRIPT_FILL_BLOCK>(registers, count, Value::UNDEFINED);
-        for offset in 0..argc {
-            registers
-                .add(usize::from(offset))
-                .write(r.get(arguments + offset));
-        }
+        copy_arguments(registers, r.0.add(usize::from(arguments)), argc);
         stack.values.set_len(window + count);
         Registers(registers)
     };
@@ -8004,14 +8046,10 @@ fn lane_planned_construction<H: Host>(
 ) -> Option<Value> {
     let plan = holding_construct_plan(vm, callee)?;
     let argc = ImmediateLayout::argument_count(i.imm());
-    let mut values = [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS];
-    for (value, parameter) in values.iter_mut().zip(&plan.parameters[..usize::from(plan.fields)]) {
-        // Parameter `k` is argument `k`, or undefined when not passed.
-        if *parameter < argc {
-            *value = r.get(i.c + parameter);
-        }
-    }
-    Some(plan.allocate(&mut vm.heap, values))
+    // Parameter `k` is argument `k`, or undefined when not passed.
+    Some(plan.allocate(&mut vm.heap, |parameter| {
+        if parameter < argc { r.get(i.c + parameter) } else { Value::UNDEFINED }
+    }))
 }
 
 /// The construct plan cache entry `callee` owns, when it names a heap cell.
@@ -8042,7 +8080,7 @@ fn lane_planned_receiver<H: Host>(
     plan: Option<&ConstructPlan>,
 ) -> Option<Value> {
     if let Some(plan) = plan.filter(|plan| plan.fields == 0) {
-        return Some(plan.allocate(&mut vm.heap, [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS]));
+        return Some(plan.allocate(&mut vm.heap, |_| Value::UNDEFINED));
     }
     let template = vm.inline_construct_template(callee)?;
     let (prototype, shape) = (template.proto(), template.shape());
