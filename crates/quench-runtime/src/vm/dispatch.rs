@@ -1116,7 +1116,7 @@ impl<H: Host> Vm<H> {
                 let key = self.read(f, i.register_c());
                 let key = self.to_property_key(p, key)?;
                 let key = match self.heap.get(key).cloned() {
-                    _ if let Some(text) = self.heap.string(key).cloned()  => PropertyKey::string(self.intern_js_atom(&text)),
+                    _ if let Some(atom) = self.string_key_atom(key) => PropertyKey::string(atom),
                     Some(Cell::Symbol(_)) => PropertyKey::symbol(key),
                     _ => return Err(JsError::validation("invalid class field key".into())),
                 };

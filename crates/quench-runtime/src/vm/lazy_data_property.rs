@@ -152,6 +152,14 @@ impl<H: Host> Vm<H> {
 
     /// The accessor of `holder`'s own property `key` while it is still a lazy data property.
     fn lazy_data_accessor(&self, holder: Value, key: PropertyKey) -> Option<Value> {
+        // A lazy data property's accessor is its getter and its setter, so a holder whose
+        // shape holds no such accessor, and no indexed descriptor, has none.
+        if let Some(object) = self.object_data(holder)
+            && !object.has_indexed_descriptors()
+            && !self.shape_may_have_table_accessors(object.shape())
+        {
+            return None;
+        }
         let attributes = self.property_attributes(holder, key)?;
         let getter = attributes.getter.filter(|_| attributes.accessor)?;
         self.lazy_member(getter).map(|_| getter)
@@ -164,7 +172,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// The member environment of `value` when it is a lazy data property's accessor.
-    fn lazy_member(&self, value: Value) -> Option<Value> {
+    pub(super) fn lazy_member(&self, value: Value) -> Option<Value> {
         match self.heap.function(value) {
             Some(FunctionRecord {
                 kind: FunctionKind::Native(Native::LazyDataProperty),
@@ -184,7 +192,7 @@ impl<H: Host> Vm<H> {
     /// A member's key as a property key: its string's atom, or the symbol itself.
     fn lazy_member_key(&mut self, key: Value) -> Result<PropertyKey, JsError> {
         match self.heap.get(key).cloned() {
-            _ if let Some(name) = self.heap.string(key).cloned()  => Ok(PropertyKey::string(self.intern_js_atom(&name))),
+            _ if let Some(atom) = self.string_key_atom(key) => Ok(PropertyKey::string(atom)),
             Some(Cell::Symbol(_)) => Ok(PropertyKey::symbol(key)),
             _ => Err(JsError(
                 "lazy data property key is a string or symbol".into(),
