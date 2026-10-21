@@ -833,6 +833,18 @@ shape produced a similar one-round sample (3.75 / 74.06 MiB); this also remains
 unpaired evidence. Corrected diagnostic data and screen reports are in
 `evidence/jit-jetstream3-2026-10-20/this-field-return-screen/`.
 
+The matcher now also accepts a three-bytecode return-marked `GetField(this)`
+getter with its unreachable fallback tail. In `sync-fs`, this covers
+`File.get data()`: one diagnostic counted 36,951,119 guarded returns from
+36,951,120 entries, with the first cache miss interpreted. Across three clean
+production samples, the candidate median Score was 2.86 versus 2.59 for its
+parent control, while median peak RSS stayed near 72.2 MiB for both. Median
+Quench wall time fell from 123.38 s to 112.25 s. The first two samples were
+grouped by binary and the peer scores moved substantially, so this is a small
+directional screen, not qualification. Quench still trails Bun and Node by a
+wide margin. Details and reports are in
+`evidence/jit-jetstream3-2026-10-21/sync-fs-getter/`.
+
 ## Numeric hash-map entry loop
 
 The observed 23-instruction `_findKeyEntry` loop has an opt-in bounded JIT-mode

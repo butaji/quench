@@ -732,7 +732,10 @@ pub(super) fn cached_field_argument_candidate(function: &Function) -> Option<JsJ
 pub(super) fn cached_this_field_return_candidate(
     function: &Function,
 ) -> Option<JsJitFieldReturn> {
-    if function.params != 0 || function.code.len() != 4 || !function.handlers.is_empty() {
+    if function.params != 0
+        || !(2..=4).contains(&function.code.len())
+        || !function.handlers.is_empty()
+    {
         return None;
     }
     let get = function_instruction(function, 0)?;
