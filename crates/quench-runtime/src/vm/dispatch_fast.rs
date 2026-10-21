@@ -2044,11 +2044,46 @@ lane_handler! {
     #[inline(never)]
     fn lane_get_field<>(cx, r, ip, i, view) {
         let Some(value) = (unsafe { lane_field_value(cx, r, i) }) else {
-            return exit(ip);
+            return match lane_getter_activation(cx, r, ip, i) {
+                Ok((registers, base)) => next!(cx, registers, base, Carried::SCRIPT),
+                Err(next) => next,
+            };
         };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::SCRIPT)
     }
+}
+
+/// A lane `GetField` whose read meets the accessor its site cached
+/// (`Vm::cached_field_getter`): the getter runs as a frameless activation of the read's
+/// record, as `lane_script_call` runs a call, with the base as receiver and no arguments,
+/// and its completion is the read's value. `Err` carries the record to continue at: the
+/// general path for any other read.
+#[inline(never)]
+fn lane_getter_activation<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    ip: Ip,
+    i: &LaneInstruction,
+) -> Result<(Registers, Ip), Ip> {
+    if !unsafe { (*cx).script_calls } || i.b == crate::bytecode::FieldBase::NESTED {
+        return Err(exit(ip));
+    }
+    let vm = unsafe { vm(cx) };
+    let Some(base) = (unsafe { lane_field_base(cx, r, crate::bytecode::FieldBase(i.b)) }) else {
+        return Err(exit(ip));
+    };
+    let Some(getter) = vm.cached_field_getter(base, i.imm(), vm.field_cache_index(i.c)) else {
+        return Err(exit(ip));
+    };
+    let Some(target) = lane_script_target(cx, getter).filter(|target| !target.forwards) else {
+        return Err(exit(ip));
+    };
+    let Some(this) = lane_activation_this(vm, &target, base) else {
+        return Err(exit(ip));
+    };
+    let no_arguments = ActivationArguments::Kept(std::ptr::NonNull::dangling().as_ptr(), 0);
+    lane_activate_keeping(cx, r, ip, target, no_arguments, this, false)
 }
 
 /// A `GetField` record's value where caches answer it (`lane_cached_field`): one read of a
