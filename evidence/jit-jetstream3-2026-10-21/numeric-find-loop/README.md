@@ -6,7 +6,8 @@ arguments, a fixed receiver, cached data-field reads, an own dense or sparse
 array element, an owned/shared lexical capture, and an already-compiled
 same-program numeric `equals` function. It polls interrupts, bounds each chain
 to 256 entries, returns at the ordinary bytecode `Return`, and leaves the frame
-at PC 0 on every guard miss.
+at PC 0 on every guard miss. It is now disabled by default; set
+`QUENCH_JS_JIT_NUMERIC_FIND=1` to exercise it.
 
 ## Diagnostic coverage
 
@@ -47,3 +48,25 @@ these one-round runs are not a matched comparison. They do not establish a
 score win. The cached diagnostic and screen are in
 `hash-map-cached-diagnostic-1round.json` and
 `hash-map-cached-score-1round.json`.
+
+## Interleaved same-binary screen
+
+The switch was then measured in three interleaved one-round pairs with the
+same production executable and benchmark command. All six outputs validated.
+
+| Pair | Enabled score / time | Disabled score / time | RSS enabled / disabled |
+| --- | ---: | ---: | ---: |
+| 1 | 3.16 / 126.62 s | 4.98 / 105.48 s | 74.12 / 74.00 MiB |
+| 2 | 3.84 / 117.55 s | 4.60 / 110.01 s | 74.10 / 74.11 MiB |
+| 3 | 2.80 / 127.91 s | 4.09 / 114.85 s | 74.00 / 74.07 MiB |
+
+The disabled arm was faster in all three pairs, by about 11% on the geometric
+mean of wall-time ratios. RSS was effectively unchanged. This rejects the path
+as a default optimization despite its high coverage; it remains available only
+as an opt-in research arm. Each raw report is `hash-map-pair-<arm>.json`.
+
+The changed default was verified with `hash-map-default-off-1round.json`, which
+passed fixture validation and scored 4.03 at 74.10 MiB / 121.23 s. The earlier
+sequential three-round arms are retained as
+`hash-map-ab-on-3round.json` and `hash-map-ab-off-3round.json`; their order was
+confounded, so the interleaved pairs above are the more useful comparison.

@@ -821,12 +821,13 @@ unpaired evidence. Corrected diagnostic data and screen reports are in
 
 ## Numeric hash-map entry loop
 
-The observed 23-instruction `_findKeyEntry` loop now has a bounded JIT-mode
-entry path for numeric keys. It checks cached own fields, supports present
-dense and sparse array data, resolves only owned/shared lexical captures, and
-uses an already-compiled same-program numeric `equals`. It returns through the
-ordinary bytecode `Return` and leaves the frame untouched on every failed
-guard. The path polls interrupts and falls back after 256 chain entries.
+The observed 23-instruction `_findKeyEntry` loop has an opt-in bounded JIT-mode
+entry path for numeric keys (`QUENCH_JS_JIT_NUMERIC_FIND=1`). It checks cached
+own fields, supports present dense and sparse array data, resolves only
+owned/shared lexical captures, and uses an already-compiled same-program
+numeric `equals`. It returns through the ordinary bytecode `Return` and leaves
+the frame untouched on every failed guard. The path polls interrupts and falls
+back after 256 chain entries.
 
 A one-round diagnostic validated the fixture and counted 53,999,968 fast
 returns out of 54 million entries; the first cache miss used the interpreter.
@@ -842,3 +843,8 @@ bytecode rescan at every hot entry. A later one-round screen was directionally
 faster (4.52 / 74.17 MiB / 111.36 s), but Node and Bun scores moved from 124.44
 and 108.18 to 155.13 and 175.49 as well. The screens are unpaired and do not
 establish a score win.
+
+An interleaved same-binary three-pair screen compared the path enabled and
+disabled. Disabled was faster in every pair (105.48 vs 126.62 s, 110.01 vs
+117.55 s, and 114.85 vs 127.91 s) with effectively unchanged RSS. The
+high-coverage loop therefore stays opt-in rather than shipping as the default.
