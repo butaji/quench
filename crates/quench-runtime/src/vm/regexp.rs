@@ -50,6 +50,25 @@ pub(super) struct RegExpResultTemplate {
     input_slot: usize,
     groups_slot: usize,
 }
+
+/// Where an exec result's `index`, `input` and `groups` sit in its recorded layout.
+#[derive(Clone, Copy)]
+struct RegExpResultSlots {
+    index: usize,
+    input: usize,
+    groups: usize,
+}
+
+impl RegExpResultSlots {
+    /// The property values in storage order.
+    fn values(self, index: Value, input: Value, groups: Value) -> [Value; REGEXP_RESULT_PROPERTY_COUNT] {
+        let mut values = [Value::UNDEFINED; REGEXP_RESULT_PROPERTY_COUNT];
+        values[self.index] = index;
+        values[self.input] = input;
+        values[self.groups] = groups;
+        values
+    }
+}
 /// `index`, `input` and `groups`.
 const REGEXP_RESULT_PROPERTY_COUNT: usize = 3;
 
@@ -2477,27 +2496,35 @@ impl<H: Host> Vm<H> {
                 Some(Cell::RegExp { meta, .. }) => meta.flags.contains('d'),
                 _ => false,
             };
+            // Each matched substring shares the subject's storage where its representation
+            // allows (`JsString::substring`); its units are the same either way.
             let values = std::iter::once(Some(matched.range.clone()))
                 .chain(matched.captures.iter().cloned())
                 .map(|range| {
-                    range.map_or(Value::UNDEFINED, |range| {
-                        vm.heap.alloc_string(JsString::from_unit_run(
-                            input.units().slice(range),
-                        ))
-                    })
+                    range.map_or(Value::UNDEFINED, |range| vm.heap.alloc_string(input.substring(range)))
                 })
                 .collect::<Vec<_>>();
-            let result = vm.heap.alloc(Cell::Array {
-                object: crate::heap::ArrayObject::new(
-                    Self::empty_object(vm.array_proto),
-                    Rc::new(values),
-                ),
-            });
             let named = regexp_named_capture_ranges(&matched);
+            // The groups object is made before the result array: no guest code runs and no
+            // collection is taken between them, so the order is unobservable.
             let groups = vm.regexp_groups_object(&named, input.units())?;
             let index = Value::number(matched.range.start as f64);
             let input_value = vm.string_value_from(argument, &input);
-            vm.initialize_regexp_result(result, index, input_value, groups)?;
+            let array = crate::heap::ArrayObject::new(Self::empty_object(vm.array_proto), Rc::new(values));
+            let result = match vm.regexp_result_layout() {
+                // The recorded layout: the array is allocated with its properties, by the
+                // same storage steps `initialize_regexp_result` takes on the published cell.
+                Some((shape, properties)) => vm.heap.alloc_array_with_properties(
+                    array,
+                    shape,
+                    &properties.values(index, input_value, groups),
+                ),
+                None => {
+                    let result = vm.heap.alloc(Cell::Array { object: array });
+                    vm.initialize_regexp_result(result, index, input_value, groups)?;
+                    result
+                }
+            };
             if has_indices {
                 let indices = vm.regexp_indices_array(&matched, &named)?;
                 let indices_atom = vm.intern_atom("indices");
@@ -2506,6 +2533,26 @@ impl<H: Host> Vm<H> {
             vm.record_regexp_legacy_match(this, input, matched)?;
             Ok(result)
         }
+    }
+
+    /// The realm's recorded exec result layout (`RegExpResultTemplate`): the shape its
+    /// arrays take and where each of `index`, `input` and `groups` sits.
+    fn regexp_result_layout(&self) -> Option<(u32, RegExpResultSlots)> {
+        let template = self
+            .realm
+            .intrinsics
+            .regexp_intrinsics
+            .get(&self.realm.globals)?
+            .result_template?;
+        let shape = self.object_data(template.anchor)?.shape();
+        Some((
+            shape,
+            RegExpResultSlots {
+                index: template.index_slot,
+                input: template.input_slot,
+                groups: template.groups_slot,
+            },
+        ))
     }
 
     /// Gives a fresh exec `result` array its `index`, `input` and `groups` properties: from
