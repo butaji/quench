@@ -13,10 +13,7 @@ const MAX_ARENA_START: usize = INLINE_PROPERTY_START as usize;
 /// three for RayTrace's vectors at the cost of max RSS (Splay 162 -> 204 MB); the integration
 /// branch keeps memory-first defaults (the owner's direction, 2026-10-17 and 2026-10-18).
 pub(crate) const INLINE_PROPERTY_COUNT: usize = 2;
-/// The smallest arena range. An object reaches the arena by outgrowing its inline slots, or
-/// by storing a value they cannot hold before that; a range for its first values would regrow
-/// as it grows past them.
-const MIN_CAPACITY: usize = (INLINE_PROPERTY_COUNT + 1).next_power_of_two();
+const MIN_CAPACITY: usize = 2;
 const BUCKETS: usize = 32;
 const DENSE_ARENA_RESERVE_THRESHOLD: usize = 65_536;
 const DENSE_ARENA_GROWTH_DIVISOR: usize = 3;
