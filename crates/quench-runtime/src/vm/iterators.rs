@@ -80,6 +80,22 @@ impl<H: Host> Vm<H> {
             .then(|| elements.to_vec())
     }
 
+    /// Whether neither `iterator` nor any prototype in its chain has `key`, which the shapes
+    /// alone decide: an iterator object with no own `key` (in its shape or side table) above
+    /// a chain of ordinary objects (`Vm::plain_property_lookup`). `false` when they cannot.
+    fn iterator_lacks_property(&self, iterator: Value, key: PropertyKey) -> bool {
+        let Some(data) = self.object_data(iterator) else {
+            return false;
+        };
+        if self.property_shape_slot(data.shape(), key).is_some()
+            || (data.has_side_descriptors() && self.descriptors.contains_key(&(iterator, key)))
+        {
+            return false;
+        }
+        let proto = data.proto();
+        proto.is_null() || self.plain_property_lookup(proto, key) == Some(None)
+    }
+
     /// Whether `source` is an ordinary Array whose `@@iterator` lookup reaches the realm's
     /// intrinsic `Array.prototype.values` data property, so GetIterator on it is calling that
     /// method: no own `@@iterator`, `Array.prototype` its prototype, and no getter met.
@@ -140,7 +156,13 @@ impl<H: Host> Vm<H> {
             {
                 return vm.iterator_close(p, *source);
             }
-            let atom = vm.intern_atom("return");
+            let atom = vm.runtime_atoms.iterator_return;
+            // GetMethod of an absent `return` yields undefined and the close ends (ECMA-262
+            // 7.4.11 steps 3-5); the shapes of a built-in iterator's chain decide that without
+            // the general lookup.
+            if vm.iterator_lacks_property(iterator, PropertyKey::string(atom)) {
+                return Ok(Value::UNDEFINED);
+            }
             let method = vm.get_property(p, iterator, atom)?;
             if method.is_undefined() || method.is_null() {
                 return Ok(Value::UNDEFINED);

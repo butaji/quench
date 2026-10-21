@@ -530,9 +530,11 @@ impl<H: Host> Vm<H> {
         true
     }
 
-    /// ArrayAccumulation's CreateDataPropertyOrThrow on the literal under construction, which
-    /// no code can reach yet: an element `MakeArray` reserved below its length is written in
-    /// place, one at its length appended. A literal in sparse storage takes the general path.
+    /// `define_array_literal_element` into a literal's dense storage: the hole `MakeArray`
+    /// left at `index` (`Vm::hole_array`), or the next element at the literal's length. A
+    /// literal is unreachable from guest code until it is complete, so no prototype observes
+    /// the index, and CreateDataProperty stores the value as its own element. `false` leaves
+    /// any other definition to `define_array_literal_element`.
     pub(super) fn define_literal_element(&mut self, array: Value, index: usize, value: Value) -> bool {
         let Some(length) = self.dense_array_length(array) else {
             return false;

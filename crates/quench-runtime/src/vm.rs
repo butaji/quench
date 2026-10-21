@@ -67,6 +67,8 @@ struct RuntimeAtoms {
     /// An iterator result's keys, in its literal order.
     value: Atom,
     done: Atom,
+    /// The iterator protocol's close method.
+    iterator_return: Atom,
     /// A property descriptor object's other keys (`value` above), which
     /// `Object.getOwnPropertyDescriptor` writes on every call.
     writable: Atom,
@@ -2588,6 +2590,7 @@ impl<H: Host> Vm<H> {
             empty: self.intern_atom(""),
             value: self.intern_atom("value"),
             done: self.intern_atom("done"),
+            iterator_return: self.intern_atom("return"),
             writable: self.intern_atom("writable"),
             enumerable: self.intern_atom("enumerable"),
             configurable: self.intern_atom("configurable"),
