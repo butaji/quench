@@ -14,11 +14,19 @@
 //! `MAX_SMALL_BYTES`, alignments above `GRANULE_BYTES`, and any request after reservation
 //! fails go to the system allocator. The size class is derived from the `Layout` passed to
 //! `dealloc`, so no pointer is ever looked up.
+//!
+//! Threads: each thread allocates from its own heap, so neither path takes a lock or an
+//! atomic read-modify-write. A page belongs to the heap that took it (`Page::owner`); a
+//! free on another thread pushes the block onto the page's `remote_free` list and queues the
+//! page on its owner's `remote_pages` once, and the owner merges those blocks in its slow
+//! path. A thread's heap outlives the thread: at exit it is abandoned, pages and all, and
+//! the next new thread adopts it. Allocation on a thread whose heap is already gone (late
+//! thread-exit destructors) uses one shared heap behind a lock.
 
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::cell::UnsafeCell;
+use std::cell::{Cell, UnsafeCell};
 use std::ptr;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
 /// One allocator page: the unit a size class takes and returns.
 pub const PAGE_BYTES: usize = 4096;
@@ -71,20 +79,29 @@ struct FreeBlock {
 /// The header at the start of every page.
 #[repr(C)]
 struct Page {
-    /// Blocks freed back to this page.
+    /// Blocks freed back to this page by its owner.
     free: *mut FreeBlock,
     /// Offset of the first never-used block.
     bump: u32,
-    /// Blocks handed out and not freed.
+    /// Blocks handed out and not freed back to the owner (remote frees count until merged).
     used: u32,
-    class: u32,
+    class: u8,
     /// Linked into its class's list of pages with free blocks.
     in_partial: bool,
+    /// Linked into the owner's `remote_pages`, so another remote free need not link it.
+    remote_queued: AtomicBool,
     prev: *mut Page,
     next: *mut Page,
+    /// The heap whose thread allocates from this page.
+    owner: *mut Heap,
+    /// Blocks other threads freed, pushed atomically; the owner merges them.
+    remote_free: AtomicPtr<FreeBlock>,
+    /// The next page in the owner's `remote_pages`.
+    remote_next: AtomicPtr<Page>,
 }
 
-struct State {
+/// One thread's allocation state.
+struct Heap {
     /// The page each class allocates from.
     current: [*mut Page; CLASS_COUNT],
     /// Pages other than `current` that have free blocks, per class.
@@ -94,33 +111,23 @@ struct State {
     /// The reserved, never-used remainder of the current chunk.
     chunk_next: usize,
     chunk_end: usize,
+    /// Pages of this heap with blocks in `remote_free`, linked through `remote_next`.
+    remote_pages: AtomicPtr<Page>,
+    /// The next heap in `ABANDONED`.
+    next_abandoned: *mut Heap,
 }
 
-/// The allocator. One instance serves a process as `#[global_allocator]`.
-pub struct QuenchAlloc {
+/// A heap and the flag that serializes its use, for heaps no single thread owns.
+struct LockedHeap {
     locked: AtomicBool,
-    state: UnsafeCell<State>,
+    heap: UnsafeCell<Heap>,
 }
 
-// SAFETY: `state` is only accessed while `locked` is held.
-unsafe impl Sync for QuenchAlloc {}
+// SAFETY: the heap is only accessed while `locked` is held.
+unsafe impl Sync for LockedHeap {}
 
-impl QuenchAlloc {
-    pub const fn new() -> Self {
-        Self {
-            locked: AtomicBool::new(false),
-            state: UnsafeCell::new(State {
-                current: [ptr::null_mut(); CLASS_COUNT],
-                partial: [ptr::null_mut(); CLASS_COUNT],
-                empty: ptr::null_mut(),
-                chunk_next: 0,
-                chunk_end: 0,
-            }),
-        }
-    }
-
-    #[inline(always)]
-    fn with_state<R>(&self, f: impl FnOnce(&mut State) -> R) -> R {
+impl LockedHeap {
+    fn with<R>(&self, f: impl FnOnce(*mut Heap) -> R) -> R {
         while self
             .locked
             .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
@@ -128,10 +135,117 @@ impl QuenchAlloc {
         {
             std::hint::spin_loop();
         }
-        // SAFETY: the lock gives exclusive access to the state.
-        let result = f(unsafe { &mut *self.state.get() });
+        let result = f(self.heap.get());
         self.locked.store(false, Ordering::Release);
         result
+    }
+}
+
+/// Serves threads whose own heap is already abandoned.
+static ORPHAN: LockedHeap = LockedHeap {
+    locked: AtomicBool::new(false),
+    heap: UnsafeCell::new(Heap::EMPTY),
+};
+
+/// Heaps of exited threads, linked through `next_abandoned`; the lock flag and the head.
+static ABANDONED_LOCK: AtomicBool = AtomicBool::new(false);
+static ABANDONED: AtomicPtr<Heap> = AtomicPtr::new(ptr::null_mut());
+
+thread_local! {
+    /// This thread's heap; null before its first allocation and after it exits.
+    static HEAP: Cell<*mut Heap> = const { Cell::new(ptr::null_mut()) };
+    /// Abandons the thread's heap when the thread exits.
+    static EXIT: ThreadExit = const { ThreadExit };
+}
+
+struct ThreadExit;
+
+impl Drop for ThreadExit {
+    fn drop(&mut self) {
+        let heap = HEAP.replace(ptr::null_mut());
+        if !heap.is_null() {
+            with_abandoned(|head| {
+                // SAFETY: the exiting thread no longer uses its heap.
+                unsafe { (*heap).next_abandoned = *head };
+                *head = heap;
+            });
+        }
+    }
+}
+
+fn with_abandoned<R>(f: impl FnOnce(&mut *mut Heap) -> R) -> R {
+    while ABANDONED_LOCK
+        .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
+        .is_err()
+    {
+        std::hint::spin_loop();
+    }
+    let mut head = ABANDONED.load(Ordering::Relaxed);
+    let result = f(&mut head);
+    ABANDONED.store(head, Ordering::Relaxed);
+    ABANDONED_LOCK.store(false, Ordering::Release);
+    result
+}
+
+/// This thread's heap, adopting an abandoned one or making one on first use; null once the
+/// thread's exit has abandoned it.
+#[inline(always)]
+fn thread_heap() -> *mut Heap {
+    let heap = HEAP.get();
+    if !heap.is_null() {
+        return heap;
+    }
+    thread_heap_slow()
+}
+
+#[cold]
+fn thread_heap_slow() -> *mut Heap {
+    // A thread past its exit guard keeps no heap of its own: one made now would never be
+    // abandoned.
+    if EXIT.try_with(|_| ()).is_err() {
+        return ptr::null_mut();
+    }
+    let adopted = with_abandoned(|head| {
+        let heap = *head;
+        if !heap.is_null() {
+            // SAFETY: abandoned heaps are linked through `next_abandoned`.
+            *head = unsafe { (*heap).next_abandoned };
+        }
+        heap
+    });
+    let heap = if adopted.is_null() {
+        // SAFETY: an anonymous private mapping sized for one heap, owned from now on.
+        let mapped = unsafe {
+            libc::mmap(
+                ptr::null_mut(),
+                std::mem::size_of::<Heap>(),
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+                -1,
+                0,
+            )
+        };
+        if mapped == libc::MAP_FAILED {
+            return ptr::null_mut();
+        }
+        let heap = mapped.cast::<Heap>();
+        // SAFETY: fresh writable memory sized and aligned (page-aligned) for a heap.
+        unsafe { heap.write(Heap::EMPTY) };
+        heap
+    } else {
+        adopted
+    };
+    HEAP.set(heap);
+    heap
+}
+
+/// The allocator. One instance serves a process as `#[global_allocator]`; its state lives in
+/// per-thread heaps, so every instance shares it.
+pub struct QuenchAlloc;
+
+impl QuenchAlloc {
+    pub const fn new() -> Self {
+        Self
     }
 
     fn small_class(layout: Layout) -> Option<usize> {
@@ -148,7 +262,17 @@ impl Default for QuenchAlloc {
     }
 }
 
-impl State {
+impl Heap {
+    const EMPTY: Self = Self {
+        current: [ptr::null_mut(); CLASS_COUNT],
+        partial: [ptr::null_mut(); CLASS_COUNT],
+        empty: ptr::null_mut(),
+        chunk_next: 0,
+        chunk_end: 0,
+        remote_pages: AtomicPtr::new(ptr::null_mut()),
+        next_abandoned: ptr::null_mut(),
+    };
+
     /// A block of `class`, or null when no page can be had.
     #[inline(always)]
     unsafe fn allocate(&mut self, class: usize) -> *mut u8 {
@@ -165,6 +289,16 @@ impl State {
 
     #[cold]
     unsafe fn allocate_slow(&mut self, class: usize) -> *mut u8 {
+        // SAFETY: called by the heap's owner.
+        unsafe { self.collect_remote() };
+        let current = self.current[class];
+        if !current.is_null() {
+            // SAFETY: `current` holds initialized pages of this class.
+            let block = unsafe { take_block(current, class) };
+            if !block.is_null() {
+                return block;
+            }
+        }
         let page = if !self.partial[class].is_null() {
             let page = self.partial[class];
             // SAFETY: partial pages are initialized and linked.
@@ -176,7 +310,7 @@ impl State {
             if page.is_null() {
                 return ptr::null_mut();
             }
-            unsafe { init_page(page, class) };
+            unsafe { init_page(page, class, self) };
             page
         };
         self.current[class] = page;
@@ -184,14 +318,51 @@ impl State {
         unsafe { take_block(page, class) }
     }
 
-    unsafe fn free(&mut self, block: *mut u8, class: usize) {
-        let page = page_of(block);
-        // SAFETY: the block came from `allocate` for this class, so its page is ours.
+    /// Frees a block of one of this heap's pages, on its owner's thread.
+    unsafe fn free(&mut self, page: *mut Page, block: *mut u8) {
+        // SAFETY: the block came from `allocate` for the page's class, and the page is ours.
         unsafe {
             let free = block.cast::<FreeBlock>();
             (*free).next = (*page).free;
             (*page).free = free;
             (*page).used -= 1;
+            self.settle(page);
+        }
+    }
+
+    /// Merges the blocks other threads freed to this heap's pages.
+    unsafe fn collect_remote(&mut self) {
+        let mut page = self.remote_pages.swap(ptr::null_mut(), Ordering::Acquire);
+        while !page.is_null() {
+            // SAFETY: queued pages are this heap's; the queue link is read before the page
+            // may be queued again.
+            unsafe {
+                let next = (*page).remote_next.load(Ordering::Relaxed);
+                // Cleared before the blocks are taken: a free pushed after the swap below
+                // queues the page again.
+                (*page).remote_queued.store(false, Ordering::SeqCst);
+                let mut block = (*page).remote_free.swap(ptr::null_mut(), Ordering::SeqCst);
+                if !block.is_null() {
+                    while !block.is_null() {
+                        let following = (*block).next;
+                        (*block).next = (*page).free;
+                        (*page).free = block;
+                        (*page).used -= 1;
+                        block = following;
+                    }
+                    self.settle(page);
+                }
+                page = next;
+            }
+        }
+    }
+
+    /// Files a page that just gained free blocks: the empty pool when it has none in use,
+    /// else its class's partial list, unless it is the class's current page.
+    unsafe fn settle(&mut self, page: *mut Page) {
+        // SAFETY: an initialized page of this heap.
+        unsafe {
+            let class = usize::from((*page).class);
             if page == self.current[class] {
                 return;
             }
@@ -254,7 +425,7 @@ impl State {
     unsafe fn unlink_partial(&mut self, page: *mut Page) {
         // SAFETY: `page` is linked in its class's partial list.
         unsafe {
-            let class = (*page).class as usize;
+            let class = usize::from((*page).class);
             if (*page).prev.is_null() {
                 self.partial[class] = (*page).next;
             } else {
@@ -274,18 +445,84 @@ fn page_of(block: *mut u8) -> *mut Page {
     (block as usize & !(PAGE_BYTES - 1)) as *mut Page
 }
 
-unsafe fn init_page(page: *mut Page, class: usize) {
+unsafe fn init_page(page: *mut Page, class: usize, owner: *mut Heap) {
     // SAFETY: the caller owns `page`, a writable page.
     unsafe {
         page.write(Page {
             free: ptr::null_mut(),
             bump: PAGE_HEADER_BYTES as u32,
             used: 0,
-            class: class as u32,
+            class: class as u8,
             in_partial: false,
+            remote_queued: AtomicBool::new(false),
             prev: ptr::null_mut(),
             next: ptr::null_mut(),
+            owner,
+            remote_free: AtomicPtr::new(ptr::null_mut()),
+            remote_next: AtomicPtr::new(ptr::null_mut()),
         });
+    }
+}
+
+/// Frees a block of a page another heap owns: the block joins the page's `remote_free`, and
+/// the page its owner's `remote_pages` unless it is queued already.
+unsafe fn free_remote(page: *mut Page, block: *mut u8) {
+    // SAFETY: the block is allocated from `page`, whose owner heap outlives its pages.
+    unsafe {
+        let free = block.cast::<FreeBlock>();
+        let mut head = (*page).remote_free.load(Ordering::Relaxed);
+        loop {
+            (*free).next = head;
+            match (*page).remote_free.compare_exchange_weak(
+                head,
+                free,
+                Ordering::SeqCst,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(actual) => head = actual,
+            }
+        }
+        if (*page).remote_queued.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let pages = &(*(*page).owner).remote_pages;
+        let mut head = pages.load(Ordering::Relaxed);
+        loop {
+            (*page).remote_next.store(head, Ordering::Relaxed);
+            match pages.compare_exchange_weak(head, page, Ordering::Release, Ordering::Relaxed) {
+                Ok(_) => break,
+                Err(actual) => head = actual,
+            }
+        }
+    }
+}
+
+/// Allocates a block of `class` from this thread's heap, or the shared one past its exit.
+#[inline(always)]
+unsafe fn allocate(class: usize) -> *mut u8 {
+    let heap = thread_heap();
+    if heap.is_null() {
+        // SAFETY: the shared heap is used under its lock.
+        return ORPHAN.with(|heap| unsafe { (*heap).allocate(class) });
+    }
+    // SAFETY: the thread's own heap, used only by this thread.
+    unsafe { (*heap).allocate(class) }
+}
+
+/// Frees a small block: on the owner's thread directly, else through the page's remote list.
+#[inline(always)]
+unsafe fn free(block: *mut u8) {
+    let page = page_of(block);
+    let heap = HEAP.get();
+    // SAFETY: the block is allocated from `page`; a heap the thread owns is used only by it.
+    unsafe {
+        if !heap.is_null() && (*page).owner == heap {
+            (*heap).free(page, block);
+        } else {
+            // Including the shared heap's pages: whoever holds its lock next merges them.
+            free_remote(page, block);
+        }
     }
 }
 
@@ -315,8 +552,8 @@ unsafe impl GlobalAlloc for QuenchAlloc {
     #[inline]
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         if let Some(class) = Self::small_class(layout) {
-            // SAFETY: the state is accessed under the lock.
-            let block = self.with_state(|state| unsafe { state.allocate(class) });
+            // SAFETY: a small class.
+            let block = unsafe { allocate(class) };
             // Null only when address space cannot be reserved: an allocation failure. The
             // system allocator cannot stand in, since `dealloc` routes by layout alone.
             return block;
@@ -327,9 +564,9 @@ unsafe impl GlobalAlloc for QuenchAlloc {
 
     #[inline]
     unsafe fn dealloc(&self, block: *mut u8, layout: Layout) {
-        if let Some(class) = Self::small_class(layout) {
-            // SAFETY: a small layout's block came from `alloc` for the same class.
-            self.with_state(|state| unsafe { state.free(block, class) });
+        if Self::small_class(layout).is_some() {
+            // SAFETY: a small layout's block came from `alloc`, which took it from its page.
+            unsafe { free(block) };
             return;
         }
         // SAFETY: a large layout's block came from the system allocator.
@@ -402,7 +639,7 @@ mod tests {
         for block in &blocks {
             unsafe { allocator.dealloc(*block, small) };
         }
-        let state = unsafe { &*allocator.state.get() };
+        let state = unsafe { &*thread_heap() };
         let reserved_before = state.chunk_next;
         // Every page but the current one went back to the empty pool, so another class
         // takes them without reserving more.
@@ -411,11 +648,55 @@ mod tests {
         let reused: Vec<*mut u8> = (0..pages_freed * ((PAGE_BYTES - PAGE_HEADER_BYTES) / 1024))
             .map(|_| unsafe { allocator.alloc(large) })
             .collect();
-        let state = unsafe { &*allocator.state.get() };
+        let state = unsafe { &*thread_heap() };
         assert_eq!(state.chunk_next, reserved_before);
         for block in reused {
             unsafe { allocator.dealloc(block, large) };
         }
+    }
+
+    #[test]
+    fn blocks_freed_on_other_threads_return_to_their_owner() {
+        let allocator = QuenchAlloc::new();
+        let layout = Layout::from_size_align(64, 8).unwrap();
+        let blocks: Vec<usize> = (0..2000)
+            .map(|_| unsafe { allocator.alloc(layout) } as usize)
+            .collect();
+        let reserved = unsafe { (*thread_heap()).chunk_next };
+        std::thread::scope(|scope| {
+            for part in blocks.chunks(500) {
+                scope.spawn(move || {
+                    for block in part {
+                        unsafe { QuenchAlloc::new().dealloc(*block as *mut u8, layout) };
+                    }
+                });
+            }
+        });
+        // Every block came back through the remote lists, so the owner reuses them without
+        // reserving more.
+        let again: Vec<*mut u8> = (0..2000).map(|_| unsafe { allocator.alloc(layout) }).collect();
+        assert_eq!(unsafe { (*thread_heap()).chunk_next }, reserved);
+        for block in again {
+            unsafe { allocator.dealloc(block, layout) };
+        }
+    }
+
+    #[test]
+    fn exited_threads_hand_their_heap_on() {
+        let layout = Layout::from_size_align(32, 8).unwrap();
+        let kept = std::thread::spawn(move || unsafe { QuenchAlloc::new().alloc(layout) } as usize)
+            .join()
+            .unwrap();
+        // The block outlives its thread; freeing it here goes to the abandoned heap.
+        unsafe { QuenchAlloc::new().dealloc(kept as *mut u8, layout) };
+        let reused = std::thread::spawn(move || unsafe {
+            let block = QuenchAlloc::new().alloc(layout);
+            QuenchAlloc::new().dealloc(block, layout);
+            block as usize
+        })
+        .join()
+        .unwrap();
+        assert_ne!(reused, 0);
     }
 
     #[test]
