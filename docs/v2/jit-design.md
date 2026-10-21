@@ -985,3 +985,14 @@ three-round builds. Promise score moved upward while Async moved downward, with
 flat RSS and large peer timing drift. The change was reverted because the
 screen did not establish a matched win. Results are in
 `evidence/jit-jetstream3-2026-10-21/doxbee-empty-als-snapshot/`.
+
+The one-round `typescript-lib` diagnostic reinforces the same coverage issue:
+Quench scored 0.05 versus Node 1.45 and Bun 1.12, with 567 MiB versus about
+359 MiB peak RSS for both peers. Of 2,348 function rows, 2,178 were unsupported;
+the largest buckets were unsupported activation/function kinds (1,228 rows),
+unsupported opcodes/control flow (713), and the 256-instruction limit (117).
+The hottest rows include `forEach`, `checkSourceElement`, `findSourceFile`, and
+`bind`; these are interpreter-heavy loops and closure/call paths. The profile
+counted 28.9M entries but only 3.93M native entries, with 43 successful
+compilations. These are diagnostic results from one round. The raw profile is
+`evidence/jit-jetstream3-2026-10-21/full-suite-screen/typescript-lib-diagnostic-1round.json`.
