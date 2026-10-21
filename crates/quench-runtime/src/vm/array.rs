@@ -530,18 +530,25 @@ impl<H: Host> Vm<H> {
         true
     }
 
-    /// `define_array_literal_element` at a literal's length, the definition every element of
-    /// a literal without elisions makes: the element joins the dense storage. A literal is
-    /// unreachable from guest code until it is complete, so no prototype observes the index.
-    /// `false` leaves any other definition to `define_array_literal_element`.
-    pub(super) fn append_literal_element(&mut self, array: Value, index: usize, value: Value) -> bool {
-        if self.dense_array_length(array) != Some(index) || index >= MAX_ARRAY_LENGTH {
+    /// ArrayAccumulation's CreateDataPropertyOrThrow on the literal under construction, which
+    /// no code can reach yet: an element `MakeArray` reserved below its length is written in
+    /// place, one at its length appended. A literal in sparse storage takes the general path.
+    pub(super) fn define_literal_element(&mut self, array: Value, index: usize, value: Value) -> bool {
+        let Some(length) = self.dense_array_length(array) else {
+            return false;
+        };
+        if index > length || index >= MAX_ARRAY_LENGTH {
             return false;
         }
         let Some(object) = self.heap.array_store_mut(array, value) else {
             return false;
         };
-        super::index::mutable_array_elements(object.elements_mut()).push(value);
+        let elements = super::index::mutable_array_elements(object.elements_mut());
+        if index == length {
+            elements.push(value);
+        } else {
+            elements[index] = value;
+        }
         true
     }
 
