@@ -11,8 +11,7 @@ use crate::{ModuleSource, module_identity::ModuleIdentity};
 use rustc_hash::FxHashSet;
 
 fn module_cache_key(name: &str, module_type: &str) -> String {
-    let name = crate::module_identity::normalize(std::path::Path::new(name));
-    format!("{}:{module_type}", name.text())
+    format!("{}:{module_type}", crate::module_identity::normalized_text(name))
 }
 
 fn self_import_referrer(referrer: &str, resolved: &str) -> bool {
@@ -5726,6 +5725,7 @@ impl PromiseRuntime {
             module_sources,
             waiting_static_modules,
             active_native,
+            async_module_settled,
         } = self;
         let pending = [
             ("a rejection notification", rejection_notifications.is_empty()),
@@ -5734,6 +5734,7 @@ impl PromiseRuntime {
             ("a reaction capability", reaction_capabilities.is_empty()),
             ("a module record", modules.is_empty() && async_module_order.is_empty() && module_sources.is_empty()),
             ("a module load", dynamic_import_jobs.is_empty() && waiting_static_modules.is_empty()),
+            ("a settled async module", !async_module_settled),
             ("a native activation", active_native.is_empty()),
         ];
         if let Some((what, _)) = pending.iter().find(|(_, empty)| !empty) {
