@@ -272,8 +272,12 @@ enum Inst {
         alternative: u32,
     },
     Jump(u32),
+    /// A group's start into its temporary register: with a restore entry where the group
+    /// may run again on one path (`Compiler::repeated`), plainly elsewhere, as the group's
+    /// own open then always writes the temporary again before its close reads it.
     CaptureOpen {
         temporary: u32,
+        restores: bool,
     },
     CaptureClose {
         capture: u32,
@@ -337,6 +341,12 @@ enum Frame {
         register: u32,
         value: usize,
     },
+    /// Both bounds of a capture, which every capture write sets together.
+    RestoreCapture {
+        capture: u32,
+        start: usize,
+        end: usize,
+    },
     /// A greedy `UnitRepeat` that may give back units down to `floor`.
     Greedy {
         pc: u32,
@@ -386,8 +396,19 @@ pub(crate) struct Program {
     register_count: usize,
     /// Where matches can start; `None` where any position can.
     starts: Option<Starts>,
+    /// How an ASCII subject's scan finds the next of `starts`' units; derived from them once
+    /// here, as the set algebra that builds `starts` never scans. Only their ASCII part
+    /// matters there: an ASCII subject holds no other unit.
+    scan: AsciiScan,
     /// The literal bytes every match begins with, searched for directly in ASCII subjects.
     prefix: Option<LiteralFinder>,
+    /// Whether a match can only start at the subject's start (`Starts::only_at_start` with
+    /// `at_start`); one with neither start can never match, which the run finds at once.
+    anchored: bool,
+    /// For an `anchored` pattern, a superset of the units its match consumes first at the
+    /// subject's start (`anchored_first_units`), so a search whose first unit is outside it
+    /// fails without a run; `None` where no such set is known.
+    anchored_first: Option<UnitSet>,
     /// The length of `prefix` when it is the whole pattern and the pattern has no captures:
     /// an ASCII subject's match is then where the search finds it, with no run.
     literal_length: Option<usize>,
@@ -407,6 +428,10 @@ struct Compiler {
     sets: Vec<UnitSet>,
     lists: Vec<u32>,
     registers: u32,
+    /// Bodies being compiled that one path may run more than once, or whose registers a
+    /// caller keeps across their run: loops with more than one iteration and lookarounds.
+    /// Outside them, a group runs at most once per path.
+    repeated: u32,
 }
 
 impl Compiler {
@@ -490,7 +515,10 @@ impl Compiler {
             Expr::Capture { index, body } => {
                 let capture = u32::try_from(*index).map_err(|_| Unsupported)?;
                 let temporary = self.register();
-                self.emit(Inst::CaptureOpen { temporary });
+                self.emit(Inst::CaptureOpen {
+                    temporary,
+                    restores: self.repeated > 0,
+                });
                 self.compile(body, flags)?;
                 self.emit(Inst::CaptureClose { capture, temporary });
             }
@@ -537,7 +565,9 @@ impl Compiler {
                     let skip = (!*greedy).then(|| self.emit(Inst::Jump(0)));
                     let body_start = self.pc();
                     self.emit(Inst::LoopIterate { start });
-                    if count > 0 {
+                    // Outside repeated bodies the iteration's captures run only here, once per
+                    // path, so they are still unset and need no reset.
+                    if count > 0 && self.repeated > 0 {
                         self.emit(Inst::ResetCaptures { first, count });
                     }
                     self.compile(body, flags)?;
@@ -571,7 +601,9 @@ impl Compiler {
                 if count > 0 {
                     self.emit(Inst::ResetCaptures { first, count });
                 }
+                self.repeated += 1;
                 self.compile(body, flags)?;
+                self.repeated -= 1;
                 self.emit(Inst::LoopTail {
                     counter,
                     start,
@@ -601,7 +633,9 @@ impl Compiler {
                     Lookaround::Behind | Lookaround::NegativeBehind => return Err(Unsupported),
                 };
                 let look = self.emit(Inst::Look { negative, end: 0 });
+                self.repeated += 1;
                 self.compile(body, flags)?;
+                self.repeated -= 1;
                 self.emit(Inst::LookSucceed);
                 let end = self.pc();
                 self.instructions[look as usize] = Inst::Look { negative, end };
@@ -665,6 +699,152 @@ struct Starts {
     at_end: bool,
     units: UnitSet,
     only_at_start: bool,
+}
+
+/// The most start units a scan finds with `memchr`, `memchr2` or `memchr3`.
+const START_SCAN_BYTES: usize = 3;
+/// The most runs of consecutive ASCII start units a scan tests a block of units against at
+/// once (`StartRanges`); a set of more runs is scanned unit by unit.
+const START_SCAN_RANGES: usize = 4;
+
+/// The scan of an ASCII subject for its next start unit (`Program::scan`).
+#[derive(Clone, Copy)]
+enum AsciiScan {
+    /// No ASCII unit starts a match.
+    Nothing,
+    Bytes(StartBytes),
+    Ranges(StartRanges),
+    /// Unit by unit, through `UnitSet::table`.
+    Table,
+}
+
+impl AsciiScan {
+    /// The scan for the ASCII units in `ascii`.
+    fn of(ascii: u128) -> Self {
+        if ascii == 0 {
+            return Self::Nothing;
+        }
+        if let Some(bytes) = StartBytes::of(ascii) {
+            return Self::Bytes(bytes);
+        }
+        StartRanges::of(ascii).map_or(Self::Table, Self::Ranges)
+    }
+
+    /// The offset in `haystack`, an ASCII subject's units, of its first unit in the scan's
+    /// set, which `admits` tests unit by unit.
+    #[inline(always)]
+    fn find(self, haystack: &[u8], admits: impl Fn(u8) -> bool) -> Option<usize> {
+        match self {
+            Self::Nothing => None,
+            Self::Bytes(bytes) => bytes.find(haystack),
+            Self::Ranges(ranges) => ranges.find(haystack, admits),
+            Self::Table => haystack.iter().position(|unit| admits(*unit)),
+        }
+    }
+}
+
+/// Up to `START_SCAN_RANGES` runs `low..=high` of consecutive ASCII start units, which a scan
+/// tests a block of units against with one comparison pair per run.
+#[derive(Clone, Copy)]
+struct StartRanges {
+    low: [u8; START_SCAN_RANGES],
+    high: [u8; START_SCAN_RANGES],
+    count: usize,
+}
+
+/// The units a block scan tests at once: one SSE2 register.
+const SCAN_BLOCK: usize = 16;
+
+impl StartRanges {
+    fn of(ascii: u128) -> Option<Self> {
+        let mut ranges = Self { low: [0; START_SCAN_RANGES], high: [0; START_SCAN_RANGES], count: 0 };
+        // Each step takes the lowest run of set bits, then clears it: adding the run's
+        // lowest bit carries through the whole run.
+        let mut rest = ascii;
+        while rest != 0 {
+            if ranges.count == START_SCAN_RANGES {
+                return None;
+            }
+            let low = rest.trailing_zeros();
+            let length = (rest >> low).trailing_ones();
+            ranges.low[ranges.count] = low as u8;
+            ranges.high[ranges.count] = (low + length - 1) as u8;
+            ranges.count += 1;
+            rest &= rest.wrapping_add(rest & rest.wrapping_neg());
+        }
+        Some(ranges)
+    }
+
+    /// The offset of `haystack`'s first unit in a range, `table` deciding the units after the
+    /// last whole block.
+    fn find(self, haystack: &[u8], admits: impl Fn(u8) -> bool) -> Option<usize> {
+        let admits = |unit: &u8| admits(*unit);
+        // A near start, as between words, is found before the block scan's set-up pays.
+        let near = haystack.len().min(SCAN_BLOCK);
+        if let Some(found) = haystack[..near].iter().position(admits) {
+            return Some(found);
+        }
+        let mut offset = near;
+        #[cfg(target_arch = "x86_64")]
+        // SAFETY: SSE2 is part of the x86-64 baseline, and each load reads a whole block
+        // inside `haystack`.
+        unsafe {
+            use std::arch::x86_64::{
+                __m128i, _mm_cmpeq_epi8, _mm_loadu_si128, _mm_max_epu8, _mm_min_epu8, _mm_movemask_epi8,
+                _mm_or_si128, _mm_set1_epi8, _mm_setzero_si128,
+            };
+            let bounds: [(__m128i, __m128i); START_SCAN_RANGES] = std::array::from_fn(|range| {
+                (_mm_set1_epi8(self.low[range] as i8), _mm_set1_epi8(self.high[range] as i8))
+            });
+            while offset + SCAN_BLOCK <= haystack.len() {
+                let block = _mm_loadu_si128(haystack.as_ptr().add(offset).cast());
+                let mut hits = _mm_setzero_si128();
+                for (low, high) in &bounds[..self.count] {
+                    // A unit is in `low..=high` exactly when clamping it there leaves it.
+                    let clamped = _mm_min_epu8(_mm_max_epu8(block, *low), *high);
+                    hits = _mm_or_si128(hits, _mm_cmpeq_epi8(clamped, block));
+                }
+                let mask = _mm_movemask_epi8(hits) as u32;
+                if mask != 0 {
+                    return Some(offset + mask.trailing_zeros() as usize);
+                }
+                offset += SCAN_BLOCK;
+            }
+        }
+        haystack[offset..].iter().position(admits).map(|found| offset + found)
+    }
+}
+
+/// One to `START_SCAN_BYTES` bytes a match can start with.
+#[derive(Clone, Copy)]
+struct StartBytes {
+    bytes: [u8; START_SCAN_BYTES],
+    count: usize,
+}
+
+impl StartBytes {
+    fn of(ascii: u128) -> Option<Self> {
+        let count = ascii.count_ones() as usize;
+        if count == 0 || count > START_SCAN_BYTES {
+            return None;
+        }
+        let mut bytes = [0; START_SCAN_BYTES];
+        for (slot, unit) in bytes.iter_mut().zip((0..ASCII_UNITS).filter(|unit| ascii >> unit & 1 != 0)) {
+            *slot = unit as u8;
+        }
+        Some(Self { bytes, count })
+    }
+
+    /// The offset in `haystack` of its first byte among these.
+    #[inline(always)]
+    fn find(self, haystack: &[u8]) -> Option<usize> {
+        let [first, second, third] = self.bytes;
+        match self.count {
+            1 => memchr::memchr(first, haystack),
+            2 => memchr::memchr2(first, second, haystack),
+            _ => memchr::memchr3(first, second, third, haystack),
+        }
+    }
 }
 
 impl Starts {
@@ -824,6 +1004,25 @@ fn sequence_consuming_starts(parts: &[Expr], flags: Flags) -> Option<(Option<Sta
     Some((found, false))
 }
 
+/// The units a match of a pattern anchored at the subject's start can consume first: the
+/// starts (`sequence_consuming_starts`) of the parts after its leading anchor, when they
+/// stop at a part that must consume a unit and admit neither end of the subject.
+fn anchored_first_units(expr: &Expr, flags: Flags) -> Option<UnitSet> {
+    let Expr::Sequence(parts) = expr else {
+        return None;
+    };
+    let (Expr::Assertion(anchor), rest) = parts.split_first()? else {
+        return None;
+    };
+    if !Starts::of_anchor(*anchor, flags).is_some_and(|starts| starts.at_start) {
+        return None;
+    }
+    match sequence_consuming_starts(rest, flags)? {
+        (Some(starts), true) if !starts.at_start && !starts.at_end => Some(starts.units),
+        _ => None,
+    }
+}
+
 /// Whether `expr` can match the empty string.
 fn nullable(expr: &Expr) -> bool {
     match expr {
@@ -844,21 +1043,36 @@ impl Program {
             sets: Vec::new(),
             lists: Vec::new(),
             registers: u32::try_from(2 * capture_count).ok()?,
+            repeated: 0,
         };
         compiler.compile(expr, flags).ok()?;
         compiler.emit(Inst::Match);
         let mut prefix = Vec::new();
         let whole_literal = literal_prefix(expr, flags, &mut prefix);
+        let starts = starts(expr, flags);
         Some(Self {
             instructions: compiler.instructions.into_boxed_slice(),
             sets: compiler.sets.into_boxed_slice(),
             lists: compiler.lists.into_boxed_slice(),
             capture_count,
             register_count: compiler.registers as usize,
-            starts: starts(expr, flags),
+            anchored: starts.as_ref().is_some_and(|starts| starts.only_at_start),
+            anchored_first: starts
+                .as_ref()
+                .is_some_and(|starts| starts.only_at_start)
+                .then(|| anchored_first_units(expr, flags))
+                .flatten(),
+            scan: starts.as_ref().map_or(AsciiScan::Nothing, |starts| AsciiScan::of(starts.units.ascii)),
+            starts,
             prefix: (!prefix.is_empty()).then(|| literal_finder(&prefix)),
             literal_length: (whole_literal && capture_count == 0 && !prefix.is_empty()).then_some(prefix.len()),
         })
+    }
+
+    /// Whether a match can only start at the subject's start (`Starts::only_at_start`), so a
+    /// search tries that one position and scans for nothing.
+    pub(crate) fn anchored_at_start(&self) -> bool {
+        self.anchored
     }
 
     /// Whether every ASCII search starts by finding `literal` as the program's prefix
@@ -897,18 +1111,25 @@ impl Program {
                 captures: Vec::new(),
             }));
         }
+        let search = Search {
+            last: if sticky { first } else { text.len() },
+        };
+        let Some(start) = self.next_start(text, first, search.last) else {
+            return Ok(None);
+        };
+        // An anchored search has the one start, which a first unit outside the anchored
+        // pattern's first units fails before a run.
+        if let Some(units) = &self.anchored_first {
+            if start >= text.len() || !units.contains(text.unit(start)) {
+                return Ok(None);
+            }
+        }
         WORKSPACE.with_borrow_mut(|workspace| {
             let Workspace { registers, stack } = &mut *workspace;
             // A failed run restores every register it set, so one reset serves every start.
             registers.clear();
             registers.resize(self.register_count, UNSET);
             let mut steps = budget.unwrap_or(usize::MAX);
-            let search = Search {
-                last: if sticky { first } else { text.len() },
-            };
-            let Some(start) = self.next_start(text, first, search.last) else {
-                return Ok(None);
-            };
             stack.clear();
             stack.push(Frame::Barrier);
             let found = if budget.is_some() {
@@ -937,15 +1158,42 @@ impl Program {
         if from > last {
             return None;
         }
+        // An anchored pattern starts at the subject's start or nowhere, whatever its prefix.
+        if self.anchored {
+            return (from == 0).then_some(0);
+        }
         if let (Some(prefix), Some(bytes)) = (&self.prefix, text.bytes()) {
             let found = from + prefix.find(&bytes[from..])?;
             return (found <= last).then_some(found);
         }
         match &self.starts {
             None => Some(from),
-            Some(starts) if starts.only_at_start => (starts.at_start && from == 0).then_some(0),
+            Some(starts) if let Some(bytes) = text.bytes() => {
+                // A start right here, as in a run of matches, needs no scan; a start at the
+                // subject's start is found here or first in the scan.
+                if bytes.get(from).is_some_and(|unit| starts.units.table[usize::from(*unit & ASCII_MAX as u8)]) {
+                    return Some(from);
+                }
+                Self::scan_start_bytes(starts, self.scan, bytes, from, last)
+            }
             Some(starts) => (from..=last).find(|position| starts.admits(text, *position)),
         }
+    }
+
+    /// `next_start` by a `memchr` scan of an ASCII subject for one to `START_SCAN_BYTES`
+    /// start units, out of line so `run`, whose restarts call it, keeps its registers.
+    #[inline(never)]
+    fn scan_start_bytes(starts: &Starts, scan: AsciiScan, bytes: &[u8], from: usize, last: usize) -> Option<usize> {
+        // The positions admitted in order: the subject's start, a start byte, its end.
+        if starts.at_start && from == 0 {
+            return Some(0);
+        }
+        let found = bytes
+            .get(from..)
+            .and_then(|rest| scan.find(rest, |unit| starts.units.table[usize::from(unit & ASCII_MAX as u8)]))
+            .map(|offset| from + offset)
+            .or_else(|| starts.at_end.then_some(bytes.len()))?;
+        (found <= last).then_some(found)
     }
 
     /// Runs from `pc` at `position` until a `Match` or `LookSucceed`, whose position it
@@ -973,6 +1221,16 @@ impl Program {
                 value: *slot,
             });
             *slot = value;
+        };
+        let set_capture = |registers: &mut [usize], stack: &mut Vec<Frame>, capture: u32, start, end| {
+            let bound = 2 * capture as usize;
+            stack.push(Frame::RestoreCapture {
+                capture,
+                start: registers[bound],
+                end: registers[bound + 1],
+            });
+            registers[bound] = start;
+            registers[bound + 1] = end;
         };
         loop {
             if BUDGETED {
@@ -1063,23 +1321,25 @@ impl Program {
                     pc = target;
                     true
                 }
-                Inst::CaptureOpen { temporary } => {
-                    set(registers, stack, temporary, position);
+                Inst::CaptureOpen { temporary, restores } => {
+                    if restores {
+                        set(registers, stack, temporary, position);
+                    } else {
+                        registers[temporary as usize] = position;
+                    }
                     pc += 1;
                     true
                 }
                 Inst::CaptureClose { capture, temporary } => {
                     let start = registers[temporary as usize];
-                    set(registers, stack, 2 * capture, start);
-                    set(registers, stack, 2 * capture + 1, position);
+                    set_capture(registers, stack, capture, start, position);
                     pc += 1;
                     true
                 }
                 Inst::ResetCaptures { first, count } => {
                     for &capture in &self.lists[first as usize..(first + count) as usize] {
                         if registers[2 * capture as usize] != UNSET {
-                            set(registers, stack, 2 * capture, UNSET);
-                            set(registers, stack, 2 * capture + 1, UNSET);
+                            set_capture(registers, stack, capture, UNSET, UNSET);
                         }
                     }
                     pc += 1;
@@ -1191,7 +1451,7 @@ impl Program {
                             // captures stay for backtracking past it.
                             let mut kept = base;
                             for index in base + 1..stack.len() {
-                                if let Frame::Restore { .. } = stack[index] {
+                                if let Frame::Restore { .. } | Frame::RestoreCapture { .. } = stack[index] {
                                     stack[kept] = stack[index];
                                     kept += 1;
                                 }
@@ -1202,8 +1462,8 @@ impl Program {
                         }
                         (true, true) => {
                             while stack.len() > base {
-                                if let Some(Frame::Restore { register, value }) = stack.pop() {
-                                    registers[register as usize] = value;
+                                if let Some(frame) = stack.pop() {
+                                    restore(registers, frame);
                                 }
                             }
                             false
@@ -1243,8 +1503,8 @@ impl Program {
                         position = next;
                         break;
                     }
-                    Some(Frame::Restore { register, value }) => {
-                        registers[register as usize] = value;
+                    Some(frame @ (Frame::Restore { .. } | Frame::RestoreCapture { .. })) => {
+                        restore(registers, frame);
                     }
                     Some(Frame::Choice {
                         pc: resume,
@@ -1296,6 +1556,19 @@ impl Program {
                 }
             }
         }
+    }
+}
+
+/// The registers a restore entry puts back; any other entry restores nothing.
+fn restore(registers: &mut [usize], frame: Frame) {
+    match frame {
+        Frame::Restore { register, value } => registers[register as usize] = value,
+        Frame::RestoreCapture { capture, start, end } => {
+            let bound = 2 * capture as usize;
+            registers[bound] = start;
+            registers[bound + 1] = end;
+        }
+        _ => {}
     }
 }
 
@@ -1388,6 +1661,38 @@ mod tests {
             r"((a)?)?c",
             r"(x?)?",
             r"(a)?\1b",
+            r";\s?",
+            r"[;,]x",
+            r"(?:a|b|c)d",
+            r"[abcd]e",
+            r"^ab|c",
+            r"(?:x|;)y?$",
+            r"\s?;\s?",
+            r"^c",
+            r"a$|^b",
+            r"\nx",
+            r"(a)?(b)?\2",
+            r"((a)|(b))?c",
+            r"(?:(x)|y)?(z)?",
+            r"(a)?(?=(b))",
+            r"((a)?b)?\2",
+            r"(?:(a)?b)?a\1",
+            r"((a)?)?\2b",
+            r"(?:((a)b)?c)?\2",
+            r"(?=((a)?))\1b",
+            r"(?:(a)|b)*?\1",
+            // Start sets the scans cover: byte sets, up to four ranges, more than four
+            // ranges (the table), members past ASCII, and anchored first units.
+            r"[0-9a-f]+",
+            r"[A-Z_][a-z]",
+            r"[0-2]|[5-6]|[b-c]|[x-y]|q",
+            r"[!#%&(*,.]",
+            r"\s+\w",
+            r"\d\s",
+            r"^(?=x)a",
+            r"^$",
+            r"^(?:ba|q)",
+            r"^\s*a",
         ];
         let subjects = [
             "",
@@ -1418,6 +1723,16 @@ mod tests {
             "xx\n",
             " b \t",
             "cab\nab",
+            "a;b ; c,x;",
+            "bcd ade cxy",
+            "c\nx",
+            "ab;",
+            // Longer than one scan block, with the match past the block body and in the tail.
+            "...........................Q_bar 7f;",
+            "................................. 5 x",
+            "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzc",
+            "xa..............................&",
+            "\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0} a",
         ];
         for flags in ["", "i", "m", "s", "u", "im", "iu"] {
             for pattern in patterns {
