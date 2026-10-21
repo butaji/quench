@@ -1276,8 +1276,18 @@ impl Heap {
         shape: u32,
         values: &[Value],
     ) -> Value {
-        let (properties, inline_properties) = self.initial_object_storage(shape, values, true);
-        self.alloc_object(Object::with_property_storage(proto, properties, inline_properties))
+        self.properties.assert_shape_length(shape, values.len());
+        if values.len() <= INLINE_PROPERTY_COUNT
+            && let Some(object) = Object::with_inline_values(proto, shape, values)
+        {
+            return self.alloc_object(object);
+        }
+        let properties = self.properties.with_values(shape, values);
+        self.alloc_object(Object::with_property_storage(
+            proto,
+            properties,
+            [Value::UNDEFINED; INLINE_PROPERTY_COUNT],
+        ))
     }
     pub(crate) fn initialize_object_properties(
         &mut self,
@@ -2850,13 +2860,13 @@ impl Heap {
             let data = self
                 .object_store_mut(object, value)
                 .expect("property owner is an object");
-            if data.inline_store_widens(value) {
-                None
-            } else if data.inline_properties().is_some() {
-                data.set_inline_property(slot, value);
+            let vector = data.properties();
+            if !vector.has_inline_property_storage() {
+                Some(vector)
+            } else if data.store_inline_narrow(slot, value) {
                 return;
             } else {
-                Some(data.properties())
+                None
             }
         };
         match vector {
@@ -2886,14 +2896,13 @@ impl Heap {
             let data = self
                 .object_store_mut(object, value)
                 .expect("property owner is an object");
-            if data.inline_store_widens(value) {
-                None
-            } else if data.inline_properties().is_some() {
-                debug_assert!(slot < INLINE_PROPERTY_COUNT);
-                data.set_inline_property(slot, value);
+            let vector = data.properties();
+            if !vector.has_inline_property_storage() {
+                Some(vector)
+            } else if data.store_inline_narrow(slot, value) {
                 return;
             } else {
-                Some(data.properties())
+                None
             }
         };
         match vector {
@@ -2930,12 +2939,9 @@ impl Heap {
             }
         };
         if data.properties().has_inline_property_storage() {
-            debug_assert!(slot < INLINE_PROPERTY_COUNT);
-            if data.inline_store_widens(value) {
+            if !data.store_inline_narrow(slot, value) {
                 let length = self.properties.len(data.properties());
                 widen_inline_storage(data, &mut self.properties, data.shape(), length, slot, value);
-            } else {
-                data.set_inline_property(slot, value);
             }
             return true;
         }
@@ -3617,7 +3623,7 @@ mod offset_order_tests {
 }
 
 /// Moves `data`'s inline values into an arena range of `shape`, `length` values long, with
-/// `value` at `slot`: the store its payload word cannot hold (`Object::inline_store_widens`).
+/// `value` at `slot`: the store its payload word cannot hold (`Object::store_inline_narrow`).
 fn widen_inline_storage(
     data: &mut Object,
     properties: &mut ValueArena,
@@ -3637,26 +3643,23 @@ fn widen_inline_storage(
 /// storage length, and moves the owner to `shape`.
 #[inline(always)]
 fn append_property(data: &mut Object, properties: &mut ValueArena, slot: usize, value: Value, shape: u32) {
-    let vector = data.properties();
-    match data.inline_properties() {
-        Some(_) if slot < INLINE_PROPERTY_COUNT && data.inline_store_widens(value) => {
+    let mut vector = data.properties();
+    if !vector.has_inline_property_storage() {
+        properties.push(&mut vector, value);
+        data.set_properties(vector);
+    } else if slot < INLINE_PROPERTY_COUNT {
+        if !data.store_inline_narrow(slot, value) {
             widen_inline_storage(data, properties, shape, slot + 1, slot, value);
         }
-        Some(_) if slot < INLINE_PROPERTY_COUNT => data.set_inline_property(slot, value),
-        Some(inline) => {
-            debug_assert_eq!(slot, INLINE_PROPERTY_COUNT);
-            // One arena range sized for the grown shape, not one for the inline values that
-            // the add then outgrows at once.
-            let mut grown = [value; INLINE_PROPERTY_COUNT + 1];
-            grown[..INLINE_PROPERTY_COUNT].copy_from_slice(&inline);
-            let moved = properties.with_values(shape, &grown);
-            data.replace_property_storage(moved, [Value::UNDEFINED; INLINE_PROPERTY_COUNT]);
-        }
-        None => {
-            let mut vector = vector;
-            properties.push(&mut vector, value);
-            data.set_properties(vector);
-        }
+    } else {
+        debug_assert_eq!(slot, INLINE_PROPERTY_COUNT);
+        // One arena range sized for the grown shape, not one for the inline values that the
+        // add then outgrows at once.
+        let inline = data.inline_properties().expect("inline storage");
+        let mut grown = [value; INLINE_PROPERTY_COUNT + 1];
+        grown[..INLINE_PROPERTY_COUNT].copy_from_slice(&inline);
+        let moved = properties.with_values(shape, &grown);
+        data.replace_property_storage(moved, [Value::UNDEFINED; INLINE_PROPERTY_COUNT]);
     }
     data.set_shape(shape);
 }
