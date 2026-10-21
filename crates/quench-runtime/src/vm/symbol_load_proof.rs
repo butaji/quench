@@ -50,10 +50,7 @@ impl Default for SymbolLoadProofs {
 
 impl SymbolLoadProofs {
     fn index(shape: u32, key: Value) -> usize {
-        use std::hash::{Hash, Hasher};
-        let mut hasher = rustc_hash::FxHasher::default();
-        (shape, key).hash(&mut hasher);
-        hasher.finish() as usize & (SYMBOL_LOAD_PROOF_ENTRIES - 1)
+        super::shape_memo::direct_mapped_index((shape, key), SYMBOL_LOAD_PROOF_ENTRIES)
     }
 
     /// The answer a proof for `key` on a receiver of `shape` holds under `epoch`.
