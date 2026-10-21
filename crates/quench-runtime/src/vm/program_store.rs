@@ -92,7 +92,7 @@ struct ProgramEntry {
     residual: Rc<ResidualProgram>,
     wasm_signatures: Option<Rc<crate::wasm::WasmSignatures>>,
     constants: Vec<Value>,
-    const_arrays: Vec<Option<Rc<Vec<Value>>>>,
+    const_arrays: Vec<Option<crate::heap::ArrayElements>>,
     function_sources: Vec<Option<Value>>,
     /// Each RegExp literal site's record, shared by every object it evaluates to, or its
     /// compile error.
@@ -105,9 +105,9 @@ struct ProgramEntry {
     module: bool,
     /// Per-function lane views, derived from the residual on first lane entry.
     lane_views: Vec<std::cell::OnceCell<super::dispatch_fast::LaneView>>,
-    /// Per function: the general loop has entered it without its lane view
-    /// (`entry_lane_view`).
-    lane_deferred: Vec<std::cell::Cell<bool>>,
+    /// Per function: the runs it has made without its lane view (`entry_lane_view`,
+    /// `lane_call_may_derive`), up to `LANE_VIEW_DEFERRED_RUNS`.
+    lane_deferred: Vec<std::cell::Cell<u8>>,
     /// The program's compiled functions, once the compiled mode first calls
     /// one; `Some(None)` records that none compile.
     compiled: Option<Option<Rc<super::compiled::CompiledProgram>>>,
@@ -568,6 +568,18 @@ impl ProgramStore {
         }
     }
 
+    /// Whether a by-name load the compiler left unresolved in `function` of the program can
+    /// only denote a global binding, given that the function's names resolve statically: a
+    /// module's environment holds only bindings the compiler resolved, at its root as in its
+    /// functions; a global-scope program's root body may still meet bindings its own
+    /// declarations add, so only its nested functions qualify.
+    pub(crate) fn unresolved_names_are_global(&self, id: ProgramId, function: u32) -> bool {
+        self.entry(id).is_some_and(|entry| {
+            entry.residual.kind == crate::bytecode::ProgramKind::Module
+                || (function != super::ROOT_FUNCTION_ID && self.runs_in_global_scope(id))
+        })
+    }
+
     /// Whether the program's root body evaluates in the global environment.
     pub(crate) fn runs_in_global_scope(&self, id: ProgramId) -> bool {
         self.entry(id).is_some_and(|entry| match entry.scope {
@@ -606,7 +618,7 @@ impl ProgramStore {
             .iter()
             .map(|_| std::cell::OnceCell::new())
             .collect();
-        let lane_deferred = vec![std::cell::Cell::new(false); program.functions.len()];
+        let lane_deferred = vec![std::cell::Cell::new(0); program.functions.len()];
         let origin = if program.kind == crate::bytecode::ProgramKind::Eval { CompilationOrigin::Eval { caller: None } } else { CompilationOrigin::Source };
         self.programs.push(Some(ProgramEntry {
             residual: program,
@@ -1646,9 +1658,10 @@ impl ProgramStore {
     }
 
     /// The lane view a general-loop entry of `function` runs with. A function that may loop
-    /// gets it at its first entry; any other at its second, so code that runs once without
-    /// looping (a module body) runs its single pass on the general path instead of first
-    /// deriving a view of every instruction, which costs more than that pass.
+    /// gets it at its first entry; any other once its deferred runs are complete
+    /// (`LANE_VIEW_DEFERRED_RUNS`), so code that runs a few times without looping (a module
+    /// body) runs on the general path instead of first deriving a view of every instruction,
+    /// which costs more than those runs.
     pub(super) fn entry_lane_view(
         &self,
         id: ProgramId,
@@ -1667,7 +1680,7 @@ impl ProgramStore {
             return Some(view);
         }
         let code = entry.residual.function_get(function as usize)?;
-        if !entry.lane_deferred.get(function as usize)?.replace(true) && !may_loop(code) {
+        if !deferred_run_completes(entry.lane_deferred.get(function as usize)?) && !may_loop(code) {
             return None;
         }
         Some(view.get_or_init(|| {
@@ -1682,11 +1695,10 @@ impl ProgramStore {
         }))
     }
 
-    /// Whether a lane call may derive `function`'s view now: it has one, or an earlier entry
-    /// or lane call already deferred it, as `entry_lane_view` defers a first entry. The first
-    /// call of a function the lane has no view for marks it and takes the general path, so a
-    /// function called once costs no view (about a thousand instructions per bytecode
-    /// instruction).
+    /// Whether a lane call may derive `function`'s view now: it has one, or its earlier entries
+    /// and lane calls completed its deferred runs (`LANE_VIEW_DEFERRED_RUNS`), as
+    /// `entry_lane_view` defers its entries. A deferred call counts its run and takes the
+    /// general path.
     pub(super) fn lane_call_may_derive(&self, id: ProgramId, function: u32) -> bool {
         let Some(entry) = self.entry(id) else {
             return false;
@@ -1699,7 +1711,7 @@ impl ProgramStore {
             || entry
                 .lane_deferred
                 .get(function as usize)
-                .is_some_and(|deferred| deferred.replace(true))
+                .is_some_and(deferred_run_completes)
     }
 
     pub(super) fn lane_view(
@@ -1742,12 +1754,12 @@ impl ProgramStore {
         id: ProgramId,
         start: usize,
         count: usize,
-    ) -> Option<Rc<Vec<Value>>> {
+    ) -> Option<crate::heap::ArrayElements> {
         let entry = self.entry_mut(id)?;
         let end = start.checked_add(count)?;
         let cached = entry.const_arrays.get_mut(start)?;
         if cached.is_none() {
-            *cached = Some(Rc::new(entry.constants.get(start..end)?.to_vec()));
+            *cached = Some(crate::heap::ArrayElements::from_slice(entry.constants.get(start..end)?));
         }
         cached.clone()
     }
@@ -1980,4 +1992,21 @@ fn census_label(entry: &ProgramEntry, function: u32) -> String {
         body.and_then(|body| body.name).map(|atom| code.atoms[atom as usize].to_string()).unwrap_or_default(),
         body.and_then(|body| body.source_span).map(|span| span.start),
     )
+}
+
+/// The runs a function makes on the general path before it derives its lane view, which costs
+/// about a thousand instructions per bytecode instruction, so a function that runs fewer times
+/// costs no view. Measured in instructions against deriving at the second run: four takes 3.3%
+/// from the jiti npm scenario (Babel's many functions that run a few times) and 0.1-0.6% from
+/// semver, ajv, Babel, color-convert and typescript-eslint; eight adds at most 0.3%.
+const LANE_VIEW_DEFERRED_RUNS: u8 = 4;
+
+/// Count one view-less run of a function; true once its deferred runs are complete.
+fn deferred_run_completes(runs: &std::cell::Cell<u8>) -> bool {
+    let done = runs.get();
+    if done >= LANE_VIEW_DEFERRED_RUNS {
+        return true;
+    }
+    runs.set(done + 1);
+    false
 }

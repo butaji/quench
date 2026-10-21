@@ -7,8 +7,52 @@ enum CollectionEntries {
     Pairs,
     Values,
 }
+/// The name of the Map and Set count accessor `collection_size_field` answers.
+const COLLECTION_SIZE: &str = "size";
 include!("collections_set_relations.rs");
 impl<H: Host> Vm<H> {
+    /// A Map's or Set's `size` read that runs no guest code: the walk from the receiver
+    /// through ordinary prototypes meets no other `size` before an accessor whose getter is
+    /// the collection's own (`Map.prototype.size` or `Set.prototype.size`, wherever a
+    /// prototype holds it, as primordials copy it), which reads the entry count. `None` leaves
+    /// the read to the general path.
+    pub(super) fn collection_size_field(&self, object: Value, atom: Atom) -> Option<Value> {
+        let (getter, count) = match self.heap.get(object)? {
+            Cell::Map { entries, .. } => (Native::MapSizeGetter, entries.len()),
+            Cell::Set { entries, .. } => (Native::SetSizeGetter, entries.len()),
+            _ => return None,
+        };
+        if !self.atom_class(atom).contains(object::AtomClass::VIRTUAL_FIELD)
+            || self.atom_name(atom) != COLLECTION_SIZE
+        {
+            return None;
+        }
+        let key = PropertyKey::string(atom);
+        let mut current = object;
+        let mut data = self.heap.get(object)?.object()?;
+        loop {
+            if data.is_module_namespace()
+                || (data.has_side_descriptors() && self.descriptors.contains_key(&(current, key)))
+            {
+                return None;
+            }
+            if let Some(slot) = self.property_shape_slot(data.shape(), key) {
+                let attributes = self.slot_attributes(data, slot)?;
+                let found = attributes.getter.filter(|_| attributes.accessor)?;
+                let own = matches!(
+                    self.heap.function(found),
+                    Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) if *native == getter
+                );
+                return own.then(|| Value::length(count));
+            }
+            current = data.proto();
+            if current.is_null() {
+                return None;
+            }
+            data = self.heap.ordinary_object(current)?;
+        }
+    }
+
     fn keep_alive(&mut self, value: Value) {
         if !self
             .kept_alive
@@ -742,7 +786,7 @@ impl<H: Host> Vm<H> {
                         Ok(entries.value_at(index))
                     }
                     Native::MapSet => {
-                        let key = args.first().copied().unwrap_or(Value::UNDEFINED);
+                        let key = canonical_collection_key(args.first().copied().unwrap_or(Value::UNDEFINED));
                         let value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
                         let index = self.map_entry_index(this, key);
                         let key_hash = self.same_value_zero_hash(key);
@@ -872,7 +916,7 @@ impl<H: Host> Vm<H> {
                         "Set.prototype.add called on incompatible receiver".into(),
                     ));
                 }
-                let value = args.first().copied().unwrap_or(Value::UNDEFINED);
+                let value = canonical_collection_key(args.first().copied().unwrap_or(Value::UNDEFINED));
                 let exists = self.set_entry_index(this, value).is_some();
                 let value_hash = self.same_value_zero_hash(value);
                 let Some(Cell::Set { entries, .. }) = self.heap.get_mut(this) else {
@@ -1249,6 +1293,18 @@ impl<H: Host> Vm<H> {
             (Native::SetHas, Cell::Set { .. }) => {
                 Some(boolean(self.set_entry_index(receiver, key).is_some()))
             }
+            // A value that cannot be held weakly is never a key.
+            (Native::WeakMapGet, Cell::WeakMap { entries, .. }) => Some(if self.is_weak_key_value(key) {
+                entries.get(key).unwrap_or(Value::UNDEFINED)
+            } else {
+                Value::UNDEFINED
+            }),
+            (Native::WeakMapHas, Cell::WeakMap { entries, .. }) => {
+                Some(boolean(self.is_weak_key_value(key) && entries.get(key).is_some()))
+            }
+            (Native::WeakSetHas, Cell::WeakSet { .. }) => Some(boolean(
+                self.is_weak_key_value(key) && self.weak_set_entry_index(receiver, key).is_some(),
+            )),
             _ => None,
         }
     }
@@ -1355,4 +1411,9 @@ pub(super) fn canonicalize_keyed_collection_key(key: Value) -> Value {
     } else {
         key
     }
+}
+
+/// CanonicalizeKeyedCollectionKey: a Map key or Set value of -0 is stored as +0.
+fn canonical_collection_key(key: Value) -> Value {
+    if key.as_number() == Some(0.0) { Value::integer(0) } else { key }
 }

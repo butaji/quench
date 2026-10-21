@@ -477,6 +477,9 @@ impl<H: Host> Vm<H> {
                 Ok(self.heap.alloc_string(decoded))
             }
             Native::StringFromCharCode => {
+                if let Some(text) = self.from_char_code_numbers(args) {
+                    return Ok(text);
+                }
                 let mut units = Vec::with_capacity(args.len());
                 for value in args {
                     units.push(Self::uint16_from_value(self.to_number(p, *value)?));
@@ -686,6 +689,16 @@ impl<H: Host> Vm<H> {
         range: std::ops::Range<usize>,
     ) -> Result<Value, JsError> {
         Ok(self.heap.alloc_string(text.substring(range)))
+    }
+
+    /// `String.fromCharCode` of Numbers, whose ToNumber runs no guest code; `None` when any
+    /// argument is another value.
+    pub(super) fn from_char_code_numbers(&mut self, args: &[Value]) -> Option<Value> {
+        let units = args
+            .iter()
+            .map(|value| value.as_number().map(Self::uint16_from_value))
+            .collect::<Option<Vec<u16>>>()?;
+        self.string_from_units(&units).ok()
     }
 
     pub(super) fn string_from_units(&mut self, units: &[u16]) -> Result<Value, JsError> {

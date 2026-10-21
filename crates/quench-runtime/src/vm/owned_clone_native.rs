@@ -136,7 +136,7 @@ impl<H: Host> Vm<H> {
                 let v = self.heap.alloc(Cell::Array {
                     object: crate::heap::ArrayObject::new(
                         Self::empty_object(prototype),
-                        Rc::new(Vec::new()),
+                        Vec::new(),
                     ),
                 });
                 self.set_array_length(&p, v, Value::number(*length as f64))?;

@@ -56,7 +56,7 @@ impl<H: Host> Vm<H> {
         self.array_proto = self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
                 Self::empty_object(self.object_proto),
-                Rc::new(Vec::new()),
+                Vec::new(),
             ),
         });
         self.realm

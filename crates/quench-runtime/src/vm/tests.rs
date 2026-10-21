@@ -216,7 +216,7 @@ fn fallback_descriptor_edges_follow_their_owner_lifetime() {
     let owner = vm.heap.alloc(Cell::Array {
         object: crate::heap::ArrayObject::new(
             Vm::<SilentHost>::empty_object(Value::NULL),
-            Rc::new(Vec::new()),
+            Vec::new(),
         ),
     });
     let setter = vm.native_with_env(Native::Object, owner);
@@ -5137,7 +5137,7 @@ fn property_copy_roots_release_after_callback_completion() {
                 let args = vm
                     .heap
                     .array_elements(operands)
-                    .map(|elements| elements.as_ref().clone())
+                    .map(|elements| elements.to_vec())
                     .expect("operands");
                 let handles = args
                     .iter()
@@ -5230,7 +5230,7 @@ fn descriptor_snapshot_and_assign_root_fresh_native_arguments() {
                 let args = vm
                     .heap
                     .array_elements(operands)
-                    .map(|elements| elements.as_ref().clone())
+                    .map(|elements| elements.to_vec())
                     .expect("operands");
                 let source_handle = vm.heap.weak_handle(args[1]).unwrap();
                 let later_handle = vm.heap.weak_handle(args[2]).unwrap();
@@ -5380,7 +5380,7 @@ fn for_in_roots_release_after_prototype_and_key_callbacks() {
                         let elements = vm
                             .heap
                             .array_elements(result)
-                            .map(|elements| elements.as_ref().clone())
+                            .map(|elements| elements.to_vec())
                             .expect("key snapshot");
                         let names = elements
                             .into_iter()
@@ -5511,7 +5511,7 @@ fn proxy_introspection_roots_release_after_nested_validation() {
                 let args = vm
                     .heap
                     .array_elements(operands)
-                    .map(|elements| elements.as_ref().clone())
+                    .map(|elements| elements.to_vec())
                     .expect("operands");
                 let handles = args
                     .iter()
@@ -5659,7 +5659,7 @@ fn proxy_reads_root_operands_and_results_through_nested_callbacks() {
                 let args = vm
                     .heap
                     .array_elements(operands)
-                    .map(|elements| elements.as_ref().clone())
+                    .map(|elements| elements.to_vec())
                     .expect("operands");
                 let handles = args
                     .iter()

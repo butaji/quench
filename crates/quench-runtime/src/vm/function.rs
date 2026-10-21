@@ -145,7 +145,7 @@ impl<H: Host> Vm<H> {
                 None => frame.locals[usize::from(parameter)],
             }
         });
-        let args = Rc::new(
+        let args = crate::heap::ArrayElements::from(
             reflected
                 .chain(frame.original_arguments.iter().copied())
                 .collect::<Vec<_>>(),
@@ -184,7 +184,7 @@ impl<H: Host> Vm<H> {
         let bound_args = self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_proto),
-                Rc::new(args.get(1..).unwrap_or_default().to_vec()),
+                args.get(1..).unwrap_or_default().to_vec(),
             ),
         });
         self.set_property(env, args_atom, bound_args)?;
