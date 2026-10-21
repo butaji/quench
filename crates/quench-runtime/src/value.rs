@@ -73,9 +73,10 @@ const NARROW_INDEX_BITS: u32 = u32::BITS - NARROW_INDEX_SHIFT - 2;
 const NARROW_INTEGER_BITS: u32 = u32::BITS - NARROW_CODE_SHIFT - 1;
 const LOWER_WORD: u64 = u32::MAX as u64;
 /// Upper words of narrow non-integers by code: the eight heap reference families in
-/// `HEAP_FAMILY_BITS` order, then the tagged constants. Unused codes repeat `undefined`.
-const NARROW_UPPER_WORDS: [u64; 1 << NARROW_CODE_BITS] = {
-    let mut words = [TAG_UNDEFINED; 1 << NARROW_CODE_BITS];
+/// `HEAP_FAMILY_BITS` order, then the tagged constants. Unused codes hold zero, the upper word
+/// of a number, which `to_narrow` never looks up.
+const NARROW_UPPER_WORDS: [u64; NARROW_LOOKUP_CODES] = {
+    let mut words = [0; NARROW_LOOKUP_CODES];
     let mut family = 0;
     while family < NARROW_HEAP_FAMILIES {
         words[family] = TAG_HEAP | (family as u64) << HEAP_FAMILY_SHIFT;
@@ -88,9 +89,28 @@ const NARROW_UPPER_WORDS: [u64; 1 << NARROW_CODE_BITS] = {
     words
 };
 const HEAP_FAMILY_SHIFT: u32 = HEAP_FAMILY_BITS.trailing_zeros();
+/// The position of `tag` in tag order from `FIRST_TAG`.
+const fn tag_index(tag: u64) -> usize {
+    ((tag - FIRST_TAG) >> TAG_SHIFT) as usize
+}
+/// First narrow code of each tag, in tag order from `FIRST_TAG`; a value's code adds its
+/// family bits. The integer tag's entry is unused: integers pack apart.
+const NARROW_TAG_CODES: [usize; ((LAST_TAG - FIRST_TAG) >> TAG_SHIFT) as usize + 1] = {
+    let mut codes = [0; ((LAST_TAG - FIRST_TAG) >> TAG_SHIFT) as usize + 1];
+    codes[tag_index(TAG_UNDEFINED)] = NARROW_HEAP_FAMILIES;
+    codes[tag_index(TAG_NULL)] = NARROW_HEAP_FAMILIES + 1;
+    codes[tag_index(TAG_BOOL)] = NARROW_HEAP_FAMILIES + 2;
+    codes[tag_index(TAG_HEAP)] = 0;
+    codes[tag_index(TAG_DELETED)] = NARROW_HEAP_FAMILIES + 3;
+    codes
+};
+/// Codes `to_narrow` can compute: a constant's base plus stray family bits. Codes past the
+/// packed field name no upper word any value has.
+const NARROW_LOOKUP_CODES: usize = 2 * (1 << NARROW_CODE_BITS);
 const NARROW_HEAP_FAMILIES: usize = 1 << HEAP_FAMILY_BITS.count_ones();
 const _: () = assert!(HEAP_FAMILY_BITS >> HEAP_FAMILY_SHIFT == NARROW_HEAP_FAMILIES as u64 - 1);
 const _: () = assert!(NARROW_HEAP_FAMILIES + 4 <= 1 << NARROW_CODE_BITS);
+const _: () = assert!(NARROW_HEAP_FAMILIES + 3 + NARROW_HEAP_FAMILIES <= NARROW_LOOKUP_CODES);
 
 impl Value {
     /// This value as a narrow value, when it has one.
@@ -105,14 +125,11 @@ impl Value {
                 .contains(&integer)
                 .then_some(((integer as u32) << NARROW_CODE_SHIFT) | NARROW_INTEGER_FLAG);
         }
-        let code = match self.0 & TAG_MASK {
-            TAG_HEAP => ((self.0 & HEAP_FAMILY_BITS) >> HEAP_FAMILY_SHIFT) as usize,
-            TAG_UNDEFINED => NARROW_HEAP_FAMILIES,
-            TAG_NULL => NARROW_HEAP_FAMILIES + 1,
-            TAG_BOOL => NARROW_HEAP_FAMILIES + 2,
-            TAG_DELETED => NARROW_HEAP_FAMILIES + 3,
-            _ => return None,
-        };
+        // The code of the value's tag plus its family bits; only an upper word the code names
+        // exactly is narrow, which also rejects numbers and family bits on a constant.
+        let tag = (self.0 >> TAG_SHIFT).wrapping_sub(FIRST_TAG >> TAG_SHIFT) as usize;
+        let base = *NARROW_TAG_CODES.get(tag)?;
+        let code = base + ((self.0 & HEAP_FAMILY_BITS) >> HEAP_FAMILY_SHIFT) as usize;
         (NARROW_UPPER_WORDS[code] == upper && lower >> NARROW_INDEX_BITS == 0)
             .then_some(lower << NARROW_INDEX_SHIFT | (code as u32) << NARROW_CODE_SHIFT)
     }

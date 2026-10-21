@@ -1309,6 +1309,11 @@ pub(crate) struct InlineObjectHeader {
 }
 
 impl InlineObjectHeader {
+    /// The inline shape this header stores.
+    pub(crate) fn shape(self) -> u32 {
+        ValueVec::from_parts(0, self.auxiliary).auxiliary()
+    }
+
     /// No receiver's header: an unplanned entry's, which no construction reads.
     pub(crate) const EMPTY: Self = Self {
         meta: 0,
@@ -1900,19 +1905,18 @@ impl Object {
     }
 
     /// An object of `header`'s prototype and inline shape holding `inline`: what
-    /// `with_property_storage` makes, from header words derived once.
+    /// `with_property_storage` makes, from header words derived once. `None` when a value
+    /// has no narrow form, so the payload word cannot hold it.
     #[inline(always)]
     pub(crate) fn from_inline_header(
         header: InlineObjectHeader,
         inline: [Value; INLINE_PROPERTY_COUNT],
-    ) -> Self {
-        let mut object = Self {
+    ) -> Option<Self> {
+        Some(Self {
             meta: header.meta,
             auxiliary: header.auxiliary,
-            payload: 0,
-        };
-        object.store_inline_values(inline);
-        object
+            payload: Self::pack_inline(inline)?,
+        })
     }
 
     pub(crate) fn inline_properties(&self) -> Option<[Value; INLINE_PROPERTY_COUNT]> {
