@@ -766,23 +766,83 @@ const EMPTY_SCRIPT_CALL_TARGET: ScriptCallTarget = ScriptCallTarget {
 };
 
 /// Entries of the script call cache, in sets of `SCRIPT_TARGET_WAYS` that a hash of the
-/// callee's heap index picks (`script_target_set`). Express's router calls a matcher
-/// closure per layer, some 400 distinct callees a request, which 256 entries thrashed
-/// (Callgrind: 2.4% of a ping request re-resolving); 1024 hold them in 64 KiB per table.
+/// callee's heap index picks (`ScriptTargets::set`), at most: Express's router calls a
+/// matcher closure per layer, some 400 distinct callees a request, which 256 entries
+/// thrashed (Callgrind: 2.4% of a ping request re-resolving); 1024 hold them in 64 KiB per
+/// table.
 const SCRIPT_CALL_TARGETS: usize = 1024;
+/// Entries a script call cache starts with: a program that calls few distinct callees keeps
+/// 16 KiB per table resident instead of 64 (V8-v7 max RSS, both tables: about 100 KiB per
+/// fixture). A cache grows to `SCRIPT_CALL_TARGETS` by this factor each time it has
+/// displaced more live targets than it holds.
+const SCRIPT_CALL_TARGETS_INITIAL: usize = 256;
+const SCRIPT_CALL_TARGETS_GROWTH: usize = 4;
+const _: () = assert!(
+    SCRIPT_CALL_TARGETS_INITIAL.is_power_of_two()
+        && SCRIPT_CALL_TARGETS_GROWTH.is_power_of_two()
+        && SCRIPT_CALL_TARGETS_INITIAL <= SCRIPT_CALL_TARGETS
+);
 /// Entries per set: the one most recently resolved first, then the one before it, so two
 /// callees whose indices share a set both stay resolved.
 const SCRIPT_TARGET_WAYS: usize = 2;
 const _: () = assert!(SCRIPT_CALL_TARGETS.is_power_of_two() && SCRIPT_TARGET_WAYS == 2);
 
-/// The first entry of `callee`'s set in the script call cache, when it names a heap cell;
-/// the set's other entry follows it (`| 1`). The set is the shared direct-mapped index of
-/// the heap index (`shape_memo::direct_mapped_index`): a family's closures take indices at
-/// a fixed stride, which a multiplicative hash of the index alone crowds into a few sets.
-#[inline(always)]
-fn script_target_set(callee: Value) -> Option<usize> {
-    let set = super::shape_memo::direct_mapped_index(callee.heap_index()?, SCRIPT_CALL_TARGETS / SCRIPT_TARGET_WAYS);
-    Some(set * SCRIPT_TARGET_WAYS)
+/// A script call cache (`LaneStack::script_targets`, `cross_targets`): sets of
+/// `SCRIPT_TARGET_WAYS` entries, growing from `SCRIPT_CALL_TARGETS_INITIAL` entries.
+/// Entry pointers (`Vm::script_call_entry`) are not held across a resolution, which is
+/// where it grows.
+struct ScriptTargets {
+    entries: Box<[ScriptCallTarget]>,
+    /// Live targets displaced from their set since it last grew.
+    displaced: usize,
+}
+
+impl ScriptTargets {
+    fn with_len(len: usize) -> Self {
+        Self { entries: vec![EMPTY_SCRIPT_CALL_TARGET; len].into_boxed_slice(), displaced: 0 }
+    }
+
+    /// The first entry of `callee`'s set, when it names a heap cell; the set's other entry
+    /// follows it (`| 1`). The set is the shared direct-mapped index of the heap index
+    /// (`shape_memo::direct_mapped_index`): a family's closures take indices at a fixed
+    /// stride, which a multiplicative hash of the index alone crowds into a few sets.
+    #[inline(always)]
+    fn set(&self, callee: Value) -> Option<usize> {
+        let sets = self.entries.len() / SCRIPT_TARGET_WAYS;
+        Some(super::shape_memo::direct_mapped_index(callee.heap_index()?, sets) * SCRIPT_TARGET_WAYS)
+    }
+
+    /// Record `target` first in its set, the entry it displaces moving second; a cache that
+    /// has displaced more live targets than it holds grows, empty, before recording it.
+    fn remember(&mut self, target: ScriptCallTarget) {
+        let Some(set) = self.set(target.callee) else {
+            return;
+        };
+        if self.entries[set].callee != target.callee {
+            if self.entries[set | 1].generation == target.generation {
+                self.displaced += 1;
+            }
+            self.entries[set | 1] = self.entries[set];
+        }
+        self.entries[set] = target;
+        if self.displaced > self.entries.len() && self.entries.len() < SCRIPT_CALL_TARGETS {
+            *self = Self::with_len(self.entries.len() * SCRIPT_CALL_TARGETS_GROWTH);
+            self.remember(target);
+        }
+    }
+
+    fn clear(&mut self) {
+        self.entries.fill(EMPTY_SCRIPT_CALL_TARGET);
+        self.displaced = 0;
+    }
+}
+
+impl std::ops::Index<usize> for ScriptTargets {
+    type Output = ScriptCallTarget;
+    #[inline(always)]
+    fn index(&self, index: usize) -> &ScriptCallTarget {
+        &self.entries[index]
+    }
 }
 
 /// Entries of the function target memo (`LaneStack::function_targets`), one per function
@@ -889,15 +949,6 @@ const EMPTY_CONSTRUCT_PLAN: ConstructPlan = ConstructPlan {
 };
 const _: () = assert!(SCRIPT_CALL_TARGETS.is_power_of_two());
 
-/// Record `target` first in its set `set` of `targets`, the entry it displaces moving second.
-/// Entry pointers (`Vm::script_call_entry`) are not held across a resolution.
-fn remember_in_set(targets: &mut [ScriptCallTarget; SCRIPT_CALL_TARGETS], set: usize, target: ScriptCallTarget) {
-    if targets[set].callee != target.callee {
-        targets[set | 1] = targets[set];
-    }
-    targets[set] = target;
-}
-
 /// Activations a lane runs without VM frames, innermost last, over the
 /// bottom VM frame of the lane run. They exist only while the lane runs:
 /// every exit makes them VM frames with pending calls, exactly as frame
@@ -909,11 +960,11 @@ pub(super) struct LaneStack {
     activations: Vec<Activation>,
     /// Resolved targets of lane `Call` records (`Vm::script_call_target`) of callees of the
     /// running program.
-    script_targets: Box<[ScriptCallTarget; SCRIPT_CALL_TARGETS]>,
+    script_targets: ScriptTargets,
     /// Resolved targets of callees of another program than the calling one, which those
     /// calls only activate (`Vm::resolve_script_call_target`): one per callee serves every
     /// other program, apart from the target its own program's calls use.
-    cross_targets: Box<[ScriptCallTarget; SCRIPT_CALL_TARGETS]>,
+    cross_targets: ScriptTargets,
     /// The last target resolved for a closure of each function (`FUNCTION_TARGETS`), under
     /// its generation and program: every field but the closure's own (`callee`, `env`,
     /// `capture`, an arrow's `lexical_this`) depends on the function alone.
@@ -953,8 +1004,8 @@ impl Default for LaneStack {
         Self {
             values: Vec::new(),
             activations: Vec::new(),
-            script_targets: Box::new([EMPTY_SCRIPT_CALL_TARGET; SCRIPT_CALL_TARGETS]),
-            cross_targets: Box::new([EMPTY_SCRIPT_CALL_TARGET; SCRIPT_CALL_TARGETS]),
+            script_targets: ScriptTargets::with_len(SCRIPT_CALL_TARGETS_INITIAL),
+            cross_targets: ScriptTargets::with_len(SCRIPT_CALL_TARGETS_INITIAL),
             function_targets: Box::new([EMPTY_SCRIPT_CALL_TARGET; FUNCTION_TARGETS]),
             cross_function_targets: Box::new([EMPTY_SCRIPT_CALL_TARGET; FUNCTION_TARGETS]),
             construct_plans: Box::new([EMPTY_CONSTRUCT_PLAN; CONSTRUCT_PLANS]),
@@ -969,20 +1020,20 @@ impl Default for LaneStack {
 }
 
 impl LaneStack {
-    /// `remember_in_set` of a target of the running program's callee (`script_targets`).
-    fn remember_script_target(&mut self, set: usize, target: ScriptCallTarget) {
-        remember_in_set(&mut self.script_targets, set, target);
+    /// Records a target of the running program's callee (`script_targets`).
+    fn remember_script_target(&mut self, target: ScriptCallTarget) {
+        self.script_targets.remember(target);
     }
 
     /// `remember_script_target` of another program's callee (`cross_targets`).
-    fn remember_cross_target(&mut self, set: usize, target: ScriptCallTarget) {
-        remember_in_set(&mut self.cross_targets, set, target);
+    fn remember_cross_target(&mut self, target: ScriptCallTarget) {
+        self.cross_targets.remember(target);
     }
 
     /// Forget resolved call targets, as the general loop's call target cache is reset.
     pub(super) fn clear_script_targets(&mut self) {
-        *self.script_targets = [EMPTY_SCRIPT_CALL_TARGET; SCRIPT_CALL_TARGETS];
-        *self.cross_targets = [EMPTY_SCRIPT_CALL_TARGET; SCRIPT_CALL_TARGETS];
+        self.script_targets.clear();
+        self.cross_targets.clear();
         *self.function_targets = [EMPTY_SCRIPT_CALL_TARGET; FUNCTION_TARGETS];
         *self.cross_function_targets = [EMPTY_SCRIPT_CALL_TARGET; FUNCTION_TARGETS];
         *self.read_memos = [EMPTY_READ_MEMO; READ_MEMOS];
@@ -1000,14 +1051,14 @@ impl LaneStack {
 
     /// Record `target` in its set and as its function's (`function_targets`), or a `cross`
     /// one in the other programs' tables.
-    fn remember_function_target(&mut self, set: usize, target: ScriptCallTarget, cross: bool) {
+    fn remember_function_target(&mut self, target: ScriptCallTarget, cross: bool) {
         let index = target.function as usize & (FUNCTION_TARGETS - 1);
         if cross {
             self.cross_function_targets[index] = target;
-            self.remember_cross_target(set, target);
+            self.remember_cross_target(target);
         } else {
             self.function_targets[index] = target;
-            self.remember_script_target(set, target);
+            self.remember_script_target(target);
         }
     }
 
@@ -6042,7 +6093,7 @@ impl<H: Host> Vm<H> {
     /// replaces it, which no activation makes.
     #[inline(always)]
     fn script_call_entry(&self, callee: Value) -> Option<*const ScriptCallTarget> {
-        let set = script_target_set(callee)?;
+        let set = self.lane_stack.script_targets.set(callee)?;
         let (generation, program) = (self.lane_stack.generation, self.active_program);
         let holds = |cached: &ScriptCallTarget| {
             cached.callee == callee && cached.generation == generation && cached.program == program
@@ -6059,7 +6110,7 @@ impl<H: Host> Vm<H> {
     /// targets `LaneStack::cross_targets` holds (`lane_script_call_cross`).
     #[inline(always)]
     fn cross_call_entry(&self, callee: Value) -> Option<*const ScriptCallTarget> {
-        let set = script_target_set(callee)?;
+        let set = self.lane_stack.cross_targets.set(callee)?;
         let (generation, program) = (self.lane_stack.generation, self.active_program);
         let holds = |cached: &ScriptCallTarget| {
             cached.callee == callee && cached.generation == generation && cached.program != program
@@ -6081,7 +6132,7 @@ impl<H: Host> Vm<H> {
         code: &ResidualProgram,
         callee: Value,
     ) -> Option<ScriptCallTarget> {
-        let set = script_target_set(callee)?;
+        callee.heap_index()?;
         let (program, function, env, numeric) = self.same_realm_script_target(callee)?;
         #[cfg(feature = "profile-lane-exits")]
         if let Some(body) = self.programs.residual(program).and_then(|code| {
@@ -6134,9 +6185,9 @@ impl<H: Host> Vm<H> {
             };
             let target = ScriptCallTarget { callee, env, capture, this_binding, lexical_this, ..known };
             if cross {
-                self.lane_stack.remember_cross_target(set, target);
+                self.lane_stack.remember_cross_target(target);
             } else {
-                self.lane_stack.remember_script_target(set, target);
+                self.lane_stack.remember_script_target(target);
             }
             return Some(target);
         }
@@ -6194,7 +6245,7 @@ impl<H: Host> Vm<H> {
                 entry: CallEntry::Frame,
                 ..EMPTY_SCRIPT_CALL_TARGET
             };
-            self.remember_target(set, target, numeric, cross);
+            self.remember_target(target, numeric, cross);
             return Some(target);
         };
         // SAFETY: the program store keeps a derived view alive with its program.
@@ -6270,17 +6321,17 @@ impl<H: Host> Vm<H> {
                 None => NO_FORWARDED_METHOD,
             },
         };
-        self.remember_target(set, target, numeric, cross);
+        self.remember_target(target, numeric, cross);
         Some(target)
     }
 
     /// Record a resolved `target`, also as its function's unless its closure is numeric; a
     /// `cross` one among the other programs' targets.
-    fn remember_target(&mut self, set: usize, target: ScriptCallTarget, numeric: bool, cross: bool) {
+    fn remember_target(&mut self, target: ScriptCallTarget, numeric: bool, cross: bool) {
         if numeric {
-            self.lane_stack.remember_script_target(set, target);
+            self.lane_stack.remember_script_target(target);
         } else {
-            self.lane_stack.remember_function_target(set, target, cross);
+            self.lane_stack.remember_function_target(target, cross);
         }
     }
 
