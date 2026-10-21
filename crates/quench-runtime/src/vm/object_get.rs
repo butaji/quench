@@ -490,6 +490,16 @@ impl<H: Host> Vm<H> {
         self.set_shape_property(object, key, value).ok()
     }
 
+    /// A keyed `[[Set]]` of a string naming an existing atom, made as
+    /// `set_plain_named_property` makes the named one; `false` leaves the write, and any key
+    /// that function refuses, to the general path, which interns a new name.
+    pub(super) fn try_plain_string_key_set(&mut self, object: Value, key: Value, value: Value) -> bool {
+        let Some(atom) = self.heap.string(key).and_then(|text| self.lookup_js_atom(text)) else {
+            return false;
+        };
+        self.set_plain_named_property(object, atom, value).is_some()
+    }
+
     /// A keyed read of a symbol, or of a string naming an existing non-index atom, that the
     /// plain chain walk answers: what `get_index` returns for it before any lookup that can
     /// run guest code. `None` leaves the read to `get_index`.
@@ -942,15 +952,33 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// The value of private field `atom` of `target` under the running frame's home for the
+    /// name. A target without the field, or whose element is a method or accessor, answers
+    /// `None`, leaving the access to the general path, which throws or calls it.
     pub(super) fn private_field_value(&mut self, p: &ResidualProgram, target: Value, atom: Atom) -> Option<Value> {
-        let home = self.private_brand_home(p, target, atom)?;
+        let home = self.private_name_home(p, atom)?;
         self.object_data(target)?.private_field(PrivateBrand { home, name: atom })
     }
 
-    /// `private_field_value` in function `function` of the running program, whose frame
-    /// would capture from `environment`, answered by the home a run of it with a frame found
-    /// (`private_name_home`'s memo) when it has no binding sites. `None` leaves the read to
-    /// the general path, which finds the home and throws for a target without the name.
+    /// The private brand of `atom` that function `function` of the running program, whose
+    /// frame would capture from `environment`, names, from the home a run of it with a frame
+    /// found (`private_name_home`'s memo) when it has no binding sites. `None` leaves the
+    /// access to the general path, which finds the home.
+    fn memoized_private_brand(
+        &self,
+        p: &ResidualProgram,
+        environment: Value,
+        function: u32,
+        atom: Atom,
+    ) -> Option<PrivateBrand> {
+        if !p.function_get(function as usize).is_some_and(|body| body.binding_sites.is_empty()) {
+            return None;
+        }
+        let key = PrivateHomeKey { environment, program: self.active_program, function, name: atom };
+        Some(PrivateBrand { home: *self.private_homes.get(&key)?, name: atom })
+    }
+
+    /// `private_field_value` through `memoized_private_brand`.
     pub(super) fn memoized_private_field_value(
         &self,
         p: &ResidualProgram,
@@ -959,17 +987,31 @@ impl<H: Host> Vm<H> {
         target: Value,
         atom: Atom,
     ) -> Option<Value> {
-        if !p.function_get(function as usize).is_some_and(|body| body.binding_sites.is_empty()) {
-            return None;
-        }
-        let key = PrivateHomeKey { environment, program: self.active_program, function, name: atom };
-        let brand = PrivateBrand { home: *self.private_homes.get(&key)?, name: atom };
-        let object = self.object_data(target)?;
-        object.has_private_name(brand).then(|| object.private_field(brand)).flatten()
+        let brand = self.memoized_private_brand(p, environment, function, atom)?;
+        self.object_data(target)?.private_field(brand)
     }
 
+    /// `set_private_field_value` through `memoized_private_brand`.
+    pub(super) fn memoized_set_private_field_value(
+        &mut self,
+        p: &ResidualProgram,
+        environment: Value,
+        function: u32,
+        target: Value,
+        atom: Atom,
+        value: Value,
+    ) -> bool {
+        let Some(brand) = self.memoized_private_brand(p, environment, function, atom) else {
+            return false;
+        };
+        self.object_data_mut(target).is_some_and(|object| object.set_private_field(brand, value))
+    }
+
+    /// The store of private field `atom` of `target` under the running frame's home for the
+    /// name: `false` for a target without the field, or whose element is a method or
+    /// accessor, which the general path throws for or calls.
     pub(super) fn set_private_field_value(&mut self, p: &ResidualProgram, target: Value, atom: Atom, value: Value) -> bool {
-        let Some(home) = self.private_brand_home(p, target, atom) else { return false; };
+        let Some(home) = self.private_name_home(p, atom) else { return false; };
         self.object_data_mut(target).is_some_and(|object| object.set_private_field(PrivateBrand { home, name: atom }, value))
     }
 

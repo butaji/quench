@@ -459,8 +459,20 @@ impl IteratorRecord {
 
 impl crate::heap::PromiseCell {
     pub(crate) fn write_snapshot(&self, writer: &mut Writer) -> SnapshotResult<()> {
-        let crate::heap::PromiseRecord { state, result, reactions, rejection, rejection_id, host_context } =
-            &self.record;
+        let crate::heap::PromiseRecord {
+            state,
+            result,
+            reactions,
+            rejection,
+            rejection_id,
+            host_context,
+            module_evaluation,
+        } = &self.record;
+        // A snapshot holds no module record (`PromiseRuntime::write_snapshot`), so no promise
+        // is a module's evaluation promise.
+        if *module_evaluation {
+            return Err(SnapshotError::unsupported("a module evaluation promise"));
+        }
         write_object(writer, &self.object)?;
         promise_state::write(writer, *state);
         writer.value(*result);
@@ -500,7 +512,15 @@ impl crate::heap::PromiseCell {
         let host_context = if reader.bool()? { Some(crate::HostExecutionContext(reader.u64()?)) } else { None };
         Ok(Self {
             object,
-            record: crate::heap::PromiseRecord { state, result, reactions: reactions.into(), rejection, rejection_id, host_context },
+            record: crate::heap::PromiseRecord {
+                state,
+                result,
+                reactions: reactions.into(),
+                rejection,
+                rejection_id,
+                host_context,
+                module_evaluation: false,
+            },
         })
     }
 }
