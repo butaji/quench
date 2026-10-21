@@ -234,14 +234,19 @@ fn listener_arguments(
     context: &mut NativeContext<'_, NodeHost>,
     arguments: RootId,
 ) -> Result<Vec<RootId>, RootedError> {
-    let length = get(context, arguments, "length")?;
-    let length = context
-        .rooted_value(length)
-        .and_then(|value| value.as_number())
-        .unwrap_or_default() as usize;
-    (0..length)
-        .map(|index| get(context, arguments, &index.to_string()))
-        .collect()
+    context.array_like_values_rooted(arguments)
+}
+
+/// The retained string `"error"` (`SharedNodeState::error_event_name`).
+fn error_event_name(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    let shared = context.host_mut().shared_state();
+    if let Some(name) = shared.borrow().error_event_name {
+        return Ok(name);
+    }
+    let name = context.string_rooted("error");
+    let name = context.retain(name)?;
+    shared.borrow_mut().error_event_name = Some(name);
+    Ok(name)
 }
 
 /// The emitting counter belongs to the listener array, including nested emits.
@@ -704,7 +709,7 @@ pub(crate) fn emit(
     let target = args.first().copied().unwrap_or(missing);
     let event = args.get(1).copied().unwrap_or(missing);
     let arguments = args.get(2).copied().unwrap_or(missing);
-    let error = context.string_rooted("error");
+    let error = error_event_name(context)?;
     if !context.strict_equal_rooted(event, error)? {
         let events = get(context, target, "_events")?;
         if undefined(context, events) {
