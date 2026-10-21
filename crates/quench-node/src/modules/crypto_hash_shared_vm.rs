@@ -403,3 +403,5 @@ pub(crate) fn cleanup(runtime: &mut Runtime<NodeHost>) {
         runtime.release_host_weak_root(handle.identity);
     }
 }
+
+crate::host::startup_snapshot::host_snap_empty!(State { handles } "a hash");

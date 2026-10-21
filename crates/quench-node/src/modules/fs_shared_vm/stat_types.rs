@@ -320,3 +320,5 @@ pub(crate) fn date(
     set(context, target, &name, date)?;
     Ok(date)
 }
+
+crate::host::startup_snapshot::host_snap_state!(State { api, stats_warning_emitted });

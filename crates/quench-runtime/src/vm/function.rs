@@ -290,8 +290,19 @@ impl<H: Host> Vm<H> {
         let (target, receiver, bound_args) = self
             .bound_function_parts(env)
             .ok_or_else(|| JsError("invalid bound function".into()))?;
-        let bound_args = bound_args.to_vec();
-        let mut combined = bound_args;
+        if bound_args.is_empty() {
+            // `Function.prototype.call` bound to a function, as Node's primordials uncurry every
+            // method: the call is that function's, with the first argument as its receiver.
+            if matches!(
+                self.heap.function(target),
+                Some(FunctionRecord { kind: FunctionKind::Native(Native::FunctionCall), .. })
+            ) {
+                let this = args.first().copied().unwrap_or(Value::UNDEFINED);
+                return self.call_value(p, receiver, this, args.get(1..).unwrap_or_default());
+            }
+            return self.call_value(p, target, receiver, args);
+        }
+        let mut combined = bound_args.to_vec();
         combined.extend_from_slice(args);
         self.call_value(p, target, receiver, &combined)
     }

@@ -965,3 +965,5 @@ pub(crate) fn guess_handle_type(context: &mut NativeContext<'_, NodeHost>, _:Roo
     let fd=super::native_number::uint32(value) as i32;
     Ok(context.number(super::fd_handle_type::guess(fd) as u8 as f64))
 }
+
+crate::host::startup_snapshot::host_snap_struct!(UtilIntrinsics { module, inspect, formatters });

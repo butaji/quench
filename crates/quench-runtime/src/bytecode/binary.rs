@@ -118,7 +118,7 @@ pub(super) fn region_start(encoding: &[u8]) -> Result<usize, String> {
 /// program valid, as this build's compiler output.
 pub(super) fn decode_trusted_program(bytes: super::KeptBytes) -> Result<super::ResidualProgram, String> {
     let encoding = sealed_encoding_length(bytes.as_ref().as_ref())?;
-    decode_program(&bytes, encoding, None)
+    decode_program(&bytes, encoding, ReadAtoms::Program, None)
 }
 
 /// The length of a sealed encoding without its checksum, when the checksum holds over its
@@ -144,7 +144,8 @@ fn compact_checksum(bytes: &[u8]) -> u64 {
 }
 
 fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding) -> (Vec<u8>, Vec<u32>) {
-    let compact = matches!(atoms, AtomEncoding::Compact(_));
+    // A compact or shared encoding leaves the source out: its reader supplies the text.
+    let compact = matches!(atoms, AtomEncoding::Compact(_) | AtomEncoding::Shared);
     let mut out = BinaryWriter::new();
     out.bytes.extend_from_slice(RESIDUAL_MAGIC);
     out.u64(super::ResidualProgram::RUNTIME_ABI_FINGERPRINT);
@@ -338,6 +339,10 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding) -> (Vec
             }
             compact.order
         }
+        AtomEncoding::Shared => {
+            header.u32(program.atoms.len() as u32);
+            Vec::new()
+        }
     };
     header.bytes.extend_from_slice(&out.bytes);
     header.bytes.extend_from_slice(&region);
@@ -348,7 +353,7 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding) -> (Vec
 pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProgram, String> {
     let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
     let length = bytes.len();
-    let program = decode_program(&(std::rc::Rc::new(bytes) as super::KeptBytes), length, None)?;
+    let program = decode_program(&(std::rc::Rc::new(bytes) as super::KeptBytes), length, ReadAtoms::Program, None)?;
     program.validate()?;
     Ok(program)
 }
@@ -363,24 +368,51 @@ pub(super) fn decode_compact_program(
     text: super::SourceText,
 ) -> Result<super::ResidualProgram, String> {
     let encoding = sealed_encoding_length(bytes.as_ref().as_ref())?;
-    decode_program(&bytes, encoding, Some((intern, text)))
+    decode_program(&bytes, encoding, ReadAtoms::Compact(intern), Some(text))
+}
+
+/// A snapshot's encoding of `program` (`crate::snapshot`): the program's own atom ids, which
+/// its VM's restored atom table keeps, and no source text, which the snapshot writes apart.
+pub(super) fn encode_snapshot_program(program: &super::ResidualProgram) -> Vec<u8> {
+    sealed(encode_program(program, AtomEncoding::Shared).0)
+}
+
+/// `encode_snapshot_program`'s bytes, with `text` as the source; the caller gives the program
+/// its VM's atom table, as long as the returned count.
+pub(super) fn decode_snapshot_program(
+    bytes: super::KeptBytes,
+    text: Option<super::SourceText>,
+) -> Result<(super::ResidualProgram, usize), String> {
+    let encoding = sealed_encoding_length(bytes.as_ref().as_ref())?;
+    let mut atom_count = 0;
+    let program = decode_program(&bytes, encoding, ReadAtoms::Shared(&mut atom_count), text)?;
+    Ok((program, atom_count))
+}
+
+/// How a decoder reads atoms (`AtomEncoding`).
+enum ReadAtoms<'a> {
+    /// The table, in the program's ids.
+    Program,
+    /// A compact table, whose names `intern` gives the reader's ids.
+    Compact(&'a mut dyn FnMut(&str) -> u32),
+    /// Only the length of the table the program shares with its reader, written here.
+    Shared(&'a mut usize),
 }
 
 /// Decodes the encoding in the first `length` bytes of `encoded`, which a program with
-/// deferred records keeps: their region is read only as each decodes.
+/// deferred records keeps: their region is read only as each decodes. `elided` is the
+/// source text an encoding left out.
 fn decode_program(
     encoded: &super::KeptBytes,
     length: usize,
-    compact: Option<(&mut dyn FnMut(&str) -> u32, super::SourceText)>,
+    mut read_atoms: ReadAtoms<'_>,
+    elided: Option<super::SourceText>,
 ) -> Result<super::ResidualProgram, String> {
     let encoding = encoded.as_ref().as_ref().get(..length).ok_or("truncated residual")?;
     let region = region_start(encoding)?;
     let region_length = encoding.len() - size_of::<u32>() - region;
     let bytes = &encoding[..region];
-    let (mut intern, mut elided) = match compact {
-        Some((intern, text)) => (Some(intern), Some(text)),
-        None => (None, None),
-    };
+    let mut elided = elided;
     let mut input = BinaryReader::new(bytes);
     input.magic(RESIDUAL_MAGIC)?;
     let abi = input.u64()?;
@@ -468,9 +500,13 @@ fn decode_program(
         }),
         _ => return Err("invalid residual module link plan tag".into()),
     };
-    let atoms = match intern.as_mut() {
-        None => input.strings()?,
-        Some(intern) => {
+    let atoms = match &mut read_atoms {
+        ReadAtoms::Program => input.strings()?,
+        ReadAtoms::Shared(count) => {
+            **count = input.u32()? as usize;
+            AtomTable::default()
+        }
+        ReadAtoms::Compact(intern) => {
             let count = input.u32()? as usize;
             let mut ids = Vec::with_capacity(count);
             for _ in 0..count {
@@ -1155,6 +1191,9 @@ const ROOT_FUNCTION: usize = 0;
 enum AtomEncoding {
     Program,
     Compact(CompactAtoms),
+    /// The program's own ids, which name its reader's atoms too: a snapshot's programs share
+    /// their VM's atom table, so only its length is written (`encode_snapshot_program`).
+    Shared,
 }
 
 #[derive(Default)]
@@ -1169,7 +1208,7 @@ impl BinaryWriter {
     fn with_atoms(atoms: AtomEncoding) -> Self { Self { bytes: Vec::new(), atoms } }
     fn atom(&mut self, atom: u32) {
         let encoded = match &mut self.atoms {
-            AtomEncoding::Program => atom,
+            AtomEncoding::Program | AtomEncoding::Shared => atom,
             AtomEncoding::Compact(compact) => *compact.positions.entry(atom).or_insert_with(|| {
                 compact.order.push(atom);
                 compact.order.len() as u32 - 1

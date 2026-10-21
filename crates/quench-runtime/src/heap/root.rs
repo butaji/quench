@@ -58,6 +58,35 @@ struct Entry {
 }
 
 impl RootTable {
+    pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
+        writer.len(self.entries.len());
+        for entry in &self.entries {
+            writer.u32(entry.generation);
+            writer.option_value(entry.value);
+        }
+        writer.u32s(&self.free);
+    }
+
+    /// A table `write_snapshot` wrote, under a fresh identity: handles the host kept across the
+    /// snapshot come back through `restored_root`.
+    pub(crate) fn read_snapshot(reader: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::SnapshotResult<Self> {
+        let entries = crate::snapshot::read_list(reader, |reader| {
+            Ok(Entry { generation: reader.u32()?, value: reader.option_value()? })
+        })?;
+        Ok(Self { id: RootTableId::fresh(), entries, free: reader.u32s()? })
+    }
+
+    /// The parts of `root` a snapshot keeps: its slot and generation.
+    pub(crate) fn snapshot_root(&self, root: RootId) -> Option<(u32, u32)> {
+        (root.table == self.id).then_some((root.slot, root.generation))
+    }
+
+    /// The handle `snapshot_root` gave the parts of, in this restored table.
+    pub(crate) fn restored_root(&self, slot: u32, generation: u32) -> Option<RootId> {
+        let entry = self.entries.get(slot as usize)?;
+        (entry.generation == generation && entry.value.is_some()).then_some(RootId { table: self.id, slot, generation })
+    }
+
     pub(crate) fn insert(&mut self, value: Value) -> RootId {
         while let Some(slot) = self.free.pop() {
             let entry = &mut self.entries[slot as usize];

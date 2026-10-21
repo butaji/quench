@@ -453,6 +453,23 @@ impl Regex {
     }
 
     /// The repository matcher, lowered from the kept source on first use.
+    /// Whether a search from `start` of a subject of `length` code units whose unit at
+    /// `start` is `first` (`None` past its end) finds no match, decided before the subject
+    /// is prepared: too few units remain for the shortest match, or the pattern's start
+    /// anchor rules the position out (`backtrack::Program::anchor_excludes`). Code units
+    /// are pattern units only outside Unicode mode, so the anchor applies only there. The
+    /// complete matcher's facts are lowered once per pattern on first use, even for a
+    /// pattern the automata backend matches.
+    pub fn excludes_search(&self, length: usize, start: usize, first: Option<u16>) -> bool {
+        let complete = self.complete();
+        length.saturating_sub(start) < complete.min_length
+            || (!(self.flags.unicode || self.flags.unicode_sets)
+                && complete
+                    .backtracking
+                    .as_ref()
+                    .is_some_and(|program| program.anchor_excludes(start, first.map(u32::from))))
+    }
+
     fn complete(&self) -> &CompleteMatcher {
         self.complete.get_or_init(|| {
             self.with_parsed_source(|parsed| {
@@ -650,7 +667,9 @@ impl Regex {
                 return Some(None);
             }
             // Every match consumes the required literal, so a subject without it has none.
-            if let Some(literal) = &complete.required_bytes {
+            // A sticky search tries the one start, whose start-set check costs less than
+            // scanning the whole remainder for the literal at every split position.
+            if let Some(literal) = complete.required_bytes.as_ref().filter(|_| !sticky) {
                 if literal.find(&bytes[start..]).is_none() {
                     return Some(None);
                 }
@@ -674,7 +693,8 @@ impl Regex {
         if let (false, Some(units)) = (unicode, subject.wide()) {
             // Outside unicode mode a code unit is a pattern unit: no decoding, and
             // positions are offsets.
-            if !complete.required_literal.is_empty()
+            if !sticky
+                && !complete.required_literal.is_empty()
                 && !complete
                     .required_wide
                     .as_ref()
@@ -691,7 +711,8 @@ impl Regex {
         }
         let units = subject.decoded(unicode);
         let first = first_unit_at(units, start);
-        if !complete.required_literal.is_empty()
+        if !sticky
+            && !complete.required_literal.is_empty()
             && !contains_literal(&units[first..], &complete.required_literal)
         {
             return Some(None);
@@ -897,6 +918,26 @@ impl Subject {
             carriage_return: std::cell::OnceCell::new(),
             decoded: Default::default(),
         }
+    }
+
+    /// Makes this the subject `short_ascii(text)` makes, in place: no new subject is built
+    /// and moved in, and whatever was prepared for the old text is dropped.
+    pub fn respell_short_ascii(&mut self, text: &str) {
+        debug_assert!(text.is_ascii());
+        let length = u8::try_from(text.len()).expect("short text fits its length byte");
+        match &mut self.text {
+            SubjectText::Inline { length: own, bytes } => {
+                bytes[..text.len()].copy_from_slice(text.as_bytes());
+                *own = length;
+            }
+            other => {
+                let mut bytes = [0; INLINE_SUBJECT_BYTES];
+                bytes[..text.len()].copy_from_slice(text.as_bytes());
+                *other = SubjectText::Inline { length, bytes };
+            }
+        }
+        self.carriage_return.take();
+        self.decoded.iter_mut().for_each(|decoded| drop(decoded.take()));
     }
 
     fn has_carriage_return(&self) -> bool {
