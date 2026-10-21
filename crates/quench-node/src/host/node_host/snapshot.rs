@@ -21,6 +21,8 @@ impl NodeHost {
             net_pending_ends,
             net_pending_destroys,
             building_snapshot: _,
+            // False at the snapshot point; a restored host sets it in `Host::resume`.
+            bootstrapped: _,
         } = self;
         require_quiescent(
             net_pending_writes.is_empty() && net_pending_ends.is_empty() && net_pending_destroys.is_empty(),
