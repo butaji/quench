@@ -85,7 +85,9 @@ struct ProgramEntry {
     constants: Vec<Value>,
     const_arrays: Vec<Option<Rc<Vec<Value>>>>,
     function_sources: Vec<Option<Value>>,
-    regexp_literals: Vec<Option<Result<Rc<quench_regexp::Regex>, Rc<str>>>>,
+    /// Each RegExp literal site's record, shared by every object it evaluates to, or its
+    /// compile error.
+    regexp_literals: Vec<Option<Result<Rc<crate::heap::RegExpMeta>, Rc<str>>>>,
     module_environment: Option<Value>,
     import_meta: Option<Value>,
     module_imports: Vec<(u16, ModuleImport)>,
@@ -1637,19 +1639,19 @@ impl ProgramStore {
         Some(*cached.get_or_insert(source))
     }
 
-    pub(crate) fn regexp_literal_matcher(
+    pub(crate) fn regexp_literal_meta(
         &self,
         id: ProgramId,
         site: usize,
-    ) -> Option<Result<Rc<quench_regexp::Regex>, Rc<str>>> {
+    ) -> Option<Result<Rc<crate::heap::RegExpMeta>, Rc<str>>> {
         self.entry(id)?.regexp_literals.get(site)?.as_ref().cloned()
     }
 
-    pub(crate) fn cache_regexp_literal_matcher(
+    pub(crate) fn cache_regexp_literal_meta(
         &mut self,
         id: ProgramId,
         site: usize,
-        matcher: Result<Rc<quench_regexp::Regex>, Rc<str>>,
+        matcher: Result<Rc<crate::heap::RegExpMeta>, Rc<str>>,
     ) -> bool {
         let Some(entry) = self.entry_mut(id) else {
             return false;
