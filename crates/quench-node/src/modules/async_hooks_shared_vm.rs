@@ -312,6 +312,9 @@ pub(crate) fn promise_settled(
 /// `enterWith` cannot mutate the context of the job that registered it.
 /// The async id of no resource, which a Promise job without one runs under.
 const NO_ASYNC_ID: u64 = 0;
+/// A Promise job captured with no resource while no promise hook observed it.
+const UNOBSERVED_JOB: JobContext =
+    JobContext { resource: None, execution: NO_ASYNC_ID, trigger: NO_ASYNC_ID as i64 };
 
 pub(crate) fn capture_job_context(
     shared_state: &Rc<RefCell<crate::host::SharedNodeState>>,
@@ -323,12 +326,16 @@ pub(crate) fn capture_job_context(
     state.next_job_id = token.checked_add(1).expect("private Promise job token space exhausted");
     // Without a Promise hook a job has no async resource, and Node runs it with execution
     // and trigger ids 0 (`executionAsyncId()` in a `then` callback).
+    // Only a job that differs from `UNOBSERVED_JOB` is recorded.
     let (execution, trigger) = match resource {
         Some(id) => (id.0, *state.context_triggers.get(&id.0).expect("Promise resource trigger registered")),
-        None if !state.tracks_promises() => (NO_ASYNC_ID, NO_ASYNC_ID as i64),
+        None if !state.tracks_promises() => (UNOBSERVED_JOB.execution, UNOBSERVED_JOB.trigger),
         None => (state.identity.current_async_id(), state.identity.current_trigger_id()),
     };
-    state.job_resources.insert(token, JobContext { resource: resource.map(|id| id.0), execution, trigger });
+    let job = JobContext { resource: resource.map(|id| id.0), execution, trigger };
+    if job != UNOBSERVED_JOB {
+        state.job_resources.insert(token, job);
+    }
     let source = state.identity.store_context();
     inherit_stores(state, source, StoreContext::Job(token));
     Some(token)
@@ -338,7 +345,7 @@ pub(crate) fn capture_job_context(
 /// Node's promise before/after hooks, a job running once a hook is installed gives its
 /// Promise one on demand, without an init event or destroy tracking.
 fn tracked_job(state: &mut super::async_hooks_state::SharedAsyncHooksState, token: u64) -> JobContext {
-    let job = *state.job_resources.get(&token).expect("live Promise job context");
+    let job = state.job_resources.get(&token).copied().unwrap_or(UNOBSERVED_JOB);
     if job.resource.is_some() || !state.tracks_promises() {
         return job;
     }

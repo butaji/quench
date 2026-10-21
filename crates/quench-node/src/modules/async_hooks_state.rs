@@ -20,7 +20,7 @@ pub(super) enum StoreContext { Resource(u64), Job(u64) }
 impl From<u64> for StoreContext {
     fn from(id: u64) -> Self { Self::Resource(id) }
 }
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) struct JobContext {
     pub resource: Option<u64>,
     pub execution: u64,
