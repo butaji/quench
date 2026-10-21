@@ -1357,8 +1357,15 @@ impl<H: Host> Vm<H> {
                 }
                 let input =
                     vm.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-                if let Some((matcher, flags)) = vm.regexp_unobservable_splitter(receiver, &input) {
-                    let limit = vm.regexp_split_limit(p, args.get(1).copied())?;
+                // An object limit's conversion runs guest code, which may change what the
+                // splitter constructed before it would observe (`exec` on its prototype).
+                let limit_arg = args.get(1).copied();
+                let limit_runs_guest_code = limit_arg.is_some_and(|limit| vm.is_object_like(limit));
+                if let Some((matcher, flags)) = (!limit_runs_guest_code)
+                    .then(|| vm.regexp_unobservable_splitter(receiver, &input))
+                    .flatten()
+                {
+                    let limit = vm.regexp_split_limit(p, limit_arg)?;
                     let array = vm.new_array(Vec::new());
                     if limit == 0 {
                         return Ok(array);
@@ -1570,8 +1577,8 @@ impl<H: Host> Vm<H> {
     /// builtin `@@species` getter, `IsRegExp` reads a data `@@match`, and the receiver's
     /// legacy owner is that constructor, the owner a splitter it constructs gets. The splitter
     /// never escapes, so the split runs with the receiver in its place
-    /// (`regexp_split_builtin`). The matcher is taken before the limit's conversion, which
-    /// may run guest code, as the spec constructs the splitter first.
+    /// (`regexp_split_builtin`). The caller takes it only for a limit whose conversion runs no
+    /// guest code, since the spec constructs the splitter before converting the limit.
     fn regexp_unobservable_splitter(
         &mut self,
         receiver: Value,
