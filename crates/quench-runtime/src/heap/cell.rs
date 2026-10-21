@@ -914,6 +914,7 @@ impl Native {
                     | Self::ObjectGetOwnPropertyDescriptor
                     | Self::ObjectPrototypeHasOwnProperty
                     | Self::ReflectGet
+                    | Self::ReflectHas
                     | Self::ReflectSet
                     | Self::ReflectOwnKeys
                     | Self::ReflectDefineProperty
