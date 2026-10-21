@@ -1090,10 +1090,11 @@ paired data are in the same evidence directory.
 
 The JetStream `async-fs` fixture spends substantial time in `File.swapByteOrder`
 calling `DataView.getFloat64` and `setFloat64`. The lane fast path handles only
-primitive numeric offsets and values on fixed, ordinary, non-shared DataViews;
-all coercion, bounds-error, detached, resizable, shared and unsupported buffer
-cases remain on the generic native implementation. The opt-in diagnostic
-counted 8,204,080 fast gets and 8,204,080 fast sets in the fixture.
+primitive numeric offsets and values on fixed, ordinary, non-shared DataViews
+in compiled (`--jit`) mode; interpreted mode stays on its existing path. All
+coercion, bounds-error, detached, resizable, shared and unsupported buffer cases
+remain on the generic native implementation. The opt-in diagnostic counted
+8,204,080 fast gets and 8,204,080 fast sets in the fixture.
 
 The three-round same-binary screen scored 2.97 with the path disabled and 3.32
 enabled (11.8% higher median), with peak RSS effectively unchanged at 87.93

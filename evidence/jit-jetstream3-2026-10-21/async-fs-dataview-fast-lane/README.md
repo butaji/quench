@@ -48,6 +48,14 @@ reports Quench 3.72 points / 87.89 MiB, Bun 139.44 / 66 MiB, and Node 56.95 /
 207.26 MiB. This confirms valid execution on the final binary; one round under
 the shared Linux host quota is not a qualification result.
 
+The fast path is restricted to `ExecutionMode::Compiled`, preserving the
+interpreter path. After adding that guard, both
+`final-jit-guarded-1round.json` and `final-interpreted-1round.json` passed
+JetStream validation. The JIT run measured 2.74 / 88.03 MiB; the interpreted
+run measured 3.86 / 87.16 MiB. Peer scores also swung substantially between
+these runs (Bun 136.45 vs 39.82), so these single-round reports verify both
+modes execute correctly but do not compare performance.
+
 ## Reproduction
 
 ```sh
