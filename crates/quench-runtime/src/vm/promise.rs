@@ -1071,6 +1071,9 @@ pub(super) struct PromiseRuntime {
     pub(super) modules: FxHashMap<String, ModuleRecord>,
     pub(super) dynamic_import_jobs: Vec<DynamicImportJob>,
     pub(super) async_module_order: VecDeque<String>,
+    /// A promise an async-evaluating module waits on has settled since module advancement
+    /// last completed modules.
+    pub(super) async_module_settled: bool,
     pub(super) module_sources: FxHashMap<ModuleIdentity, Value>,
     pub(super) waiting_static_modules: Vec<ModuleSource>,
     pub(super) active_native: Vec<super::activation::NativeActivation>,
@@ -1397,6 +1400,7 @@ impl<H: Host> Vm<H> {
                 rejection: PromiseRejectionState::Unobserved,
                 rejection_id: None,
                 host_context,
+                module_evaluation: false,
             },
         });
         if let Some(identity) = host_context {
@@ -2090,6 +2094,7 @@ impl<H: Host> Vm<H> {
                 };
                 record.begin_async_evaluation(namespace);
                 record.track_evaluation_promise(promise);
+                self.watch_module_evaluation(promise);
                 self.realm
                     .promise
                     .async_module_order
@@ -3915,7 +3920,17 @@ impl<H: Host> Vm<H> {
         let promise = &self.realm.promise;
         !promise.dynamic_import_jobs.is_empty()
             || !promise.waiting_static_modules.is_empty()
-            || self.settled_async_modules().next().is_some()
+            || promise.async_module_settled
+    }
+
+    /// Marks `promise` as one a module's async evaluation waits on; module advancement
+    /// becomes due when it settles, or now if it already has.
+    fn watch_module_evaluation(&mut self, promise: Value) {
+        let settled = self.promise_record_mut(promise).is_none_or(|record| {
+            record.module_evaluation = true;
+            record.state != PromiseState::Pending
+        });
+        self.realm.promise.async_module_settled |= settled;
     }
 
     pub(super) fn advance_static_module_jobs(
@@ -3962,13 +3977,20 @@ impl<H: Host> Vm<H> {
     }
 
     fn settle_pending_async_modules(&mut self, p: &ResidualProgram) -> Result<(), JsError> {
+        if !std::mem::take(&mut self.realm.promise.async_module_settled) {
+            return Ok(());
+        }
+        let completed = self.complete_settled_async_modules(p);
+        // A failed completion leaves the rest due.
+        self.realm.promise.async_module_settled |= completed.is_err();
+        completed
+    }
+
+    fn complete_settled_async_modules(&mut self, p: &ResidualProgram) -> Result<(), JsError> {
         let settled = self
             .settled_async_modules()
             .map(|(key, promise, namespace)| (key.clone(), promise, namespace))
             .collect::<Vec<_>>();
-        if settled.is_empty() {
-            return Ok(());
-        }
         for (key, promise, namespace) in settled {
             let Some(record) = self.promise_record(promise).cloned() else {
                 continue;
@@ -4165,6 +4187,7 @@ impl<H: Host> Vm<H> {
                         ));
                     };
                     module_record.track_evaluation_promise(evaluation);
+                    self.watch_module_evaluation(evaluation);
                 } else if pending {
                     self.drain_jobs_until_promise(&residual, evaluation)?;
                 }
