@@ -1651,6 +1651,20 @@ impl<H: Host> Vm<H> {
         Some(self.heap.alloc(Cell::bigint(value)))
     }
 
+    /// A relational operator (`<`, `<=`, `>`, `>=`) of two strings: IsLessThan orders them by
+    /// code units, which runs no guest code.
+    pub(super) fn string_relation(&self, op: u32, left: Value, right: Value) -> Option<bool> {
+        let (left, right) = (self.heap.string(left)?, self.heap.string(right)?);
+        let ordering = left.units().cmp(&right.units());
+        Some(match NumberRelation::from_operator(op)? {
+            NumberRelation::LessThan => ordering.is_lt(),
+            NumberRelation::LessEqual => ordering.is_le(),
+            NumberRelation::GreaterThan => ordering.is_gt(),
+            NumberRelation::GreaterEqual => ordering.is_ge(),
+            NumberRelation::Equal | NumberRelation::NotEqual => return None,
+        })
+    }
+
     /// A relational operator (`<`, `<=`, `>`, `>=`) of two BigInt values.
     pub(super) fn bigint_relation(&self, op: u32, left: Value, right: Value) -> Option<bool> {
         let (Some(Cell::BigInt(left)), Some(Cell::BigInt(right))) =
