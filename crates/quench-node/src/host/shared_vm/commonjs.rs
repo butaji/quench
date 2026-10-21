@@ -166,23 +166,71 @@ fn package_type(package: std::path::PathBuf) -> PackageType {
     known
 }
 
+/// A source file's text, replacing invalid UTF-8 as Node's decoder does. Valid text, nearly
+/// every file, is checked by the standard library's faster validation and borrowed.
+pub(crate) fn source_text(bytes: &[u8]) -> std::borrow::Cow<'_, str> {
+    match std::str::from_utf8(bytes) {
+        Ok(text) => std::borrow::Cow::Borrowed(text),
+        Err(_) => String::from_utf8_lossy(bytes),
+    }
+}
+
 fn detect_source_kind(path: &Path) -> Result<quench_runtime::SourceKind, String> {
     let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
-    let text = String::from_utf8_lossy(&bytes);
+    let text = source_text(&bytes);
     let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
     let text = if text.starts_with("#!") {
         text.find('\n').map_or("", |newline| &text[newline..])
     } else { text };
+    // The goal follows from the text alone, which parsing it (twice, for a module) costs a
+    // whole compilation of: typescript.js (9 MB) was parsed on every load. It is kept in the
+    // compile cache, keyed by the exact text, as a compiled program is.
+    let entry = detected_kinds().entry(DETECTED_KIND_NAME, &[text]);
+    if let Some(kind) = entry.as_ref().and_then(|entry| entry.load()).and_then(|bytes| detected_kind_of(bytes.as_ref().as_ref())) {
+        return Ok(kind);
+    }
+    let kind = detect_text_kind(text);
+    if let Some(entry) = entry {
+        entry.store(&[detected_kind_byte(kind)]);
+    }
+    Ok(kind)
+}
+
+/// The compile-cache name a detected parse goal is kept under.
+const DETECTED_KIND_NAME: &str = "\0quench:detected-source-kind";
+
+/// The cache detected parse goals are kept in: this build's compile cache, read from the
+/// environment as the host's own is, since detection runs where no host is reachable.
+fn detected_kinds() -> &'static crate::host::compile_cache::CompileCache {
+    static CACHE: std::sync::OnceLock<crate::host::compile_cache::CompileCache> = std::sync::OnceLock::new();
+    CACHE.get_or_init(crate::host::compile_cache::CompileCache::from_environment)
+}
+
+/// Each parse goal's one-byte cache record.
+const DETECTED_KIND_BYTES: [(quench_runtime::SourceKind, u8); 2] =
+    [(quench_runtime::SourceKind::Script, 0), (quench_runtime::SourceKind::Module, 1)];
+
+fn detected_kind_byte(kind: quench_runtime::SourceKind) -> u8 {
+    DETECTED_KIND_BYTES.iter().find(|(known, _)| *known == kind).map(|(_, byte)| *byte).expect("every parse goal has a record")
+}
+
+fn detected_kind_of(bytes: &[u8]) -> Option<quench_runtime::SourceKind> {
+    let [byte] = bytes else { return None };
+    DETECTED_KIND_BYTES.iter().find(|(_, known)| known == byte).map(|(kind, _)| *kind)
+}
+
+/// Node's syntax detection of `text`: the CommonJS wrapper first, then ES module syntax.
+fn detect_text_kind(text: &str) -> quench_runtime::SourceKind {
     let wrapper = [WRAPPER_PREFIX, text, WRAPPER_SUFFIX].concat();
     if valid_source(&wrapper, oxc_span::SourceType::cjs()) {
-        return Ok(quench_runtime::SourceKind::Script);
+        return quench_runtime::SourceKind::Script;
     }
     let allocator = oxc_allocator::Allocator::default();
     let parsed = oxc_parser::Parser::new(&allocator, text, oxc_span::SourceType::unambiguous()).parse();
     if parsed.program.source_type.is_module() || valid_source(text, oxc_span::SourceType::mjs()) {
-        Ok(quench_runtime::SourceKind::Module)
+        quench_runtime::SourceKind::Module
     } else {
-        Ok(quench_runtime::SourceKind::Script)
+        quench_runtime::SourceKind::Script
     }
 }
 
@@ -290,6 +338,15 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
         }
         context.seal_startup_intrinsics();
     }
+    if context.host_mut().building_snapshot {
+        return crate::host::startup_snapshot::preload(context);
+    }
+    finish_initialize(context)
+}
+
+/// The part of `initialize` after the startup snapshot point (`startup_snapshot`): what
+/// this process's options, preloads and entry install.
+pub(super) fn finish_initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     context.scoped(crate::modules::process_shared_vm::initialize_warning_policy)?;
     context.scoped(crate::modules::report_configuration_shared_vm::initialize_signal)?;
     context.scoped(crate::modules::worker_threads_shared_vm::initialize_process_owner)?;
@@ -1400,45 +1457,6 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ),
     ("_http_server", BuiltinModule::Internal("_http_server")),
     ("node:_http_server", BuiltinModule::Internal("_http_server")),
-    ("_stream_duplex", BuiltinModule::Internal("_stream_duplex")),
-    (
-        "node:_stream_duplex",
-        BuiltinModule::Internal("_stream_duplex"),
-    ),
-    (
-        "_stream_passthrough",
-        BuiltinModule::Internal("_stream_passthrough"),
-    ),
-    (
-        "node:_stream_passthrough",
-        BuiltinModule::Internal("_stream_passthrough"),
-    ),
-    (
-        "_stream_readable",
-        BuiltinModule::Internal("_stream_readable"),
-    ),
-    (
-        "node:_stream_readable",
-        BuiltinModule::Internal("_stream_readable"),
-    ),
-    (
-        "_stream_transform",
-        BuiltinModule::Internal("_stream_transform"),
-    ),
-    (
-        "node:_stream_transform",
-        BuiltinModule::Internal("_stream_transform"),
-    ),
-    ("_stream_wrap", BuiltinModule::Internal("_stream_wrap")),
-    ("node:_stream_wrap", BuiltinModule::Internal("_stream_wrap")),
-    (
-        "_stream_writable",
-        BuiltinModule::Internal("_stream_writable"),
-    ),
-    (
-        "node:_stream_writable",
-        BuiltinModule::Internal("_stream_writable"),
-    ),
     ("_tls_common", BuiltinModule::Internal("_tls_common")),
     ("node:_tls_common", BuiltinModule::Internal("_tls_common")),
     ("_tls_wrap", BuiltinModule::Internal("_tls_wrap")),
@@ -1851,7 +1869,16 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             load(context, &root.join("lib/_http_incoming.js"), Some(parent), EntryGoal::CommonJs)
         }
         BuiltinModule::Internal("dns/promises") => node_library_module(context, "dns.js", "dns/promises.js"),
-        BuiltinModule::Internal(_) => context.object_rooted(),
+        // Node's `_http_*` modules build on its `http_parser` binding, which the native `http`
+        // module does not use; until they are projected from it they stay empty.
+        BuiltinModule::Internal(
+            "_http_agent" | "_http_client" | "_http_common" | "_http_outgoing" | "_http_server",
+        ) => context.object_rooted(),
+        // Every other such builtin is Node's own library module of that name.
+        BuiltinModule::Internal(name) => {
+            let relative = format!("{}.js", name.strip_prefix("node:").unwrap_or(name));
+            node_library_module(context, &relative, &relative)
+        }
         BuiltinModule::Fs => crate::modules::fs_shared_vm::module(context),
         BuiltinModule::InternalUrl => {
             // Node's bootstrap (exposed-window-or-worker.js) installs `URL.createObjectURL`

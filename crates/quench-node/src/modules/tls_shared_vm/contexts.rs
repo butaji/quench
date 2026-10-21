@@ -273,3 +273,19 @@ fn protocol_version(
     };
     Ok(context.number(f64::from(version)))
 }
+
+impl State {
+    pub(crate) fn write_snapshot(&self, writer: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> {
+        use crate::host::startup_snapshot::{require_quiescent, HostSnap};
+        let Self { api, ciphers, transport_errors, sessions, entries } = self;
+        require_quiescent(transport_errors.is_empty() && sessions.entries.is_empty() && entries.is_empty(), "a TLS context")?;
+        api.write(writer)?;
+        ciphers.write(writer)
+    }
+    pub(crate) fn read_snapshot(&mut self, reader: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<(), String> {
+        use crate::host::startup_snapshot::HostSnap;
+        self.api = HostSnap::read(reader)?;
+        self.ciphers = HostSnap::read(reader)?;
+        Ok(())
+    }
+}

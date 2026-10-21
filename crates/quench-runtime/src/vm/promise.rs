@@ -3474,14 +3474,16 @@ impl<H: Host> Vm<H> {
     }
 
     /// A static module's program kept by the host's compile cache
-    /// (`Host::kept_compiled_program`) for its exact text: compiled unspecialized, after its
-    /// early errors were ruled out, so neither repeats.
+    /// (`Host::kept_compiled_program`) for its exact text: compiled as this VM specializes,
+    /// after its early errors were ruled out, so neither repeats.
     fn kept_static_module_program(&mut self, module: &ModuleSource) -> Option<ResidualProgram> {
-        let bytes = self
-            .host
-            .kept_compiled_program(&module.name, &[STATIC_MODULE_GOAL, &module.source])?;
+        let bytes = self.host.kept_compiled_program(
+            &module.name,
+            &[self.specialization_part(), STATIC_MODULE_GOAL, &module.source],
+        )?;
         let text = crate::bytecode::SourceText::Shared(std::sync::Arc::from(module.source.as_str()));
-        self.decode_cached_program(bytes, text, 0, &module.name, false).ok()
+        let specialized = self.specialized;
+        self.decode_cached_program(bytes, text, 0, &module.name, specialized).ok()
     }
 
     /// Offers the host the compiled program of a static module (`kept_static_module_program`).
@@ -3490,7 +3492,7 @@ impl<H: Host> Vm<H> {
             && let Some(bytes) = self.encode_cached_program(&residual)
         {
             self.host
-                .keep_compiled_program(&module.name, &[STATIC_MODULE_GOAL, &module.source], &bytes);
+                .keep_compiled_program(&module.name, &[self.specialization_part(), STATIC_MODULE_GOAL, &module.source], &bytes);
         }
     }
 
@@ -3530,7 +3532,7 @@ impl<H: Host> Vm<H> {
                         .syntax_error_result(p, &message)
                         .map(|_| ());
                 }
-                let residual = crate::Engine::specialize_module_unspecialized_with_atom_prefix(
+                let residual = crate::Engine::specialize_module_with_atom_prefix(
                     &module.source,
                     &module.name,
                     &*self,
@@ -4062,7 +4064,7 @@ impl<H: Host> Vm<H> {
         {
             Some(program) => program,
             None => {
-                let residual = crate::Engine::specialize_module_unspecialized_with_atom_prefix(
+                let residual = crate::Engine::specialize_module_with_atom_prefix(
                     &module.source,
                     &module.name,
                     &*self,
@@ -4333,7 +4335,7 @@ impl<H: Host> Vm<H> {
         let Some(link_plan) = plan.link_plan else {
             return Ok(false);
         };
-        let residual = crate::Engine::specialize_module_unspecialized_with_atom_prefix(
+        let residual = crate::Engine::specialize_module_with_atom_prefix(
             &module.source,
             &module.name,
             &*self,
@@ -5519,5 +5521,47 @@ impl<H: Host> Vm<H> {
         self.heap.release_root(receiver);
         self.heap.release_root(handler);
         outcome
+    }
+}
+
+impl PromiseRuntime {
+    /// A snapshot (`crate::snapshot`) is taken between jobs, with no module loading and no
+    /// combinator or reaction in flight, so only the rejection numbering carries over.
+    pub(super) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) -> crate::snapshot::SnapshotResult<()> {
+        let Self {
+            rejection_notifications,
+            last_rejection_id,
+            thenable_jobs,
+            finally_handler_callbacks,
+            finally_continuation_callbacks,
+            aggregates,
+            aggregate_jobs,
+            reaction_capabilities,
+            modules,
+            dynamic_import_jobs,
+            async_module_order,
+            module_sources,
+            waiting_static_modules,
+            active_native,
+        } = self;
+        let pending = [
+            ("a rejection notification", rejection_notifications.is_empty()),
+            ("a thenable job", thenable_jobs.is_empty()),
+            ("a finally callback", finally_handler_callbacks.is_empty() && finally_continuation_callbacks.is_empty()),
+            ("a promise combinator", aggregates.is_empty() && aggregate_jobs.is_empty()),
+            ("a reaction capability", reaction_capabilities.is_empty()),
+            ("a module record", modules.is_empty() && async_module_order.is_empty() && module_sources.is_empty()),
+            ("a module load", dynamic_import_jobs.is_empty() && waiting_static_modules.is_empty()),
+            ("a native activation", active_native.is_empty()),
+        ];
+        if let Some((what, _)) = pending.iter().find(|(_, empty)| !empty) {
+            return Err(crate::snapshot::SnapshotError::unsupported(what));
+        }
+        writer.u64(*last_rejection_id);
+        Ok(())
+    }
+
+    pub(super) fn read_snapshot(reader: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::SnapshotResult<Self> {
+        Ok(Self { last_rejection_id: reader.u64()?, ..Self::default() })
     }
 }
