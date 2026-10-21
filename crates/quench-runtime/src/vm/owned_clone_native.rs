@@ -43,7 +43,7 @@ impl<H: Host> Vm<H> {
                 let units = meta.source.units();
                 Some(Metadata::RegExp(
                     (0..units.len()).map(|i| units.at(i)).collect(),
-                    meta.flags.clone(),
+                    meta.flags.text(),
                 ))
             }
             Some(Cell::ArrayBuffer {

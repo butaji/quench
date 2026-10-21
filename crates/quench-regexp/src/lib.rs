@@ -650,7 +650,9 @@ impl Regex {
                 return Some(None);
             }
             // Every match consumes the required literal, so a subject without it has none.
-            if let Some(literal) = &complete.required_bytes {
+            // A sticky search tries the one start, whose start-set check costs less than
+            // scanning the whole remainder for the literal at every split position.
+            if let Some(literal) = complete.required_bytes.as_ref().filter(|_| !sticky) {
                 if literal.find(&bytes[start..]).is_none() {
                     return Some(None);
                 }
@@ -674,7 +676,8 @@ impl Regex {
         if let (false, Some(units)) = (unicode, subject.wide()) {
             // Outside unicode mode a code unit is a pattern unit: no decoding, and
             // positions are offsets.
-            if !complete.required_literal.is_empty()
+            if !sticky
+                && !complete.required_literal.is_empty()
                 && !complete
                     .required_wide
                     .as_ref()
@@ -691,7 +694,8 @@ impl Regex {
         }
         let units = subject.decoded(unicode);
         let first = first_unit_at(units, start);
-        if !complete.required_literal.is_empty()
+        if !sticky
+            && !complete.required_literal.is_empty()
             && !contains_literal(&units[first..], &complete.required_literal)
         {
             return Some(None);
