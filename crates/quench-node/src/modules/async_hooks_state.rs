@@ -132,6 +132,10 @@ impl SharedAsyncHooksState {
         }
     }
 
+    pub(crate) fn tracks_promise_lifecycle_resources(&self) -> bool {
+        self.registry.tracks_promise_lifecycle_resources()
+    }
+
     /// Node internal/async_hooks getDefaultTriggerAsyncId: a negative slot
     /// means inherit executionAsyncId; scope never changes execution or ALS.
     /// Node gives Promises async resources only while its promise hook is installed.
