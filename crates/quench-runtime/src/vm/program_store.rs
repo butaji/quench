@@ -92,7 +92,7 @@ struct ProgramEntry {
     residual: Rc<ResidualProgram>,
     wasm_signatures: Option<Rc<crate::wasm::WasmSignatures>>,
     constants: Vec<Value>,
-    const_arrays: Vec<Option<Rc<Vec<Value>>>>,
+    const_arrays: Vec<Option<crate::heap::ArrayElements>>,
     function_sources: Vec<Option<Value>>,
     /// Each RegExp literal site's record, shared by every object it evaluates to, or its
     /// compile error.
@@ -1754,12 +1754,12 @@ impl ProgramStore {
         id: ProgramId,
         start: usize,
         count: usize,
-    ) -> Option<Rc<Vec<Value>>> {
+    ) -> Option<crate::heap::ArrayElements> {
         let entry = self.entry_mut(id)?;
         let end = start.checked_add(count)?;
         let cached = entry.const_arrays.get_mut(start)?;
         if cached.is_none() {
-            *cached = Some(Rc::new(entry.constants.get(start..end)?.to_vec()));
+            *cached = Some(crate::heap::ArrayElements::from_slice(entry.constants.get(start..end)?));
         }
         cached.clone()
     }

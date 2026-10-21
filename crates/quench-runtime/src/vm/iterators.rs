@@ -2015,7 +2015,7 @@ impl<H: Host> Vm<H> {
         let keys = self
             .heap
             .array_elements(keys_value)
-            .map_or_else(Vec::new, |elements| elements.as_ref().clone());
+            .map_or_else(Vec::new, |elements| elements.to_vec());
         let mut iterators = Vec::new();
         let mut output_keys = Vec::new();
         let mut roots = Vec::new();
@@ -2915,7 +2915,7 @@ impl<H: Host> Vm<H> {
         let env = self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_proto),
-                Rc::new(vec![
+                vec![
                     if done { Value::TRUE } else { Value::FALSE },
                     iterator,
                     if close_on_rejection {
@@ -2923,7 +2923,7 @@ impl<H: Host> Vm<H> {
                     } else {
                         Value::FALSE
                     },
-                ]),
+                ],
             ),
         });
         let fulfilled = self.native_with_env(Native::AsyncFromSyncValue, env);
@@ -3201,7 +3201,7 @@ impl<H: Host> Vm<H> {
                     vm.heap.alloc(Cell::Array {
                         object: crate::heap::ArrayObject::new(
                             Self::empty_object(vm.array_proto),
-                            Rc::new(vec![value, second]),
+                            vec![value, second],
                         ),
                     })
                 })
@@ -3365,7 +3365,7 @@ impl<H: Host> Vm<H> {
                     let entry = vm.heap.alloc(Cell::Array {
                         object: crate::heap::ArrayObject::new(
                             Self::empty_object(vm.array_proto),
-                            Rc::new(vec![Value::number(index as f64), value]),
+                            vec![Value::number(index as f64), value],
                         ),
                     });
                     Some((entry, None))
