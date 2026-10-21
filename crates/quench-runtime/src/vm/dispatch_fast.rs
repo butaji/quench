@@ -5846,11 +5846,20 @@ script_handler! {
         let Some(this) = lane_direct_call_this(vm, target, r.get(i.c)) else {
             sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
         };
-        let arguments = ImmediateLayout::call_window_base(i.imm());
-        match lane_activate(cx, r, ip, target, arguments, this, false) {
-            Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
-            Err(next) => next,
+        // Values past the parameters and a full lane stack take the out-of-line form too,
+        // whose activation keeps them or grows the stack (`lane_activate`).
+        if ImmediateLayout::argument_count(i.imm()) > target.params
+            || !lane_activation_room(vm, target)
+        {
+            sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
         }
+        let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
+        if (returns && !lane_returning_call_admitted(cx)) || vm.with_scope_entered {
+            return exit(ip);
+        }
+        let arguments = ImmediateLayout::call_window_base(i.imm());
+        let (registers, base) = lane_push_activation(cx, r, ip, target, arguments, this, false);
+        next!(cx, registers, base, Carried::script(cx))
     }
 }
 
@@ -6984,7 +6993,6 @@ fn lane_activate<H: Host>(
     // SAFETY: `ip` is a record of the running view.
     let i = unsafe { &*ip };
     let argc = ImmediateLayout::argument_count(i.imm());
-    let count = usize::from(target.registers);
     // A call that returns its callee's completion completes its caller too, which only an
     // activation's return does in the lane. A host permitting proper tail calls
     // sends strict terminal calls to the general dispatch path instead.
@@ -7009,13 +7017,39 @@ fn lane_activate<H: Host>(
             None,
         );
     }
-    // Capacity, the guest-call budget and a due collection (`LaneStack::activation_limit`).
-    if vm.lane_stack.activations.len() >= vm.lane_stack.activation_limit.get()
-        || vm.lane_stack.values.capacity() - vm.lane_stack.values.len()
-            < usize::from(target.room)
-    {
+    if !lane_activation_room(vm, target) {
         return Err(lane_script_call_frame::<H>(ip));
     }
+    Ok(lane_push_activation(cx, r, ip, target, arguments, this, constructs))
+}
+
+/// Whether the lane stack takes `target`'s activation: capacity, the guest-call budget and
+/// a due collection (`LaneStack::activation_limit`).
+#[inline(always)]
+fn lane_activation_room<H: Host>(vm: &Vm<H>, target: &ScriptCallTarget) -> bool {
+    vm.lane_stack.activations.len() < vm.lane_stack.activation_limit.get()
+        && vm.lane_stack.values.capacity() - vm.lane_stack.values.len() >= usize::from(target.room)
+}
+
+/// `lane_activate` past its checks: the call passes at most `target`'s parameters, the lane
+/// stack has room (`lane_activation_room`), and the call may complete its caller. Pushes
+/// the activation and returns its registers and the callee's first record; it makes no
+/// call, so a handler activating through it keeps its registers.
+#[inline(always)]
+fn lane_push_activation<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    ip: Ip,
+    target: &ScriptCallTarget,
+    arguments: u16,
+    this: Value,
+    constructs: bool,
+) -> (Registers, Ip) {
+    let vm = unsafe { vm(cx) };
+    // SAFETY: `ip` is a record of the running view.
+    let i = unsafe { &*ip };
+    let argc = ImmediateLayout::argument_count(i.imm());
+    let count = usize::from(target.registers);
     let stack = &mut vm.lane_stack;
     let window = stack.values.len();
     // SAFETY: capacity holds the window; each slot is written before the length covers
@@ -7060,7 +7094,7 @@ fn lane_activate<H: Host>(
         (*cx).env = target.env;
         (*cx).capture = target.capture;
     }
-    Ok((callee_registers, base))
+    (callee_registers, base)
 }
 
 /// `lane_activate` of an environment target (`CallEntry::Environment`): its window holds
