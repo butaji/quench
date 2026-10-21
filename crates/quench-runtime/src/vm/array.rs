@@ -554,6 +554,27 @@ impl<H: Host> Vm<H> {
         true
     }
 
+    /// ArrayAccumulation's CreateDataPropertyOrThrow of `values` at a dense literal's next
+    /// indices (`define_literal_element` of each at the literal's length) as one append.
+    /// `false` leaves the literal untouched.
+    pub(super) fn append_literal_elements(&mut self, array: Value, values: &[Value]) -> bool {
+        let Some(length) = self.dense_array_length(array) else {
+            return false;
+        };
+        if length.checked_add(values.len()).is_none_or(|end| end > MAX_ARRAY_LENGTH) {
+            return false;
+        }
+        let Some(object) = self.heap.array_mut(array) else {
+            unreachable!("matched an array above");
+        };
+        let elements = super::index::mutable_array_elements(object.elements_mut());
+        let capacity = elements.capacity();
+        elements.extend_from_slice(values);
+        let grown = elements.capacity() - capacity;
+        self.heap.charge_payload_growth(grown * size_of::<Value>());
+        true
+    }
+
     /// `this[index] = value` into a hole below a dense array's length (`dense_array_length`):
     /// OrdinarySet finds no own element there and, while no prototype claims the index
     /// (`inherited_index_unclaimed`), defines a writable, enumerable, configurable data

@@ -321,6 +321,7 @@ impl<H: Host> Vm<H> {
             shape_slot_memo: _,
             symbol_write_proofs: _,
             symbol_load_proofs: _,
+            array_iteration_proof: _,
             function_name_shapes: _,
             typeof_names: _,
             closure_templates: _,
