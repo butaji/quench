@@ -672,10 +672,10 @@ impl<H: Host> Vm<H> {
                 .property_get(self.object_data(receiver)?, slot)?
                 .as_number()?;
         }
-        let Some(Cell::RegExp { matcher, .. }) = self.heap.get(receiver) else {
+        let Some(Cell::RegExp { meta, .. }) = self.heap.get(receiver) else {
             return None;
         };
-        Some((Rc::clone(matcher), flags))
+        Some((Rc::clone(&meta.matcher), flags))
     }
 
     /// `GetMethod(receiver, symbol)` for a RegExp `receiver` whose shape and prototype's
@@ -1357,6 +1357,16 @@ impl<H: Host> Vm<H> {
                 }
                 let input =
                     vm.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                if let Some((matcher, flags)) = vm.regexp_unobservable_splitter(receiver, &input) {
+                    let limit = vm.regexp_split_limit(p, args.get(1).copied())?;
+                    let array = vm.new_array(Vec::new());
+                    if limit == 0 {
+                        return Ok(array);
+                    }
+                    return vm.with_call_roots([array], |vm| {
+                        vm.regexp_split_builtin(receiver, &matcher, &input, array, limit, flags.unicode_mode())
+                    });
+                }
                 let constructor = vm.regexp_species_constructor(p, receiver)?;
                 let (unicode, splitter) = vm.with_call_roots([constructor], |vm| {
                     let mut flags = vm.regexp_flags_text(p, receiver)?;
@@ -1453,9 +1463,10 @@ impl<H: Host> Vm<H> {
     /// `exec` data property on that prototype. While no guest code runs, that resolution
     /// cannot change.
     fn regexp_builtin_exec_matcher(&self, regexp: Value) -> Option<Rc<quench_regexp::Regex>> {
-        let Some(Cell::RegExp { matcher, .. }) = self.heap.get(regexp) else {
+        let Some(Cell::RegExp { meta, .. }) = self.heap.get(regexp) else {
             return None;
         };
+        let matcher = &meta.matcher;
         let intrinsics = self
             .realm
             .intrinsics
@@ -1549,6 +1560,51 @@ impl<H: Host> Vm<H> {
             self.record_regexp_legacy_match(splitter, input.clone(), matched)?;
         }
         Ok(array)
+    }
+
+    /// The matcher and flags of the splitter `@@split` would construct for `receiver` over the
+    /// non-empty `input`, when constructing it is unobservable and the splitter would behave
+    /// as `receiver`'s own builtin matcher with `y`: the receiver's exec, flags and flag
+    /// accessors are builtin (`regexp_builtin_receiver_matcher`), `SpeciesConstructor`
+    /// resolves through the prototype's data `constructor` to this realm's `RegExp` and its
+    /// builtin `@@species` getter, `IsRegExp` reads a data `@@match`, and the receiver's
+    /// legacy owner is that constructor, the owner a splitter it constructs gets. The splitter
+    /// never escapes, so the split runs with the receiver in its place
+    /// (`regexp_split_builtin`). The matcher is taken before the limit's conversion, which
+    /// may run guest code, as the spec constructs the splitter first.
+    fn regexp_unobservable_splitter(
+        &mut self,
+        receiver: Value,
+        input: &JsString,
+    ) -> Option<(Rc<quench_regexp::Regex>, RegExpFlags)> {
+        if input.units().len() == 0 {
+            return None;
+        }
+        let intrinsic = self.regexp_intrinsic_constructor();
+        let owner = match self.heap.get(receiver) {
+            Some(Cell::RegExp { meta, .. }) => meta.legacy_constructor,
+            _ => return None,
+        };
+        if !matches!(owner, crate::heap::RegExpLegacyOwner::Enabled(constructor) if constructor == intrinsic) {
+            return None;
+        }
+        let matched = self.regexp_builtin_receiver_matcher(receiver)?;
+        let match_symbol = self.well_known_symbols.get(WellKnownSymbol::Match)?;
+        self.regexp_proven_symbol_method(receiver, match_symbol)?;
+        let constructor_atom = self.intern_atom("constructor");
+        let constructor_key = PropertyKey::string(constructor_atom);
+        let prototype = self.object_data(receiver)?.proto();
+        let constructor_is_intrinsic = self.property_attributes(receiver, constructor_key).is_none()
+            && self
+                .property_attributes(prototype, constructor_key)
+                .is_some_and(|attributes| !attributes.accessor)
+            && self.own_property(prototype, constructor_atom) == Some(intrinsic);
+        let species = self.well_known_symbols.get(WellKnownSymbol::Species)?;
+        let species_is_builtin = self
+            .property_attributes(intrinsic, PropertyKey::symbol(species))
+            .and_then(|attributes| attributes.accessor.then_some(attributes.getter).flatten())
+            .is_some_and(|getter| self.is_native_function(getter, Native::RegExpSpecies));
+        (constructor_is_intrinsic && species_is_builtin).then_some(matched)
     }
 
     fn regexp_species_constructor(
@@ -2142,27 +2198,6 @@ impl<H: Host> Vm<H> {
             .constant(program, site.flags_constant as usize)
             .filter(|value| self.heap.string(*value).is_some())
             .ok_or_else(|| JsError::validation("RegExp literal flags are not a string".into()))?;
-        let matcher = match self.programs.regexp_literal_matcher(program, site_index) {
-            Some(matcher) => matcher,
-            None => {
-                let flags = self.heap.string(flags_text).expect("checked above").host_string().to_owned();
-                let matcher = self
-                    .cached_regexp_matcher(&source, &flags)
-                    .map_err(|error| Rc::<str>::from(error.to_string()));
-                if !self
-                    .programs
-                    .cache_regexp_literal_matcher(program, site_index, matcher.clone())
-                {
-                    return Err(JsError::validation(
-                        "RegExp literal cache site is invalid".into(),
-                    ));
-                }
-                matcher
-            }
-        }
-        .map_err(|message| JsError(message.to_string().into()))?;
-        let flags =
-            RegExpFlags::validated(self.heap.string(flags_text).expect("checked above").host_string());
         let (prototype, constructor) = self
             .realm
             .intrinsics
@@ -2170,13 +2205,39 @@ impl<H: Host> Vm<H> {
             .get(&self.realm.globals)
             .map(|intrinsics| (intrinsics.prototype, intrinsics.constructor))
             .expect("RegExp intrinsics are installed for the active realm");
-        self.regexp_from_matcher(
-            prototype,
-            source,
-            flags,
-            matcher,
-            crate::heap::RegExpLegacyOwner::Enabled(constructor),
-        )
+        let owner = crate::heap::RegExpLegacyOwner::Enabled(constructor);
+        let meta = match self.programs.regexp_literal_meta(program, site_index) {
+            Some(meta) => meta,
+            None => {
+                let flags = self.heap.string(flags_text).expect("checked above").host_string().to_owned();
+                let meta = self
+                    .cached_regexp_matcher(&source, &flags)
+                    .map(|matcher| {
+                        Rc::new(crate::heap::RegExpMeta {
+                            source: source.clone(),
+                            flags: RegExpFlags::validated(&flags),
+                            legacy_constructor: owner,
+                            matcher,
+                        })
+                    })
+                    .map_err(|error| Rc::<str>::from(error.to_string()));
+                if !self.programs.cache_regexp_literal_meta(program, site_index, meta.clone()) {
+                    return Err(JsError::validation(
+                        "RegExp literal cache site is invalid".into(),
+                    ));
+                }
+                meta
+            }
+        }
+        .map_err(|message| JsError(message.to_string().into()))?;
+        // A site's record names the realm it was first evaluated in; another realm's
+        // evaluation owns a record of its own.
+        let meta = if meta.legacy_constructor.constructor() == constructor {
+            meta
+        } else {
+            Rc::new(crate::heap::RegExpMeta { legacy_constructor: owner, ..(*meta).clone() })
+        };
+        self.regexp_from_meta(prototype, meta)
     }
 
     pub(super) fn regexp_from_matcher(
@@ -2187,14 +2248,19 @@ impl<H: Host> Vm<H> {
         matcher: Rc<quench_regexp::Regex>,
         legacy_constructor: crate::heap::RegExpLegacyOwner,
     ) -> Result<Value, JsError> {
+        let meta = Rc::new(crate::heap::RegExpMeta { source, flags, legacy_constructor, matcher });
+        self.regexp_from_meta(prototype, meta)
+    }
+
+    /// A new RegExp object of `prototype` with the record `meta`.
+    fn regexp_from_meta(
+        &mut self,
+        prototype: Value,
+        meta: Rc<crate::heap::RegExpMeta>,
+    ) -> Result<Value, JsError> {
         let object = self.heap.alloc(Cell::RegExp {
             object: Box::new(Self::empty_object(prototype)),
-            meta: Box::new(crate::heap::RegExpMeta {
-                source,
-                flags,
-                legacy_constructor,
-            }),
-            matcher,
+            meta,
         });
         // Every new RegExp object starts in the same shape, so the `lastIndex` definition the
         // first one recorded applies again.
@@ -2270,17 +2336,14 @@ impl<H: Host> Vm<H> {
                         return vm.syntax_error_result(p, message).map(|_| Value::UNDEFINED);
                     }
                 };
-                let Some(Cell::RegExp {
-                    meta,
-                    matcher: current_matcher,
-                    ..
-                }) = vm.heap.get_mut(receiver)
-                else {
+                let Some(Cell::RegExp { meta, .. }) = vm.heap.get_mut(receiver) else {
                     unreachable!("RegExp receiver slot was validated before compilation")
                 };
+                // The record may be a literal site's, shared with its other objects.
+                let meta = Rc::make_mut(meta);
                 meta.source = source;
                 meta.flags = RegExpFlags::validated(&flags);
-                *current_matcher = matcher;
+                meta.matcher = matcher;
                 let last_index = vm.intern_atom("lastIndex");
                 vm.set_property_with_program_mode(p, receiver, last_index, Value::number(0.0), true)?;
                 Ok(receiver)
@@ -2391,8 +2454,8 @@ impl<H: Host> Vm<H> {
         known_slot: Option<usize>,
     ) -> Result<Option<quench_regexp::Match>, JsError> {
         let (regex, stateful, sticky) = match self.heap.get(this) {
-            Some(Cell::RegExp { matcher, meta, .. }) => (
-                Rc::clone(matcher),
+            Some(Cell::RegExp { meta, .. }) => (
+                Rc::clone(&meta.matcher),
                 meta.flags.intersects(RegExpFlags::GLOBAL.with(RegExpFlags::STICKY)),
                 meta.flags.contains(RegExpFlags::STICKY),
             ),
