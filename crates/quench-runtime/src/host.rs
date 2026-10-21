@@ -102,6 +102,12 @@ pub trait Host {
         None
     }
 
+    /// A program kept by `kept_compiled_program` has decoded, in place of its compilation,
+    /// and is about to run. It parsed nothing, so it took none of a compilation's phase
+    /// boundaries (`set_compile_phase_boundary`): a host may return the pages loading it
+    /// touched here instead.
+    fn cached_program_decoded(&mut self) {}
+
     /// Offers the host a compiled host program's compact form (`kept_compiled_program`).
     fn keep_compiled_program(&mut self, _name: &str, _parts: &[&str], _bytes: &[u8]) {}
 

@@ -222,7 +222,14 @@ Entries live in `$QUENCH_COMPILE_CACHE`, else `$XDG_CACHE_HOME/quench/compile`, 
 keyed by the executable that wrote it (path, size, modification time and runtime ABI), the
 module's name and the exact text compiled, and is written to a temporary file renamed into
 place. An entry that is missing, unreadable or does not decode costs only the compilation it
-would have saved. Package modules (`node_modules`) still compile on every run, so their
+would have saved.
+
+A decoded program parses nothing, so it reaches none of a compilation's phase boundaries
+(`set_compile_phase_boundary`), where the host releases its read-only pages. The runtime calls
+`Host::cached_program_decoded` after each decode instead. Once bootstrap has finished,
+`quench-node` releases there: without it, a run whose programs all decode keeps the loader's,
+decoder's and bootstrap's pages resident until its first collection. Bootstrap's own programs
+decode back to back without that release, which there only refaulted the same loader code. Package modules (`node_modules`) still compile on every run, so their
 functions keep compiling again on first call.
 
 ## Shared runtime host roots

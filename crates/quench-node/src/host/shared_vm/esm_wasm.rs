@@ -259,5 +259,7 @@ pub(crate) fn instantiate(
         };
         values.push(value);
     }
+    // Compiling, warning and instantiating ran host code the module's own code does not run.
+    crate::host::resident_pages::release_read_only_pages();
     context.array_rooted(&values)
 }
