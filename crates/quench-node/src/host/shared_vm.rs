@@ -1032,6 +1032,13 @@ impl quench_runtime::Host for NodeHost {
         self.shared_state.borrow().async_hooks.tracks_promises()
     }
 
+    /// A job boundary prunes tracked Promise resources and runs before/after hooks; with
+    /// no Promise tracked and no hook tracking them, it does neither
+    /// (`async_hooks_shared_vm::promise_job_boundary`).
+    fn observes_promise_job_boundaries(&self) -> bool {
+        self.shared_state.borrow().async_hooks.observes_job_boundaries()
+    }
+
     /// The code a run touched since the last collection leaves the resident set after each
     /// collection, and before a full one; what still runs comes back from the page cache. The
     /// collector's code and the program's are then resident one at a time, and the program's

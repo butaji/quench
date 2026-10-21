@@ -3959,6 +3959,14 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
+    /// Whether module advancement after a job has work: the queues the advancement drains.
+    pub(super) fn module_jobs_pending(&self) -> bool {
+        let promise = &self.realm.promise;
+        !promise.dynamic_import_jobs.is_empty()
+            || !promise.waiting_static_modules.is_empty()
+            || !promise.async_module_order.is_empty()
+    }
+
     pub(super) fn advance_static_module_jobs(
         &mut self,
         p: &ResidualProgram,

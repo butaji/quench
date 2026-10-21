@@ -143,6 +143,12 @@ impl SharedAsyncHooksState {
         self.registry.tracks_promises()
     }
 
+    /// Whether a Promise job boundary has work: Promise resources to prune or hooks that
+    /// track Promises.
+    pub(crate) fn observes_job_boundaries(&self) -> bool {
+        self.tracks_promises() || !self.promise_resources.is_empty()
+    }
+
     pub(super) fn default_trigger_async_id(&self) -> f64 {
         self.default_trigger_async_id.filter(|id| !(*id < 0.0))
             .unwrap_or(self.identity.current_async_id() as f64)
