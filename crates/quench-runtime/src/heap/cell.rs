@@ -1921,7 +1921,7 @@ impl Object {
     }
 
     /// The inline property slots, wherever they live.
-    fn inline_property_values(&self) -> &[Value; INLINE_PROPERTY_COUNT] {
+    pub(super) fn inline_property_values(&self) -> &[Value; INLINE_PROPERTY_COUNT] {
         match self.extras() {
             Some(extras) => &extras.inline_properties.0,
             // SAFETY: an untagged payload holds the inline values.

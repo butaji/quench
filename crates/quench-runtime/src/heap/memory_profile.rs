@@ -698,6 +698,52 @@ impl Heap {
         bytes
     }
 
+    /// Census of how many live property and element slots a 32-bit slot could hold:
+    /// a 31-bit integer, a tagged constant, or a heap reference with a 26-bit index.
+    /// Prints one `quench-narrow-fields` line per call.
+    pub(crate) fn report_narrow_fields(&self, phase: &str) {
+        let mut properties = NarrowFieldCensus::default();
+        // Live objects by property count: 0..=NARROW_LENGTH_BUCKETS-2, then larger.
+        let mut lengths = [[0u64; NARROW_LENGTH_BUCKETS]; 2];
+        self.for_each_live_value(|identity| {
+            let Some(object) = self.object(identity) else {
+                return;
+            };
+            let vector = object.properties();
+            let length = self.properties.len(vector);
+            let narrow_before = properties.narrow_containers;
+            if vector.has_inline_property_storage() {
+                properties.container(object.inline_property_values().iter().copied().take(length));
+            } else {
+                properties
+                    .container((0..length).filter_map(|index| self.properties.get(vector, index)));
+            }
+            let narrow = usize::from(properties.narrow_containers > narrow_before);
+            lengths[narrow][length.min(NARROW_LENGTH_BUCKETS - 1)] += 1;
+        });
+        let mut elements = NarrowFieldCensus::default();
+        let mut backings = rustc_hash::FxHashSet::default();
+        self.array_records.for_each_live(|_, array| {
+            // Arrays can share one copy-on-write backing; count each backing once.
+            if backings.insert(std::rc::Rc::as_ptr(array.elements())) {
+                elements.container(array.elements().iter().copied());
+            }
+        });
+        eprintln!(
+            "{{\"kind\":\"quench-narrow-fields\",\"phase\":\"{phase}\",\"classes\":{:?},\"property_classes\":{:?},\"property_containers\":{},\"property_narrow_containers\":{},\"property_narrow_container_slots\":{},\"objects_by_length_wide_narrow\":{:?},\"element_classes\":{:?},\"element_containers\":{},\"element_narrow_containers\":{},\"element_narrow_container_slots\":{}}}",
+            NarrowClass::NAMES,
+            properties.classes,
+            properties.containers,
+            properties.narrow_containers,
+            properties.narrow_container_slots,
+            lengths,
+            elements.classes,
+            elements.containers,
+            elements.narrow_containers,
+            elements.narrow_container_slots,
+        );
+    }
+
     pub(crate) fn array_element_stats(&self) -> (usize, usize) {
         let mut total = (0, 0);
         self.array_records.for_each_live(|_, array| {
@@ -780,4 +826,87 @@ fn cell_bytes(cell: &Cell) -> usize {
             Cell::Date { .. } => 0,
             Cell::RegExp { meta, .. } => meta.source.capacity() + meta.flags.capacity(),
         }
+}
+
+/// Census index bits a narrow heap reference keeps after its tag and family bits.
+const NARROW_REFERENCE_INDEX_BITS: u32 = 26;
+/// Census histogram width for objects by property count.
+const NARROW_LENGTH_BUCKETS: usize = 10;
+/// Census payload bits a narrow integer keeps after its one tag bit.
+const NARROW_INTEGER_BITS: u32 = 31;
+
+#[derive(Clone, Copy)]
+enum NarrowClass {
+    Integer,
+    WideInteger,
+    IntegralDouble,
+    Double,
+    Constant,
+    Reference,
+    WideReference,
+}
+
+impl NarrowClass {
+    const NAMES: [&'static str; 7] = [
+        "int31",
+        "int_wide",
+        "double_int31",
+        "double",
+        "constant",
+        "reference",
+        "reference_wide",
+    ];
+
+    fn of(value: Value) -> Self {
+        let narrow_integer = |integer: i64| {
+            let limit = 1i64 << (NARROW_INTEGER_BITS - 1);
+            (-limit..limit).contains(&integer)
+        };
+        if let Some(integer) = value.as_int() {
+            return if narrow_integer(integer.into()) { Self::Integer } else { Self::WideInteger };
+        }
+        if let Some(reference) = value.heap_index() {
+            return if reference < 1 << NARROW_REFERENCE_INDEX_BITS {
+                Self::Reference
+            } else {
+                Self::WideReference
+            };
+        }
+        if let Some(number) = value.as_number() {
+            let integral = number.fract() == 0.0
+                && !(number == 0.0 && number.is_sign_negative())
+                && narrow_integer(number as i64);
+            return if integral { Self::IntegralDouble } else { Self::Double };
+        }
+        Self::Constant
+    }
+
+    fn is_narrow(self) -> bool {
+        matches!(self, Self::Integer | Self::Constant | Self::Reference)
+    }
+}
+
+#[derive(Default)]
+struct NarrowFieldCensus {
+    classes: [u64; NarrowClass::NAMES.len()],
+    containers: u64,
+    narrow_containers: u64,
+    narrow_container_slots: u64,
+}
+
+impl NarrowFieldCensus {
+    fn container(&mut self, values: impl Iterator<Item = Value>) {
+        let (mut slots, mut narrow) = (0u64, true);
+        for value in values {
+            let class = NarrowClass::of(value);
+            self.classes[class as usize] += 1;
+            narrow &= class.is_narrow();
+            slots += 1;
+        }
+        self.containers += 1;
+        if narrow {
+            self.narrow_containers += 1;
+            self.narrow_container_slots += slots;
+        }
+    }
 }
