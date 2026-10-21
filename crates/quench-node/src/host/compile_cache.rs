@@ -46,6 +46,16 @@ impl CompileCache {
         Self { directory: build.and(directory), build: build.unwrap_or_default() }
     }
 
+    /// The cache's directory, when it has one.
+    pub(crate) fn directory(&self) -> Option<&std::path::Path> {
+        self.directory.as_deref()
+    }
+
+    /// The identity of the build that keys the cache (`build_identity`).
+    pub(crate) fn build(&self) -> u64 {
+        self.build
+    }
+
     /// The entry for compiling `parts` (the module's text, in order) under `name`.
     pub(crate) fn entry(&self, name: &str, parts: &[&str]) -> Option<CacheEntry> {
         let directory = self.directory.as_ref()?;
@@ -75,14 +85,8 @@ impl CacheEntry {
     /// function's record on its first call, so the pages of records never called stay out of
     /// memory. Entries are replaced by rename, never written in place, so the mapped file
     /// keeps its contents.
-    #[cfg(unix)]
     pub(crate) fn load(&self) -> Option<quench_runtime::KeptBytes> {
-        MappedFile::open(&self.path).map(|file| std::rc::Rc::new(file) as quench_runtime::KeptBytes)
-    }
-
-    #[cfg(not(unix))]
-    pub(crate) fn load(&self) -> Option<quench_runtime::KeptBytes> {
-        std::fs::read(&self.path).ok().map(|bytes| std::rc::Rc::new(bytes) as quench_runtime::KeptBytes)
+        map_file(&self.path)
     }
 
     /// Stores `bytes`; a failure (a read-only or full disk) leaves the cache as it was.
@@ -98,6 +102,18 @@ impl CacheEntry {
             let _ = std::fs::remove_file(&temporary);
         }
     }
+}
+
+/// The file at `path`, mapped where the platform maps files; files the cache and snapshots
+/// keep are replaced by rename, never written in place, so a mapping keeps its contents.
+#[cfg(unix)]
+pub(crate) fn map_file(path: &std::path::Path) -> Option<quench_runtime::KeptBytes> {
+    MappedFile::open(path).map(|file| std::rc::Rc::new(file) as quench_runtime::KeptBytes)
+}
+
+#[cfg(not(unix))]
+pub(crate) fn map_file(path: &std::path::Path) -> Option<quench_runtime::KeptBytes> {
+    std::fs::read(path).ok().map(|bytes| std::rc::Rc::new(bytes) as quench_runtime::KeptBytes)
 }
 
 /// The running executable's path, size and modification time with the runtime ABI: a rebuild

@@ -158,6 +158,40 @@ impl<H: Host> Runtime<H> {
         Ok(program)
     }
 
+    /// Installs the realm and the host for `program` without running it, then writes the VM
+    /// as a startup snapshot, with the host's state that `write_host` adds. The host ends its
+    /// `initialize` at the point its `resume` continues from.
+    pub fn build_snapshot(
+        &mut self,
+        program: &ResidualProgram,
+        write_host: impl FnOnce(&H, &mut crate::SnapshotWriter<'_>) -> Result<(), String>,
+    ) -> Result<Vec<u8>, String> {
+        program.validate_unless_proven().map_err(|error| error.to_string())?;
+        self.vm.initialize_for_snapshot(program).map_err(|error| error.to_string())?;
+        // A restored heap starts as a full collection leaves it, every cell old: garbage the
+        // snapshot kept would stay until the next full collection.
+        self.vm.collect_now(program);
+        self.vm.write_snapshot(write_host).map_err(|error| error.0)
+    }
+
+    /// Makes this new runtime the one a `build_snapshot` wrote into `snapshot`, with `entry`
+    /// as its main program and the host state `read_host` reads back. Returns the entry as the
+    /// restored runtime runs it, for `execute_restored` and every later call naming it.
+    pub fn restore_snapshot(
+        &mut self,
+        snapshot: crate::KeptBytes,
+        entry: &ResidualProgram,
+        read_host: impl FnOnce(&mut H, &mut crate::SnapshotReader<'_, '_>) -> Result<(), String>,
+    ) -> Result<ResidualProgram, String> {
+        entry.validate_unless_proven().map_err(|error| error.to_string())?;
+        self.vm.restore_snapshot(snapshot, entry, read_host).map_err(|error| error.0)
+    }
+
+    /// `execute_deferred_jobs` for a restored runtime (`restore_snapshot`).
+    pub fn execute_restored(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
+        self.vm.execute_restored(program).map(drop)
+    }
+
     pub fn execute_deferred_jobs(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         program.validate_unless_proven().map_err(JsError::validation)?;
         self.vm.execute_deferred_jobs(program).map(drop)

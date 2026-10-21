@@ -560,9 +560,12 @@ impl ResidualProgram {
             {
                 return Err(format!("function {index} has an invalid parent"));
             }
+            let module_body = (self.kind == super::ProgramKind::Module && index == 0 && function.parent.is_none())
+                .then_some(self.module_link_plan.as_ref())
+                .flatten()
+                .map(|plan| (plan, &self.module_imports[..]));
             if let Some(captured) = &function.selective_capture_slots
-                && (index == 0
-                    || function.parent.is_none()
+                && ((module_body.is_none() && (index == 0 || function.parent.is_none()))
                     || captured.iter().any(|slot| *slot >= function.locals)
                     || captured.windows(2).any(|pair| pair[0] >= pair[1]))
             {
@@ -572,7 +575,7 @@ impl ResidualProgram {
             }
             if function.selective_capture_slots.is_some()
                 && (selective_capture_scope_unsafe[index]
-                    || !selective_capture_layout_is_eligible(function, index, &self.atoms))
+                    || !selective_capture_layout_is_eligible(function, index, module_body, &self.atoms))
             {
                 return Err(format!(
                     "function {index} has an ineligible selective capture layout"
@@ -1042,6 +1045,7 @@ fn has_dynamic_scope_access(function: &super::Function) -> bool {
 fn selective_capture_layout_is_eligible(
     function: &super::Function,
     index: usize,
+    module_body: Option<(&super::ModuleLinkPlan, &[super::ModuleImportBinding])>,
     atoms: &super::AtomTable,
 ) -> bool {
     let has_closure = function
@@ -1073,9 +1077,19 @@ fn selective_capture_layout_is_eligible(
             .arguments_slot
             .is_none_or(|slot| captured.binary_search(&slot).is_ok());
 
-    index != 0
-        && function.parent.is_some()
-        && has_closure
+    // A module body (`module_body` given: its link plan and imports) splits whether or not it makes closures, keeping
+    // its module-scope bindings in the module environment; a nested function splits only
+    // around closures.
+    let activation_splits = if let Some((plan, imports)) = module_body {
+        function
+            .module_environment_slots(plan, imports, |atom| {
+                usize::try_from(atom).ok().filter(|atom| *atom < atoms.len()).map(|atom| &atoms[atom])
+            })
+            .all(|slot| captured.binary_search(&slot).is_ok())
+    } else {
+        index != 0 && function.parent.is_some() && has_closure
+    };
+    activation_splits
         && !function.is_async
         && !function.is_generator
         && !function.is_class_constructor

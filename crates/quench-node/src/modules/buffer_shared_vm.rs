@@ -377,3 +377,31 @@ pub(crate) fn encode_bytes(c: &mut Context<'_>, input: RootId, encoding: Option<
     };
     Ok(super::buffer_codec::encode_units(&units, canonical))
 }
+
+/// `PoolOwner` tags, in declaration order.
+const POOL_UNBORN: u8 = 0;
+const POOL_HOST: u8 = 1;
+const POOL_LIBRARY: u8 = 2;
+
+impl PoolOwner {
+    pub(crate) fn write_snapshot(&self, writer: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> {
+        match *self {
+            Self::Unborn => writer.u8(POOL_UNBORN),
+            Self::Host(root) => {
+                writer.u8(POOL_HOST);
+                writer.root(root)?;
+            }
+            Self::Library => writer.u8(POOL_LIBRARY),
+        }
+        Ok(())
+    }
+    pub(crate) fn read_snapshot(&mut self, reader: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<(), String> {
+        *self = match reader.u8()? {
+            POOL_UNBORN => Self::Unborn,
+            POOL_HOST => Self::Host(reader.root()?),
+            POOL_LIBRARY => Self::Library,
+            _ => return Err("invalid snapshot buffer pool".into()),
+        };
+        Ok(())
+    }
+}

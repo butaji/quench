@@ -1561,6 +1561,26 @@ impl Function {
         self.global_declarations_or_none().map_or(&[], |declarations| &declarations.annex_b_var)
     }
 
+    /// The slots a module body's environment holds for its importers and linker: its imports
+    /// (whatever their phase), its exported locals and its hoisted functions, which `link_plan`
+    /// names and the linker addresses by slot. The body's other bindings are its own.
+    pub(crate) fn module_environment_slots<'a>(
+        &'a self,
+        link_plan: &'a ModuleLinkPlan,
+        imports: &'a [ModuleImportBinding],
+        atom_text: impl Fn(Atom) -> Option<&'a str> + 'a,
+    ) -> impl Iterator<Item = u16> + 'a {
+        let linked = move |name: &str| {
+            imports.iter().any(|import| import.local == name)
+                || link_plan.locals.iter().chain(&link_plan.hoisted_functions).any(|(local, _)| local == name)
+        };
+        self.local_atoms
+            .iter()
+            .enumerate()
+            .filter(move |(_, atom)| atom_text(**atom).is_some_and(linked))
+            .filter_map(|(slot, _)| u16::try_from(slot).ok())
+    }
+
     pub fn global_immutable_atoms(&self) -> &[Atom] {
         self.global_declarations_or_none().map_or(&[], |declarations| &declarations.immutable)
     }
@@ -1612,10 +1632,12 @@ impl Function {
     pub(crate) fn plain_local_context_ineligibility(
         &self,
     ) -> Option<PlainLocalContextIneligibility> {
-        if self.parent.is_none() {
+        let selective = self.selective_capture_slots.is_some();
+        // A root's locals are its script's global bindings, unless it is a module body whose
+        // activation splits (only a module body's may): then its uncaptured locals are its own.
+        if self.parent.is_none() && !selective {
             return Some(PlainLocalContextIneligibility::RootFunction);
         }
-        let selective = self.selective_capture_slots.is_some();
         let has_legacy_environment_access = self.code.iter().any(|instruction| {
             instruction.op() == Op::MakeClosure && !selective
                 || matches!(instruction.op(), Op::LoadEnvLocal | Op::StoreEnvLocal) && !selective
@@ -2118,20 +2140,19 @@ impl Function {
     /// Whether neither this function nor any enclosing one has dynamic scope access or
     /// contains a `with` statement. The compiler then resolved every lexical binding the body
     /// names, so a by-name load in it can only denote a global binding.
-    pub(crate) fn names_resolve_statically(
-        &self,
-        functions: &[FunctionSlot],
-        atoms: &AtomTable,
-    ) -> bool {
+    /// `program` holds this function; an enclosing function whose record it has not read yet
+    /// is read here.
+    pub(crate) fn names_resolve_statically(&self, program: &ResidualProgram) -> bool {
         *self.static_name_scope.get_or_init(|| {
+            let atoms = &program.atoms;
             !self.has_dynamic_scope_access()
                 && !self.contains_with_statement(|atom| {
                     atom < atoms.len() && &atoms[atom] == WITH_ENTER_BINDING
                 })
                 && self.parent.is_none_or(|parent| {
-                    functions
-                        .get(parent as usize)
-                        .is_some_and(|parent| parent.names_resolve_statically(functions, atoms))
+                    program
+                        .function_get(parent as usize)
+                        .is_some_and(|parent| parent.names_resolve_statically(program))
                 })
         })
     }
@@ -2694,6 +2715,79 @@ pub(crate) struct ProgramSource {
     pub(crate) line_starts: std::cell::OnceCell<Box<[u32]>>,
 }
 
+/// A static item at a fixed place in the executable image, from which a snapshot measures the
+/// embedded text a program retains (`SourceText::Static`): within one linked image the offset
+/// between two statics is fixed, and a snapshot is read only by the build that wrote it.
+static SNAPSHOT_TEXT_ANCHOR: u8 = 0;
+
+/// The bytes at each end of embedded text that a snapshot checks before using the text.
+const SNAPSHOT_TEXT_EDGE: usize = 32;
+
+impl SourceText {
+    pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
+        match self {
+            Self::Shared(text) => {
+                writer.u8(0);
+                writer.str(text);
+            }
+            Self::Static(text) => {
+                writer.u8(1);
+                let anchor = std::ptr::addr_of!(SNAPSHOT_TEXT_ANCHOR) as usize as i64;
+                writer.u64((text.as_ptr() as usize as i64).wrapping_sub(anchor) as u64);
+                writer.len(text.len());
+                let edge = SNAPSHOT_TEXT_EDGE.min(text.len());
+                writer.bytes(&text.as_bytes()[..edge]);
+                writer.bytes(&text.as_bytes()[text.len() - edge..]);
+            }
+        }
+    }
+
+    pub(crate) fn read_snapshot(reader: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::SnapshotResult<Self> {
+        Ok(match reader.u8()? {
+            0 => Self::Shared(std::sync::Arc::from(reader.str()?)),
+            1 => {
+                let offset = reader.u64()? as i64;
+                let len = reader.len()?;
+                let head = reader.bytes()?;
+                let tail = reader.bytes()?;
+                let anchor = std::ptr::addr_of!(SNAPSHOT_TEXT_ANCHOR) as usize as i64;
+                let address = anchor.wrapping_add(offset) as usize as *const u8;
+                // SAFETY: the snapshot was written by this build (its header names the runtime
+                // ABI and the host keys it by the executable's identity), whose image holds the
+                // embedded text at this offset from the anchor; its edges are checked below.
+                let bytes = unsafe { std::slice::from_raw_parts(address, len) };
+                if &bytes[..head.len()] != head || &bytes[len - tail.len()..] != tail {
+                    return Err(crate::snapshot::SnapshotError("snapshot embedded text moved".into()));
+                }
+                // SAFETY: the text was a `&'static str` of this image when written.
+                Self::Static(unsafe { std::str::from_utf8_unchecked(bytes) })
+            }
+            _ => return Err(crate::snapshot::SnapshotError("invalid snapshot source text".into())),
+        })
+    }
+}
+
+impl ProgramSource {
+    pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
+        // `line_starts` is a memo of `text`, made again on the first line read.
+        let Self { text, base, line_offset, column_offset, line_starts: _ } = self;
+        text.write_snapshot(writer);
+        writer.u32(*base);
+        writer.u32(*line_offset);
+        writer.u32(*column_offset);
+    }
+
+    pub(crate) fn read_snapshot(reader: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::SnapshotResult<Self> {
+        Ok(Self {
+            text: SourceText::read_snapshot(reader)?,
+            base: reader.u32()?,
+            line_offset: reader.u32()?,
+            column_offset: reader.u32()?,
+            line_starts: std::cell::OnceCell::new(),
+        })
+    }
+}
+
 /// Starts of JavaScript source lines, including an empty line after a final terminator.
 pub(crate) fn source_line_starts(text: &str) -> impl Iterator<Item = usize> + '_ {
     const LINE_SEPARATOR: &[u8] = "\u{2028}".as_bytes();
@@ -2878,6 +2972,7 @@ impl ResidualProgram {
     #[inline(never)]
     fn recompile_function(&self, index: usize) -> &Function {
         self.functions[index].record.get_or_init(|| {
+            crate::compile::compile_phase_boundary(crate::compile::CompilePhase::FirstCall);
             let deferred = self
                 .encoded_records
                 .as_deref()
@@ -3034,6 +3129,28 @@ impl ResidualProgram {
     /// output, which the host keys by build and whose checksum held.
     pub(crate) fn decode_trusted(bytes: KeptBytes) -> Result<Self, String> {
         let program = binary::decode_trusted_program(bytes)?;
+        program.validated.establish();
+        Ok(program)
+    }
+
+    /// This program as a snapshot keeps it (`crate::snapshot`): its own atom ids, which the
+    /// snapshot's atom table keeps, and its source written apart (`SourceText`).
+    pub(crate) fn encode_snapshot(&self) -> Vec<u8> {
+        binary::encode_snapshot_program(self)
+    }
+
+    /// `encode_snapshot`'s bytes, sharing `atoms` (the restored VM's) and with `text` as the
+    /// source; valid as the compiler output it was when written.
+    pub(crate) fn decode_snapshot(
+        bytes: KeptBytes,
+        text: Option<SourceText>,
+        atoms: &std::rc::Rc<AtomSequence>,
+    ) -> Result<Self, String> {
+        let (mut program, atom_count) = binary::decode_snapshot_program(bytes, text)?;
+        if atom_count > atoms.len() {
+            return Err("snapshot program names atoms its VM lacks".into());
+        }
+        program.atoms = AtomTable::shared(atoms.clone(), atom_count);
         program.validated.establish();
         Ok(program)
     }

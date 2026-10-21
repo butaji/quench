@@ -166,3 +166,5 @@ pub(crate) fn prune(runtime: &mut quench_runtime::Runtime<NodeHost>) {
     }
     shared.borrow_mut().vm_scripts.scripts = live;
 }
+
+crate::host::startup_snapshot::host_snap_empty!(State { scripts } "a vm.Script");

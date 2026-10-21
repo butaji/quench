@@ -23,6 +23,7 @@ pub(crate) use promise_record::{PromiseCell, PromiseReaction, PromiseRecord, Pro
 mod records;
 mod root;
 mod slots;
+mod snapshot;
 mod thin_slice;
 pub(crate) use thin_slice::ThinBoxSlice;
 mod weak;
@@ -58,10 +59,17 @@ fn payload_unit() -> usize {
     #[cfg(not(feature = "gc-tuning"))]
     PAYLOAD_BYTES_PER_ALLOCATION
 }
-/// The fewest allocations after which a collection is full on a small heap.
+/// The fewest allocations after which a collection is full on a small heap: the first
+/// collection runs after the young minimum, and is full once the allocation cap has passed.
 #[cfg(test)]
-pub(crate) const FULL_COLLECTION_ALLOCATION_BOUND: usize =
-    pacing::PRODUCTION_PACING.minimum_allocation_cap;
+pub(crate) const FULL_COLLECTION_ALLOCATION_BOUND: usize = {
+    let pacing = pacing::PRODUCTION_PACING;
+    if pacing.minimum_young > pacing.minimum_allocation_cap {
+        pacing.minimum_young
+    } else {
+        pacing.minimum_allocation_cap
+    }
+};
 /// Payload bytes beside a cell (string units, array elements) that weigh as one more
 /// allocation toward the next collection.
 #[cfg(not(feature = "gc-tuning"))]
