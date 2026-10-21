@@ -1004,3 +1004,10 @@ one-round score at 0.05. In three rounds the 512-cap screen scored 0.07 /
 reverted: this additional native coverage did not improve score or RSS.
 Reports are in
 `evidence/jit-jetstream3-2026-10-21/typescript-jit-instruction-cap/`.
+
+A faster Fx hasher for internal Promise async-ID and job-token maps was also
+screened. Promise score rose from 3.07 to 3.60 while Async fell from 5.19 to
+3.22; only Async RSS improved (2.3%), and peer timings varied substantially.
+The hasher change was reverted because these sequential screens did not show a
+consistent score and memory win. Reports are in
+`evidence/jit-jetstream3-2026-10-21/doxbee-fxhash-context-map/`.
