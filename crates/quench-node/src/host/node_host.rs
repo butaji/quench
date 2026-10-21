@@ -51,6 +51,27 @@ pub struct NodeHost {
     pub(crate) net_pending_destroys: Vec<(u64, bool)>,
     /// The kind of startup snapshot this host builds, ending `initialize` at its point.
     pub(crate) building_snapshot: Option<crate::host::startup_snapshot::SnapshotKind>,
+    /// Module paths' real paths, as Node's ESM resolver keeps them for the process
+    /// (lib/internal/modules/esm/resolve.js `realpathCache`): every import of a module
+    /// resolves through one, and canonicalizing reads each path component's link.
+    pub(crate) real_paths: rustc_hash::FxHashMap<std::path::PathBuf, std::path::PathBuf>,
+}
+
+impl NodeHost {
+    /// `path`'s real path through `real_paths`; a path that cannot be resolved is returned
+    /// as it is and not kept.
+    pub(crate) fn real_path(&mut self, path: std::path::PathBuf) -> std::path::PathBuf {
+        if let Some(real) = self.real_paths.get(&path) {
+            return real.clone();
+        }
+        match std::fs::canonicalize(&path) {
+            Ok(real) => {
+                self.real_paths.insert(path, real.clone());
+                real
+            }
+            Err(_) => path,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -205,6 +226,9 @@ pub(crate) struct SharedChildProcess {
     pub(crate) ipc: Option<crate::modules::child_process_ipc_shared_vm::IpcChannel>,
     pub(crate) ipc_pipe: Option<u64>,
     pub(crate) events: std::sync::mpsc::Receiver<ChildProcessEvent>,
+    /// Held until the loop delivers the child's exit; dropping it lets the waiter reap the
+    /// child, which stays signalable as a zombie until then, as under Node.
+    pub(crate) reap: Option<std::sync::mpsc::Sender<()>>,
     pub(crate) stdout_terminal: bool,
     pub(crate) stderr_terminal: bool,
     pub(crate) exit: Option<(Option<i32>, Option<String>)>,
@@ -416,6 +440,7 @@ impl NodeHost {
             eval_builtin_globals: false,
             eval_source_nonempty: false,
             initial_node_debug: std::env::var_os("NODE_DEBUG").map(|value| value.to_string_lossy().into_owned()),
+            real_paths: Default::default(),
             net_pending_writes: Vec::new(),
             net_pending_ends: Vec::new(),
             net_pending_destroys: Vec::new(),

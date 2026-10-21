@@ -67,6 +67,8 @@ struct RuntimeAtoms {
     /// An iterator result's keys, in its literal order.
     value: Atom,
     done: Atom,
+    /// The iterator protocol's close method.
+    iterator_return: Atom,
     /// A property descriptor object's other keys (`value` above), which
     /// `Object.getOwnPropertyDescriptor` writes on every call.
     writable: Atom,
@@ -152,6 +154,7 @@ mod object;
 mod shape_memo;
 mod symbol_write_proof;
 mod symbol_load_proof;
+mod enumerable_key_memo;
 mod name_atom_memo;
 mod object_assignment;
 mod object_array;
@@ -507,6 +510,7 @@ enum PendingJob {
         args: Vec<Value>,
     },
     Reaction(promise::PromiseJob),
+    Thenable(promise::ThenableJob),
 }
 
 impl PendingJob {
@@ -522,6 +526,7 @@ impl PendingJob {
                 roots.extend_from_slice(args);
             }
             Self::Reaction(job) => roots.extend([job.realm, job.handler, job.next, job.value]),
+            Self::Thenable(job) => roots.extend([job.realm, job.then, job.thenable, job.promise]),
         }
     }
 }
@@ -1649,6 +1654,8 @@ pub(crate) struct Vm<H> {
     function_name_shapes: provenance::FunctionNameShapes,
     symbol_write_proofs: symbol_write_proof::SymbolWriteProofs,
     symbol_load_proofs: symbol_load_proof::SymbolLoadProofs,
+    array_iteration_proof: Option<iterators::ArrayIterationProof>,
+    enumerable_keys: enumerable_key_memo::EnumerableKeyMemo,
     shape_attribute_memo: shape_memo::ShapeAttributeMemo,
     name_atom_memo: name_atom_memo::NameAtomMemo,
     atom_text: AtomTable,
@@ -1715,15 +1722,19 @@ pub(crate) struct Vm<H> {
     /// The shape of an iterator result `{ value, done }` (`Vm::iterator_result`); derived
     /// from shapes, so field-cache invalidation clears it.
     iterator_result_shape: Option<u32>,
+    /// The shapes of a complete data and accessor property descriptor object
+    /// (`Vm::property_descriptor_object`), indexed by `accessor`; derived from shapes, so
+    /// field-cache invalidation clears them.
+    descriptor_shapes: [Option<u32>; 2],
     /// The shape a new RegExp object starts in and the one its own `lastIndex` moves it to
     /// (`Vm::regexp_from_matcher`), as the first one recorded; derived from shapes, so
     /// field-cache invalidation clears it.
     regexp_object_shapes: Option<(u32, u32)>,
     /// A RegExp receiver shape verified to hold an own writable data `lastIndex` at the paired
     /// slot; derived from shapes, so field-cache invalidation clears it.
-    regexp_last_index_layout: Option<(u32, u32)>,
+    regexp_last_index_layouts: Vec<(u32, u32)>,
     /// Derived from shapes, so field-cache invalidation clears it.
-    regexp_builtin_layout: Option<regexp::RegExpBuiltinLayout>,
+    regexp_builtin_layouts: Vec<regexp::RegExpBuiltinLayout>,
     /// Derived from shapes, so field-cache invalidation clears it.
     regexp_symbol_layouts: Vec<regexp::RegExpSymbolLayout>,
     /// An object verified to hold the native `Function.prototype[@@hasInstance]` as a
@@ -2261,9 +2272,8 @@ impl<H: Host> Vm<H> {
         eprintln!("{{\"kind\":\"quench-live-cells\",\"top\":{:?}}}", &kinds[..kinds.len().min(8)]);
         let promise = &self.realm.promise;
         eprintln!(
-            "{{\"kind\":\"quench-vm-tables\",\"live_slots\":{},\"thenable_jobs\":{},\"reaction_capabilities\":{},\"jobs\":{},\"descriptors\":{},\"function_values\":{},\"frames\":{},\"active_call_roots\":{}}}",
+            "{{\"kind\":\"quench-vm-tables\",\"live_slots\":{},\"reaction_capabilities\":{},\"jobs\":{},\"descriptors\":{},\"function_values\":{},\"frames\":{},\"active_call_roots\":{}}}",
             self.heap.live_slots(),
-            promise.thenable_jobs.len(),
             promise.reaction_capabilities.len(),
             self.realm.jobs.len(),
             self.descriptors.len(),
@@ -2501,6 +2511,19 @@ impl<H: Host> Vm<H> {
         );
         crate::report_allocator_memory(phase);
     }
+    /// `Runtime::end_for_process_exit`: drops the host, and the program store when its drop
+    /// reports, and leaves every other field to the operating system.
+    pub(crate) fn end_for_process_exit(self) {
+        let vm = std::mem::ManuallyDrop::new(self);
+        // SAFETY: `vm` is never used or dropped again, so each field read here is dropped
+        // exactly once and the rest are never dropped.
+        unsafe {
+            if vm.programs.reports_on_drop() {
+                drop(std::ptr::read(&vm.programs));
+            }
+            drop(std::ptr::read(&vm.host));
+        }
+    }
     fn initialize(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         self.initialize_shared(&Rc::new(program.clone()), builtins::RealmScope::Complete)
     }
@@ -2541,6 +2564,8 @@ impl<H: Host> Vm<H> {
         self.function_name_shapes.clear();
         self.symbol_write_proofs.clear();
         self.symbol_load_proofs.clear();
+        self.array_iteration_proof = None;
+        self.enumerable_keys.clear();
         self.shape_attribute_memo.clear();
         self.atom_strings.clear();
         // The sealed holders and their shapes belong to the discarded heap.
@@ -2585,6 +2610,7 @@ impl<H: Host> Vm<H> {
             empty: self.intern_atom(""),
             value: self.intern_atom("value"),
             done: self.intern_atom("done"),
+            iterator_return: self.intern_atom("return"),
             writable: self.intern_atom("writable"),
             enumerable: self.intern_atom("enumerable"),
             configurable: self.intern_atom("configurable"),
@@ -2621,9 +2647,10 @@ impl<H: Host> Vm<H> {
         self.function_name_shapes.clear();
         self.closure_templates.fill(None);
         self.iterator_result_shape = None;
+        self.descriptor_shapes = [None; 2];
         self.regexp_object_shapes = None;
-        self.regexp_last_index_layout = None;
-        self.regexp_builtin_layout = None;
+        self.regexp_last_index_layouts.clear();
+        self.regexp_builtin_layouts.clear();
         self.regexp_symbol_layouts.clear();
         self.set_instanceof_has_instance_holder(Value::NULL);
         self.program_cache_layouts.clear();

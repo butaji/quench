@@ -42,6 +42,19 @@ pub(super) struct JsJitFieldReturn {
     pub(super) return_register: crate::bytecode::Register,
 }
 
+/// A strict postfix numeric update of one own field on `this`, followed by
+/// an undefined return. The VM guard handles ordinary writable data fields;
+/// all coercion, accessor, proxy, and strict-write cases stay interpreted.
+#[derive(Clone, Copy)]
+pub(super) struct JsJitThisFieldIncrement {
+    pub(super) atom: crate::bytecode::Atom,
+    pub(super) read_cache_site: u16,
+    pub(super) write_cache_site: u16,
+    pub(super) decrement: bool,
+    pub(super) return_pc: usize,
+    pub(super) return_register: crate::bytecode::Register,
+}
+
 /// A bounded numeric-only lowering of a linked entry lookup loop. Heap reads
 /// remain guarded by VM field caches and present own dense or sparse array
 /// data; any miss leaves the original frame at bytecode zero.
@@ -708,6 +721,65 @@ pub(super) fn cached_this_field_return_candidate(
     Some(JsJitFieldReturn {
         cache_site,
         return_pc,
+        return_register: ret.register_a(),
+    })
+}
+
+pub(super) fn cached_this_field_increment_candidate(
+    program: &ResidualProgram,
+    function: &Function,
+) -> Option<JsJitThisFieldIncrement> {
+    if function.params != 0
+        || function.code.len() != 6
+        || !function.handlers.is_empty()
+        || !eligible(function, program)
+    {
+        return None;
+    }
+    let load_this = function_instruction(function, 0)?;
+    let get = function_instruction(function, 1)?;
+    let update = function_instruction(function, 2)?;
+    let set = function_instruction(function, 3)?;
+    let load_undefined = function_instruction(function, 4)?;
+    let ret = function_instruction(function, 5)?;
+    if load_this.op() != Op::LoadThis
+        || get.op() != Op::GetField
+        || get.returns_from_frame()
+        || get.writes_current_this()
+        || get.result_flags() != 0
+        || update.op() != Op::IncDec
+        || update.returns_from_frame()
+        || update.result_flags() != 0
+        || update.register_b() != get.result_register()
+        || set.op() != Op::SetThisFieldStrict
+        || set.register_a() != update.result_register()
+        || load_undefined.op() != Op::LoadConst
+        || load_undefined.returns_from_frame()
+        || load_undefined.result_flags() != 0
+        || ret.op() != Op::Return
+        || ret.result_flags() != 0
+        || ret.register_a() != load_undefined.result_register()
+        || !matches!(program.constants.get(load_undefined.constant_index()), Some(Constant::Undefined))
+    {
+        return None;
+    }
+    let FieldLookup::Atom {
+        atom,
+        base,
+        cache_site: read_cache_site,
+    } = get.field_lookup()?
+    else {
+        return None;
+    };
+    if base.register_index() != Some(load_this.result_register()) || set.atom_index() != atom {
+        return None;
+    }
+    Some(JsJitThisFieldIncrement {
+        atom,
+        read_cache_site,
+        write_cache_site: set.cache_site_index(),
+        decrement: update.boolean_flag()?,
+        return_pc: 5,
         return_register: ret.register_a(),
     })
 }

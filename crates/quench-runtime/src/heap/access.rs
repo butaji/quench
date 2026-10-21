@@ -391,6 +391,23 @@ impl Heap {
         Some(unsafe { self.array_records.get_live_mut_storing(record_id, stored) })
     }
 
+    /// `record_array_store_mut` for a store the write barrier passes without logging, else
+    /// `None`: the caller takes the logging store elsewhere, so its own path makes no call.
+    #[inline(always)]
+    pub(crate) fn record_array_store_mut_unlogged(
+        &mut self,
+        value: Value,
+        stored: Value,
+    ) -> Option<&mut ArrayObject> {
+        let record_id = value.direct_array_index()?;
+        if self.array_records.store_logs(record_id, stored) {
+            return None;
+        }
+        // SAFETY: direct-array Values name live records; `&mut self` is exclusive; the store
+        // logs nothing.
+        Some(unsafe { self.array_records.get_live_mut_unbarriered(record_id) })
+    }
+
     /// `array_mut` for a store of `stored` into the array's elements.
     #[inline(always)]
     pub(crate) fn array_store_mut(&mut self, value: Value, stored: Value) -> Option<&mut ArrayObject> {

@@ -363,6 +363,7 @@ impl<H: Host> Vm<H> {
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         let mut phase_started = std::time::Instant::now();
         self.constructed_shapes.fill(super::provenance::ConstructedShape::EMPTY);
+        self.enumerable_keys.clear();
         #[cfg(feature = "profile-aggregate")]
         for (index, frame) in self.frames.iter().enumerate() {
             self.profile.gc_frame(
@@ -833,14 +834,7 @@ impl<H: Host> Vm<H> {
         );
         self.descriptors
             .retain(|(object, _), _| self.heap.is_live(*object));
-        let mut abandoned_job_contexts = self.heap.take_abandoned_job_contexts();
-        self.realm.promise.thenable_jobs.retain(|job, record| {
-            let live = self.heap.is_live(*job);
-            if !live {
-                abandoned_job_contexts.extend(record.execution_context);
-            }
-            live
-        });
+        let abandoned_job_contexts = self.heap.take_abandoned_job_contexts();
         for context in abandoned_job_contexts {
             self.release_job_context(context);
         }
@@ -994,12 +988,7 @@ impl<H: Host> Vm<H> {
         let previous = std::mem::replace(&mut self.native_microtask_running, true);
         let result = (|| {
             self.check_execution_interrupt()?;
-            while let Some(job) = self.realm.jobs.pop_front() {
-                self.check_execution_interrupt()?;
-                self.run_pending_job(program, job)?;
-                self.advance_static_module_jobs(program)?;
-                self.advance_dynamic_import_jobs(program, true)?;
-            }
+            self.run_job_queue(program, |_| true)?;
             Ok(Value::UNDEFINED)
         })();
         self.native_microtask_running = previous;
@@ -1017,23 +1006,60 @@ impl<H: Host> Vm<H> {
         self.drain_pending_microtasks(program)
     }
 
-    /// Runs a job already taken off the queue: a finished job roots nothing, so a drain
-    /// whose jobs keep enqueueing more holds only the jobs still pending.
+    /// Runs queued jobs while `more` holds. A job runs in its realm, and the queue stays
+    /// there until work of another realm comes: consecutive jobs of one realm share one
+    /// realm entry, and the drain's own realm returns for module advancement, a host job,
+    /// and the drain's end, however it ends.
+    fn run_job_queue(
+        &mut self,
+        program: &ResidualProgram,
+        mut more: impl FnMut(&Self) -> bool,
+    ) -> Result<(), JsError> {
+        let home = self.realm.globals;
+        let result = (|| {
+            while more(self) && let Some(job) = self.realm.jobs.pop_front() {
+                self.check_execution_interrupt()?;
+                self.run_pending_job(program, job, home)?;
+                if self.module_jobs_pending() {
+                    self.switch_realm_global(home);
+                }
+                self.advance_static_module_jobs(program)?;
+                self.advance_dynamic_import_jobs(program, true)?;
+            }
+            Ok(())
+        })();
+        self.switch_realm_global(home);
+        result
+    }
+
+    /// Runs a job already taken off the queue, leaving its realm current: a finished job
+    /// roots nothing, so a drain whose jobs keep enqueueing more holds only the jobs still
+    /// pending. A host job runs in the drain's realm `home`.
     fn run_pending_job(
         &mut self,
         program: &ResidualProgram,
         job: PendingJob,
+        home: Value,
     ) -> Result<(), JsError> {
         let start = self.active_call_roots.len();
         job.push_roots(&mut self.active_call_roots);
+        // A job boundary is a safepoint, as a back edge is: a job may run no loop, so a due
+        // collection would otherwise wait while job after job allocates, and the lane, which
+        // admits no frameless call while one is due, would push a frame for every call. The
+        // job's own values are call roots, and a collection inside its callback, which any
+        // back edge makes, is no less possible.
         let previous = std::mem::replace(&mut self.native_microtask_running, true);
         let result = match job {
             PendingJob::Call {
                 callback,
                 this,
                 args,
-            } => self.call_value(program, callback, this, &args).map(|_| ()),
+            } => {
+                self.switch_realm_global(home);
+                self.call_value(program, callback, this, &args).map(|_| ())
+            }
             PendingJob::Reaction(reaction) => self.run_promise_reaction(program, reaction),
+            PendingJob::Thenable(thenable) => self.run_thenable_job(program, thenable),
         };
         self.native_microtask_running = previous;
         self.active_call_roots.truncate(start);
@@ -1052,16 +1078,10 @@ impl<H: Host> Vm<H> {
         program: &ResidualProgram,
         promise: Value,
     ) -> Result<(), JsError> {
-        while self
-            .promise_record(promise)
-            .is_some_and(|record| record.state == PromiseState::Pending)
-            && let Some(job) = self.realm.jobs.pop_front()
-        {
-            self.run_pending_job(program, job)?;
-            self.advance_static_module_jobs(program)?;
-            self.advance_dynamic_import_jobs(program, true)?;
-        }
-        Ok(())
+        self.run_job_queue(program, |vm| {
+            vm.promise_record(promise)
+                .is_some_and(|record| record.state == PromiseState::Pending)
+        })
     }
 }
 
