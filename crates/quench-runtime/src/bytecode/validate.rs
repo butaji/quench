@@ -392,6 +392,7 @@ fn immediate_domains_in_bounds(
         super::ImmediateRole::UnaryOperator => {
             instruction.unary_operator() <= oxc_ast::ast::UnaryOperator::Void as u32
                 || instruction.unary_operator() == super::UNARY_TO_STRING
+                || super::typeof_test(instruction.unary_operator()).is_some()
         }
         super::ImmediateRole::FunctionNamePrefix => {
             instruction.function_name_prefix() <= super::FUNCTION_NAME_PREFIX_SETTER
