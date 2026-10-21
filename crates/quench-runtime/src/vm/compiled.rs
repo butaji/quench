@@ -6561,6 +6561,38 @@ impl<H: Host> Vm<H> {
         let program_id = self.frames[frame].program;
         let function_id = self.frames[frame].function;
         let function = program.function_get(function_id as usize)?;
+        let field_return_candidate =
+            super::js_compiled::cached_this_field_return_candidate(function);
+        let mut field_return_diagnostic_entry_recorded = false;
+        if let Some(candidate) = field_return_candidate {
+            let fixed_this = self.frames[frame].fixed_this;
+            if self.programs.js_jit_diagnostics_enabled() {
+                self.programs.record_js_jit_entry(
+                    program_id,
+                    function_id,
+                    false,
+                    function.params,
+                );
+                self.programs.record_js_jit_field_return_candidate(
+                    program_id,
+                    function_id,
+                    fixed_this,
+                );
+                field_return_diagnostic_entry_recorded = true;
+            }
+            if fixed_this {
+                let receiver = self.frames[frame].this;
+                if let super::object::FieldCacheProbe::Hit(value) =
+                    self.cached_field_hit(program, receiver, candidate.cache_site)
+                {
+                    if self.programs.js_jit_diagnostics_enabled() {
+                        self.programs
+                            .record_js_jit_field_return_entry(program_id, function_id);
+                    }
+                    return Some((candidate.return_pc, candidate.return_register, value));
+                }
+            }
+        }
         let tier = self.programs.js_tier(program_id, function_id);
         let rejected_entry = if self.programs.js_jit_diagnostics_enabled()
             && matches!(
@@ -6702,8 +6734,10 @@ impl<H: Host> Vm<H> {
             Some(string.units())
         });
         if let Some((entries, reason)) = rejected_entry {
-            self.programs
-                .record_js_jit_entry(program_id, function_id, numeric, function.params);
+            if !field_return_diagnostic_entry_recorded {
+                self.programs
+                    .record_js_jit_entry(program_id, function_id, numeric, function.params);
+            }
             self.programs
                 .record_js_jit_rejection(program_id, function_id, reason, entries);
             return None;
@@ -6720,12 +6754,14 @@ impl<H: Host> Vm<H> {
             if let Some(entries) = report_entries
                 && self.programs.js_jit_diagnostics_enabled()
             {
-                self.programs.record_js_jit_entry(
-                    program_id,
-                    function_id,
-                    numeric,
-                    function.params,
-                );
+                if !field_return_diagnostic_entry_recorded {
+                    self.programs.record_js_jit_entry(
+                        program_id,
+                        function_id,
+                        numeric,
+                        function.params,
+                    );
+                }
                 self.programs
                     .record_js_jit_rejection(program_id, function_id, reason, entries);
             }
@@ -6738,7 +6774,9 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
-        if self.programs.js_jit_diagnostics_enabled() {
+        if self.programs.js_jit_diagnostics_enabled()
+            && !field_return_diagnostic_entry_recorded
+        {
             self.programs
                 .record_js_jit_entry(program_id, function_id, numeric, function.params);
         }
