@@ -2446,7 +2446,8 @@ script_handler! {
 
 script_handler! {
     /// `lane_set_index` past a record array, appending to a dense array at its length,
-    /// filling one of its holes, or a plain symbol-keyed write.
+    /// filling one of its holes, a plain symbol-keyed write, or a Number stored into a typed
+    /// array (`Vm::typed_array_set_number`).
     #[inline(never)]
     fn lane_set_index_slot<>(cx, r, ip, i, view) {
         let (object, key, value) = (r.get(i.b), r.get(i.c), r.get(i.a));
@@ -2455,6 +2456,9 @@ script_handler! {
             && !vm.try_append_dense_element(object, key, value)
             && !vm.try_fill_dense_hole(object, key, value)
             && !vm.try_plain_symbol_set(object, key, value)
+            && !vm
+                .array_index_key(key)
+                .is_some_and(|index| vm.typed_array_set_number(object, index as usize, value))
         {
             return exit(ip);
         }
@@ -3506,13 +3510,58 @@ fn lane_cached_field<H: Host>(
     atom: crate::bytecode::Atom,
     site: u16,
 ) -> Option<Value> {
-    let vm = unsafe { vm(cx) };
-    vm.prepare_named_function_info_lookup(object, atom);
-    match vm.cached_field_hit(code, object, site) {
+    let probe = {
+        let vm = unsafe { vm(cx) };
+        vm.prepare_named_function_info_lookup(object, atom);
+        vm.cached_field_hit(code, object, site)
+    };
+    match probe {
         super::object::FieldCacheProbe::Hit(value) => Some(value),
-        // SAFETY: the context outlives the lane run.
-        probe => lane_cached_field_miss(vm, code, object, atom, site, probe, unsafe { (*cx).env }),
+        // An accessor's entry answers before the data lookups, which would walk the chain to
+        // reach the same accessor and decline it.
+        probe => unsafe { lane_getter_read(cx, object, atom, site) }.or_else(|| {
+            // SAFETY: the context outlives the lane run.
+            lane_cached_field_miss(unsafe { vm(cx) }, code, object, atom, site, probe, unsafe { (*cx).env })
+        }),
     }
+}
+
+/// A read whose site caches an accessor (`Vm::cached_field_getter`) whose getter is a pure
+/// native read (`Vm::pure_native_getter_value`) or a frameless read target, answered as the
+/// getter's call would return (`lane_call_read`): `[[Get]]` calls it on the base with no
+/// arguments, and neither runs guest code. `None` leaves the read to the general path, which
+/// calls the getter.
+///
+/// # Safety
+/// `cx` is the running lane's context.
+#[inline(never)]
+unsafe fn lane_getter_read<H: Host>(
+    cx: *mut LaneContext<H>,
+    object: Value,
+    atom: crate::bytecode::Atom,
+    site: u16,
+) -> Option<Value> {
+    let getter = {
+        let vm = unsafe { vm(cx) };
+        vm.cached_field_getter(object, atom, vm.field_cache_index(site))?
+    };
+    if let Some(value) = (unsafe { vm(cx) }).pure_native_getter_value(getter, object) {
+        return Some(value);
+    }
+    let target = lane_script_target(cx, getter)?;
+    if target.entry == CallEntry::Reads {
+        // A getter only the general path has called has not run its read in the lane yet: it
+        // takes the kind its first run would.
+        // SAFETY: as `lane_call_read`; the context's program outlives the lane run.
+        let (entry, code) = unsafe { ((*target.view).records(), &*(*cx).code) };
+        if unsafe { (*entry).handler } == lane_returning_field_first::<H> as *const () {
+            requicken(entry, returning_field_first_kind(unsafe { vm(cx) }, code, unsafe { &*entry }));
+        }
+    } else if !target.entry.reads() && target.entry != CallEntry::ForwardsRead {
+        return None;
+    }
+    let this = lane_direct_call_this(unsafe { vm(cx) }, &target, object)?;
+    unsafe { lane_call_read(cx, &target, ReadArguments::NONE, this) }
 }
 
 /// `lane_cached_field` past its probe. Out of line so that no handler inlining the probe
@@ -8420,6 +8469,9 @@ struct ReadArguments {
 }
 
 impl ReadArguments {
+    /// A call that passes nothing, as `[[Get]]` calls a getter: `get` reads no register.
+    const NONE: Self = Self { registers: Registers(std::ptr::null_mut()), base: 0, passed: 0 };
+
     #[inline(always)]
     fn get(self, parameter: u16) -> Option<Value> {
         (parameter < self.passed).then(|| self.registers.get(self.base + parameter))
@@ -8949,18 +9001,26 @@ script_handler! {
     /// `RETURNING_FIELD`, whose cached read prepares them.
     #[inline(never)]
     fn lane_returning_field_first<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        if i.b != crate::bytecode::FieldBase::NESTED && !vm.reads_function_info(i.imm()) {
-            requicken(ip, lane_returning::<H, RETURNING_FIELD_OWN>);
-            sibling!(lane_returning::<H, RETURNING_FIELD_OWN>, r, ip, Carried::script(cx))
-        }
         // SAFETY: the context's program outlives the lane run.
-        if lane_field_site_tier(vm, unsafe { &*(*cx).code }, i) == FieldSiteTier::Nested {
-            requicken(ip, lane_returning::<H, RETURNING_FIELD_NESTED>);
-            sibling!(lane_returning::<H, RETURNING_FIELD_NESTED>, r, ip, Carried::script(cx))
-        }
-        requicken(ip, lane_returning::<H, RETURNING_FIELD>);
-        sibling!(lane_returning::<H, RETURNING_FIELD>, r, ip, Carried::script(cx))
+        let handler = returning_field_first_kind(unsafe { vm(cx) }, unsafe { &*(*cx).code }, i);
+        requicken(ip, handler);
+        sibling!(handler, r, ip, Carried::script(cx))
+    }
+}
+
+/// The kind a returning `GetField` takes on its first run (`lane_returning_field_first`),
+/// which its record and site alone decide.
+fn returning_field_first_kind<H: Host>(
+    vm: &Vm<H>,
+    code: &ResidualProgram,
+    i: &LaneInstruction,
+) -> Handler {
+    if i.b != crate::bytecode::FieldBase::NESTED && !vm.reads_function_info(i.imm()) {
+        lane_returning::<H, RETURNING_FIELD_OWN>
+    } else if lane_field_site_tier(vm, code, i) == FieldSiteTier::Nested {
+        lane_returning::<H, RETURNING_FIELD_NESTED>
+    } else {
+        lane_returning::<H, RETURNING_FIELD>
     }
 }
 
