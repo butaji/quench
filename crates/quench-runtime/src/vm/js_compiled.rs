@@ -34,6 +34,14 @@ pub(super) struct JsJitFieldArgument {
     pub(super) entry_pc: usize,
 }
 
+/// A field getter that can return a cached data-property value without
+/// interpreting its `GetField` and `Return` instructions.
+pub(super) struct JsJitFieldReturn {
+    pub(super) cache_site: u16,
+    pub(super) return_pc: usize,
+    pub(super) return_register: crate::bytecode::Register,
+}
+
 #[derive(Clone, Copy)]
 pub(super) struct JsJitCaptureArgument {
     pub(super) depth: u16,
@@ -698,6 +706,43 @@ pub(super) fn cached_field_argument_candidate(function: &Function) -> Option<JsJ
     Some(JsJitFieldArgument {
         cache_site,
         entry_pc,
+    })
+}
+
+/// Recognize a direct field getter. The first instruction is an unconditional
+/// frame-returning `GetField`, so the remaining instructions are unreachable
+/// unless it throws. The VM still requires a cached data-property hit; that
+/// path cannot throw or invoke guest code. Accessors, proxies, and cache misses
+/// use the interpreter.
+pub(super) fn cached_this_field_return_candidate(
+    function: &Function,
+) -> Option<JsJitFieldReturn> {
+    if function.params != 0 || function.code.len() != 4 || !function.handlers.is_empty() {
+        return None;
+    }
+    let get = function_instruction(function, 0)?;
+    if get.op() != Op::GetField
+        || !get.returns_from_frame()
+        || get.writes_current_this()
+    {
+        return None;
+    }
+    let FieldLookup::Atom {
+        base: FieldBase::THIS,
+        cache_site,
+        ..
+    } = get.field_lookup()?
+    else {
+        return None;
+    };
+    let (return_pc, ret) = (1..function.code.len()).find_map(|pc| {
+        let instruction = function_instruction(function, pc)?;
+        (instruction.op() == Op::Return).then_some((pc, instruction))
+    })?;
+    Some(JsJitFieldReturn {
+        cache_site,
+        return_pc,
+        return_register: ret.register_a(),
     })
 }
 
