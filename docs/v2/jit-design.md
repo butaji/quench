@@ -800,6 +800,20 @@ candidate limit, while `Eu` uses captures and calls the current JS tier does not
 lower. These screens have one round each and do not qualify a win. See
 `evidence/jit-jetstream3-2026-10-20/web-ssr-baseline/README.md`.
 
+The guard-census follow-up attributes the same coverage gap more precisely:
+`Ru` entered the interpreter 15,525 times with 831 bytecodes, 47 calls, 42
+capture loads, allocations, and throws; `Eu` entered 15,524 times with 53
+bytecodes, 3 captures, a call, and exception-capable control flow. `Ru` is
+over the bytecode budget, while `Eu` fails activation eligibility before
+lowering. Their 49 and 2 conditional branch sites are census counts, not proof
+of redundant guards. Current evidence therefore gives no sound small pure
+predicate region for ISOP or lazy block versioning. Keep the existing tier
+architecture and exact interpreter fallback; next useful work is to improve
+native coverage of the renderer's effectful call/field path or find a smaller
+hot subregion with measured payback. The diagnostic report is from one
+instrumented round and is not performance evidence; details are in
+`evidence/jit-jetstream3-2026-10-20/guard-census-attribution/`.
+
 ## Cached `this` field returns
 
 The JIT-mode entry has a narrow direct-getter matcher for a return-marked
@@ -818,3 +832,33 @@ entries and is noise. Tightening the candidate to the observed four-word
 shape produced a similar one-round sample (3.75 / 74.06 MiB); this also remains
 unpaired evidence. Corrected diagnostic data and screen reports are in
 `evidence/jit-jetstream3-2026-10-20/this-field-return-screen/`.
+
+## Numeric hash-map entry loop
+
+The observed 23-instruction `_findKeyEntry` loop has an opt-in bounded JIT-mode
+entry path for numeric keys (`QUENCH_JS_JIT_NUMERIC_FIND=1`). It checks cached
+own fields, supports present dense and sparse array data, resolves only
+owned/shared lexical captures, and uses an already-compiled same-program
+numeric `equals`. It returns through the ordinary bytecode `Return` and leaves
+the frame untouched on every failed guard. The path polls interrupts and falls
+back after 256 chain entries.
+
+A one-round diagnostic validated the fixture and counted 53,999,968 fast
+returns out of 54 million entries; the first cache miss used the interpreter.
+A clean one-round screen scored 3.61 at 74.07 MiB and 125.32 seconds, versus
+Bun 108.18 / 99.03 MiB / 1.75 seconds and Node 124.44 / 159.59 MiB / 1.79
+seconds. Quench used less RSS, but the score remains far behind and the single
+round is not a matched comparison. This is coverage evidence, not a benchmark
+win. Reports are in
+`evidence/jit-jetstream3-2026-10-21/numeric-find-loop/`.
+
+The matcher now caches its last positive program/function result, avoiding a
+bytecode rescan at every hot entry. A later one-round screen was directionally
+faster (4.52 / 74.17 MiB / 111.36 s), but Node and Bun scores moved from 124.44
+and 108.18 to 155.13 and 175.49 as well. The screens are unpaired and do not
+establish a score win.
+
+An interleaved same-binary three-pair screen compared the path enabled and
+disabled. Disabled was faster in every pair (105.48 vs 126.62 s, 110.01 vs
+117.55 s, and 114.85 vs 127.91 s) with effectively unchanged RSS. The
+high-coverage loop therefore stays opt-in rather than shipping as the default.
