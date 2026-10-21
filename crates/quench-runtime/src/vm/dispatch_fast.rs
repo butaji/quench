@@ -1071,6 +1071,21 @@ fn lane_frame_storage<H: Host>(cx: *mut LaneContext<H>) -> Option<&'static mut c
     unsafe { slots.as_mut() }
 }
 
+/// `lane_frame_storage` where its cache already holds the running frame's, without the
+/// lookup, and the environment it belongs to, whose barrier a store takes.
+#[inline(always)]
+fn lane_known_frame_storage<H: Host>(
+    cx: *mut LaneContext<H>,
+) -> Option<(&'static mut crate::heap::EnvironmentSlots, Value)> {
+    let known = unsafe { (*cx).frame_storage };
+    let vm = unsafe { vm(cx) };
+    if known.frame != unsafe { (*cx).frame } || known.slots.is_null() || vm.frames[known.frame].env != known.env {
+        return None;
+    }
+    // SAFETY: as `FrameStorage`; the lane holds no other reference to the storage.
+    Some((unsafe { &mut *known.slots }, known.env))
+}
+
 /// `lane_frame_storage` past its cache: the environment's storage, recorded.
 #[cold]
 #[inline(never)]
@@ -2009,6 +2024,16 @@ script_handler! {
     /// registers; any other load takes the general handler.
     fn lane_load_window_local<ENVIRONMENT: bool>(cx, r, ip, i, view) {
         let (slot, registers) = environment_window_fields(i);
+        // A frame run whose environment storage a local access found (`lane_frame_storage`).
+        if ENVIRONMENT
+            && i.a & crate::bytecode::NUMERIC_LOCAL_TARGET == 0
+            && unsafe { (*cx).env }.is_deleted()
+            && let Some((storage, _)) = lane_known_frame_storage(cx)
+            && let Some(value) = storage.dense().and_then(|dense| dense.dense_plain(slot))
+        {
+            r.set(i.a, value);
+            next!(cx, r, following(ip), view)
+        }
         if i.a & crate::bytecode::NUMERIC_LOCAL_TARGET == 0 && !unsafe { (*cx).env }.is_deleted() {
             let value = if ENVIRONMENT {
                 // SAFETY: as `lane_load_window_local_general`'s read of the window's storage.
@@ -2038,6 +2063,22 @@ script_handler! {
     /// young.
     fn lane_store_window_local<ENVIRONMENT: bool>(cx, r, ip, i, view) {
         let (slot, registers) = environment_window_fields(i);
+        // A frame run's store to an initialized binding of its environment's storage, after
+        // the environment's barrier.
+        if ENVIRONMENT
+            && i.c == 0
+            && unsafe { (*cx).env }.is_deleted()
+            && let Some((storage, environment)) = lane_known_frame_storage(cx)
+            && let Some(binding) = storage.dense_mut().and_then(|dense| dense.dense_plain_mut(slot))
+        {
+            let value = r.get(i.a);
+            *binding = value;
+            unsafe { vm(cx) }.heap.remember_cell(environment);
+            if let Some(register) = i.b.checked_sub(crate::bytecode::OPTIONAL_REGISTER_BIAS) {
+                r.set(register, value);
+            }
+            next!(cx, r, following(ip), view)
+        }
         if !unsafe { (*cx).env }.is_deleted() && i.c == 0 {
             let binding = if ENVIRONMENT {
                 // SAFETY: as `lane_load_window_local_general`'s read of the window's storage.
@@ -2565,6 +2606,26 @@ script_handler! {
                 vm.owned_capture(slots, root, slot)
             })
         };
+        #[cfg(feature = "profile-lane-exits")]
+        {
+            let code = unsafe { &*(*cx).code };
+            let function = vm
+                .lane_stack
+                .activations
+                .last()
+                .map_or(vm.frames[unsafe { (*cx).frame }].function, |activation| activation.function);
+            let body = code.function_get(function as usize);
+            let shape = vm.current_capture_slots(unsafe { (*cx).frame }).map(|(slots, root)| {
+                (root.is_some(), unsafe { &*slots }.dense().is_some())
+            });
+            super::lane_exits::record_detail(format!(
+                "capture walk in {} {} span={:?} depth={depth} frame_run={} (root, dense)={shape:?}",
+                vm.programs.source_name(unsafe { (*cx).program }).unwrap_or_default(),
+                body.and_then(|body| body.name).map(|atom| code.atoms[atom as usize].to_string()).unwrap_or_default(),
+                body.and_then(|body| body.source_span).map(|span| span.start),
+                env.is_deleted(),
+            ));
+        }
         let Some(value) = value.or_else(|| lane_projected_capture(cx, depth, slot)) else {
             return exit(ip);
         };
@@ -6387,6 +6448,26 @@ script_handler! {
         let vm = unsafe { vm(cx) };
         let callee = r.get(i.b);
         let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
+        match vm.heap.function(callee) {
+            Some(FunctionRecord { kind: FunctionKind::User(..), .. }) => {
+                return lane_frame_construct(cx, r, ip, i);
+            }
+            Some(FunctionRecord { kind: FunctionKind::Native(native), .. })
+                if native.constructs_from_lane() && !returns =>
+            {
+                let argc = usize::from(ImmediateLayout::argument_count(i.imm()));
+                // SAFETY: the construction's window is registers of the running function.
+                let args = unsafe { std::slice::from_raw_parts(r.0.add(usize::from(i.c)), argc) };
+                let Some(value) = lane_construct_native(cx, ip, callee, args) else {
+                    return exit(ip);
+                };
+                // The construction ran from the innermost frame, whose registers are the lane's.
+                let r = unsafe { (*cx).registers };
+                r.set(i.a, value);
+                next!(cx, r, following(ip), Carried::script(cx))
+            }
+            _ => {}
+        }
         if (returns && vm.lane_stack.activations.is_empty())
             || !matches!(
                 vm.heap.function(callee),
@@ -6717,6 +6798,39 @@ fn lane_call_native<H: Host>(
     // The native branch of `Vm::call_value_with_target_inner`, whose callee this is.
     let result = vm.call_native_guarded(code, native, receiver, arguments.as_slice(), callee);
     // The native's allocations may make a collection due, which the lane's safepoints take.
+    note_allocation(vm);
+    match result {
+        Ok(value) => Some(value),
+        Err(error) => {
+            vm.lane_raised = Some(error);
+            None
+        }
+    }
+}
+
+/// A lane `new` of a native that `Native::constructs_from_lane` admits, made as the general
+/// path makes it (`Vm::construct_value_with_new_target`) from the running frame, after
+/// activations become frames, as `lane_call_native` makes a call. `None` exits to the general
+/// path, which raises the error the construction stashed in `Vm::lane_raised` or makes one
+/// this does not admit.
+#[inline(never)]
+fn lane_construct_native<H: Host>(cx: *mut LaneContext<H>, ip: Ip, callee: Value, args: &[Value]) -> Option<Value> {
+    let vm = unsafe { vm(cx) };
+    if !unsafe { (*cx).script_calls } || vm.construct_target.is_some() {
+        return None;
+    }
+    // The values are copied before activations become frames, which moves the registers
+    // they may lie in; the frames then root what the construction passes.
+    let arguments = super::call_arguments::CallArguments::from_slice(args);
+    vm.materialize_lane_activations(cx);
+    // SAFETY: the context's program outlives the lane run, and `ip` is a record of the
+    // active view, which is the running frame's.
+    let (code, frame, call_pc) = unsafe { (&*(*cx).code, (*cx).frame, ip.offset_from((*cx).base) as usize) };
+    vm.frames[frame].pc = call_pc + 1;
+    vm.frames[frame].pc_is_resume = true;
+    let result = vm.construct_value_with_new_target(code, callee, callee, arguments.as_slice());
+    // The construction's allocations may make a collection due, which the lane's safepoints
+    // take.
     note_allocation(vm);
     match result {
         Ok(value) => Some(value),
@@ -8601,6 +8715,84 @@ script_handler! {
                 exit(ip)
             }
             _ => exit(ip),
+        }
+    }
+}
+
+/// `new` of a user constructor that needs a VM frame, made in place as the general loop's
+/// in-loop construction makes it (`Vm::inline_construct_target`): lane activations become
+/// frames, the receiver is allocated, and the constructor's frame is pushed with the pending
+/// construction that substitutes the receiver for a non-object result
+/// (`lane_return_script_frame`). Any other construction takes the general path.
+#[inline(never)]
+fn lane_frame_construct<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i: &LaneInstruction) -> Ip {
+    let vm = unsafe { vm(cx) };
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    let callee = r.get(i.b);
+    let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
+    // The checks `inline_construct_target` makes of the callee alone, before activations
+    // become frames for it.
+    let pushable = match vm.heap.function(callee) {
+        Some(FunctionRecord { kind: FunctionKind::User(program, id), realm, .. }) => {
+            *program == unsafe { (*cx).program }
+                && *realm == vm.realm.globals
+                && code.function_get(*id as usize).is_some_and(Vm::<H>::inline_constructible)
+        }
+        _ => false,
+    };
+    if !pushable
+        || !unsafe { (*cx).script_calls && (*cx).script_constructs }
+        || vm.construct_target.is_some()
+        || returns && !lane_returning_call_admitted(cx)
+    {
+        return exit(ip);
+    }
+    vm.materialize_lane_activations(cx);
+    // The caller is now the innermost frame, its registers the frame's.
+    let (frame, r) = unsafe { ((*cx).frame, (*cx).registers) };
+    let Some((id, env, this)) = vm.inline_construct_target(code, frame, callee) else {
+        return exit(ip);
+    };
+    // Allocating the receiver can make a collection due.
+    note_allocation(vm);
+    // SAFETY: the call record lies in the running view.
+    let call_pc = unsafe { ip.offset_from((*cx).base) } as usize;
+    vm.frames[frame].pc = call_pc + 1;
+    vm.frames[frame].pc_is_resume = true;
+    let argc = usize::from(ImmediateLayout::argument_count(i.imm()));
+    // SAFETY: the construction's window is registers of the caller frame, which the push
+    // neither moves nor frees before it copies them.
+    let arguments: *const [Value] = unsafe { std::slice::from_raw_parts(r.0.add(usize::from(i.c)), argc) };
+    vm.construct_target = Some(super::activation::ConstructionTarget { callee, new_target: callee });
+    let pushed = vm.push_general_user_frame(code, id, env, this, unsafe { &*arguments }, CallContext::user_function(id, callee));
+    vm.construct_target = None;
+    match pushed {
+        Ok(call_guard) => {
+            // SAFETY: the general loop's pending calls outlive the lane run.
+            unsafe { &mut *(*cx).pending }.push(PendingGeneralCall {
+                caller: frame,
+                caller_cursor: None,
+                call_pc: call_pc as u32,
+                destination: i.a & crate::bytecode::REGISTER_MASK,
+                construct_this: Some(this),
+                returns,
+                call_guard: Some(call_guard),
+                caller_program: None,
+            });
+            // The pushed frame's guard narrows the activations the thread admits.
+            vm.lane_stack.refresh_activation_limit();
+            let callee_frame = frame + 1;
+            if let Some(return_pc) = vm.js_tier_frame_entry(code, callee_frame) {
+                vm.frames[callee_frame].pc = return_pc;
+            }
+            lane_enter_script_frame(cx, callee_frame)
+        }
+        // A failed push (the guest call depth) throws at the construction, as the general
+        // path's.
+        Err(error) => {
+            vm.lane_raised = Some(error);
+            exit(ip)
         }
     }
 }
