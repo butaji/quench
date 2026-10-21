@@ -288,6 +288,10 @@ mod platform {
         id: Option<u64>,
     }
     impl SignalState {
+        /// Whether no signal is watched (`startup_snapshot`).
+        pub(crate) fn snapshot_quiescent(&self) -> bool {
+            self.id.is_none()
+        }
         pub(crate) fn watch(&mut self, name: &str) -> io::Result<()> {
             let Some(signal) = signal_number(name) else {
                 return Ok(());
@@ -370,6 +374,9 @@ mod platform {
     #[derive(Default)]
     pub(crate) struct SignalState;
     impl SignalState {
+        pub(crate) fn snapshot_quiescent(&self) -> bool {
+            true
+        }
         pub(crate) fn watch(&mut self, _: &str) -> std::io::Result<()> {
             Ok(())
         }

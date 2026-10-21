@@ -481,3 +481,39 @@ fn build_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, Ro
     context.define_data_property_rooted(binding, key, codes, false, true, true)?;
     Ok(binding)
 }
+
+/// `ErrorClass` and `ErrorPresentation` tags, in declaration order.
+const ERROR_CLASSES: [ErrorClass; 3] = [ErrorClass::Error, ErrorClass::TypeError, ErrorClass::RangeError];
+const ERROR_PRESENTATIONS: [ErrorPresentation; 2] = [ErrorPresentation::Direct, ErrorPresentation::HiddenStackFrames];
+
+impl crate::host::startup_snapshot::HostSnap for NodeErrorApi {
+    fn write(&self, writer: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> {
+        let Self { brand, prototypes } = self;
+        writer.root(*brand)?;
+        writer.len(prototypes.len());
+        for (&(code, class, presentation), prototype) in prototypes {
+            writer.str(code);
+            writer.u8(ERROR_CLASSES.iter().position(|candidate| *candidate == class).expect("listed class") as u8);
+            writer.u8(
+                ERROR_PRESENTATIONS.iter().position(|candidate| *candidate == presentation).expect("listed presentation")
+                    as u8,
+            );
+            writer.root(*prototype)?;
+        }
+        Ok(())
+    }
+    fn read(reader: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<Self, String> {
+        let brand = reader.root()?;
+        let mut prototypes = std::collections::HashMap::new();
+        for _ in 0..reader.len()? {
+            // Error codes are the program's own literals; a restored process names each one
+            // the snapshot cached once, for the life of the process, as its literal would.
+            let code: &'static str = Box::leak(reader.string()?.into_boxed_str());
+            let class = *ERROR_CLASSES.get(usize::from(reader.u8()?)).ok_or("invalid snapshot error class")?;
+            let presentation =
+                *ERROR_PRESENTATIONS.get(usize::from(reader.u8()?)).ok_or("invalid snapshot error presentation")?;
+            prototypes.insert((code, class, presentation), reader.root()?);
+        }
+        Ok(Self { brand, prototypes })
+    }
+}

@@ -1496,3 +1496,24 @@ pub(crate) fn create_pbkdf2(
         Some(NativeRequest::Pbkdf2(request)),
     )
 }
+
+impl State {
+    pub(crate) fn write_snapshot(&self, _: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> {
+        use crate::host::startup_snapshot::require_quiescent;
+        let Self {
+            running,
+            resources,
+            #[cfg(quench_openssl_provider)]
+            configured,
+            #[cfg(quench_openssl_provider)]
+            digests,
+        } = self;
+        require_quiescent(running.is_empty() && resources.is_empty(), "a crypto job")?;
+        #[cfg(quench_openssl_provider)]
+        require_quiescent(configured.is_empty() && digests.snapshot_quiescent(), "a crypto digest")?;
+        Ok(())
+    }
+    pub(crate) fn read_snapshot(&mut self, _: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<(), String> {
+        Ok(())
+    }
+}

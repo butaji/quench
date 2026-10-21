@@ -1054,6 +1054,11 @@ impl quench_runtime::Host for NodeHost {
         crate::host::resident_pages::release_read_only_pages();
     }
 
+    /// The snapshot is a tracked read-only mapping (`startup_snapshot::load_or_schedule`).
+    fn snapshot_bytes_read(bytes: &[u8]) {
+        crate::host::resident_pages::release_tracked_bytes(bytes);
+    }
+
     fn kept_compiled_program(&mut self, name: &str, parts: &[&str]) -> Option<quench_runtime::KeptBytes> {
         self.compile_cache.entry(name, parts)?.load()
     }
@@ -1308,7 +1313,7 @@ impl quench_runtime::Host for NodeHost {
             return Ok(Some(quench_runtime::ModuleSource::text(name, source)));
         }
         let source = if extension == "json" {
-            String::from_utf8_lossy(&bytes).into_owned()
+            commonjs::source_text(&bytes).into_owned()
         } else {
             let kind = Self::source_kind(&path)?;
             if kind == quench_runtime::SourceKind::Module {
@@ -1322,7 +1327,7 @@ impl quench_runtime::Host for NodeHost {
                 );
                 source.push_str("export { __quenchModule as 'module.exports' };\n");
                 for (index, export) in
-                    commonjs_exports::names(&path, &String::from_utf8_lossy(&bytes))
+                    commonjs_exports::names(&path, &commonjs::source_text(&bytes))
                         .into_iter()
                         .enumerate()
                 {
@@ -1501,6 +1506,13 @@ impl quench_runtime::Host for NodeHost {
         context.profile_memory_checkpoint("node_commonjs");
         context.host_mut().bootstrapped = true;
         Ok(())
+    }
+
+    fn resume(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
+        crate::host::resident_pages::release_read_only_pages();
+        context.scoped(crate::modules::process_shared_vm::refresh_identity)?;
+        context.scoped(crate::modules::performance_binding_shared_vm::refresh_time_origins)?;
+        commonjs::finish_initialize(context)
     }
 }
 

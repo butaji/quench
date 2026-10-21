@@ -6,6 +6,8 @@ use crate::heap::WeakHandle;
 use rustc_hash::FxHashMap;
 use std::io::Write as _;
 
+mod snapshot;
+
 #[derive(Default)]
 struct JsJitCounters {
     source_name: Option<Box<str>>,

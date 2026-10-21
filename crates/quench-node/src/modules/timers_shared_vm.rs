@@ -1480,3 +1480,9 @@ pub(crate) fn libuv_now(context: &mut NativeContext<'_, NodeHost>, _: RootId, _:
 pub(crate) fn binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     Ok(timer_handle_api(context)?.binding)
 }
+
+crate::host::startup_snapshot::host_snap_struct!(TimerHandleApi {
+    refed_key, async_id_key, primitive_key, primitive_registry, primitive_cleanup, delete_property,
+    number_string, timer_callback, repeat_delay, apply, binding, timeout_prototype, immediate_prototype,
+});
+crate::host::startup_snapshot::host_snap_struct!(TimerDurationWarnings { negative, not_number });
