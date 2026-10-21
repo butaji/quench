@@ -1122,7 +1122,7 @@ impl<H: Host> Vm<H> {
                 let key = self.read(f, i.register_c());
                 let key = self.to_property_key(p, key)?;
                 let key = match self.heap.get(key).cloned() {
-                    _ if let Some(text) = self.heap.string(key).cloned()  => PropertyKey::string(self.intern_js_atom(&text)),
+                    _ if let Some(atom) = self.string_key_atom(key) => PropertyKey::string(atom),
                     Some(Cell::Symbol(_)) => PropertyKey::symbol(key),
                     _ => return Err(JsError::validation("invalid class field key".into())),
                 };
@@ -1151,12 +1151,13 @@ impl<H: Host> Vm<H> {
                         || i.boolean_flag().expect("validated boolean immediate"),
                 )?
             }
-            Op::DefineArrayElement => self.define_array_literal_element(
-                p,
-                self.read(f, i.register_b()),
-                i.array_index() as usize,
-                self.read(f, i.register_a()),
-            )?,
+            Op::DefineArrayElement => {
+                let (array, index, value) =
+                    (self.read(f, i.register_b()), i.array_index() as usize, self.read(f, i.register_a()));
+                if !self.define_literal_element(array, index, value) {
+                    self.define_array_literal_element(p, array, index, value)?;
+                }
+            }
             Op::Move => self.write(f, i.result_register(), self.read(f, i.register_b())),
             Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
                 let operator = i.binary_operator();

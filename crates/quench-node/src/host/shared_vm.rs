@@ -10,6 +10,21 @@ pub(crate) mod esm_wasm;
 pub(crate) mod policy_projection;
 pub(crate) use commonjs::source_kind;
 
+thread_local! {
+    /// The import resolver, kept as `commonjs::with_commonjs_resolver` keeps the require one.
+    static IMPORT_RESOLVER: oxc_resolver::Resolver = oxc_resolver::Resolver::new(oxc_resolver::ResolveOptions {
+        extensions: vec![".mjs".into(), ".js".into(), ".json".into(), ".cjs".into()],
+        main_files: vec!["index".into()],
+        condition_names: vec!["node".into(), "import".into(), "default".into()],
+        ..Default::default()
+    });
+}
+
+/// Runs `use_resolver` with the resolver of an ES module's imports.
+pub(crate) fn with_import_resolver<R>(use_resolver: impl FnOnce(&oxc_resolver::Resolver) -> R) -> R {
+    IMPORT_RESOLVER.with(use_resolver)
+}
+
 pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
     quench_runtime::host_functions![
         method "workerConstruct" (1) => crate::modules::worker_threads_shared_vm::construct,
@@ -1032,12 +1047,25 @@ impl quench_runtime::Host for NodeHost {
         self.shared_state.borrow().async_hooks.tracks_promises()
     }
 
-    /// Counts the collection for the release before output (`resident_pages::note_collection`).
-    /// The pages themselves stay: releasing them after every collection refaulted the run's
-    /// hot code after each young one (EarleyBoyer, dynamic x86_64 production build,
-    /// 2026-10-20: ~63K minor faults and ~0.11 s of system time per run against ~15K and
-    /// ~0.035 s without).
+    /// A job boundary prunes tracked Promise resources and runs before/after hooks; with
+    /// no Promise tracked and no hook tracking them, it does neither
+    /// (`async_hooks_shared_vm::promise_job_boundary`).
+    fn observes_promise_job_boundaries(&self) -> bool {
+        self.shared_state.borrow().async_hooks.observes_job_boundaries()
+    }
+
+    /// The code a run touched since the last collection leaves the resident set after each
+    /// collection, and before a full one; what still runs comes back from the page cache. The
+    /// collector's code and the program's are then resident one at a time, and the program's
+    /// only as much of it as ran since the last collection (V8-v7 RegExp max RSS, static
+    /// x86_64 unbolted, 2026-10-18: 7244-7500 -> 7136-7328 KiB at every collection's end;
+    /// Splay 39800 -> 38988 KiB with the release before full collections).
+    /// The allocator's free pages, which the collection's sweep just freed, leave with them
+    /// (V8-v7 max RSS, static x86_64 unbolted, 2026-10-19: RegExp 6772-7044 -> 6664-6772 KiB,
+    /// EarleyBoyer 9048-9088 -> 8536-8576, the rest unchanged).
     fn at_collection_boundary(&mut self) {
+        crate::host::resident_pages::release_read_only_pages();
+        crate::host::resident_pages::release_free_heap_pages();
         crate::host::resident_pages::note_collection();
     }
 
@@ -1256,22 +1284,12 @@ impl quench_runtime::Host for NodeHost {
         let path = match path {
             Some(path) => path,
             None => {
-                thread_local! {
-                    /// The import resolver, kept as `commonjs::with_commonjs_resolver` keeps
-                    /// the require one.
-                    static IMPORT_RESOLVER: oxc_resolver::Resolver = oxc_resolver::Resolver::new(oxc_resolver::ResolveOptions {
-                        extensions: vec![".mjs".into(), ".js".into(), ".json".into(), ".cjs".into()],
-                        main_files: vec!["index".into()],
-                        condition_names: vec!["node".into(), "import".into(), "default".into()],
-                        ..Default::default()
-                    });
-                }
                 let resolution_specifier = if internal {
                     format!("./{specifier}")
                 } else {
                     specifier.to_owned()
                 };
-                let resolved = IMPORT_RESOLVER.with(|resolver| {
+                let resolved = with_import_resolver(|resolver| {
                     match commonjs::resolve_kept(resolver, |resolver| resolver.resolve(&base, &resolution_specifier)) {
                         Ok(resolution) => Ok(Some(resolution.full_path())),
                         Err(oxc_resolver::ResolveError::Specifier(_)) => Ok(None),

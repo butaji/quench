@@ -165,13 +165,14 @@ type PackageType = Result<Option<Option<quench_runtime::SourceKind>>, String>;
 thread_local! {
     /// Each `package.json` is read once per thread, as Node's package config reader caches
     /// each file it reads; a package with many modules (date-fns: 316 imports under one
-    /// 199 KB `package.json`) otherwise parsed it again for every module.
-    static PACKAGE_TYPES: std::cell::RefCell<std::collections::HashMap<std::path::PathBuf, PackageType>> =
+    /// 199 KB `package.json`) otherwise parsed it again for every module. Keyed by the
+    /// path's text: `Path`'s own hash walks its components.
+    static PACKAGE_TYPES: std::cell::RefCell<rustc_hash::FxHashMap<std::ffi::OsString, PackageType>> =
         Default::default();
 }
 
 fn package_type(package: std::path::PathBuf) -> PackageType {
-    if let Some(known) = PACKAGE_TYPES.with(|types| types.borrow().get(&package).cloned()) {
+    if let Some(known) = PACKAGE_TYPES.with(|types| types.borrow().get(package.as_os_str()).cloned()) {
         return known;
     }
     let read = || -> PackageType {
@@ -194,7 +195,7 @@ fn package_type(package: std::path::PathBuf) -> PackageType {
         }
     };
     let known = read();
-    PACKAGE_TYPES.with(|types| types.borrow_mut().insert(package, known.clone()));
+    PACKAGE_TYPES.with(|types| types.borrow_mut().insert(package.into_os_string(), known.clone()));
     known
 }
 
@@ -217,7 +218,7 @@ fn detect_source_kind(path: &Path) -> Result<quench_runtime::SourceKind, String>
     // The goal follows from the text alone, which parsing it (twice, for a module) costs a
     // whole compilation of: typescript.js (9 MB) was parsed on every load. It is kept in the
     // compile cache, keyed by the exact text, as a compiled program is.
-    let entry = detected_kinds().entry(DETECTED_KIND_NAME, &[text]);
+    let entry = text_facts_cache().entry(DETECTED_KIND_NAME, &[text]);
     if let Some(kind) = entry.as_ref().and_then(|entry| entry.load()).and_then(|bytes| detected_kind_of(bytes.as_ref().as_ref())) {
         return Ok(kind);
     }
@@ -231,9 +232,10 @@ fn detect_source_kind(path: &Path) -> Result<quench_runtime::SourceKind, String>
 /// The compile-cache name a detected parse goal is kept under.
 const DETECTED_KIND_NAME: &str = "\0quench:detected-source-kind";
 
-/// The cache detected parse goals are kept in: this build's compile cache, read from the
-/// environment as the host's own is, since detection runs where no host is reachable.
-fn detected_kinds() -> &'static crate::host::compile_cache::CompileCache {
+/// The cache facts derived from a file's text alone are kept in (its detected parse goal,
+/// its static CommonJS exports): this build's compile cache, read from the environment as
+/// the host's own is, since they are derived where no host is reachable.
+pub(super) fn text_facts_cache() -> &'static crate::host::compile_cache::CompileCache {
     static CACHE: std::sync::OnceLock<crate::host::compile_cache::CompileCache> = std::sync::OnceLock::new();
     CACHE.get_or_init(crate::host::compile_cache::CompileCache::from_environment)
 }
@@ -370,8 +372,8 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
         }
         context.seal_startup_intrinsics();
     }
-    if context.host_mut().building_snapshot {
-        return crate::host::startup_snapshot::preload(context);
+    if let Some(kind) = context.host_mut().building_snapshot {
+        return crate::host::startup_snapshot::preload(context, kind);
     }
     finish_initialize(context)
 }

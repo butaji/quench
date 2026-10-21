@@ -258,11 +258,8 @@ fn scope_slot_owners_survive_collection_and_release() {
 #[test]
 fn ordinary_object_payloads_live_in_compact_records() {
     // The prototype reference packs beside the shape and integrity bits, so a record is a
-    // header the size of a property vector plus two inline values.
-    assert_eq!(
-        size_of::<Object>(),
-        size_of::<ValueVec>() + size_of::<[Value; INLINE_PROPERTY_COUNT]>()
-    );
+    // header the size of a property vector plus one payload word of narrow inline values.
+    assert_eq!(size_of::<Object>(), size_of::<ValueVec>() + size_of::<u64>());
     assert_eq!(size_of::<Slot>(), size_of::<Option<Cell>>());
 }
 
@@ -827,12 +824,12 @@ fn regexp_legacy_constructor_is_traced_through_live_instances() {
         let weak_constructor = heap.weak_handle(constructor).unwrap();
         let regexp = heap.alloc(Cell::RegExp {
             object: Box::new(plain_object()),
-            meta: Box::new(crate::heap::RegExpMeta {
+            meta: Rc::new(crate::heap::RegExpMeta {
                 source: "a".into(),
                 flags: crate::vm::RegExpFlags::validated(""),
                 legacy_constructor: owner(constructor),
+                matcher: Rc::new(quench_regexp::Regex::with_flags("a", Default::default()).unwrap()),
             }),
-            matcher: Rc::new(quench_regexp::Regex::with_flags("a", Default::default()).unwrap()),
         });
         let root = heap.root(regexp);
         heap.collect([]);
