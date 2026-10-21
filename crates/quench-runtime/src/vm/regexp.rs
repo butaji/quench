@@ -1143,12 +1143,13 @@ impl<H: Host> Vm<H> {
         result_used: bool,
     ) -> Result<Value, JsError> {
         let (ranges, last) = if flags.contains(RegExpFlags::GLOBAL) {
+            let searcher = matcher.range_searcher(subject);
             let ranges = self.regexp_global_matches(
                 p,
                 receiver,
                 input,
                 flags,
-                |start| matcher.find_range_in_subject(subject, start),
+                |start| searcher.find(start),
                 Range::clone,
             )?;
             // Only the last match's captures are observable, through the legacy statics,
