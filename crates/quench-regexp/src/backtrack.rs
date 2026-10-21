@@ -146,11 +146,14 @@ impl UnitSet {
         }
     }
 
-    fn union(&self, other: &Self) -> Self {
-        Self::of(
-            self.ascii | other.ascii,
-            Beyond::Either(Box::new([self.beyond.clone(), other.beyond.clone()])),
-        )
+    /// The set of both: their tests are moved, not copied, as a fold over an alternation's
+    /// branches would otherwise copy the growing test once per branch.
+    fn union(self, other: Self) -> Self {
+        let beyond = match (self.beyond, other.beyond) {
+            (Beyond::Never, beyond) | (beyond, Beyond::Never) => beyond,
+            (left, right) => Beyond::Either(Box::new([left, right])),
+        };
+        Self::of(self.ascii | other.ascii, beyond)
     }
 
     fn new(beyond: Beyond) -> Self {
@@ -923,7 +926,7 @@ impl Starts {
         Self::new(
             self.at_start || other.at_start,
             self.at_end || other.at_end,
-            self.units.union(&other.units),
+            self.units.union(other.units),
         )
     }
 
