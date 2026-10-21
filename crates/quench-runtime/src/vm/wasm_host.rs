@@ -13,17 +13,30 @@ enum WasmHostInvocation {
 }
 
 impl<H: Host> Vm<H> {
+    /// A host function of an embedding signature, whose types name no declarations.
     pub(crate) fn create_wasm_host_function(
         &mut self,
         name: &str,
         target: crate::heap::WasmHostTarget,
         signature: WasmSignature,
     ) -> Result<Value, JsError> {
-        if signature
-            .params
-            .iter()
-            .chain(&signature.results)
-            .any(|ty| ty.requires_declarations())
+        self.create_owned_wasm_host_function(name, target, signature, None)
+    }
+
+    /// A host function whose signature's declared types, if any, resolve in `owner`.
+    pub(crate) fn create_owned_wasm_host_function(
+        &mut self,
+        name: &str,
+        target: crate::heap::WasmHostTarget,
+        signature: WasmSignature,
+        owner: Option<Rc<crate::wasm::WasmSignatures>>,
+    ) -> Result<Value, JsError> {
+        if owner.is_none()
+            && signature
+                .params
+                .iter()
+                .chain(&signature.results)
+                .any(|ty| ty.requires_declarations())
         {
             return Err(JsError::validation(
                 "embedded Wasm signature requires a declaration owner".into(),
@@ -45,11 +58,11 @@ impl<H: Host> Vm<H> {
         let length = signature.params.len();
         let environment = self.heap.alloc(Cell::WasmHostFunction {
             target,
-            signature: Rc::new(signature),
+            signature: Rc::new(crate::wasm::WasmHostSignature { signature, owner }),
         });
         let function = self.native_with_env(Native::WasmHost, environment);
         self.set_builtin_function_name(function, name)?;
-        let atom = self.intern_atom("length");
+        let atom = self.length_atom;
         self.set_property_with_attributes(
             function,
             atom,
@@ -103,7 +116,7 @@ impl<H: Host> Vm<H> {
             .get(self.active_program)
             .ok_or_else(|| JsError::validation("missing host caller program".into()))?;
         let result = self.call_value(&program, function, Value::UNDEFINED, &arguments)?;
-        self.decode_wasm_result_types(&signature.results, result, None)
+        self.decode_wasm_result_types(&signature.results, result, signature.declarations())
     }
 
     pub(super) fn wasm_callable_signature(&self, function: Value) -> Option<&WasmSignature> {

@@ -102,7 +102,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let source = args.first().copied().unwrap_or(Value::UNDEFINED);
-        if let Some(Cell::String(source_text)) = self.heap.get(source).cloned()
+        if let Some(source_text) = self.heap.string(source).cloned()
             && let Some(literal) = crate::Engine::eval_single_regexp_literal(source_text.host_string())
         {
             let text = source_text.host_string();
@@ -121,14 +121,14 @@ impl<H: Host> Vm<H> {
             }
             let pattern = self
                 .heap
-                .alloc(Cell::String(JsString::from_units(pattern_units)));
+                .alloc_string(JsString::from_units(pattern_units));
             let flags = self
                 .heap
-                .alloc(Cell::String(JsString::from_units(&flag_units)));
+                .alloc_string(JsString::from_units(&flag_units));
             return self.construct_regexp_native(p, &[pattern, flags], None);
         }
         let source_text = match self.heap.get(source) {
-            Some(Cell::String(value)) => value.clone(),
+            _ if let Some(value) = self.heap.string(source)  => value.clone(),
             _ => return Ok(source),
         };
         let text = source_text.host_string().to_owned();
@@ -855,8 +855,7 @@ impl<H: Host> Vm<H> {
         direct: bool,
     ) -> Result<Value, JsError> {
         let (function, environment) = match self.call_target(callee)? {
-            CallTarget::User(_, function, environment)
-            | CallTarget::NumericUser(_, function, environment) => (function, environment),
+            CallTarget::User(_, function, environment) => (function, environment),
             CallTarget::Native(_) => return Err(JsError("eval body is not a user closure".into())),
         };
         self.with_call_roots([callee, this], |vm| {
@@ -1025,7 +1024,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         message: &str,
     ) -> Result<Value, JsError> {
-        let text = self.heap.alloc(Cell::String(message.into()));
+        let text = self.heap.alloc_string(message.into());
         let error = self.construct_error_native(p, Native::SyntaxError, &[text])?;
         Err(JsError::thrown(error, format!("SyntaxError: {message}")))
     }
@@ -1037,7 +1036,7 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> Result<(), JsError> {
         let value_root = self.heap.root(value);
-        let key = self.heap.alloc(Cell::String(self.atom_value(atom)));
+        let key = self.heap.alloc_string(self.atom_value(atom));
         let value = self.heap.root_value(value_root).unwrap();
         let result = self.define_property_or_throw(
             p,

@@ -765,7 +765,7 @@ impl<H: Host> Vm<H> {
         if !self.has_property(p, object, key)? {
             return Ok(false);
         }
-        let Some(unscopables) = self.well_known_symbols.get("unscopables").copied() else {
+        let Some(unscopables) = self.well_known_symbols.get(WellKnownSymbol::Unscopables) else {
             return Ok(true);
         };
         let exclusions = self.get_index(p, object, unscopables)?;
@@ -870,7 +870,7 @@ impl<H: Host> Vm<H> {
         if objects.is_empty() {
             return Ok(None);
         }
-        let key = self.heap.alloc(Cell::String(self.atom_name(atom).into()));
+        let key = self.heap.alloc_string(self.atom_name(atom).into());
         self.with_call_roots(std::iter::once(key).chain(objects.iter().copied()), |vm| {
             for object in objects.iter().rev().copied() {
                 if vm.with_binding(p, object, key, atom)? {
@@ -1001,7 +1001,7 @@ impl<H: Host> Vm<H> {
             }
             return Err(self.reference_error(p, format!("{} is not defined", self.atom_name(atom))));
         }
-        let key = self.heap.alloc(Cell::String(self.atom_name(atom).into()));
+        let key = self.heap.alloc_string(self.atom_name(atom).into());
         // ResolveName has already selected a non-global object environment.
         // Preserve that reference even if evaluating the RHS removed the
         // binding before PutValue (the specification's captured Reference).
@@ -1297,7 +1297,7 @@ impl<H: Host> Vm<H> {
         if object == self.realm.globals {
             return self.load_name_without_with(p, atom, None, false);
         }
-        let key = self.heap.alloc(Cell::String(self.atom_name(atom).into()));
+        let key = self.heap.alloc_string(self.atom_name(atom).into());
         if !self.has_property(p, object, key)? {
             if strict {
                 return Err(
@@ -1358,7 +1358,7 @@ impl<H: Host> Vm<H> {
         if self.own_property(self.realm.globals, atom).is_some() {
             return Ok(true);
         }
-        let key = self.heap.alloc(Cell::String(self.atom_name(atom).into()));
+        let key = self.heap.alloc_string(self.atom_name(atom).into());
         self.has_property(p, self.realm.globals, key)
     }
 
@@ -1589,6 +1589,60 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// `slot` at the end of a capture walk `walked_capture_slots` remembers, when that end is
+    /// a function environment holding the slot densely; `None` leaves the read to the walk.
+    #[inline(always)]
+    pub(super) fn remembered_capture(
+        &self,
+        env: Value,
+        captured: bool,
+        depth: u16,
+        slot: u16,
+    ) -> Option<Value> {
+        let walk = &self.capture_walks[capture_walk_index(env, depth)?];
+        if walk.depth != depth
+            || walk.cache.env != env
+            || walk.cache.captured != captured
+            || walk.cache.epoch != self.heap.collection_epoch()
+            || walk.cache.slots.is_null()
+            || walk.cache.root.is_some()
+        {
+            return None;
+        }
+        // SAFETY: as `walked_capture_slots`: the walk ends at a live cell this collection.
+        unsafe { &*walk.cache.slots }.dense()?.dense_plain(usize::from(slot))
+    }
+
+    /// `environment_capture_slots` through the walks it remembers (`capture_walks`): a walk
+    /// from the same environment, equally its own or not, to the same depth in the same
+    /// collection ends at the same live cell, whose slot storage never moves.
+    #[inline(always)]
+    pub(super) fn walked_capture_slots(
+        &mut self,
+        env: Value,
+        captured: bool,
+        depth: u16,
+    ) -> Option<(*const crate::heap::EnvironmentSlots, Option<Option<u32>>)> {
+        let epoch = self.heap.collection_epoch();
+        let index = capture_walk_index(env, depth)?;
+        let walk = &self.capture_walks[index];
+        if walk.depth == depth
+            && walk.cache.env == env
+            && walk.cache.captured == captured
+            && walk.cache.epoch == epoch
+            && !walk.cache.slots.is_null()
+        {
+            return Some((walk.cache.slots, walk.cache.root));
+        }
+        let (slots, root) = self.environment_capture_slots(env, captured, depth)?;
+        let slots: *const crate::heap::EnvironmentSlots = slots;
+        self.capture_walks[index] = CaptureWalk {
+            depth,
+            cache: CaptureCache { env, captured, epoch, slots, root },
+        };
+        Some((slots, root))
+    }
+
     /// The frame's cached innermost slots and root program while the cache is current
     /// (`cached_direct_capture`).
     #[inline(always)]
@@ -1618,7 +1672,10 @@ impl<H: Host> Vm<H> {
         slot: u16,
     ) -> Option<Value> {
         if depth != 0 {
-            return self.direct_capture(frame, depth, slot);
+            let (env, captured) = (self.frames[frame].env, self.frames[frame].captured);
+            let (slots, root) = self.walked_capture_slots(env, captured, depth)?;
+            // SAFETY: as `walked_capture_slots`: the walk ends at a live cell this collection.
+            return self.owned_capture(unsafe { &*slots }, root, slot);
         }
         let (slots, root) = if let Some(current) = self.current_capture_slots(frame) {
             current
@@ -1637,6 +1694,40 @@ impl<H: Host> Vm<H> {
         };
         // SAFETY: see above; the pointer was taken from the frame's current environment.
         self.owned_capture(unsafe { &*slots }, root, slot)
+    }
+
+    /// A capture that can be read from an owned or shared environment slot after applying the same
+    /// functionless-layer skipping as `capture`, without projected property lookup.
+    pub(super) fn jit_owned_capture(
+        &mut self,
+        frame: usize,
+        depth: u16,
+        slot: u16,
+    ) -> Option<Value> {
+        if let Some(value) = self.cached_direct_capture(frame, depth, slot) {
+            return Some(value);
+        }
+        let env = self.capture_env(frame, depth)?;
+        let Some(Cell::Environment {
+            function,
+            scope,
+            ..
+        }) = self.heap.get(env)
+        else {
+            return None;
+        };
+        let root = *function == super::ROOT_FUNCTION_ID;
+        if root && !self.root_environment_slot_is_binding(scope.program(), slot) {
+            return None;
+        }
+        let Some(value) = self
+            .heap
+            .environment_slot(env, usize::from(slot))
+            .filter(|value| !value.is_deleted())
+        else {
+            return None;
+        };
+        Some(value)
     }
 
     #[cold]
@@ -1686,6 +1777,21 @@ impl<H: Host> Vm<H> {
             slot,
             !self.eval_script_context,
         )
+    }
+
+    /// `load_projected_environment_binding` of a global var where reading it runs no guest
+    /// code: a data property the global object or its prototypes hold
+    /// (`Vm::plain_named_get`). `None` for any other projection or read.
+    pub(super) fn plain_projected_global_var(&self, env: Value, slot: u16) -> Option<Value> {
+        let Cell::Environment { function, scope, .. } = self.heap.get(env)? else {
+            return None;
+        };
+        let owner_id = scope
+            .program()
+            .map_or(self.active_program, super::ProgramId::from_raw);
+        let owner = self.programs.residual(owner_id)?;
+        let atom = self.root_global_var_atom(owner, owner_id, *function, usize::from(slot))?;
+        self.plain_named_get(self.realm.globals, atom)
     }
 
     /// Reads a root-function projection (global var, global lexical or module import) or
@@ -1793,23 +1899,11 @@ impl<H: Host> Vm<H> {
         else {
             return false;
         };
-        let function = *function;
         debug_assert_eq!(program, self.active_program);
-        if function == super::ROOT_FUNCTION_ID
-            || function == u32::MAX
-            || scope.program().is_some_and(|owner| owner != program.raw())
-        {
+        if !environment_admits_direct_store(p, program, *function, scope, slot) {
             return false;
         }
         let slot = usize::from(slot);
-        let Some(owner) = p.function_get(function as usize) else {
-            return false;
-        };
-        if owner.is_self_binding_slot(slot)
-            || super::arguments::mapped_arguments_slot(owner, slot).is_some()
-        {
-            return false;
-        }
         match self.heap.environment_slot_mut(env, slot) {
             Some(binding) if !binding.is_deleted() => {
                 *binding = value;
@@ -1817,6 +1911,61 @@ impl<H: Host> Vm<H> {
             }
             _ => false,
         }
+    }
+
+    /// `direct_store_environment` of a slot `env` owns: one lookup, which also makes the
+    /// write barrier's note, for the running frameless activation's own environment. A
+    /// slot another environment holds, or one holding any marker (an uninitialized binding),
+    /// returns `false` for the general store.
+    #[inline(always)]
+    pub(super) fn direct_store_own_environment(
+        &mut self,
+        p: &ResidualProgram,
+        program: super::ProgramId,
+        env: Value,
+        slot: u16,
+        value: Value,
+    ) -> bool {
+        let Some(Cell::Environment {
+            function,
+            scope,
+            slots,
+            ..
+        }) = self.heap.get_mut(env)
+        else {
+            return false;
+        };
+        if !environment_admits_direct_store(p, program, *function, scope, slot) {
+            return false;
+        }
+        match slots.owned_mut(usize::from(slot)) {
+            Some(binding) if !binding.is_internal_marker() => {
+                *binding = value;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether `environment_admits_direct_store` admits a store to every slot of `env` in
+    /// the executing program: its function has no self binding and maps no parameter.
+    pub(super) fn admits_every_direct_store(
+        &self,
+        p: &ResidualProgram,
+        program: super::ProgramId,
+        env: Value,
+    ) -> bool {
+        let Some(Cell::Environment {
+            function, scope, ..
+        }) = self.heap.get(env)
+        else {
+            return false;
+        };
+        direct_store_owner(p, program, *function, scope).is_some_and(|owner| {
+            owner.self_binding_slot.is_none()
+                && (0..usize::from(owner.params))
+                    .all(|parameter| super::arguments::mapped_arguments_slot(owner, parameter).is_none())
+        })
     }
 
     fn store_environment_binding(
@@ -2412,4 +2561,49 @@ impl NameLookup {
             vm.outer_environment_binding(vm.captured_parent_environment(self.frame), self.atom)
         })
     }
+}
+
+/// Whether a store to `slot` of an environment of `function` with `scope` is a plain slot
+/// write in `program`: not the root's, a function-less layer's or another program's, nor a
+/// self binding or a mapped arguments parameter, which the general store handles.
+#[inline(always)]
+fn environment_admits_direct_store(
+    p: &ResidualProgram,
+    program: super::ProgramId,
+    function: u32,
+    scope: &crate::heap::EnvironmentScopeRef,
+    slot: u16,
+) -> bool {
+    let slot = usize::from(slot);
+    direct_store_owner(p, program, function, scope).is_some_and(|owner| {
+        !owner.is_self_binding_slot(slot)
+            && super::arguments::mapped_arguments_slot(owner, slot).is_none()
+    })
+}
+
+/// The function owning an environment of `function` with `scope` whose slots
+/// `environment_admits_direct_store` may admit: not the root's, a function-less layer's or
+/// another program's.
+#[inline(always)]
+fn direct_store_owner<'p>(
+    p: &'p ResidualProgram,
+    program: super::ProgramId,
+    function: u32,
+    scope: &crate::heap::EnvironmentScopeRef,
+) -> Option<&'p crate::bytecode::Function> {
+    if function == super::ROOT_FUNCTION_ID
+        || function == u32::MAX
+        || scope.program().is_some_and(|owner| owner != program.raw())
+    {
+        return None;
+    }
+    // Read on demand: an environment restored from a startup snapshot can outlive its
+    // function's record in this process.
+    p.function_get(function as usize)
+}
+
+/// The `Vm::capture_walks` entry a walk from `env` to `depth` uses.
+#[inline(always)]
+fn capture_walk_index(env: Value, depth: u16) -> Option<usize> {
+    Some((env.heap_index()? as usize ^ usize::from(depth) * (CAPTURE_WALKS / 2 + 1)) & (CAPTURE_WALKS - 1))
 }

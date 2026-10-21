@@ -264,7 +264,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         let function = self.native_value(native);
         let name_atom = self.intern_atom("name");
-        let name_value = self.heap.alloc(Cell::String(name.into()));
+        let name_value = self.heap.alloc_string(name.into());
         self.set_named(program, function, "name", name_value)?;
         self.set_property_attributes(
             function,
@@ -323,10 +323,10 @@ impl<H: Host> Vm<H> {
         global: Value,
         tag: &str,
     ) -> Result<(), JsError> {
-        if self.well_known_symbols.contains_key("toStringTag") {
+        if self.well_known_symbols.get(WellKnownSymbol::ToStringTag).is_some() {
             self.install_builtin_to_string_tag(prototype, tag)?;
         }
-        if let Some(species) = self.well_known_symbols.get("species").copied() {
+        if let Some(species) = self.well_known_symbols.get(WellKnownSymbol::Species) {
             let getter = self.native_with_realm(Native::ArrayBufferSpecies, Value::NULL, global);
             self.set_builtin_function_name(getter, "get [Symbol.species]")?;
             self.set_symbol_property(constructor, species, getter)?;
@@ -616,7 +616,7 @@ impl<H: Host> Vm<H> {
             .transpose()?
             .unwrap_or(length);
         let count = end.saturating_sub(start);
-        let constructor_atom = self.intern_atom("constructor");
+        let constructor_atom = self.runtime_atoms.constructor;
         let constructor = self.get_property(p, this, constructor_atom)?;
         let species = if constructor.is_undefined() {
             None

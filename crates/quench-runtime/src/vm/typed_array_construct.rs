@@ -309,7 +309,7 @@ impl<H: Host> Vm<H> {
         let to_string_tag =
             self.native_with_realm(Native::TypedArrayToStringTag, Value::NULL, realm);
         self.set_builtin_function_name(to_string_tag, "get [Symbol.toStringTag]")?;
-        let tag_symbol = self.well_known_symbols.get("toStringTag").copied().unwrap();
+        let tag_symbol = self.well_known_symbols.get(WellKnownSymbol::ToStringTag).unwrap();
         self.set_symbol_property(prototype, tag_symbol, Value::UNDEFINED)?;
         self.set_property_attributes(
             prototype,
@@ -323,7 +323,7 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
-        let species = self.well_known_symbols.get("species").copied().unwrap();
+        let species = self.well_known_symbols.get(WellKnownSymbol::Species).unwrap();
         let getter = self.native_with_realm(Native::ArraySpecies, realm, realm);
         self.set_builtin_function_name(getter, "get [Symbol.species]")?;
         self.set_symbol_property(constructor, species, Value::UNDEFINED)?;
@@ -374,7 +374,7 @@ impl<H: Host> Vm<H> {
         let kind = self
             .typed_array_kind(source)
             .ok_or_else(|| self.type_error(p, "typed array species source is invalid".into()))?;
-        let constructor_atom = self.intern_atom("constructor");
+        let constructor_atom = self.runtime_atoms.constructor;
         let mut constructor = self.get_property(p, source, constructor_atom)?;
         if self.is_object_like(constructor) {
             constructor = self.species_of(p, constructor)?;
@@ -434,7 +434,7 @@ impl<H: Host> Vm<H> {
                 .array_buffer_to_index(p, object)
                 .map(TypedArrayInitialization::Length);
         }
-        if let Some(symbol) = self.well_known_symbols.get("iterator").copied() {
+        if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::Iterator) {
             let method = self.get_index(p, object, symbol)?;
             if !method.is_undefined() && !method.is_null() {
                 if !self.is_function(method) {

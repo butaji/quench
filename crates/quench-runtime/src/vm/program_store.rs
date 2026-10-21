@@ -12,13 +12,28 @@ mod snapshot;
 struct JsJitCounters {
     source_name: Option<Box<str>>,
     function_name: Option<Box<str>>,
+    parameter_count: u16,
+    instruction_count: u32,
+    guard_conditional_branches: u32,
+    guard_typeof_ops: u32,
+    guard_strict_comparisons: u32,
+    guard_relational_comparisons: u32,
     entries: u64,
     numeric_entries: u64,
     promotions: u64,
     compile_attempts: u64,
     compile_successes: u64,
+    rejection_reason: Option<&'static str>,
     compile_ns: u64,
     native_entries: u64,
+    field_return_candidate_entries: u64,
+    field_return_fixed_this_entries: u64,
+    field_return_fast_entries: u64,
+    numeric_find_fast_entries: u64,
+    fallback_entries: u64,
+    interpreter_completions: u64,
+    interpreter_inclusive_ns: u64,
+    opcode_counts: Vec<(u16, u32)>,
     code_bytes: usize,
 }
 
@@ -28,14 +43,25 @@ struct JsJitCounters {
 /// under a stationary Bernoulli model; it is not a VM-wide multiple-test bound.
 pub(super) const JS_JIT_PROMOTION_LOOKS: [(u8, u8); 4] =
     [(32, 31), (64, 59), (128, 113), (255, 219)];
-const JS_JIT_MAX_FUNCTIONS: usize = 8;
+const JS_JIT_MAX_FUNCTIONS: usize = 64;
 const JS_JIT_MAX_TRACKED_FUNCTIONS: usize = 256;
-const JS_JIT_MAX_MAPPED_BYTES: usize = 64 * 1024;
+const JS_JIT_MAX_DIAGNOSTIC_FUNCTIONS: usize = 4096;
+const JS_JIT_MAX_REJECTED_FUNCTIONS: usize = 4096;
+const JS_JIT_REJECTION_DIAGNOSTIC_ENTRIES: u64 = 32;
+// Cranelift executable mappings are page-rounded. A 64 KiB cap admitted only
+// sixteen tiny JS artifacts on 4 KiB systems, starving later high-frequency
+// helpers; the function-count cap still bounds artifact proliferation.
+const JS_JIT_MAX_MAPPED_BYTES: usize = 512 * 1024;
 /// Promote a Wasm function only after repeated interpreter entries. Wasm
 /// signatures and bytecode are fixed, so this is a call-hotness gate.
 pub(super) const WASM_JIT_PROMOTION_ENTRIES: u8 = 32;
 const WASM_JIT_MAX_TIER_ROOTS: usize = 32;
 const WASM_JIT_MAX_TIER_MAPPED_BYTES: usize = 4 * 1024 * 1024;
+/// One process-local admission ceiling shared by JS and Wasm tiers. The
+/// language-specific limits above are additional policy caps, not separate
+/// executable-memory pools.
+const JIT_MAX_ARTIFACTS: usize = JS_JIT_MAX_FUNCTIONS + WASM_JIT_MAX_TIER_ROOTS;
+const JIT_MAX_MAPPED_BYTES: usize = WASM_JIT_MAX_TIER_MAPPED_BYTES;
 
 #[derive(Clone)]
 pub(super) enum JsTierState {
@@ -43,6 +69,10 @@ pub(super) enum JsTierState {
     /// A hot function whose promotion observation had a non-numeric argument;
     /// compile on its next numeric entry.
     PromotionPending,
+    Rejected {
+        entries: u64,
+        reason: &'static str,
+    },
     Unsupported,
     Compiled(Rc<super::compiled::CompiledJsFunction>),
 }
@@ -176,12 +206,19 @@ pub(crate) struct ProgramStore {
     unchecked_reclaimable: usize,
     /// VM-local bounds for the optional JavaScript tier cache.
     js_jit_tracked_functions: usize,
+    js_jit_rejected_functions: usize,
     js_jit_compiled_functions: usize,
     js_jit_mapped_bytes: usize,
     wasm_jit_tier_roots: usize,
     wasm_jit_tier_mapped_bytes: usize,
+    /// Shared JS/Wasm code-cache budget counters.
+    jit_compiled_artifacts: usize,
+    jit_mapped_bytes: usize,
     /// Allocated only when opt-in JavaScript JIT diagnostics are requested.
     js_jit_diagnostics: Option<FxHashMap<(u32, u32), JsJitCounters>>,
+    /// Last matched numeric loop shape; hot entries keep reusing the same artifact.
+    js_jit_numeric_find_candidate:
+        Option<(ProgramId, u32, super::js_compiled::JsJitNumericFind)>,
 }
 
 impl Default for ProgramStore {
@@ -193,18 +230,39 @@ impl Default for ProgramStore {
             reclaim_passes: 0,
             unchecked_reclaimable: 0,
             js_jit_tracked_functions: 0,
+            js_jit_rejected_functions: 0,
             js_jit_compiled_functions: 0,
             js_jit_mapped_bytes: 0,
             wasm_jit_tier_roots: 0,
             wasm_jit_tier_mapped_bytes: 0,
+            jit_compiled_artifacts: 0,
+            jit_mapped_bytes: 0,
             js_jit_diagnostics: std::env::var_os("QUENCH_JS_JIT_STATS")
                 .is_some_and(|value| value == "1")
                 .then(FxHashMap::default),
+            js_jit_numeric_find_candidate: None,
         }
     }
 }
 
 impl ProgramStore {
+    pub(super) fn js_jit_numeric_find_candidate(
+        &mut self,
+        id: ProgramId,
+        function_id: u32,
+        function: &crate::bytecode::Function,
+    ) -> Option<super::js_compiled::JsJitNumericFind> {
+        if let Some((cached_id, cached_function, candidate)) = self.js_jit_numeric_find_candidate
+            && cached_id == id
+            && cached_function == function_id
+        {
+            return Some(candidate);
+        }
+        let candidate = super::js_compiled::numeric_find_candidate(function)?;
+        self.js_jit_numeric_find_candidate = Some((id, function_id, candidate));
+        Some(candidate)
+    }
+
     pub(super) fn cached_global_eval(&self, source: &JsString) -> Option<ProgramId> {
         let program = *self.global_eval_programs.get(source)?;
         self.entry(program).map(|_| program)
@@ -274,6 +332,8 @@ impl ProgramStore {
         let mut reclaimed = Vec::new();
         let mut reclaimed_tiers = (0usize, 0usize, 0usize);
         let mut reclaimed_wasm_tiers = (0usize, 0usize);
+        let mut reclaimed_wasm_baselines = (0usize, 0usize);
+        let mut reclaimed_rejected = 0usize;
         let mut pending = 0;
         for (index, slot) in self.programs.iter_mut().enumerate() {
             let Some(entry) = slot else { continue };
@@ -284,7 +344,16 @@ impl ProgramStore {
                 pending += 1;
                 continue;
             }
-            reclaimed_tiers.0 += entry.js_tiers.len();
+            reclaimed_tiers.0 += entry
+                .js_tiers
+                .values()
+                .filter(|state| !matches!(state, JsTierState::Rejected { .. }))
+                .count();
+            reclaimed_rejected += entry
+                .js_tiers
+                .values()
+                .filter(|state| matches!(state, JsTierState::Rejected { .. }))
+                .count();
             for state in entry.js_tiers.values() {
                 if let JsTierState::Compiled(compiled) = state {
                     reclaimed_tiers.1 += 1;
@@ -302,12 +371,19 @@ impl ProgramStore {
                 .values()
                 .filter(|state| state.compiled.is_some())
                 .count();
+            if let Some(compiled) = entry.compiled.as_ref().and_then(Option::as_ref) {
+                reclaimed_wasm_baselines.0 += 1;
+                reclaimed_wasm_baselines.1 += compiled.mapped_bytes();
+            }
             *slot = None;
             reclaimed.extend(ProgramId::from_index(index));
         }
         self.js_jit_tracked_functions = self
             .js_jit_tracked_functions
             .saturating_sub(reclaimed_tiers.0);
+        self.js_jit_rejected_functions = self
+            .js_jit_rejected_functions
+            .saturating_sub(reclaimed_rejected);
         self.js_jit_compiled_functions = self
             .js_jit_compiled_functions
             .saturating_sub(reclaimed_tiers.1);
@@ -318,6 +394,18 @@ impl ProgramStore {
         self.wasm_jit_tier_mapped_bytes = self
             .wasm_jit_tier_mapped_bytes
             .saturating_sub(reclaimed_wasm_tiers.1);
+        let reclaimed_artifacts = reclaimed_tiers
+            .1
+            .saturating_add(reclaimed_wasm_tiers.0)
+            .saturating_add(reclaimed_wasm_baselines.0);
+        let reclaimed_bytes = reclaimed_tiers
+            .2
+            .saturating_add(reclaimed_wasm_tiers.1)
+            .saturating_add(reclaimed_wasm_baselines.1);
+        self.jit_compiled_artifacts = self
+            .jit_compiled_artifacts
+            .saturating_sub(reclaimed_artifacts);
+        self.jit_mapped_bytes = self.jit_mapped_bytes.saturating_sub(reclaimed_bytes);
         self.unchecked_reclaimable = pending;
         if !reclaimed.is_empty() {
             let programs = &self.programs;
@@ -333,10 +421,13 @@ impl ProgramStore {
         self.programs.clear();
         self.unchecked_reclaimable = 0;
         self.js_jit_tracked_functions = 0;
+        self.js_jit_rejected_functions = 0;
         self.js_jit_compiled_functions = 0;
         self.js_jit_mapped_bytes = 0;
         self.wasm_jit_tier_roots = 0;
         self.wasm_jit_tier_mapped_bytes = 0;
+        self.jit_compiled_artifacts = 0;
+        self.jit_mapped_bytes = 0;
         if let Some(diagnostics) = &mut self.js_jit_diagnostics {
             diagnostics.clear();
         }
@@ -851,6 +942,28 @@ impl ProgramStore {
         id: ProgramId,
         compiled: Option<Rc<super::compiled::CompiledProgram>>,
     ) {
+        if let Some(previous_bytes) = self
+            .entry(id)
+            .and_then(|entry| entry.compiled.as_ref())
+            .and_then(Option::as_ref)
+            .map(|previous| previous.mapped_bytes())
+        {
+            self.jit_compiled_artifacts = self.jit_compiled_artifacts.saturating_sub(1);
+            self.jit_mapped_bytes = self
+                .jit_mapped_bytes
+                .saturating_sub(previous_bytes);
+        }
+        let compiled = compiled.filter(|compiled| {
+            self.jit_compiled_artifacts < JIT_MAX_ARTIFACTS
+                && self
+                    .jit_mapped_bytes
+                    .saturating_add(compiled.mapped_bytes())
+                    <= JIT_MAX_MAPPED_BYTES
+        });
+        if let Some(compiled) = &compiled {
+            self.jit_compiled_artifacts += 1;
+            self.jit_mapped_bytes += compiled.mapped_bytes();
+        }
         if let Some(entry) = self.entry_mut(id) {
             entry.compiled = Some(compiled);
         }
@@ -983,6 +1096,8 @@ impl ProgramStore {
                 .wasm_jit_tier_mapped_bytes
                 .saturating_add(bytes)
                 > WASM_JIT_MAX_TIER_MAPPED_BYTES
+            || self.jit_compiled_artifacts >= JIT_MAX_ARTIFACTS
+            || self.jit_mapped_bytes.saturating_add(bytes) > JIT_MAX_MAPPED_BYTES
         {
             return false;
         }
@@ -992,6 +1107,8 @@ impl ProgramStore {
         entry.wasm_tiers.entry(root).or_default().compiled = Some(compiled);
         self.wasm_jit_tier_roots += 1;
         self.wasm_jit_tier_mapped_bytes += bytes;
+        self.jit_compiled_artifacts += 1;
+        self.jit_mapped_bytes += bytes;
         true
     }
 
@@ -1098,7 +1215,9 @@ impl ProgramStore {
                         numeric
                     }
                 }
-                JsTierState::Unsupported | JsTierState::Compiled(_) => false,
+                JsTierState::Rejected { .. }
+                | JsTierState::Unsupported
+                | JsTierState::Compiled(_) => false,
             },
         };
         if inserted {
@@ -1110,7 +1229,63 @@ impl ProgramStore {
         should_compile
     }
 
-    pub(super) fn record_js_jit_entry(&mut self, id: ProgramId, function: u32, numeric: bool) {
+    /// Memoize an unsupported bytecode shape separately from tier candidates.
+    /// Cold bootstrap helpers therefore cannot consume the hot-function
+    /// promotion table. Return its accumulated count only once diagnostic
+    /// reporting becomes useful.
+    pub(super) fn reject_js_function(
+        &mut self,
+        id: ProgramId,
+        function: u32,
+        reason: &'static str,
+    ) -> Option<u64> {
+        let can_reject = self.js_jit_rejected_functions < JS_JIT_MAX_REJECTED_FUNCTIONS;
+        let entry = self.entry_mut(id)?;
+        let mut inserted = false;
+        let count = match entry.js_tiers.entry(function) {
+            std::collections::hash_map::Entry::Vacant(slot) if can_reject => {
+                slot.insert(JsTierState::Rejected { entries: 1, reason });
+                inserted = true;
+                1
+            }
+            std::collections::hash_map::Entry::Occupied(mut slot) => {
+                let JsTierState::Rejected { entries, .. } = slot.get_mut() else {
+                    return None;
+                };
+                *entries = entries.saturating_add(1);
+                *entries
+            }
+            _ => return None,
+        };
+        if inserted {
+            self.js_jit_rejected_functions += 1;
+        }
+        (count >= JS_JIT_REJECTION_DIAGNOSTIC_ENTRIES).then_some(count)
+    }
+
+    pub(super) fn note_js_rejected_entry(
+        &mut self,
+        id: ProgramId,
+        function: u32,
+    ) -> Option<(u64, &'static str)> {
+        let JsTierState::Rejected { entries, reason } = self
+            .entry_mut(id)?
+            .js_tiers
+            .get_mut(&function)?
+        else {
+            return None;
+        };
+        *entries = entries.saturating_add(1);
+        (*entries >= JS_JIT_REJECTION_DIAGNOSTIC_ENTRIES).then_some((*entries, *reason))
+    }
+
+    pub(super) fn record_js_jit_entry(
+        &mut self,
+        id: ProgramId,
+        function: u32,
+        numeric: bool,
+        parameter_count: u16,
+    ) {
         let key = (id.raw(), function);
         let Some(diagnostics) = self.js_jit_diagnostics.as_ref() else {
             return;
@@ -1122,36 +1297,124 @@ impl ProgramStore {
                 .and_then(|diagnostics| diagnostics.get_mut(&key))
             {
                 counters.entries = counters.entries.saturating_add(1);
+                counters.parameter_count = parameter_count;
                 counters.numeric_entries = counters
                     .numeric_entries
                     .saturating_add(u64::from(numeric));
             }
             return;
         }
-        if diagnostics.len() >= JS_JIT_MAX_TRACKED_FUNCTIONS {
+        if diagnostics.len() >= JS_JIT_MAX_DIAGNOSTIC_FUNCTIONS {
             return;
         }
-        let (source_name, function_name) = self
+        let (source_name, function_name, instruction_count, opcode_counts, guard_census) = self
             .entry(id)
             .map(|entry| {
-                let function_name = entry
-                    .residual
-                    .functions
-                    .get(function as usize)
-                    .and_then(|function| function.header().name.or(function.header().inferred_name))
+                let slot = entry.residual.functions.get(function as usize);
+                let function_code = slot.and_then(|slot| slot.record());
+                let function_name = slot
+                    .and_then(|slot| slot.header().name.or(slot.header().inferred_name))
                     .and_then(|atom| {
                         let index = atom as usize;
                         (index < entry.residual.atoms.len())
                             .then(|| entry.residual.atoms[index].to_owned())
                     })
                     .unwrap_or_default();
-                (entry.residual.source_name.clone(), function_name)
+                let instruction_count = function_code.map_or(0, |function| {
+                    u32::try_from(function.code.len()).unwrap_or(u32::MAX)
+                });
+                let mut opcode_counts = vec![0_u32; crate::bytecode::Op::COUNT];
+                if let Some(function) = function_code {
+                    for instruction in &function.code {
+                        let opcode = instruction.as_wide().op() as usize;
+                        opcode_counts[opcode] = opcode_counts[opcode].saturating_add(1);
+                    }
+                }
+                let opcode_counts = opcode_counts
+                    .into_iter()
+                    .enumerate()
+                    .filter_map(|(opcode, count)| {
+                        (count != 0).then(|| (u16::try_from(opcode).unwrap_or(u16::MAX), count))
+                    })
+                    .collect();
+                // This is a bytecode-site census, not a claim that a site is
+                // pure, redundant, or safe to remove. Predicate purity and
+                // path implication need separate proofs before optimization.
+                let mut guard_census = (0_u32, 0_u32, 0_u32, 0_u32);
+                if let Some(function) = function_code {
+                    for instruction in &function.code {
+                        let instruction = instruction.as_wide();
+                        match instruction.op() {
+                            crate::bytecode::Op::JumpFalse
+                            | crate::bytecode::Op::JumpTrue
+                            | crate::bytecode::Op::JumpBinaryFalse => {
+                                guard_census.0 = guard_census.0.saturating_add(1);
+                                if instruction.op() == crate::bytecode::Op::JumpBinaryFalse {
+                                    match instruction.binary_operator_field() {
+                                        x if x
+                                            == oxc_ast::ast::BinaryOperator::StrictEquality as u32
+                                            || x == oxc_ast::ast::BinaryOperator::StrictInequality as u32 =>
+                                        {
+                                            guard_census.2 = guard_census.2.saturating_add(1);
+                                        }
+                                        x if x == oxc_ast::ast::BinaryOperator::LessThan as u32
+                                            || x == oxc_ast::ast::BinaryOperator::LessEqualThan as u32
+                                            || x == oxc_ast::ast::BinaryOperator::GreaterThan as u32
+                                            || x == oxc_ast::ast::BinaryOperator::GreaterEqualThan as u32 =>
+                                        {
+                                            guard_census.3 = guard_census.3.saturating_add(1);
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                            crate::bytecode::Op::Unary
+                                if instruction.unary_operator()
+                                    == oxc_ast::ast::UnaryOperator::Typeof as u32 =>
+                            {
+                                guard_census.1 = guard_census.1.saturating_add(1);
+                            }
+                            crate::bytecode::Op::Binary => {
+                                match instruction.binary_operator() {
+                                    x if x == oxc_ast::ast::BinaryOperator::StrictEquality as u32
+                                        || x == oxc_ast::ast::BinaryOperator::StrictInequality as u32 =>
+                                    {
+                                        guard_census.2 = guard_census.2.saturating_add(1);
+                                    }
+                                    x if x == oxc_ast::ast::BinaryOperator::LessThan as u32
+                                        || x == oxc_ast::ast::BinaryOperator::LessEqualThan as u32
+                                        || x == oxc_ast::ast::BinaryOperator::GreaterThan as u32
+                                        || x == oxc_ast::ast::BinaryOperator::GreaterEqualThan as u32 =>
+                                    {
+                                        guard_census.3 = guard_census.3.saturating_add(1);
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                (
+                    entry.residual.source_name.clone(),
+                    function_name,
+                    instruction_count,
+                    opcode_counts,
+                    guard_census,
+                )
             })
             .unwrap_or_default();
         if let Some(diagnostics) = self.js_jit_diagnostics.as_mut() {
             let counters = diagnostics.entry(key).or_default();
             counters.source_name = Some(source_name.into_boxed_str());
             counters.function_name = Some(function_name.into_boxed_str());
+            counters.parameter_count = parameter_count;
+            counters.instruction_count = instruction_count;
+            counters.opcode_counts = opcode_counts;
+            counters.guard_conditional_branches = guard_census.0;
+            counters.guard_typeof_ops = guard_census.1;
+            counters.guard_strict_comparisons = guard_census.2;
+            counters.guard_relational_comparisons = guard_census.3;
             counters.entries = counters.entries.saturating_add(1);
             counters.numeric_entries = counters
                 .numeric_entries
@@ -1176,6 +1439,7 @@ impl ProgramStore {
         elapsed_ns: u64,
         code_bytes: usize,
         installed: bool,
+        rejection: Option<&'static str>,
     ) {
         if let Some(counters) = self
             .js_jit_diagnostics
@@ -1188,6 +1452,26 @@ impl ProgramStore {
                 .saturating_add(u64::from(installed));
             counters.compile_ns = counters.compile_ns.saturating_add(elapsed_ns);
             counters.code_bytes = counters.code_bytes.saturating_add(code_bytes);
+            if rejection.is_some() {
+                counters.rejection_reason = rejection;
+            }
+        }
+    }
+
+    pub(super) fn record_js_jit_rejection(
+        &mut self,
+        id: ProgramId,
+        function: u32,
+        reason: &'static str,
+        entries: u64,
+    ) {
+        if let Some(counters) = self
+            .js_jit_diagnostics
+            .as_mut()
+            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
+        {
+            counters.rejection_reason = Some(reason);
+            counters.entries = entries;
         }
     }
 
@@ -1198,6 +1482,76 @@ impl ProgramStore {
             .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
         {
             counters.native_entries = counters.native_entries.saturating_add(1);
+        }
+    }
+
+    pub(super) fn record_js_jit_field_return_candidate(
+        &mut self,
+        id: ProgramId,
+        function: u32,
+        fixed_this: bool,
+    ) {
+        if let Some(counters) = self
+            .js_jit_diagnostics
+            .as_mut()
+            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
+        {
+            counters.field_return_candidate_entries =
+                counters.field_return_candidate_entries.saturating_add(1);
+            counters.field_return_fixed_this_entries = counters
+                .field_return_fixed_this_entries
+                .saturating_add(u64::from(fixed_this));
+        }
+    }
+
+    pub(super) fn record_js_jit_field_return_entry(&mut self, id: ProgramId, function: u32) {
+        if let Some(counters) = self
+            .js_jit_diagnostics
+            .as_mut()
+            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
+        {
+            counters.field_return_fast_entries =
+                counters.field_return_fast_entries.saturating_add(1);
+        }
+    }
+
+    pub(super) fn record_js_jit_numeric_find_entry(&mut self, id: ProgramId, function: u32) {
+        if let Some(counters) = self
+            .js_jit_diagnostics
+            .as_mut()
+            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
+        {
+            counters.numeric_find_fast_entries = counters
+                .numeric_find_fast_entries
+                .saturating_add(1);
+        }
+    }
+
+    pub(super) fn record_js_jit_fallback_entry(&mut self, id: ProgramId, function: u32) {
+        if let Some(counters) = self
+            .js_jit_diagnostics
+            .as_mut()
+            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
+        {
+            counters.fallback_entries = counters.fallback_entries.saturating_add(1);
+        }
+    }
+
+    pub(super) fn record_js_jit_interpreter_completion(
+        &mut self,
+        id: ProgramId,
+        function: u32,
+        inclusive_ns: u64,
+    ) {
+        if let Some(counters) = self
+            .js_jit_diagnostics
+            .as_mut()
+            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
+        {
+            counters.interpreter_completions = counters.interpreter_completions.saturating_add(1);
+            counters.interpreter_inclusive_ns = counters
+                .interpreter_inclusive_ns
+                .saturating_add(inclusive_ns);
         }
     }
 
@@ -1216,10 +1570,17 @@ impl ProgramStore {
                     .js_jit_mapped_bytes
                     .saturating_add(compiled.mapped_bytes())
                     <= JS_JIT_MAX_MAPPED_BYTES
+                && self.jit_compiled_artifacts < JIT_MAX_ARTIFACTS
+                && self
+                    .jit_mapped_bytes
+                    .saturating_add(compiled.mapped_bytes())
+                    <= JIT_MAX_MAPPED_BYTES
         });
         if let Some(compiled) = &compiled {
             self.js_jit_compiled_functions += 1;
             self.js_jit_mapped_bytes += compiled.mapped_bytes();
+            self.jit_compiled_artifacts += 1;
+            self.jit_mapped_bytes += compiled.mapped_bytes();
         }
         if let Some(entry) = self.entry_mut(id) {
             entry.js_tiers.insert(
@@ -1234,6 +1595,11 @@ impl ProgramStore {
     #[cfg(test)]
     pub(super) fn js_jit_tracked_function_count(&self) -> usize {
         self.js_jit_tracked_functions
+    }
+
+    #[cfg(test)]
+    pub(super) fn jit_mapped_bytes(&self) -> usize {
+        self.jit_mapped_bytes
     }
 
     /// A program's lane views by function, derived on first use.
@@ -1257,6 +1623,7 @@ impl ProgramStore {
             &crate::bytecode::Function,
             &[Value],
             crate::bytecode::ProgramKind,
+            Option<&[u64]>,
         ) -> super::dispatch_fast::LaneView,
     ) -> Option<*const super::dispatch_fast::LaneView> {
         let entry = self.entry(id)?;
@@ -1268,7 +1635,10 @@ impl ProgramStore {
         if !entry.lane_deferred.get(function as usize)?.replace(true) && !may_loop(code) {
             return None;
         }
-        Some(view.get_or_init(|| derive(code, &entry.constants, entry.residual.kind)))
+        Some(view.get_or_init(|| {
+            let live = entry.residual.register_root_masks(function);
+            derive(code, &entry.constants, entry.residual.kind, live)
+        }))
     }
 
     pub(super) fn lane_view(
@@ -1279,12 +1649,16 @@ impl ProgramStore {
             &crate::bytecode::Function,
             &[Value],
             crate::bytecode::ProgramKind,
+            Option<&[u64]>,
         ) -> super::dispatch_fast::LaneView,
     ) -> Option<*const super::dispatch_fast::LaneView> {
         let entry = self.entry(id)?;
         let code = entry.residual.function_get(function as usize)?;
         let view = entry.lane_views.get(function as usize)?;
-        Some(view.get_or_init(|| derive(code, &entry.constants, entry.residual.kind)))
+        Some(view.get_or_init(|| {
+            let live = entry.residual.register_root_masks(function);
+            derive(code, &entry.constants, entry.residual.kind, live)
+        }))
     }
 
     pub(crate) fn constant(&self, id: ProgramId, index: usize) -> Option<Value> {
@@ -1409,6 +1783,7 @@ impl Drop for ProgramStore {
                 .map(|tier| match tier {
                     JsTierState::Hot { .. } => "hot",
                     JsTierState::PromotionPending => "promotion-pending",
+                    JsTierState::Rejected { .. } => "unsupported",
                     JsTierState::Unsupported => "unsupported",
                     JsTierState::Compiled(_) => "compiled",
                 })
@@ -1426,6 +1801,13 @@ impl Drop for ProgramStore {
                 .map(|entry| entry.residual.source_name.as_str())
                 .or_else(|| counters.source_name.as_deref())
                 .unwrap_or("");
+            let native_entry_coverage_ppm = if counters.entries == 0 {
+                0
+            } else {
+                (u128::from(counters.native_entries) * 1_000_000
+                    / u128::from(counters.entries))
+                    .min(1_000_000) as u64
+            };
             let _ = write!(
                 stderr,
                 "QUENCH_JS_JIT_STATS {{\"program\":{program},\"function\":{function},\"function_name\":"
@@ -1433,9 +1815,17 @@ impl Drop for ProgramStore {
             let _ = write_json_string(&mut stderr, function_name);
             let _ = write!(stderr, ",\"source_name\":");
             let _ = write_json_string(&mut stderr, source_name);
-            let _ = writeln!(
+            let _ = write!(stderr, ",\"rejection_reason\":");
+            if let Some(reason) = counters.rejection_reason {
+                let _ = write_json_string(&mut stderr, reason);
+            } else {
+                let _ = write!(stderr, "null");
+            }
+            let _ = write!(
                 stderr,
-                ",\"status\":\"{status}\",\"entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"compile_ns\":{},\"native_entries\":{},\"code_bytes\":{}}}",
+                ",\"status\":\"{status}\",\"parameter_count\":{},\"instruction_count\":{},\"entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"compile_ns\":{},\"native_entries\":{},\"native_entry_coverage_ppm\":{},\"field_return_candidate_entries\":{},\"field_return_fixed_this_entries\":{},\"field_return_fast_entries\":{},\"numeric_find_fast_entries\":{},\"fallback_entries\":{},\"interpreter_completions\":{},\"interpreter_inclusive_ns\":{},\"guard_census\":{{\"conditional_branch_sites\":{},\"typeof_operations\":{},\"strict_comparison_sites\":{},\"relational_comparison_sites\":{}}},\"opcodes\":[",
+                counters.parameter_count,
+                counters.instruction_count,
                 counters.entries,
                 counters.numeric_entries,
                 counters.promotions,
@@ -1443,7 +1833,35 @@ impl Drop for ProgramStore {
                 counters.compile_successes,
                 counters.compile_ns,
                 counters.native_entries,
-                counters.code_bytes,
+                native_entry_coverage_ppm,
+                counters.field_return_candidate_entries,
+                counters.field_return_fixed_this_entries,
+                counters.field_return_fast_entries,
+                counters.numeric_find_fast_entries,
+                counters.fallback_entries,
+                counters.interpreter_completions,
+                counters.interpreter_inclusive_ns,
+                counters.guard_conditional_branches,
+                counters.guard_typeof_ops,
+                counters.guard_strict_comparisons,
+                counters.guard_relational_comparisons,
+            );
+            for (index, (opcode, count)) in counters.opcode_counts.iter().enumerate() {
+                if index != 0 {
+                    let _ = write!(stderr, ",");
+                }
+                let name = crate::bytecode::Op::NAMES
+                    .get(usize::from(*opcode))
+                    .copied()
+                    .unwrap_or("unknown");
+                let _ = write!(stderr, "[");
+                let _ = write_json_string(&mut stderr, name);
+                let _ = write!(stderr, ",{count}]");
+            }
+            let _ = writeln!(
+                stderr,
+                "],\"code_bytes\":{},\"guard_census_kind\":\"bytecode-sites-not-proven-redundancies\"}}",
+                counters.code_bytes
             );
         }
     }

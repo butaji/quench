@@ -130,6 +130,8 @@ pub(crate) struct SharedNodeState {
     pub(crate) emitter_keys: Option<crate::modules::event_constructor_shared_vm::EmitterKeys>,
     /// The internal invocation every receiverless next tick shares (`queue_next_tick`).
     pub(crate) tick_invocation: Option<quench_runtime::RootId>,
+    /// The string `"error"`, which every EventEmitter `emit` compares its event with.
+    pub(crate) error_event_name: Option<quench_runtime::RootId>,
     pub(crate) timer_duration_warnings: crate::modules::timers_shared_vm::TimerDurationWarnings,
     /// Invocation flags supplied by the embedder for this logical process.
     pub(crate) exec_argv: Vec<String>,
@@ -236,6 +238,7 @@ impl SharedNodeState {
         self.path_module = None;
         self.timer_handle_api = None;
         self.tick_invocation = None;
+        self.error_event_name = None;
         self.emitter_keys = None;
         self.timer_duration_warnings = Default::default();
         self.net_socket_constructor = None;
@@ -325,6 +328,7 @@ impl SharedNodeState {
             path_module: None,
             timer_handle_api: None,
             tick_invocation: None,
+            error_event_name: None,
             emitter_keys: None,
             timer_duration_warnings: Default::default(),
             exec_argv: Vec::new(),

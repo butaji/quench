@@ -1,4 +1,5 @@
 use std::cmp::Ordering;
+use crate::heap::ProtoLink;
 
 use crate::bigint::{
     IEEE754_EXPONENT_BIAS, IEEE754_FRACTION_BITS, IEEE754_MAX_EXPONENT_BITS,
@@ -23,8 +24,7 @@ impl<H: Host> Vm<H> {
             left,
             right,
             |vm, left, right| {
-                if let (Some(Cell::String(left)), Some(Cell::String(right))) =
-                    (vm.heap.get(left), vm.heap.get(right))
+                if let (Some(left), Some(right)) = (vm.heap.string(left), vm.heap.string(right))
                 {
                     return Ok(operator.matches(left.units().cmp(&right.units())));
                 }
@@ -105,12 +105,9 @@ impl<H: Host> Vm<H> {
                     Ok(false)
                 });
             }
-            let key_atom = match vm.heap.get(key).cloned() {
-                Some(Cell::String(name)) => Some(vm.intern_js_atom(&name)),
-                _ => None,
-            };
+            let key_atom = vm.heap.string(key).cloned().map(|name| vm.intern_js_atom(&name));
             if matches!(vm.heap.get(object), Some(Cell::TypedArray { .. }))
-                && let Some(Cell::String(name)) = vm.heap.get(key).cloned()
+                && let Some(name) = vm.heap.string(key).cloned()
             {
                 match Self::typed_array_index_key(name.host_string()) {
                     super::object_descriptors::TypedArrayIndexKey::Index(index) => {
@@ -177,7 +174,7 @@ impl<H: Host> Vm<H> {
             if !vm.is_object_like(constructor) {
                 return Err(vm.type_error(p, "right-hand side of 'instanceof' is not an object".into()));
             }
-            if let Some(has_instance) = vm.well_known_symbols.get("hasInstance").copied() {
+            if let Some(has_instance) = vm.well_known_symbols.get(WellKnownSymbol::HasInstance) {
                 let method = vm.get_index(p, constructor, has_instance)?;
                 if !method.is_undefined() && !method.is_null() {
                     if !vm.is_function(method) {
@@ -225,32 +222,37 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let (shape, slot) = self.instanceof_constructor_layout?;
-        if shape != object.shape() || object.proto() != self.instanceof_has_instance_holder {
+        if shape != object.shape() || object.proto_link() != self.instanceof_has_instance_link {
             return None;
         }
         // SAFETY: the memo names the slot of `prototype` in the shape it holds, which is
         // never a dictionary's, so the slot exists.
         let prototype = unsafe { self.heap.property_get_shaped(object, slot) }?;
-        if prototype.is_deleted() || prototype.direct_object_index().is_none() {
+        if prototype.is_deleted() {
             return None;
         }
+        let target = ProtoLink::object_record(prototype.direct_object_index()?);
         let Some(record) = value.direct_object_index() else {
-            // A primitive has no prototype chain to hold the prototype; any other object
-            // takes the walk. A value outside the heap is never an object.
-            if value.heap_index().is_none() {
-                return Some(false);
-            }
-            return (!self.is_object_like(value)).then_some(false);
+            // A primitive has no prototype chain to hold the prototype: a value outside the
+            // heap, or a string. Any other value takes the walk, whose object test makes a
+            // call this steady case leaves out.
+            return (value.heap_index().is_none() || self.heap.is_string(value))
+                .then_some(false);
         };
-        let mut link = self.heap.object_record_by_id(record).proto();
+        // The walk compares encoded links; only a link outside the object records decodes.
+        let mut object = self.heap.object_record_by_id(record);
         loop {
-            if link == prototype {
+            let link = object.proto_link();
+            if link == target {
                 return Some(true);
             }
-            if link.is_null() {
+            if link == ProtoLink::NULL {
                 return Some(false);
             }
-            link = self.heap.object_record(link)?.proto();
+            object = match link.object_record_id() {
+                Some(id) => self.heap.object_record_by_id(id),
+                None => self.heap.object_record(object.proto())?,
+            };
         }
     }
 
@@ -320,7 +322,7 @@ impl<H: Host> Vm<H> {
 
     /// The slot of `constructor`'s own data `prototype` when it has no own `@@hasInstance`.
     fn instanceof_constructor_slot(&mut self, constructor: Value) -> Option<usize> {
-        let has_instance = PropertyKey::symbol(*self.well_known_symbols.get("hasInstance")?);
+        let has_instance = PropertyKey::symbol(self.well_known_symbols.get(WellKnownSymbol::HasInstance)?);
         if self.property_attributes(constructor, has_instance).is_some() {
             return None;
         }
@@ -338,7 +340,7 @@ impl<H: Host> Vm<H> {
     /// with an own `@@hasInstance` holds it, and no proxy precedes it. A subclass constructor
     /// inherits it through its parent constructors.
     fn inherits_native_has_instance(&mut self, holder: Value) -> bool {
-        let Some(&symbol) = self.well_known_symbols.get("hasInstance") else {
+        let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::HasInstance) else {
             return false;
         };
         let mut current = holder;
@@ -366,7 +368,7 @@ impl<H: Host> Vm<H> {
     }
 
     fn verify_has_instance_holder(&mut self, holder: Value) -> bool {
-        let Some(&symbol) = self.well_known_symbols.get("hasInstance") else {
+        let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::HasInstance) else {
             return false;
         };
         let Some(attributes) = self.property_attributes(holder, PropertyKey::symbol(symbol))
@@ -384,9 +386,14 @@ impl<H: Host> Vm<H> {
                 )
             });
         if native && !attributes.writable && !attributes.configurable {
-            self.instanceof_has_instance_holder = holder;
+            self.set_instanceof_has_instance_holder(holder);
         }
         native
+    }
+
+    pub(super) fn set_instanceof_has_instance_holder(&mut self, holder: Value) {
+        self.instanceof_has_instance_holder = holder;
+        self.instanceof_has_instance_link = ProtoLink::of(holder);
     }
 
     pub(super) fn ordinary_has_instance(
@@ -455,11 +462,11 @@ fn compare_numbers(left: f64, right: f64, operator: super::operations::Relationa
 
 fn compare_bigint_string(heap: &Heap, left: Value, right: Value) -> Option<Option<Ordering>> {
     match (heap.get(left), heap.get(right)) {
-        (Some(Cell::BigInt(bigint)), Some(Cell::String(string))) => Some(
+        (Some(Cell::BigInt(bigint)), None) if let Some(string) = heap.string(right) => Some(
             crate::bigint::parse_string(string.host_string())
                 .map(|right| bigint.as_ref().cmp(&right)),
         ),
-        (Some(Cell::String(string)), Some(Cell::BigInt(bigint))) => Some(
+        (None, Some(Cell::BigInt(bigint))) if let Some(string) = heap.string(left) => Some(
             crate::bigint::parse_string(string.host_string())
                 .map(|left| left.cmp(bigint)),
         ),

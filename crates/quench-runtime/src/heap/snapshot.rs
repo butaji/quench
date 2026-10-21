@@ -29,6 +29,10 @@ impl Heap {
             return Err(SnapshotError::unsupported("a suspended async function"));
         }
         write_records(writer, &self.iterator_records, |writer, record| record.write_snapshot(writer))?;
+        write_records(writer, &self.string_records, |writer, record: &JsString| {
+            record.write_snapshot(writer);
+            Ok(())
+        })?;
         self.properties.write_snapshot(writer);
         self.roots.write_snapshot(writer);
         let sparse = self.sparse_arrays.as_deref();
@@ -74,6 +78,7 @@ impl Heap {
         read_records(reader, &mut heap.function_records, |reader| FunctionRecord::read_snapshot(reader))?;
         read_records(reader, &mut heap.promise_records, |reader| PromiseCell::read_snapshot(reader))?;
         read_records(reader, &mut heap.iterator_records, |reader| IteratorRecord::read_snapshot(reader))?;
+        read_records(reader, &mut heap.string_records, |reader| JsString::read_snapshot(reader))?;
         heap.properties = crate::value_vec::ValueArena::read_snapshot(reader)?;
         heap.roots = root::RootTable::read_snapshot(reader)?;
         let sparse = read_list(reader, |reader| {
@@ -92,6 +97,7 @@ impl Heap {
         let mut payload = 0;
         self.for_each_cell(|cell| payload += cell.payload_bytes());
         self.array_records.for_each_live(|_, array| payload += external::array_payload_bytes(array));
+        self.string_records.for_each_live(|_, string| payload += string.flat_unit_bytes());
         self.payload_bytes = payload;
         let legacy_live = self.slots.len() - self.free_slots;
         let live = legacy_live
@@ -99,11 +105,13 @@ impl Heap {
             + self.array_records.live_count()
             + self.function_records.live_count()
             + self.promise_records.live_count()
-            + self.iterator_records.live_count();
+            + self.iterator_records.live_count()
+            + self.string_records.live_count();
         self.old_live = legacy_live;
         self.live_after_full = live;
         let live_weight = live + self.payload_bytes / payload_unit();
         self.live_weight_after_previous = live_weight;
+        self.live_weight_after_full = live_weight;
         self.threshold = pacing().young_budget(live);
         self.max_threshold = self.max_threshold.max(self.threshold);
         self.full_due = false;
@@ -120,9 +128,9 @@ impl Heap {
     }
 }
 
-fn write_records<T>(
+fn write_records<T, const CAPACITY: usize>(
     writer: &mut Writer,
-    space: &records::RecordSpace<T>,
+    space: &records::RecordSpace<T, CAPACITY>,
     mut write: impl FnMut(&mut Writer, &T) -> SnapshotResult<()>,
 ) -> SnapshotResult<()> {
     writer.len(space.live_count());
@@ -138,9 +146,9 @@ fn write_records<T>(
     Ok(())
 }
 
-fn read_records<T>(
+fn read_records<T, const CAPACITY: usize>(
     reader: &mut Reader<'_>,
-    space: &mut records::RecordSpace<T>,
+    space: &mut records::RecordSpace<T, CAPACITY>,
     mut read: impl FnMut(&mut Reader<'_>) -> SnapshotResult<T>,
 ) -> SnapshotResult<()> {
     let live = reader.len()?;
