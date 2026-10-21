@@ -879,6 +879,16 @@ impl<H: Host> Vm<H> {
             return Ok(true);
         }
         let value = descriptor_value.or(existing).unwrap_or(Value::UNDEFINED);
+        // A new data property is added with its attributes in one shape transition, as
+        // `set_shape_property` and `set_property_attributes` would leave it in two.
+        if is_new
+            && !matches!(key, PropertyKey::Private(_))
+            && let Some(data) = DataAttributes::of(attributes)
+            && self.object_data(target).is_some()
+        {
+            self.create_shape_data_property(target, key, value, data)?;
+            return Ok(true);
+        }
         if is_new || descriptor_value.is_some() && (current.writable || current.configurable) {
             if (current.accessor || !current.writable && current.configurable) && descriptor_data {
                 self.remove_property_attributes(target, key);
