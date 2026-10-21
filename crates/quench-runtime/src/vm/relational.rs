@@ -147,8 +147,8 @@ impl<H: Host> Vm<H> {
                             return Ok(true);
                         }
                     }
-                    let descriptor = vm.object_get_own_property_descriptor(p, &[current, key])?;
-                    if !descriptor.is_undefined() {
+                    // [[GetOwnProperty]] itself: presence needs no descriptor object.
+                    if vm.ordinary_get_own_property(p, current, key)?.is_some() {
                         return Ok(true);
                     }
                     let next = vm.object_get_prototype_of(p, current)?;

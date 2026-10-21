@@ -63,6 +63,13 @@ struct RuntimeAtoms {
     /// An iterator result's keys, in its literal order.
     value: Atom,
     done: Atom,
+    /// A property descriptor object's other keys (`value` above), which
+    /// `Object.getOwnPropertyDescriptor` writes on every call.
+    writable: Atom,
+    enumerable: Atom,
+    configurable: Atom,
+    get: Atom,
+    set: Atom,
     /// The internal keys a bound function's environment holds its parts under
     /// (`Vm::bound_function_parts`).
     bound_target: Atom,
@@ -2351,6 +2358,11 @@ impl<H: Host> Vm<H> {
             empty: self.intern_atom(""),
             value: self.intern_atom("value"),
             done: self.intern_atom("done"),
+            writable: self.intern_atom("writable"),
+            enumerable: self.intern_atom("enumerable"),
+            configurable: self.intern_atom("configurable"),
+            get: self.intern_atom("get"),
+            set: self.intern_atom("set"),
             bound_target: self.intern_atom(BOUND_TARGET_KEY),
             bound_this: self.intern_atom(BOUND_THIS_KEY),
             bound_args: self.intern_atom(BOUND_ARGS_KEY),
