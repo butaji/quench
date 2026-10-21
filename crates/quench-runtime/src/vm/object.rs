@@ -758,6 +758,7 @@ impl<H: Host> Vm<H> {
         self.function_name_shapes.clear();
         self.closure_templates.fill(None);
         self.iterator_result_shape = None;
+        self.descriptor_shapes = [None; 2];
         self.regexp_object_shapes = None;
         self.regexp_last_index_layout = None;
         self.regexp_builtin_layout = None;

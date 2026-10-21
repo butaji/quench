@@ -137,6 +137,7 @@ impl<H: Host> Vm<H> {
             closure_shapes: [None; 2],
             closure_templates: Box::new([None; CLOSURE_TEMPLATES]),
             iterator_result_shape: None,
+            descriptor_shapes: [None; 2],
             regexp_object_shapes: None,
             regexp_last_index_layout: None,
             regexp_builtin_layout: None,
