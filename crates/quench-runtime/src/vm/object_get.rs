@@ -947,10 +947,28 @@ impl<H: Host> Vm<H> {
         self.object_data(target)?.private_field(PrivateBrand { home, name: atom })
     }
 
-    /// `private_field_value` in function `function` of the running program, whose frame
-    /// would capture from `environment`, answered by the home a run of it with a frame found
-    /// (`private_name_home`'s memo) when it has no binding sites. `None` leaves the read to
-    /// the general path, which finds the home and throws for a target without the name.
+    /// The private brand of `atom` that function `function` of the running program, whose
+    /// frame would capture from `environment`, names, from the home a run of it with a frame
+    /// found (`private_name_home`'s memo) when it has no binding sites, if `target` has it.
+    /// `None` leaves the access to the general path, which finds the home and throws for a
+    /// target without the name.
+    fn memoized_private_brand(
+        &self,
+        p: &ResidualProgram,
+        environment: Value,
+        function: u32,
+        target: Value,
+        atom: Atom,
+    ) -> Option<PrivateBrand> {
+        if !p.function_get(function as usize).is_some_and(|body| body.binding_sites.is_empty()) {
+            return None;
+        }
+        let key = PrivateHomeKey { environment, program: self.active_program, function, name: atom };
+        let brand = PrivateBrand { home: *self.private_homes.get(&key)?, name: atom };
+        self.object_data(target)?.has_private_name(brand).then_some(brand)
+    }
+
+    /// `private_field_value` through `memoized_private_brand`.
     pub(super) fn memoized_private_field_value(
         &self,
         p: &ResidualProgram,
@@ -959,13 +977,24 @@ impl<H: Host> Vm<H> {
         target: Value,
         atom: Atom,
     ) -> Option<Value> {
-        if !p.function_get(function as usize).is_some_and(|body| body.binding_sites.is_empty()) {
-            return None;
-        }
-        let key = PrivateHomeKey { environment, program: self.active_program, function, name: atom };
-        let brand = PrivateBrand { home: *self.private_homes.get(&key)?, name: atom };
-        let object = self.object_data(target)?;
-        object.has_private_name(brand).then(|| object.private_field(brand)).flatten()
+        let brand = self.memoized_private_brand(p, environment, function, target, atom)?;
+        self.object_data(target)?.private_field(brand)
+    }
+
+    /// `set_private_field_value` through `memoized_private_brand`.
+    pub(super) fn memoized_set_private_field_value(
+        &mut self,
+        p: &ResidualProgram,
+        environment: Value,
+        function: u32,
+        target: Value,
+        atom: Atom,
+        value: Value,
+    ) -> bool {
+        let Some(brand) = self.memoized_private_brand(p, environment, function, target, atom) else {
+            return false;
+        };
+        self.object_data_mut(target).is_some_and(|object| object.set_private_field(brand, value))
     }
 
     pub(super) fn set_private_field_value(&mut self, p: &ResidualProgram, target: Value, atom: Atom, value: Value) -> bool {

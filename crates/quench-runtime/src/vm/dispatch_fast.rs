@@ -188,6 +188,13 @@ struct ActivationShape {
 }
 
 impl LaneView {
+    /// The address range its records span (`lane_exits::register_view`).
+    #[cfg(feature = "profile-lane-exits")]
+    pub(super) fn record_range(&self) -> (usize, usize) {
+        let start = self.records().addr();
+        (start, start + self.records.len() * std::mem::size_of::<LaneInstruction>())
+    }
+
     pub(super) fn records(&self) -> Ip {
         std::cell::UnsafeCell::raw_get(self.records.as_ptr()).cast_const()
     }
@@ -1246,6 +1253,8 @@ unsafe fn vm<'a, H: Host>(cx: *mut LaneContext<H>) -> &'a mut Vm<H> {
 /// The handler of the record at `ip`.
 #[inline(always)]
 fn handler<H: Host>(ip: Ip) -> Handler {
+    #[cfg(feature = "profile-lane-exits")]
+    super::lane_exits::count_record(ip.addr());
     // SAFETY: a view is only run by the VM type whose handlers built it, and
     // every reachable record is initialized.
     unsafe { std::mem::transmute::<*const (), Handler>((*ip).handler) }
@@ -3600,13 +3609,46 @@ fn lane_set_field<H: Host>(
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let vm = unsafe { vm(cx) };
-    // The general loop's cached write: the store inline, the add out of line.
-    if !vm.cached_field_write_hit(code, object, i.imm(), r.get(i.a), i.c) {
+    // A private field's store writes the object's private element, as the general loop's
+    // `SetField` does, before any cache; the general loop's cached write otherwise: the store
+    // inline, the add out of line.
+    let stored = if vm.is_private_name(i.imm()) {
+        lane_private_field_store(cx, code, object, i.imm(), r.get(i.a))
+    } else {
+        vm.cached_field_write_hit(code, object, i.imm(), r.get(i.a), i.c)
+    };
+    if !stored {
         return exit(ip);
     }
     // Adding a property can allocate.
     note_allocation(vm);
     next!(cx, r, following(ip), Carried::script(cx))
+}
+
+/// The store of private field `atom` of `object`, whose home follows the running function
+/// and the environment its frame would capture from, as `lane_cached_field_miss` reads one:
+/// the lane's frame, or a frameless activation's function and closure environment. `false`
+/// leaves the store, a private accessor's or method's included, to the general path.
+#[inline(never)]
+fn lane_private_field_store<H: Host>(
+    cx: *mut LaneContext<H>,
+    code: &ResidualProgram,
+    object: Value,
+    atom: crate::bytecode::Atom,
+    value: Value,
+) -> bool {
+    let vm = unsafe { vm(cx) };
+    match vm.lane_stack.activations.last() {
+        None => vm.set_private_field_value(code, object, atom, value),
+        Some(activation) => {
+            let Some(function) = activation.script().map(|_| activation.function) else {
+                return false;
+            };
+            // SAFETY: the context outlives the lane run.
+            let environment = unsafe { (*cx).env };
+            vm.memoized_set_private_field_value(code, environment, function, object, atom, value)
+        }
+    }
 }
 
 script_handler! {
@@ -3666,7 +3708,10 @@ lane_handler! {
         let vm = unsafe { vm(cx) };
         let polymorphic = vm.field_site_polymorphic(i.c);
         let adds = vm.field_site_adds(i.c);
-        let handler: Option<Handler> = if adds && !polymorphic && vm.field_add_atom_eligible(i.imm()) {
+        // A private field's store takes the private element path (`lane_set_field`).
+        let handler: Option<Handler> = if vm.is_private_name(i.imm()) {
+            Some(if THIS { lane_set_this_field::<H> } else { lane_set_object_field::<H> })
+        } else if adds && !polymorphic && vm.field_add_atom_eligible(i.imm()) {
             Some(if THIS { lane_set_this_field_add::<H> } else { lane_set_object_field_add::<H> })
         } else if adds || polymorphic {
             Some(if THIS { lane_set_this_field::<H> } else { lane_set_object_field::<H> })
