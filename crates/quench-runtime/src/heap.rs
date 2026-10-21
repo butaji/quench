@@ -1,6 +1,6 @@
 use crate::value::{HeapReference, Value};
 use crate::vm::wtf16::JsString;
-use crate::value_vec::{INLINE_PROPERTY_COUNT, ValueArena, ValueVec};
+use crate::value_vec::{CompactionTargets, INLINE_PROPERTY_COUNT, ValueArena, ValueVec};
 use rayon::prelude::*;
 use rayon::{Scope, ThreadPool, ThreadPoolBuilder};
 use rustc_hash::FxHashMap;
@@ -1417,7 +1417,7 @@ impl Heap {
         }));
         owners.extend(direct_owners);
         owners.sort_unstable_by_key(|(offset, _)| *offset);
-        let mut target = 0;
+        let mut targets = CompactionTargets::default();
         let Self {
             object_records,
             array_records,
@@ -1453,10 +1453,10 @@ impl Heap {
             }
             .expect("property owner remains live during compaction");
             let mut vector = object.properties();
-            target += properties.compact_vector(&mut vector, target);
+            properties.compact_vector(&mut vector, &mut targets);
             object.set_properties(vector);
         }
-        properties.finish_compaction(target);
+        properties.finish_compaction(targets);
         #[cfg(feature = "profile-memory")]
         if std::env::var_os("QUENCH_MEMORY").is_some() {
             let after = properties.stats();
@@ -2900,9 +2900,23 @@ impl Heap {
             }
         };
         match vector {
-            Some(vector) => self.properties.set(vector, slot, value),
+            Some(mut vector) => {
+                if self.properties.set(&mut vector, slot, value) {
+                    self.store_moved_properties(object, vector);
+                }
+            }
             None => self.widen_inline_property(object, slot, value),
         }
+    }
+
+    /// Gives `object` its arena `vector` again after a store moved its range out of the
+    /// narrow lane (`ValueArena::set`).
+    #[cold]
+    fn store_moved_properties(&mut self, object: Value, vector: ValueVec) {
+        let (data, _) = self
+            .object_and_arena_mut(object)
+            .expect("property owner is an object");
+        data.set_properties(vector);
     }
 
     /// Stores `value` at inline `slot` of `object`, whose payload word cannot hold it: its
@@ -2936,8 +2950,12 @@ impl Heap {
             }
         };
         match vector {
-            // SAFETY: the caller proves that the property slot exists.
-            Some(vector) => unsafe { self.properties.set_unchecked(vector, slot, value) },
+            Some(mut vector) => {
+                // SAFETY: the caller proves that the property slot exists.
+                if unsafe { self.properties.set_unchecked(&mut vector, slot, value) } {
+                    self.store_moved_properties(object, vector);
+                }
+            }
             None => self.widen_inline_property(object, slot, value),
         }
     }
@@ -2975,10 +2993,12 @@ impl Heap {
             }
             return true;
         }
-        let vector = data.properties();
+        let mut vector = data.properties();
         debug_assert!(!vector.is_dictionary(), "the caller matched an exact shape");
         // SAFETY: the caller proves that the property slot exists outside dictionary storage.
-        unsafe { self.properties.set_flat_unchecked(vector, slot, value) };
+        if unsafe { self.properties.set_flat_unchecked(&mut vector, slot, value) } {
+            data.set_properties(vector);
+        }
         true
     }
     /// Appends `value` as the next property of `object`, which moves to `shape`, whose

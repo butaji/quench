@@ -1,7 +1,9 @@
 use crate::Value;
 use rustc_hash::FxHashMap;
 
-const START_MASK: u32 = 0x3fff_ffff;
+/// `ValueVec::start` bit of a range in the narrow lane (`ValueArena`).
+const NARROW_STORAGE: u32 = 1 << 29;
+const START_MASK: u32 = NARROW_STORAGE - 1;
 const NON_EXTENSIBLE: u32 = 1 << 30;
 const FROZEN: u32 = 1 << 31;
 const DICTIONARY_STORAGE: u32 = 1 << 31;
@@ -35,7 +37,7 @@ pub(crate) struct ValueVec {
 
 /// `ValueVec::start` bits that hold the storage position: an arena offset, a dictionary id,
 /// or one of the empty and inline markers.
-pub(crate) const VALUE_VEC_START_BITS: u32 = START_MASK;
+pub(crate) const VALUE_VEC_START_BITS: u32 = START_MASK | NARROW_STORAGE;
 /// `ValueVec::start` bits that hold the object's integrity level.
 pub(crate) const VALUE_VEC_INTEGRITY_BITS: u32 = NON_EXTENSIBLE | FROZEN;
 
@@ -102,7 +104,7 @@ impl ValueVec {
 
     fn use_dictionary(&mut self, id: u32) {
         assert!(id <= START_MASK, "property dictionary table exhausted");
-        self.start = (self.start & !START_MASK) | id;
+        self.start = (self.start & !VALUE_VEC_START_BITS) | id;
         self.auxiliary |= DICTIONARY_STORAGE;
     }
 
@@ -139,15 +141,24 @@ impl ValueVec {
         (self.start & START_MASK) as usize
     }
 
+    /// The range's place for compaction order: its lane, then its offset in that lane.
     pub(crate) fn start_offset(self) -> usize {
         debug_assert!(!self.is_dictionary());
         debug_assert!(!self.has_inline_property_storage());
-        self.start()
+        (self.start & VALUE_VEC_START_BITS) as usize
     }
 
-    fn relocate(&mut self, start: usize) {
-        assert!(start < EMPTY_START as usize, "property arena exhausted");
-        self.start = start as u32 | (self.start & !START_MASK);
+    /// Whether the range lives in the narrow lane.
+    #[inline(always)]
+    fn is_narrow(self) -> bool {
+        self.start & NARROW_STORAGE != 0
+    }
+
+    /// Names the range at `start` of the narrow lane or the wide one.
+    fn place(&mut self, start: usize, narrow: bool) {
+        assert!(start < INLINE_PROPERTY_START as usize, "property arena exhausted");
+        let lane = if narrow { NARROW_STORAGE } else { 0 };
+        self.start = start as u32 | lane | (self.start & !VALUE_VEC_START_BITS);
     }
 }
 
@@ -157,11 +168,107 @@ impl Default for ValueVec {
     }
 }
 
-pub(crate) struct ValueArena {
-    values: Vec<Value>,
+/// One store of arena ranges: `slots` with free ranges by power-of-two size class.
+struct Lane<T> {
+    slots: Vec<T>,
     free: [Vec<u32>; BUCKETS],
-    /// Values held by the ranges on `free`.
-    released_values: usize,
+    /// Slots held by the ranges on `free`.
+    released: usize,
+}
+
+impl<T> Default for Lane<T> {
+    fn default() -> Self {
+        Self { slots: Vec::new(), free: Default::default(), released: 0 }
+    }
+}
+
+impl<T: Copy> Lane<T> {
+    fn write_snapshot(&self, writer: &mut crate::snapshot::Writer, slots: impl FnOnce(&mut crate::snapshot::Writer, &[T])) {
+        slots(writer, &self.slots);
+        for bucket in &self.free {
+            writer.u32s(bucket);
+        }
+        writer.len(self.released);
+    }
+
+    fn read_snapshot(
+        reader: &mut crate::snapshot::Reader<'_>,
+        slots: impl FnOnce(&mut crate::snapshot::Reader<'_>) -> crate::snapshot::SnapshotResult<Vec<T>>,
+    ) -> crate::snapshot::SnapshotResult<Self> {
+        let slots = slots(reader)?;
+        let mut free: [Vec<u32>; BUCKETS] = Default::default();
+        for bucket in &mut free {
+            *bucket = reader.u32s()?;
+        }
+        Ok(Self { slots, free, released: reader.len()? })
+    }
+
+    fn reset(&mut self) {
+        self.slots.clear();
+        for bucket in &mut self.free {
+            bucket.clear();
+        }
+        self.released = 0;
+    }
+
+    fn allocate(&mut self, capacity: usize, max_start: usize, fill: T) -> Option<usize> {
+        let bucket = ValueArena::bucket(capacity);
+        if let Some(start) = self.free[bucket].pop() {
+            self.released -= capacity;
+            return Some(start as usize);
+        }
+        let start = self.slots.len();
+        if start >= max_start {
+            return None;
+        }
+        let required = start.checked_add(capacity)?;
+        // Vec's 2x policy leaves a large unused tail once long-lived heaps
+        // cross into millions of property slots. Preserve that policy for
+        // small programs, then grow by one third so the arena remains dense
+        // without turning every object allocation into a reallocation.
+        if required > self.slots.capacity() && self.slots.capacity() >= DENSE_ARENA_RESERVE_THRESHOLD {
+            let target = required.max(self.slots.capacity() + self.slots.capacity() / DENSE_ARENA_GROWTH_DIVISOR);
+            self.slots.reserve_exact(target - self.slots.len());
+        }
+        self.slots.resize(start + capacity, fill);
+        Some(start)
+    }
+
+    fn release(&mut self, start: usize, capacity: usize) {
+        self.free[ValueArena::bucket(capacity)].push(start as u32);
+        self.released += capacity;
+    }
+
+    fn compaction_due(&self) -> bool {
+        self.released > 0 && self.released >= self.slots.len() / COMPACTION_RELEASED_SHARE_DIVISOR
+    }
+
+    fn compact(&mut self, source: usize, length: usize, capacity: usize, target: usize, fill: T) {
+        assert!(target <= source, "property ranges must compact in source order");
+        self.slots.copy_within(source..source + length, target);
+        self.slots[target + length..target + capacity].fill(fill);
+    }
+
+    fn finish_compaction(&mut self, length: usize) {
+        self.slots.truncate(length);
+        for bucket in &mut self.free {
+            bucket.clear();
+        }
+        self.released = 0;
+    }
+
+    fn memory_bytes(&self) -> usize {
+        self.slots.capacity() * size_of::<T>() + self.free.iter().map(|bucket| bucket.capacity() * size_of::<u32>()).sum::<usize>()
+    }
+}
+
+/// Property values of every object outside inline and dictionary storage. A range lives in
+/// the narrow lane, as narrow values (`Value::to_narrow`), while each of its values has a
+/// narrow form, and in the wide lane otherwise; a value without a narrow form moves its range
+/// to the wide lane for good.
+pub(crate) struct ValueArena {
+    values: Lane<Value>,
+    narrow: Lane<u32>,
     shape_lengths: Vec<u32>,
     dictionaries: FxHashMap<u32, FxHashMap<u32, Value>>,
     free_dictionaries: Vec<u32>,
@@ -171,9 +278,8 @@ pub(crate) struct ValueArena {
 impl Default for ValueArena {
     fn default() -> Self {
         Self {
-            values: vec![],
-            free: Default::default(),
-            released_values: 0,
+            values: Lane::default(),
+            narrow: Lane::default(),
             shape_lengths: vec![0],
             dictionaries: FxHashMap::default(),
             free_dictionaries: Vec::new(),
@@ -182,16 +288,18 @@ impl Default for ValueArena {
     }
 }
 
+/// The narrow form of undefined, which fills unused narrow slots.
+fn narrow_undefined() -> u32 {
+    Value::UNDEFINED.to_narrow().expect("undefined has a narrow form")
+}
+
 impl ValueArena {
     /// The arena as a snapshot keeps it (`crate::snapshot`): storage positions name places in
-    /// `values`, so the vector and its free ranges are written as they are.
+    /// the lanes, so the lanes and their free ranges are written as they are.
     pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
-        let Self { values, free, released_values, shape_lengths, dictionaries, free_dictionaries, next_dictionary } = self;
-        writer.values(values);
-        for bucket in free {
-            writer.u32s(bucket);
-        }
-        writer.len(*released_values);
+        let Self { values, narrow, shape_lengths, dictionaries, free_dictionaries, next_dictionary } = self;
+        values.write_snapshot(writer, |writer, slots| writer.values(slots));
+        narrow.write_snapshot(writer, |writer, slots| writer.u32s(slots));
         writer.u32s(shape_lengths);
         writer.len(dictionaries.len());
         for (id, entries) in dictionaries {
@@ -207,12 +315,8 @@ impl ValueArena {
     }
 
     pub(crate) fn read_snapshot(reader: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::SnapshotResult<Self> {
-        let values = reader.values()?;
-        let mut free: [Vec<u32>; BUCKETS] = Default::default();
-        for bucket in &mut free {
-            *bucket = reader.u32s()?;
-        }
-        let released_values = reader.len()?;
+        let values = Lane::read_snapshot(reader, |reader| reader.values())?;
+        let narrow = Lane::read_snapshot(reader, |reader| reader.u32s())?;
         let shape_lengths = reader.u32s()?;
         let dictionaries = crate::snapshot::read_list(reader, |reader| {
             let id = reader.u32()?;
@@ -223,8 +327,7 @@ impl ValueArena {
         .collect();
         Ok(Self {
             values,
-            free,
-            released_values,
+            narrow,
             shape_lengths,
             dictionaries,
             free_dictionaries: reader.u32s()?,
@@ -233,11 +336,8 @@ impl ValueArena {
     }
 
     pub(crate) fn reset(&mut self) {
-        self.values.clear();
-        for bucket in &mut self.free {
-            bucket.clear();
-        }
-        self.released_values = 0;
+        self.values.reset();
+        self.narrow.reset();
         self.shape_lengths.truncate(1);
         self.shape_lengths[0] = 0;
         self.dictionaries.clear();
@@ -263,6 +363,51 @@ impl ValueArena {
         self.shape_lengths.push(0);
     }
 
+    /// The value at `index` of `vector`'s range, in whichever lane holds it.
+    ///
+    /// # Safety
+    /// `vector` has a range and `index` is within its length.
+    #[inline(always)]
+    unsafe fn range_get(&self, vector: ValueVec, index: usize) -> Value {
+        let at = vector.start() + index;
+        // SAFETY: the caller proves the slot is inside the vector's reserved range.
+        unsafe {
+            if vector.is_narrow() {
+                Value::from_narrow(*self.narrow.slots.get_unchecked(at))
+            } else {
+                *self.values.slots.get_unchecked(at)
+            }
+        }
+    }
+
+    /// Stores `value` at `index` of `vector`'s range. `true` when the range had to move to
+    /// the wide lane (or, with the arena exhausted, to a dictionary), so `vector` changed and
+    /// its owner must store it again.
+    ///
+    /// # Safety
+    /// As for `range_get`.
+    #[inline(always)]
+    unsafe fn range_set(&mut self, vector: &mut ValueVec, index: usize, value: Value) -> bool {
+        if vector.is_narrow() {
+            if let Some(narrow) = value.to_narrow() {
+                // SAFETY: as for `range_get`.
+                unsafe { *self.narrow.slots.get_unchecked_mut(vector.start() + index) = narrow };
+                return false;
+            }
+            self.widen(vector);
+            if vector.is_dictionary() {
+                self.dictionary_set(*vector, index, value);
+                return true;
+            }
+            // SAFETY: widening keeps the length and capacity.
+            unsafe { *self.values.slots.get_unchecked_mut(vector.start() + index) = value };
+            return true;
+        }
+        // SAFETY: as for `range_get`.
+        unsafe { *self.values.slots.get_unchecked_mut(vector.start() + index) = value };
+        false
+    }
+
     pub(crate) fn get(&self, vector: ValueVec, index: usize) -> Option<Value> {
         debug_assert!(!vector.has_inline_property_storage());
         if index >= self.len(vector) {
@@ -275,7 +420,8 @@ impl ValueArena {
                 .and_then(|values| values.get(&(index as u32)))
                 .copied();
         }
-        Some(self.values[vector.start() + index])
+        // SAFETY: the index is within the vector's length, so inside its range.
+        Some(unsafe { self.range_get(vector, index) })
     }
 
     /// # Safety
@@ -288,8 +434,8 @@ impl ValueArena {
             return self.dictionary_get(vector, index);
         }
         // SAFETY: caller provides the initialized-range invariant; every
-        // vector range was allocated from `values` and remains reserved.
-        unsafe { *self.values.get_unchecked(vector.start() + index) }
+        // vector range was allocated from its lane and remains reserved.
+        unsafe { self.range_get(vector, index) }
     }
 
     /// `get_unchecked` of a vector known to be outside dictionary mode (`exact_auxiliary`
@@ -302,7 +448,7 @@ impl ValueArena {
         debug_assert!(!vector.has_inline_property_storage() && !vector.is_dictionary());
         debug_assert!(index < self.len(vector));
         // SAFETY: as for `get_unchecked`.
-        unsafe { *self.values.get_unchecked(vector.start() + index) }
+        unsafe { self.range_get(vector, index) }
     }
 
     /// `get_unchecked` of a vector outside dictionary mode; `None` for a dictionary, whose
@@ -318,7 +464,7 @@ impl ValueArena {
         }
         debug_assert!(index < self.len(vector));
         // SAFETY: as for `get_unchecked`.
-        Some(unsafe { *self.values.get_unchecked(vector.start() + index) })
+        Some(unsafe { self.range_get(vector, index) })
     }
 
     #[cold]
@@ -336,31 +482,32 @@ impl ValueArena {
             .insert(index as u32, value);
     }
 
-    pub(crate) fn set(&mut self, vector: ValueVec, index: usize, value: Value) {
+    /// Stores `value` at `index`; `true` when `vector` changed (`range_set`).
+    pub(crate) fn set(&mut self, vector: &mut ValueVec, index: usize, value: Value) -> bool {
         debug_assert!(!vector.has_inline_property_storage());
-        assert!(index < self.len(vector));
+        assert!(index < self.len(*vector));
         if vector.is_dictionary() {
-            self.dictionaries
-                .get_mut(&vector.dictionary_id())
-                .expect("object dictionary exists")
-                .insert(index as u32, value);
-            return;
+            self.dictionary_set(*vector, index, value);
+            return false;
         }
-        self.values[vector.start() + index] = value;
+        // SAFETY: the index is within the vector's length, so inside its range.
+        unsafe { self.range_set(vector, index, value) }
     }
 
+    /// Stores `value` at `index`; `true` when `vector` changed (`range_set`).
+    ///
     /// # Safety
     /// `index` must be within the initialized length recorded by `vector`.
     #[inline(always)]
-    pub(crate) unsafe fn set_unchecked(&mut self, vector: ValueVec, index: usize, value: Value) {
+    pub(crate) unsafe fn set_unchecked(&mut self, vector: &mut ValueVec, index: usize, value: Value) -> bool {
         debug_assert!(!vector.has_inline_property_storage());
-        debug_assert!(index < self.len(vector));
+        debug_assert!(index < self.len(*vector));
         if vector.is_dictionary() {
-            self.dictionary_set(vector, index, value);
-            return;
+            self.dictionary_set(*vector, index, value);
+            return false;
         }
         // SAFETY: caller provides the same initialized-range invariant as get.
-        unsafe { self.set_flat_unchecked(vector, index, value) };
+        unsafe { self.range_set(vector, index, value) }
     }
 
     /// `set_unchecked` of a vector known not to be a dictionary.
@@ -368,35 +515,38 @@ impl ValueArena {
     /// # Safety
     /// As for `set_unchecked`, and `vector` is not a dictionary.
     #[inline(always)]
-    pub(crate) unsafe fn set_flat_unchecked(&mut self, vector: ValueVec, index: usize, value: Value) {
+    pub(crate) unsafe fn set_flat_unchecked(&mut self, vector: &mut ValueVec, index: usize, value: Value) -> bool {
         debug_assert!(!vector.is_dictionary());
         // SAFETY: caller provides the same initialized-range invariant as get.
-        unsafe {
-            *self.values.get_unchecked_mut(vector.start() + index) = value;
-        }
+        unsafe { self.range_set(vector, index, value) }
     }
 
     pub(crate) fn push(&mut self, vector: &mut ValueVec, value: Value) {
         debug_assert!(!vector.has_inline_property_storage());
         let len = self.len(*vector);
-        if vector.is_dictionary() {
-            self.dictionaries
-                .get_mut(&vector.dictionary_id())
-                .expect("object dictionary exists")
-                .insert(len as u32, value);
-            return;
-        }
-        if len == self.capacity(*vector) {
-            self.grow(vector, MAX_ARENA_START);
-            if vector.is_dictionary() {
-                self.dictionaries
-                    .get_mut(&vector.dictionary_id())
-                    .expect("object dictionary exists")
-                    .insert(len as u32, value);
+        if !vector.is_dictionary() {
+            let narrow = value.to_narrow();
+            if vector.is_narrow() && narrow.is_none() {
+                self.widen(vector);
+            }
+            if !vector.is_dictionary() && len == self.capacity(*vector) {
+                // A vector without a range starts in the lane its first value fits.
+                let lane = if self.capacity(*vector) == 0 { narrow.is_some() } else { vector.is_narrow() };
+                self.grow(vector, MAX_ARENA_START, lane);
+            }
+            if !vector.is_dictionary() {
+                let at = vector.start() + len;
+                match narrow.filter(|_| vector.is_narrow()) {
+                    Some(narrow) => self.narrow.slots[at] = narrow,
+                    None => self.values.slots[at] = value,
+                }
                 return;
             }
         }
-        self.values[vector.start() + len] = value;
+        self.dictionaries
+            .get_mut(&vector.dictionary_id())
+            .expect("object dictionary exists")
+            .insert(len as u32, value);
     }
 
     pub(crate) fn with_values(&mut self, shape: u32, values: &[Value]) -> ValueVec {
@@ -413,13 +563,30 @@ impl ValueArena {
             .max(MIN_CAPACITY)
             .checked_next_power_of_two()
             .expect("property vector capacity overflow");
-        if let Some(start) = self.allocate(capacity, MAX_ARENA_START) {
-            vector.start = start as u32;
-            self.values[start..start + values.len()].copy_from_slice(values);
+        if values.iter().all(|value| value.to_narrow().is_some())
+            && let Some(start) = self.narrow.allocate(capacity, MAX_ARENA_START, narrow_undefined())
+        {
+            vector.place(start, true);
+            for (slot, value) in self.narrow.slots[start..start + values.len()].iter_mut().zip(values) {
+                *slot = value.to_narrow().expect("checked narrow");
+            }
+        } else if let Some(start) = self.values.allocate(capacity, MAX_ARENA_START, Value::UNDEFINED) {
+            vector.place(start, false);
+            self.values.slots[start..start + values.len()].copy_from_slice(values);
         } else {
             vector.use_dictionary(self.allocate_dictionary(values.to_vec()));
         }
         vector
+    }
+
+    /// `vector`'s range values in order, decoded from whichever lane holds them.
+    fn range_values(&self, vector: ValueVec) -> Vec<Value> {
+        let (start, len) = (vector.start(), self.len(vector));
+        if vector.is_narrow() {
+            self.narrow.slots[start..start + len].iter().map(|narrow| Value::from_narrow(*narrow)).collect()
+        } else {
+            self.values.slots[start..start + len].to_vec()
+        }
     }
 
     /// The heap references among a vector's values: the edges a collector traces. Numbers,
@@ -438,12 +605,17 @@ impl ValueArena {
         if !self.has_compact_range(vector) {
             return;
         }
-        output.extend(
-            self.values[vector.start()..vector.start() + len]
-                .iter()
-                .copied()
-                .filter(|value| value.is_heap()),
-        );
+        let start = vector.start();
+        if vector.is_narrow() {
+            output.extend(
+                self.narrow.slots[start..start + len]
+                    .iter()
+                    .map(|narrow| Value::from_narrow(*narrow))
+                    .filter(|value| value.is_heap()),
+            );
+        } else {
+            output.extend(self.values.slots[start..start + len].iter().copied().filter(|value| value.is_heap()));
+        }
     }
 
     /// An independent copy of `vector`'s storage: the same shape, integrity and values in a
@@ -464,14 +636,20 @@ impl ValueArena {
         if capacity == 0 {
             return copy;
         }
-        let len = self.len(vector);
-        match self.allocate(capacity, MAX_ARENA_START) {
-            Some(start) => {
-                self.values.copy_within(vector.start()..vector.start() + len, start);
-                copy.relocate(start);
-            }
+        let (source, len) = (vector.start(), self.len(vector));
+        let start = if vector.is_narrow() {
+            self.narrow.allocate(capacity, MAX_ARENA_START, narrow_undefined()).inspect(|start| {
+                self.narrow.slots.copy_within(source..source + len, *start);
+            })
+        } else {
+            self.values.allocate(capacity, MAX_ARENA_START, Value::UNDEFINED).inspect(|start| {
+                self.values.slots.copy_within(source..source + len, *start);
+            })
+        };
+        match start {
+            Some(start) => copy.place(start, vector.is_narrow()),
             None => {
-                let values = self.values[vector.start()..vector.start() + len].to_vec();
+                let values = self.range_values(vector);
                 copy.use_dictionary(self.allocate_dictionary(values));
             }
         }
@@ -490,23 +668,27 @@ impl ValueArena {
         }
         let capacity = self.capacity(vector);
         if capacity != 0 {
-            self.free[Self::bucket(capacity)].push(vector.start & START_MASK);
-            self.released_values += capacity;
+            if vector.is_narrow() {
+                self.narrow.release(vector.start(), capacity);
+            } else {
+                self.values.release(vector.start(), capacity);
+            }
         }
     }
 
-    /// Whether released ranges have grown enough that compaction is worth rewriting every
-    /// live object's storage.
+    /// Whether released ranges have grown enough, in either lane, that compaction is worth
+    /// rewriting every live object's storage.
     pub(crate) fn compaction_due(&self) -> bool {
-        self.released_values > 0
-            && self.released_values >= self.values.len() / COMPACTION_RELEASED_SHARE_DIVISOR
+        self.values.compaction_due() || self.narrow.compaction_due()
     }
 
     pub(crate) fn has_compact_range(&self, vector: ValueVec) -> bool {
         vector.has_compact_range()
     }
 
-    pub(crate) fn compact_vector(&mut self, vector: &mut ValueVec, target: usize) -> usize {
+    /// Slides `vector`'s range down to its lane's next target, which advances past it. Owners
+    /// come in `ValueVec::start_offset` order: each lane in offset order.
+    pub(crate) fn compact_vector(&mut self, vector: &mut ValueVec, targets: &mut CompactionTargets) {
         assert!(
             !vector.is_dictionary(),
             "dictionary storage is not arena-backed"
@@ -514,31 +696,25 @@ impl ValueArena {
         let length = self.len(*vector);
         let capacity = self.capacity(*vector);
         let source = vector.start();
-        assert!(
-            target <= source,
-            "property ranges must compact in source order"
-        );
-        self.values.copy_within(source..source + length, target);
-        self.values[target + length..target + capacity].fill(Value::UNDEFINED);
-        vector.relocate(target);
-        capacity
+        let narrow = vector.is_narrow();
+        let target = if narrow { &mut targets.narrow } else { &mut targets.values };
+        if narrow {
+            self.narrow.compact(source, length, capacity, *target, narrow_undefined());
+        } else {
+            self.values.compact(source, length, capacity, *target, Value::UNDEFINED);
+        }
+        vector.place(*target, narrow);
+        *target += capacity;
     }
 
-    pub(crate) fn finish_compaction(&mut self, length: usize) {
-        self.values.truncate(length);
-        for bucket in &mut self.free {
-            bucket.clear();
-        }
-        self.released_values = 0;
+    pub(crate) fn finish_compaction(&mut self, targets: CompactionTargets) {
+        self.values.finish_compaction(targets.values);
+        self.narrow.finish_compaction(targets.narrow);
     }
 
     pub(crate) fn memory_bytes(&self) -> usize {
-        self.values.capacity() * size_of::<Value>()
-            + self
-                .free
-                .iter()
-                .map(|bucket| bucket.capacity() * size_of::<u32>())
-                .sum::<usize>()
+        self.values.memory_bytes()
+            + self.narrow.memory_bytes()
             + self.dictionaries.capacity() * size_of::<(u32, FxHashMap<u32, Value>)>()
             + self
                 .dictionaries
@@ -549,19 +725,46 @@ impl ValueArena {
     }
 
     pub(crate) fn memory_breakdown(&self) -> (usize, usize) {
-        let values = self.values.capacity() * size_of::<Value>();
+        let values = self.values.slots.capacity() * size_of::<Value>()
+            + self.narrow.slots.capacity() * size_of::<u32>();
         (values, self.memory_bytes() - values)
     }
 
+    /// Slots in use, slots reserved and free ranges, over both lanes.
     pub(crate) fn stats(&self) -> (usize, usize, usize) {
+        let free = |lane_free: &[Vec<u32>; BUCKETS]| lane_free.iter().map(Vec::len).sum::<usize>();
         (
-            self.values.len(),
-            self.values.capacity(),
-            self.free.iter().map(Vec::len).sum(),
+            self.values.slots.len() + self.narrow.slots.len(),
+            self.values.slots.capacity() + self.narrow.slots.capacity(),
+            free(&self.values.free) + free(&self.narrow.free),
         )
     }
 
-    fn grow(&mut self, vector: &mut ValueVec, max_start: usize) {
+    /// Moves `vector`'s narrow range to the wide lane, or to a dictionary when that lane is
+    /// exhausted. The capacity stays.
+    #[cold]
+    fn widen(&mut self, vector: &mut ValueVec) {
+        debug_assert!(vector.is_narrow());
+        let (source, len, capacity) = (vector.start(), self.len(*vector), self.capacity(*vector));
+        match self.values.allocate(capacity, MAX_ARENA_START, Value::UNDEFINED) {
+            Some(start) => {
+                for slot in 0..len {
+                    self.values.slots[start + slot] = Value::from_narrow(self.narrow.slots[source + slot]);
+                }
+                self.narrow.release(source, capacity);
+                vector.place(start, false);
+            }
+            None => {
+                let values = self.range_values(*vector);
+                self.narrow.release(source, capacity);
+                vector.use_dictionary(self.allocate_dictionary(values));
+            }
+        }
+    }
+
+    /// Doubles `vector`'s range in its lane (`narrow`, for a vector without one). With the
+    /// lane exhausted below `max_start`, the values move to a dictionary.
+    fn grow(&mut self, vector: &mut ValueVec, max_start: usize, narrow: bool) {
         let len = self.len(*vector);
         let capacity = self.capacity(*vector);
         let next = if capacity == 0 {
@@ -571,9 +774,14 @@ impl ValueArena {
                 .checked_mul(2)
                 .expect("property arena capacity overflow")
         };
-        let Some(start) = self.allocate(next, max_start) else {
+        let start = if narrow {
+            self.narrow.allocate(next, max_start, narrow_undefined())
+        } else {
+            self.values.allocate(next, max_start, Value::UNDEFINED)
+        };
+        let Some(start) = start else {
             let values = if self.has_compact_range(*vector) {
-                self.values[vector.start()..vector.start() + len].to_vec()
+                self.range_values(*vector)
             } else {
                 vec![Value::UNDEFINED; len]
             };
@@ -583,16 +791,21 @@ impl ValueArena {
             return;
         };
         if len != 0 {
-            self.values
-                .copy_within(vector.start()..vector.start() + len, start);
+            let source = vector.start();
+            if narrow {
+                self.narrow.slots.copy_within(source..source + len, start);
+            } else {
+                self.values.slots.copy_within(source..source + len, start);
+            }
             self.release(*vector);
         }
-        vector.start = start as u32 | (vector.start & !START_MASK);
+        vector.place(start, narrow);
     }
 
     #[cfg(test)]
     pub(crate) fn migrate_to_dictionary_for_test(&mut self, vector: &mut ValueVec) {
-        self.grow(vector, 0);
+        let narrow = vector.is_narrow();
+        self.grow(vector, 0, narrow);
     }
 
     pub(crate) fn vector_stats(&self, vector: ValueVec) -> (usize, usize) {
@@ -621,32 +834,6 @@ impl ValueArena {
             (0, true) => MIN_CAPACITY,
             (length, _) => length.next_power_of_two().max(MIN_CAPACITY),
         }
-    }
-
-    fn allocate(&mut self, capacity: usize, max_start: usize) -> Option<usize> {
-        let bucket = Self::bucket(capacity);
-        if let Some(start) = self.free[bucket].pop() {
-            self.released_values -= capacity;
-            return Some(start as usize);
-        }
-        let start = self.values.len();
-        if start >= max_start {
-            return None;
-        }
-        let required = start.checked_add(capacity)?;
-        // Vec's 2x policy leaves a large unused tail once long-lived heaps
-        // cross into millions of property slots. Preserve that policy for
-        // small programs, then grow by one third so the arena remains dense
-        // without turning every object allocation into a reallocation.
-        if required > self.values.capacity()
-            && self.values.capacity() >= DENSE_ARENA_RESERVE_THRESHOLD
-        {
-            let target = required
-                .max(self.values.capacity() + self.values.capacity() / DENSE_ARENA_GROWTH_DIVISOR);
-            self.values.reserve_exact(target - self.values.len());
-        }
-        self.values.resize(start + capacity, Value::UNDEFINED);
-        Some(start)
     }
 
     fn allocate_dictionary(&mut self, values: Vec<Value>) -> u32 {
@@ -678,6 +865,13 @@ impl ValueArena {
         assert!(bucket < BUCKETS, "property arena bucket overflow");
         bucket
     }
+}
+
+/// Where compaction places the next range of each lane (`ValueArena::compact_vector`).
+#[derive(Default)]
+pub(crate) struct CompactionTargets {
+    values: usize,
+    narrow: usize,
 }
 
 #[cfg(test)]
@@ -715,11 +909,42 @@ mod tests {
         assert_eq!(arena.get(copy, 1).unwrap().as_number(), Some(2.0));
 
         arena.migrate_to_dictionary_for_test(&mut source);
-        arena.set(source, 0, Value::number(3.0));
+        arena.set(&mut source, 0, Value::number(3.0));
         let dictionary_copy = arena.duplicate(source);
         assert_ne!(dictionary_copy.dictionary_id(), source.dictionary_id());
-        arena.set(source, 0, Value::number(4.0));
+        arena.set(&mut source, 0, Value::number(4.0));
         assert_eq!(arena.get(dictionary_copy, 0).unwrap().as_number(), Some(3.0));
+    }
+
+    #[test]
+    fn narrow_ranges_widen_on_a_value_without_a_narrow_form() {
+        let mut arena = ValueArena::default();
+        arena.register_shape(1, 3);
+        arena.register_shape(2, 4);
+        let mut vector = arena.with_values(1, &[Value::integer(7), Value::heap(11), Value::TRUE]);
+        assert!(vector.is_narrow());
+        assert_eq!(arena.values.slots.len(), 0, "every value is narrow");
+        let mut references = Vec::new();
+        arena.append_heap_references(vector, &mut references);
+        assert_eq!(references, [Value::heap(11)]);
+
+        assert!(!arena.set(&mut vector, 0, Value::integer(8)), "a narrow store keeps the range");
+        let copy = arena.duplicate(vector);
+        assert!(copy.is_narrow());
+        assert!(arena.set(&mut vector, 2, Value::number(0.5)), "a double moves the range");
+        assert!(!vector.is_narrow());
+        assert_eq!(
+            (0..3).map(|slot| arena.get(vector, slot).unwrap()).collect::<Vec<_>>(),
+            [Value::integer(8), Value::heap(11), Value::number(0.5)]
+        );
+        assert_eq!(arena.get(copy, 2), Some(Value::TRUE), "the copy keeps its own range");
+
+        let mut grown = copy;
+        arena.push(&mut grown, Value::number(1.5));
+        grown.set_auxiliary(2);
+        assert!(!grown.is_narrow());
+        assert_eq!(arena.get(grown, 3).unwrap().as_number(), Some(1.5));
+        assert_eq!(arena.get(grown, 1), Some(Value::heap(11)));
     }
 
     #[test]
@@ -738,7 +963,10 @@ mod tests {
         // Reusing a released range takes it off the free lists.
         arena.with_values(1, &pair);
         assert!(!arena.compaction_due());
-        arena.finish_compaction(arena.stats().0);
+        arena.finish_compaction(CompactionTargets {
+            values: arena.values.slots.len(),
+            narrow: arena.narrow.slots.len(),
+        });
         assert!(!arena.compaction_due());
     }
 
@@ -764,27 +992,28 @@ mod tests {
     fn arena_exhaustion_migrates_live_slots_to_dictionary_storage() {
         let mut arena = ValueArena::default();
         arena.register_shape(1, 2);
-        let mut vector = arena.with_values(1, &[Value::number(11.0), Value::number(22.0)]);
+        let mut vector = arena.with_values(1, &[Value::number(11.5), Value::number(22.5)]);
 
         let start = vector.start();
-        let range_count = arena.values.len();
+        let range_count = arena.values.slots.len();
         // A zero address limit exercises the same checked exhaustion branch
         // without allocating billions of arena entries in a unit test.
         arena.migrate_to_dictionary_for_test(&mut vector);
         let dictionary_id = vector.dictionary_id();
 
         assert!(vector.is_dictionary());
-        assert_eq!(arena.get(vector, 0).unwrap().as_number(), Some(11.0));
-        assert_eq!(arena.get(vector, 1).unwrap().as_number(), Some(22.0));
-        arena.set(vector, 1, Value::number(33.0));
-        assert_eq!(arena.get(vector, 1).unwrap().as_number(), Some(33.0));
+        assert_eq!(arena.get(vector, 0).unwrap().as_number(), Some(11.5));
+        assert_eq!(arena.get(vector, 1).unwrap().as_number(), Some(22.5));
+        arena.set(&mut vector, 1, Value::number(33.5));
+        assert_eq!(arena.get(vector, 1).unwrap().as_number(), Some(33.5));
 
         let mut references = Vec::new();
         arena.append_heap_references(vector, &mut references);
         assert!(references.is_empty(), "numbers are not heap references");
-        assert_eq!(arena.values.len(), range_count);
+        assert_eq!(arena.values.slots.len(), range_count);
         assert!(
             arena
+                .values
                 .free
                 .iter()
                 .any(|bucket| bucket.contains(&(start as u32)))
@@ -800,7 +1029,7 @@ mod tests {
         let mut arena = ValueArena::default();
         arena.register_shape(1, 2);
         let mut vector = arena.with_values(1, &[Value::heap(11), Value::heap(12)]);
-        arena.set(vector, 1, Value::DELETED);
+        arena.set(&mut vector, 1, Value::DELETED);
 
         arena.migrate_to_dictionary_for_test(&mut vector);
 
