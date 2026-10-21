@@ -878,8 +878,9 @@ impl Native {
 
     /// Natives a lane `Call` makes in place from the running frame (`lane_call_native`):
     /// the string, RegExp and `Math` functions, the Array, Object, Reflect and JSON
-    /// functions, `String.fromCharCode` and `fromCodePoint`, the primitive conversions, the
-    /// keyed collection methods and embedder host functions, which read no caller state
+    /// functions, `String.fromCharCode` and `fromCodePoint`, the primitive conversions and
+    /// Number tests, `Function.prototype[@@hasInstance]`, the buffer and typed array views'
+    /// getters, the keyed collection methods and embedder host functions, which read no caller state
     /// beyond the frame's published PC and run guest code only through ordinary nested calls.
     pub(crate) fn runs_from_lane(self) -> bool {
         self.is_string_regexp_or_math()
@@ -927,6 +928,22 @@ impl Native {
                     | Self::JsonStringify
                     | Self::JsonParse
                     | Self::NumberIsInteger
+                    | Self::NumberIsNaN
+                    | Self::NumberIsFinite
+                    | Self::NumberIsSafeInteger
+                    | Self::GlobalIsNaN
+                    | Self::GlobalIsFinite
+                    | Self::ObjectIs
+                    | Self::FunctionPrototypeHasInstance
+                    | Self::ArrayBufferIsView
+                    | Self::ArrayBufferSlice
+                    | Self::ArrayBufferTransfer
+                    | Self::ArrayBufferByteLengthGetter
+                    | Self::TypedArrayBufferGetter
+                    | Self::TypedArrayByteLengthGetter
+                    | Self::TypedArrayByteOffsetGetter
+                    | Self::TypedArrayLengthGetter
+                    | Self::TypedArrayToStringTag
                     | Self::ParseInt
                     | Self::StringFromCharCode
                     | Self::StringFromCodePoint
