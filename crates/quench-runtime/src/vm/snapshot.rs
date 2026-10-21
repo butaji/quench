@@ -353,6 +353,7 @@ impl<H: Host> Vm<H> {
             instanceof_constructor_layout: _,
             closure_shapes: _,
             iterator_result_shape: _,
+            descriptor_shapes: _,
             regexp_object_shapes: _,
             regexp_last_index_layout: _,
             regexp_builtin_layout: _,
