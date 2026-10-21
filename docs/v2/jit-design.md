@@ -1046,3 +1046,20 @@ was reverted. This points away from per-equality dispatch lookup as the main
 score limit; next focus remains the interpreted `run` loop and its calls,
 allocations and collection behavior. The six-pair raw data are stored in
 `evidence/jit-jetstream3-2026-10-21/hash-map-numeric-find-screen/`.
+
+### Hash-map diagnostic attribution
+
+Reviewing the existing opt-in diagnostic report clarified the timing scope:
+`runIteration` has 32 entries and 175.968 seconds of inclusive interpreter
+time, while its child `run` has 120 entries and 111.730 seconds. These times
+overlap and must not be added. `computeHashCode` enters native code for all
+64.8 million recorded entries, and `equals` for 53,999,969 of 54 million.
+The numeric lookup helper takes its guarded fast path 53,999,968 times. Its
+3 ms `interpreter_inclusive_ns` value covers only ordinary interpreter
+completion and excludes that helper's native execution, so it is not a cost
+estimate for the lookup path. The evidence points to the effectful outer
+`run`/`runIteration` dispatch as the remaining measured opportunity; it does
+not justify a Boolean guard rewrite or another equality-call shortcut. Raw
+diagnostic source: `enabled-diagnostic-1round.json` in the same report
+directory. This is attribution from instrumented inclusive counters, not an
+exclusive CPU profile or an optimization result.
