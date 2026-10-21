@@ -56,6 +56,21 @@ pub trait Host {
     /// Promise allocation and optimized await free of embedding callbacks.
     const OBSERVE_PROMISE_LIFECYCLE: bool = false;
 
+    /// Whether this host currently needs Promise identity and lifecycle
+    /// metadata. Hosts with lazily enabled observers can override this while
+    /// retaining the static default for hosts whose observation policy never
+    /// changes.
+    fn observe_promise_lifecycle(&self) -> bool {
+        Self::OBSERVE_PROMISE_LIFECYCLE
+    }
+
+    /// Whether the host needs a weakly tracked record for a Promise's
+    /// lifecycle. This can be narrower than identity observation: a host may
+    /// need Promise IDs and job context while no init/destroy hook is active.
+    fn track_promise_lifecycle_resource(&self) -> bool {
+        self.observe_promise_lifecycle()
+    }
+
     fn write_line(&mut self, text: &str);
     fn clock_millis(&mut self) -> f64;
 

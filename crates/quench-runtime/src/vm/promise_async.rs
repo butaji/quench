@@ -79,7 +79,7 @@ impl<H: Host> Vm<H> {
         source: Value,
         yielded: bool,
     ) -> Result<(), JsError> {
-        let source = if H::OBSERVE_PROMISE_LIFECYCLE
+        let source = if self.host.observe_promise_lifecycle()
             && !self.realm.promise.records.contains_key(&source)
             && !self.is_object_like(source)
         {
@@ -118,7 +118,7 @@ impl<H: Host> Vm<H> {
         );
         // Materialize the await reaction's Promise resource for host lifecycle
         // observation, even though the continuation consumes no result value.
-        let next = if H::OBSERVE_PROMISE_LIFECYCLE {
+        let next = if self.host.observe_promise_lifecycle() {
             self.with_call_roots([fulfilled, rejected, source, promise], |vm| {
                 vm.promise_object_with_parent(
                     vm.realm.promise.records.get(&source).and_then(|record| record.host_context),

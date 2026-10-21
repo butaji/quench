@@ -994,6 +994,15 @@ pub(crate) fn operation(name: &str) -> HostFunctionId {
 impl quench_runtime::Host for NodeHost {
     const OBSERVE_PROMISE_LIFECYCLE: bool = true;
 
+    fn observe_promise_lifecycle(&self) -> bool {
+        true
+    }
+
+    fn track_promise_lifecycle_resource(&self) -> bool {
+        let shared = self.shared_state.borrow();
+        shared.async_hooks.tracks_promise_lifecycle_resources()
+    }
+
     fn proper_tail_calls(&self) -> bool {
         false
     }

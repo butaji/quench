@@ -58,6 +58,11 @@ impl Registry {
     fn visible_counts(&self) -> [u32; HookKind::ALL.len()] {
         self.snapshot.map_or(self.counts, |(_, counts)| counts)
     }
+
+    pub(super) fn tracks_promise_lifecycle_resources(&self) -> bool {
+        let counts = self.visible_counts();
+        counts[HookKind::Init.index()] != 0 || counts[HookKind::Destroy.index()] != 0
+    }
 }
 
 pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {

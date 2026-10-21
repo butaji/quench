@@ -5,7 +5,7 @@
 
 use super::async_hooks_state::{StoreContext, JobContext};
 use crate::host::NodeHost;
-use quench_runtime::{NativeContext, RootId, RootedError, Runtime};
+use quench_runtime::{Host, NativeContext, RootId, RootedError, Runtime};
 use std::{cell::RefCell, rc::Rc};
 
 const ASYNC_ID: &str = "\0quench:async_hooks:id";
@@ -214,6 +214,9 @@ pub(crate) fn initialize_promise(
     promise: RootId,
     resource: quench_runtime::HostExecutionContext,
 ) -> Result<(), RootedError> {
+    if !context.host_mut().track_promise_lifecycle_resource() {
+        return Ok(());
+    }
     let weak = context.host_weak_root(promise)?;
     context.host_mut().shared_state().borrow_mut().async_hooks.promise_resources.insert(resource.0, weak);
     emit_init(context, promise, "PROMISE", resource.0)
