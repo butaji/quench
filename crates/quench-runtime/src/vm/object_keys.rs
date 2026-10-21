@@ -34,12 +34,51 @@ impl<H: Host> Vm<H> {
     /// shape in OrdinaryOwnPropertyKeys order, without key strings or descriptor objects.
     /// `None` sends every other object through the generic path.
     pub(super) fn shape_enumerable_keys(&self, object: Value) -> Option<Vec<Atom>> {
-        if matches!(
-            self.heap.get(object),
-            Some(Cell::Proxy { .. } | Cell::TypedArray { .. })
-        ) || self.heap.array(object).is_some()
-            || self.object_data(object)?.is_module_namespace()
-        {
+        if let Some(slots) = self.shape_enumerable_slots(object) {
+            return Some(slots.iter().map(|(atom, _)| *atom).collect());
+        }
+        self.shape_enumerable_key_walk(object)
+    }
+
+    /// `shape_enumerable_keys` with each key's slot, for an object whose shape alone decides
+    /// them (`enumerable_key_memo`): a non-dictionary shape without side-table descriptors.
+    pub(super) fn shape_enumerable_slots(
+        &self,
+        object: Value,
+    ) -> Option<super::enumerable_key_memo::EnumerableSlots> {
+        if !self.shape_lists_enumerable_keys(object) {
+            return None;
+        }
+        let data = self.object_data(object)?;
+        let shape = data.shape();
+        if data.has_side_descriptors() || self.shape_is_dictionary(shape) {
+            return None;
+        }
+        if let Some(slots) = self.enumerable_keys.get(shape) {
+            return Some(slots);
+        }
+        let keys = self.shape_enumerable_key_walk(object)?;
+        let slots = keys
+            .into_iter()
+            .map(|atom| {
+                let slot = self.property_shape_slot(shape, PropertyKey::string(atom))?;
+                Some((atom, u32::try_from(slot).ok()?))
+            })
+            .collect::<Option<super::enumerable_key_memo::EnumerableSlots>>()?;
+        self.enumerable_keys.record(shape, slots.clone());
+        Some(slots)
+    }
+
+    /// Whether `object`'s string keys all live in its shape: no Proxy, array, typed array or
+    /// module namespace.
+    fn shape_lists_enumerable_keys(&self, object: Value) -> bool {
+        !matches!(self.heap.get(object), Some(Cell::Proxy { .. } | Cell::TypedArray { .. }))
+            && self.heap.array(object).is_none()
+            && self.object_data(object).is_some_and(|data| !data.is_module_namespace())
+    }
+
+    fn shape_enumerable_key_walk(&self, object: Value) -> Option<Vec<Atom>> {
+        if !self.shape_lists_enumerable_keys(object) {
             return None;
         }
         Some(

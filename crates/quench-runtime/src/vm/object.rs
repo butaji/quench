@@ -748,6 +748,7 @@ impl<H: Host> Vm<H> {
         }
         self.symbol_write_proofs.clear();
         self.symbol_load_proofs.clear();
+        self.enumerable_keys.clear();
         self.field_add_sets.clear();
         self.megamorphic_fields.clear();
         self.inherited_field_caches.clear();

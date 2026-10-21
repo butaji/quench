@@ -32,11 +32,20 @@ impl<K: Copy + Eq + Hash, V: Copy> Default for ShapeMemo<K, V> {
     }
 }
 
+/// The entry `key` maps to in a direct-mapped table of `entries`, a power of two above one:
+/// the top bits of its Fx hash. An Fx hash's low bits depend only on its input's low bits,
+/// so masking them would crowd keys built from small shape ids and heap indices into a few
+/// entries, which then evict each other on every use.
+pub(super) fn direct_mapped_index(key: impl Hash, entries: usize) -> usize {
+    debug_assert!(entries.is_power_of_two() && entries > 1);
+    let mut hasher = rustc_hash::FxHasher::default();
+    key.hash(&mut hasher);
+    (hasher.finish() >> (u64::BITS - entries.trailing_zeros())) as usize
+}
+
 impl<K: Copy + Eq + Hash, V: Copy> ShapeMemo<K, V> {
     fn index(shape: u32, key: K) -> usize {
-        let mut hasher = rustc_hash::FxHasher::default();
-        (shape, key).hash(&mut hasher);
-        hasher.finish() as usize & (SHAPE_MEMO_ENTRIES - 1)
+        direct_mapped_index((shape, key), SHAPE_MEMO_ENTRIES)
     }
 
     /// The memoized answer for `key` in `shape`, if one is recorded.

@@ -2449,6 +2449,9 @@ unsafe fn lane_unary_value<H: Host>(
     if operator == super::coercion::LOGICAL_NOT {
         return Some(vm.logical_not(operand));
     }
+    if let Some((index, negated)) = crate::bytecode::typeof_test(operator) {
+        return Some(vm.typeof_test_value(operand, index, negated));
+    }
     if operator == super::coercion::TYPEOF {
         let name = vm.typeof_value(operand);
         // Interning the type's name can allocate.
@@ -3149,11 +3152,46 @@ script_handler! {
     #[inline(never)]
     fn lane_get_field<>(cx, r, ip, i, view) {
         let Some(value) = (unsafe { lane_field_value(cx, r, i) }) else {
-            return exit(ip);
+            return match lane_getter_activation(cx, r, ip, i) {
+                Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
+                Err(next) => next,
+            };
         };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
     }
+}
+
+/// A lane `GetField` whose read meets the accessor its site cached
+/// (`Vm::cached_field_getter`): the getter runs as a frameless activation of the read's
+/// record, as `lane_script_call` runs a call, with the base as receiver and no arguments,
+/// and its completion is the read's value. `Err` carries the record to continue at: the
+/// general path for any other read.
+#[inline(never)]
+fn lane_getter_activation<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    ip: Ip,
+    i: &LaneInstruction,
+) -> Result<(Registers, Ip), Ip> {
+    if !unsafe { (*cx).script_calls } || i.b == crate::bytecode::FieldBase::NESTED {
+        return Err(exit(ip));
+    }
+    let vm = unsafe { vm(cx) };
+    let Some(base) = (unsafe { lane_field_base(cx, r, crate::bytecode::FieldBase(i.b)) }) else {
+        return Err(exit(ip));
+    };
+    let Some(getter) = vm.cached_field_getter(base, i.imm(), vm.field_cache_index(i.c)) else {
+        return Err(exit(ip));
+    };
+    let Some(target) = lane_script_target(cx, getter).filter(|target| !target.forwards()) else {
+        return Err(exit(ip));
+    };
+    let Some(this) = lane_call_this(vm, &target, base) else {
+        return Err(exit(ip));
+    };
+    let no_arguments = ActivationArguments::Kept(std::ptr::NonNull::dangling().as_ptr(), 0);
+    lane_activate_keeping(cx, r, ip, target, no_arguments, this, false, None)
 }
 
 /// A `GetField` record's value where caches answer it (`lane_cached_field`): one read of a
@@ -6024,42 +6062,56 @@ fn lane_new_array<H: Host>(vm: &mut Vm<H>, prototype: Value, args: &[Value]) -> 
 }
 
 lane_handler! {
-    /// `Function.prototype.call` of a frameless target `f` (`f.call(thisArg, ...args)`):
-    /// `f`'s activation as `lane_script_call` makes it, with `this` the first value the call
-    /// passes and the remaining values its arguments. Any other takes the general path.
+    /// A call that forwards without an observable step of its own (`Vm::forwarded_call`):
+    /// `f.call(thisArg, ...args)`, a bound function without bound arguments, or an
+    /// uncurried builtin (`uncurryThis(f)(thisArg, ...args)`). A frameless target's
+    /// activation is the one `lane_script_call` makes, and a native runs as
+    /// `lane_native_call` runs it, with the forwarded receiver and arguments. Any other
+    /// takes the general path.
     #[inline(never)]
     fn lane_function_call<>(cx, r, ip, i, view) {
-        match lane_function_call_activation(cx, r, ip, i) {
+        let vm = unsafe { vm(cx) };
+        // SAFETY: the call's window is registers of the running function, which the
+        // activation or native call copies before anything can move them.
+        let window = unsafe { lane_call_window(r, i) };
+        let Some((callee, receiver, args)) = vm.forwarded_call(r.get(i.b), r.get(i.c), window) else {
+            return exit(ip);
+        };
+        if let Some(FunctionRecord { kind: kind @ FunctionKind::Native(_), .. }) = vm.heap.function(callee) {
+            let kind = *kind;
+            if i.a & crate::bytecode::RETURN_REGISTER != 0 && !lane_returning_call_admitted(cx) {
+                return exit(ip);
+            }
+            let value = lane_native_value(cx, ip, i, kind, callee, receiver, args);
+            return lane_native_complete(cx, ip, i, value);
+        }
+        match lane_function_call_activation(cx, r, ip, callee, receiver, args) {
             Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
             Err(next) => next,
         }
     }
 }
 
-/// `lane_function_call`'s activation: the callee's registers and first record, or the
-/// record to continue at. Out of line, as `lane_construct_keeping_activation`.
+/// `lane_function_call`'s activation of the frameless `callee` with the forwarded `receiver`
+/// and `args`: the callee's registers and first record, or the record to continue at. Out of line, as `lane_construct_keeping_activation`.
 #[inline(never)]
 fn lane_function_call_activation<H: Host>(
     cx: *mut LaneContext<H>,
     r: Registers,
     ip: Ip,
-    i: &LaneInstruction,
+    callee: Value,
+    receiver: Value,
+    args: &[Value],
 ) -> Result<(Registers, Ip), Ip> {
     let vm = unsafe { vm(cx) };
-    let Some(target) = lane_script_target(cx, r.get(i.c)) else {
+    let Some(target) = lane_script_target(cx, callee) else {
         return Err(exit(ip));
     };
-    let window = ImmediateLayout::call_window_base(i.imm());
-    let argc = usize::from(ImmediateLayout::argument_count(i.imm()));
-    let receiver = if argc == 0 { Value::UNDEFINED } else { r.get(window) };
     // `call_this_value` without its boxing of primitives, which allocates.
     let Some(this) = lane_call_this(vm, &target, receiver) else {
         return Err(exit(ip));
     };
-    // SAFETY: the values after `thisArg` are registers of the running function, which the
-    // activation copies before anything can move them.
-    let rest = unsafe { r.0.add(usize::from(window) + 1) };
-    let arguments = ActivationArguments::Kept(rest, argc.saturating_sub(1));
+    let arguments = ActivationArguments::Kept(args.as_ptr(), args.len());
     lane_activate_keeping(cx, r, ip, target, arguments, this, false, None)
 }
 
@@ -6080,7 +6132,7 @@ lane_handler! {
             }) => *kind,
             _ => sibling!(lane_frame_call::<H>, r, ip, Carried::script(cx)),
         };
-        if matches!(kind, FunctionKind::Native(Native::FunctionCall)) {
+        if matches!(kind, FunctionKind::Native(Native::FunctionCall | Native::FunctionBoundCall)) {
             sibling!(lane_function_call::<H>, r, ip, Carried::script(cx))
         }
         // A call that returns its result completes its caller: an activation in the lane, or
@@ -6091,85 +6143,110 @@ lane_handler! {
         if returns && !lane_returning_call_admitted(cx) {
             return exit(ip);
         }
-        let receiver = r.get(i.c);
-        let value = match kind {
-            FunctionKind::Native(Native::ArrayPush) => {
-                let window = ImmediateLayout::call_window_base(i.imm());
-                let argc = ImmediateLayout::argument_count(i.imm());
-                // SAFETY: the call's window is registers of the running function, which
-                // the push neither moves nor frees.
-                let args = unsafe {
-                    std::slice::from_raw_parts(r.0.add(usize::from(window)), usize::from(argc))
-                };
-                vm.array_push_dense(receiver, args)
-            }
-            FunctionKind::Native(Native::ArrayPop) => vm.array_pop_dense(receiver),
-            FunctionKind::Native(Native::StringCharCodeAt) if ImmediateLayout::argument_count(i.imm()) != 0 => {
-                // `charCodeAt` of a string at an integer index: the unit there, or NaN outside
-                // the string. Any other receiver or index takes the native's coercions.
-                let window = ImmediateLayout::call_window_base(i.imm());
-                let index = r.get(window).as_int();
-                match (vm.heap.string(receiver), index) {
-                    (Some(text), Some(index)) => Some(
-                        usize::try_from(index)
-                            .ok()
-                            .and_then(|index| text.units().get(index))
-                            .map_or(Value::number(f64::NAN), |unit| Value::number(unit.into())),
-                    ),
-                    _ => lane_string_or_native_call(cx, r, ip, i, receiver),
-                }
-            }
-            FunctionKind::Native(native @ (Native::MapGet | Native::MapHas | Native::SetHas)) => {
-                let key = if ImmediateLayout::argument_count(i.imm()) == 0 {
-                    Value::UNDEFINED
-                } else {
-                    r.get(ImmediateLayout::call_window_base(i.imm()))
-                };
-                vm.pure_collection_lookup(native, receiver, key)
-                    .or_else(|| lane_string_or_native_call(cx, r, ip, i, receiver))
-            }
-            _ => lane_string_or_native_call(cx, r, ip, i, receiver),
-        };
-        let Some(value) = value else {
-            return exit(ip);
-        };
-        // The call may have made the lane's activations frames, so the running function's
-        // registers and caller are read again.
-        if returns {
-            let Some((registers, next, view)) = lane_complete_activation(cx, value) else {
-                return lane_frame_return(vm, ip, value);
-            };
-            if is_exit(next) {
-                return next;
-            }
-            next!(cx, registers, next, view)
-        }
-        let r = unsafe { (*cx).registers };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script(cx))
+        // SAFETY: the call's window is registers of the running function, which the native
+        // call copies before anything can move them.
+        let args = unsafe { lane_call_window(r, i) };
+        let value = lane_native_value(cx, ip, i, kind, r.get(i.b), r.get(i.c), args);
+        lane_native_complete(cx, ip, i, value)
     }
+}
+
+/// The values a lane `Call` record passes: its window of the running function's registers.
+///
+/// # Safety
+/// `r` is the registers of the activation `i` belongs to; the slice is valid until they move.
+#[inline(always)]
+unsafe fn lane_call_window<'a>(r: Registers, i: &LaneInstruction) -> &'a [Value] {
+    let window = ImmediateLayout::call_window_base(i.imm());
+    let argc = ImmediateLayout::argument_count(i.imm());
+    unsafe { std::slice::from_raw_parts(r.0.add(usize::from(window)), usize::from(argc)) }
+}
+
+/// The value of the lane `Call` record `i` of the native `callee`, of `kind`, with
+/// `receiver` and `args`: dense `push` and `pop`, `charCodeAt` and collection lookups in
+/// place, else `lane_string_or_native_call`. `None` leaves the call to the general path,
+/// which raises an error the call stashed in `Vm::lane_raised`.
+#[inline(always)]
+fn lane_native_value<H: Host>(
+    cx: *mut LaneContext<H>,
+    ip: Ip,
+    i: &LaneInstruction,
+    kind: FunctionKind,
+    callee: Value,
+    receiver: Value,
+    args: &[Value],
+) -> Option<Value> {
+    let vm = unsafe { vm(cx) };
+    match kind {
+        FunctionKind::Native(Native::ArrayPush) => vm.array_push_dense(receiver, args),
+        FunctionKind::Native(Native::ArrayPop) => vm.array_pop_dense(receiver),
+        FunctionKind::Native(Native::StringCharCodeAt) if !args.is_empty() => {
+            // `charCodeAt` of a string at an integer index: the unit there, or NaN outside
+            // the string. Any other receiver or index takes the native's coercions.
+            match (vm.heap.string(receiver), args[0].as_int()) {
+                (Some(text), Some(index)) => Some(
+                    usize::try_from(index)
+                        .ok()
+                        .and_then(|index| text.units().get(index))
+                        .map_or(Value::number(f64::NAN), |unit| Value::number(unit.into())),
+                ),
+                _ => lane_string_or_native_call(cx, ip, i, callee, receiver, args),
+            }
+        }
+        FunctionKind::Native(native @ (Native::MapGet | Native::MapHas | Native::SetHas)) => {
+            let key = args.first().copied().unwrap_or(Value::UNDEFINED);
+            vm.pure_collection_lookup(native, receiver, key)
+                .or_else(|| lane_string_or_native_call(cx, ip, i, callee, receiver, args))
+        }
+        _ => lane_string_or_native_call(cx, ip, i, callee, receiver, args),
+    }
+}
+
+/// The lane `Call` record `i` completed with `value`: in its result register, or returned
+/// from the caller for a call that returns its result; the general path for `None`.
+#[inline(always)]
+fn lane_native_complete<H: Host>(
+    cx: *mut LaneContext<H>,
+    ip: Ip,
+    i: &LaneInstruction,
+    value: Option<Value>,
+) -> Ip {
+    let vm = unsafe { vm(cx) };
+    let Some(value) = value else {
+        return exit(ip);
+    };
+    // The call may have made the lane's activations frames, so the running function's
+    // registers and caller are read again.
+    if i.a & crate::bytecode::RETURN_REGISTER != 0 {
+        let Some((registers, next, view)) = lane_complete_activation(cx, value) else {
+            return lane_frame_return(vm, ip, value);
+        };
+        if is_exit(next) {
+            return next;
+        }
+        next!(cx, registers, next, view)
+    }
+    let r = unsafe { (*cx).registers };
+    r.set(i.a, value);
+    next!(cx, r, following(ip), Carried::script(cx))
 }
 
 /// A lane native call that `lane_native_call` does not make inline: a pure string method or
 /// `RegExp.prototype.exec` in place, else the native through `lane_call_native`.
 fn lane_string_or_native_call<H: Host>(
     cx: *mut LaneContext<H>,
-    r: Registers,
     ip: Ip,
     i: &LaneInstruction,
+    callee: Value,
     receiver: Value,
+    args: &[Value],
 ) -> Option<Value> {
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
-    let window = ImmediateLayout::call_window_base(i.imm());
-    let argc = ImmediateLayout::argument_count(i.imm());
-    // SAFETY: the call's window is registers of the running function, which a pure string
-    // method neither moves nor frees.
-    let args = unsafe { std::slice::from_raw_parts(r.0.add(usize::from(window)), usize::from(argc)) };
     // RegExp exec and test run through `lane_call_native` (`Vm::steady_regexp_call`).
-    vm.pure_string_method_call(code, r.get(i.b), receiver, args)
-        .or_else(|| lane_call_native(cx, r, ip, i))
+    vm.pure_string_method_call(code, callee, receiver, args)
+        .or_else(|| lane_call_native(cx, ip, i, callee, receiver, args))
 }
 
 /// A lane `Call` of a native that `Native::runs_from_lane` admits, made as the general path
@@ -6181,12 +6258,13 @@ fn lane_string_or_native_call<H: Host>(
 #[inline(never)]
 fn lane_call_native<H: Host>(
     cx: *mut LaneContext<H>,
-    r: Registers,
     ip: Ip,
     i: &LaneInstruction,
+    callee: Value,
+    receiver: Value,
+    args: &[Value],
 ) -> Option<Value> {
     let vm = unsafe { vm(cx) };
-    let callee = r.get(i.b);
     let native = match vm.heap.function(callee) {
         Some(FunctionRecord {
             kind: FunctionKind::Native(native),
@@ -6194,25 +6272,22 @@ fn lane_call_native<H: Host>(
         }) if native.runs_from_lane() => *native,
         _ => return None,
     };
-    let window = ImmediateLayout::call_window_base(i.imm());
-    let argc = ImmediateLayout::argument_count(i.imm());
     // A unary Math function of a Number runs no guest code and observes no frame, so it
     // runs from any activation.
-    if argc > 0
-        && let Some(value) = r.get(window).as_number()
+    if let Some(value) = args.first().and_then(|value| value.as_number())
         && let Some(result) = super::number::math_unary(native, value)
     {
         return Some(Value::number(result));
     }
     // A RegExp exec or test that runs no guest code and raises nothing observes no frame
     // either (`Vm::steady_regexp_call`).
-    if argc > 0
+    if let Some(&subject) = args.first()
         // SAFETY: the context's program outlives the lane run.
         && let Some(result) = vm.steady_regexp_call(
             unsafe { &*(*cx).code },
             native,
-            r.get(i.c),
-            r.get(window),
+            receiver,
+            subject,
             ImmediateLayout::lane_call_result_used(i.imm()),
         )
     {
@@ -6225,14 +6300,13 @@ fn lane_call_native<H: Host>(
             }
         };
     }
-    if argc >= 2
+    if args.len() >= 2
         && let Some(result) = vm.steady_string_replace(
             // SAFETY: the context's program outlives the lane run.
             unsafe { &*(*cx).code },
             native,
-            r.get(i.c),
-            // SAFETY: the call's window is registers of the running function.
-            unsafe { std::slice::from_raw_parts(r.0.add(usize::from(window)), usize::from(argc)) },
+            receiver,
+            args,
             ImmediateLayout::lane_call_result_used(i.imm()),
         )
     {
@@ -6248,10 +6322,12 @@ fn lane_call_native<H: Host>(
     if !unsafe { (*cx).script_calls } {
         return None;
     }
+    // The values are copied before activations become frames, which moves the registers
+    // they may lie in; the frames then root what the call passes.
+    let arguments = super::call_arguments::CallArguments::from_slice(args);
     // The callee observes the frame stack: lane activations become frames first, as leaving
     // the lane would make them, and the call runs from the innermost one.
     vm.materialize_lane_activations(cx);
-    let r = unsafe { (*cx).registers };
     // SAFETY: the context's program outlives the lane run, and `ip` is a record of the
     // active view, which is the running frame's.
     let (code, frame, call_pc) = unsafe {
@@ -6263,12 +6339,8 @@ fn lane_call_native<H: Host>(
     };
     vm.frames[frame].pc = call_pc + 1;
     vm.frames[frame].pc_is_resume = true;
-    // SAFETY: the call's window is registers of the running frame, copied before the call.
-    let arguments = super::call_arguments::CallArguments::from_slice(unsafe {
-        std::slice::from_raw_parts(r.0.add(usize::from(window)), usize::from(argc))
-    });
     // The native branch of `Vm::call_value_with_target_inner`, whose callee this is.
-    let result = vm.call_native_guarded(code, native, r.get(i.c), arguments.as_slice(), callee);
+    let result = vm.call_native_guarded(code, native, receiver, arguments.as_slice(), callee);
     // The native's allocations may make a collection due, which the lane's safepoints take.
     note_allocation(vm);
     match result {
