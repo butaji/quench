@@ -1863,6 +1863,25 @@ impl Object {
         std::array::from_fn(|slot| Value::from_narrow((word >> (slot as u32 * u32::BITS)) as u32))
     }
 
+    /// An object of `proto` and inline `shape` holding `values`, at most the inline slots and
+    /// `undefined` past them; `None` when a value has no narrow form.
+    #[inline(always)]
+    pub(crate) fn with_inline_values(proto: Value, shape: u32, values: &[Value]) -> Option<Self> {
+        debug_assert!(values.len() <= INLINE_PROPERTY_COUNT);
+        // A loop over the fixed bound unrolls to element moves, where one over `values`
+        // becomes a `memcpy` call.
+        let inline = std::array::from_fn(|slot| values.get(slot).copied().unwrap_or(Value::UNDEFINED));
+        let payload = Self::pack_inline(inline)?;
+        let mut object = Self {
+            meta: Self::encode_proto(proto),
+            auxiliary: 0,
+            payload,
+        };
+        // Inline storage leaves the payload word alone.
+        object.set_properties(ValueVec::inline_property_storage(shape));
+        Some(object)
+    }
+
     /// Whether inline `values` fit the payload word without moving into extras.
     #[inline(always)]
     pub(crate) fn inline_values_narrow(values: &[Value]) -> bool {
@@ -1870,6 +1889,7 @@ impl Object {
     }
 
     /// The inline property slots, wherever they live.
+    #[inline(always)]
     fn inline_values(&self) -> [Value; INLINE_PROPERTY_COUNT] {
         match self.extras() {
             Some(extras) => extras.inline_properties.0,
@@ -1919,17 +1939,9 @@ impl Object {
         })
     }
 
+    #[inline(always)]
     pub(crate) fn inline_properties(&self) -> Option<[Value; INLINE_PROPERTY_COUNT]> {
         (self.meta & OBJECT_INLINE_STORAGE != 0).then(|| self.inline_values())
-    }
-
-    /// Whether storing `value` in an inline slot would move the inline values out of the
-    /// payload word: the object holds them there and `value` has no narrow form.
-    #[inline(always)]
-    pub(crate) fn inline_store_widens(&self, value: Value) -> bool {
-        self.meta & OBJECT_INLINE_STORAGE != 0
-            && self.extras_pointer().is_none()
-            && value.to_narrow().is_none()
     }
 
     /// The inline property at `slot`, when the object stores its properties inline.
@@ -1945,18 +1957,40 @@ impl Object {
         })
     }
 
+    /// Stores `value` at inline `slot`, moving the inline values into extras when the payload
+    /// word cannot hold it.
+    #[cfg(test)]
     pub(crate) fn set_inline_property(&mut self, slot: usize, value: Value) {
+        // A cached slot past the inline values is a caller bug, not a reason to panic here.
+        if slot < INLINE_PROPERTY_COUNT && !self.store_inline_narrow(slot, value) {
+            self.set_inline_property_wide(slot, value);
+        }
+    }
+
+    /// Stores `value` at inline `slot` unless the payload word holds the inline values and
+    /// cannot hold `value`; `false` leaves the object unchanged for the caller to move its
+    /// values to the arena.
+    #[inline(always)]
+    pub(crate) fn store_inline_narrow(&mut self, slot: usize, value: Value) -> bool {
         debug_assert!(self.properties().has_inline_property_storage());
         debug_assert!(slot < INLINE_PROPERTY_COUNT);
-        // A cached slot past the inline values is a caller bug, not a reason to panic here.
-        if slot >= INLINE_PROPERTY_COUNT {
-            return;
+        match (self.extras_pointer(), value.to_narrow()) {
+            (None, Some(narrow)) => {
+                let shift = slot as u32 * u32::BITS;
+                self.payload = self.payload & !(u64::from(u32::MAX) << shift) | u64::from(narrow) << shift;
+                true
+            }
+            (None, None) => false,
+            (Some(_), _) => {
+                self.set_inline_property_wide(slot, value);
+                true
+            }
         }
-        if let (None, Some(narrow)) = (self.extras_pointer(), value.to_narrow()) {
-            let shift = slot as u32 * u32::BITS;
-            self.payload = self.payload & !(u64::from(u32::MAX) << shift) | u64::from(narrow) << shift;
-            return;
-        }
+    }
+
+    /// `set_inline_property` into extras: the object has them, or `value` has no narrow form.
+    #[cold]
+    fn set_inline_property_wide(&mut self, slot: usize, value: Value) {
         let mut values = self.inline_values();
         values[slot] = value;
         self.store_inline_values(values);
