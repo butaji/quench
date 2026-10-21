@@ -69,7 +69,7 @@ impl<H: Host> Vm<H> {
         }
         self.set_builtin_named(program, self.array_proto, "constructor", Native::Array)?;
         self.set_builtin_value_named(array, "length", Value::number(ARRAY_CONSTRUCTOR_LENGTH))?;
-        let length_atom = self.intern_atom("length");
+        let length_atom = self.length_atom;
         self.set_property_attributes(
             array,
             PropertyKey::string(length_atom),
@@ -117,7 +117,7 @@ impl<H: Host> Vm<H> {
         self.set_builtin_value_named(array, "prototype", prototype)?;
         self.set_builtin_value_named(prototype, "constructor", array)?;
         self.set_builtin_value_named(array, "length", Value::number(ARRAY_CONSTRUCTOR_LENGTH))?;
-        let length = self.intern_atom("length");
+        let length = self.length_atom;
         self.set_property_attributes(
             array,
             PropertyKey::string(length),

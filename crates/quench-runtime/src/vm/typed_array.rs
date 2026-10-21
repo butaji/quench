@@ -22,8 +22,8 @@ impl<H: Host> Vm<H> {
         }
     }
     pub(super) fn install_typed_array(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
-        self.intern_atom("value");
-        self.intern_atom("done");
+        self.runtime_atoms.value;
+        self.runtime_atoms.done;
         let uint8_array = self.native_value(Native::Uint8Array);
         let typed_array = self.native_value(Native::TypedArray);
         self.uint8_array_proto = self.object();
@@ -698,7 +698,10 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         super::sort::try_stable_sort_by(values, |left, right| {
             if let Some(comparator) = comparator {
-                self.compare_sort_callback(p, comparator, *left, *right)
+                let comparator = self.heap.root_value(comparator).unwrap();
+                let left = self.heap.root_value(*left).unwrap();
+                let right = self.heap.root_value(*right).unwrap();
+                self.compare_sort_callback(p, comparator, left, right)
             } else {
                 let left = self.heap.root_value(*left).unwrap();
                 let right = self.heap.root_value(*right).unwrap();
