@@ -5552,6 +5552,9 @@ impl<H: Host> Vm<H> {
             self.lane_stack.remember_script_target(set, target);
             return Some(target);
         }
+        if !self.programs.lane_call_may_derive(program, function) {
+            return None;
+        }
         let body = code.function_get(function as usize)?;
         let plan = body.call_plan(code);
         // An arrow binds the `this` of its environment, found once here: one still
