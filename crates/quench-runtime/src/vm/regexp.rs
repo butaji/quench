@@ -1357,6 +1357,16 @@ impl<H: Host> Vm<H> {
                 }
                 let input =
                     vm.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                if let Some((matcher, flags)) = vm.regexp_unobservable_splitter(receiver, &input) {
+                    let limit = vm.regexp_split_limit(p, args.get(1).copied())?;
+                    let array = vm.new_array(Vec::new());
+                    if limit == 0 {
+                        return Ok(array);
+                    }
+                    return vm.with_call_roots([array], |vm| {
+                        vm.regexp_split_builtin(receiver, &matcher, &input, array, limit, flags.unicode_mode())
+                    });
+                }
                 let constructor = vm.regexp_species_constructor(p, receiver)?;
                 let (unicode, splitter) = vm.with_call_roots([constructor], |vm| {
                     let mut flags = vm.regexp_flags_text(p, receiver)?;
@@ -1549,6 +1559,51 @@ impl<H: Host> Vm<H> {
             self.record_regexp_legacy_match(splitter, input.clone(), matched)?;
         }
         Ok(array)
+    }
+
+    /// The matcher and flags of the splitter `@@split` would construct for `receiver` over the
+    /// non-empty `input`, when constructing it is unobservable and the splitter would behave
+    /// as `receiver`'s own builtin matcher with `y`: the receiver's exec, flags and flag
+    /// accessors are builtin (`regexp_builtin_receiver_matcher`), `SpeciesConstructor`
+    /// resolves through the prototype's data `constructor` to this realm's `RegExp` and its
+    /// builtin `@@species` getter, `IsRegExp` reads a data `@@match`, and the receiver's
+    /// legacy owner is that constructor, the owner a splitter it constructs gets. The splitter
+    /// never escapes, so the split runs with the receiver in its place
+    /// (`regexp_split_builtin`). The matcher is taken before the limit's conversion, which
+    /// may run guest code, as the spec constructs the splitter first.
+    fn regexp_unobservable_splitter(
+        &mut self,
+        receiver: Value,
+        input: &JsString,
+    ) -> Option<(Rc<quench_regexp::Regex>, RegExpFlags)> {
+        if input.units().len() == 0 {
+            return None;
+        }
+        let intrinsic = self.regexp_intrinsic_constructor();
+        let owner = match self.heap.get(receiver) {
+            Some(Cell::RegExp { meta, .. }) => meta.legacy_constructor,
+            _ => return None,
+        };
+        if !matches!(owner, crate::heap::RegExpLegacyOwner::Enabled(constructor) if constructor == intrinsic) {
+            return None;
+        }
+        let matched = self.regexp_builtin_receiver_matcher(receiver)?;
+        let match_symbol = self.well_known_symbols.get(WellKnownSymbol::Match)?;
+        self.regexp_proven_symbol_method(receiver, match_symbol)?;
+        let constructor_atom = self.intern_atom("constructor");
+        let constructor_key = PropertyKey::string(constructor_atom);
+        let prototype = self.object_data(receiver)?.proto();
+        let constructor_is_intrinsic = self.property_attributes(receiver, constructor_key).is_none()
+            && self
+                .property_attributes(prototype, constructor_key)
+                .is_some_and(|attributes| !attributes.accessor)
+            && self.own_property(prototype, constructor_atom) == Some(intrinsic);
+        let species = self.well_known_symbols.get(WellKnownSymbol::Species)?;
+        let species_is_builtin = self
+            .property_attributes(intrinsic, PropertyKey::symbol(species))
+            .and_then(|attributes| attributes.accessor.then_some(attributes.getter).flatten())
+            .is_some_and(|getter| self.is_native_function(getter, Native::RegExpSpecies));
+        (constructor_is_intrinsic && species_is_builtin).then_some(matched)
     }
 
     fn regexp_species_constructor(
