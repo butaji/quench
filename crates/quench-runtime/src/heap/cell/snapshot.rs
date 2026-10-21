@@ -651,10 +651,11 @@ impl Cell {
                 writer.f64(*milliseconds);
                 write_object(writer, object)?;
             }
-            Self::RegExp { object, meta, matcher: _ } => {
+            Self::RegExp { object, meta } => {
                 writer.u8(tag::REGEXP);
                 write_object(writer, object)?;
-                let RegExpMeta { source, flags, legacy_constructor } = &**meta;
+                // The matcher is compiled again from the source and flags on restore.
+                let RegExpMeta { source, flags, legacy_constructor, matcher: _ } = &**meta;
                 source.write_snapshot(writer);
                 writer.str(&flags.text());
                 match legacy_constructor {
@@ -831,7 +832,9 @@ impl Cell {
                     _ => return Err(SnapshotError("invalid snapshot regexp owner".into())),
                 };
                 let matcher = (decoder.regexp)(&source, &flag_text)?;
-                Self::RegExp { object, meta: Box::new(RegExpMeta { source, flags, legacy_constructor }), matcher }
+                // A restored RegExp owns its record; literal sites share theirs again from the
+                // program store (`ProgramStore::regexp_literal_meta`) on their next evaluation.
+                Self::RegExp { object, meta: std::rc::Rc::new(RegExpMeta { source, flags, legacy_constructor, matcher }) }
             }
             tag::ERROR => Self::Error(reader.string()?),
             tag::PROMISE => Self::Promise(Box::new(crate::heap::PromiseCell::read_snapshot(reader)?)),
