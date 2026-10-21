@@ -1354,6 +1354,9 @@ impl<H: Host> Vm<H> {
                 executing_program = executing.id;
                 current_program = executing.retained;
                 executing_residual = current_program.as_deref().unwrap_or(entry_program);
+                // SAFETY: as for `p` at the top of the loop; the lane may have left in another program.
+                #[cfg(feature = "profile-lane-exits")]
+                let p = unsafe { &*executing_residual };
                 #[cfg(feature = "profile-lane-exits")]
                 if let Some(instruction) = p
                     .functions
@@ -1368,7 +1371,7 @@ impl<H: Host> Vm<H> {
                             Some(crate::heap::FunctionRecord { kind: FunctionKind::User(program, id), .. }) => {
                                 let plan = self.programs.residual(*program).and_then(|code| {
                                     let body = code.function_get(*id as usize)?;
-                                    Some(format!("user {} pc={pc} registers_only={} async={} gen={} class={} self={} args={:?}", body.name.map(|a| code.atoms[a as usize].to_string()).unwrap_or_default(), body.call_plan(code).registers_only, body.is_async, body.is_generator, body.is_class_constructor, body.self_binding_slot.is_some(), body.arguments_slot.is_some()))
+                                    Some(format!("user {} same_program={} pc={pc} registers_only={} async={} gen={} class={} self={} args={:?}", body.name.map(|a| code.atoms[a as usize].to_string()).unwrap_or_default(), *program == cursor.program, body.call_plan(code).registers_only, body.is_async, body.is_generator, body.is_class_constructor, body.self_binding_slot.is_some(), body.arguments_slot.is_some()))
                                 });
                                 plan.unwrap_or_else(|| "user ?".into())
                             }
@@ -1376,6 +1379,12 @@ impl<H: Host> Vm<H> {
                         };
                         let caller = p.function_get(self.frames[frame].function as usize).map(|f| (f.is_async, Self::lane_runs(cursor.lane, pc), self.frames.len() - 1 - frame, pending_calls.len()));
                         super::lane_exits::record_detail(format!("{:?} {detail} caller(async,arrow,depth,pending)={caller:?}", instruction.op()));
+                    }
+                    if matches!(instruction.op(), Op::CloneEnv | Op::Return | Op::GetField | Op::GetIndex | Op::SetIndex | Op::LoadName) {
+                        let function = p.function_get(self.frames[frame].function as usize);
+                        let name = function.and_then(|f| f.name).map(|a| p.atoms[a as usize].to_string()).unwrap_or_default();
+                        let span = function.map(|f| format!("{:?}", f.source_span)).unwrap_or_default();
+                        super::lane_exits::record_detail(format!("{:?} in {name} {span} pc={pc} lane={}", instruction.op(), Self::lane_runs(cursor.lane, pc)));
                     }
                     if matches!(instruction.op(), Op::JumpBinaryFalse | Op::Binary) {
                         let constants = self.programs.constants(cursor.program);
