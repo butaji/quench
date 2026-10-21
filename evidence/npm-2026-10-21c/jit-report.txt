@@ -1,0 +1,39 @@
+verdicts {"behavior-pass":286,"declarations-pass":13,"oracle-failed":1}
+passing 299  fastest wall 252  fastest cpu 265  lowest rss 292
+wall median (ms) quench 48.1 node 107.5 bun 66.7
+cpu median (ms) quench 46.3 node 128.0 bun 70.1
+rss median (MiB) quench 14.1 node 63.4 bun 36.5
+slowest relative to the faster of Node and Bun (wall ms):
+  jiti                                     q     347 n    348 b     83  x4.2
+  color-convert                            q     302 n    177 b     85  x3.5
+  undici                                   q     147 n    142 b     50  x3.0
+  schema-utils                             q     384 n    218 b    243  x1.8
+  ajv-keywords                             q     217 n    190 b    125  x1.7
+  semver                                   q     199 n    162 b    119  x1.7
+  whatwg-url                               q     243 n    193 b    146  x1.7
+  date-fns                                 q     129 n   1251 b     81  x1.6
+  lucide-react                             q     218 n    213 b    139  x1.6
+  @babel/core                              q     393 n    349 b    257  x1.5
+  source-map                               q     108 n     98 b     73  x1.5
+  baseline-browser-mapping                 q     147 n    112 b     98  x1.5
+  playwright                               q     616 n    432 b    424  x1.5
+  axios                                    q     178 n    180 b    124  x1.4
+  @typescript-eslint/eslint-plugin         q    1274 n   1314 b    894  x1.4
+  browserslist                             q     157 n    131 b    111  x1.4
+  @testing-library/dom                     q    1165 n   1056 b    834  x1.4
+  typescript-eslint                        q    1270 n   1139 b    917  x1.4
+  execa                                    q     171 n    201 b    130  x1.3
+  ajv-formats                              q     216 n    184 b    166  x1.3
+  ws                                       q      62 n     93 b     48  x1.3
+  esbuild                                  q     127 n    161 b    101  x1.3
+  @aws-sdk/signature-v4-multi-region       q      82 n    108 b     69  x1.2
+  ajv                                      q     176 n    175 b    150  x1.2
+  @babel/helper-module-transforms          q     265 n    272 b    226  x1.2
+not lowest rss: 7
+  type-fest                                q 53.6 n 62.7 b 52.7
+  undici-types                             q 74.4 n 74.7 b 74.2
+  @types/json-schema                       q 44.6 n 63.0 b 44.5
+  @types/react-dom                         q 54.8 n 62.7 b 53.5
+  @eslint/core                             q 45.3 n 63.0 b 45.0
+  @types/chai                              q 45.5 n 62.8 b 45.3
+  @types/ws                                q 71.9 n 72.0 b 71.9
