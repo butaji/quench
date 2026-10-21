@@ -1209,6 +1209,34 @@ impl<H: Host> Vm<H> {
         Some(hit.value)
     }
 
+    /// `primary_holder_field_hit` when the receiver's prototype is an object record, the
+    /// common holder, read without the cell families' dispatch (`Heap::object`), which is a
+    /// call: `None` for any other prototype as for a miss.
+    #[inline(always)]
+    pub(super) fn primary_record_holder_field_hit(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        site: u16,
+    ) -> Option<Value> {
+        debug_assert!(self.lane_admits(p));
+        let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
+        let holder = self.heap.object_record_by_id(receiver.proto_link().object_record_id()?);
+        // SAFETY: the active program's layout reserves every compiler-emitted site.
+        let cache = unsafe { *self.field_caches.get_unchecked(self.field_cache_index(site)) };
+        if cache.holder == NO_FIELD_HOLDER
+            || cache.receiver != receiver.exact_shape()
+            || holder.is_module_namespace()
+            || cache.holder != holder.exact_shape()
+        {
+            return None;
+        }
+        // SAFETY: as `cached_ordinary_holder_field_value`.
+        let value = unsafe { self.heap.property_get_flat(holder, cache.slot as usize) };
+        self.profile.field_cache_hit(0, 1);
+        Some(value)
+    }
+
     /// `primary_own_field_hit` for a receiver any heap cell holds, such as a function's own
     /// static field (`Strength.REQUIRED`), which a direct object's record lookup misses.
     #[inline(always)]
