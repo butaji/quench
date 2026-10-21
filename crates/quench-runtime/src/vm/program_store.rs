@@ -100,9 +100,9 @@ struct ProgramEntry {
     module: bool,
     /// Per-function lane views, derived from the residual on first lane entry.
     lane_views: Vec<std::cell::OnceCell<super::dispatch_fast::LaneView>>,
-    /// Per function: the general loop has entered it without its lane view
-    /// (`entry_lane_view`).
-    lane_deferred: Vec<std::cell::Cell<bool>>,
+    /// Per function: the runs it has made without its lane view (`entry_lane_view`,
+    /// `lane_call_may_derive`), up to `LANE_VIEW_DEFERRED_RUNS`.
+    lane_deferred: Vec<std::cell::Cell<u8>>,
     /// The program's compiled functions, once the compiled mode first calls
     /// one; `Some(None)` records that none compile.
     compiled: Option<Option<Rc<super::compiled::CompiledProgram>>>,
@@ -613,7 +613,7 @@ impl ProgramStore {
             .iter()
             .map(|_| std::cell::OnceCell::new())
             .collect();
-        let lane_deferred = vec![std::cell::Cell::new(false); program.functions.len()];
+        let lane_deferred = vec![std::cell::Cell::new(0); program.functions.len()];
         let origin = if program.kind == crate::bytecode::ProgramKind::Eval { CompilationOrigin::Eval { caller: None } } else { CompilationOrigin::Source };
         self.programs.push(Some(ProgramEntry {
             residual: program,
@@ -1623,9 +1623,10 @@ impl ProgramStore {
     }
 
     /// The lane view a general-loop entry of `function` runs with. A function that may loop
-    /// gets it at its first entry; any other at its second, so code that runs once without
-    /// looping (a module body) runs its single pass on the general path instead of first
-    /// deriving a view of every instruction, which costs more than that pass.
+    /// gets it at its first entry; any other once its deferred runs are complete
+    /// (`LANE_VIEW_DEFERRED_RUNS`), so code that runs a few times without looping (a module
+    /// body) runs on the general path instead of first deriving a view of every instruction,
+    /// which costs more than those runs.
     pub(super) fn entry_lane_view(
         &self,
         id: ProgramId,
@@ -1644,7 +1645,7 @@ impl ProgramStore {
             return Some(view);
         }
         let code = entry.residual.function_get(function as usize)?;
-        if !entry.lane_deferred.get(function as usize)?.replace(true) && !may_loop(code) {
+        if !deferred_run_completes(entry.lane_deferred.get(function as usize)?) && !may_loop(code) {
             return None;
         }
         Some(view.get_or_init(|| {
@@ -1653,11 +1654,10 @@ impl ProgramStore {
         }))
     }
 
-    /// Whether a lane call may derive `function`'s view now: it has one, or an earlier entry
-    /// or lane call already deferred it, as `entry_lane_view` defers a first entry. The first
-    /// call of a function the lane has no view for marks it and takes the general path, so a
-    /// function called once costs no view (about a thousand instructions per bytecode
-    /// instruction).
+    /// Whether a lane call may derive `function`'s view now: it has one, or its earlier entries
+    /// and lane calls completed its deferred runs (`LANE_VIEW_DEFERRED_RUNS`), as
+    /// `entry_lane_view` defers its entries. A deferred call counts its run and takes the
+    /// general path.
     pub(super) fn lane_call_may_derive(&self, id: ProgramId, function: u32) -> bool {
         let Some(entry) = self.entry(id) else {
             return false;
@@ -1670,7 +1670,7 @@ impl ProgramStore {
             || entry
                 .lane_deferred
                 .get(function as usize)
-                .is_some_and(|deferred| deferred.replace(true))
+                .is_some_and(deferred_run_completes)
     }
 
     pub(super) fn lane_view(
@@ -1929,4 +1929,21 @@ fn numeric_promotion_decision(numeric: u8, observations: u8) -> Option<bool> {
         .iter()
         .find_map(|(look, minimum)| (*look == observations).then_some(*minimum))?;
     Some(numeric >= minimum)
+}
+
+/// The runs a function makes on the general path before it derives its lane view, which costs
+/// about a thousand instructions per bytecode instruction, so a function that runs fewer times
+/// costs no view. Measured in instructions against deriving at the second run: four takes 3.3%
+/// from the jiti npm scenario (Babel's many functions that run a few times) and 0.1-0.6% from
+/// semver, ajv, Babel, color-convert and typescript-eslint; eight adds at most 0.3%.
+const LANE_VIEW_DEFERRED_RUNS: u8 = 4;
+
+/// Count one view-less run of a function; true once its deferred runs are complete.
+fn deferred_run_completes(runs: &std::cell::Cell<u8>) -> bool {
+    let done = runs.get();
+    if done >= LANE_VIEW_DEFERRED_RUNS {
+        return true;
+    }
+    runs.set(done + 1);
+    false
 }
