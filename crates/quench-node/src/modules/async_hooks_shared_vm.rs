@@ -482,6 +482,9 @@ fn take_store_context(
     shared_state: &Rc<RefCell<crate::host::SharedNodeState>>, async_id: StoreContext,
 ) -> Vec<RootId> {
     let mut shared = shared_state.borrow_mut();
+    if shared.async_hooks.local_stores.is_empty() {
+        return Vec::new();
+    }
     let frame = shared.async_hooks.local_stores.remove(&async_id).unwrap_or_default();
     frame
         .into_iter()
