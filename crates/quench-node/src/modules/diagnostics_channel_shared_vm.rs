@@ -379,15 +379,13 @@ pub(crate) fn has_subscribers(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let name = string_arg(context, args.first().copied(), "name")?;
-    let subscribed = context
-        .host_mut()
-        .shared_state()
-        .borrow()
-        .diagnostics
-        .channels
-        .get(&name)
-        .is_some_and(|subscribers| !subscribers.is_empty());
+    let subscribed = channel_has_subscribers(&context.host_mut().shared_state().borrow(), &name);
     Ok(context.boolean(subscribed))
+}
+
+/// Whether channel `name` has a subscriber, which a publish delivers its message to.
+pub(crate) fn channel_has_subscribers(state: &crate::host::SharedNodeState, name: &str) -> bool {
+    state.diagnostics.channels.get(name).is_some_and(|subscribers| !subscribers.is_empty())
 }
 
 pub(crate) fn publish(
