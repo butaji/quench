@@ -11429,3 +11429,56 @@ print(JSON.stringify(out));
     vm.execute(&Engine::specialize(source, "cross-program-applies.js").unwrap()).unwrap();
     assert_eq!(output.borrow().as_slice(), [r#"["object:0:x:2","u:0::1","object:0:y:2","object:::0","object:0:z:3","object:0:1","object:0:1","object::0","t0:0:1","t0:0:2",6,"RangeErrorr0","RangeErrorr0","TypeError","TypeError","object:al:b:2","object::hole:2","g","object:got:2:2","object:B:0:2","object:B:c:2","object:B:d:2","object:A1:A2:2","object:1:x:2","u:1::1","object:1:y:2","object:::0","object:1:z:3","object:1:1","object:1:1","object::0","t1:1:1","t1:1:2",6,"RangeErrorr1","RangeErrorr1","TypeError","TypeError","object:al:b:2","object::hole:2","g","object:got:2:2","object:B:1:2","object:B:c:2","object:B:d:2","object:A1:A2:2","object:2:x:2","u:2::1","object:2:y:2","object:::0","object:2:z:3","object:2:1","object:2:1","object::0","t2:2:1","t2:2:2",6,"RangeErrorr2","RangeErrorr2","TypeError","TypeError","object:al:b:2","object::hole:2","g","object:got:2:2","object:B:2:2","object:B:c:2","object:B:d:2","object:A1:A2:2","0-0,1-1,2-2"]"#]);
 }
+
+#[test]
+fn json_stringify_fast_path_keeps_the_full_algorithms_results() {
+    // JSON.stringify of plain data takes the direct writer; replacers, gaps, toJSON on any link, accessors,
+    // holes, arguments objects, boxed primitives, BigInt, cycles and depth keep the full algorithm.
+    let source = r#"
+const out = [];
+const S = (v, ...a) => out.push(String(JSON.stringify(v, ...a)));
+S({ a: 1, b: 'two', c: [1, 2, 3], d: { e: true } }); S([]); S({}); S(null); S(undefined); S(() => 1); S(Symbol('x'));
+S({ u: undefined, f() {}, s: Symbol('s'), n: null, nan: NaN, inf: -Infinity, z: -0, big: 1e21, small: 1e-7 });
+S([undefined, () => 1, Symbol('y'), NaN]); S('quote " back \\ nl \n tab \t ctl \u0001 uni é 😀 lone \ud800');
+S({ 2: 'b', 1: 'a', x: 'x', 0: 'z' }); S({ 'ke"y': 1, 'k\u0002': 2, 'é': 3 });
+const o = { a: 1 }; Object.defineProperty(o, 'hidden', { value: 2, enumerable: false }); Object.defineProperty(o, 'g', { get() { return 'got'; }, enumerable: true }); S(o);
+S({ d: new Date(0) }); S({ t: { toJSON(k) { return 'tj:' + k; } } }); S([1, , 3]); const sp = [1]; sp[5] = 6; S(sp);
+(function () { S(arguments); })(1, 2); S(Object.create({ inherited: 1 })); S(new Map([[1, 2]])); S(new Number(5)); S(new String('s')); S(Object(true));
+try { S({ b: 10n }); } catch (e) { out.push(e.constructor.name); }
+const cyc = { a: {} }; cyc.a.self = cyc; try { S(cyc); } catch (e) { out.push(e.constructor.name); }
+let deep = {}; let cur = deep; for (let i = 0; i < 100; i++) { cur.n = {}; cur = cur.n; } out.push(JSON.stringify(deep).length);
+S({ a: [1, { b: 2 }] }, null, 2); S({ a: 1, b: 2 }, ['b']); S({ a: 1 }, (k, v) => (k === 'a' ? v + 1 : v));
+Object.prototype.toJSON = function () { return 'proto'; }; S({ a: 1 }); delete Object.prototype.toJSON;
+Array.prototype.toJSON = function () { return 'arr'; }; S([1]); delete Array.prototype.toJSON;
+class K { constructor() { this.x = 1; this.y = [true]; } } S(new K()); S([new K(), { z: 'w' }]);
+S({ __proto__: null, a: 1 }); const p = new Proxy({ a: 1 }, {}); S(p); S(new Uint8Array([1, 2]));
+print(JSON.stringify(out));
+"#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "json_stringify_fast_path_keeps_the_full_algorithms_results.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), [r#"["{\"a\":1,\"b\":\"two\",\"c\":[1,2,3],\"d\":{\"e\":true}}","[]","{}","null","undefined","undefined","undefined","{\"n\":null,\"nan\":null,\"inf\":null,\"z\":0,\"big\":1e+21,\"small\":1e-7}","[null,null,null,null]","\"quote \\\" back \\\\ nl \\n tab \\t ctl \\u0001 uni é 😀 lone \\ud800\"","{\"0\":\"z\",\"1\":\"a\",\"2\":\"b\",\"x\":\"x\"}","{\"ke\\\"y\":1,\"k\\u0002\":2,\"é\":3}","{\"a\":1,\"g\":\"got\"}","{\"d\":\"1970-01-01T00:00:00.000Z\"}","{\"t\":\"tj:t\"}","[1,null,3]","[1,null,null,null,null,6]","{\"0\":1,\"1\":2}","{}","{}","5","\"s\"","true","TypeError","TypeError",602,"{\n  \"a\": [\n    1,\n    {\n      \"b\": 2\n    }\n  ]\n}","{\"b\":2}","{\"a\":2}","\"proto\"","\"arr\"","{\"x\":1,\"y\":[true]}","[{\"x\":1,\"y\":[true]},{\"z\":\"w\"}]","{\"a\":1}","{\"a\":1}","{\"0\":1,\"1\":2}"]"#]);
+}
+
+#[test]
+fn json_parse_literal_shapes_keep_create_data_property_semantics() {
+    // JSON.parse objects allocated with their literal shape keep duplicate-key, index-key, __proto__,
+    // wide-object, reviver and inherited-setter behavior.
+    let source = r#"
+const out = [];
+const P = (s, r) => { try { const v = JSON.parse(s, r); out.push(JSON.stringify(v), Object.keys(v ?? {}).join(','), typeof v); } catch (e) { out.push(e.constructor.name); } };
+P('{"a":1,"b":"two","c":[1,2,3],"d":{"e":true}}'); P('{"a":1,"a":2,"b":3}'); P('{"2":"b","1":"a","x":1}'); P('{"__proto__":{"p":1},"q":2}');
+const pr = JSON.parse('{"__proto__":{"p":1}}'); out.push(Object.getPrototypeOf(pr) === Object.prototype, Object.keys(pr).join(), pr.p === undefined);
+let wide = '{' + Array.from({ length: 40 }, (_, i) => `"k${i}":${i}`).join(',') + '}'; P(wide);
+P('[{"x":1},{"x":2,"y":3},{"y":4,"x":5}]'); P('{"":1,"é":2,"\\u0041":3}'); P('{"a":{"b":{"c":{"d":[null,true,false,-0,1e300]}}}}');
+P('{"a":1,"b":2}', (k, v) => (typeof v === 'number' ? v * 10 : v)); P('{bad}'); P('[1,]'); P('"\\ud800"'); P('  {"s":"x"}  ');
+Object.defineProperty(Object.prototype, 'trap', { set(v) { out.push('setter-called'); }, configurable: true });
+P('{"trap":1}'); delete Object.prototype.trap;
+const a = JSON.parse('{"m":1,"n":2}'), b = JSON.parse('{"m":3,"n":4}'); out.push(Object.keys(a).join() === Object.keys(b).join()); a.z = 1; out.push(JSON.stringify(a), JSON.stringify(b));
+print(JSON.stringify(out));
+"#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "json_parse_literal_shapes_keep_create_data_property_semantics.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), [r#"["{\"a\":1,\"b\":\"two\",\"c\":[1,2,3],\"d\":{\"e\":true}}","a,b,c,d","object","{\"a\":2,\"b\":3}","a,b","object","{\"1\":\"a\",\"2\":\"b\",\"x\":1}","1,2,x","object","{\"__proto__\":{\"p\":1},\"q\":2}","__proto__,q","object",true,"__proto__",true,"{\"k0\":0,\"k1\":1,\"k2\":2,\"k3\":3,\"k4\":4,\"k5\":5,\"k6\":6,\"k7\":7,\"k8\":8,\"k9\":9,\"k10\":10,\"k11\":11,\"k12\":12,\"k13\":13,\"k14\":14,\"k15\":15,\"k16\":16,\"k17\":17,\"k18\":18,\"k19\":19,\"k20\":20,\"k21\":21,\"k22\":22,\"k23\":23,\"k24\":24,\"k25\":25,\"k26\":26,\"k27\":27,\"k28\":28,\"k29\":29,\"k30\":30,\"k31\":31,\"k32\":32,\"k33\":33,\"k34\":34,\"k35\":35,\"k36\":36,\"k37\":37,\"k38\":38,\"k39\":39}","k0,k1,k2,k3,k4,k5,k6,k7,k8,k9,k10,k11,k12,k13,k14,k15,k16,k17,k18,k19,k20,k21,k22,k23,k24,k25,k26,k27,k28,k29,k30,k31,k32,k33,k34,k35,k36,k37,k38,k39","object","[{\"x\":1},{\"x\":2,\"y\":3},{\"y\":4,\"x\":5}]","0,1,2","object","{\"\":1,\"é\":2,\"A\":3}",",é,A","object","{\"a\":{\"b\":{\"c\":{\"d\":[null,true,false,0,1e+300]}}}}","a","object","{\"a\":10,\"b\":20}","a,b","object","SyntaxError","SyntaxError","\"\\ud800\"","0","string","{\"s\":\"x\"}","s","object","{\"trap\":1}","trap","object",true,"{\"m\":1,\"n\":2,\"z\":1}","{\"m\":3,\"n\":4}"]"#]);
+}

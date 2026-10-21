@@ -693,6 +693,7 @@ impl<H: Host> Vm<H> {
         self.field_caches.fill(EMPTY_CACHE);
         self.symbol_write_proofs.clear();
         self.symbol_load_proofs.clear();
+        self.enumerable_keys.clear();
         self.field_add_indices.fill(NO_FIELD_ADD_SET);
         self.field_add_sets.clear();
         self.megamorphic_field_indices.fill(NO_MEGAMORPHIC_FIELD);
