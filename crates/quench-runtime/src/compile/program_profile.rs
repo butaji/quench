@@ -1,7 +1,8 @@
 //! `QUENCH_MEMORY` attribution of a compiled program's owned bytes, one JSON line per
 //! program: the function records and each per-function and program-wide table at capacity.
 use crate::bytecode::{
-    Atom, BindingSite, Constant, EnvironmentClone, FieldSite, Function, Handler, Instr,
+    Atom, BindingSite, Constant, EnvironmentClone, FieldSite, Function, FunctionSlot, Handler,
+    Instr,
     LocalRegister, MethodSite, ObjectSite, RegExpLiteralSite, Register, ResidualProgram,
     Superinstruction, WideInstruction,
 };
@@ -11,6 +12,7 @@ fn bytes<T>(values: &Vec<T>) -> usize {
     values.capacity() * size_of::<T>()
 }
 
+/// A thin slice's elements, which it holds at exactly their length.
 fn slice_bytes<T>(values: &[T]) -> usize {
     size_of_val(values)
 }
@@ -44,14 +46,15 @@ fn atom_bytes(function: &Function) -> usize {
 /// Layout tables beside the code: registers, capture slots, binding sites and clones.
 fn layout_bytes(function: &Function) -> usize {
     slice_bytes::<LocalRegister>(&function.local_registers)
-        + function.selective_capture_slots.as_deref().map_or(0, slice_bytes::<u16>)
+        + function.selective_capture_slots.as_ref().map_or(0, bytes::<u16>)
         + slice_bytes::<BindingSite>(&function.binding_sites)
         + slice_bytes::<EnvironmentClone>(&function.environment_clones)
 }
 
 pub(super) fn report(program: &ResidualProgram) {
-    let functions = &program.functions;
-    let sum = |field: fn(&Function) -> usize| functions.iter().map(field).sum::<usize>();
+    let slots = &program.functions;
+    let records = || slots.iter().filter_map(FunctionSlot::record);
+    let sum = |field: fn(&Function) -> usize| records().map(field).sum::<usize>();
     eprintln!(
         "{{\"kind\":\"quench-program-memory\",\"name\":{:?},\"source_bytes\":{},\"functions\":{},\
          \"function_record_size\":{},\"function_records\":{},\"code\":{},\"wide\":{},\
@@ -59,9 +62,9 @@ pub(super) fn report(program: &ResidualProgram) {
          \"sites\":{},\"register_roots\":{}}}",
         program.source_name,
         program.source.as_ref().map_or(0, |source| source.text.len()),
-        functions.len(),
+        slots.len(),
         size_of::<Function>(),
-        functions.capacity() * size_of::<Function>(),
+        slots.capacity() * size_of::<FunctionSlot>() + records().count() * size_of::<Function>(),
         sum(|function| bytes::<Instr>(&function.code)),
         sum(|function| bytes::<WideInstruction>(&function.wide)),
         sum(|function| function.source_positions.capacity_bytes()),
@@ -74,7 +77,12 @@ pub(super) fn report(program: &ResidualProgram) {
             + bytes::<FieldSite>(&program.field_sites)
             + bytes::<ObjectSite>(&program.object_sites)
             + bytes::<RegExpLiteralSite>(&program.regexp_literal_sites)
+            + program
+                .literal_templates
+                .iter()
+                .map(|steps| slice_bytes::<crate::bytecode::LiteralStep>(steps))
+                .sum::<usize>()
             + bytes::<Superinstruction>(&program.superinstructions),
-        sum(|function| function.register_roots.bytes()),
+        sum(|function| function.register_roots.capacity_bytes()),
     );
 }

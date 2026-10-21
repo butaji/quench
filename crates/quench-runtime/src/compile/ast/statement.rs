@@ -1,15 +1,16 @@
 use super::*;
 
-const STRICT_EQUAL_OPERATOR: u32 = 2;
-
 impl FunctionCompiler<'_, '_> {
     pub(crate) fn statements(&mut self, body: &[Statement<'_>]) {
         for statement in body {
             self.statement(statement);
-            self.release_temporaries();
         }
     }
 
+    /// Compiles `statement`, then frees its temporaries: nothing after a statement reads a
+    /// register it allocated, wherever it stands (a list, an `if` branch, a loop body), and a
+    /// construct reading registers across its body holds them (`with_registers_held`). So
+    /// the branches of an `if` chain share one run of registers.
     pub(super) fn statement(&mut self, statement: &Statement<'_>) {
         let position = self.owner.source_position(statement.span().start);
         let previous = self
@@ -17,6 +18,7 @@ impl FunctionCompiler<'_, '_> {
             .replace((position.line, position.column));
         self.statement_at_current_position(statement);
         self.current_source_position = previous;
+        self.release_temporaries();
     }
 
     fn statement_at_current_position(&mut self, statement: &Statement<'_>) {
@@ -105,6 +107,13 @@ impl FunctionCompiler<'_, '_> {
                 self.class_declaration(item);
             }
             Statement::ExpressionStatement(item) => {
+                // A host wrapper is a script of one function expression, which the host
+                // calls as soon as the script runs.
+                if self.function_id == crate::vm::ROOT_FUNCTION_ID
+                    && matches!(item.expression.without_parentheses(), Expression::FunctionExpression(_))
+                {
+                    self.owner.note_invoked_callee(&item.expression);
+                }
                 let value = if matches!(
                     self.statement_completion,
                     StatementCompletion::Ignored | StatementCompletion::Suppress(_)
@@ -351,6 +360,12 @@ impl FunctionCompiler<'_, '_> {
             return;
         }
         for item in &declaration.declarations {
+            // The alias's reads read `arguments` itself (`arguments_alias`).
+            if let BindingPattern::BindingIdentifier(name) = &item.id
+                && self.arguments_alias.as_deref() == Some(name.name.as_str())
+            {
+                continue;
+            }
             if let Some(init) = &item.init {
                 let reference = (declaration.kind == VariableDeclarationKind::Var
                     && self.with_depth != self.inherited_with_depth)
@@ -562,17 +577,19 @@ impl FunctionCompiler<'_, '_> {
         let mut case_edges = Vec::with_capacity(item.cases.len());
         for case in &item.cases {
             case_edges.push(case.test.as_ref().map(|test| {
-                let test = self.expression(test);
+                let test = match binding_time::expression(test).static_value() {
+                    Some(constant) => self.constant_operand(constant),
+                    None => Operand::register(self.expression(test)),
+                };
                 let discriminant = self.load_atom(discriminant_binding);
-                let matched = self.emit_binary(
-                    STRICT_EQUAL_OPERATOR,
-                    Operand::register(discriminant),
-                    Operand::register(test),
-                );
-                let next = self.emit(Op::JumpFalse, matched, 0, 0, 0);
-                let selected = self.emit(Op::Jump, 0, 0, 0, 0);
-                self.patch(next);
-                selected
+                // `!(d !== t)` is exactly `d === t`: one fused test selects the clause.
+                self.emit(
+                    Op::JumpBinaryFalse,
+                    BinaryOperator::StrictInequality as u16,
+                    Operand::register(discriminant).0,
+                    test.0,
+                    0,
+                )
             }));
         }
         let no_match = self.emit(Op::Jump, 0, 0, 0, 0);

@@ -16,7 +16,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         constructor: Value,
     ) -> Result<Value, JsError> {
-        let Some(species) = self.well_known_symbols.get("species").copied() else {
+        let Some(species) = self.well_known_symbols.get(WellKnownSymbol::Species) else {
             return Ok(Value::UNDEFINED);
         };
         let intrinsic_getter = self
@@ -24,8 +24,8 @@ impl<H: Host> Vm<H> {
             .and_then(|attributes| attributes.getter.filter(|_| attributes.accessor))
             .is_some_and(|getter| {
                 matches!(
-                    self.heap.get(getter),
-                    Some(Cell::Function {
+                    self.heap.function(getter),
+                    Some(FunctionRecord {
                         kind: FunctionKind::Native(native),
                         ..
                     }) if native.is_intrinsic_species_getter()
@@ -91,6 +91,10 @@ impl<H: Host> Vm<H> {
         let value = self
             .module_binding_value(object, atom)
             .or_else(|| self.own_property(object, atom));
+        let value = match value {
+            Some(value) => Some(self.resolve_pending_binding(p, value)?),
+            None => None,
+        };
         if value.is_some_and(Value::is_deleted) {
             return Err(self.uninitialized_binding_error(p, atom));
         }
@@ -114,7 +118,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         match property {
             PropertyKey::String(atom) if !self.is_private_name(atom) => {
-                Ok(self.heap.alloc(Cell::String(self.atom_value(atom))))
+                Ok(self.heap.alloc_string(self.atom_value(atom)))
             }
             PropertyKey::Symbol(key) => Ok(key),
             PropertyKey::String(_) | PropertyKey::Private(_) => {
@@ -321,7 +325,7 @@ impl<H: Host> Vm<H> {
                 ],
             )?;
             if !descriptor.is_undefined() && !self.descriptor_flag(descriptor, "configurable") {
-                let value_atom = self.intern_atom("value");
+                let value_atom = self.runtime_atoms.value;
                 let writable_atom = self.intern_atom("writable");
                 let setter_atom = self.intern_atom("set");
                 let is_data = self.own_property(descriptor, value_atom).is_some()
@@ -425,7 +429,7 @@ impl<H: Host> Vm<H> {
     /// leaves accessors (lazy properties among them), exotic and namespace objects, Proxies
     /// and private, index, `length` or legacy function keys to the general path.
     #[inline]
-    fn plain_named_get(&self, object: Value, atom: Atom) -> Option<Value> {
+    pub(super) fn plain_named_get(&self, object: Value, atom: Atom) -> Option<Value> {
         if !self.plain_named_key(atom) {
             return None;
         }
@@ -490,12 +494,14 @@ impl<H: Host> Vm<H> {
     /// plain chain walk answers: what `get_index` returns for it before any lookup that can
     /// run guest code. `None` leaves the read to `get_index`.
     pub(super) fn plain_keyed_get(&mut self, object: Value, key: Value) -> Option<Value> {
+        if let Some(text) = self.heap.string(key) {
+            return self.plain_named_get(object, self.lookup_js_atom(text)?);
+        }
         match self.heap.get(key)? {
             // A host-private symbol names only an own property, which the general path reads.
             Cell::Symbol(symbol) if symbol.kind != crate::heap::SymbolKind::HostPrivate => {
                 self.plain_symbol_get(object, key)
             }
-            Cell::String(text) => self.plain_named_get(object, self.lookup_js_atom(text)?),
             _ => None,
         }
     }
@@ -700,7 +706,7 @@ impl<H: Host> Vm<H> {
             && self
                 .atom_class(atom)
                 .contains(AtomClass::RESTRICTED_FUNCTION_PROPERTY)
-            && matches!(self.heap.get(object), Some(Cell::Function { .. }))
+            && self.heap.is_function_value(object)
             && self.own_property(object, atom).is_none()
             && !self.function_caller_is_restricted(object)
         {
@@ -846,7 +852,7 @@ impl<H: Host> Vm<H> {
                     Some(Cell::ArrayBuffer { object: x, .. }) => object = x.proto(),
                     Some(Cell::TypedArray { object: x, .. }) => object = x.proto(),
                     Some(Cell::DataView { object: x, .. }) => object = x.proto(),
-                    Some(Cell::String(v)) => {
+                    _ if let Some(v) = self.heap.string(object)  => {
                         let length = v.len();
                         if self.atom_class(atom).contains(AtomClass::ARRAY_INDEX)
                             && let Some(index) = super::object_static::array_index(self.atom_name(atom))
@@ -869,7 +875,7 @@ impl<H: Host> Vm<H> {
                                 return Ok(description
                                     .as_ref()
                                     .map(|value| {
-                                        self.heap.alloc(Cell::String(value.as_ref().into()))
+                                        self.heap.alloc_string(value.as_ref().into())
                                     })
                                     .unwrap_or(Value::UNDEFINED));
                             }
@@ -905,8 +911,8 @@ impl<H: Host> Vm<H> {
                     | Some(Cell::WeakSet { object: x, .. }) => object = x.proto(),
                     Some(Cell::WeakRef { object: x, .. }) => object = x.proto(),
                     Some(Cell::FinalizationRegistry { object: x, .. }) => object = x.proto(),
-                    Some(Cell::Iterator { object: x, .. }) => object = x.proto(),
-                    Some(Cell::Function { object: x, .. }) => object = x.proto(),
+                    Some(Cell::Iterator(x)) => object = x.object.proto(),
+                    Some(Cell::Function(x)) => object = x.object.proto(),
                     _ => match self.heap.object(object) {
                         Some(x) => object = x.proto(),
                         None => return Ok(Value::UNDEFINED),
@@ -1014,8 +1020,7 @@ impl<H: Host> Vm<H> {
         // bindings resolve the same initialized home whenever the closure's environment chain
         // is the same.
         let static_bindings = p
-            .functions
-            .get(key.function as usize)
+            .function_get(key.function as usize)
             .is_some_and(|function| function.binding_sites.is_empty());
         if static_bindings && let Some(home) = self.private_homes.get(&key) {
             return Some(*home);
@@ -1036,7 +1041,7 @@ impl<H: Host> Vm<H> {
         let mut function = Some(self.frames[frame_index].function);
         let mut home_atoms = Vec::new();
         while let Some(id) = function
-            && let Some(metadata) = p.functions.get(id as usize)
+            && let Some(metadata) = p.function_get(id as usize)
         {
             if let Some(atom) = metadata.super_home_atom
                 && !home_atoms.contains(&atom)
@@ -1070,8 +1075,7 @@ impl<H: Host> Vm<H> {
                 });
                 let owner = owner.as_deref().unwrap_or(p);
                 let visible_homes = owner
-                    .functions
-                    .get(*function as usize)
+                    .function_get(*function as usize)
                     .into_iter()
                     .flat_map(|metadata| metadata.local_atoms.iter().copied())
                     .filter(|atom| self.atom_name(*atom).starts_with("\0quench:home:"))

@@ -174,7 +174,7 @@ impl FunctionCompiler<'_, '_> {
             self.push_private_bindings(private_bindings);
         }
         for field in &fields {
-            if class_field_value(*field).is_some() {
+            if class_field_initializer(*field).is_some() {
                 self.hidden_local(&class_field_initializer_name(
                     class_field_span(*field).start,
                 ));
@@ -185,7 +185,7 @@ impl FunctionCompiler<'_, '_> {
             .collect();
         let scopes = self.capture_scopes();
         for field in &fields {
-            let Some(expression) = class_field_value(*field) else {
+            let Some(expression) = class_field_initializer(*field) else {
                 continue;
             };
             let id = self.owner.compile_function(
@@ -289,10 +289,11 @@ impl FunctionCompiler<'_, '_> {
                     ..FunctionOptions::default()
                 },
             );
-            self.owner.functions[constructor_id as usize]
-                .as_mut()
-                .expect("compiled class constructor")
-                .instance_initializer = Some(initializer);
+            // A replay of the function enclosing the class finds the constructor as the load
+            // left it.
+            if let Some(constructor) = self.owner.functions.get_mut(constructor_id) {
+                constructor.instance_initializer = Some(initializer);
+            }
         }
         let class_value = self.reg();
         self.emit(Op::MakeClosure, class_value, 0, 0, constructor_id);
@@ -525,16 +526,15 @@ impl FunctionCompiler<'_, '_> {
                 None
             };
             self.store_atom(home_atom, target);
-            let function_id = self.owner.compile_class_method(
+            let function_id = self.owner.compile_replayable_class_method(
                 method,
-                Some(element.span()),
-                &scopes,
-                Some(self.function_id),
-                None,
-                None,
-                false,
-                home_atom,
-                self.with_depth,
+                super::replay::ClassMethodContext {
+                    element_span: element.span(),
+                    home_atom,
+                    scopes: scopes.clone(),
+                    parent: Some(self.function_id),
+                    with_depth: self.with_depth,
+                },
             );
             let function = self.reg();
             self.emit(Op::MakeClosure, function, 0, 0, function_id);
@@ -595,7 +595,9 @@ impl FunctionCompiler<'_, '_> {
                     } else {
                         None
                     };
-                    let value = if initializer.is_some() {
+                    let value = if let Some(constant) = class_field_constant(field) {
+                        self.literal(constant)
+                    } else if initializer.is_some() {
                         let atom = self.owner.atom(&class_field_initializer_name(span.start));
                         let callee = self.load_atom(atom);
                         let value = self.reg();
@@ -733,25 +735,27 @@ impl FunctionCompiler<'_, '_> {
         fields: &[ClassField<'_>],
         private_methods: &[Atom],
     ) {
+        if fields.is_empty() && private_methods.is_empty() {
+            return;
+        }
         let this = self.reg();
         self.emit(Op::LoadThis, this, 0, 0, 0);
-        let home_atom = self
-            .super_home_atom
-            .expect("class constructor carries its private home object");
-        // Only private methods and fields read the home object.
-        let private_elements = !private_methods.is_empty()
-            || fields.iter().any(|field| {
-                matches!(
-                    field,
-                    ClassField::Property(field)
-                        if matches!(&field.key, PropertyKey::PrivateIdentifier(_))
-                )
-            });
-        let home = if private_elements {
+        let private_field = |field: &ClassField<'_>| {
+            matches!(
+                field,
+                ClassField::Property(field)
+                    if matches!(&field.key, PropertyKey::PrivateIdentifier(_))
+            )
+        };
+        // Only private elements read the private home object.
+        let home = if private_methods.is_empty() && !fields.iter().any(private_field) {
+            0
+        } else {
+            let home_atom = self
+                .super_home_atom
+                .expect("class constructor carries its private home object");
             let home_name = self.owner.atoms[home_atom as usize].to_string();
             self.load_name(&home_name)
-        } else {
-            0
         };
         for atom in private_methods {
             self.emit(Op::MarkPrivateName, 0, this, home, *atom);
@@ -813,7 +817,8 @@ impl FunctionCompiler<'_, '_> {
                 self.emit(Op::SetField, value, this, cache, field_atom);
             } else {
                 let field_atom = name.unwrap();
-                self.emit(Op::DefineField, value, this, 0, field_atom);
+                let cache = self.owner.cache_site();
+                self.emit(Op::DefineField, value, this, cache, field_atom);
             }
         }
     }
@@ -990,11 +995,23 @@ fn class_field_value<'a>(field: ClassField<'a>) -> Option<&'a Expression<'a>> {
     }
 }
 
+/// The value of a field whose initializer is a constant. Evaluating one observes nothing an
+/// initializer function would provide (its receiver, home object or new.target) and names
+/// no function, so the definition stores the constant itself.
+fn class_field_constant(field: ClassField<'_>) -> Option<Constant> {
+    class_field_value(field).and_then(|value| super::binding_time::expression(value).static_value())
+}
+
+/// The initializer expression a field evaluates in a function of its own: any but a constant.
+fn class_field_initializer<'a>(field: ClassField<'a>) -> Option<&'a Expression<'a>> {
+    class_field_value(field).filter(|_| class_field_constant(field).is_none())
+}
+
 impl Compiler<'_> {
     fn compile_auto_accessor_methods(
         &mut self,
         accessor: &AccessorProperty<'_>,
-        scopes: &[Rc<FxHashMap<Atom, u16>>],
+        scopes: &super::capture_scope::ScopeChain,
         parent: Option<u32>,
         home_atom: Atom,
         with_depth: u16,
@@ -1054,22 +1071,19 @@ impl Compiler<'_> {
         );
         // Generated parser names are scaffolding; the actual property key owns
         // the accessor's name, including computed and private keys.
-        self.functions[getter as usize]
-            .as_mut()
-            .expect("compiled auto-accessor getter")
-            .name = None;
-        self.functions[setter as usize]
-            .as_mut()
-            .expect("compiled auto-accessor setter")
-            .name = None;
+        for accessor in [getter, setter] {
+            if let Some(accessor) = self.functions.get_mut(accessor) {
+                accessor.name = None;
+            }
+        }
         Some((getter, setter))
     }
 
-    fn compile_class_method(
+    pub(super) fn compile_class_method(
         &mut self,
         method: &MethodDefinition<'_>,
         source_span: Option<Span>,
-        scopes: &[Rc<FxHashMap<Atom, u16>>],
+        scopes: &super::capture_scope::ScopeChain,
         parent: Option<u32>,
         instance_fields: Option<&[ClassField<'_>]>,
         instance_private_methods: Option<&[Atom]>,
@@ -1135,7 +1149,7 @@ impl Compiler<'_> {
     fn compile_class_static_block(
         &mut self,
         block: &StaticBlock<'_>,
-        scopes: &[Rc<FxHashMap<Atom, u16>>],
+        scopes: &super::capture_scope::ScopeChain,
         parent: Option<u32>,
         home_atom: Atom,
         with_depth: u16,

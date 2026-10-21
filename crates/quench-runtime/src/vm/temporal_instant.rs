@@ -138,10 +138,10 @@ impl<H: Host> Vm<H> {
     }
 
     fn install_instant_to_string_tag(&mut self, prototype: Value) -> Result<(), JsError> {
-        let Some(symbol) = self.well_known_symbols.get("toStringTag").copied() else {
+        let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::ToStringTag) else {
             return Ok(());
         };
-        let tag = self.heap.alloc(Cell::String("Temporal.Instant".into()));
+        let tag = self.heap.alloc_string("Temporal.Instant".into());
         self.set_symbol_property(prototype, symbol, tag)?;
         self.set_property_attributes(
             prototype,
@@ -166,9 +166,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let value = args.first().copied().unwrap_or(Value::UNDEFINED);
         let bigint = self.to_bigint(p, value)?;
-        let epoch = bigint
-            .to_string()
-            .parse::<i128>()
+        let epoch = i128::try_from(bigint)
             .map_err(|_| self.range_error(p, "epochNanoseconds outside supported range".into()))?;
         if epoch.unsigned_abs() > MAX_INSTANT_EPOCH_NANOSECONDS as u128 {
             return Err(self.range_error(p, "epochNanoseconds outside supported range".into()));
@@ -249,10 +247,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let value = args.first().copied().unwrap_or(Value::UNDEFINED);
         let epoch = match native {
-            Native::TemporalInstantFromEpochNanoseconds => self
-                .to_bigint(p, value)?
-                .to_string()
-                .parse::<i128>()
+            Native::TemporalInstantFromEpochNanoseconds => i128::try_from(self.to_bigint(p, value)?)
                 .map_err(|_| {
                     self.range_error(p, "epochNanoseconds outside supported range".into())
                 })?,
@@ -300,7 +295,7 @@ impl<H: Host> Vm<H> {
         let epoch = self.temporal_instant_epoch(p, this)?;
         match native {
             Native::TemporalInstantEpochNanosecondsGetter => {
-                Ok(self.heap.alloc(Cell::BigInt(epoch.to_string())))
+                Ok(self.heap.alloc(Cell::bigint(epoch.into())))
             }
             Native::TemporalInstantEpochMillisecondsGetter => Ok(Value::number(
                 epoch.div_euclid(INSTANT_NANOSECONDS_PER_MILLISECOND) as f64,
@@ -354,7 +349,7 @@ impl<H: Host> Vm<H> {
             super::temporal_instant_format::format_temporal_datetime(epoch, &options, None, "Z")
         }
         .ok_or_else(|| self.range_error(p, "Invalid epochNanoseconds".into()))?;
-        Ok(self.heap.alloc(Cell::String(text.into())))
+        Ok(self.heap.alloc_string(text.into()))
     }
 
     fn temporal_instant_value_of(&mut self, p: &ResidualProgram) -> Result<Value, JsError> {

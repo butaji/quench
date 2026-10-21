@@ -41,8 +41,37 @@ pub struct HostGlobal {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ModuleSource {
     pub name: String,
+    /// The text the VM compiles.
     pub source: String,
-    pub bytes: Vec<u8>,
+    /// The module's bytes when they are not `source`'s UTF-8: a file that is not
+    /// UTF-8, or a host interop wrapper that keeps the bytes it wraps. Absent, the
+    /// bytes are `source` itself, so a module's text is never held twice.
+    pub original_bytes: Option<Vec<u8>>,
+}
+
+impl ModuleSource {
+    /// A module whose bytes are its source text.
+    pub fn text(name: impl Into<String>, source: impl Into<String>) -> Self {
+        Self { name: name.into(), source: source.into(), original_bytes: None }
+    }
+
+    /// A module read as bytes: its source is their UTF-8 decoding, with replacement
+    /// characters where they are not UTF-8, and the bytes are kept only then.
+    pub fn from_bytes(name: impl Into<String>, bytes: Vec<u8>) -> Self {
+        match String::from_utf8(bytes) {
+            Ok(source) => Self::text(name, source),
+            Err(error) => {
+                let bytes = error.into_bytes();
+                let source = String::from_utf8_lossy(&bytes).into_owned();
+                Self { name: name.into(), source, original_bytes: Some(bytes) }
+            }
+        }
+    }
+
+    /// The module's bytes, as an import with `type: "bytes"` reads them.
+    pub fn bytes(&self) -> &[u8] {
+        self.original_bytes.as_deref().unwrap_or(self.source.as_bytes())
+    }
 }
 
 /// An opaque host execution context captured by a Promise reaction or
@@ -59,9 +88,27 @@ pub trait Host {
         false
     }
 
-    /// A full collection finished: a host may return memory the process no longer needs
-    /// resident (its read-only pages), which nothing observable depends on.
-    fn after_full_collection(&mut self) {}
+    /// A collection has finished, or a full one is starting: a host may return memory the
+    /// process no longer needs resident (its read-only pages), which nothing observable
+    /// depends on. At these boundaries the code about to run differs from the code that ran.
+    fn at_collection_boundary(&mut self) {}
+
+    /// A compiled host program kept across runs: the bytes `keep_compiled_program` was given
+    /// for compiling `parts` (the program's text, in order) under `name` in this build. The
+    /// runtime decodes them under its own atoms and compiles when they do not decode. A
+    /// decoded program keeps the bytes and reads each function's record on its first call,
+    /// so a host serving a mapped file keeps the records never called out of memory.
+    fn kept_compiled_program(&mut self, _name: &str, _parts: &[&str]) -> Option<crate::KeptBytes> {
+        None
+    }
+
+    /// Offers the host a compiled host program's compact form (`kept_compiled_program`).
+    fn keep_compiled_program(&mut self, _name: &str, _parts: &[&str], _bytes: &[u8]) {}
+
+    /// A WebAssembly module's native compilation, which runs once per module, is about to
+    /// start: like `at_collection_boundary`, the code about to run (the code generator)
+    /// differs from the code that ran before it (loading, linking, instantiation).
+    fn before_wasm_native_compilation(&mut self) {}
 
     fn write_line(&mut self, text: &str);
     fn clock_millis(&mut self) -> f64;

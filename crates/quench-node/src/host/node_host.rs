@@ -32,6 +32,8 @@ impl InlineSource {
 pub struct NodeHost {
     /// Immutable installation asset root, independent of guest cwd changes.
     pub(crate) node_library_root: std::path::PathBuf,
+    /// Compiled library modules kept across runs (`compile_cache`).
+    pub(crate) compile_cache: crate::host::compile_cache::CompileCache,
     pub(crate) shared_state: Rc<RefCell<SharedNodeState>>,
     pub(crate) commonjs_entry: Option<CommonJsEntry>,
     pub(crate) inline_source: InlineSource,
@@ -81,6 +83,8 @@ pub(crate) struct SharedNodeState {
     pub(crate) module_parent_api: Option<quench_runtime::RootId>,
     pub(crate) active_esm_requires: std::collections::HashMap<String, quench_runtime::RootId>,
     pub(crate) builtin_cache: std::collections::HashMap<String, quench_runtime::RootId>,
+    /// Buffer's allocation pool while the host holds it for `buffer.js` to adopt.
+    pub(crate) buffer_pool: crate::modules::buffer_shared_vm::PoolOwner,
     pub(crate) commonjs_cache: Option<CommonJsCache>,
     /// Node's internal primordial snapshot used when loading `lib/internal/*`.
     pub(crate) primordials_module: Option<quench_runtime::RootId>,
@@ -216,6 +220,7 @@ impl SharedNodeState {
         self.performance_native = Default::default();
         self.vm_scripts = Default::default();
         self.builtin_cache.clear();
+        self.buffer_pool = Default::default();
         self.messaging.reset();
         #[cfg(not(quench_node_cares))]
         self.dns_channels.reset();
@@ -285,6 +290,7 @@ impl SharedNodeState {
             fs_stat_watch: crate::modules::fs_stat_watch_shared_vm::State::default(),
             cwd,
             builtin_cache: std::collections::HashMap::new(),
+            buffer_pool: Default::default(),
             commonjs_cache: None,
             module_parent_api: None,
             active_esm_requires: std::collections::HashMap::new(),
@@ -377,11 +383,14 @@ impl NodeHost {
             .canonicalize()
             .unwrap_or(node_library_root);
         // The Node test common/tmpdir helper exposes a per-process host path.
-        // Materialize that parent at host construction so fixtures can create
-        // files there even when the helper's JS-side refresh hook is absent
-        // from a reduced bootstrap realm.
-        let tmp = std::path::PathBuf::from(format!("/tmp/quench-node-{}", std::process::id()));
-        let _ = std::fs::create_dir_all(tmp);
+        // Under the test runner, materialize that parent at host construction so
+        // fixtures can create files there even when the helper's JS-side refresh
+        // hook is absent from a reduced bootstrap realm. Other runs create nothing:
+        // every process had left an empty directory in /tmp.
+        if std::env::var_os(crate::shared_run::CHILD_RUNNER_ENV).is_some() {
+            let tmp = std::path::PathBuf::from(format!("/tmp/quench-node-{}", std::process::id()));
+            let _ = std::fs::create_dir_all(tmp);
+        }
         let fs = crate::modules::fs_state::FsState::new();
         let argv = crate::modules::process_state::ProcessArgs::new(argv);
         let async_identity = crate::modules::async_hooks_state::AsyncIdentity::new();
@@ -389,6 +398,7 @@ impl NodeHost {
         let cwd = crate::modules::process_state::ProcessCwd::from_current_directory();
         Self {
             node_library_root,
+            compile_cache: crate::host::compile_cache::CompileCache::from_environment(),
             shared_state: Rc::new(RefCell::new(SharedNodeState::new(
                 fs,
                 cwd,

@@ -1,6 +1,7 @@
 use super::module::ModuleRecord;
 use super::promise::PromiseState;
 use super::*;
+use smallvec::SmallVec;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 // RayTrace's allocation trace shows about 40–43% of its shape table is
@@ -79,6 +80,55 @@ fn append_shape_roots(
 /// Parallel GC readers need only the immutable shape transition metadata.
 /// `Shape` also contains `Cell` and `OnceCell` caches, which this view never
 /// reads or mutates while workers are active.
+/// Edges kept outside their owner's cell (descriptors, promise job and continuation tables),
+/// indexed by owner for the collection that derived them. Owners hold one to three such
+/// edges, so the first two stay inline.
+type OwnedRoots = FxHashMap<Value, SmallVec<[Value; OWNED_ROOTS_INLINE]>>;
+
+/// Filter bits per owned-roots owner: a marked object probes the map only when its bit is
+/// set, so the hundreds of owners cost the millions of marked objects one bit test each.
+const OWNED_ROOT_FILTER_BITS_PER_OWNER: usize = 16;
+
+/// Which owners `OwnedRoots` may hold: one bit per owner, by a hash of its identity.
+struct OwnedRootFilter {
+    words: Vec<u64>,
+    /// `words.len() * 64 - 1`; the bit count is a power of two.
+    mask: usize,
+}
+
+impl OwnedRootFilter {
+    fn new(roots: &OwnedRoots) -> Self {
+        let bits = (roots.len() * OWNED_ROOT_FILTER_BITS_PER_OWNER)
+            .next_power_of_two()
+            .max(u64::BITS as usize);
+        let mut filter = Self {
+            words: vec![0; bits / u64::BITS as usize],
+            mask: bits - 1,
+        };
+        for owner in roots.keys() {
+            let bit = filter.bit(*owner);
+            filter.words[bit / u64::BITS as usize] |= 1 << (bit % u64::BITS as usize);
+        }
+        filter
+    }
+
+    #[inline(always)]
+    fn bit(&self, owner: Value) -> usize {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = rustc_hash::FxHasher::default();
+        owner.hash(&mut hasher);
+        // The high bits of the multiplicative hash spread consecutive heap indices.
+        (hasher.finish() >> 32) as usize & self.mask
+    }
+
+    #[inline(always)]
+    fn may_hold(&self, owner: Value) -> bool {
+        let bit = self.bit(owner);
+        self.words[bit / u64::BITS as usize] & (1 << (bit % u64::BITS as usize)) != 0
+    }
+}
+const OWNED_ROOTS_INLINE: usize = 2;
+
 struct ParallelShapeTrace<'a> {
     shapes: *const Shape,
     shape_count: usize,
@@ -86,7 +136,8 @@ struct ParallelShapeTrace<'a> {
     marked_shapes: &'a [AtomicU64],
     marked_constructor_shapes: &'a [AtomicU64],
     constructors: &'a [Value],
-    owned_roots: &'a FxHashMap<Value, Vec<Value>>,
+    owned_roots: &'a OwnedRoots,
+    owned_root_filter: &'a OwnedRootFilter,
     _shape_borrow: std::marker::PhantomData<&'a [Shape]>,
 }
 
@@ -138,11 +189,17 @@ impl ParallelShapeTrace<'_> {
         // A prototype no longer owns its original base constructor. Keep this
         // trace bit separate: a prototype may be the first holder of a shape.
         let constructor = self.constructors[shape_index];
+        // As for the shape bit: a plain load first, so a shape already counted costs no
+        // locked read-modify-write.
         if !prototype && !constructor.is_undefined() &&
-            (trace_kind == GcTraceKind::VerifyFull || self.marked_constructor_shapes[word].fetch_or(mask, Ordering::Relaxed) & mask == 0) {
+            (trace_kind == GcTraceKind::VerifyFull
+                || (self.marked_constructor_shapes[word].load(Ordering::Relaxed) & mask == 0
+                    && self.marked_constructor_shapes[word].fetch_or(mask, Ordering::Relaxed) & mask == 0)) {
             roots.push(constructor);
         }
-        if let Some(edges) = self.owned_roots.get(&owner) {
+        if self.owned_root_filter.may_hold(owner)
+            && let Some(edges) = self.owned_roots.get(&owner)
+        {
             roots.extend(edges.iter().copied());
         }
     }
@@ -280,12 +337,7 @@ impl<H: Host> Vm<H> {
         self.frames
             .iter()
             .for_each(|frame| reference(frame.program));
-        self.suspended
-            .iter()
-            .filter_map(|entry| entry.continuation.as_ref())
-            .for_each(|continuation| reference(continuation.program));
-        self.heap
-            .for_each_cell(|cell| cell.program_references(&mut reference));
+        self.heap.for_each_program_reference(&mut reference);
         let reclaimed = self.programs.reclaim_unreferenced(referenced);
         if reclaimed.is_empty() {
             return;
@@ -299,7 +351,11 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn collect_slow(&mut self, _program: &ResidualProgram, full: bool) {
+        self.invalidate_wasm_reference_caches();
         let full = self.heap.collection_is_full(full);
+        if full {
+            self.host.at_collection_boundary();
+        }
         #[cfg(feature = "profile-memory")]
         if std::env::var_os("QUENCH_FUNCTION_USE").is_some() {
             self.report_function_use();
@@ -319,41 +375,26 @@ impl<H: Host> Vm<H> {
         }
         // Out-of-cell metadata belongs to its object. Derive the edge index for
         // this collection and visit it only when the owner becomes reachable.
-        let mut owned_roots: FxHashMap<Value, Vec<Value>> = FxHashMap::default();
-        let attached_continuations: FxHashSet<_> = self
-            .realm
-            .promise
-            .async_resume_jobs
-            .values()
-            .map(|job| job.continuation)
-            .collect();
-        let continuation_edges =
-            self.realm
-                .promise
-                .async_resume_jobs
-                .iter()
-                .flat_map(|(owner, job)| {
-                    self.suspended_continuation(job.continuation)
-                        .into_iter()
-                        .flat_map(Continuation::roots)
-                        .map(move |edge| (*owner, edge))
-                });
-        let descriptor_edges = self
-            .descriptors
-            .iter()
-            .flat_map(|((owner, key), attributes)| {
-                key.symbol_value()
-                    .into_iter()
-                    .chain([attributes.getter, attributes.setter].into_iter().flatten())
-                    .map(move |edge| (*owner, edge))
-            });
-        for (owner, edge) in descriptor_edges
-            .chain(self.realm.promise.owned_edges())
-            .chain(continuation_edges)
-            .filter(|(_, edge)| edge.heap_index().is_some())
-        {
-            owned_roots.entry(owner).or_default().push(edge);
+        let mut owned_roots = OwnedRoots::with_capacity_and_hasher(
+            self.gc_owned_root_count,
+            Default::default(),
+        );
+        let mut own = |owner: Value, edge: Value| {
+            if edge.heap_index().is_some() {
+                owned_roots.entry(owner).or_default().push(edge);
+            }
+        };
+        for ((owner, key), attributes) in &self.descriptors {
+            for edge in key
+                .symbol_value()
+                .into_iter()
+                .chain([attributes.getter, attributes.setter].into_iter().flatten())
+            {
+                own(*owner, edge);
+            }
         }
+        self.realm.promise.for_each_owned_edge(&mut own);
+        self.gc_owned_root_count = owned_roots.len();
         let external_roots = if full {
             Vec::new()
         } else {
@@ -652,7 +693,9 @@ impl<H: Host> Vm<H> {
                 .iter()
                 .map(|job| job.promise),
         );
-        roots.extend(self.realm.jobs.iter().flat_map(PendingJob::roots));
+        for job in &self.realm.jobs {
+            job.push_roots(&mut roots);
+        }
         roots.extend(self.realm.template_objects.values().copied());
         roots.extend(
             self.realm
@@ -664,22 +707,9 @@ impl<H: Host> Vm<H> {
         roots.extend(self.with_stack.iter().copied());
         roots.extend(std::iter::once(self.instanceof_has_instance_holder));
         roots.extend(self.active_call_roots.iter().copied());
-        roots.extend(
-            self.suspended
-                .iter()
-                .enumerate()
-                .filter_map(|(slot, entry)| {
-                    let continuation = entry.continuation.as_ref()?;
-                    let id = super::activation::ContinuationId {
-                        slot: slot as u32,
-                        generation: entry.generation,
-                    };
-                    (!attached_continuations.contains(&id)).then_some(continuation)
-                })
-                .flat_map(Continuation::roots),
-        );
         roots.extend(self.symbol_registry.values().copied());
-        roots.extend(self.well_known_symbols.values().copied());
+        roots.extend(self.well_known_symbols.values());
+        roots.extend(self.typeof_names);
         roots.extend(self.startup_intrinsic_roots());
         roots.extend(self.frames.iter().flat_map(|frame| {
             // A missing map means the function uses a register form
@@ -727,22 +757,25 @@ impl<H: Host> Vm<H> {
             .map(|_| AtomicU64::new(0))
             .collect::<Vec<_>>();
         let marked_constructor_shape_bits = (0..shape_word_count).map(|_| AtomicU64::new(0)).collect::<Vec<_>>();
-        let mut constructors = Vec::with_capacity(shape_count);
-        for shape in &self.shapes {
+        let constructors = &mut self.shape_constructors;
+        for shape in &self.shapes[constructors.len()..] {
             let constructor = match shape.transition {
                 ShapeTransition::Constructed { constructor, .. } => constructor,
                 _ => shape.parent().map(|parent| constructors[parent as usize]).unwrap_or(Value::UNDEFINED),
             };
             constructors.push(constructor);
         }
+        let constructors = &self.shape_constructors;
+        let owned_root_filter = OwnedRootFilter::new(&owned_roots);
         let shape_trace = ParallelShapeTrace {
             shapes: self.shapes.as_ptr(),
             shape_count,
             accessors: &self.shape_accessors,
             marked_shapes: &marked_shape_bits,
             marked_constructor_shapes: &marked_constructor_shape_bits,
-            constructors: &constructors,
+            constructors,
             owned_roots: &owned_roots,
+            owned_root_filter: &owned_root_filter,
             _shape_borrow: std::marker::PhantomData,
         };
         let parallel_object_roots =
@@ -769,6 +802,7 @@ impl<H: Host> Vm<H> {
         // into newly freed slots.
         let heap = &self.heap;
         self.programs.prune_owned_script_realms(|realm| heap.weak_value(realm).is_some());
+        self.programs.clear_wasm_reference_caches();
         self.prune_function_values();
         self.prune_wasm_exported_functions();
         // A home stays reachable through its environment; entries of swept environments go
@@ -789,17 +823,6 @@ impl<H: Host> Vm<H> {
         } else {
             self.retain_live_method_caches();
         }
-        let live_continuations: FxHashSet<_> = self
-            .realm
-            .promise
-            .async_resume_jobs
-            .iter()
-            .filter(|(owner, _)| self.heap.is_live(**owner))
-            .map(|(_, job)| job.continuation)
-            .collect();
-        for id in attached_continuations.difference(&live_continuations) {
-            self.resume_continuation(*id);
-        }
         self.realm.jobs.extend(
             finalization_jobs
                 .into_iter()
@@ -811,19 +834,7 @@ impl<H: Host> Vm<H> {
         );
         self.descriptors
             .retain(|(object, _), _| self.heap.is_live(*object));
-        let mut abandoned_job_contexts = Vec::new();
-        self.realm.promise.records.retain(|promise, record| {
-            let live = self.heap.is_live(*promise);
-            if !live {
-                abandoned_job_contexts.extend(
-                    record
-                        .reactions
-                        .iter()
-                        .filter_map(|reaction| reaction.execution_context),
-                );
-            }
-            live
-        });
+        let mut abandoned_job_contexts = self.heap.take_abandoned_job_contexts();
         self.realm.promise.thenable_jobs.retain(|job, record| {
             let live = self.heap.is_live(*job);
             if !live {
@@ -854,23 +865,17 @@ impl<H: Host> Vm<H> {
             .promise
             .reaction_capabilities
             .retain(|promise, _| self.heap.is_live(*promise));
-        self.realm
-            .promise
-            .async_resume_jobs
-            .retain(|job, _| self.heap.is_live(*job));
         #[cfg(feature = "profile-aggregate")]
         self.retain_live_gc_method_snapshots();
         if let Some(strings) = &mut self.dynamic_strings {
-            strings.retain(|_, value| matches!(self.heap.get(*value), Some(Cell::String(_))));
+            strings.retain(|_, value| self.heap.is_live(*value));
         }
         if let Some(concats) = &mut self.string_concats {
             concats.fill(EMPTY_STRING_CONCAT_CACHE);
         }
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         self.heap.record_vm_gc_phase(3, after_collection_started);
-        if full {
-            self.host.after_full_collection();
-        }
+        self.host.at_collection_boundary();
         #[cfg(feature = "profile-memory")]
         if std::env::var_os("QUENCH_MEMORY_PEAK").is_some() {
             let phase = format!("gc_{}_after", self.heap.collection_count());
@@ -932,6 +937,7 @@ impl<H: Host> Vm<H> {
         self.heap.remap_live_object_shapes(&mapping, &lengths);
         self.startup_intrinsics.remap_shapes(&mapping);
         self.shapes = shapes;
+        self.shape_constructors.clear();
         self.transitions = transitions;
         self.shape_slot_memo.clear();
         self.function_name_shapes.clear();
@@ -1019,17 +1025,19 @@ impl<H: Host> Vm<H> {
         program: &ResidualProgram,
         job: PendingJob,
     ) -> Result<(), JsError> {
-        let roots = job.roots();
+        let start = self.active_call_roots.len();
+        job.push_roots(&mut self.active_call_roots);
         let previous = std::mem::replace(&mut self.native_microtask_running, true);
-        let result = self.with_call_roots(roots, |vm| match job {
+        let result = match job {
             PendingJob::Call {
                 callback,
                 this,
                 args,
-            } => vm.call_value(program, callback, this, &args).map(|_| ()),
-            PendingJob::Reaction(reaction) => vm.run_promise_reaction(program, reaction),
-        });
+            } => self.call_value(program, callback, this, &args).map(|_| ()),
+            PendingJob::Reaction(reaction) => self.run_promise_reaction(program, reaction),
+        };
         self.native_microtask_running = previous;
+        self.active_call_roots.truncate(start);
         result
     }
 
@@ -1046,10 +1054,7 @@ impl<H: Host> Vm<H> {
         promise: Value,
     ) -> Result<(), JsError> {
         while self
-            .realm
-            .promise
-            .records
-            .get(&promise)
+            .promise_record(promise)
             .is_some_and(|record| record.state == PromiseState::Pending)
             && let Some(job) = self.realm.jobs.pop_front()
         {

@@ -24,7 +24,7 @@ macro_rules! fusion_recipes {
             recipe: Recipe,
             first: Instr,
             second: Instr,
-            fields: &mut Vec<FieldSite>,
+            fields: &mut SiteTable<'_, FieldSite>,
         ) -> Option<Instr> {
             match recipe {
                 $(Recipe::$recipe => ($handler)(first, second, fields)),+
@@ -37,7 +37,7 @@ macro_rules! fusion_recipes {
 // macro derives recipe identity, pattern rows, and recipe dispatch together.
 fusion_recipes! {
     ConstantLeft: [LoadConst, Binary] =>
-        |first: Instr, mut second: Instr, _: &mut Vec<FieldSite>| {
+        |first: Instr, mut second: Instr, _: &mut SiteTable<'_, FieldSite>| {
             let result = first.result_register();
             let constant = Operand::constant(first.constant_index() as u32)?;
             if second.operand_b().register_index() != Some(result) { return None; }
@@ -48,13 +48,13 @@ fusion_recipes! {
             Some(second)
         };
     ConstantRight: [LoadConst, Binary] =>
-        |first: Instr, mut second: Instr, _: &mut Vec<FieldSite>| {
+        |first: Instr, mut second: Instr, _: &mut SiteTable<'_, FieldSite>| {
             if second.operand_c().register_index() != Some(first.result_register()) { return None; }
             second.set_operand_c(Operand::constant(first.constant_index() as u32)?)?;
             Some(second)
         };
     StoreLoadLocal: [StoreLocal, LoadLocal] =>
-        |mut first: Instr, second: Instr, _: &mut Vec<FieldSite>| {
+        |mut first: Instr, second: Instr, _: &mut SiteTable<'_, FieldSite>| {
             if first.optional_register_b().is_some() || first.local_slot() != second.local_slot() { return None; }
             first.set_optional_register_b(Some(second.result_register()));
             Some(first)
@@ -64,13 +64,13 @@ fusion_recipes! {
         LoadName, Move; Binary, Move; Unary, Move; GetField, Move; IncDec, Move;
         Call, Move; CallKnown, Move; CallMethod, Move; CallThisMethod, Move; Construct, Move;
         LoadThis, Move; MakeObject2, Move; SuperConstArrayObject2, Move
-    ] => |mut first: Instr, second: Instr, _: &mut Vec<FieldSite>| {
+    ] => |mut first: Instr, second: Instr, _: &mut SiteTable<'_, FieldSite>| {
         if second.register_b() != first.result_register() { return None; }
         first.set_result_register(second.result_register());
         Some(first)
     };
     BinaryJumpFalse: [Binary, JumpFalse] =>
-        |first: Instr, second: Instr, _: &mut Vec<FieldSite>| {
+        |first: Instr, second: Instr, _: &mut SiteTable<'_, FieldSite>| {
             if first.result_register() != second.register_a() { return None; }
             Some(Instr::new(
                 Op::JumpBinaryFalse,
@@ -84,13 +84,13 @@ fusion_recipes! {
         Binary, Return; Unary, Return; GetField, Return; Call, Return; CallKnown, Return;
         CallMethod, Return; CallThisMethod, Return; Construct, Return;
         MakeObject2, Return; MakeObjectLiteral, Return; SuperConstArrayObject2, Return
-    ] => |mut first: Instr, second: Instr, _: &mut Vec<FieldSite>| {
+    ] => |mut first: Instr, second: Instr, _: &mut SiteTable<'_, FieldSite>| {
         if first.result_register() != second.register_a() { return None; }
         first.set_returns_from_frame();
         Some(first)
     };
     GetSetThis: [GetField, SetThisField] =>
-        |mut first: Instr, second: Instr, fields: &mut Vec<FieldSite>| {
+        |mut first: Instr, second: Instr, fields: &mut SiteTable<'_, FieldSite>| {
             if first.result_register() != second.register_a() { return None; }
             let sink = (second.atom_index(), second.cache_site_index());
             match first.field_lookup()? {
@@ -117,9 +117,9 @@ fusion_recipes! {
 
 pub(super) fn apply(
     function: &mut BcFunction,
-    methods: &[MethodSiteSpec],
-    field_sites: &mut Vec<FieldSite>,
-    superinstructions: &mut Vec<Superinstruction>,
+    methods: &(impl liveness::MethodArguments + ?Sized),
+    field_sites: &mut SiteTable<'_, FieldSite>,
+    superinstructions: &mut SiteTable<'_, Superinstruction>,
 ) {
     let input = function.code.len();
     thread_jumps(function);
@@ -130,13 +130,13 @@ pub(super) fn apply(
     }
     // Each pass hands the liveness of the code it leaves unchanged to the next.
     let mut liveness = None;
-    while coalesce_distant_producer_moves(function, methods, field_sites, superinstructions, &mut liveness) {
+    while coalesce_distant_producer_moves(function, methods, field_sites.as_slice(), superinstructions.as_slice(), &mut liveness) {
         changed_passes += 1;
     }
-    if forward_move_sources(function, methods, field_sites, superinstructions, &mut liveness) {
+    if forward_move_sources(function, methods, field_sites.as_slice(), superinstructions.as_slice(), &mut liveness) {
         changed_passes += 1;
     }
-    while rewrite_once(function, methods, field_sites, superinstructions, &mut liveness) {
+    while rewrite_once(function, methods, field_sites, superinstructions.as_slice(), &mut liveness) {
         changed_passes += 1;
     }
     if std::env::var_os("QUENCH_REWRITE_STATS").is_some() {
@@ -146,6 +146,57 @@ pub(super) fn apply(
             changed_passes + 1
         );
     }
+}
+
+/// Coalesces the copies frame-register promotion leaves: each promoted load or store of a
+/// local becomes a `Move` beside the instruction that produces or consumes its value. The
+/// same producer and consumer coalescing as `apply` folds them away; dropping the `Nop`s a
+/// round leaves makes the next copies adjacent to their consumers, until none changes.
+pub(super) fn coalesce_promoted_moves(
+    function: &mut BcFunction,
+    methods: &(impl liveness::MethodArguments + ?Sized),
+    field_sites: &[FieldSite],
+    superinstructions: &[Superinstruction],
+) {
+    let mut liveness = None;
+    loop {
+        let mut changed = false;
+        while coalesce_distant_producer_moves(function, methods, field_sites, superinstructions, &mut liveness) {
+            changed = true;
+        }
+        changed |= forward_move_sources(function, methods, field_sites, superinstructions, &mut liveness);
+        if !changed {
+            return;
+        }
+        remove_nops(function, &mut liveness);
+    }
+}
+
+/// Drops every `Nop`, relocating jumps, handlers and source positions onto the instruction
+/// that followed it. The code's liveness, indexed by the old positions, is dropped with them.
+fn remove_nops(function: &mut BcFunction, liveness: &mut Option<CodeLiveness>) {
+    *liveness = None;
+    let old = std::mem::take(&mut function.code);
+    let mut code = Vec::with_capacity(old.len());
+    let mut map = vec![0usize; old.len() + 1];
+    for (pc, &instruction) in old.iter().enumerate() {
+        map[pc] = code.len();
+        if instruction.op() != Op::Nop {
+            code.push(instruction);
+        }
+    }
+    map[old.len()] = code.len();
+    relocate(
+        &mut code,
+        &mut function.wide,
+        &map,
+        &mut function.handlers,
+        &mut function.parameter_end_pc,
+        &mut function.binding_sites,
+        &mut function.source_positions,
+        &old,
+    );
+    function.code = code;
 }
 
 /// The liveness of a function's code as it stands: each instruction's transfer masks and the
@@ -160,7 +211,7 @@ impl CodeLiveness {
     fn of(
         current: &mut Option<Self>,
         function: &BcFunction,
-        methods: &[MethodSiteSpec],
+        methods: &(impl liveness::MethodArguments + ?Sized),
         field_sites: &[FieldSite],
         superinstructions: &[Superinstruction],
     ) -> Option<Self> {
@@ -246,7 +297,7 @@ fn invert_branches_over_jumps(function: &mut BcFunction) {
 /// candidate's liveness facts are unaffected by the others.
 fn coalesce_distant_producer_moves(
     function: &mut BcFunction,
-    methods: &[MethodSiteSpec],
+    methods: &(impl liveness::MethodArguments + ?Sized),
     field_sites: &[FieldSite],
     superinstructions: &[Superinstruction],
     current: &mut Option<CodeLiveness>,
@@ -350,7 +401,7 @@ fn coalesce_distant_producer_moves(
 /// rewrite trades `d` for `s` and changes nothing else it reads or writes.
 fn forward_move_sources(
     function: &mut BcFunction,
-    methods: &[MethodSiteSpec],
+    methods: &(impl liveness::MethodArguments + ?Sized),
     field_sites: &[FieldSite],
     superinstructions: &[Superinstruction],
     current: &mut Option<CodeLiveness>,
@@ -519,7 +570,7 @@ fn register_bit(register: Register) -> u64 {
 
 struct SuperRule {
     pattern: &'static [Op],
-    fuse: fn(&[Instr], &mut Vec<Superinstruction>) -> Option<Instr>,
+    fuse: fn(&[Instr], &mut SiteTable<'_, Superinstruction>) -> Option<Instr>,
 }
 
 const CONST_ARRAY_OBJECT2: [Op; 4] = [Op::MakeConstArray, Op::Binary, Op::Binary, Op::MakeObject2];
@@ -531,7 +582,7 @@ const SUPER_RULES: &[SuperRule] = &[SuperRule {
 
 fn rewrite_super_window(
     function: &mut BcFunction,
-    superinstructions: &mut Vec<Superinstruction>,
+    superinstructions: &mut SiteTable<'_, Superinstruction>,
 ) -> bool {
     let old = std::mem::take(&mut function.code);
     let protected = protected_positions(
@@ -590,7 +641,7 @@ fn rewrite_super_window(
 
 fn fuse_const_array_object2(
     window: &[Instr],
-    superinstructions: &mut Vec<Superinstruction>,
+    superinstructions: &mut SiteTable<'_, Superinstruction>,
 ) -> Option<Instr> {
     let code: [Instr; 4] = window.try_into().ok()?;
     if code.map(|instruction| instruction.op()) != CONST_ARRAY_OBJECT2 {
@@ -672,8 +723,8 @@ fn region_boundaries(
 
 fn rewrite_once(
     function: &mut BcFunction,
-    methods: &[MethodSiteSpec],
-    field_sites: &mut Vec<FieldSite>,
+    methods: &(impl liveness::MethodArguments + ?Sized),
+    field_sites: &mut SiteTable<'_, FieldSite>,
     superinstructions: &[Superinstruction],
     current: &mut Option<CodeLiveness>,
 ) -> bool {
@@ -689,7 +740,7 @@ fn rewrite_once(
         return false;
     }
     let analysis = has_pair
-        .then(|| CodeLiveness::of(current, function, methods, field_sites, superinstructions))
+        .then(|| CodeLiveness::of(current, function, methods, field_sites.as_slice(), superinstructions))
         .flatten();
     let live = analysis.as_ref().map(|analysis| &analysis.live);
     let old = std::mem::take(&mut function.code);
@@ -774,7 +825,7 @@ fn apply_rule(
     rule: Rule,
     first: Instr,
     second: Instr,
-    field_sites: &mut Vec<FieldSite>,
+    field_sites: &mut SiteTable<'_, FieldSite>,
     positions: &[crate::bytecode::SourcePosition],
     pc: usize,
 ) -> Option<Instr> {
@@ -947,7 +998,7 @@ mod tests {
             Instr::new(Op::Move, 5, 3, 0, 0),
             Instr::new(Op::Return, 5, 0, 0, 0),
         ];
-        assert!(!coalesce_distant_producer_moves(function, &[], &[], &[], &mut None));
+        assert!(!coalesce_distant_producer_moves(function, &[] as &[MethodSiteSpec], &[], &[], &mut None));
         assert_eq!(function.code[0].result_register(), 3);
         assert_eq!(function.code[2].op(), Op::Move);
     }
@@ -969,11 +1020,11 @@ mod tests {
             (Recipe::ConstantRight, right),
             (Recipe::ConstantLeft, both),
         ] {
-            assert!(apply_recipe(recipe, load, binary, &mut vec![]).is_none());
+            assert!(apply_recipe(recipe, load, binary, &mut SiteTable::default()).is_none());
         }
         let boundary = Instr::new(Op::LoadConst, 0, 0, 0, index - 1);
-        assert!(apply_recipe(Recipe::ConstantLeft, boundary, left, &mut vec![]).is_some());
-        assert!(apply_recipe(Recipe::ConstantRight, boundary, right, &mut vec![]).is_some());
+        assert!(apply_recipe(Recipe::ConstantLeft, boundary, left, &mut SiteTable::default()).is_some());
+        assert!(apply_recipe(Recipe::ConstantRight, boundary, right, &mut SiteTable::default()).is_some());
     }
 
     #[test]
@@ -993,7 +1044,7 @@ mod tests {
             6,
         );
         let branch = Instr::new(Op::JumpFalse, 7, 0, 0, 41);
-        let fused = apply_recipe(Recipe::BinaryJumpFalse, binary, branch, &mut vec![]).unwrap();
+        let fused = apply_recipe(Recipe::BinaryJumpFalse, binary, branch, &mut SiteTable::default()).unwrap();
         assert_eq!(fused.op(), Op::JumpBinaryFalse);
         assert_eq!(
             (fused.a(), fused.b(), fused.c(), fused.imm()),
@@ -1001,7 +1052,7 @@ mod tests {
         );
 
         let other = Instr::new(Op::JumpFalse, 8, 0, 0, 41);
-        assert!(apply_recipe(Recipe::BinaryJumpFalse, binary, other, &mut vec![]).is_none());
+        assert!(apply_recipe(Recipe::BinaryJumpFalse, binary, other, &mut SiteTable::default()).is_none());
     }
 
     #[test]
@@ -1065,7 +1116,7 @@ mod tests {
                 register,
             })
             .collect();
-        while coalesce_distant_producer_moves(function, &[], &[], &[], &mut None) {}
+        while coalesce_distant_producer_moves(function, &[] as &[MethodSiteSpec], &[], &[], &mut None) {}
         function
             .code
             .iter()
@@ -1171,7 +1222,7 @@ mod tests {
         let function = &mut program.functions[0];
         function.code = code;
         function.registers = registers;
-        rewrite_once(function, &[], &mut vec![], &[], &mut None);
+        rewrite_once(function, &[] as &[MethodSiteSpec], &mut SiteTable::default(), &[], &mut None);
         std::mem::take(&mut function.code)
     }
 
@@ -1276,7 +1327,7 @@ mod tests {
             ),
             Instr::new(Op::MakeObject2, 4, 1, 3, 0),
         ];
-        let mut sites = vec![];
+        let mut sites = SiteTable::default();
         let fused = fuse_const_array_object2(&code, &mut sites).unwrap();
         assert_eq!(fused.op(), Op::SuperConstArrayObject2);
         assert_eq!(

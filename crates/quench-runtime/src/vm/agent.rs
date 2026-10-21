@@ -74,7 +74,7 @@ impl<H: Host> Vm<H> {
     }
 
     fn set_agent_function_length(&mut self, function: Value, length: f64) {
-        let atom = self.intern_atom("length");
+        let atom = self.length_atom;
         let _ = self.set_property_with_attributes(
             function,
             atom,
@@ -121,7 +121,7 @@ impl<H: Host> Vm<H> {
 
     fn agent_start(&mut self, p: &ResidualProgram, args: &[Value]) -> Result<Value, JsError> {
         let source = args.first().copied().unwrap_or(Value::UNDEFINED);
-        if !matches!(self.heap.get(source), Some(Cell::String(_))) {
+        if !self.heap.is_string(source) {
             return Err(self.type_error(p, "agent.start expects a string".into()));
         }
         self.begin_agent_callback();
@@ -160,7 +160,7 @@ impl<H: Host> Vm<H> {
 
     fn agent_report(&mut self, p: &ResidualProgram, args: &[Value]) -> Result<Value, JsError> {
         let value = self.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-        let report = self.heap.alloc(Cell::String(value.clone().into()));
+        let report = self.heap.alloc_string(value.clone().into());
         let index = self.test262_agent.reports.len();
         self.test262_agent.reports.push(report);
         self.test262_agent.consumed_reports.push(false);
@@ -268,7 +268,7 @@ impl<H: Host> Vm<H> {
                 continue;
             }
             if let Some(promise) = waiter.async_promise {
-                let timeout_result = self.heap.alloc(Cell::String("timed-out".into()));
+                let timeout_result = self.heap.alloc_string("timed-out".into());
                 self.promise_settle(p, promise, PromiseState::Fulfilled, timeout_result)?;
             } else if !waiter.woken {
                 if let Some(report) = waiter.report {
@@ -289,7 +289,7 @@ impl<H: Host> Vm<H> {
 
     fn agent_report_is_number(&self, index: usize) -> bool {
         self.test262_agent.reports.get(index).is_some_and(|report| {
-            matches!(self.heap.get(*report), Some(Cell::String(value)) if value.host_string().parse::<f64>().is_ok())
+            self.heap.string(*report).is_some_and(|value| value.host_string().parse::<f64>().is_ok())
         })
     }
 
@@ -297,15 +297,15 @@ impl<H: Host> Vm<H> {
         let Some(report) = self.test262_agent.reports.get(index).copied() else {
             return;
         };
-        let replacement = match self.heap.get(report) {
-            Some(Cell::String(value)) if value.host_string().contains(' ') => value
+        let replacement = match self.heap.string(report) {
+            Some(value) if value.host_string().contains(' ') => value
                 .host_string()
                 .rsplit_once(' ')
                 .map(|(prefix, _)| format!("{prefix} {status}")),
             _ => Some(status.to_owned()),
         };
         if let Some(replacement) = replacement {
-            self.test262_agent.reports[index] = self.heap.alloc(Cell::String(replacement.into()));
+            self.test262_agent.reports[index] = self.heap.alloc_string(replacement.into());
         }
     }
 

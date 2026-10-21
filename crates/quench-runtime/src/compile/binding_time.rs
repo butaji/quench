@@ -23,7 +23,7 @@ pub(super) fn expression(value: &Expression<'_>) -> BindingTime<Constant> {
         Expression::NumericLiteral(value) => BindingTime::Static(Constant::Number(value.value)),
         Expression::StringLiteral(value) => BindingTime::Static(super::string::constant(value)),
         Expression::BigIntLiteral(value) => {
-            BindingTime::Static(Constant::BigInt(value.value.to_string()))
+            BindingTime::Static(Constant::BigInt(crate::bigint::decimal_literal(&value.value)))
         }
         Expression::BooleanLiteral(value) => BindingTime::Static(Constant::Boolean(value.value)),
         Expression::NullLiteral(_) => BindingTime::Static(Constant::Null),

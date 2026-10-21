@@ -102,7 +102,7 @@ impl<H: Host> Vm<H> {
         }
         let iterator = self.get_iterator(p, input)?;
         let iterator = self.heap.root(iterator);
-        let next_atom = self.intern_atom("next");
+        let next_atom = self.runtime_atoms.next;
         let next = self.get_property(p, self.heap.root_value(iterator).unwrap(), next_atom);
         match next {
             Ok(next) => Ok(AggregateInput::Iterable {
@@ -401,7 +401,7 @@ impl<H: Host> Vm<H> {
                     } else {
                         "fulfilled"
                     };
-                    let status_value = self.heap.alloc(Cell::String(status.into()));
+                    let status_value = self.heap.alloc_string(status.into());
                     self.set_property(result, status_atom, status_value)?;
                     let key_atom = self.intern_atom(if aggregate_job.rejected {
                         "reason"
@@ -476,7 +476,8 @@ impl<H: Host> Vm<H> {
             .flatten();
         let outcome = self.with_call_roots([reaction.handler, reaction.next, value], |vm| {
             vm.promise_job_boundary(reaction.execution_context, true)?;
-            if !vm.is_function(reaction.handler) {
+            let await_reaction = vm.heap.await_state(reaction.handler).is_some();
+            if !await_reaction && !vm.is_function(reaction.handler) {
                 vm.settle_reaction(
                     p,
                     reaction.next,
@@ -489,18 +490,22 @@ impl<H: Host> Vm<H> {
                 )?;
                 return Ok(Value::UNDEFINED);
             }
-            let (state, result) =
-                match vm.call_value(p, reaction.handler, Value::UNDEFINED, &[value]) {
-                    Ok(result) => (PromiseState::Fulfilled, result),
-                    // Host execution termination is not a guest throw. Return
-                    // through the outer realm/context cleanup, without
-                    // rejecting the result capability with undefined.
-                    Err(error) if error.is_execution_terminated() => return Err(error),
-                    Err(error) => (
-                        PromiseState::Rejected,
-                        error.thrown_value().unwrap_or(Value::UNDEFINED),
-                    ),
-                };
+            let called = if await_reaction {
+                vm.resume_await(p, reaction.handler, reaction.rejected, value)
+            } else {
+                vm.call_value(p, reaction.handler, Value::UNDEFINED, &[value])
+            };
+            let (state, result) = match called {
+                Ok(result) => (PromiseState::Fulfilled, result),
+                // Host execution termination is not a guest throw. Return
+                // through the outer realm/context cleanup, without
+                // rejecting the result capability with undefined.
+                Err(error) if error.is_execution_terminated() => return Err(error),
+                Err(error) => (
+                    PromiseState::Rejected,
+                    error.thrown_value().unwrap_or(Value::UNDEFINED),
+                ),
+            };
             vm.settle_reaction(p, reaction.next, state, result)?;
             Ok(Value::UNDEFINED)
         });
@@ -554,12 +559,12 @@ impl<H: Host> Vm<H> {
     /// Whether `then` is this realm's own %Promise.prototype.then%.
     fn is_intrinsic_promise_then(&self, then: Value) -> bool {
         matches!(
-            self.heap.get(then),
-            Some(Cell::Function {
+            self.heap.function(then),
+            Some(FunctionRecord {
                 kind: FunctionKind::Native(Native::PromiseThen),
-                object,
+                realm,
                 ..
-            }) if object.realm == self.realm.globals
+            }) if *realm == self.realm.globals
         )
     }
 
@@ -623,7 +628,7 @@ impl<H: Host> Vm<H> {
             |vm| {
                 vm.promise_job_boundary(thenable.execution_context, true)?;
                 if vm.is_intrinsic_promise_then(thenable.then)
-                    && vm.realm.promise.records.contains_key(&thenable.thenable)
+                    && vm.is_promise(thenable.thenable)
                     && !vm
                         .realm
                         .promise

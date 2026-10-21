@@ -56,7 +56,7 @@ impl<H: Host> Vm<H> {
         let iterator =
             self.native_with_realm(Native::IntlSegmenterSegmentsIterator, global, global);
         self.set_builtin_function_name(iterator, "[Symbol.iterator]")?;
-        let symbol_iterator = self.well_known_symbols["iterator"];
+        let symbol_iterator = self.well_known_symbols[WellKnownSymbol::Iterator];
         self.set_symbol_property(segments_prototype, symbol_iterator, iterator)?;
         let containing =
             self.native_with_realm(Native::IntlSegmenterSegmentsContaining, global, global);
@@ -141,20 +141,20 @@ impl<H: Host> Vm<H> {
                     if native == Native::IntlSegmenterSegmentsIterator {
                         let prototype =
                             vm.realm.intrinsics.intl_segment_iterator_prototypes[&vm.realm.globals];
-                        return Ok(vm.heap.alloc(Cell::Iterator {
-                            object: Box::new(Self::empty_object(prototype)),
+                        return Ok(vm.heap.alloc_iterator(IteratorRecord {
+                            object: Self::empty_object(prototype),
                             source: data,
                             kind: IteratorKind::IntlSegments,
                             index: 0,
                             done: false,
-                            ext: Box::new(crate::heap::IteratorExt {
+                            ext: crate::heap::IteratorExt {
                                 position_high: 0,
                                 next_method: None,
                                 helper: None,
                                 helper_running: false,
                                 helper_started: false,
                                 generator: None,
-                            }),
+                            },
                         }));
                     }
                     let index =
@@ -191,7 +191,7 @@ impl<H: Host> Vm<H> {
                 .map(|index| Value::number(index as f64))
                 .collect();
             let boundaries = vm.new_array(boundaries);
-            let input = vm.heap.alloc(Cell::String(input));
+            let input = vm.heap.alloc_string(input);
             let prototype = vm.realm.intrinsics.intl_segments_prototypes[&vm.realm.globals];
             let object = vm.heap.alloc(Cell::Object(Self::empty_object(prototype)));
             let data = vm.new_array(vec![this, input, boundaries]);
@@ -215,7 +215,7 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, "incompatible Segments receiver".into()));
         };
         let (segmenter, input, boundaries) = (*segmenter, *input, *boundaries);
-        let Some(Cell::String(text)) = self.heap.get(input) else {
+        let Some(text) = self.heap.string(input) else {
             return Ok(None);
         };
         if index >= text.units().len() {
@@ -246,7 +246,7 @@ impl<H: Host> Vm<H> {
         let object = self.heap.alloc(Cell::Object(Self::empty_object(
             self.realm_object_prototype(self.realm.globals),
         )));
-        let text = self.heap.alloc(Cell::String(text));
+        let text = self.heap.alloc_string(text);
         self.set_named(p, object, "segment", text)?;
         self.set_named(p, object, "index", Value::number(start as f64))?;
         self.set_named(p, object, "input", input)?;
@@ -267,8 +267,8 @@ impl<H: Host> Vm<H> {
         iterator: Value,
     ) -> Result<Value, JsError> {
         self.with_call_roots([iterator], |vm| {
-            let (data, index, done) = match vm.heap.get(iterator) {
-                Some(Cell::Iterator {
+            let (data, index, done) = match vm.heap.iterator(iterator) {
+                Some(IteratorRecord {
                     source,
                     index,
                     done,
@@ -283,13 +283,13 @@ impl<H: Host> Vm<H> {
             }
             match vm.segment_data(p, data, index)? {
                 Some((value, end)) => {
-                    if let Some(Cell::Iterator { index, ext, .. }) = vm.heap.get_mut(iterator) {
+                    if let Some(IteratorRecord { index, ext, .. }) = vm.heap.iterator_mut(iterator) {
                         ext.store_position(index, end);
                     }
                     vm.iterator_result(value, false)
                 }
                 None => {
-                    if let Some(Cell::Iterator { done, .. }) = vm.heap.get_mut(iterator) {
+                    if let Some(IteratorRecord { done, .. }) = vm.heap.iterator_mut(iterator) {
                         *done = true;
                     }
                     vm.iterator_result(Value::UNDEFINED, true)

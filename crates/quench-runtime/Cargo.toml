@@ -19,9 +19,14 @@ profile-aggregate = []
 profile-trace = ["profile-aggregate"]
 profile-memory = []
 profile-gc-time = []
+# Counts, by opcode, the instructions the lane leaves to the general loop; reported at exit.
+profile-lane-exits = []
 # Reads the collection pacing knobs from the environment (measurement builds only).
 gc-tuning = []
 reference = []
+# Recompiles each replayable function after its program loads and logs any difference
+# (`QUENCH_REPLAY_LOG`); verification builds only.
+verify-replay = []
 
 [dependencies]
 quench-stack = { path = "../quench-stack" }
@@ -41,6 +46,7 @@ hashbrown = { version = "0.16", default-features = false }
 rayon = "1.12.0"
 smallvec = "1.15.2"
 num-bigint = "0.4"
+num-traits = "0.2"
 quench-regexp = { path = "../quench-regexp" }
 quench-intl = { path = "../quench-intl" }
 quench-temporal = { path = "../quench-temporal" }
