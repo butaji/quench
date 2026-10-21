@@ -49,8 +49,8 @@ pub struct NodeHost {
     pub(crate) net_pending_writes: Vec<(u64, Vec<u8>)>,
     pub(crate) net_pending_ends: Vec<u64>,
     pub(crate) net_pending_destroys: Vec<(u64, bool)>,
-    /// Whether this host builds a startup snapshot, ending `initialize` at its point.
-    pub(crate) building_snapshot: bool,
+    /// The kind of startup snapshot this host builds, ending `initialize` at its point.
+    pub(crate) building_snapshot: Option<crate::host::startup_snapshot::SnapshotKind>,
 }
 
 #[derive(Clone)]
@@ -419,7 +419,7 @@ impl NodeHost {
             net_pending_writes: Vec::new(),
             net_pending_ends: Vec::new(),
             net_pending_destroys: Vec::new(),
-            building_snapshot: false,
+            building_snapshot: None,
         }
     }
 

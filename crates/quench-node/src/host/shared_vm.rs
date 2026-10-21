@@ -10,6 +10,16 @@ pub(crate) mod esm_wasm;
 pub(crate) mod policy_projection;
 pub(crate) use commonjs::source_kind;
 
+/// The resolver of an ES module's imports.
+pub(crate) fn esm_resolver() -> oxc_resolver::Resolver {
+    oxc_resolver::Resolver::new(oxc_resolver::ResolveOptions {
+        extensions: vec![".mjs".into(), ".js".into(), ".json".into(), ".cjs".into()],
+        main_files: vec!["index".into()],
+        condition_names: vec!["node".into(), "import".into(), "default".into()],
+        ..Default::default()
+    })
+}
+
 pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
     quench_runtime::host_functions![
         method "workerConstruct" (1) => crate::modules::worker_threads_shared_vm::construct,
@@ -1262,12 +1272,7 @@ impl quench_runtime::Host for NodeHost {
         let path = match path {
             Some(path) => path,
             None => {
-                let resolver = oxc_resolver::Resolver::new(oxc_resolver::ResolveOptions {
-                    extensions: vec![".mjs".into(), ".js".into(), ".json".into(), ".cjs".into()],
-                    main_files: vec!["index".into()],
-                    condition_names: vec!["node".into(), "import".into(), "default".into()],
-                    ..Default::default()
-                });
+                let resolver = esm_resolver();
                 let resolution_specifier = if internal {
                     format!("./{specifier}")
                 } else {
