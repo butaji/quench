@@ -2344,7 +2344,27 @@ impl<H: Host> Vm<H> {
         self.object_data(receiver)
             .and_then(|object| self.heap.property_get(object, slot))?
             .as_number()?;
-        self.regexp_builtin_exec(p, receiver, args).ok()
+        let (Some(Cell::RegExp { matcher, meta, .. }), Some(Cell::String(input))) =
+            (self.heap.get(receiver), self.heap.get(args[0]))
+        else {
+            return None;
+        };
+        // A non-global, non-sticky match starts at 0 whatever `lastIndex` holds, and leaves it
+        // as it was; ToLength of the number it holds has no effect (22.2.7.2 steps 4-8).
+        if meta.flags.contains('g') || meta.flags.contains('y') {
+            return self.regexp_builtin_exec(p, receiver, args).ok();
+        }
+        let (matcher, input) = (Rc::clone(matcher), input.clone());
+        let subject = self.regexp_subject(&input);
+        let matched = matcher.find_in_subject(&subject, 0).next();
+        drop(subject);
+        let Some(matched) = matched else {
+            return Some(Value::NULL);
+        };
+        self.with_call_roots([receiver, args[0]], |vm| {
+            vm.regexp_exec_result(receiver, args[0], input, matched)
+        })
+        .ok()
     }
 
     pub(super) fn regexp_builtin_exec(
@@ -2359,45 +2379,57 @@ impl<H: Host> Vm<H> {
                     vm.type_error(p, "RegExp method called on incompatible receiver".into())
                 );
             }
-            let input =
-                vm.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+            let subject = args.first().copied().unwrap_or(Value::UNDEFINED);
+            let input = vm.coerce_js_string(p, subject)?;
             let Some(matched) = vm.regexp_builtin_match(p, this, &input)? else {
                 return Ok(Value::NULL);
             };
-            let has_indices = match vm.heap.get(this) {
-                Some(Cell::RegExp { meta, .. }) => meta.flags.contains('d'),
-                _ => false,
-            };
-            let values = std::iter::once(Some(matched.range.clone()))
-                .chain(matched.captures.iter().cloned())
-                .map(|range| {
-                    range.map_or(Value::UNDEFINED, |range| {
-                        vm.heap.alloc(Cell::String(JsString::from_unit_run(
-                            input.units().slice(range),
-                        )))
-                    })
-                })
-                .collect::<Vec<_>>();
-            let result = vm.heap.alloc(Cell::Array {
-                object: crate::heap::ArrayObject::new(
-                    Self::empty_object(vm.array_proto),
-                    Rc::new(values),
-                ),
-            });
-            let named = regexp_named_capture_ranges(&matched);
-            let groups = vm.regexp_groups_object(&named, input.units())?;
-            let index = Value::number(matched.range.start as f64);
-            let input_value =
-                vm.string_value_from(args.first().copied().unwrap_or(Value::UNDEFINED), &input);
-            vm.initialize_regexp_result(result, index, input_value, groups)?;
-            if has_indices {
-                let indices = vm.regexp_indices_array(&matched, &named)?;
-                let indices_atom = vm.intern_atom("indices");
-                vm.set_property(result, indices_atom, indices)?;
-            }
-            vm.record_regexp_legacy_match(this, input, matched)?;
-            Ok(result)
+            vm.regexp_exec_result(this, subject, input, matched)
         })
+    }
+
+    /// The array `RegExpBuiltinExec` returns for `matched`, a match of the RegExp `this` in
+    /// `input`, the string `subject` converts to (ECMA-262 22.2.7.2 steps 15 on), with the
+    /// legacy static properties it records. The caller roots `this` and `subject`.
+    fn regexp_exec_result(
+        &mut self,
+        this: Value,
+        subject: Value,
+        input: JsString,
+        matched: quench_regexp::Match,
+    ) -> Result<Value, JsError> {
+        let has_indices = match self.heap.get(this) {
+            Some(Cell::RegExp { meta, .. }) => meta.flags.contains('d'),
+            _ => false,
+        };
+        let values = std::iter::once(Some(matched.range.clone()))
+            .chain(matched.captures.iter().cloned())
+            .map(|range| {
+                range.map_or(Value::UNDEFINED, |range| {
+                    self.heap.alloc(Cell::String(JsString::from_unit_run(
+                        input.units().slice(range),
+                    )))
+                })
+            })
+            .collect::<Vec<_>>();
+        let result = self.heap.alloc(Cell::Array {
+            object: crate::heap::ArrayObject::new(
+                Self::empty_object(self.array_proto),
+                Rc::new(values),
+            ),
+        });
+        let named = regexp_named_capture_ranges(&matched);
+        let groups = self.regexp_groups_object(&named, input.units())?;
+        let index = Value::number(matched.range.start as f64);
+        let input_value = self.string_value_from(subject, &input);
+        self.initialize_regexp_result(result, index, input_value, groups)?;
+        if has_indices {
+            let indices = self.regexp_indices_array(&matched, &named)?;
+            let indices_atom = self.intern_atom("indices");
+            self.set_property(result, indices_atom, indices)?;
+        }
+        self.record_regexp_legacy_match(this, input, matched)?;
+        Ok(result)
     }
 
     /// Gives a fresh exec `result` array its `index`, `input` and `groups` properties: from
