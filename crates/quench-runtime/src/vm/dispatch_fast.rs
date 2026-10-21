@@ -6253,7 +6253,15 @@ lane_handler! {
                 }
             }
             Some(FunctionRecord {
-                kind: FunctionKind::Native(native @ (Native::MapGet | Native::MapHas | Native::SetHas)),
+                kind:
+                    FunctionKind::Native(
+                        native @ (Native::MapGet
+                        | Native::MapHas
+                        | Native::SetHas
+                        | Native::WeakMapGet
+                        | Native::WeakMapHas
+                        | Native::WeakSetHas),
+                    ),
                 ..
             }) => {
                 let key = if ImmediateLayout::argument_count(i.imm()) == 0 {
@@ -6263,6 +6271,19 @@ lane_handler! {
                 };
                 let native = *native;
                 vm.pure_collection_lookup(native, receiver, key)
+                    .or_else(|| lane_string_or_native_call(cx, r, ip, i, receiver))
+            }
+            Some(FunctionRecord {
+                kind: FunctionKind::Native(Native::ArrayIsArray),
+                ..
+            }) => {
+                let value = if ImmediateLayout::argument_count(i.imm()) == 0 {
+                    Value::UNDEFINED
+                } else {
+                    r.get(ImmediateLayout::call_window_base(i.imm()))
+                };
+                vm.steady_is_array(value)
+                    .map(|holds| if holds { Value::TRUE } else { Value::FALSE })
                     .or_else(|| lane_string_or_native_call(cx, r, ip, i, receiver))
             }
             _ => lane_string_or_native_call(cx, r, ip, i, receiver),
@@ -6363,6 +6384,10 @@ fn lane_call_native<H: Host>(
     }
     if !unsafe { (*cx).script_calls } {
         return None;
+    }
+    #[cfg(feature = "profile-lane-exits")]
+    if !vm.lane_stack.activations.is_empty() {
+        super::lane_exits::record_detail(format!("materializes for native {native:?}"));
     }
     // The callee observes the frame stack: lane activations become frames first, as leaving
     // the lane would make them, and the call runs from the innermost one.
