@@ -75,3 +75,30 @@ gained more from this session's host than Quench did (Wasmi +15%, Node +22%; Que
 * `child_entry` full run: 21 failures, all failing in the 2026-10-19 run as well except
   `cli_signal_defaults_reset_inherited_ignores_before_vm_workers_start`, which fails the same
   way on the merged tree without this change.
+
+## After merging v2-merged `acd849678` (`coremark-esm-acd849678-11.csv`)
+
+v2-merged moved during the campaign above (a retrained static link order, per-thread
+allocator heaps, JavaScript JIT hash loops). Merged and bolted again from that binary's own
+profiles; 11 rounds, same method:
+
+| Mode | Runtime | Median Score | Range | Median max RSS |
+| -- | -- | --: | -- | --: |
+| No JIT | **quench-node, Wasm ESM** | **3,177.1** | 2,904–3,387 | **2.99 MB** |
+| No JIT | quench-node, `run-js.mjs` | 3,150.4 | 3,036–3,295 | 3.39 MB |
+| No JIT | Wasmi v2 | 3,044.6 | 2,992–3,407 | 5.10 MB |
+| No JIT | Wasm3 | 2,170.0 | 2,043–2,282 | 3.84 MB |
+| JIT | **quench-node --jit, Wasm ESM** | **23,616.5** | 21,753–24,341 | **6.12 MB** |
+| JIT | quench-node --jit, `run-js.mjs` | 23,520.2 | 22,033–24,093 | 6.27 MB |
+| JIT | Node v26.12.0, Wasm ESM | 22,419.8 | 21,296–23,381 | 51.82 MB |
+| JIT | Node v26.12.0, `run-js.mjs` | 22,378.0 | 21,858–23,950 | 52.43 MB |
+| JIT | Wasmtime | 18,726.6 | 17,720–19,484 | 13.28 MB |
+| JIT | Winch | 9,227.4 | 9,065–9,649 | 11.43 MB |
+
+* No-JIT Score: won (1.044x Wasmi v2; 7 of 11 rounds).
+* No-JIT max RSS: won (2,852–3,060 KB against Wasm3's 3,752–4,112 KB; 11 of 11).
+* JIT Score: won (1.053x Node's best row; 8 of 11 rounds, and the `run-js.mjs` row 10 of 11).
+* JIT max RSS: won (6.12 MB against Winch's 11.43 MB; 11 of 11).
+
+Interleaved `--jit` rounds before this campaign put this build at a median 23,534 against the
+previous merge's 24,111 and Node's 22,381 (six rounds each); the ranges overlap.
