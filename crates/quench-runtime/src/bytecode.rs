@@ -450,6 +450,15 @@ impl ImmediateLayout {
             })
     }
 
+    /// A lane `Call` record whose result register is dead after the call (`derive_lane_view`).
+    /// Lane call records carry no eval flags (`lane_call_fits`), so the flag reuses the
+    /// direct-eval bit; a callee whose result is unobservable may skip building it.
+    pub(crate) const LANE_CALL_RESULT_UNUSED_FLAG: u32 = Self::DIRECT_EVAL_FLAG;
+
+    pub(crate) const fn lane_call_result_used(imm: u32) -> bool {
+        imm & Self::LANE_CALL_RESULT_UNUSED_FLAG == 0
+    }
+
     pub(crate) const fn direct_eval(imm: u32) -> bool {
         imm & Self::DIRECT_EVAL_FLAG != 0
     }
@@ -870,6 +879,12 @@ opcodes!(
     WasmAtomicAccess => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmAtomicOperator, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
     WasmAtomicFence => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning Unused, @ Register, @ fields(Unused, Unused, Unused),
     SetFunctionDebugName => Effect::WRITES_HEAP; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Unused, Unused),
+    // `arguments.length` and `arguments[key]` of the `arguments` binding in the local slot:
+    // an unmaterialized binding answers from the values its activation kept
+    // (`Function::forwards_arguments_only`); any other value is read as `GetField` and
+    // `GetIndex` read it.
+    ArgumentsLength => READ_THROW; layout Scalar; meaning LocalSlot, @ Register, @ fields(ResultRegister, Unused, Unused),
+    ArgumentGet => READ_THROW; layout Scalar; meaning LocalSlot, @ Register, @ fields(ResultRegister, Register, Unused),
 
 );
 
@@ -1304,6 +1319,13 @@ pub(crate) struct CallPlan {
     /// reflection, if any, reads its parameter registers or the forwarded values. A lane
     /// may run such a body without a frame.
     pub(crate) registers_only: bool,
+    /// The activation's state is its registers, its frame locals and the environment its
+    /// closures capture, which it may make on entry: an ordinary body but for the closures
+    /// it makes, with no `arguments`, self binding, handler, binding site, environment clone,
+    /// dynamic scope access or superinstruction, whose every local access is a plain or
+    /// environment load, store or dead-zone opening of a selectively captured layout. A lane
+    /// may run such a body without a frame (`CallEntry::Environment`).
+    pub(crate) environment_activation: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1816,7 +1838,7 @@ impl Function {
     }
 
     /// Whether an activation is fully described by the function's static layout: a nested,
-    /// non-arrow, non-derived function whose parameters all live in registers, with no rest
+    /// non-derived function whose parameters all live in registers, with no rest
     /// array, self binding, `arguments` object, parameter-scope `arguments` error, inherited
     /// `with` scope or observable implicit bindings. Such a frame needs only its storage sized
     /// (cleared when no root map lets the collector skip stale registers), its parameters
@@ -1836,8 +1858,10 @@ impl Function {
                 .filter(|entry| entry.local < self.params)
                 .count();
             // Plain but for an `arguments` binding.
+            // An arrow's `this` is its environment's, which its activation binds
+            // (`Vm::lexical_activation_this`); one reaching `super` keeps its frame.
             let ordinary = self.parent.is_some()
-                && !self.is_arrow
+                && !(self.is_arrow && self.super_home_atom.is_some())
                 && !self.derived_constructor
                 && !self.rest
                 && self.self_binding_slot.is_none()
@@ -1870,7 +1894,40 @@ impl Function {
                         .addressed_local_slots()
                         .all(|slot| Some(slot) == self.arguments_slot)
                 });
+            let environment_activation = in_loop
+                && self.parent.is_some()
+                && !self.is_arrow
+                && !self.is_class_constructor
+                && !self.rest
+                && self.simple_parameters
+                && self.self_binding_slot.is_none()
+                && !self.inherited_with_scope
+                && self.local_registers.is_empty()
+                && self.arguments_slot.is_none()
+                && self.handlers.is_empty()
+                && self.binding_sites.is_empty()
+                && self.selective_capture_slots.is_some()
+                && self.initial_register == InitialRegister::Undefined
+                && !self.has_dynamic_scope_access()
+                && !self.activation_binding_reads(atoms)
+                && self.instructions().all(|instruction| {
+                    let op = instruction.op();
+                    op.immediate_role() != ImmediateRole::SuperinstructionIndex
+                        && op != Op::CloneEnv
+                        && (instruction.addressed_local_slots().next().is_none()
+                            || matches!(
+                                op,
+                                Op::LoadLocal
+                                    | Op::LoadLocalPlain
+                                    | Op::LoadEnvLocal
+                                    | Op::StoreLocal
+                                    | Op::StoreLocalPlain
+                                    | Op::StoreEnvLocal
+                                    | Op::InitializeTdz
+                            ))
+                });
             CallPlan {
+                environment_activation,
                 plain: ordinary && self.arguments_slot.is_none(),
                 in_loop,
                 legacy_reflection,
@@ -1985,10 +2042,12 @@ impl Function {
     }
 
     /// Whether every read of the `arguments` binding loads it into the last argument of the
-    /// `CallForwardingArguments` right after, and nothing else can reach the binding: no
+    /// `CallForwardingArguments` right after, or reads its length or an element
+    /// (`ArgumentsLength`, `ArgumentGet`), and nothing else can reach the binding: no
     /// closure, environment clone, dynamic scope access or promoted register, and no
     /// suspension. An object it later materializes must equal one made on entry: unmapped,
-    /// or mapped onto no parameters.
+    /// or mapped onto no parameters. The activation then keeps the values it was passed, from
+    /// which those reads are answered.
     pub(crate) fn forwards_arguments_only(&self) -> bool {
         let Some(slot) = self.arguments_slot else {
             return false;
@@ -2019,7 +2078,9 @@ impl Function {
                         next.op() == Op::CallForwardingArguments
                             && next.call_window().last() == Some(instruction.result_register())
                     });
-            if !feeds_forwarding_call {
+            let reads_kept_values =
+                matches!(instruction.op(), Op::ArgumentsLength | Op::ArgumentGet);
+            if !feeds_forwarding_call && !reads_kept_values {
                 return false;
             }
             forwarded = true;
@@ -2624,6 +2685,9 @@ pub(crate) struct ProgramSource {
     pub(crate) base: u32,
     pub(crate) line_offset: u32,
     pub(crate) column_offset: u32,
+    /// `source_line_starts(text)`, indexed on the first line read: error source positions
+    /// read a line per throw, which a scan from the top would make linear in the source.
+    pub(crate) line_starts: std::cell::OnceCell<Box<[u32]>>,
 }
 
 /// A static item at a fixed place in the executable image, from which a snapshot measures the
@@ -2680,7 +2744,8 @@ impl SourceText {
 
 impl ProgramSource {
     pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
-        let Self { text, base, line_offset, column_offset } = self;
+        // `line_starts` is a memo of `text`, made again on the first line read.
+        let Self { text, base, line_offset, column_offset, line_starts: _ } = self;
         text.write_snapshot(writer);
         writer.u32(*base);
         writer.u32(*line_offset);
@@ -2693,6 +2758,7 @@ impl ProgramSource {
             base: reader.u32()?,
             line_offset: reader.u32()?,
             column_offset: reader.u32()?,
+            line_starts: std::cell::OnceCell::new(),
         })
     }
 }
@@ -2736,10 +2802,14 @@ impl ProgramSource {
         } else {
             (0, 0)
         };
-        let compiled_line = line.checked_add(line_offset)?.checked_sub(1)?;
-        let mut starts = source_line_starts(&self.text);
-        let start = starts.nth(compiled_line as usize)?;
-        let end = starts.next().unwrap_or(self.text.len());
+        let compiled_line = line.checked_add(line_offset)?.checked_sub(1)? as usize;
+        let starts = self.line_starts.get_or_init(|| {
+            source_line_starts(&self.text)
+                .map(|start| u32::try_from(start).unwrap_or(u32::MAX))
+                .collect()
+        });
+        let start = *starts.get(compiled_line)? as usize;
+        let end = starts.get(compiled_line + 1).map_or(self.text.len(), |&end| end as usize);
         let text = self.text.get(start..end)?
             .trim_end_matches(['\r', '\n', '\u{2028}', '\u{2029}']);
         if line != 1 {

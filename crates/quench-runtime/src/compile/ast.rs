@@ -151,6 +151,9 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     inherited_with_depth: u16,
     pub(super) strict: bool,
     pub(super) dynamic_eval: bool,
+    /// The `var x = arguments;` alias whose reads read the `arguments` binding
+    /// (`early::arguments_alias`); its declaration then stores nothing.
+    pub(super) arguments_alias: Option<String>,
     parameter_context: bool,
     pub(super) parameter_eval_arguments_error: bool,
     pub(super) parameter_arguments_slot: Option<u16>,
@@ -269,6 +272,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             inherited_with_depth: with_depth,
             strict: false,
             dynamic_eval: false,
+            arguments_alias: None,
             parameter_context: false,
             parameter_eval_arguments_error: false,
             parameter_arguments_slot,
@@ -704,6 +708,11 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
 
     pub(super) fn emit_parameter_bindings(&mut self, params: &oxc_ast::ast::FormalParameters<'_>) {
         let non_simple = Self::has_non_simple_parameters(params);
+        // A simple parameter list binds each name to the slot its argument already fills,
+        // so there is nothing to initialize.
+        if !non_simple {
+            return;
+        }
         let parameter_names = Self::parameter_local_names(params);
         if non_simple {
             for name in Self::parameter_bound_names(params) {
@@ -714,6 +723,11 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             }
         }
         for (index, item) in params.items.iter().enumerate() {
+            // A simple parameter's binding is the local its argument arrives in, already
+            // initialized: binding it again would store the value it holds.
+            if !non_simple {
+                continue;
+            }
             let atom = self.owner.atom(&parameter_names[index]);
             let current = self.load_atom(atom);
             if let Some(initializer) = &item.initializer {

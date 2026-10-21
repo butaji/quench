@@ -43,6 +43,15 @@ impl Snap for Native {
     }
 }
 
+impl Snap for WellKnownSymbols {
+    fn snap(&self, writer: &mut Writer) -> SnapshotResult<()> {
+        self.0.snap(writer)
+    }
+    fn unsnap(reader: &mut Reader<'_>) -> SnapshotResult<Self> {
+        Ok(Self(Snap::unsnap(reader)?))
+    }
+}
+
 impl Snap for ProgramId {
     fn snap(&self, writer: &mut Writer) -> SnapshotResult<()> {
         writer.u32(self.raw());
@@ -111,7 +120,7 @@ crate::snapshot::snap_struct!(ErrorRealmIntrinsics {
 crate::snapshot::snap_struct!(PrivateHomeKey { environment, program, function, name });
 crate::snapshot::snap_struct!(RuntimeAtoms {
     lexical_this, new_target, regexp_exec, regexp_flags, last_index, regexp_flag_accessors, then,
-    constructor, name, empty, value, done, writable, enumerable, configurable, get, set,
+    constructor, next, name, empty, value, done, writable, enumerable, configurable, get, set,
     bound_target, bound_this, bound_args,
 });
 crate::snapshot::snap_struct!(RealmIntrinsics {
@@ -310,6 +319,11 @@ impl<H: Host> Vm<H> {
             transitions,
             shape_slot_memo: _,
             symbol_write_proofs: _,
+            symbol_load_proofs: _,
+            function_name_shapes: _,
+            typeof_names: _,
+            closure_templates: _,
+            capture_walks: _,
             shape_attribute_memo: _,
             name_atom_memo: _,
             atom_text,
@@ -344,6 +358,8 @@ impl<H: Host> Vm<H> {
             regexp_builtin_layout: _,
             regexp_symbol_layouts: _,
             instanceof_has_instance_holder,
+            // Derived from the holder, which the restore sets through its setter.
+            instanceof_has_instance_link: _,
             to_fixed_atom,
             to_precision_atom,
             runtime_atoms,
@@ -457,8 +473,8 @@ impl<H: Host> Vm<H> {
             writer.values(&live);
         }
         private_homes.snap(&mut writer)?;
-        let wasm_js::WasmJsIntrinsics { module, instance, memory, table, global } = wasm_js;
-        [*module, *instance, *memory, *table, *global].snap(&mut writer)?;
+        let wasm_js::WasmJsIntrinsics { module, instance, memory, table, global, js_tag } = wasm_js;
+        [*module, *instance, *memory, *table, *global, *js_tag].snap(&mut writer)?;
         writer.value(*instanceof_has_instance_holder);
         write_host(host, &mut crate::SnapshotWriter { writer: &mut writer, heap }).map_err(SnapshotError)?;
         Ok(writer.finish())
@@ -532,9 +548,10 @@ impl<H: Host> Vm<H> {
             self.function_values.insert(key, handles);
         }
         self.private_homes = Snap::unsnap(&mut reader)?;
-        let [module, instance, memory, table, global] = <[Value; 5]>::unsnap(&mut reader)?;
-        self.wasm_js = wasm_js::WasmJsIntrinsics { module, instance, memory, table, global };
-        self.instanceof_has_instance_holder = reader.value()?;
+        let [module, instance, memory, table, global, js_tag] = <[Value; 6]>::unsnap(&mut reader)?;
+        self.wasm_js = wasm_js::WasmJsIntrinsics { module, instance, memory, table, global, js_tag };
+        let holder = reader.value()?;
+        self.set_instanceof_has_instance_holder(holder);
         read_host(&mut self.host, &mut crate::SnapshotReader { reader: &mut reader, heap: &self.heap })
             .map_err(SnapshotError)?;
         reader.finish()?;

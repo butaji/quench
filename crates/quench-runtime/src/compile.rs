@@ -2076,8 +2076,15 @@ impl<'a> Compiler<'a> {
             .as_ref()
             .map(|id| id.name.as_str())
             .or(context.default_export.then_some("default"));
+        // A named function expression binds its name in its own scope; a body that cannot
+        // observe the binding needs none, and runs without a frame where nothing else needs
+        // one (`CallPlan::registers_only`).
         let name_binding = if context.expression {
-            function.id.as_ref().map(|id| self.atom(id.name.as_str()))
+            function
+                .id
+                .as_ref()
+                .filter(|id| early::function_may_reference(&function.params, body, id.name.as_str()))
+                .map(|id| self.atom(id.name.as_str()))
         } else {
             None
         };
@@ -2664,6 +2671,7 @@ impl<'a> Compiler<'a> {
                 base: 0,
                 line_offset: 0,
                 column_offset: 0,
+                line_starts: Default::default(),
             }),
             atoms,
             constants,
@@ -3115,7 +3123,6 @@ impl<'a> Compiler<'a> {
             && simple_parameters
             && !options.async_function
             && !options.generator
-            && !options.class_constructor
             && !options.derived_constructor
             && !options.class_initializer
             && !options.implicit_super
@@ -3172,6 +3179,9 @@ impl<'a> Compiler<'a> {
             function.statement_completion = StatementCompletion::Track(completion);
         }
         function.dynamic_eval = dynamic_eval;
+        if arguments_slot.is_some() && parameter_arguments_slot.is_none() {
+            function.arguments_alias = early::arguments_alias(options.defaults, body);
+        }
         let mut lexical_slots: Vec<_> = lexical_atoms
             .iter()
             .filter_map(|atom| function.local_slots.get(atom).copied())
@@ -3229,16 +3239,16 @@ impl<'a> Compiler<'a> {
                 .wide
                 .iter()
                 .any(|instruction| instruction.op() == Op::MakeClosure);
+        let reads_binding =
+            |op: Op| matches!(op, Op::LoadLocal | Op::ArgumentsLength | Op::ArgumentGet);
         let arguments_slot = arguments_slot.filter(|slot| {
             (captures_locals && function.owner.arrows_reach_arguments(id, *slot))
                 || function.dynamic_eval
                 || function.code.iter().any(|instruction| {
-                    instruction.op() == Op::LoadLocal
-                        && instruction.local_slot() == usize::from(*slot)
+                    reads_binding(instruction.op()) && instruction.local_slot() == usize::from(*slot)
                 })
                 || function.wide.iter().any(|instruction| {
-                    instruction.op() == Op::LoadLocal
-                        && instruction.local_slot() == usize::from(*slot)
+                    reads_binding(instruction.op()) && instruction.local_slot() == usize::from(*slot)
                 })
         });
         let parameter_atoms = options.defaults.map_or_else(Vec::new, |formal| {
@@ -3439,6 +3449,9 @@ impl<'a> Compiler<'a> {
         frame_registers::promote(function, plain_slots, superinstructions, undefined_constant, |atom| {
             self.atoms.get(atom)
         });
+        if self.mode == SpecializationMode::Enabled {
+            rewrite::coalesce_promoted_moves(function, method_sites, field_sites, superinstructions);
+        }
         if function
             .code
             .iter()

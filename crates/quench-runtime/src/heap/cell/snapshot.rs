@@ -47,7 +47,8 @@ mod tag {
     pub(super) const FUNCTION: u8 = 14;
     pub(super) const BINDING_REFERENCE: u8 = 15;
     pub(super) const ENVIRONMENT: u8 = 16;
-    pub(super) const STRING: u8 = 17;
+    /// `WebAssembly.JSTag`, the one Wasm cell every realm holds (`wasm_js::js_tag_cell`).
+    pub(super) const JS_TAG: u8 = 17;
     pub(super) const BIGINT: u8 = 18;
     pub(super) const SYMBOL: u8 = 19;
     pub(super) const DATE: u8 = 20;
@@ -76,21 +77,20 @@ impl Native {
     }
 }
 
+/// A function kind's tag in a snapshot.
+const USER_FUNCTION: u8 = 0;
+const NATIVE_FUNCTION: u8 = 1;
+
 impl FunctionKind {
     pub(crate) fn write_snapshot(self, writer: &mut Writer) {
         match self {
             Self::User(program, function) => {
-                writer.u8(0);
-                writer.u32(program.raw());
-                writer.u32(function);
-            }
-            Self::NumericUser(program, function) => {
-                writer.u8(1);
+                writer.u8(USER_FUNCTION);
                 writer.u32(program.raw());
                 writer.u32(function);
             }
             Self::Native(native) => {
-                writer.u8(2);
+                writer.u8(NATIVE_FUNCTION);
                 native.write_snapshot(writer);
             }
         }
@@ -98,9 +98,8 @@ impl FunctionKind {
 
     pub(crate) fn read_snapshot(reader: &mut Reader<'_>) -> SnapshotResult<Self> {
         Ok(match reader.u8()? {
-            0 => Self::User(ProgramId::from_raw(reader.u32()?), reader.u32()?),
-            1 => Self::NumericUser(ProgramId::from_raw(reader.u32()?), reader.u32()?),
-            2 => Self::Native(Native::read_snapshot(reader)?),
+            USER_FUNCTION => Self::User(ProgramId::from_raw(reader.u32()?), reader.u32()?),
+            NATIVE_FUNCTION => Self::Native(Native::read_snapshot(reader)?),
             _ => return Err(SnapshotError("invalid snapshot function kind".into())),
         })
     }
@@ -194,6 +193,7 @@ fn write_extras(writer: &mut Writer, extras: &ObjectExtras) -> SnapshotResult<()
         stack_data,
         indexed_descriptors,
         length_descriptor,
+        side_descriptors,
     } = extras;
     if external_address.is_some() {
         return Err(SnapshotError::unsupported("an object whose address an embedder observed"));
@@ -205,7 +205,7 @@ fn write_extras(writer: &mut Writer, extras: &ObjectExtras) -> SnapshotResult<()
     if let Some(map) = arguments_map {
         writer.u16s(map);
     }
-    for flag in [*arguments_object, *raw_json, *error_data, *module_namespace, *structured_transfer_forbidden, *indexed_descriptors, *length_descriptor] {
+    for flag in [*arguments_object, *raw_json, *error_data, *module_namespace, *structured_transfer_forbidden, *indexed_descriptors, *length_descriptor, *side_descriptors] {
         writer.bool(flag);
     }
     writer.option_value(*boxed_primitive);
@@ -241,8 +241,8 @@ fn read_extras(reader: &mut Reader<'_>) -> SnapshotResult<ObjectExtras> {
     );
     let arena_start = reader.u32()?;
     let arguments_map = if reader.bool()? { Some(reader.u16s()?) } else { None };
-    let [arguments_object, raw_json, error_data, module_namespace, structured_transfer_forbidden, indexed_descriptors, length_descriptor] =
-        [reader.bool()?, reader.bool()?, reader.bool()?, reader.bool()?, reader.bool()?, reader.bool()?, reader.bool()?];
+    let [arguments_object, raw_json, error_data, module_namespace, structured_transfer_forbidden, indexed_descriptors, length_descriptor, side_descriptors] =
+        [reader.bool()?, reader.bool()?, reader.bool()?, reader.bool()?, reader.bool()?, reader.bool()?, reader.bool()?, reader.bool()?];
     let boxed_primitive = reader.option_value()?;
     let structured_serialization = structured_serialization::read(reader)?;
     let module_bindings = read_list(reader, |reader| Ok((reader.u32()?, ProgramId::from_raw(reader.u32()?), reader.u16()?)))?;
@@ -273,6 +273,7 @@ fn read_extras(reader: &mut Reader<'_>) -> SnapshotResult<ObjectExtras> {
         stack_data,
         indexed_descriptors,
         length_descriptor,
+        side_descriptors,
     })
 }
 
@@ -518,7 +519,7 @@ impl crate::heap::PromiseCell {
         let host_context = if reader.bool()? { Some(crate::HostExecutionContext(reader.u64()?)) } else { None };
         Ok(Self {
             object,
-            record: crate::heap::PromiseRecord { state, result, reactions, rejection, rejection_id, host_context },
+            record: crate::heap::PromiseRecord { state, result, reactions: reactions.into(), rejection, rejection_id, host_context },
         })
     }
 }
@@ -655,10 +656,6 @@ impl Cell {
                 }
                 scope.write_snapshot(writer);
             }
-            Self::String(text) => {
-                writer.u8(tag::STRING);
-                text.write_snapshot(writer);
-            }
             Self::BigInt(value) => {
                 writer.u8(tag::BIGINT);
                 writer.bytes(&value.to_signed_bytes_le());
@@ -678,7 +675,7 @@ impl Cell {
                 write_object(writer, object)?;
                 let RegExpMeta { source, flags, legacy_constructor } = &**meta;
                 source.write_snapshot(writer);
-                writer.str(flags);
+                writer.str(&flags.text());
                 match legacy_constructor {
                     RegExpLegacyOwner::Enabled(value) => {
                         writer.u8(0);
@@ -705,6 +702,9 @@ impl Cell {
             }
             Self::ArrayFromAsyncState(_) | Self::AwaitState(_) => {
                 return Err(SnapshotError::unsupported("a suspended async operation"));
+            }
+            Self::WasmTag { declarations, ty } if crate::vm::js_tag_type() == (declarations.clone(), *ty) => {
+                writer.u8(tag::JS_TAG);
             }
             Self::WasmBits64(_)
             | Self::WasmV128(_)
@@ -831,7 +831,7 @@ impl Cell {
                 }
                 Self::Environment { parent, function, slots: EnvironmentSlots(slots), scope: EnvironmentScopeRef::read_snapshot(reader)? }
             }
-            tag::STRING => Self::String(JsString::read_snapshot(reader)?),
+            tag::JS_TAG => crate::vm::js_tag_cell(),
             tag::BIGINT => Self::BigInt(Box::new(num_bigint::BigInt::from_signed_bytes_le(reader.bytes()?))),
             tag::SYMBOL => Self::Symbol(SymbolData {
                 description: reader.option_string()?.map(String::into_boxed_str),
@@ -841,13 +841,15 @@ impl Cell {
             tag::REGEXP => {
                 let object = boxed_object(reader)?;
                 let source = JsString::read_snapshot(reader)?;
-                let flags = reader.string()?;
+                let flag_text = reader.string()?;
+                let flags = crate::vm::RegExpFlags::of(&flag_text)
+                    .ok_or_else(|| SnapshotError("invalid snapshot regexp flags".into()))?;
                 let legacy_constructor = match reader.u8()? {
                     0 => RegExpLegacyOwner::Enabled(reader.value()?),
                     1 => RegExpLegacyOwner::Disabled(reader.value()?),
                     _ => return Err(SnapshotError("invalid snapshot regexp owner".into())),
                 };
-                let matcher = (decoder.regexp)(&source, &flags)?;
+                let matcher = (decoder.regexp)(&source, &flag_text)?;
                 Self::RegExp { object, meta: Box::new(RegExpMeta { source, flags, legacy_constructor }), matcher }
             }
             tag::ERROR => Self::Error(reader.string()?),

@@ -439,6 +439,7 @@ fn decode_program(
             base: input.u32()?,
             line_offset: input.u32()?,
             column_offset: input.u32()?,
+            line_starts: Default::default(),
         }),
         None => None,
     };

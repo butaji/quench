@@ -49,6 +49,9 @@ const DIRECT_PROMISE_HANDLE_BIT: u64 = 1 << 45;
 const DIRECT_AWAIT_HANDLE_BITS: u64 = DIRECT_PROMISE_HANDLE_BIT | DIRECT_ARRAY_HANDLE_BIT;
 /// The iterator record family's code.
 const DIRECT_ITERATOR_HANDLE_BITS: u64 = DIRECT_PROMISE_HANDLE_BIT | DIRECT_OBJECT_HANDLE_BIT;
+/// The string record family's code: every family bit.
+const DIRECT_STRING_HANDLE_BITS: u64 =
+    DIRECT_PROMISE_HANDLE_BIT | DIRECT_OBJECT_HANDLE_BIT | DIRECT_ARRAY_HANDLE_BIT;
 /// The payload bits that code a heap value's reference family.
 const HEAP_FAMILY_BITS: u64 = DIRECT_FUNCTION_HANDLE_BITS | DIRECT_PROMISE_HANDLE_BIT;
 /// The bits that name a heap value's reference family (`Value::heap_reference`).
@@ -63,6 +66,7 @@ pub(crate) enum HeapReference {
     PromiseRecord(u32),
     AwaitRecord(u32),
     IteratorRecord(u32),
+    StringRecord(u32),
 }
 
 /// `value` truncated toward zero when it fits `i32`; any other result is some `i32` whose
@@ -291,6 +295,11 @@ impl Value {
     }
 
     #[inline(always)]
+    pub(crate) fn direct_string(index: u32) -> Self {
+        Self(TAG_HEAP | DIRECT_STRING_HANDLE_BITS | u64::from(index))
+    }
+
+    #[inline(always)]
     pub(crate) fn direct_await(index: u32) -> Self {
         Self(TAG_HEAP | DIRECT_AWAIT_HANDLE_BITS | u64::from(index))
     }
@@ -341,6 +350,7 @@ impl Value {
                 DIRECT_PROMISE_HANDLE_BIT => HeapReference::PromiseRecord(index),
                 DIRECT_AWAIT_HANDLE_BITS => HeapReference::AwaitRecord(index),
                 DIRECT_ITERATOR_HANDLE_BITS => HeapReference::IteratorRecord(index),
+                DIRECT_STRING_HANDLE_BITS => HeapReference::StringRecord(index),
                 _ => return None,
             },
         )
@@ -355,7 +365,8 @@ impl Value {
             | HeapReference::FunctionRecord(_)
             | HeapReference::PromiseRecord(_)
             | HeapReference::AwaitRecord(_)
-            | HeapReference::IteratorRecord(_) => None,
+            | HeapReference::IteratorRecord(_)
+            | HeapReference::StringRecord(_) => None,
         }
     }
 
@@ -373,6 +384,11 @@ impl Value {
     #[inline(always)]
     pub(crate) fn direct_iterator_index(self) -> Option<u32> {
         (self.0 & HEAP_FAMILY_MASK == TAG_HEAP | DIRECT_ITERATOR_HANDLE_BITS).then_some(self.0 as u32)
+    }
+
+    #[inline(always)]
+    pub(crate) fn direct_string_index(self) -> Option<u32> {
+        (self.0 & HEAP_FAMILY_MASK == TAG_HEAP | DIRECT_STRING_HANDLE_BITS).then_some(self.0 as u32)
     }
 
     #[inline(always)]
@@ -429,6 +445,13 @@ impl Value {
 
     pub(crate) fn is_deleted(self) -> bool {
         self.0 == TAG_DELETED
+    }
+
+    /// Whether this is any `TAG_DELETED` marker: `DELETED`, a shared environment slot, an
+    /// environment index or unmaterialized arguments. None is a value a program observes.
+    #[inline(always)]
+    pub(crate) fn is_internal_marker(self) -> bool {
+        self.0 & TAG_MASK == TAG_DELETED
     }
 
     #[inline(always)]

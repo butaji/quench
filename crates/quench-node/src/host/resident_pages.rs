@@ -135,6 +135,28 @@ pub fn unmap_tracked_mapping(start: usize, length: usize) {
     }
 }
 
+/// Releases the read-only pages and, besides them, the clean pages of the read-only data
+/// mappings, for a compilation's phase boundaries: a small program's peak is its entry
+/// compilation, when the parser's constants and the code generator's would be resident
+/// together (V8-v7 max RSS, bolted static x86_64, 2026-10-20: Crypto 3096 -> 2956 KiB,
+/// Richards 2512 -> 2368, RayTrace 2968 -> 2824). Collections do not page data out: a long
+/// run refaults its data between them, at its heap's peak (RegExp +60-150 KiB). A data page
+/// a relocation or an early write made private stays: `MADV_PAGEOUT` reclaims only what
+/// it can drop or swap.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+pub fn release_read_only_code_and_data() {
+    release_read_only_pages();
+    for (start, end) in file_mappings(&[DATA_MAPPING]) {
+        // SAFETY: paging out never changes a mapping's contents.
+        unsafe {
+            libc::madvise(start as *mut libc::c_void, end - start, libc::MADV_PAGEOUT);
+        }
+    }
+}
+
+#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+pub fn release_read_only_code_and_data() {}
+
 /// The page-aligned address ranges of the segments above, from the loader's own table: every
 /// non-writable segment of the executable, which the table lists without a name, and every
 /// library's non-writable code segment. The kernel's vDSO, whose name is not a path, is left

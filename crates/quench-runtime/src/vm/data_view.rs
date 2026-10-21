@@ -103,7 +103,7 @@ impl<H: Host> Vm<H> {
                 },
             )?;
         }
-        if self.well_known_symbols.contains_key("toStringTag") {
+        if self.well_known_symbols.get(WellKnownSymbol::ToStringTag).is_some() {
             self.install_builtin_to_string_tag(prototype, "DataView")?;
         }
         if global == self.realm.globals {

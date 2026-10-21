@@ -13,6 +13,47 @@ pub(super) struct ClosureShapes {
     prototype: Option<(u32, u32)>,
 }
 
+/// What a recorded ordinary closure of one nested function in one realm is made of, apart
+/// from its environment (`Vm::closure_in_realm`): its own properties' values under their
+/// named shape, its `[[Prototype]]`, its kind, and for a constructor its prototype object's
+/// parent and the shape `constructor` gives it.
+#[derive(Clone, Copy)]
+pub(super) struct ClosureTemplate {
+    program: ProgramId,
+    function: u32,
+    realm: Value,
+    function_prototype: Value,
+    shape: u32,
+    length: Value,
+    name: Value,
+    kind: FunctionKind,
+    prototype: Option<(Value, u32)>,
+}
+
+/// A closure's own `length` and `name`, which the recorded shapes add first; its `prototype`,
+/// when it has one, follows them.
+const FINISHED_CLOSURE_NAMED_SLOTS: usize = 2;
+
+/// Whether a closure's own properties fit its inline slots, so it can be allocated finished.
+fn finished_closure_fits(prototype: Option<Value>) -> bool {
+    FINISHED_CLOSURE_NAMED_SLOTS + usize::from(prototype.is_some())
+        <= crate::value_vec::INLINE_PROPERTY_COUNT
+}
+
+/// The inline slots of a closure allocated finished (`finished_closure_fits`).
+fn finished_closure_slots(
+    named: &[Value; FINISHED_CLOSURE_NAMED_SLOTS],
+    prototype: Option<Value>,
+) -> [Value; crate::value_vec::INLINE_PROPERTY_COUNT] {
+    debug_assert!(finished_closure_fits(prototype));
+    let mut slots = [Value::UNDEFINED; crate::value_vec::INLINE_PROPERTY_COUNT];
+    slots[..FINISHED_CLOSURE_NAMED_SLOTS].copy_from_slice(named);
+    if let (Some(prototype), Some(slot)) = (prototype, slots.get_mut(FINISHED_CLOSURE_NAMED_SLOTS)) {
+        *slot = prototype;
+    }
+    slots
+}
+
 impl<H: Host> Vm<H> {
     pub(super) fn function_realm(
         &mut self,
@@ -59,7 +100,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn string_constructor_argument(&mut self, args: &[Value]) -> Value {
         args.first().copied().unwrap_or_else(|| {
             self.heap
-                .alloc(Cell::String(super::wtf16::JsString::from_str("")))
+                .alloc_string(super::wtf16::JsString::from_str(""))
         })
     }
 
@@ -70,7 +111,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let argument = self.string_constructor_argument(args);
         let text = self.coerce_js_string(p, argument)?;
-        Ok(self.heap.alloc(Cell::String(text)))
+        Ok(self.heap.alloc_string(text))
     }
 
     pub(super) fn set_function_name(
@@ -107,7 +148,7 @@ impl<H: Host> Vm<H> {
         if let Some(&value) = self.atom_strings.get(&atom) {
             return value;
         }
-        let value = self.heap.alloc(Cell::String(self.atom_value(atom)));
+        let value = self.heap.alloc_string(self.atom_value(atom));
         if keep {
             self.atom_strings.insert(atom, value);
         }
@@ -116,7 +157,7 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn set_function_name_key(&mut self, function: Value, key: Value, prefix: u32) {
         let name = match self.heap.get(key) {
-            Some(Cell::String(value)) => value.to_string(),
+            _ if let Some(value) = self.heap.string(key)  => value.to_string(),
             Some(Cell::Symbol(description)) => description
                 .as_ref()
                 .map_or_else(String::new, |description| format!("[{}]", description)),
@@ -134,7 +175,7 @@ impl<H: Host> Vm<H> {
         let Some(slot) = self.inferred_function_name_slot(function) else {
             return;
         };
-        let value = self.heap.alloc(Cell::String(text.into()));
+        let value = self.heap.alloc_string(text.into());
         self.heap.property_set(function, slot, value);
         self.capture_function_name(function, value);
     }
@@ -148,7 +189,7 @@ impl<H: Host> Vm<H> {
         }
         let name_atom = self.runtime_atoms.name;
         let current = self.own_property(function, name_atom).unwrap_or(Value::UNDEFINED);
-        if !matches!(self.heap.get(current), Some(Cell::String(value)) if value.units().is_empty()) {
+        if !self.heap.string(current).is_some_and(|value| value.units().is_empty()) {
             return None;
         }
         self.shape_slot(self.object_data(function)?.shape(), name_atom)
@@ -166,7 +207,7 @@ impl<H: Host> Vm<H> {
         };
         match kind {
                 FunctionKind::Native(Native::HostFunction) => self.host_function_constructible(*env),
-                FunctionKind::User(program_id, id) | FunctionKind::NumericUser(program_id, id) => {
+                FunctionKind::User(program_id, id) => {
                     self.programs.get(*program_id).is_some_and(|program| {
                         program.functions.get(*id as usize).is_some_and(|function| {
                             let header = function.header();
@@ -272,6 +313,29 @@ impl<H: Host> Vm<H> {
         self.closure_in_realm(p, id, env, self.realm.globals)
     }
 
+    /// A closure of `template`'s function over `env`, as `closure_in_realm` makes a
+    /// recorded one.
+    fn closure_of_template(&mut self, template: ClosureTemplate, env: Value) -> Value {
+        let prototype = template
+            .prototype
+            .map(|(parent, _)| self.heap.alloc_object(Self::empty_object(parent)));
+        let object = crate::heap::Object::with_property_storage(
+            template.function_prototype,
+            crate::value_vec::ValueVec::inline_property_storage(template.shape),
+            finished_closure_slots(&[template.length, template.name], prototype),
+        );
+        let function = self.heap.alloc_function(FunctionRecord {
+            object,
+            realm: template.realm,
+            kind: template.kind,
+            env,
+        });
+        if let (Some(prototype), Some((_, constructor))) = (prototype, template.prototype) {
+            self.heap.property_add(prototype, function, constructor);
+        }
+        function
+    }
+
     pub(super) fn closure_in_realm(
         &mut self,
         p: &ResidualProgram,
@@ -292,6 +356,15 @@ impl<H: Host> Vm<H> {
                 .unwrap_or(active)
                 .to_vec()
         };
+        let template_index = id as usize & (CLOSURE_TEMPLATES - 1);
+        let plain_scope = with_objects.is_empty();
+        if plain_scope
+            && let Some(template) = self.closure_templates[template_index].filter(|template| {
+                template.function == id && template.program == self.active_program && template.realm == realm
+            })
+        {
+            return Ok(self.closure_of_template(template, env));
+        }
         if !with_objects.is_empty() {
             env = self.heap.alloc(Cell::Environment {
                 parent: env,
@@ -332,13 +405,48 @@ impl<H: Host> Vm<H> {
             (false, false) => Native::Function,
         };
         let function_object_prototype = self.realm.intrinsics.builtin_prototypes[&(realm, intrinsic)];
+        let plan_name = function_plan.name.or(function_plan.inferred_name);
+        // Names are the compiled functions' own, so keeping each one's string is bounded by
+        // the code loaded, while every closure of a module function would otherwise make one.
+        let name_value = self.atom_string_kept(plan_name.unwrap_or(self.runtime_atoms.empty), true);
+        let length_value = Value::number(function_plan.length as f64);
+        // An ordinary closure's own properties and its prototype's `constructor` take the
+        // shapes the first one recorded; every other closure defines them one by one.
+        let ordinary = !function_plan.is_async
+            && !function_plan.is_generator
+            && !function_plan.is_class_constructor;
+        let shapes_key = usize::from(prototype.is_some());
+        let recorded_shapes = self.closure_shapes[shapes_key].filter(|_| ordinary);
+        // A recorded closure whose own properties fit its inline slots is allocated finished:
+        // its `length`, `name` and `prototype` inline, as the adds would leave them, under the
+        // shape they and its original name would reach. A larger one takes the recorded shapes
+        // by adds after allocation.
+        let finished = recorded_shapes.and_then(|shapes| {
+            let (shape, own_prototype) = match (prototype, shapes.prototype) {
+                (Some(prototype), Some((with_prototype, _))) => (with_prototype, Some(prototype)),
+                _ => (shapes.name, None),
+            };
+            finished_closure_fits(own_prototype).then_some((shape, own_prototype))
+        });
+        let mut named_shape = None;
+        let object = match finished {
+            Some((shape, own_prototype)) => {
+                let named =
+                    self.function_name_shape(shape, plan_name.unwrap_or(self.runtime_atoms.empty));
+                named_shape = Some(named);
+                crate::heap::Object::with_property_storage(
+                    function_object_prototype,
+                    crate::value_vec::ValueVec::inline_property_storage(named),
+                    finished_closure_slots(&[length_value, name_value], own_prototype),
+                )
+            }
+            None => Self::empty_object(function_object_prototype),
+        };
+        let kind = FunctionKind::User(self.active_program, id);
         let function = self.heap.alloc_function(FunctionRecord {
-            object: Self::empty_object(function_object_prototype),
+            object,
             realm,
-            kind: match function_plan.dispatch {
-                DispatchClass::General => FunctionKind::User(self.active_program, id),
-                DispatchClass::Numeric => FunctionKind::NumericUser(self.active_program, id),
-            },
+            kind,
             env,
         });
         // Only closures of a program's top level are ever found again by plan
@@ -355,27 +463,43 @@ impl<H: Host> Vm<H> {
                     .expect("new closure is live"),
             );
         }
-        let plan_name = function_plan.name.or(function_plan.inferred_name);
-        // Names are the compiled functions' own, so keeping each one's string is bounded by
-        // the code loaded, while every closure of a module function would otherwise make one.
-        let name_value = self.atom_string_kept(plan_name.unwrap_or(self.runtime_atoms.empty), true);
-        let length_value = Value::number(function_plan.length as f64);
-        // An ordinary closure's own properties and its prototype's `constructor` take the
-        // shapes the first one recorded; every other closure defines them one by one.
-        let ordinary = !function_plan.is_async
-            && !function_plan.is_generator
-            && !function_plan.is_class_constructor;
-        let shapes_key = usize::from(prototype.is_some());
-        if ordinary && let Some(shapes) = self.closure_shapes[shapes_key] {
-            self.heap.property_add(function, length_value, shapes.length);
-            self.heap.property_add(function, name_value, shapes.name);
-            if let (Some(prototype), Some((with_prototype, constructor))) =
-                (prototype, shapes.prototype)
-            {
-                self.heap.property_add(function, prototype, with_prototype);
-                self.heap.property_add(prototype, function, constructor);
+        if let Some(shapes) = recorded_shapes {
+            if finished.is_none() {
+                self.heap.property_add(function, length_value, shapes.length);
+                self.heap.property_add(function, name_value, shapes.name);
+                if let (Some(prototype), Some((with_prototype, _))) = (prototype, shapes.prototype) {
+                    self.heap.property_add(function, prototype, with_prototype);
+                }
+                self.capture_fresh_closure_name(function, plan_name);
             }
-            self.capture_fresh_closure_name(function, plan_name);
+            let constructor = match (prototype, shapes.prototype) {
+                (Some(prototype), Some((_, constructor))) => {
+                    self.heap.property_add(prototype, function, constructor);
+                    Some(constructor)
+                }
+                _ => None,
+            };
+            // A nested function's closures are found by none of its plans, so a template
+            // makes the next ones the same way; a top-level one is recorded above. Only a
+            // closure allocated finished (`named_shape`) has a template, and a prototype the
+            // recorded shapes do not hold leaves the template unmade.
+            if plain_scope
+                && function_plan.parent.is_some_and(|parent| parent != super::ROOT_FUNCTION_ID)
+                && prototype.is_some() == constructor.is_some()
+                && let Some(shape) = named_shape
+            {
+                self.closure_templates[template_index] = Some(ClosureTemplate {
+                    program: self.active_program,
+                    function: id,
+                    realm,
+                    function_prototype: function_object_prototype,
+                    shape,
+                    length: length_value,
+                    name: name_value,
+                    kind,
+                    prototype: constructor.map(|constructor| (self.realm_object_prototype(realm), constructor)),
+                });
+            }
             return Ok(function);
         }
         let mut recorded = ClosureShapes {
@@ -383,7 +507,7 @@ impl<H: Host> Vm<H> {
             name: 0,
             prototype: None,
         };
-        let length = self.intern_atom("length");
+        let length = self.length_atom;
         self.set_property_with_attributes(
             function,
             length,
@@ -512,8 +636,7 @@ impl<H: Host> Vm<H> {
                 let (kind, derived_constructor) = match vm.heap.function(callee) {
                     Some(FunctionRecord { kind, .. }) => {
                         let derived = match kind {
-                            FunctionKind::User(program_id, id)
-                            | FunctionKind::NumericUser(program_id, id) => {
+                            FunctionKind::User(program_id, id) => {
                                 vm.programs.get(*program_id).is_some_and(|program| {
                                     program
                                         .function_get(*id as usize)
@@ -526,7 +649,7 @@ impl<H: Host> Vm<H> {
                     }
                     _ => unreachable!("IsConstructor accepted a non-function target"),
                 };
-                if let FunctionKind::User(program_id, id) | FunctionKind::NumericUser(program_id, id) =
+                if let FunctionKind::User(program_id, id) =
                     kind
                 {
                     let Some(program) = vm.programs.get(program_id) else {

@@ -506,14 +506,10 @@ impl Heap {
         counts[CellKind::Object as usize] += self.promise_records.live_count();
         counts[CellKind::AwaitState as usize] = self.await_records.live_count();
         counts[CellKind::Iterator as usize] = self.iterator_records.live_count();
+        counts[CellKind::String as usize] = self.string_records.live_count();
         self.for_each_live_value(|identity| {
-            if identity.direct_object_index().is_some()
-                || identity.direct_array_index().is_some()
-                || identity.direct_function_index().is_some()
-                || identity.direct_promise_index().is_some()
-                || identity.direct_await_index().is_some()
-                || identity.direct_iterator_index().is_some()
-            {
+            // Every record family is counted above; only legacy slots hold a `Cell`.
+            if identity.legacy_heap_index().is_none() {
                 return;
             }
             let cell = self.get(identity).expect("live legacy value has a Cell");
@@ -542,6 +538,8 @@ impl Heap {
                 && let Some(promise) = self.promise(identity)
             {
                 bytes[CellKind::Object as usize] += promise.object.allocated_extra_bytes();
+            } else if let Some(string) = self.string(identity) {
+                bytes[CellKind::String as usize] += string.flat_unit_bytes();
             } else if let Some(cell) = self.get(identity) {
                 bytes[Self::cell_kind(cell) as usize] += Self::cell_payload_bytes(cell);
             }
@@ -557,6 +555,7 @@ impl Heap {
             + self.promise_records.allocated_bytes()
             + self.await_records.allocated_bytes()
             + self.iterator_records.allocated_bytes()
+            + self.string_records.allocated_bytes()
             + self.live_value_payload_bytes()
             + self
                 .sparse_arrays
@@ -696,15 +695,14 @@ fn cell_bytes(cell: &Cell) -> usize {
                     + scope.boxed_bytes()
                     + scope.with_objects().len() * size_of::<Value>()
             }
-            Cell::String(value) => value.capacity(),
             Cell::BigInt(value) => crate::bigint::magnitude_bytes(value),
             Cell::Error(value) => value.capacity(),
             Cell::Promise(promise) => {
                 size_of::<super::PromiseCell>()
-                    + promise.record.reactions.capacity() * size_of::<super::PromiseReaction>()
+                    + promise.record.reaction_heap_bytes()
             }
             Cell::Symbol(value) => value.as_ref().map_or(0, |description| description.len()),
             Cell::Date { .. } => 0,
-            Cell::RegExp { meta, .. } => meta.source.capacity() + meta.flags.capacity(),
+            Cell::RegExp { meta, .. } => meta.source.capacity(),
         }
 }

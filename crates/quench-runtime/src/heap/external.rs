@@ -9,10 +9,10 @@ impl Cell {
     }
 
     /// The memory a cell owns beyond its slot, which allocation weight and live weight
-    /// charge: string units, array element storage and external buffers.
+    /// charge: array element storage and external buffers. A string record's units are
+    /// charged by `JsString::flat_unit_bytes` (`Heap::alloc_string`).
     pub(super) fn payload_bytes(&self) -> usize {
         match self {
-            Self::String(text) => text.flat_unit_bytes(),
             Self::Array { object } => array_payload_bytes(object),
             cell => cell.external_bytes(),
         }

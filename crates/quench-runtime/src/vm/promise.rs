@@ -1123,7 +1123,7 @@ impl<H: Host> Vm<H> {
         {
             return Value::UNDEFINED;
         }
-        self.heap.alloc(Cell::String("ModuleSource".into()))
+        self.heap.alloc_string("ModuleSource".into())
     }
 
     pub(super) fn call_native_guarded(
@@ -1171,6 +1171,62 @@ impl<H: Host> Vm<H> {
         result
     }
 
+    /// `call_value(method, receiver, args)` of the protocol method a String method found
+    /// (`@@match`, `@@replace`, `@@search` or `@@split`), whose receiver and arguments the
+    /// caller roots. A RegExp builtin of the running realm runs as `call_native_guarded`
+    /// runs it, under its native activation and stack guard, but straight into its body:
+    /// its receiver needs no String conversion and the general call's dispatch decides
+    /// nothing more for it. Any other method takes the general call.
+    pub(super) fn call_protocol_method(
+        &mut self,
+        p: &ResidualProgram,
+        method: Value,
+        receiver: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let native = match self.heap.function(method) {
+            Some(FunctionRecord {
+                kind: FunctionKind::Native(native),
+                realm,
+                ..
+            }) if *realm == self.realm.globals
+                && matches!(
+                    native,
+                    Native::RegExpSymbolMatch
+                        | Native::RegExpSymbolReplace
+                        | Native::RegExpSymbolSearch
+                        | Native::RegExpSymbolSplit
+                ) =>
+            {
+                *native
+            }
+            _ => return self.call_value(p, method, receiver, args),
+        };
+        self.profile.call_target(0, args.len());
+        self.realm
+            .promise
+            .active_native
+            .push(super::activation::NativeActivation {
+                callable: method,
+                frame_depth: self.frames.len(),
+                boundary: super::activation::NativeCallBoundary::Opaque,
+            });
+        let result = (|| {
+            let _stack = self.enter_stack()?;
+            self.check_execution_interrupt()?;
+            self.with_call_roots([method], |vm| match native {
+                Native::RegExpSymbolMatch => vm.regexp_symbol_match(p, receiver, args),
+                Native::RegExpSymbolReplace => vm.regexp_symbol_replace(p, receiver, args),
+                Native::RegExpSymbolSearch => vm.regexp_symbol_search(p, receiver, args),
+                _ => vm.regexp_symbol_split(p, receiver, args),
+            })
+        })();
+        self.realm.promise.active_native.pop();
+        // String natives make text on demand; charge it before the caller's next safepoint.
+        self.heap.charge_materialized_text();
+        result
+    }
+
     pub(super) fn native_with_env(&mut self, kind: Native, env: Value) -> Value {
         self.native_with_realm(kind, env, self.realm.globals)
     }
@@ -1194,7 +1250,7 @@ impl<H: Host> Vm<H> {
             .then_some(1.0)
             .or_else(|| native_length(kind));
         if let Some(length) = length {
-            let atom = self.intern_atom("length");
+            let atom = self.length_atom;
             let _ = self.set_property_with_attributes(
                 function,
                 atom,
@@ -1211,7 +1267,7 @@ impl<H: Host> Vm<H> {
         }
         if promise_resolver || anonymous_capability_executor || anonymous_proxy_revoke {
             let atom = self.intern_atom("name");
-            let empty_name = self.heap.alloc(Cell::String("".into()));
+            let empty_name = self.heap.alloc_string("".into());
             let _ = self.set_property_with_attributes(
                 function,
                 atom,
@@ -1288,7 +1344,7 @@ impl<H: Host> Vm<H> {
         ] {
             self.set_realm_builtin_named(program, promise, name, native, method_realm)?;
         }
-        if let Some(species) = self.well_known_symbols.get("species").copied() {
+        if let Some(species) = self.well_known_symbols.get(WellKnownSymbol::Species) {
             let getter = self.realm_native_value(
                 Native::PromiseSpeciesGetter,
                 global,
@@ -1337,7 +1393,7 @@ impl<H: Host> Vm<H> {
             record: PromiseRecord {
                 state: PromiseState::Pending,
                 result: Value::UNDEFINED,
-                reactions: vec![],
+                reactions: Default::default(),
                 rejection: PromiseRejectionState::Unobserved,
                 rejection_id: None,
                 host_context,
@@ -2125,11 +2181,11 @@ impl<H: Host> Vm<H> {
                 self.module_namespace_default(value)
             }
             "text" => {
-                let source = self.heap.alloc(Cell::String(module.source.clone().into()));
+                let source = self.heap.alloc_string(module.source.clone().into());
                 self.module_namespace_default(source)
             }
             "json" => {
-                let source = self.heap.alloc(Cell::String(module.source.clone().into()));
+                let source = self.heap.alloc_string(module.source.clone().into());
                 let value = self.json_parse(p, &[source])?;
                 self.module_namespace_default(value)
             }
@@ -2622,6 +2678,10 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         allow_evaluation: bool,
     ) -> Result<(), JsError> {
+        // Checked after every job: an empty queue has nothing to root or advance.
+        if self.realm.promise.dynamic_import_jobs.is_empty() {
+            return Ok(());
+        }
         let jobs = std::mem::take(&mut self.realm.promise.dynamic_import_jobs);
         // Taking the batch transfers its roots out of the persistent queue.
         // Keep every waiter alive, including jobs not yet evaluated, until it
@@ -4914,7 +4974,7 @@ impl<H: Host> Vm<H> {
         let mut module_type = None;
         for key in keys {
             let key_name = match self.heap.get(key) {
-                Some(Cell::String(value)) => Some(value.host_string().to_owned()),
+                _ if let Some(value) = self.heap.string(key)  => Some(value.host_string().to_owned()),
                 Some(Cell::Symbol(_)) => continue,
                 _ => return Err(JsError("invalid import attribute key".into())),
             };
@@ -4926,12 +4986,12 @@ impl<H: Host> Vm<H> {
             let enumerable = self.get_property(p, descriptor, enumerable_atom)?;
             if self.truthy(enumerable) {
                 let value = self.get_index(p, attributes, key)?;
-                if !matches!(self.heap.get(value), Some(Cell::String(_))) {
+                if !self.heap.is_string(value) {
                     return Err(self
                         .type_error(p, "dynamic import attribute values must be strings".into()));
                 }
                 if key_name.as_deref() == Some("type")
-                    && let Some(Cell::String(value)) = self.heap.get(value)
+                    && let Some(value) = self.heap.string(value)
                 {
                     module_type = Some(value.host_string().to_owned());
                 }
@@ -4978,10 +5038,10 @@ impl<H: Host> Vm<H> {
                 self.set_property(namespace, atom, value)?;
             }
         }
-        if let Some(symbol) = self.well_known_symbols.get("toStringTag").copied() {
+        if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::ToStringTag) {
             let module = self
                 .heap
-                .alloc(Cell::String(namespace_tag.to_string().into()));
+                .alloc_string(namespace_tag.to_string().into());
             self.set_symbol_property(namespace, symbol, module)?;
             self.set_property_attributes(
                 namespace,
@@ -5007,9 +5067,9 @@ impl<H: Host> Vm<H> {
             Constant::Number(value) => Value::number(value),
             Constant::WasmBits64(bits) => self.encode_bits64(bits),
             Constant::WasmV128(bits) => self.heap.alloc(Cell::WasmV128(bits)),
-            Constant::String(value) => self.heap.alloc(Cell::String(value.into())),
+            Constant::String(value) => self.heap.alloc_string(value.into()),
             Constant::StringUnits(value) => {
-                self.heap.alloc(Cell::String(JsString::from_units(&value)))
+                self.heap.alloc_string(JsString::from_units(&value))
             }
             Constant::BigInt(value) => self.heap.alloc(Cell::bigint(value)),
             Constant::Boolean(true) => Value::TRUE,
