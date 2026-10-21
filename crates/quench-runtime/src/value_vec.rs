@@ -10,9 +10,10 @@ const EMPTY_START: u32 = START_MASK;
 const INLINE_PROPERTY_START: u32 = EMPTY_START - 1;
 const MAX_ARENA_START: usize = INLINE_PROPERTY_START as usize;
 /// Properties an object keeps in its record. The Score lane (`v2-cloud-c`, a2deff57a) runs
-/// three for RayTrace's vectors at the cost of max RSS (Splay 162 -> 204 MB); the integration
-/// branch keeps memory-first defaults (the owner's direction, 2026-10-17 and 2026-10-18).
-pub(crate) const INLINE_PROPERTY_COUNT: usize = 2;
+/// three, for RayTrace's three-field vectors and colors, at the cost of max RSS (Splay 162 ->
+/// 204 MB); the integration branch keeps memory-first defaults (the owner's direction,
+/// 2026-10-17 and 2026-10-18), and merges from it keep three on this lane.
+pub(crate) const INLINE_PROPERTY_COUNT: usize = 3;
 const MIN_CAPACITY: usize = 2;
 const BUCKETS: usize = 32;
 const DENSE_ARENA_RESERVE_THRESHOLD: usize = 65_536;
