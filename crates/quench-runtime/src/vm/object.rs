@@ -594,6 +594,30 @@ impl<H: Host> Vm<H> {
         true
     }
 
+    /// Whether no prototype of `object` holds array index `index` or could answer it outside
+    /// its storage (a proxy, typed array, module namespace, arguments object or boxed
+    /// primitive): HasProperty of the index, where `object` holds none, is then false.
+    pub(super) fn inherited_index_absent(&self, object: Value, index: usize) -> bool {
+        let mut current = self.object_data(object).map(|data| data.proto());
+        while let Some(holder) = current.filter(|value| !value.is_null()) {
+            if matches!(self.heap.get(holder), Some(Cell::Proxy { .. } | Cell::TypedArray { .. })) {
+                return false;
+            }
+            let Some(data) = self.object_data(holder) else {
+                return false;
+            };
+            if data.is_module_namespace()
+                || data.is_arguments_object()
+                || data.boxed_primitive().is_some()
+                || !self.lacks_own_index(holder, index)
+            {
+                return false;
+            }
+            current = Some(data.proto());
+        }
+        true
+    }
+
     /// Whether storing each index of `indices`, none of them own, on `array` is a plain
     /// data definition (`inherited_index_unclaimed`).
     pub(super) fn array_indices_store_plainly(
@@ -1944,12 +1968,15 @@ impl<H: Host> Vm<H> {
         };
         let (receiver_shape, prototype) = (receiver.shape(), receiver.proto());
         if let Some(slot) = self.shape_slot(receiver_shape, atom) {
-            let own_getter = self.heap.ordinary_object(object).is_some_and(|own| {
-                self.slot_attributes(own, slot)
-                    .is_some_and(|attributes| attributes.accessor && attributes.getter.is_some())
-            });
-            if slot < FIELD_CACHE_SLOT_CAPACITY && own_getter {
-                self.accessor_field_caches.insert(
+            // An own accessor, as `debug`'s `enabled` on each logger function: every receiver
+            // of the shape holds its own getter in the slot, read from it at each hit.
+            let own_getter = slot < FIELD_CACHE_SLOT_CAPACITY
+                && !receiver.has_side_descriptors()
+                && self
+                    .slot_attributes(receiver, slot)
+                    .is_some_and(|attributes| attributes.accessor && attributes.getter.is_some());
+            if own_getter {
+                self.record_accessor_entry(
                     site,
                     AccessorFieldCache {
                         receiver: receiver_shape,
@@ -1999,7 +2026,7 @@ impl<H: Host> Vm<H> {
         if crate::heap::prototype_layout_epoch() != epoch {
             return;
         }
-        self.accessor_field_caches.insert(
+        self.record_accessor_entry(
             site,
             AccessorFieldCache {
                 receiver: receiver_shape,
@@ -2011,20 +2038,38 @@ impl<H: Host> Vm<H> {
         );
     }
 
+    /// Records `entry` among the site's accessor entries: one for its receiver shape is
+    /// replaced, and a full site drops its oldest.
+    fn record_accessor_entry(&mut self, site: usize, entry: AccessorFieldCache) {
+        let entries = self.accessor_field_caches.entry(site).or_default();
+        if let Some(existing) = entries.iter_mut().find(|cached| cached.receiver == entry.receiver) {
+            *existing = entry;
+            return;
+        }
+        if entries.len() >= INHERITED_FIELD_CACHE_WAYS {
+            entries.remove(0);
+        }
+        entries.push(entry);
+    }
+
     /// The getter a field read of `atom` at cache index `site` calls on `object`, when the
     /// site's recorded accessor still answers it (`record_accessor_field_cache`).
     pub(super) fn cached_field_getter(&self, object: Value, atom: Atom, site: usize) -> Option<Value> {
-        let cache = self.accessor_field_caches.get(&site)?;
+        let entries = self.accessor_field_caches.get(&site)?;
         let receiver = self.shape_property_lookup(object, atom)?;
-        if receiver.shape() != cache.receiver
-            || receiver.proto() != cache.prototype
-            || crate::heap::prototype_layout_epoch() != cache.epoch
-        {
-            return None;
-        }
-        let holder = if cache.holder == OWN_ACCESSOR { object } else { cache.holder };
-        self.slot_attributes(self.heap.ordinary_object(holder)?, usize::from(cache.slot))?
-            .getter
+        let epoch = crate::heap::prototype_layout_epoch();
+        let cache = entries.iter().find(|cache| {
+            receiver.shape() == cache.receiver && receiver.proto() == cache.prototype && epoch == cache.epoch
+        })?;
+        let holder = if cache.holder == OWN_ACCESSOR {
+            if receiver.has_side_descriptors() {
+                return None;
+            }
+            receiver
+        } else {
+            self.heap.ordinary_object(cache.holder)?
+        };
+        self.slot_attributes(holder, usize::from(cache.slot))?.getter
     }
 
     /// What native accessor `getter` returns for `this` where its call is a read of the

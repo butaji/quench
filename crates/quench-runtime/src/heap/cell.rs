@@ -875,146 +875,23 @@ impl Native {
             )
     }
 
-    /// Natives a lane `Call` makes in place from the running frame (`lane_call_native`):
-    /// the string, RegExp and `Math` functions, the Array, Object, Reflect and JSON
-    /// functions, `String.fromCharCode` and `fromCodePoint`, the primitive conversions and
-    /// Number tests, `Function.prototype[@@hasInstance]`, the buffer and typed array views'
-    /// getters, the keyed collection methods and embedder host functions, which read no caller state
-    /// beyond the frame's published PC and run guest code only through ordinary nested calls.
+    /// Natives a lane `Call` makes in place from the running frame (`lane_call_native`),
+    /// as the general loop's native branch makes them once lane activations are frames:
+    /// every native but those whose call the general loop takes as its own step. The
+    /// call-forwarding natives push their target as a frame there (and run under a
+    /// forwarding boundary), direct `eval` reads the calling instruction, and `with` entry
+    /// and exit change the running frame's object environment.
     pub(crate) fn runs_from_lane(self) -> bool {
-        self.is_string_regexp_or_math()
-            || matches!(
-                self,
-                Self::ArrayIsArray
-                    | Self::ArrayIteratorNext
-                    | Self::ArrayIndexOf
-                    | Self::ArrayLastIndexOf
-                    | Self::ArrayIncludes
-                    | Self::ArraySlice
-                    | Self::ArrayJoin
-                    | Self::ArrayConcat
-                    | Self::ArrayMap
-                    | Self::ArrayForEach
-                    | Self::ArrayFilter
-                    | Self::ArraySome
-                    | Self::ArrayEvery
-                    | Self::ArrayFind
-                    | Self::ArrayFindIndex
-                    | Self::ArrayReduce
-                    | Self::ArraySplice
-                    | Self::ArrayShift
-                    | Self::ArrayUnshift
-                    | Self::ArrayFrom
-                    | Self::ArrayOf
-                    | Self::ObjectKeys
-                    | Self::ObjectValues
-                    | Self::ObjectEntries
-                    | Self::ObjectCreate
-                    | Self::ObjectAssign
-                    | Self::ObjectDefineProperty
-                    | Self::ObjectFreeze
-                    | Self::ObjectGetPrototypeOf
-                    | Self::ObjectSetPrototypeOf
-                    | Self::ObjectHasOwn
-                    | Self::ObjectGetOwnPropertyDescriptor
-                    | Self::ObjectPrototypeHasOwnProperty
-                    | Self::ReflectGet
-                    | Self::ReflectHas
-                    | Self::ReflectSet
-                    | Self::ReflectOwnKeys
-                    | Self::ReflectDefineProperty
-                    | Self::ReflectGetOwnPropertyDescriptor
-                    | Self::FunctionBind
-                    | Self::JsonStringify
-                    | Self::JsonParse
-                    | Self::NumberIsInteger
-                    | Self::NumberIsNaN
-                    | Self::NumberIsFinite
-                    | Self::NumberIsSafeInteger
-                    | Self::GlobalIsNaN
-                    | Self::GlobalIsFinite
-                    | Self::ObjectIs
-                    | Self::FunctionPrototypeHasInstance
-                    | Self::ArrayBufferIsView
-                    | Self::ArrayBufferSlice
-                    | Self::ArrayBufferTransfer
-                    | Self::ArrayBufferByteLengthGetter
-                    | Self::TypedArrayBufferGetter
-                    | Self::TypedArrayByteLengthGetter
-                    | Self::TypedArrayByteOffsetGetter
-                    | Self::TypedArrayLengthGetter
-                    | Self::TypedArrayToStringTag
-                    | Self::ParseInt
-                    | Self::StringFromCharCode
-                    | Self::StringFromCodePoint
-                    | Self::String
-                    | Self::Number
-                    | Self::Boolean
-                    | Self::HostFunction
-                    | Self::MapGet
-                    | Self::MapSet
-                    | Self::MapHas
-                    | Self::MapDelete
-                    | Self::MapClear
-                    | Self::MapKeys
-                    | Self::MapValues
-                    | Self::MapEntries
-                    | Self::MapForEach
-                    | Self::SetAdd
-                    | Self::SetHas
-                    | Self::SetDelete
-                    | Self::SetClear
-                    | Self::SetValues
-                    | Self::SetEntries
-                    | Self::SetForEach
-                    | Self::WeakMapGet
-                    | Self::WeakMapSet
-                    | Self::WeakMapHas
-                    | Self::WeakMapDelete
-                    | Self::WeakSetAdd
-                    | Self::WeakSetHas
-                    | Self::WeakSetDelete
-                    | Self::ReflectGetPrototypeOf
-                    | Self::ForInKeyIsEnumerable
-                    | Self::PromiseThen
-                    | Self::PromiseCatch
-                    | Self::PromiseResolve
-                    | Self::GeneratorNext
-                    | Self::GeneratorReturn
-                    | Self::GeneratorThrow
-                    | Self::AsyncGeneratorNext
-                    | Self::IteratorNext
-                    | Self::StringIteratorNext
-            )
-            || self.is_data_view_element_method()
-    }
-
-    /// `DataView.prototype`'s element reads and writes (`getUint8` through `setBigUint64`).
-    pub(crate) fn is_data_view_element_method(self) -> bool {
-        matches!(
+        !matches!(
             self,
-            Self::DataViewGetUint8
-                | Self::DataViewSetUint8
-                | Self::DataViewGetInt8
-                | Self::DataViewSetInt8
-                | Self::DataViewGetUint16
-                | Self::DataViewSetUint16
-                | Self::DataViewGetInt16
-                | Self::DataViewSetInt16
-                | Self::DataViewGetUint32
-                | Self::DataViewSetUint32
-                | Self::DataViewGetInt32
-                | Self::DataViewSetInt32
-                | Self::DataViewGetFloat32
-                | Self::DataViewSetFloat32
-                | Self::DataViewGetFloat64
-                | Self::DataViewSetFloat64
-                | Self::DataViewGetFloat16
-                | Self::DataViewSetFloat16
-                | Self::DataViewGetBigInt64
-                | Self::DataViewSetBigInt64
-                | Self::DataViewGetBigUint64
-                | Self::DataViewSetBigUint64
+            Self::FunctionCall
+                | Self::FunctionApply
+                | Self::FunctionBoundCall
+                | Self::ReflectApply
+                | Self::ReflectConstruct
+                | Self::Eval
+                | Self::WithEnter
+                | Self::WithExit
         )
     }
 
