@@ -8590,6 +8590,8 @@ fn derive_lane_view<H: Host>(
     kind: crate::bytecode::ProgramKind,
     live: Option<&[u64]>,
 ) -> LaneView {
+    // Each pass below reads instructions by PC; they are decoded once, here.
+    let decoded: Vec<WideInstruction> = function.instructions().collect();
     // Every backward jump observes host termination, including allocation-free
     // Wasm loops. Collection and stack-floor exits share this safepoint.
 
@@ -8611,8 +8613,8 @@ fn derive_lane_view<H: Host>(
         .code
         .iter()
         .enumerate()
-        .map(|(pc, packed)| {
-            let instruction = decoded_instruction(function, *packed);
+        .map(|(pc, _)| {
+            let instruction = decoded[pc];
             let op = instruction.op();
             let binds_memory =
                 op == Op::WasmInstanceBinding && Some(instruction.a()) == memory_register;
@@ -8639,7 +8641,7 @@ fn derive_lane_view<H: Host>(
             // A table is backward when one of its entries jumps back.
             let backward_jump = if op == Op::WasmBranchTable {
                     crate::bytecode::branch_table_entries(pc, instruction).any(|entry| {
-                        decoded_instruction(function, function.code[entry]).imm() as usize <= pc
+                        decoded[entry].imm() as usize <= pc
                     })
                 } else {
                     op.immediate_role() == ImmediateRole::JumpTarget
@@ -8734,8 +8736,7 @@ fn derive_lane_view<H: Host>(
     };
     // A table follows its selected entry's jump, so every entry must run in
     // the lane.
-    for (pc, packed) in function.code.iter().enumerate() {
-        let instruction = decoded_instruction(function, *packed);
+    for (pc, &instruction) in decoded.iter().enumerate() {
         if instruction.op() == Op::WasmBranchTable
             && crate::bytecode::branch_table_entries(pc, instruction).any(|entry| exits[entry])
         {
@@ -8748,8 +8749,8 @@ fn derive_lane_view<H: Host>(
     // that load as one record: the load reads the sum as its carried
     // accumulator, so control reaches it only from the add.
     for pc in 0..records.len().saturating_sub(1) {
-        let instruction = decoded_instruction(function, function.code[pc]);
-        let next = decoded_instruction(function, function.code[pc + 1]);
+        let instruction = decoded[pc];
+        let next = decoded[pc + 1];
         let plain_add = serves(records[pc].handler, Op::WasmI32AddImmediate, ACC_NONE);
         let carried_load = serves(records[pc + 1].handler, next.op(), ACC_C);
         if instruction.op() == Op::WasmI32AddImmediate
@@ -8759,7 +8760,7 @@ fn derive_lane_view<H: Host>(
         {
             // A float operator taking the loaded f64 joins the fusion.
             let operator = (next.op() == Op::WasmF64Load && pc + 2 < records.len())
-                .then(|| decoded_instruction(function, function.code[pc + 2]))
+                .then(|| decoded[pc + 2])
                 .filter(|third| third.op() == Op::WasmF64Binary)
                 .and_then(|third| {
                     let second = float_arithmetic(third.op(), third.imm())?;
@@ -8776,8 +8777,8 @@ fn derive_lane_view<H: Host>(
     // An i32 load whose value the next record's branch table selects on
     // runs with that table as one record.
     for pc in 0..records.len().saturating_sub(1) {
-        let instruction = decoded_instruction(function, function.code[pc]);
-        let next = decoded_instruction(function, function.code[pc + 1]);
+        let instruction = decoded[pc];
+        let next = decoded[pc + 1];
         let field = [ACC_NONE, ACC_C]
             .into_iter()
             .find(|acc| serves(records[pc].handler, instruction.op(), *acc));
@@ -8815,9 +8816,9 @@ fn derive_lane_view<H: Host>(
     // An i32 load, the operator taking the loaded value and the store of
     // its result run as one record.
     for pc in 0..records.len().saturating_sub(2) {
-        let load = decoded_instruction(function, function.code[pc]);
-        let combine = decoded_instruction(function, function.code[pc + 1]);
-        let store = decoded_instruction(function, function.code[pc + 2]);
+        let load = decoded[pc];
+        let combine = decoded[pc + 1];
+        let store = decoded[pc + 2];
         if load.op() != Op::WasmI32Load || store.op() != Op::WasmI32Store {
             continue;
         }
@@ -8838,7 +8839,7 @@ fn derive_lane_view<H: Host>(
     // A constant that the next record stores runs with that store as one
     // record.
     for pc in 0..records.len().saturating_sub(1) {
-        let next = decoded_instruction(function, function.code[pc + 1]);
+        let next = decoded[pc + 1];
         if serves(records[pc].handler, Op::LoadConst, ACC_NONE)
             && serves(records[pc + 1].handler, next.op(), ACC_A)
             && let Some(fused) = constant_store_handler::<H>(next.op())
@@ -8849,8 +8850,8 @@ fn derive_lane_view<H: Host>(
     // A load whose value the next record stores runs with that store as
     // one record.
     for pc in 0..records.len().saturating_sub(1) {
-        let instruction = decoded_instruction(function, function.code[pc]);
-        let next = decoded_instruction(function, function.code[pc + 1]);
+        let instruction = decoded[pc];
+        let next = decoded[pc + 1];
         let field = [ACC_NONE, ACC_C]
             .into_iter()
             .find(|acc| serves(records[pc].handler, instruction.op(), *acc));
@@ -8876,8 +8877,7 @@ fn derive_lane_view<H: Host>(
     // running its record. This runs before the fusions below, which take a
     // following jump's record as a plain jump.
     let mut entry_jumps = vec![false; records.len()];
-    for (pc, packed) in function.code.iter().enumerate() {
-        let instruction = decoded_instruction(function, *packed);
+    for (pc, &instruction) in decoded.iter().enumerate() {
         if instruction.op() == Op::WasmBranchTable {
             for entry in crate::bytecode::branch_table_entries(pc, instruction) {
                 entry_jumps[entry] = true;
@@ -8885,8 +8885,7 @@ fn derive_lane_view<H: Host>(
         }
     }
     let record_bytes = size_of::<LaneInstruction>() as isize;
-    for (pc, packed) in function.code.iter().enumerate() {
-        let instruction = decoded_instruction(function, *packed);
+    for (pc, &instruction) in decoded.iter().enumerate() {
         let target = instruction.imm() as usize;
         if instruction.op() != Op::Jump
             || jump_direction(records[pc].handler).is_none()
@@ -8895,7 +8894,7 @@ fn derive_lane_view<H: Host>(
         {
             continue;
         }
-        let absorbed = decoded_instruction(function, function.code[target]);
+        let absorbed = decoded[target];
         let plain = |op: Op| absorbed.op() == op && serves(records[target].handler, op, ACC_NONE);
         let backward = target <= pc;
         let (handler, c) = if plain(Op::Move) {
@@ -8961,8 +8960,8 @@ fn derive_lane_view<H: Host>(
     // chain from its start.
     let mut pc = 0;
     while pc + 1 < records.len() {
-        let instruction = decoded_instruction(function, function.code[pc]);
-        let next = decoded_instruction(function, function.code[pc + 1]);
+        let instruction = decoded[pc];
+        let next = decoded[pc + 1];
         let pair = (|| {
             if next.op() != Op::WasmF64Binary {
                 return None;
@@ -8988,7 +8987,7 @@ fn derive_lane_view<H: Host>(
                 // (`mem[x] += v`) joins as well.
                 let updates =
                     pc + 2 < records.len() && usize::from(second) < FLOAT_PAIR_FIRSTS && {
-                        let store = decoded_instruction(function, function.code[pc + 2]);
+                        let store = decoded[pc + 2];
                         store.op() == Op::WasmF64Store
                             && store.a() == next.a()
                             && [ACC_NONE, ACC_A]
@@ -9097,7 +9096,7 @@ fn derive_lane_view<H: Host>(
         };
         if target > 0 && !exits[target - 1] {
             use crate::bytecode::ControlFlowLayout as Flow;
-            match decoded_instruction(function, function.code[target - 1])
+            match decoded[target - 1]
                 .op()
                 .control_flow_layout()
             {
@@ -9124,7 +9123,7 @@ fn derive_lane_view<H: Host>(
             if through {
                 // The record runs its target and lands after it.
                 if jump + 1 == target
-                    && !agree(Some(decoded_instruction(function, function.code[jump]).a()))
+                    && !agree(Some(decoded[jump].a()))
                 {
                     return None;
                 }
@@ -9158,7 +9157,7 @@ fn derive_lane_view<H: Host>(
                 return None;
             }
             let register = if then || pair {
-                Some(decoded_instruction(function, function.code[pc - 1]).a())
+                Some(decoded[pc - 1].a())
             } else if jump_direction(records[pc].handler).is_some() {
                 carried_through(records, pc - 1)
             } else {
@@ -9171,8 +9170,8 @@ fn derive_lane_view<H: Host>(
         carried
     };
     for pc in 0..records.len().saturating_sub(1) {
-        let add = decoded_instruction(function, function.code[pc]);
-        let load = decoded_instruction(function, function.code[pc + 1]);
+        let add = decoded[pc];
+        let load = decoded[pc + 1];
         let Some(head) = load_table_handler::<H>(load.op(), ACC_NONE, true) else {
             continue;
         };
