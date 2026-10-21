@@ -6123,6 +6123,9 @@ lane_handler! {
                 vm.pure_collection_lookup(native, receiver, key)
                     .or_else(|| lane_string_or_native_call(cx, r, ip, i, receiver))
             }
+            FunctionKind::Native(
+                native @ (Native::RegExpExec | Native::RegExpTest | Native::StringReplace),
+            ) => lane_regexp_call(cx, r, ip, i, native, receiver),
             _ => lane_string_or_native_call(cx, r, ip, i, receiver),
         };
         let Some(value) = value else {
@@ -6145,8 +6148,48 @@ lane_handler! {
     }
 }
 
-/// A lane native call that `lane_native_call` does not make inline: a pure string method or
-/// `RegExp.prototype.exec` in place, else the native through `lane_call_native`.
+/// `RegExp.prototype.exec` or `test`, or `String.prototype.replace` of a RegExp, made in
+/// place when it runs no guest code and raises nothing, so it observes no frame
+/// (`Vm::steady_regexp_call`, `Vm::steady_string_replace`); any other such call goes on as
+/// `lane_string_or_native_call` makes it.
+#[inline(never)]
+fn lane_regexp_call<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    ip: Ip,
+    i: &LaneInstruction,
+    native: Native,
+    receiver: Value,
+) -> Option<Value> {
+    let vm = unsafe { vm(cx) };
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    let window = ImmediateLayout::call_window_base(i.imm());
+    let argc = ImmediateLayout::argument_count(i.imm());
+    // SAFETY: the call's window is registers of the running function.
+    let args = unsafe { std::slice::from_raw_parts(r.0.add(usize::from(window)), usize::from(argc)) };
+    let result_used = ImmediateLayout::lane_call_result_used(i.imm());
+    let steady = match (native, args) {
+        (Native::StringReplace, _) => vm.steady_string_replace(code, native, receiver, args, result_used),
+        (_, [subject, ..]) => vm.steady_regexp_call(code, native, receiver, *subject, result_used),
+        _ => None,
+    };
+    let Some(result) = steady else {
+        return lane_string_or_native_call(cx, r, ip, i, receiver);
+    };
+    // The call's allocations may make a collection due, which the lane's safepoints take.
+    note_allocation(vm);
+    match result {
+        Ok(value) => Some(value),
+        Err(error) => {
+            vm.lane_raised = Some(error);
+            None
+        }
+    }
+}
+
+/// A lane native call that `lane_native_call` does not make inline: a pure string method in
+/// place, else the native through `lane_call_native`.
 fn lane_string_or_native_call<H: Host>(
     cx: *mut LaneContext<H>,
     r: Registers,
@@ -6162,7 +6205,6 @@ fn lane_string_or_native_call<H: Host>(
     // SAFETY: the call's window is registers of the running function, which a pure string
     // method neither moves nor frees.
     let args = unsafe { std::slice::from_raw_parts(r.0.add(usize::from(window)), usize::from(argc)) };
-    // RegExp exec and test run through `lane_call_native` (`Vm::steady_regexp_call`).
     vm.pure_string_method_call(code, r.get(i.b), receiver, args)
         .or_else(|| lane_call_native(cx, r, ip, i))
 }
@@ -6198,47 +6240,6 @@ fn lane_call_native<H: Host>(
         && let Some(result) = super::number::math_unary(native, value)
     {
         return Some(Value::number(result));
-    }
-    // A RegExp exec or test that runs no guest code and raises nothing observes no frame
-    // either (`Vm::steady_regexp_call`).
-    if argc > 0
-        // SAFETY: the context's program outlives the lane run.
-        && let Some(result) = vm.steady_regexp_call(
-            unsafe { &*(*cx).code },
-            native,
-            r.get(i.c),
-            r.get(window),
-            ImmediateLayout::lane_call_result_used(i.imm()),
-        )
-    {
-        note_allocation(vm);
-        return match result {
-            Ok(value) => Some(value),
-            Err(error) => {
-                vm.lane_raised = Some(error);
-                None
-            }
-        };
-    }
-    if argc >= 2
-        && let Some(result) = vm.steady_string_replace(
-            // SAFETY: the context's program outlives the lane run.
-            unsafe { &*(*cx).code },
-            native,
-            r.get(i.c),
-            // SAFETY: the call's window is registers of the running function.
-            unsafe { std::slice::from_raw_parts(r.0.add(usize::from(window)), usize::from(argc)) },
-            ImmediateLayout::lane_call_result_used(i.imm()),
-        )
-    {
-        note_allocation(vm);
-        return match result {
-            Ok(value) => Some(value),
-            Err(error) => {
-                vm.lane_raised = Some(error);
-                None
-            }
-        };
     }
     if !unsafe { (*cx).script_calls } {
         return None;
