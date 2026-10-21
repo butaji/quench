@@ -5931,8 +5931,9 @@ script_handler! {
         if target.forwards() {
             sibling!(lane_script_call_keeping::<H>, r, ip, Carried::script(cx))
         }
-        let Some(this) = lane_call_this(vm, target, r.get(i.c)) else {
-            return exit(ip);
+        // A receiver whose binding reads the heap takes the general form.
+        let Some(this) = lane_direct_call_this(vm, target, r.get(i.c)) else {
+            sibling!(lane_script_call_general::<H>, r, ip, Carried::script(cx))
         };
         let arguments = ImmediateLayout::call_window_base(i.imm());
         let argc = ImmediateLayout::argument_count(i.imm());
@@ -5946,16 +5947,52 @@ script_handler! {
             unsafe { lane_call_read(cx, target, passed, this) }
         };
         let Some(value) = value else {
-            match lane_activate(cx, r, ip, target, arguments, this, false) {
-                Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
-                Err(next) => return next,
+            // An activation keeping values past the parameters, or a full lane stack, takes the
+            // general form (`lane_activate`).
+            if argc > target.params
+                || !lane_activation_room(vm, target)
+                || (returns && !lane_returning_call_admitted(cx))
+                || vm.with_scope_entered
+            {
+                sibling!(lane_script_call_general::<H>, r, ip, Carried::script(cx))
             }
+            let (registers, base) = lane_push_activation(cx, r, ip, target, arguments, this, false);
+            next!(cx, registers, base, Carried::script(cx))
         };
         if !returns {
             r.set(i.a, value);
             next!(cx, r, following(ip), Carried::script(cx))
         }
         lane_return_value!(cx, ip, value)
+    }
+}
+
+script_handler! {
+    /// `lane_script_call_full`'s activation of a call its form declines: a receiver whose
+    /// binding reads the heap (`lane_call_this`), values past the parameters, which the
+    /// keeping activation holds, or a full lane stack (`lane_activate`). Out of line, so the
+    /// full form makes no call; it reads no target, which the full form already answered.
+    #[inline(never)]
+    fn lane_script_call_general<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let callee = r.get(i.b);
+        let target = vm
+            .script_call_entry(callee)
+            .filter(|_| unsafe { (*cx).script_calls } && !lane_constructing(vm, callee));
+        // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
+        let Some(target) = target.map(|target| unsafe { &*target }).filter(|target| {
+            !matches!(target.entry, CallEntry::Frame | CallEntry::Environment) && !target.forwards()
+        }) else {
+            sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
+        };
+        let Some(this) = lane_call_this(vm, target, r.get(i.c)) else {
+            return exit(ip);
+        };
+        let arguments = ImmediateLayout::call_window_base(i.imm());
+        match lane_activate(cx, r, ip, target, arguments, this, false) {
+            Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
+            Err(next) => next,
+        }
     }
 }
 
@@ -7974,7 +8011,9 @@ unsafe fn lane_call_leaf_read<H: Host>(
     } else if handler == lane_returning::<H, RETURNING_FIELD_OWN> as *const () {
         returning_field_hit::<H, RETURNING_FIELD_OWN>(vm, code, object, entry.c)
     } else if handler == lane_returning::<H, RETURNING_FIELD_HOLDER> as *const () {
-        returning_field_hit::<H, RETURNING_FIELD_HOLDER>(vm, code, object, entry.c)
+        // A record prototype's method, read with no call; any other declines the read, and
+        // the activation's own record reads it.
+        vm.primary_record_holder_field_hit(code, object, entry.c)
     } else if handler == lane_returning::<H, RETURNING_FIELD_INHERITED> as *const () {
         returning_field_hit::<H, RETURNING_FIELD_INHERITED>(vm, code, object, entry.c)
     } else {
@@ -8014,7 +8053,7 @@ fn lane_record_field_hit<H: Host>(
     } else if handler == lane_get_field_holder::<H, true> as *const ()
         || handler == lane_get_field_holder::<H, false> as *const ()
     {
-        vm.primary_holder_field_hit(code, object, record.c)
+        vm.primary_record_holder_field_hit(code, object, record.c)
     } else {
         None
     }
