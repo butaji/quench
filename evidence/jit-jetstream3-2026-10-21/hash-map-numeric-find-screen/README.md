@@ -36,3 +36,32 @@ unset. The stock fixture exited successfully and scored 2.00 with sampled peak
 RSS 74.16 MiB on that single noisy round. This confirms default-mode execution
 and output validation, not a repeat of the A/B estimate. Its binary hash and
 raw output are in `default-clean-1round.json`.
+
+## Quench vs JIT peers
+
+With the default enabled, the harness completed a separate valid 3-round
+JetStream report for the same fixture (`peers-3round.json`, all outputs equal).
+Quench median Score was 2.83 / 73.99 MiB, Bun 1.4.3 was 165.97 / 83.56 MiB,
+and Node 24.19.0 was 124.87 / 222.77 MiB. Quench used less RSS than both
+peers, but its Score was only 1.7% of Bun's and 2.3% of Node's. This is a
+three-round screen rather than the 11-round qualification, and it demonstrates
+that the local +11.4% A/B improvement is far from the requested score win.
+
+## Cached native `equals` entry experiment (rejected)
+
+A follow-up cached the already-compiled two-number Boolean `equals` entry for
+the bounded lookup loop, holding its `Rc` owner while calling the raw native
+entry. A diagnostic run validated stock output and recorded 53,999,969 native
+`equals` entries. The clean same-binary A/B then ran twelve alternating arms
+in two windows; raw records are `direct-ab-*.json`.
+
+| Arm | Median Score | Median sampled RSS | Median wall time |
+| --- | ---: | ---: | ---: |
+| Existing `js_jit_compiled_call` | 2.515 | 74.19 MiB | 169.0 s |
+| Cached raw native entry | 2.385 | 74.23 MiB | 174.9 s |
+
+Only 3 of 6 adjacent score pairs and 2 of 6 time pairs favored the raw entry.
+The six-pair median score ratio was 0.950 and median time ratio was 1.128;
+RSS rose by 0.03 MiB. The raw-entry optimization was reverted. This rejects
+that call-boundary shortcut for this fixture; it does not alter the previously
+screened default numeric lookup path.
