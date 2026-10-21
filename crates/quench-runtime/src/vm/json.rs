@@ -41,7 +41,19 @@ struct JsonSerialization {
     /// The text written so far, and the nesting depth of the value being written.
     output: JsonText,
     depth: usize,
+    /// Member plans of the plain objects serialized so far, by shape and prototype
+    /// (`Vm::json_object_plan`). They are shape facts, so they hold only while no guest code
+    /// runs: the property steps (`Vm::json_serialize_property`) drop them all.
+    plans: rustc_hash::FxHashMap<(u32, Value), Option<JsonObjectPlan>>,
+    /// Counts the property steps taken, each of which drops `plans`: a plan read under one
+    /// count holds until it changes.
+    steps: u64,
 }
+
+/// An object's enumerable own data members, as keys with their slots, when it is an ordinary
+/// object of a non-dictionary shape that no `toJSON` reaches: serializing it reads each slot,
+/// which runs no guest code.
+type JsonObjectPlan = std::rc::Rc<[(Atom, usize)]>;
 
 impl JsonSerialization {
     /// Starts a member of an array or object that already holds `written` members: the
@@ -953,6 +965,8 @@ impl<H: Host> Vm<H> {
             to_json: self.intern_atom("toJSON"),
             output: JsonText::new(),
             depth: 0,
+            plans: Default::default(),
+            steps: 0,
         };
         let holder = self.json_object();
         let holder_root = self.heap.root(holder);
@@ -1055,6 +1069,9 @@ impl<H: Host> Vm<H> {
         state: &mut JsonSerialization,
     ) -> Result<bool, JsError> {
         let _stack = self.enter_stack()?;
+        // The steps may run guest code, which can change the shapes plans describe.
+        state.plans.clear();
+        state.steps += 1;
         let holder_root = self.heap.root(holder);
         let result = (|| {
             let holder = self.heap.root_value(holder_root).unwrap_or(holder);
@@ -1113,6 +1130,108 @@ impl<H: Host> Vm<H> {
         result
     }
 
+    /// SerializeJSONProperty of a container's member, given the member's value when reading
+    /// it runs no guest code (`plain_named_get`, a present dense element). With no replacer,
+    /// a value that is no object or BigInt, or one that no `toJSON` reaches
+    /// (`plain_property_lookup`), serializes as it is: the property steps would call nothing.
+    /// Any other member takes them (`json_serialize_property`).
+    fn json_member(
+        &mut self,
+        p: &ResidualProgram,
+        holder: Value,
+        key: JsonKey,
+        value: Option<Value>,
+        state: &mut JsonSerialization,
+    ) -> Result<bool, JsError> {
+        if state.replacer.is_none()
+            && let Some(value) = value
+        {
+            let calls_nothing = if self.is_object_like(value) {
+                self.json_object_plan(value, state).is_some()
+                    || self.json_lacks_to_json(value, state.to_json)
+            } else {
+                !matches!(self.heap.get(value), Some(Cell::BigInt(_)))
+            };
+            if calls_nothing {
+                // A nested container recurses here, as the property steps would.
+                let _stack = self.enter_stack()?;
+                return self.json_serialize_value(p, value, state);
+            }
+        }
+        self.json_serialize_property(p, holder, key, state)
+    }
+
+    /// The member plan of `object` (`JsonObjectPlan`), derived once per shape and prototype
+    /// while no guest code runs; `None` for any object the plan does not describe.
+    fn json_object_plan(
+        &self,
+        object: Value,
+        state: &mut JsonSerialization,
+    ) -> Option<JsonObjectPlan> {
+        let data = self.heap.object_record(object)?;
+        let shape_key = (data.shape(), data.proto());
+        if let Some(plan) = state.plans.get(&shape_key) {
+            return plan.clone();
+        }
+        let plan = self.derive_json_object_plan(object, data, state.to_json);
+        state.plans.insert(shape_key, plan.clone());
+        plan
+    }
+
+    fn derive_json_object_plan(
+        &self,
+        object: Value,
+        data: &Object,
+        to_json: Atom,
+    ) -> Option<JsonObjectPlan> {
+        let shape = data.shape();
+        if self.shape_is_dictionary(shape)
+            || data.has_side_descriptors()
+            || data.is_raw_json()
+            || self.boxed_primitive_data(object).is_some()
+            || !self.json_lacks_to_json(object, to_json)
+        {
+            return None;
+        }
+        let accessors = self.shape_may_have_accessors(shape);
+        self.shape_enumerable_keys(object)?
+            .into_iter()
+            .map(|key| {
+                let slot = self.property_shape_slot(shape, PropertyKey::string(key))?;
+                let accessor = accessors && self.slot_attributes(data, slot)?.accessor;
+                (self.plain_named_key(key) && !accessor).then_some((key, slot))
+            })
+            .collect()
+    }
+
+    /// Whether `Get(value, "toJSON")` finds nothing, decided without running guest code, for
+    /// an object the serializer reads as it is, along a chain of arrays (such as
+    /// `Array.prototype`) whose own shapes lack the key and of ordinary objects
+    /// (`plain_property_lookup`). A boxed primitive, whose serialization coerces it, and any
+    /// other object answer `false`.
+    fn json_lacks_to_json(&self, value: Value, to_json: Atom) -> bool {
+        let key = PropertyKey::string(to_json);
+        if self.boxed_primitive_data(value).is_some() {
+            return false;
+        }
+        let mut current = value;
+        loop {
+            let Some(array) = self.heap.array(current) else {
+                return self.plain_property_lookup(current, key) == Some(None);
+            };
+            if array.is_arguments_object()
+                || array.has_side_descriptors()
+                || self.property_shape_slot(array.shape(), key).is_some()
+            {
+                return false;
+            }
+            current = array.proto();
+            if current.is_null() {
+                return true;
+            }
+        }
+    }
+
     /// A key's string value, allocated last before the call that receives it.
     fn json_key_value(&mut self, key: JsonKey) -> Value {
         let text = match key {
@@ -1159,8 +1278,14 @@ impl<H: Host> Vm<H> {
         if self.heap.object_record(value).is_some() || self.heap.promise(value).is_some() {
             return self.json_serialize_object(p, value, state).map(|()| true);
         }
-        if self.heap.array(value).is_some() {
-            return self.json_serialize_array(p, value, state).map(|()| true);
+        if let Some(array) = self.heap.array(value) {
+            // An arguments object is an ordinary object to IsArray, so it serializes as one.
+            return if array.is_arguments_object() {
+                self.json_serialize_object(p, value, state)
+            } else {
+                self.json_serialize_array(p, value, state)
+            }
+            .map(|()| true);
         }
         match self.heap.get(value).cloned() {
             _ if let Some(text) = self.heap.string(value).cloned()  => {
@@ -1262,7 +1387,10 @@ impl<H: Host> Vm<H> {
             for index in 0..length {
                 let array = self.heap.root_value(array_root).unwrap_or(array);
                 state.begin_member(index);
-                if !self.json_serialize_property(p, array, JsonKey::Index(index), state)? {
+                let element = self
+                    .present_dense_elements(array, index..index + 1)
+                    .map(|element| element[0]);
+                if !self.json_member(p, array, JsonKey::Index(index), element, state)? {
                     state.output.extend_from_slice(b"null");
                 }
             }
@@ -1285,7 +1413,15 @@ impl<H: Host> Vm<H> {
         let object_root = self.heap.root(object);
         let result = (|| {
             let object = self.heap.root_value(object_root).unwrap_or(object);
-            let keys = if let Some(property_list) = &state.property_list {
+            let plan = if state.property_list.is_none() && state.replacer.is_none() {
+                self.json_object_plan(object, state)
+            } else {
+                None
+            };
+            let planned_steps = state.steps;
+            let keys = if let Some(plan) = &plan {
+                plan.iter().map(|(key, _)| *key).collect()
+            } else if let Some(property_list) = &state.property_list {
                 property_list.clone()
             } else {
                 self.json_enumerable_keys(p, object)?
@@ -1293,7 +1429,7 @@ impl<H: Host> Vm<H> {
             state.output.push(b'{');
             state.depth += 1;
             let mut written = 0;
-            for key in keys {
+            for (index, key) in keys.into_iter().enumerate() {
                 let object = self.heap.root_value(object_root).unwrap_or(object);
                 // The member is written before its value is known; an omitted value
                 // takes it back.
@@ -1301,7 +1437,14 @@ impl<H: Host> Vm<H> {
                 state.begin_member(written);
                 self.write_json_key(key, &mut state.output);
                 state.output.extend_from_slice(if state.gap.is_empty() { b":" } else { b": " });
-                if self.json_serialize_property(p, object, JsonKey::Name(key), state)? {
+                // A plan read for this object holds while no member took the property steps.
+                let planned = plan.as_ref().filter(|_| state.steps == planned_steps).and_then(|plan| {
+                    self.heap
+                        .ordinary_object(object)
+                        .and_then(|data| self.heap.property_get(data, plan[index].1))
+                });
+                let value = planned.or_else(|| self.plain_named_get(object, key));
+                if self.json_member(p, object, JsonKey::Name(key), value, state)? {
                     written += 1;
                 } else {
                     state.output.truncate(member);
