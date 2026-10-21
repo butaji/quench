@@ -432,7 +432,7 @@ impl<H: Host> Vm<H> {
     /// removing from its element vector: it is extensible, unfrozen, holds no indexed
     /// descriptors or sparse elements, is no arguments object and has a writable `length`.
     /// `None` leaves every other receiver to the generic algorithms.
-    fn dense_array_length(&self, this: Value) -> Option<usize> {
+    pub(super) fn dense_array_length(&self, this: Value) -> Option<usize> {
         let object = self.heap.array(this)?;
         if object.has_indexed_descriptors()
             || object.is_frozen()
@@ -452,6 +452,44 @@ impl<H: Host> Vm<H> {
             return None;
         }
         Some(length)
+    }
+
+    /// The elements `range` of an array whose indices there are present own data elements:
+    /// it holds no indexed descriptors, sparse storage or arguments mapping, and no hole in
+    /// `range`. HasProperty and Get of each such index read the element and observe nothing.
+    pub(super) fn present_dense_elements(
+        &self,
+        this: Value,
+        range: std::ops::Range<usize>,
+    ) -> Option<&[Value]> {
+        let object = self.heap.array(this)?;
+        if object.has_indexed_descriptors()
+            || object.is_arguments_object()
+            || self.heap.sparse_length(this).is_some()
+        {
+            return None;
+        }
+        let elements = object.elements().get(range)?;
+        elements.iter().all(|value| !value.is_deleted()).then_some(elements)
+    }
+
+    /// CreateDataPropertyOrThrow of `values` at indices `0..` of `array`, a dense array
+    /// (`dense_array_length`) of exactly their count holding only holes, as ArrayCreate
+    /// makes one: each definition fills its hole. `false` leaves `array` untouched.
+    pub(super) fn fill_dense_holes(&mut self, array: Value, values: &[Value]) -> bool {
+        if self.dense_array_length(array) != Some(values.len())
+            || !self
+                .heap
+                .array(array)
+                .is_some_and(|object| object.elements().iter().all(|value| value.is_deleted()))
+        {
+            return false;
+        }
+        let Some(object) = self.heap.array_mut(array) else {
+            unreachable!("matched an array above");
+        };
+        super::index::mutable_array_elements(object.elements_mut()).copy_from_slice(values);
+        true
     }
 
     /// `push` onto a dense array (`dense_array_length`) as one append, when each appended
@@ -606,7 +644,11 @@ impl<H: Host> Vm<H> {
         object: Value,
         length: usize,
     ) -> Result<(), JsError> {
-        let atom = self.intern_atom("length");
+        // A dense array's writable `length` already holding `length` stays as it is.
+        if self.dense_array_length(object) == Some(length) {
+            return Ok(());
+        }
+        let atom = self.length_atom;
         if self.heap.array(object).is_some()
             && !self
                 .object_data(object)
@@ -656,6 +698,13 @@ impl<H: Host> Vm<H> {
             .unwrap_or(length);
         let count = end.saturating_sub(start);
         let result = self.array_species_create(p, object, count)?;
+        if let Some(values) = self.present_dense_elements(object, start..end).map(<[Value]>::to_vec)
+            && self.fill_dense_holes(result, &values)
+        {
+            // Each CreateDataPropertyOrThrow filled a hole; the final `length` Set still runs.
+            self.set_array_like_length(p, result, count)?;
+            return Ok(result);
+        }
         // `result` is held only here while guest code (getters, traps) can collect.
         self.with_call_roots([result], |vm| {
             for (destination, source) in (start..end).enumerate() {
@@ -677,8 +726,7 @@ impl<H: Host> Vm<H> {
         length: usize,
     ) -> Result<Value, JsError> {
         let mut constructor = if self.is_array(p, source)? {
-            let atom = self.intern_atom("constructor");
-            self.get_property(p, source, atom)?
+            self.get_property(p, source, self.runtime_atoms.constructor)?
         } else {
             Value::UNDEFINED
         };

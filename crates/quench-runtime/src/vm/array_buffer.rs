@@ -616,7 +616,7 @@ impl<H: Host> Vm<H> {
             .transpose()?
             .unwrap_or(length);
         let count = end.saturating_sub(start);
-        let constructor_atom = self.intern_atom("constructor");
+        let constructor_atom = self.runtime_atoms.constructor;
         let constructor = self.get_property(p, this, constructor_atom)?;
         let species = if constructor.is_undefined() {
             None
