@@ -86,6 +86,10 @@ impl Heap {
         let mut other_cell_payload_bytes = 0;
         let mut array_identities = HashSet::new();
         let mut string_identities = HashSet::new();
+        // String dedupe census: live string records, distinct contents, and the bytes of unit
+        // buffers that repeat a content another live buffer already holds.
+        let mut string_contents = HashSet::new();
+        let (mut string_records_seen, mut duplicate_buffer_bytes, mut duplicate_buffers) = (0, 0, 0);
         let mut array_buffer_bytes = 0;
         let mut array_buffer_store_bytes = 0;
         let mut buffer_identities = HashSet::new();
@@ -204,9 +208,21 @@ impl Heap {
             if let Some(value) = self.string(identity) {
                 other_cell_payload_bytes += payload_bytes.saturating_sub(value.capacity());
                 let (units, host) = value.memory_parts();
+                string_records_seen += 1;
+                let content = {
+                    use std::hash::{Hash, Hasher};
+                    let mut hasher = rustc_hash::FxHasher::default();
+                    value.hash(&mut hasher);
+                    hasher.finish()
+                };
+                let new_content = string_contents.insert(content);
                 if string_identities.insert(units.0) {
                     string_buffers_bytes += units.1;
                     string_buffer_count += 1;
+                    if !new_content {
+                        duplicate_buffer_bytes += units.1;
+                        duplicate_buffers += 1;
+                    }
                 }
                 if let Some(host) = host
                     && string_identities.insert(host.0)
@@ -254,6 +270,12 @@ impl Heap {
                 }
             }
         });
+        eprintln!(
+            "{{\"kind\":\"quench-string-dedupe\",\"string_records\":{string_records_seen},\"distinct_contents\":{},\"duplicate_records\":{},\"duplicate_buffers\":{duplicate_buffers},\"duplicate_buffer_bytes\":{duplicate_buffer_bytes},\"string_record_bytes\":{}}}",
+            string_contents.len(),
+            string_records_seen - string_contents.len(),
+            string_records_seen * size_of::<crate::vm::wtf16::JsString>(),
+        );
         let cell_payload_bytes = other_cell_payload_bytes
             + dense_array_elements_bytes
             + dense_array_headers_bytes
