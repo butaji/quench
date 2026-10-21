@@ -799,3 +799,22 @@ the benchmark driver's `quickHash`; the hot generated React functions `Ru` and
 candidate limit, while `Eu` uses captures and calls the current JS tier does not
 lower. These screens have one round each and do not qualify a win. See
 `evidence/jit-jetstream3-2026-10-20/web-ssr-baseline/README.md`.
+
+## Cached `this` field returns
+
+The JIT-mode entry has a narrow direct-getter matcher for a return-marked
+`GetField` from fixed `this`, followed by the compiler's unreachable fallback
+tail. On a cached data-property hit, it returns the value through an ordinary
+`Return` opcode. Accessors, proxies, cache misses, and non-fixed `this` use the
+interpreter from bytecode zero. Diagnostic counters confirmed 10,799,999 fast
+entries each for `get key` and `get value`, out of 10.8 million entries per
+function; the one initial cache miss per function stayed interpreted. The
+JetStream round validated output. One corrected-matcher production round
+scored 3.76 at 74.13 MiB; Bun scored 245.20 and Node 136.06. That sample and
+the saved parent sample (1.02 at 73.82 MiB) are unpaired, and the peer scores
+varied substantially between runs. They do not establish an optimization or a
+win. The earlier one-round score delta used a matcher that had zero fast
+entries and is noise. Tightening the candidate to the observed four-word
+shape produced a similar one-round sample (3.75 / 74.06 MiB); this also remains
+unpaired evidence. Corrected diagnostic data and screen reports are in
+`evidence/jit-jetstream3-2026-10-20/this-field-return-screen/`.
