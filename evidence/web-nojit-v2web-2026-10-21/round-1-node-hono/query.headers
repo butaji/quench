@@ -1,0 +1,8 @@
+HTTP/1.1 200 OK
+content-type: text/plain; charset=UTF-8
+x-powered-by: benchmark
+Content-Length: 5
+Date: Wed, 21 Oct 2026 22:23:04 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+

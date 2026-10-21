@@ -1,0 +1,6 @@
+HTTP/1.1 200 OK
+Date: Wed, 21 Oct 2026 22:14:38 GMT
+content-type: video/mp4
+Connection: keep-alive
+Transfer-Encoding: chunked
+
