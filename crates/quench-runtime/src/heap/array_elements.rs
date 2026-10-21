@@ -58,6 +58,21 @@ impl ArrayElements {
         elements
     }
 
+    /// `len` copies of `value`, allocated at their final size with no intermediate buffer.
+    pub(crate) fn filled(len: usize, value: Value) -> Self {
+        if len == 0 {
+            return Self::new();
+        }
+        let elements = Self::allocate(len, len);
+        // SAFETY: the new allocation holds `len` slots after the header.
+        unsafe {
+            for slot in 0..len {
+                elements.values().add(slot).write(value);
+            }
+        }
+        elements
+    }
+
     fn layout(capacity: usize) -> Layout {
         Layout::from_size_align(
             VALUES_OFFSET + capacity.checked_mul(size_of::<Value>()).expect("array backing overflow"),
