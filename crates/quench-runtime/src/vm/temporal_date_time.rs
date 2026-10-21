@@ -189,8 +189,7 @@ impl<H: Host> Vm<H> {
         super::temporal_plain_date_time_conversion::validate_bounds(
             self, p, date.year, date.month, date.day, time,
         )?;
-        let prototype_atom = self.prototype_atom();
-        let prototype = self.get_property(p, new_target, prototype_atom)?;
+        let prototype = self.constructor_prototype_value(p, new_target)?;
         let prototype = if self.is_object_like(prototype) {
             prototype
         } else {
