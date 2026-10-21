@@ -1032,7 +1032,6 @@ impl<H: Host> Vm<H> {
         // admits no frameless call while one is due, would push a frame for every call. The
         // job's own values are call roots, and a collection inside its callback, which any
         // back edge makes, is no less possible.
-        self.maybe_collect(program);
         let previous = std::mem::replace(&mut self.native_microtask_running, true);
         let result = match job {
             PendingJob::Call {
