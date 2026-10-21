@@ -2401,6 +2401,20 @@ impl EnvironmentScopeRef {
         Self::boxed(scope)
     }
 
+    /// The scope of a function's activation, which names only its `program`: `new` of that
+    /// scope, without building it first.
+    pub(crate) fn of_program(program: u32) -> Self {
+        Self::inline(Some(program)).unwrap_or_else(|| {
+            Self::boxed(EnvironmentScope {
+                program: Some(program),
+                root_eval_scope: false,
+                binding_site_pc: None,
+                dynamic_bindings: EnvironmentBindings::Owned(Vec::new()),
+                with_objects: Box::default(),
+            })
+        })
+    }
+
     fn inline(program: Option<u32>) -> Option<Self> {
         let payload = program.map_or(Some(0), |program| usize::try_from(program).ok()?.checked_add(1))?;
         (payload.leading_zeros() >= INLINE_PROGRAM_SHIFT).then(|| {

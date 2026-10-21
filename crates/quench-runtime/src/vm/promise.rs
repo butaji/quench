@@ -1171,6 +1171,62 @@ impl<H: Host> Vm<H> {
         result
     }
 
+    /// `call_value(method, receiver, args)` of the protocol method a String method found
+    /// (`@@match`, `@@replace`, `@@search` or `@@split`), whose receiver and arguments the
+    /// caller roots. A RegExp builtin of the running realm runs as `call_native_guarded`
+    /// runs it, under its native activation and stack guard, but straight into its body:
+    /// its receiver needs no String conversion and the general call's dispatch decides
+    /// nothing more for it. Any other method takes the general call.
+    pub(super) fn call_protocol_method(
+        &mut self,
+        p: &ResidualProgram,
+        method: Value,
+        receiver: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let native = match self.heap.function(method) {
+            Some(FunctionRecord {
+                kind: FunctionKind::Native(native),
+                realm,
+                ..
+            }) if *realm == self.realm.globals
+                && matches!(
+                    native,
+                    Native::RegExpSymbolMatch
+                        | Native::RegExpSymbolReplace
+                        | Native::RegExpSymbolSearch
+                        | Native::RegExpSymbolSplit
+                ) =>
+            {
+                *native
+            }
+            _ => return self.call_value(p, method, receiver, args),
+        };
+        self.profile.call_target(0, args.len());
+        self.realm
+            .promise
+            .active_native
+            .push(super::activation::NativeActivation {
+                callable: method,
+                frame_depth: self.frames.len(),
+                boundary: super::activation::NativeCallBoundary::Opaque,
+            });
+        let result = (|| {
+            let _stack = self.enter_stack()?;
+            self.check_execution_interrupt()?;
+            self.with_call_roots([method], |vm| match native {
+                Native::RegExpSymbolMatch => vm.regexp_symbol_match(p, receiver, args),
+                Native::RegExpSymbolReplace => vm.regexp_symbol_replace(p, receiver, args),
+                Native::RegExpSymbolSearch => vm.regexp_symbol_search(p, receiver, args),
+                _ => vm.regexp_symbol_split(p, receiver, args),
+            })
+        })();
+        self.realm.promise.active_native.pop();
+        // String natives make text on demand; charge it before the caller's next safepoint.
+        self.heap.charge_materialized_text();
+        result
+    }
+
     pub(super) fn native_with_env(&mut self, kind: Native, env: Value) -> Value {
         self.native_with_realm(kind, env, self.realm.globals)
     }
