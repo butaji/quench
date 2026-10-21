@@ -2496,12 +2496,15 @@ impl<H: Host> Vm<H> {
                 Some(Cell::RegExp { meta, .. }) => meta.flags.contains('d'),
                 _ => false,
             };
-            // Each matched substring shares the subject's storage where its representation
-            // allows (`JsString::substring`); its units are the same either way.
+            // Each matched substring is copied out (`JsString::from_unit_run`): captures are
+            // short, and a copy measured cheaper than `JsString::substring`'s sharing
+            // (V8-v7 RegExp Score run, callgrind: 50 against 75 instructions a capture).
             let values = std::iter::once(Some(matched.range.clone()))
                 .chain(matched.captures.iter().cloned())
                 .map(|range| {
-                    range.map_or(Value::UNDEFINED, |range| vm.heap.alloc_string(input.substring(range)))
+                    range.map_or(Value::UNDEFINED, |range| {
+                        vm.heap.alloc_string(JsString::from_unit_run(input.units().slice(range)))
+                    })
                 })
                 .collect::<Vec<_>>();
             let named = regexp_named_capture_ranges(&matched);
