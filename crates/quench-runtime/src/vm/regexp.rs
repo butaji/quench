@@ -496,6 +496,7 @@ impl<H: Host> Vm<H> {
                             replacement,
                             &matcher,
                             flags,
+                            true,
                         );
                     }
                     let flags = vm.regexp_flags_text(p, receiver)?;
@@ -1000,12 +1001,13 @@ impl<H: Host> Vm<H> {
         replacement: FastReplacement<'_>,
         matcher: &quench_regexp::Regex,
         flags: RegExpFlags,
+        result_used: bool,
     ) -> Result<Value, JsError> {
         let subject = self.regexp_subject(input);
         if let FastReplacement::Template(template) = replacement {
             if !template.units().iter().any(|unit| unit == u16::from(b'$')) {
                 return self.regexp_replace_with_literal(
-                    p, receiver, input, &subject, template, matcher, flags,
+                    p, receiver, input, &subject, template, matcher, flags, result_used,
                 );
             }
         }
@@ -1123,6 +1125,7 @@ impl<H: Host> Vm<H> {
         template: &JsString,
         matcher: &quench_regexp::Regex,
         flags: RegExpFlags,
+        result_used: bool,
     ) -> Result<Value, JsError> {
         let (ranges, last) = if flags.contains(RegExpFlags::GLOBAL) {
             let ranges = self.regexp_global_matches(
@@ -1145,9 +1148,22 @@ impl<H: Host> Vm<H> {
             )
         };
         let Some(last) = last else {
+            if !result_used {
+                return Ok(Value::UNDEFINED);
+            }
             return Ok(self.heap.alloc_string(input.clone()));
         };
         self.record_regexp_legacy_match(receiver, input.clone(), last)?;
+        // Nothing reads the result: building it runs no guest code, so only its one
+        // observable outcome, a length past the limit raising, needs the length.
+        if !result_used {
+            let kept = ranges.iter().try_fold(input.units().len(), |length, range| {
+                (length - range.len()).checked_add(template.units().len())
+            });
+            if kept.is_some_and(|length| length <= super::wtf16::MAX_STRING_UNITS) {
+                return Ok(Value::UNDEFINED);
+            }
+        }
         let mut output = super::wtf16::JsStringBuilder::default();
         let mut next_source = 0;
         for range in ranges {
@@ -2436,6 +2452,53 @@ impl<H: Host> Vm<H> {
             return Some(self.regexp_steady_exec(p, receiver, subject, slot, last_index, result_used));
         }
         Some(self.regexp_test(p, receiver, &arguments))
+    }
+
+    /// `String.prototype.replace(regexp, string)` when the call runs no guest code, so it
+    /// observes no frame (`lane_call_native`): a string receiver and replacement, and a
+    /// RegExp whose `@@replace` is this realm's builtin (`regexp_proven_symbol_method`) and
+    /// whose exec, flags and lastIndex are builtin (`regexp_builtin_receiver_matcher`).
+    /// Those make the native's steps the builtin `@@replace`'s fast path, which this runs;
+    /// `None` leaves any other call to the general path.
+    pub(super) fn steady_string_replace(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        this: Value,
+        arguments: &[Value],
+        result_used: bool,
+    ) -> Option<Result<Value, JsError>> {
+        let [search, replacement] = *arguments.get(..2)?.as_array::<2>()?;
+        if native != Native::StringReplace
+            || !self.is_string(this)
+            || !self.is_string(replacement)
+        {
+            return None;
+        }
+        let symbol = self.well_known_symbols.get(WellKnownSymbol::Replace)?;
+        let method = self.regexp_proven_symbol_method(search, symbol)?;
+        if !matches!(
+            self.heap.function(method),
+            Some(FunctionRecord { kind: FunctionKind::Native(Native::RegExpSymbolReplace), realm, .. })
+                if *realm == self.realm.globals
+        ) {
+            return None;
+        }
+        let (matcher, flags) = self.regexp_builtin_receiver_matcher(search)?;
+        let input = self.heap.string(this)?.clone();
+        let template = self.heap.string(replacement)?.clone();
+        Some(self.with_call_roots([this, search, replacement], |vm| {
+            vm.regexp_symbol_replace_fast(
+                p,
+                search,
+                &input,
+                this,
+                FastReplacement::Template(&template),
+                &matcher,
+                flags,
+                result_used,
+            )
+        }))
     }
 
     /// `regexp_builtin_exec` of `steady_regexp_call`'s case: a string subject, whose
