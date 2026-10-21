@@ -16,7 +16,7 @@ use std::cell::RefCell;
 use std::ops::Range;
 
 use super::{
-    class_is_single_unit, class_matches, equal, is_line_terminator, is_word_mode, merge_flags,
+    canonical, canonical_preimages_of, class_is_single_unit, class_matches, equal, is_line_terminator, is_word_mode, merge_flags,
     literal_finder, Assertion, Backreference, ClassExpr, ClassItem, ClassKind, Expr, Flags, LiteralFinder, Lookaround,
     Unit, ASCII_MAX,
 };
@@ -229,6 +229,14 @@ impl Beyond {
                         bits | (u128::MAX >> (ASCII_UNITS - 1 - max)) & (u128::MAX << min)
                     });
                 if *negative { !members } else { members }
+            }
+            // The units folding to the literal's canonical form: that form and its preimages.
+            Self::Literal { value, unicode } => {
+                let form = canonical(*value, *unicode);
+                std::iter::once(form)
+                    .chain(canonical_preimages_of(form, *unicode))
+                    .filter(|unit| *unit < ASCII_UNITS && canonical(*unit, *unicode) == form)
+                    .fold(0u128, |bits, unit| bits | 1 << unit)
             }
             _ => (0..ASCII_UNITS)
                 .filter(|value| self.matches(*value))
@@ -1703,6 +1711,22 @@ mod tests {
                     .filter(|value| beyond.matches(*value))
                     .fold(0u128, |bits, value| bits | 1 << value);
                 assert_eq!(beyond.ascii_mask(), each, "{ranges:?} negative={negative}");
+            }
+        }
+    }
+
+    /// A case-folded literal's derived ASCII mask: the units its per-unit test admits, for
+    /// literals that fold with ASCII letters (the Kelvin sign, long s) and others.
+    #[test]
+    fn literal_ascii_mask_matches_each_unit() {
+        const LITERALS_CHECKED: u32 = 0x2200;
+        for value in 0..LITERALS_CHECKED {
+            for unicode in [false, true] {
+                let beyond = Beyond::Literal { value, unicode };
+                let each = (0..ASCII_UNITS)
+                    .filter(|unit| beyond.matches(*unit))
+                    .fold(0u128, |bits, unit| bits | 1 << unit);
+                assert_eq!(beyond.ascii_mask(), each, "{value:#x} unicode={unicode}");
             }
         }
     }
