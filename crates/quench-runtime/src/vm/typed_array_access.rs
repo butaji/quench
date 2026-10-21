@@ -466,6 +466,9 @@ impl<H: Host> Vm<H> {
         let Some(kind) = self.typed_array_kind(object) else {
             return Ok(false);
         };
+        if self.typed_array_set_number(object, index, value) {
+            return Ok(true);
+        }
         let object = self.heap.root(object);
         let outcome = (|| {
             let value = self.typed_array_convert_value(p, kind, value)?;
@@ -474,6 +477,19 @@ impl<H: Host> Vm<H> {
         })();
         self.heap.release_root(object);
         outcome
+    }
+
+    /// `typed_array_set` of a Number into a typed array of Number content: its ToNumber has no
+    /// effect, so the write needs neither a root nor a conversion. False leaves the store to
+    /// `typed_array_set`.
+    pub(super) fn typed_array_set_number(&mut self, object: Value, index: usize, value: Value) -> bool {
+        let Some(number) = value.as_number() else {
+            return false;
+        };
+        if self.typed_array_kind(object).is_none_or(TypedArrayKind::is_bigint) {
+            return false;
+        }
+        self.typed_array_write_element(object, index, &TypedArrayElement::Number(number))
     }
 
     pub(super) fn typed_array_write_element(

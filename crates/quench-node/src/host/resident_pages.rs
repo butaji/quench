@@ -28,7 +28,8 @@ const CODE_MAPPING: &str = "r-xp";
 
 /// A release and the refaults of the code a run touches again after it cost about 1.2 ms
 /// (about 730 pages at 1.7 µs, the lodash npm scenario, x86_64 VM, 2026-10-19). Releases after
-/// library loads (`release_read_only_pages_after_load`) come at most once per this interval,
+/// library loads (`release_read_only_pages_after_load`) and at compilations' phase boundaries
+/// (`at_compile_phase`) each come at most once per this interval,
 /// which bounds that cost to about 1% of a run's time: loads that follow each other faster run
 /// the same loader and compiler code, which a release would only refault (semver scenario
 /// 926 -> 741 ms). Collections keep releasing at each boundary (`at_collection_boundary`):
@@ -157,38 +158,55 @@ pub fn release_read_only_code_and_data() {
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
 pub fn release_read_only_code_and_data() {}
 
-/// The host's action at a compilation's phase boundaries (`set_compile_phase_boundary`).
-/// Code generation pages code and data out (`release_read_only_code_and_data`). A first
-/// call releases the read-only pages at most once per `LOAD_RELEASE_INTERVAL` of first
-/// calls, timed apart from the collections' releases, which come far more often: a run that
-/// reports its result once at the end first calls its reporting code then, at its heap's
-/// peak, with the code it ran since the last collection resident (V8-v7 RegExp).
+/// The host's action at a compilation's phase boundaries (`set_compile_phase_boundary`), each
+/// at most once per `LOAD_RELEASE_INTERVAL`. Code generation pages code and data out
+/// (`release_read_only_code_and_data`); compilations that follow it quickly (functions a
+/// program builds at run time with `new Function`, `eval` or `vm`) run the same parser and
+/// code generator, which a release would only refault, and each release reads the whole
+/// mapping table (7% of the `@testing-library/dom` npm scenario's instructions). A first call
+/// releases the read-only pages, timed apart from the collections' releases, which come far
+/// more often: a run that reports its result once at the end first calls its reporting code
+/// then, at its heap's peak, with the code it ran since the last collection resident (V8-v7
+/// RegExp).
 pub fn at_compile_phase(phase: quench_runtime::CompilePhase) {
     match phase {
-        quench_runtime::CompilePhase::CodeGeneration => release_read_only_code_and_data(),
-        quench_runtime::CompilePhase::FirstCall => release_read_only_pages_at_first_call(),
+        quench_runtime::CompilePhase::CodeGeneration => {
+            release_once_per_interval(CompileRelease::CodeGeneration, release_read_only_code_and_data)
+        }
+        quench_runtime::CompilePhase::FirstCall => {
+            release_once_per_interval(CompileRelease::FirstCall, release_read_only_pages)
+        }
     }
 }
 
-/// When a first call last released the read-only pages (`at_compile_phase`).
+/// The compile-phase releases timed apart from each other (`at_compile_phase`).
+#[derive(Clone, Copy)]
+enum CompileRelease {
+    CodeGeneration,
+    FirstCall,
+}
+
+/// When each compile-phase release last ran, indexed by `CompileRelease`.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-static LAST_FIRST_CALL_RELEASE: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+static LAST_COMPILE_RELEASES: std::sync::Mutex<[Option<std::time::Instant>; 2]> =
+    std::sync::Mutex::new([None; 2]);
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-fn release_read_only_pages_at_first_call() {
-    let Ok(mut last) = LAST_FIRST_CALL_RELEASE.lock() else {
+fn release_once_per_interval(release: CompileRelease, action: fn()) {
+    let Ok(mut releases) = LAST_COMPILE_RELEASES.lock() else {
         return;
     };
+    let last = &mut releases[release as usize];
     if last.is_some_and(|last| last.elapsed() < LOAD_RELEASE_INTERVAL) {
         return;
     }
     *last = Some(std::time::Instant::now());
-    drop(last);
-    release_read_only_pages();
+    drop(releases);
+    action();
 }
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
-fn release_read_only_pages_at_first_call() {}
+fn release_once_per_interval(_: CompileRelease, _: fn()) {}
 
 /// The page-aligned address ranges of the segments above, from the loader's own table: every
 /// non-writable segment of the executable, which the table lists without a name, and every
@@ -286,22 +304,35 @@ pub fn release_free_heap_pages() {}
 /// The address ranges of the process's file mappings (not the kernel's bracketed ones) whose
 /// permissions are one of `permissions`.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+/// The table is read as bytes, its fields split at spaces: a process with many compile-cache
+/// entries mapped has a line for each (over 1,200 for the jsdom npm scenario), and decoding it
+/// as text cost about 3,700 instructions a line.
 fn file_mappings(permissions: &[&str]) -> Vec<(usize, usize)> {
-    let Ok(maps) = std::fs::read_to_string(MAPS_PATH) else {
-        return Vec::new();
+    std::fs::read(MAPS_PATH).map_or_else(|_| Vec::new(), |maps| parse_file_mappings(&maps, permissions))
+}
+
+/// `file_mappings` over the table's bytes `maps`.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn parse_file_mappings(maps: &[u8], permissions: &[&str]) -> Vec<(usize, usize)> {
+    let hex = |digits: &[u8]| {
+        digits.iter().try_fold(0usize, |value, &digit| {
+            Some(value.checked_mul(16)? + char::from(digit).to_digit(16)? as usize)
+        })
     };
-    maps.lines()
+    maps.split(|&byte| byte == b'\n')
         .filter_map(|line| {
-            let mut fields = line.split_whitespace();
+            let mut fields = line.split(|&byte| byte == b' ').filter(|field| !field.is_empty());
             let (range, mode) = (fields.next()?, fields.next()?);
-            // Offset, device and inode precede the path; a bracketed name ([vdso]) is the
-            // kernel's and an anonymous mapping has none.
-            let path = fields.nth(3)?;
-            if !permissions.contains(&mode) || !path.starts_with('/') {
+            if !permissions.iter().any(|permission| permission.as_bytes() == mode) {
                 return None;
             }
-            let (start, end) = range.split_once('-')?;
-            Some((usize::from_str_radix(start, 16).ok()?, usize::from_str_radix(end, 16).ok()?))
+            // Offset, device and inode precede the path; a bracketed name ([vdso]) is the
+            // kernel's and an anonymous mapping has none.
+            if fields.nth(3)?.first() != Some(&b'/') {
+                return None;
+            }
+            let dash = range.iter().position(|&byte| byte == b'-')?;
+            Some((hex(&range[..dash])?, hex(&range[dash + 1..])?))
         })
         .collect()
 }
@@ -422,3 +453,22 @@ pub fn release_tracked_bytes(_bytes: &[u8]) {}
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
 pub fn release_read_only_pages_after_load() {}
+
+#[cfg(all(test, target_os = "linux", target_arch = "x86_64"))]
+mod tests {
+    /// File mappings with the asked permissions, by their ranges; anonymous and kernel
+    /// mappings and other permissions are left out.
+    #[test]
+    fn parses_file_mappings() {
+        let maps = b"55d0c8a00000-55d0c8a3f000 r--p 00000000 08:01 1234                       /usr/bin/quench node\n\
+7f00aa000000-7f00aa021000 rw-p 00000000 00:00 0 \n\
+7f00ab000000-7f00ab200000 r-xp 00028000 08:01 99 /lib/libc.so.6\n\
+7ffd1c3f2000-7ffd1c3f4000 r--p 00000000 00:00 0                          [vvar]\n\
+7f00ac000000-7f00ac001000 r--p 00001000 08:01 77 /lib/libc.so.6\n";
+        assert_eq!(
+            super::parse_file_mappings(maps, &["r--p"]),
+            [(0x55d0c8a00000, 0x55d0c8a3f000), (0x7f00ac000000, 0x7f00ac001000)]
+        );
+        assert_eq!(super::parse_file_mappings(maps, &["r-xp"]), [(0x7f00ab000000, 0x7f00ab200000)]);
+    }
+}

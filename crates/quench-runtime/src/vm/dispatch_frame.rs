@@ -1402,11 +1402,29 @@ impl<H: Host> Vm<H> {
                         let span = function.map(|f| format!("{:?}", f.source_span)).unwrap_or_default();
                         super::lane_exits::record_detail(format!("{:?} in {name} {span} pc={pc} lane={}", instruction.op(), Self::lane_runs(cursor.lane, pc)));
                     }
-                    if matches!(instruction.op(), Op::GetIndex | Op::SetIndex) {
-                        let (base, key) = if instruction.op() == Op::GetIndex {
-                            (self.inert_operand(frame, instruction.operand_b()), self.inert_operand(frame, instruction.operand_c()))
-                        } else {
-                            (Some(self.read(frame, instruction.register_b())), Some(self.read(frame, instruction.register_c())))
+                    if instruction.op() == Op::GetField
+                        && let Some(lookup) = instruction.field_lookup()
+                    {
+                        let (base, atoms) = match lookup {
+                            crate::bytecode::FieldLookup::Site(site) => {
+                                let site = p.field_sites[site];
+                                (site.base, [Some(site.first.0), site.second.map(|second| second.0)])
+                            }
+                            crate::bytecode::FieldLookup::Atom { atom, base, .. } => (base, [Some(atom), None]),
+                        };
+                        let names = atoms.iter().flatten().map(|atom| p.atoms[*atom as usize].to_string()).collect::<Vec<_>>().join(".");
+                        let base = self.resolve_field_base(p, frame, base).ok();
+                        let kind = base.and_then(|base| self.heap.get(base)).map_or("immediate", |cell| cell.profile_variant_name());
+                        super::lane_exits::record_detail(format!("GetField {names} on {kind}"));
+                    }
+                    if matches!(instruction.op(), Op::GetIndex | Op::SetIndex | Op::DefineArrayElement) {
+                        let (base, key) = match instruction.op() {
+                            Op::GetIndex => (self.inert_operand(frame, instruction.operand_b()), self.inert_operand(frame, instruction.operand_c())),
+                            Op::SetIndex => (Some(self.read(frame, instruction.register_b())), Some(self.read(frame, instruction.register_c()))),
+                            _ => {
+                                let registers = &self.frames[frame].registers;
+                                (registers.get(usize::from(instruction.a())).copied(), registers.get(usize::from(instruction.register_b())).copied())
+                            }
                         };
                         let describe = |value: Option<Value>| match value {
                             None => "?".to_string(),
@@ -1430,7 +1448,8 @@ impl<H: Host> Vm<H> {
                                 None => "other".into(),
                             },
                         };
-                        super::lane_exits::record_detail(format!("{:?} kinds base={} key={}", instruction.op(), describe(base), describe(key)));
+                        let dense = base.and_then(|base| self.heap.array(base)).map(|array| (array.elements().len(), array.has_indexed_descriptors(), array.is_frozen()));
+                        super::lane_exits::record_detail(format!("{:?} kinds base={} key={} array={dense:?}", instruction.op(), describe(base), describe(key)));
                     }
                     if matches!(instruction.op(), Op::JumpBinaryFalse | Op::Binary) {
                         let constants = self.programs.constants(cursor.program);

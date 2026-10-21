@@ -161,12 +161,7 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding) -> (Vec
         out.u32(source.line_offset);
         out.u32(source.column_offset);
     }
-    out.u32(program.module_requests.len() as u32);
-    for request in &program.module_requests {
-        out.string(&request.source);
-        out.u8(request.phase.binary_tag());
-        write_optional_string(&mut out, request.module_type.as_deref());
-    }
+    write_module_requests(&mut out, &program.module_requests);
     out.u32(program.module_imports.len() as u32);
     for import in &program.module_imports {
         out.string(&import.source);
@@ -181,42 +176,7 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding) -> (Vec
         }
         out.string(&import.local);
     }
-    match &program.module_link_plan {
-        None => out.u8(MODULE_LINK_PLAN_NONE),
-        Some(plan) => {
-            out.u8(MODULE_LINK_PLAN_SOME);
-            out.u32(plan.locals.len() as u32);
-            for (local, exported) in &plan.locals {
-                out.string(local);
-                out.string(exported);
-            }
-            out.u32(plan.hoisted_functions.len() as u32);
-            for (binding, function) in &plan.hoisted_functions {
-                out.string(binding);
-                out.string(function);
-            }
-            out.u32(plan.reexports.len() as u32);
-            for reexport in &plan.reexports {
-                out.u8(reexport.kind().binary_tag());
-                match reexport {
-                    ModuleReexport::Named {
-                        source,
-                        imported,
-                        exported,
-                    } => {
-                        out.string(source);
-                        out.string(imported);
-                        out.string(exported);
-                    }
-                    ModuleReexport::Star { source } => out.string(source),
-                    ModuleReexport::Namespace { source, exported } => {
-                        out.string(source);
-                        out.string(exported);
-                    }
-                }
-            }
-        }
-    }
+    write_module_link_plan(&mut out, program.module_link_plan.as_ref());
     let mut header = out;
     let mut out = BinaryWriter::with_atoms(atoms);
     out.u32(program.constants.len() as u32);
@@ -443,17 +403,7 @@ fn decode_program(
         }),
         None => None,
     };
-    let module_requests = input.list(|input| {
-        let source = input.string()?;
-        let phase = ModuleRequestPhase::from_binary_tag(input.u8()?)
-            .ok_or_else(|| "invalid residual module request phase".to_string())?;
-        let module_type = read_optional_string(input)?;
-        Ok(ModuleRequest {
-            source,
-            phase,
-            module_type,
-        })
-    })?;
+    let module_requests = read_module_requests(&mut input)?;
     let module_imports = input.list(|input| {
         let source = input.string()?;
         let phase = ModuleRequestPhase::from_binary_tag(input.u8()?)
@@ -474,32 +424,7 @@ fn decode_program(
             local,
         })
     })?;
-    let module_link_plan = match input.u8()? {
-        MODULE_LINK_PLAN_NONE => None,
-        MODULE_LINK_PLAN_SOME => Some(ModuleLinkPlan {
-            locals: input.list(|input| Ok((input.string()?, input.string()?)))?,
-            hoisted_functions: input.list(|input| Ok((input.string()?, input.string()?)))?,
-            reexports: input.list(|input| {
-                let kind = ModuleReexportKind::from_binary_tag(input.u8()?)
-                    .ok_or_else(|| "invalid residual module re-export kind".to_string())?;
-                Ok(match kind {
-                    ModuleReexportKind::Named => ModuleReexport::Named {
-                        source: input.string()?,
-                        imported: input.string()?,
-                        exported: input.string()?,
-                    },
-                    ModuleReexportKind::Star => ModuleReexport::Star {
-                        source: input.string()?,
-                    },
-                    ModuleReexportKind::Namespace => ModuleReexport::Namespace {
-                        source: input.string()?,
-                        exported: input.string()?,
-                    },
-                })
-            })?,
-        }),
-        _ => return Err("invalid residual module link plan tag".into()),
-    };
+    let module_link_plan = read_module_link_plan(&mut input)?;
     let atoms = match &mut read_atoms {
         ReadAtoms::Program => input.strings()?,
         ReadAtoms::Shared(count) => {
@@ -1351,4 +1276,128 @@ fn read_optional_string(input: &mut BinaryReader<'_>) -> Result<Option<String>, 
         OPTIONAL_STRING_SOME => input.string().map(Some),
         _ => Err("invalid optional residual string".into()),
     }
+}
+
+fn write_module_requests(out: &mut BinaryWriter, requests: &[ModuleRequest]) {
+    out.u32(requests.len() as u32);
+    for request in requests {
+        out.string(&request.source);
+        out.u8(request.phase.binary_tag());
+        write_optional_string(out, request.module_type.as_deref());
+    }
+}
+
+fn read_module_requests(input: &mut BinaryReader<'_>) -> Result<Vec<ModuleRequest>, String> {
+    input.list(|input| {
+        let source = input.string()?;
+        let phase = ModuleRequestPhase::from_binary_tag(input.u8()?)
+            .ok_or_else(|| "invalid residual module request phase".to_string())?;
+        let module_type = read_optional_string(input)?;
+        Ok(ModuleRequest { source, phase, module_type })
+    })
+}
+
+fn write_module_link_plan(out: &mut BinaryWriter, plan: Option<&ModuleLinkPlan>) {
+    let Some(plan) = plan else {
+        out.u8(MODULE_LINK_PLAN_NONE);
+        return;
+    };
+    out.u8(MODULE_LINK_PLAN_SOME);
+    out.u32(plan.locals.len() as u32);
+    for (local, exported) in &plan.locals {
+        out.string(local);
+        out.string(exported);
+    }
+    out.u32(plan.hoisted_functions.len() as u32);
+    for (binding, function) in &plan.hoisted_functions {
+        out.string(binding);
+        out.string(function);
+    }
+    out.u32(plan.reexports.len() as u32);
+    for reexport in &plan.reexports {
+        out.u8(reexport.kind().binary_tag());
+        match reexport {
+            ModuleReexport::Named { source, imported, exported } => {
+                out.string(source);
+                out.string(imported);
+                out.string(exported);
+            }
+            ModuleReexport::Star { source } => out.string(source),
+            ModuleReexport::Namespace { source, exported } => {
+                out.string(source);
+                out.string(exported);
+            }
+        }
+    }
+}
+
+fn read_module_link_plan(input: &mut BinaryReader<'_>) -> Result<Option<ModuleLinkPlan>, String> {
+    Ok(match input.u8()? {
+        MODULE_LINK_PLAN_NONE => None,
+        MODULE_LINK_PLAN_SOME => Some(ModuleLinkPlan {
+            locals: input.list(|input| Ok((input.string()?, input.string()?)))?,
+            hoisted_functions: input.list(|input| Ok((input.string()?, input.string()?)))?,
+            reexports: input.list(|input| {
+                let kind = ModuleReexportKind::from_binary_tag(input.u8()?)
+                    .ok_or_else(|| "invalid residual module re-export kind".to_string())?;
+                Ok(match kind {
+                    ModuleReexportKind::Named => ModuleReexport::Named {
+                        source: input.string()?,
+                        imported: input.string()?,
+                        exported: input.string()?,
+                    },
+                    ModuleReexportKind::Star => ModuleReexport::Star { source: input.string()? },
+                    ModuleReexportKind::Namespace => ModuleReexport::Namespace {
+                        source: input.string()?,
+                        exported: input.string()?,
+                    },
+                })
+            })?,
+        }),
+        _ => return Err("invalid residual module link plan tag".into()),
+    })
+}
+
+/// A `StaticModuleAnalysis`'s tag: what its text says.
+const ANALYSIS_UNBOUNDED: u8 = 0;
+const ANALYSIS_EARLY_ERROR: u8 = 1;
+const ANALYSIS_PLAN: u8 = 2;
+
+/// A static module analysis as bytes, which the host's compile cache keeps for its text.
+pub(crate) fn encode_static_module_analysis(analysis: &crate::compile::StaticModuleAnalysis) -> Vec<u8> {
+    let mut out = BinaryWriter::new();
+    match analysis {
+        crate::compile::StaticModuleAnalysis { early_error: Some(message), .. } => {
+            out.u8(ANALYSIS_EARLY_ERROR);
+            out.string(message);
+        }
+        crate::compile::StaticModuleAnalysis { early_error: None, plan: Some(plan) } => {
+            out.u8(ANALYSIS_PLAN);
+            write_module_requests(&mut out, &plan.requests);
+            write_module_link_plan(&mut out, plan.link_plan.as_ref());
+            out.u8(u8::from(plan.has_top_level_await));
+        }
+        crate::compile::StaticModuleAnalysis { early_error: None, plan: None } => out.u8(ANALYSIS_UNBOUNDED),
+    }
+    out.bytes
+}
+
+pub(crate) fn decode_static_module_analysis(bytes: &[u8]) -> Result<crate::compile::StaticModuleAnalysis, String> {
+    let mut input = BinaryReader::new(bytes);
+    let analysis = match input.u8()? {
+        ANALYSIS_UNBOUNDED => crate::compile::StaticModuleAnalysis { early_error: None, plan: None },
+        ANALYSIS_EARLY_ERROR => crate::compile::StaticModuleAnalysis { early_error: Some(input.string()?), plan: None },
+        ANALYSIS_PLAN => {
+            let requests = read_module_requests(&mut input)?;
+            let link_plan = read_module_link_plan(&mut input)?;
+            let has_top_level_await = input.flag("top-level await")?;
+            crate::compile::StaticModuleAnalysis {
+                early_error: None,
+                plan: Some(crate::compile::StaticModulePlan { link_plan, requests, has_top_level_await }),
+            }
+        }
+        _ => return Err("invalid static module analysis tag".into()),
+    };
+    input.finish()?;
+    Ok(analysis)
 }

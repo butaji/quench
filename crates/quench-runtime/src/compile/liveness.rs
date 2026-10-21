@@ -1,6 +1,6 @@
 use crate::bytecode::{
     ControlFlowLayout, FieldLayout, FieldLookup, FieldSite, Function, ImmediateLayout,
-    ImmediateRole, Instr, InstructionField, Operand, Register, Superinstruction, WideInstruction,
+    ImmediateRole, Instr, InstructionField, Op, Operand, Register, Superinstruction, WideInstruction,
 };
 
 /// The registers a root mask covers: one bit each.
@@ -87,20 +87,30 @@ pub(super) fn transfers(
 
 /// Live registers before each instruction. A reverse pass settles every instruction whose
 /// successors all follow it, so only code with a backward successor iterates to a fixed point.
+/// Each instruction's successors are enumerated once, into `successors[starts[pc]..starts[pc
+/// + 1]]`, which every pass then reads.
 pub(super) fn analyze_transfers(function: &Function, transfers: &[(u64, u64)]) -> Vec<u64> {
-    let decoded = function.instructions().collect::<Vec<_>>();
-    let has_backward_successor = decoded.iter().enumerate().any(|(pc, &instruction)| {
-        let mut backward = false;
+    let length = function.code.len();
+    let mut starts = Vec::with_capacity(length + 1);
+    let mut successors = Vec::with_capacity(length);
+    let mut has_backward_successor = false;
+    for (pc, instruction) in function.instructions().enumerate() {
+        starts.push(successors.len());
         function.for_each_successor(pc, instruction, |successor, _| {
-            backward |= successor <= pc
+            has_backward_successor |= successor <= pc;
+            successors.push(successor);
         });
-        backward
-    });
-    let mut live = vec![0; function.code.len() + 1];
+    }
+    starts.push(successors.len());
+    let mut live = vec![0; length + 1];
     loop {
         let mut changed = false;
-        for pc in (0..function.code.len()).rev() {
-            let output = live_out(function, &live, pc, decoded[pc]);
+        for pc in (0..length).rev() {
+            let output = successors[starts[pc]..starts[pc + 1]]
+                .iter()
+                .fold(0, |output, &successor| {
+                    output | live.get(successor).copied().unwrap_or(0)
+                });
             let (read, written) = transfers[pc];
             let next = read | (output & !written);
             if live[pc] != next {
@@ -129,9 +139,16 @@ pub(super) fn live_out(
     output
 }
 
+/// Whether a frame paused at `op` can resume with an abrupt completion that enters the
+/// enclosing handler: a call that throws, or a suspension point (an awaited rejection, a
+/// generator's `throw` or `return`).
+fn resumes_into_handler(op: Op) -> bool {
+    op.control_flow_layout() == ControlFlowLayout::Call || matches!(op, Op::Await | Op::Yield | Op::YieldStar)
+}
+
 fn add_suspended_exception_roots(function: &Function, live: &mut [u64]) {
     for (pc, instruction) in function.instructions().enumerate() {
-        if instruction.op().control_flow_layout() != ControlFlowLayout::Call {
+        if !resumes_into_handler(instruction.op()) {
             continue;
         }
         for handler in &function.handlers {

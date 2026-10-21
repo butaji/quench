@@ -1,0 +1,37 @@
+verdicts {"behavior-pass":286,"declarations-pass":13,"oracle-failed":1}
+passing 299  fastest wall 208  fastest cpu 243  lowest rss 294
+wall median (ms) quench 58.2 node 107.5 bun 67.5
+cpu median (ms) quench 55.7 node 126.7 bun 71.1
+rss median (MiB) quench 14.4 node 63.4 bun 36.3
+slowest relative to the faster of Node and Bun (wall ms):
+  color-convert                            q     395 n    136 b     84  x4.7
+  jiti                                     q     329 n    274 b     75  x4.4
+  undici                                   q     142 n    144 b     56  x2.5
+  schema-utils                             q     484 n    243 b    202  x2.4
+  whatwg-url                               q     210 n    142 b    100  x2.1
+  ajv                                      q     245 n    162 b    122  x2.0
+  ws                                       q      96 n    103 b     49  x2.0
+  baseline-browser-mapping                 q     160 n     98 b     82  x1.9
+  semver                                   q     196 n    166 b    103  x1.9
+  @babel/helper-compilation-targets        q     149 n    135 b     80  x1.9
+  date-fns                                 q     167 n   1409 b     90  x1.9
+  ajv-keywords                             q     230 n    192 b    130  x1.8
+  agent-base                               q      95 n    108 b     56  x1.7
+  playwright                               q     753 n    443 b    455  x1.7
+  @testing-library/dom                     q    1691 n   1062 b   1007  x1.7
+  node-fetch                               q      83 n    143 b     50  x1.7
+  ajv-formats                              q     200 n    156 b    125  x1.6
+  @babel/plugin-syntax-typescript          q     361 n    292 b    225  x1.6
+  @typescript-eslint/eslint-plugin         q    1364 n    969 b    856  x1.6
+  @babel/core                              q     343 n    279 b    217  x1.6
+  typescript-eslint                        q    1303 n   1156 b    832  x1.6
+  browserslist                             q     141 n    146 b     92  x1.5
+  @typescript-eslint/utils                 q     263 n    216 b    176  x1.5
+  minimatch                                q     103 n     87 b     72  x1.4
+  @babel/generator                         q     121 n    132 b     85  x1.4
+not lowest rss: 5
+  @types/node                              q 71.8 n 71.4 b 72.3
+  @types/json-schema                       q 44.9 n 62.8 b 44.5
+  @eslint/core                             q 45.3 n 62.9 b 45.2
+  @types/babel__template                   q 53.0 n 62.6 b 53.0
+  @types/yargs                             q 45.7 n 63.0 b 45.0

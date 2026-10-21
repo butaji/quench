@@ -91,12 +91,14 @@ impl<H: Host> Vm<H> {
     }
 
     /// Whether neither `iterator` nor any prototype in its chain has `key`, which the shapes
-    /// alone decide: an iterator object with no own `key` (in its shape or side table) above
-    /// a chain of ordinary objects (`Vm::plain_property_lookup`). `false` when they cannot.
+    /// alone decide: a built-in iterator record, or an ordinary object, with no own `key` (in
+    /// its shape or side table) above a chain of ordinary objects (`Vm::plain_property_lookup`).
+    /// `false` when they cannot, as for a Proxy, whose `get` trap observes the lookup.
     fn iterator_lacks_property(&self, iterator: Value, key: PropertyKey) -> bool {
-        let Some(data) = self.object_data(iterator) else {
-            return false;
+        let Some(record) = self.heap.iterator(iterator) else {
+            return self.plain_property_lookup(iterator, key) == Some(None);
         };
+        let data = &record.object;
         if self.property_shape_slot(data.shape(), key).is_some()
             || (data.has_side_descriptors() && self.descriptors.contains_key(&(iterator, key)))
         {

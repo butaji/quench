@@ -94,7 +94,9 @@ struct ProgramEntry {
     constants: Vec<Value>,
     const_arrays: Vec<Option<Rc<Vec<Value>>>>,
     function_sources: Vec<Option<Value>>,
-    regexp_literals: Vec<Option<Result<Rc<quench_regexp::Regex>, Rc<str>>>>,
+    /// Each RegExp literal site's record, shared by every object it evaluates to, or its
+    /// compile error.
+    regexp_literals: Vec<Option<Result<Rc<crate::heap::RegExpMeta>, Rc<str>>>>,
     module_environment: Option<Value>,
     import_meta: Option<Value>,
     module_imports: Vec<(u16, ModuleImport)>,
@@ -564,6 +566,18 @@ impl ProgramStore {
         if let Some(entry) = self.entry_mut(id) {
             entry.scope = scope;
         }
+    }
+
+    /// Whether a by-name load the compiler left unresolved in `function` of the program can
+    /// only denote a global binding, given that the function's names resolve statically: a
+    /// module's environment holds only bindings the compiler resolved, at its root as in its
+    /// functions; a global-scope program's root body may still meet bindings its own
+    /// declarations add, so only its nested functions qualify.
+    pub(crate) fn unresolved_names_are_global(&self, id: ProgramId, function: u32) -> bool {
+        self.entry(id).is_some_and(|entry| {
+            entry.residual.kind == crate::bytecode::ProgramKind::Module
+                || (function != super::ROOT_FUNCTION_ID && self.runs_in_global_scope(id))
+        })
     }
 
     /// Whether the program's root body evaluates in the global environment.
@@ -1680,6 +1694,26 @@ impl ProgramStore {
         }))
     }
 
+    /// Whether a lane call may derive `function`'s view now: it has one, or an earlier entry
+    /// or lane call already deferred it, as `entry_lane_view` defers a first entry. The first
+    /// call of a function the lane has no view for marks it and takes the general path, so a
+    /// function called once costs no view (about a thousand instructions per bytecode
+    /// instruction).
+    pub(super) fn lane_call_may_derive(&self, id: ProgramId, function: u32) -> bool {
+        let Some(entry) = self.entry(id) else {
+            return false;
+        };
+        let derived = entry
+            .lane_views
+            .get(function as usize)
+            .is_some_and(|view| view.get().is_some());
+        derived
+            || entry
+                .lane_deferred
+                .get(function as usize)
+                .is_some_and(|deferred| deferred.replace(true))
+    }
+
     pub(super) fn lane_view(
         &self,
         id: ProgramId,
@@ -1751,19 +1785,19 @@ impl ProgramStore {
         Some(*cached.get_or_insert(source))
     }
 
-    pub(crate) fn regexp_literal_matcher(
+    pub(crate) fn regexp_literal_meta(
         &self,
         id: ProgramId,
         site: usize,
-    ) -> Option<Result<Rc<quench_regexp::Regex>, Rc<str>>> {
+    ) -> Option<Result<Rc<crate::heap::RegExpMeta>, Rc<str>>> {
         self.entry(id)?.regexp_literals.get(site)?.as_ref().cloned()
     }
 
-    pub(crate) fn cache_regexp_literal_matcher(
+    pub(crate) fn cache_regexp_literal_meta(
         &mut self,
         id: ProgramId,
         site: usize,
-        matcher: Result<Rc<quench_regexp::Regex>, Rc<str>>,
+        matcher: Result<Rc<crate::heap::RegExpMeta>, Rc<str>>,
     ) -> bool {
         let Some(entry) = self.entry_mut(id) else {
             return false;
@@ -1806,6 +1840,13 @@ impl ProgramStore {
                 ModuleImport::Binding(_, _, fallback) => *fallback,
             }));
         }
+    }
+}
+
+impl ProgramStore {
+    /// Whether dropping the store reports something (`QUENCH_JS_JIT_STATS`).
+    pub(crate) fn reports_on_drop(&self) -> bool {
+        self.js_jit_diagnostics.is_some()
     }
 }
 

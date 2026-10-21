@@ -1293,6 +1293,18 @@ impl<H: Host> Vm<H> {
             (Native::SetHas, Cell::Set { .. }) => {
                 Some(boolean(self.set_entry_index(receiver, key).is_some()))
             }
+            // A value that cannot be held weakly is never a key.
+            (Native::WeakMapGet, Cell::WeakMap { entries, .. }) => Some(if self.is_weak_key_value(key) {
+                entries.get(key).unwrap_or(Value::UNDEFINED)
+            } else {
+                Value::UNDEFINED
+            }),
+            (Native::WeakMapHas, Cell::WeakMap { entries, .. }) => {
+                Some(boolean(self.is_weak_key_value(key) && entries.get(key).is_some()))
+            }
+            (Native::WeakSetHas, Cell::WeakSet { .. }) => Some(boolean(
+                self.is_weak_key_value(key) && self.weak_set_entry_index(receiver, key).is_some(),
+            )),
             _ => None,
         }
     }

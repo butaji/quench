@@ -138,19 +138,14 @@ fn write_object(writer: &mut Writer, object: &Object) -> SnapshotResult<()> {
     writer.u32(object.meta);
     writer.u32(object.auxiliary);
     match object.extras() {
+        // The payload word: narrow inline values or the storage position.
         None => {
-            // SAFETY: an untagged payload is plain words; an array's second word is its element
-            // backing, which the array writes instead.
-            let words = unsafe { object.payload.words };
             writer.u8(0);
-            writer.u64(words[0]);
-            writer.u64(if object.is_array() { 0 } else { words[1] });
+            writer.u64(object.payload);
         }
+        // The payload word is the extras pointer; the extras are written field by field.
         Some(extras) => {
-            // SAFETY: as above; the first word is the extras pointer, written field by field.
-            let words = unsafe { object.payload.words };
             writer.u8(1);
-            writer.u64(if object.is_array() { 0 } else { words[1] });
             write_extras(writer, extras)?;
         }
     }
@@ -160,17 +155,12 @@ fn write_object(writer: &mut Writer, object: &Object) -> SnapshotResult<()> {
 fn read_object(reader: &mut Reader<'_>) -> SnapshotResult<Object> {
     let meta = reader.u32()?;
     let auxiliary = reader.u32()?;
-    let words = match reader.u8()? {
-        0 => [reader.u64()?, reader.u64()?],
-        1 => {
-            let second = reader.u64()?;
-            let extras = read_extras(reader)?;
-            [Object::tag_extras(Box::new(extras)), second]
-        }
+    let payload = match reader.u8()? {
+        0 => reader.u64()?,
+        1 => Object::tag_extras(Box::new(read_extras(reader)?)),
         _ => return Err(SnapshotError("invalid snapshot object".into())),
     };
-    const _: () = assert!(INLINE_PROPERTY_COUNT == 2);
-    Ok(Object { meta, auxiliary, payload: ObjectPayload { words } })
+    Ok(Object { meta, auxiliary, payload })
 }
 
 fn write_extras(writer: &mut Writer, extras: &ObjectExtras) -> SnapshotResult<()> {
@@ -397,16 +387,7 @@ impl ArrayObject {
             return Err(SnapshotError("snapshot array without its array flag".into()));
         }
         let elements = Rc::new(reader.values()?);
-        let mut array = Self { object };
-        // SAFETY: `read_object` left the second word zero; this writes the backing there without
-        // reading or dropping it, as `new` does.
-        unsafe {
-            std::ptr::write(
-                std::ptr::addr_of_mut!((*array.object.payload.array).elements),
-                std::mem::ManuallyDrop::new(elements),
-            );
-        }
-        Ok(array)
+        Ok(Self { object, elements })
     }
 }
 
@@ -478,8 +459,20 @@ impl IteratorRecord {
 
 impl crate::heap::PromiseCell {
     pub(crate) fn write_snapshot(&self, writer: &mut Writer) -> SnapshotResult<()> {
-        let crate::heap::PromiseRecord { state, result, reactions, rejection, rejection_id, host_context } =
-            &self.record;
+        let crate::heap::PromiseRecord {
+            state,
+            result,
+            reactions,
+            rejection,
+            rejection_id,
+            host_context,
+            module_evaluation,
+        } = &self.record;
+        // A snapshot holds no module record (`PromiseRuntime::write_snapshot`), so no promise
+        // is a module's evaluation promise.
+        if *module_evaluation {
+            return Err(SnapshotError::unsupported("a module evaluation promise"));
+        }
         write_object(writer, &self.object)?;
         promise_state::write(writer, *state);
         writer.value(*result);
@@ -519,7 +512,15 @@ impl crate::heap::PromiseCell {
         let host_context = if reader.bool()? { Some(crate::HostExecutionContext(reader.u64()?)) } else { None };
         Ok(Self {
             object,
-            record: crate::heap::PromiseRecord { state, result, reactions: reactions.into(), rejection, rejection_id, host_context },
+            record: crate::heap::PromiseRecord {
+                state,
+                result,
+                reactions: reactions.into(),
+                rejection,
+                rejection_id,
+                host_context,
+                module_evaluation: false,
+            },
         })
     }
 }
@@ -670,10 +671,11 @@ impl Cell {
                 writer.f64(*milliseconds);
                 write_object(writer, object)?;
             }
-            Self::RegExp { object, meta, matcher: _ } => {
+            Self::RegExp { object, meta } => {
                 writer.u8(tag::REGEXP);
                 write_object(writer, object)?;
-                let RegExpMeta { source, flags, legacy_constructor } = &**meta;
+                // The matcher is compiled again from the source and flags on restore.
+                let RegExpMeta { source, flags, legacy_constructor, matcher: _ } = &**meta;
                 source.write_snapshot(writer);
                 writer.str(&flags.text());
                 match legacy_constructor {
@@ -850,7 +852,9 @@ impl Cell {
                     _ => return Err(SnapshotError("invalid snapshot regexp owner".into())),
                 };
                 let matcher = (decoder.regexp)(&source, &flag_text)?;
-                Self::RegExp { object, meta: Box::new(RegExpMeta { source, flags, legacy_constructor }), matcher }
+                // A restored RegExp owns its record; literal sites share theirs again from the
+                // program store (`ProgramStore::regexp_literal_meta`) on their next evaluation.
+                Self::RegExp { object, meta: std::rc::Rc::new(RegExpMeta { source, flags, legacy_constructor, matcher }) }
             }
             tag::ERROR => Self::Error(reader.string()?),
             tag::PROMISE => Self::Promise(Box::new(crate::heap::PromiseCell::read_snapshot(reader)?)),
