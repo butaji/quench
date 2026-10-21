@@ -6,7 +6,7 @@
 use super::async_hooks_state::{StoreContext, JobContext};
 use crate::host::NodeHost;
 use quench_runtime::{Host, NativeContext, RootId, RootedError, Runtime};
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, collections::HashSet, rc::Rc};
 
 const ASYNC_ID: &str = "\0quench:async_hooks:id";
 const LOCAL_ID: &str = "\0quench:async_hooks:local:id";
@@ -206,6 +206,7 @@ pub(crate) fn create_promise_context(
     let trigger = parent.map_or_else(|| state.async_hooks.default_trigger_async_id(), |id| id.0 as f64);
     let id = state.async_hooks.identity.allocate_async_id();
     state.async_hooks.context_triggers.insert(id, trigger as i64);
+    state.async_hooks.promise_contexts.insert(id);
     quench_runtime::HostExecutionContext(id)
 }
 
@@ -234,7 +235,9 @@ pub(crate) fn prune_promises(
             shared.borrow_mut().async_hooks.promise_resources.insert(id, weak);
         } else {
             context.release_host_weak_root(weak);
-            shared.borrow_mut().async_hooks.context_triggers.remove(&id);
+            let mut shared = shared.borrow_mut();
+            shared.async_hooks.context_triggers.remove(&id);
+            shared.async_hooks.promise_contexts.remove(&id);
             queue_destroy(context, id)?;
         }
     }
@@ -319,8 +322,46 @@ pub(crate) fn restore_job_context(
 pub(crate) fn release_job_context(
     shared_state: &Rc<RefCell<crate::host::SharedNodeState>>, token: u64,
 ) -> Vec<RootId> {
-    shared_state.borrow_mut().async_hooks.job_resources.remove(&token);
+    let mut shared = shared_state.borrow_mut();
+    let state = &mut shared.async_hooks;
+    state.job_resources.remove(&token);
+    drop(shared);
     take_store_context(shared_state, StoreContext::Job(token))
+}
+
+pub(crate) fn finish_promise_context_collection(
+    shared_state: &Rc<RefCell<crate::host::SharedNodeState>>,
+    live_contexts: &[quench_runtime::HostExecutionContext],
+) {
+    let mut shared = shared_state.borrow_mut();
+    let state = &mut shared.async_hooks;
+    let live_ids = live_contexts.iter().map(|context| context.0).collect::<HashSet<_>>();
+    let referenced_resources = state
+        .job_resources
+        .values()
+        .filter_map(|job| job.resource)
+        .collect::<HashSet<_>>();
+    let promise_resources = &state.promise_resources;
+    let contexts = &mut state.promise_contexts;
+    let dead = contexts
+        .iter()
+        .copied()
+        .filter(|id| {
+            !live_ids.contains(id)
+                && !promise_resources.contains_key(id)
+                && !referenced_resources.contains(id)
+        })
+        .collect::<Vec<_>>();
+    for id in dead {
+        contexts.remove(&id);
+        state.context_triggers.remove(&id);
+    }
+    let contexts = &mut state.context_triggers;
+    if contexts.capacity() > 131_072
+        && contexts.capacity() > contexts.len().saturating_mul(2)
+    {
+        contexts.shrink_to_fit();
+    }
 }
 
 /// Enter a named async identity and restore the previous identity on every

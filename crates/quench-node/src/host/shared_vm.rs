@@ -1373,6 +1373,16 @@ impl quench_runtime::Host for NodeHost {
         crate::modules::async_hooks_shared_vm::release_job_context(&self.shared_state, context.0)
     }
 
+    fn finish_promise_context_collection(
+        &mut self,
+        live_contexts: &[quench_runtime::HostExecutionContext],
+    ) {
+        crate::modules::async_hooks_shared_vm::finish_promise_context_collection(
+            &self.shared_state,
+            live_contexts,
+        );
+    }
+
     fn functions(&self) -> &[HostFunction<Self>] {
         bindings()
     }

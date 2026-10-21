@@ -93,6 +93,9 @@ pub(crate) struct SharedAsyncHooksState {
     pub(super) registry: super::async_hook_registry_shared_vm::Registry,
     pub(super) default_trigger_async_id: Option<f64>,
     pub(super) context_triggers: HashMap<u64, i64>,
+    /// Promise IDs with context-trigger entries. Kept separate from private
+    /// job tokens so GC cannot release one namespace using the other's IDs.
+    pub(super) promise_contexts: HashSet<u64>,
     /// Store snapshots have private identities; async-hooks observes their
     /// actual Promise resource identity instead.
     pub(super) job_resources: HashMap<u64, JobContext>,
@@ -113,6 +116,7 @@ impl SharedAsyncHooksState {
             registry: super::async_hook_registry_shared_vm::Registry::new(),
             default_trigger_async_id: None,
             context_triggers: HashMap::new(),
+            promise_contexts: HashSet::new(),
             job_resources: HashMap::new(),
             next_job_id: 0,
             job_stack: Vec::new(),
