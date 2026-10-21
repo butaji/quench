@@ -800,6 +800,20 @@ candidate limit, while `Eu` uses captures and calls the current JS tier does not
 lower. These screens have one round each and do not qualify a win. See
 `evidence/jit-jetstream3-2026-10-20/web-ssr-baseline/README.md`.
 
+The guard-census follow-up attributes the same coverage gap more precisely:
+`Ru` entered the interpreter 15,525 times with 831 bytecodes, 47 calls, 42
+capture loads, allocations, and throws; `Eu` entered 15,524 times with 53
+bytecodes, 3 captures, a call, and exception-capable control flow. `Ru` is
+over the bytecode budget, while `Eu` fails activation eligibility before
+lowering. Their 49 and 2 conditional branch sites are census counts, not proof
+of redundant guards. Current evidence therefore gives no sound small pure
+predicate region for ISOP or lazy block versioning. Keep the existing tier
+architecture and exact interpreter fallback; next useful work is to improve
+native coverage of the renderer's effectful call/field path or find a smaller
+hot subregion with measured payback. The diagnostic report is from one
+instrumented round and is not performance evidence; details are in
+`evidence/jit-jetstream3-2026-10-20/guard-census-attribution/`.
+
 ## Cached `this` field returns
 
 The JIT-mode entry has a narrow direct-getter matcher for a return-marked
