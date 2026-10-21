@@ -555,18 +555,21 @@ impl<H: Host> Vm<H> {
             text.push_str(reader.str()?);
             ends.push(u32::try_from(text.len()).map_err(|_| SnapshotError("snapshot atom text exceeds u32".into()))?);
         }
+        let appended = reader.len()?;
         self.atom_text = AtomTable::new(text, ends);
         self.atom_sequence = Rc::new(crate::bytecode::AtomSequence::new(self.atom_text.clone()));
-        self.atoms.clear();
+        // Sized for every atom at once: growing would hash every name again.
+        self.atoms = hashbrown::HashTable::with_capacity(base + appended);
         self.array_index_atoms.clear();
         self.name_atom_memo.clear();
         self.atom_classes.clear();
+        self.atom_classes.reserve(base + appended);
         self.atom_classes.resize_with(base, Default::default);
         let atom_text = self.atom_text.clone();
         for (id, name) in atom_text.iter().enumerate() {
             self.index_atom(Self::atom_hash_str(name), id as Atom, name);
         }
-        for _ in 0..reader.len()? {
+        for _ in 0..appended {
             let name = JsString::read_snapshot(reader)?;
             let hash = Self::atom_hash_units(name.units());
             self.insert_dynamic_atom(name, hash);
@@ -579,6 +582,7 @@ impl<H: Host> Vm<H> {
     fn read_shapes(&mut self, reader: &mut Reader<'_>) -> SnapshotResult<()> {
         let count = reader.len()?;
         self.shapes = Shape::table();
+        self.shapes.reserve(count.saturating_sub(self.shapes.len()));
         for _ in 1..count {
             let parent = reader.u32()?;
             let transition = Snap::unsnap(reader)?;
@@ -599,8 +603,9 @@ impl<H: Host> Vm<H> {
         }
         self.shape_constructors = Snap::unsnap(reader)?;
         self.shape_accessors = Snap::unsnap(reader)?;
-        self.transitions.clear();
-        for child in reader.u32s()? {
+        let children = reader.u32s()?;
+        self.transitions = shape_transitions::ShapeTransitionIndex::with_capacity(children.len());
+        for child in children {
             let indexed = self.shapes.get(child as usize).is_some_and(|shape| {
                 shape_transitions_origin_key(&self.shapes, shape).is_some()
             });

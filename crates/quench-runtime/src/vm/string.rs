@@ -153,6 +153,50 @@ pub(super) fn string_native_length(native: Native) -> Option<f64> {
         })
 }
 
+/// What a native does with its receiver before it runs (`Vm::string_method_receiver`).
+#[derive(Clone, Copy)]
+enum StringReceiver {
+    /// Takes it as it is.
+    Kept,
+    /// Requires it coercible to an object: the methods that dispatch on a RegExp argument.
+    Coercible,
+    /// Converts it to a string: the other `String.prototype` methods.
+    Converted,
+}
+
+/// Each native's receiver rule, by discriminant, derived from the method tables: every native
+/// call reads it.
+const STRING_RECEIVERS: [StringReceiver; Native::COUNT as usize] = {
+    let mut table = [StringReceiver::Kept; Native::COUNT as usize];
+    let mut index = 0;
+    while index < STRING_METHODS.len() {
+        let native = STRING_METHODS[index].1;
+        if !matches!(native, Native::StringToString | Native::StringValueOf) {
+            table[native as usize] = StringReceiver::Converted;
+        }
+        index += 1;
+    }
+    let mut index = 0;
+    while index < STRING_HTML_METHODS.len() {
+        table[STRING_HTML_METHODS[index].native as usize] = StringReceiver::Converted;
+        index += 1;
+    }
+    let coercible = [
+        Native::StringMatch,
+        Native::StringMatchAll,
+        Native::StringReplace,
+        Native::StringReplaceAll,
+        Native::StringSearch,
+        Native::StringSplit,
+    ];
+    let mut index = 0;
+    while index < coercible.len() {
+        table[coercible[index] as usize] = StringReceiver::Coercible;
+        index += 1;
+    }
+    table
+};
+
 fn string_html_method(native: Native) -> Option<&'static StringHtmlMethod> {
     STRING_HTML_METHODS
         .iter()
@@ -199,23 +243,13 @@ impl<H: Host> Vm<H> {
         native: Native,
         receiver: Value,
     ) -> Result<Value, JsError> {
-        if matches!(
-            native,
-            Native::StringMatch
-                | Native::StringMatchAll
-                | Native::StringReplace
-                | Native::StringReplaceAll
-                | Native::StringSearch
-                | Native::StringSplit
-        ) {
-            self.require_object_coercible(p, receiver)?;
-            return Ok(receiver);
-        }
-        let converts_receiver = STRING_METHODS.iter().any(|(_, method, _)| {
-            *method == native && !matches!(native, Native::StringToString | Native::StringValueOf)
-        }) || string_html_method(native).is_some();
-        if !converts_receiver {
-            return Ok(receiver);
+        match STRING_RECEIVERS[native as usize] {
+            StringReceiver::Kept => return Ok(receiver),
+            StringReceiver::Coercible => {
+                self.require_object_coercible(p, receiver)?;
+                return Ok(receiver);
+            }
+            StringReceiver::Converted => {}
         }
         self.require_object_coercible(p, receiver)?;
         if matches!(self.heap.get(receiver), Some(Cell::String(_))) {
