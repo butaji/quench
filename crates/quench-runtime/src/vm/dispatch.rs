@@ -240,7 +240,16 @@ impl<H: Host> Vm<H> {
         let mut this = window.first().copied().unwrap_or(Value::UNDEFINED);
         let apply_arguments;
         let bound_arguments;
-        let arguments = match self.heap.get(callee) {
+        // `f.call(...)`, a bound function without bound arguments, or an uncurried builtin
+        // (`Vm::forwarded_call`). A forwarded `arguments` reaches here unmaterialized, which
+        // only `apply` takes as its list.
+        let forwarded = if i.op() == Op::Call { self.forwarded_call(callee, target, window) } else { None };
+        let arguments = match forwarded {
+            Some((forwarded_target, forwarded_this, forwarded_arguments)) => {
+                (target, this) = (forwarded_target, forwarded_this);
+                forwarded_arguments
+            }
+            None => match self.heap.get(callee) {
             // A bound function calls its target with its bound `this`, its bound arguments
             // and then the call's, and takes no observable step of its own.
             Some(Cell::Function {
@@ -258,10 +267,6 @@ impl<H: Host> Vm<H> {
                 bound_arguments = bound.iter().chain(window).copied().collect::<Vec<_>>();
                 bound_arguments.as_slice()
             }
-            Some(Cell::Function {
-                kind: FunctionKind::Native(Native::FunctionCall),
-                ..
-            }) => window.get(1..).unwrap_or_default(),
             // `Reflect.apply` takes its target and receiver as arguments and requires a list
             // object, which only a dense array answers here.
             Some(Cell::Function {
@@ -294,6 +299,7 @@ impl<H: Host> Vm<H> {
                 }
             },
             _ => return None,
+            },
         };
         let resolved = self.in_loop_call_target(p, target)?;
         self.profile.call_source(0);
