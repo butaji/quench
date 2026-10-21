@@ -573,6 +573,12 @@ enum CallEntry {
     /// parameters in order (`forwarding_read_body`), which a call answers where that method
     /// is a `Reads` or `ReadsElement` target whose read hits.
     ForwardsRead,
+    /// Its body returns one of its captures (`capture_read_body`), as a bundler's export
+    /// getter `() => binding` compiles, which a call answers by reading the capture.
+    ReadsCapture,
+    /// Its body returns its `this` (`this_read_body`), as `get self() { return this; }`
+    /// compiles, which a call answers with the receiver it binds.
+    ReadsThis,
     /// It keeps frame locals and makes closures (`CallPlan::environment_activation`): its
     /// activation's window holds its environment and locals after its registers
     /// (`lane_activate_environment`). Only a plain call activates it.
@@ -583,7 +589,7 @@ impl CallEntry {
     /// A body a call answers by reading alone (`lane_call_leaf_read`).
     #[inline(always)]
     fn reads(self) -> bool {
-        matches!(self, Self::Reads | Self::ReadsElement)
+        matches!(self, Self::Reads | Self::ReadsElement | Self::ReadsCapture | Self::ReadsThis)
     }
 }
 
@@ -636,6 +642,34 @@ fn element_read_body(body: &Function) -> bool {
         && element.c() < body.params
         && done.op() == Op::Return
         && done.a() == element.a()
+}
+
+/// Whether `body` is `LoadCapture` and `Return` of it (`CallEntry::ReadsCapture`), as
+/// `() => binding` compiles.
+fn capture_read_body(body: &Function) -> bool {
+    let [load, done] = match body.code.get(..2) {
+        Some(&[load, done]) => [load, done].map(|packed| decoded_instruction(body, packed)),
+        _ => return false,
+    };
+    load.op() == Op::LoadCapture
+        && !load.returns_from_frame()
+        && done.op() == Op::Return
+        && done.a() == load.a()
+}
+
+/// Whether `body` is `LoadThis` and `Return` of it (`CallEntry::ReadsThis`): a function's own
+/// `this`, which neither an arrow's lexical one nor a constructor's binding complicates.
+fn this_read_body(body: &Function) -> bool {
+    let [load, done] = match body.code.get(..2) {
+        Some(&[load, done]) => [load, done].map(|packed| decoded_instruction(body, packed)),
+        _ => return false,
+    };
+    !body.is_arrow
+        && !body.is_class_constructor
+        && load.op() == Op::LoadThis
+        && !load.returns_from_frame()
+        && done.op() == Op::Return
+        && done.a() == load.a()
 }
 
 impl ScriptCallTarget {
@@ -6104,6 +6138,10 @@ impl<H: Host> Vm<H> {
                     CallEntry::ReadsElement
                 } else if forwarding_read_body(body) {
                     CallEntry::ForwardsRead
+                } else if capture_read_body(body) {
+                    CallEntry::ReadsCapture
+                } else if this_read_body(body) {
+                    CallEntry::ReadsThis
                 } else {
                     CallEntry::Activates
                 },
@@ -8547,8 +8585,36 @@ unsafe fn lane_call_read<H: Host>(
     } else {
         (target, arguments, this)
     };
-    // SAFETY: as for `LeafRead::of`.
-    unsafe { LeafRead::of::<H>(target) }?.run(vm, code, arguments, this)
+    match target.entry {
+        // The receiver the call binds (`lane_direct_call_this`), which is what it returns.
+        CallEntry::ReadsThis => Some(this),
+        // SAFETY: a capture-read target of the running program.
+        CallEntry::ReadsCapture => unsafe { lane_read_capture(vm, target) },
+        // SAFETY: as for `LeafRead::of`.
+        _ => unsafe { LeafRead::of::<H>(target) }?.run(vm, code, arguments, this),
+    }
+}
+
+/// The capture a `CallEntry::ReadsCapture` target's closure environment holds, read as its
+/// frameless activation's `LoadCapture` would (`lane_load_capture_walk`); an uninitialized
+/// binding misses.
+///
+/// # Safety
+/// `target` is a `CallEntry::ReadsCapture` target of the running program, whose view holds
+/// its `LoadCapture` record first.
+#[inline(never)]
+unsafe fn lane_read_capture<H: Host>(vm: &mut Vm<H>, target: &ScriptCallTarget) -> Option<Value> {
+    // SAFETY: the program store keeps a derived view alive with its program.
+    let imm = unsafe { &*(*target.view).records() }.imm();
+    let (depth, slot) = (ImmediateLayout::capture_depth(imm), ImmediateLayout::capture_slot(imm));
+    let slots = capture_reads(target.capture);
+    if depth == 0 && !slots.is_null() {
+        // SAFETY: as `ScriptCallTarget::capture`.
+        return unsafe { &*slots }.dense_plain(usize::from(slot));
+    }
+    let (slots, root) = vm.walked_capture_slots(target.env, false, depth)?;
+    // SAFETY: as `Vm::walked_capture_slots`; no collection runs in the lane.
+    vm.owned_capture(unsafe { &*slots }, root, slot)
 }
 
 /// The values a call that a read answers passed (`lane_call_read`): parameter `k` is the
