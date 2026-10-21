@@ -4176,7 +4176,6 @@ impl<H: Host> Vm<H> {
         }
         self.programs.set_module_imports(program_id, imports);
         let active_program = self.replace_active_program(program_id);
-        let specialized = std::mem::replace(&mut self.specialized, false);
         let evaluated = (|| {
             let closure = self.closure(&residual, 0, Value::NULL)?;
             let evaluation = self.call_value(&residual, closure, Value::UNDEFINED, &[])?;
@@ -4280,7 +4279,6 @@ impl<H: Host> Vm<H> {
             Ok(values)
         })();
         self.set_active_program(active_program);
-        self.specialized = specialized;
         evaluated
     }
 
