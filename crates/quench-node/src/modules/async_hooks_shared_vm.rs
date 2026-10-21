@@ -310,6 +310,9 @@ pub(crate) fn promise_settled(
 /// Snapshot the currently visible stores under a fresh identity for one
 /// Promise job. Even an empty snapshot needs an identity so a later
 /// `enterWith` cannot mutate the context of the job that registered it.
+/// The async id of no resource, which a Promise job without one runs under.
+const NO_ASYNC_ID: u64 = 0;
+
 pub(crate) fn capture_job_context(
     shared_state: &Rc<RefCell<crate::host::SharedNodeState>>,
     resource: Option<quench_runtime::HostExecutionContext>,
@@ -318,10 +321,13 @@ pub(crate) fn capture_job_context(
     let state = &mut shared.async_hooks;
     let token = state.next_job_id;
     state.next_job_id = token.checked_add(1).expect("private Promise job token space exhausted");
-    let execution = resource.map_or(state.identity.current_async_id(), |id| id.0);
-    let trigger = if resource.is_some() {
-        *state.context_triggers.get(&execution).expect("Promise resource trigger registered")
-    } else { state.identity.current_trigger_id() };
+    // Without a Promise hook a job has no async resource, and Node runs it with execution
+    // and trigger ids 0 (`executionAsyncId()` in a `then` callback).
+    let (execution, trigger) = match resource {
+        Some(id) => (id.0, *state.context_triggers.get(&id.0).expect("Promise resource trigger registered")),
+        None if !state.tracks_promises() => (NO_ASYNC_ID, NO_ASYNC_ID as i64),
+        None => (state.identity.current_async_id(), state.identity.current_trigger_id()),
+    };
     state.job_resources.insert(token, JobContext { resource: resource.map(|id| id.0), execution, trigger });
     let source = state.identity.store_context();
     inherit_stores(state, source, StoreContext::Job(token));
