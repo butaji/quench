@@ -498,14 +498,14 @@ impl Heap {
     }
 
     /// An array's dense element backing, whether it lives in a record or a slot.
-    pub(crate) fn array_elements(&self, value: Value) -> Option<&std::rc::Rc<Vec<Value>>> {
+    pub(crate) fn array_elements(&self, value: Value) -> Option<&super::ArrayElements> {
         self.array(value).map(ArrayObject::elements)
     }
 
     pub(crate) fn array_elements_mut(
         &mut self,
         value: Value,
-    ) -> Option<&mut std::rc::Rc<Vec<Value>>> {
+    ) -> Option<&mut super::ArrayElements> {
         self.array_mut(value).map(ArrayObject::elements_mut)
     }
 

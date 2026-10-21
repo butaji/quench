@@ -383,7 +383,7 @@ impl<H: Host> JsonBuilder for JsonHeapBuilder<'_, H> {
         self.vm.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
                 Vm::<H>::empty_object(self.array_prototype),
-                Rc::new(values),
+                values,
             ),
         })
     }
