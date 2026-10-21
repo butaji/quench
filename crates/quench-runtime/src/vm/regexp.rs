@@ -495,7 +495,7 @@ impl<H: Host> Vm<H> {
                             input_value,
                             replacement,
                             &matcher,
-                            &flags,
+                            flags,
                         );
                     }
                     let flags = vm.regexp_flags_text(p, receiver)?;
@@ -633,15 +633,15 @@ impl<H: Host> Vm<H> {
     fn regexp_builtin_receiver_matcher(
         &mut self,
         receiver: Value,
-    ) -> Option<(Rc<quench_regexp::Regex>, InlineRegExpFlags)> {
+    ) -> Option<(Rc<quench_regexp::Regex>, RegExpFlags)> {
         let Some(Cell::RegExp { meta, .. }) = self.heap.get(receiver) else {
             return None;
         };
-        let flags = &meta.flags;
-        let global = flags.contains('g');
+        let flags = meta.flags;
+        let global = flags.contains(RegExpFlags::GLOBAL);
         // A non-global exec reads lastIndex through ToLength and updates it when sticky;
         // only a numeric lastIndex without stickiness leaves both unobservable.
-        if !global && flags.contains('y') {
+        if !global && flags.contains(RegExpFlags::STICKY) {
             return None;
         }
         let (prototype, exec_slot) = self.regexp_builtin_layout_proof(receiver)?;
@@ -657,10 +657,10 @@ impl<H: Host> Vm<H> {
                 .property_get(self.object_data(receiver)?, slot)?
                 .as_number()?;
         }
-        let Some(Cell::RegExp { matcher, meta, .. }) = self.heap.get(receiver) else {
+        let Some(Cell::RegExp { matcher, .. }) = self.heap.get(receiver) else {
             return None;
         };
-        Some((Rc::clone(matcher), InlineRegExpFlags::of(&meta.flags)?))
+        Some((Rc::clone(matcher), flags))
     }
 
     /// `GetMethod(receiver, symbol)` for a RegExp `receiver` whose shape and prototype's
@@ -779,12 +779,7 @@ impl<H: Host> Vm<H> {
             && self.regexp_builtin_layout_proof(receiver).is_some()
             && let Some(Cell::RegExp { meta, .. }) = self.heap.get(receiver)
         {
-            let ordered = REGEXP_FLAG_ACCESSORS
-                .iter()
-                .map(|(_, _, flag)| *flag)
-                .filter(|flag| meta.flags.contains(*flag))
-                .collect::<String>();
-            return Ok(JsString::from_str(&ordered));
+            return Ok(JsString::from_str(&meta.flags.text()));
         }
         let atom = self.intern_atom("flags");
         let value = self.get_property(p, receiver, atom)?;
@@ -1004,7 +999,7 @@ impl<H: Host> Vm<H> {
         input_value: Value,
         replacement: FastReplacement<'_>,
         matcher: &quench_regexp::Regex,
-        flags: &str,
+        flags: RegExpFlags,
     ) -> Result<Value, JsError> {
         let subject = self.regexp_subject(input);
         if let FastReplacement::Template(template) = replacement {
@@ -1014,7 +1009,7 @@ impl<H: Host> Vm<H> {
                 );
             }
         }
-        let matches = if flags.contains('g') {
+        let matches = if flags.contains(RegExpFlags::GLOBAL) {
             self.regexp_global_matches(
                 p,
                 receiver,
@@ -1089,13 +1084,13 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         receiver: Value,
         input: &JsString,
-        flags: &str,
+        flags: RegExpFlags,
         mut find: impl FnMut(usize) -> Option<T>,
         range: impl Fn(&T) -> Range<usize>,
     ) -> Result<Vec<T>, JsError> {
         self.store_regexp_last_index(p, receiver, Value::number(0.0))?;
-        let sticky = flags.contains('y');
-        let unicode = flags.contains('u') || flags.contains('v');
+        let sticky = flags.contains(RegExpFlags::STICKY);
+        let unicode = flags.unicode_mode();
         let mut matches = Vec::new();
         let mut search_start = 0;
         while let Some(found) = find(search_start) {
@@ -1127,9 +1122,9 @@ impl<H: Host> Vm<H> {
         subject: &quench_regexp::Subject,
         template: &JsString,
         matcher: &quench_regexp::Regex,
-        flags: &str,
+        flags: RegExpFlags,
     ) -> Result<Value, JsError> {
-        let (ranges, last) = if flags.contains('g') {
+        let (ranges, last) = if flags.contains(RegExpFlags::GLOBAL) {
             let ranges = self.regexp_global_matches(
                 p,
                 receiver,
@@ -1675,9 +1670,9 @@ impl<H: Host> Vm<H> {
                 let input =
                     vm.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 if let Some((matcher, flags)) = vm.regexp_builtin_receiver_matcher(receiver)
-                    && flags.contains('g')
+                    && flags.contains(RegExpFlags::GLOBAL)
                 {
-                    return vm.regexp_symbol_match_global_fast(p, receiver, &input, &matcher, &flags);
+                    return vm.regexp_symbol_match_global_fast(p, receiver, &input, &matcher, flags);
                 }
                 let flags = vm.regexp_flags_text(p, receiver)?;
                 if !flags.host_string().contains('g') {
@@ -1750,7 +1745,7 @@ impl<H: Host> Vm<H> {
         receiver: Value,
         input: &JsString,
         matcher: &quench_regexp::Regex,
-        flags: &str,
+        flags: RegExpFlags,
     ) -> Result<Value, JsError> {
         let subject = self.regexp_subject(input);
         // Only the last match's captures are observable (the legacy statics), so the rest
@@ -1833,7 +1828,7 @@ impl<H: Host> Vm<H> {
         this: Value,
     ) -> Result<Value, JsError> {
         let flags = match self.heap.get(this) {
-            Some(Cell::RegExp { meta, .. }) => meta.flags.clone(),
+            Some(Cell::RegExp { meta, .. }) => meta.flags,
             _ if self
                 .realm
                 .intrinsics
@@ -1851,11 +1846,10 @@ impl<H: Host> Vm<H> {
         };
         let flag = REGEXP_FLAG_ACCESSORS
             .iter()
-            .find(|(_, accessor, _)| *accessor == native)
-            .map(|(_, _, flag)| *flag)
+            .position(|(_, accessor, _)| *accessor == native)
+            .map(RegExpFlags::at)
             .ok_or_else(|| JsError("invalid RegExp flag accessor".into()))?;
-        let contains = flags.contains(flag);
-        Ok(if contains { Value::TRUE } else { Value::FALSE })
+        Ok(if flags.contains(flag) { Value::TRUE } else { Value::FALSE })
     }
 
     pub(super) fn regexp_flags_native(
@@ -1984,7 +1978,7 @@ impl<H: Host> Vm<H> {
             let input = if let Some(Cell::RegExp { meta, .. }) = vm.heap.get(pattern_value) {
                 RegExpConstructorInput::Internal {
                     source: meta.source.clone(),
-                    original_flags: flags_omitted.then(|| meta.flags.clone()),
+                    original_flags: flags_omitted.then(|| meta.flags.text()),
                 }
             } else {
                 let source = if pattern_is_regexp {
@@ -2092,6 +2086,7 @@ impl<H: Host> Vm<H> {
         legacy_constructor: crate::heap::RegExpLegacyOwner,
     ) -> Result<Value, JsError> {
         let matcher = self.cached_regexp_matcher(&source, &flags)?;
+        let flags = RegExpFlags::validated(&flags);
         self.regexp_from_matcher(prototype, source, flags, matcher, legacy_constructor)
     }
 
@@ -2111,14 +2106,15 @@ impl<H: Host> Vm<H> {
             .constant(program, site.pattern_constant as usize)
             .and_then(|value| self.heap.string(value).map(|source| source.clone()))
             .ok_or_else(|| JsError::validation("RegExp literal pattern is not a string".into()))?;
-        let flags = self
+        let flags_text = self
             .programs
             .constant(program, site.flags_constant as usize)
-            .and_then(|value| self.heap.string(value).map(|flags| flags.host_string().to_owned()))
+            .filter(|value| self.heap.string(*value).is_some())
             .ok_or_else(|| JsError::validation("RegExp literal flags are not a string".into()))?;
         let matcher = match self.programs.regexp_literal_matcher(program, site_index) {
             Some(matcher) => matcher,
             None => {
+                let flags = self.heap.string(flags_text).expect("checked above").host_string().to_owned();
                 let matcher = self
                     .cached_regexp_matcher(&source, &flags)
                     .map_err(|error| Rc::<str>::from(error.to_string()));
@@ -2134,6 +2130,8 @@ impl<H: Host> Vm<H> {
             }
         }
         .map_err(|message| JsError(message.to_string().into()))?;
+        let flags =
+            RegExpFlags::validated(self.heap.string(flags_text).expect("checked above").host_string());
         let (prototype, constructor) = self
             .realm
             .intrinsics
@@ -2154,7 +2152,7 @@ impl<H: Host> Vm<H> {
         &mut self,
         prototype: Value,
         source: JsString,
-        flags: String,
+        flags: RegExpFlags,
         matcher: Rc<quench_regexp::Regex>,
         legacy_constructor: crate::heap::RegExpLegacyOwner,
     ) -> Result<Value, JsError> {
@@ -2228,7 +2226,7 @@ impl<H: Host> Vm<H> {
                             "flags cannot be supplied when pattern is a RegExp".into(),
                         ));
                     }
-                    (meta.source.clone(), meta.flags.clone())
+                    (meta.source.clone(), meta.flags.text())
                 } else {
                     vm.regexp_initialization_strings(p, pattern, flags)?
                 };
@@ -2250,7 +2248,7 @@ impl<H: Host> Vm<H> {
                     unreachable!("RegExp receiver slot was validated before compilation")
                 };
                 meta.source = source;
-                meta.flags = flags;
+                meta.flags = RegExpFlags::validated(&flags);
                 *current_matcher = matcher;
                 let last_index = vm.intern_atom("lastIndex");
                 vm.set_property_with_program_mode(p, receiver, last_index, Value::number(0.0), true)?;
@@ -2364,8 +2362,8 @@ impl<H: Host> Vm<H> {
         let (regex, stateful, sticky) = match self.heap.get(this) {
             Some(Cell::RegExp { matcher, meta, .. }) => (
                 Rc::clone(matcher),
-                meta.flags.contains('g') || meta.flags.contains('y'),
-                meta.flags.contains('y'),
+                meta.flags.intersects(RegExpFlags::GLOBAL.with(RegExpFlags::STICKY)),
+                meta.flags.contains(RegExpFlags::STICKY),
             ),
             _ => {
                 return Err(
@@ -2493,7 +2491,7 @@ impl<H: Host> Vm<H> {
         {
             let vm = self;
             let has_indices = match vm.heap.get(this) {
-                Some(Cell::RegExp { meta, .. }) => meta.flags.contains('d'),
+                Some(Cell::RegExp { meta, .. }) => meta.flags.contains(RegExpFlags::HAS_INDICES),
                 _ => false,
             };
             // Each matched substring is copied out (`JsString::from_unit_run`): captures are
@@ -2983,34 +2981,77 @@ fn regexp_escape_control(character: char) -> Option<&'static str> {
     }
 }
 
-/// A RegExp's flags held inline, so a matcher's caller copies them without allocating. A
-/// valid flags string names each letter of `REGEXP_FLAG_ACCESSORS` at most once, which
-/// bounds its length.
-#[derive(Clone, Copy)]
-pub(super) struct InlineRegExpFlags {
-    letters: [u8; REGEXP_FLAG_LETTERS],
-    length: u8,
-}
+/// A RegExp's flags (its [[OriginalFlags]]) as the set of letters they name. A valid flags
+/// string names each letter of `REGEXP_FLAG_ACCESSORS` at most once and nothing observes the
+/// order it was written in, so the set is the whole fact: bit `index` is the letter of
+/// accessor `index`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct RegExpFlags(u8);
 
-/// The most letters a RegExp's flags hold: one per flag accessor.
-const REGEXP_FLAG_LETTERS: usize = 8;
-const _: () = assert!(REGEXP_FLAG_ACCESSORS.len() == REGEXP_FLAG_LETTERS);
+const _: () = assert!(REGEXP_FLAG_ACCESSORS.len() <= u8::BITS as usize);
 
-impl InlineRegExpFlags {
-    /// `flags` inline, or `None` when they are longer than any valid flags.
-    fn of(flags: &str) -> Option<Self> {
-        let bytes = flags.as_bytes();
-        let mut letters = [0; REGEXP_FLAG_LETTERS];
-        letters.get_mut(..bytes.len())?.copy_from_slice(bytes);
-        Some(Self { letters, length: bytes.len() as u8 })
+impl RegExpFlags {
+    pub(crate) const HAS_INDICES: Self = Self::letter('d');
+    pub(crate) const GLOBAL: Self = Self::letter('g');
+    pub(crate) const STICKY: Self = Self::letter('y');
+    /// Either Unicode mode: `u`, or `v` (unicodeSets).
+    const UNICODE_MODES: Self = Self::letter('u').with(Self::letter('v'));
+
+    /// The flag of `REGEXP_FLAG_ACCESSORS[index]`.
+    pub(crate) const fn at(index: usize) -> Self {
+        Self(1 << index)
     }
-}
 
-impl std::ops::Deref for InlineRegExpFlags {
-    type Target = str;
-    fn deref(&self) -> &str {
-        // SAFETY: the letters are a prefix copied from a `str`, cut at its end.
-        unsafe { std::str::from_utf8_unchecked(&self.letters[..usize::from(self.length)]) }
+    const fn letter(letter: char) -> Self {
+        let mut index = 0;
+        while index < REGEXP_FLAG_ACCESSORS.len() {
+            if REGEXP_FLAG_ACCESSORS[index].2 == letter {
+                return Self::at(index);
+            }
+            index += 1;
+        }
+        panic!("not a RegExp flag letter")
+    }
+
+    /// The set a flags string names, or `None` when it names an unknown letter or one twice.
+    pub(crate) fn of(text: &str) -> Option<Self> {
+        text.chars().try_fold(Self(0), |flags, letter| {
+            let index = REGEXP_FLAG_ACCESSORS
+                .iter()
+                .position(|(_, _, flag)| *flag == letter)?;
+            (!flags.contains(Self::at(index))).then(|| flags.with(Self::at(index)))
+        })
+    }
+
+    /// The set of flags a compiled matcher was built from: compilation validated `text`.
+    pub(crate) fn validated(text: &str) -> Self {
+        Self::of(text).expect("compiled RegExp flags are valid")
+    }
+
+    pub(crate) const fn with(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+
+    pub(crate) const fn contains(self, other: Self) -> bool {
+        self.0 & other.0 == other.0
+    }
+
+    pub(crate) const fn intersects(self, other: Self) -> bool {
+        self.0 & other.0 != 0
+    }
+
+    pub(crate) const fn unicode_mode(self) -> bool {
+        self.intersects(Self::UNICODE_MODES)
+    }
+
+    /// The flags' letters in accessor order, the order the `flags` getter spells them.
+    pub(crate) fn text(self) -> String {
+        REGEXP_FLAG_ACCESSORS
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| self.contains(Self::at(*index)))
+            .map(|(_, (_, _, letter))| *letter)
+            .collect()
     }
 }
 
