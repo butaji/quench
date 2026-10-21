@@ -3249,7 +3249,7 @@ impl crate::snapshot::Snap for RegExpIntrinsics {
         writer.bool(match legacy_match {
             LegacyRegExpMatch::Empty => false,
             LegacyRegExpMatch::Invalid => true,
-            LegacyRegExpMatch::Matched { .. } => {
+            LegacyRegExpMatch::Matched { .. } | LegacyRegExpMatch::Pending { .. } => {
                 return Err(crate::snapshot::SnapshotError::unsupported("legacy RegExp match data"));
             }
         });
