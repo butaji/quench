@@ -1399,6 +1399,38 @@ impl Heap {
     }
     /// Slide every live arena range down over released ones, in offset order.
     /// `objects` holds each live arena owner packed with its range offset.
+    /// The live owners of compact property ranges after a sweep, as the sweep would list
+    /// them (`compact_property_arena`): cells by packed offset and slot, records by offset.
+    fn live_property_owners(&mut self) -> (Vec<u64>, Vec<(usize, Value)>) {
+        let (slot_count, direct_count) = self.property_owner_counts;
+        let mut slot_owners = Vec::with_capacity(slot_count);
+        let properties = &self.properties;
+        for (base, slab) in self.slots.slabs_mut() {
+            for (offset, slot) in slab.iter().enumerate() {
+                if let Some(object) = slot.cell.as_ref().and_then(Cell::object)
+                    && properties.has_compact_range(object.properties())
+                {
+                    slot_owners.push(pack_offset_owner(object.properties().start_offset(), base + offset));
+                }
+            }
+        }
+        let mut direct_owners = Vec::with_capacity(direct_count);
+        let mut owner = |properties: ValueVec, value: Value| {
+            if properties.has_compact_range() {
+                direct_owners.push((properties.start_offset(), value));
+            }
+        };
+        self.object_records.for_each_live(|id, object| owner(object.properties(), Value::direct_object(id)));
+        self.function_records
+            .for_each_live(|id, function| owner(function.object.properties(), Value::direct_function(id)));
+        self.promise_records
+            .for_each_live(|id, promise| owner(promise.object.properties(), Value::direct_promise(id)));
+        self.iterator_records
+            .for_each_live(|id, iterator| owner(iterator.object.properties(), Value::direct_iterator(id)));
+        self.array_records.for_each_live(|id, array| owner(array.properties(), Value::direct_array(id)));
+        (slot_owners, direct_owners)
+    }
+
     fn compact_property_arena(
         &mut self,
         slot_owners: Vec<u64>,
@@ -1974,6 +2006,13 @@ impl Heap {
         if compacts {
             self.property_owner_counts = (property_owners.len(), direct_property_owners.len());
             self.compact_property_arena(property_owners, direct_property_owners);
+        } else if full && self.properties.compaction_due() {
+            // This sweep's releases made compaction due: compact now, listing the survivors
+            // apart from the sweep, rather than holding the released ranges until the next
+            // full collection (V8-v7 RegExp's live heap, 5100 -> 5284 KiB).
+            let (slot_owners, direct_owners) = self.live_property_owners();
+            self.property_owner_counts = (slot_owners.len(), direct_owners.len());
+            self.compact_property_arena(slot_owners, direct_owners);
         }
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         {
