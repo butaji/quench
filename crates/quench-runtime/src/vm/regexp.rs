@@ -2723,7 +2723,7 @@ impl<H: Host> Vm<H> {
             let groups = vm.regexp_groups_object(&named, input.units())?;
             let index = Value::number(matched.range.start as f64);
             let input_value = vm.string_value_from(argument, &input);
-            let array = crate::heap::ArrayObject::new(Self::empty_object(vm.array_proto), Rc::new(values));
+            let array = crate::heap::ArrayObject::new(Self::empty_object(vm.array_proto), values);
             let result = match vm.regexp_result_layout() {
                 // The recorded layout: the array is allocated with its properties, by the
                 // same storage steps `initialize_regexp_result` takes on the published cell.
@@ -2953,7 +2953,7 @@ impl<H: Host> Vm<H> {
         let indices = self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_proto),
-                Rc::new(entries),
+                entries,
             ),
         });
         let groups = if !named.is_empty() {
@@ -2985,7 +2985,7 @@ impl<H: Host> Vm<H> {
         self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_proto),
-                Rc::new(pair.into()),
+                pair,
             ),
         })
     }

@@ -54,13 +54,13 @@ impl<H: Host> Vm<H> {
                 let Some(elements) = self.heap.array_elements_mut(existing) else {
                     return Err(JsError("array group bucket is not an array".into()));
                 };
-                Rc::make_mut(elements).push(value);
+                elements.make_mut().push(value);
                 continue;
             }
             let bucket = self.heap.alloc(Cell::Array {
                 object: crate::heap::ArrayObject::new(
                     Self::empty_object(self.array_proto),
-                    Rc::new(vec![value]),
+                    vec![value],
                 ),
             });
             if let Some(atom) = key_atom {

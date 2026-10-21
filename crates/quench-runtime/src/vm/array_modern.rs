@@ -69,7 +69,7 @@ impl<H: Host> Vm<H> {
         prototype: Value,
     ) -> Value {
         self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(Self::empty_object(prototype), Rc::new(values)),
+            object: crate::heap::ArrayObject::new(Self::empty_object(prototype), values),
         })
     }
 
@@ -193,7 +193,7 @@ impl<H: Host> Vm<H> {
         let array = self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
                 Self::empty_object(prototype),
-                Rc::new(Vec::new()),
+                Vec::new(),
             ),
         });
         self.heap.sparse_set_length(array, length);

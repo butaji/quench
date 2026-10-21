@@ -386,7 +386,7 @@ impl ArrayObject {
         if !object.is_array() {
             return Err(SnapshotError("snapshot array without its array flag".into()));
         }
-        let elements = Rc::new(reader.values()?);
+        let elements = super::super::ArrayElements::from(reader.values()?);
         Ok(Self { object, elements })
     }
 }
