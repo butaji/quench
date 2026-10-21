@@ -280,7 +280,19 @@ struct JsonHeapBuilder<'v, H: Host> {
     /// epoch, since a full collection may renumber shapes.
     transitions: rustc_hash::FxHashMap<(u32, Atom), u32>,
     transitions_epoch: u64,
+    /// Short string values this parse made, by content hash: a JSON text repeats them, and a
+    /// string has no identity, so equal ones share one record (json-parse-inspector keeps
+    /// 146k live strings of 7k contents). Valid within one collection epoch, like
+    /// `transitions`.
+    strings: rustc_hash::FxHashMap<u64, Value>,
+    strings_epoch: u64,
 }
+
+/// The longest string a parse shares: longer values rarely repeat, and comparing them costs
+/// what sharing saves.
+const JSON_SHARED_STRING_UNITS: usize = 64;
+/// The most distinct strings one parse remembers, bounding its table.
+const JSON_SHARED_STRINGS: usize = 1 << 14;
 
 enum JsonBuildError {
     Parse(JsonParseError),
@@ -294,6 +306,8 @@ impl<'v, H: Host> JsonHeapBuilder<'v, H> {
             array_prototype: vm.array_prototype_for_realm(globals),
             object_prototype: vm.realm_object_prototype(globals),
             transitions_epoch: vm.heap.collection_epoch(),
+            strings: Default::default(),
+            strings_epoch: vm.heap.collection_epoch(),
             vm,
             error: None,
             transitions: Default::default(),
@@ -352,9 +366,31 @@ impl<H: Host> JsonBuilder for JsonHeapBuilder<'_, H> {
         Value::number(value)
     }
     fn string(&mut self, units: &[u16]) -> Value {
-        self.vm
-            .heap
-            .alloc_string(JsString::from_units(units))
+        let text = JsString::from_units(units);
+        if units.len() > JSON_SHARED_STRING_UNITS {
+            return self.vm.heap.alloc_string(text);
+        }
+        let epoch = self.vm.heap.collection_epoch();
+        if epoch != self.strings_epoch {
+            self.strings.clear();
+            self.strings_epoch = epoch;
+        }
+        let hash = {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = rustc_hash::FxHasher::default();
+            text.hash(&mut hasher);
+            hasher.finish()
+        };
+        if let Some(&value) = self.strings.get(&hash)
+            && self.vm.heap.string(value) == Some(&text)
+        {
+            return value;
+        }
+        let value = self.vm.heap.alloc_string(text);
+        if self.strings.len() < JSON_SHARED_STRINGS {
+            self.strings.insert(hash, value);
+        }
+        value
     }
     fn key(&mut self, units: &[u16]) -> Atom {
         self.vm.intern_unit_run_atom(Units::Wide(units))
