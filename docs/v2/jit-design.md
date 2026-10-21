@@ -883,6 +883,13 @@ problem on `doxbee-promise` (966 MiB), `doxbee-async` (1004 MiB), and
 other workloads. These single rounds are diagnostic screens, not
 qualification.
 
+A three-round glibc allocator screen tried `MALLOC_TRIM_THRESHOLD_=0` on
+`doxbee-promise` and `doxbee-async`. Median peak RSS was unchanged (within
+0.01%) in both fixtures. Quench Score rose 3.8–4.3%, but large peer timing
+drift between sequential screens makes that inconclusive. Aggressive trim
+is not retained as a runtime setting. Raw reports are in
+`evidence/jit-jetstream3-2026-10-21/doxbee-glibc-trim/`.
+
 The focused `typescript-lib` profile counted 28.9 million function entries,
 3.93 million native entries, 89 promotions, and 43 successful native
 compilations. The highest-cost work is in closure/call-heavy functions and
