@@ -68,6 +68,11 @@ impl Registry {
     fn visible_counts(&self) -> [u32; HookKind::ALL.len()] {
         self.snapshot.map_or(self.counts, |(_, counts)| counts)
     }
+
+    pub(super) fn tracks_promise_lifecycle_resources(&self) -> bool {
+        let counts = self.visible_counts();
+        counts[HookKind::Init.index()] != 0 || counts[HookKind::Destroy.index()] != 0
+    }
 }
 
 pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
@@ -373,4 +378,21 @@ pub(super) fn emit(
         context.release_root(root);
     }
     result
+}
+
+impl Registry {
+    /// The hooks API a bootstrap built, with no hook installed.
+    pub(super) fn write_snapshot(&self, writer: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> {
+        use crate::host::startup_snapshot::{require_quiescent, HostSnap};
+        let Self { api, counts, depth, snapshot, promise_hook } = self;
+        require_quiescent(
+            counts.iter().all(|count| *count == 0) && *depth == 0 && snapshot.is_none() && !promise_hook,
+            "an async hook",
+        )?;
+        api.write(writer)
+    }
+    pub(super) fn read_snapshot(&mut self, reader: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<(), String> {
+        self.api = crate::host::startup_snapshot::HostSnap::read(reader)?;
+        Ok(())
+    }
 }

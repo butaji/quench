@@ -129,6 +129,11 @@ impl<H: Host> Vm<H> {
                 return Ok(value);
             }
         }
+        // A symbol or an existing non-index name that the plain chain walk answers, as the
+        // lane reads it (`plain_keyed_get`): no guest code runs before the slow path would.
+        if let Some(value) = self.plain_keyed_get(object, key) {
+            return Ok(value);
+        }
         self.get_index_slow(p, object, key)
     }
 
@@ -348,6 +353,30 @@ impl<H: Host> Vm<H> {
             .elements()
             .get(index)
             .copied()
+            .filter(|value| !value.is_deleted())
+    }
+
+    /// A present own data index on an ordinary array, whether it lives in the dense
+    /// vector or sparse backing. Accessors and absent indices stay on the full lookup path.
+    pub(super) fn direct_array_index_data(&self, base: Value, key: Value) -> Option<Value> {
+        let index = usize::try_from(self.array_index_key(key)?).ok()?;
+        let array = self.heap.array(base)?;
+        if let Some(value) = array
+            .elements()
+            .get(index)
+            .copied()
+            .filter(|value| !value.is_deleted())
+        {
+            return Some(value);
+        }
+        if self
+            .array_descriptor_entry(base, index)
+            .is_some_and(|(_, attributes)| attributes.accessor)
+        {
+            return None;
+        }
+        self.heap
+            .sparse_get(base, index)
             .filter(|value| !value.is_deleted())
     }
 

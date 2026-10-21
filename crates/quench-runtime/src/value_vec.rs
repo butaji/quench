@@ -10,10 +10,9 @@ const EMPTY_START: u32 = START_MASK;
 const INLINE_PROPERTY_START: u32 = EMPTY_START - 1;
 const MAX_ARENA_START: usize = INLINE_PROPERTY_START as usize;
 /// Properties an object keeps in its record. The Score lane (`v2-cloud-c`, a2deff57a) runs
-/// three, for RayTrace's three-field vectors and colors, at the cost of max RSS (Splay 162 ->
-/// 204 MB); the integration branch keeps memory-first defaults (the owner's direction,
-/// 2026-10-17 and 2026-10-18), and merges from it keep three on this lane.
-pub(crate) const INLINE_PROPERTY_COUNT: usize = 3;
+/// three for RayTrace's vectors at the cost of max RSS (Splay 162 -> 204 MB); the integration
+/// branch keeps memory-first defaults (the owner's direction, 2026-10-17 and 2026-10-18).
+pub(crate) const INLINE_PROPERTY_COUNT: usize = 2;
 const MIN_CAPACITY: usize = 2;
 const BUCKETS: usize = 32;
 const DENSE_ARENA_RESERVE_THRESHOLD: usize = 65_536;
@@ -181,6 +180,55 @@ impl Default for ValueArena {
 }
 
 impl ValueArena {
+    /// The arena as a snapshot keeps it (`crate::snapshot`): storage positions name places in
+    /// `values`, so the vector and its free ranges are written as they are.
+    pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
+        let Self { values, free, released_values, shape_lengths, dictionaries, free_dictionaries, next_dictionary } = self;
+        writer.values(values);
+        for bucket in free {
+            writer.u32s(bucket);
+        }
+        writer.len(*released_values);
+        writer.u32s(shape_lengths);
+        writer.len(dictionaries.len());
+        for (id, entries) in dictionaries {
+            writer.u32(*id);
+            writer.len(entries.len());
+            for (key, value) in entries {
+                writer.u32(*key);
+                writer.value(*value);
+            }
+        }
+        writer.u32s(free_dictionaries);
+        writer.u32(*next_dictionary);
+    }
+
+    pub(crate) fn read_snapshot(reader: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::SnapshotResult<Self> {
+        let values = reader.values()?;
+        let mut free: [Vec<u32>; BUCKETS] = Default::default();
+        for bucket in &mut free {
+            *bucket = reader.u32s()?;
+        }
+        let released_values = reader.len()?;
+        let shape_lengths = reader.u32s()?;
+        let dictionaries = crate::snapshot::read_list(reader, |reader| {
+            let id = reader.u32()?;
+            let entries = crate::snapshot::read_list(reader, |reader| Ok((reader.u32()?, reader.value()?)))?;
+            Ok((id, entries.into_iter().collect()))
+        })?
+        .into_iter()
+        .collect();
+        Ok(Self {
+            values,
+            free,
+            released_values,
+            shape_lengths,
+            dictionaries,
+            free_dictionaries: reader.u32s()?,
+            next_dictionary: reader.u32()?,
+        })
+    }
+
     pub(crate) fn reset(&mut self) {
         self.values.clear();
         for bucket in &mut self.free {
