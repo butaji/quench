@@ -373,7 +373,7 @@ impl<H: Host> Vm<H> {
         if let Some(length) = self.own_array_length(object) {
             return Ok(length);
         }
-        let length_atom = self.intern_atom("length");
+        let length_atom = self.length_atom;
         let value = self.get_property(p, object, length_atom)?;
         let number = self.to_number(p, value)?;
         if number.is_nan() || number <= 0.0 {

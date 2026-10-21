@@ -16,12 +16,17 @@ impl ProgramStore {
             owned_scripts,
             reclaim_passes,
             unchecked_reclaimable,
+            // Compiled code is never in a snapshot: its budgets and memos start over.
             js_jit_tracked_functions: _,
+            js_jit_rejected_functions: _,
             js_jit_compiled_functions: _,
             js_jit_mapped_bytes: _,
             wasm_jit_tier_roots: _,
             wasm_jit_tier_mapped_bytes: _,
+            jit_compiled_artifacts: _,
+            jit_mapped_bytes: _,
             js_jit_diagnostics: _,
+            js_jit_numeric_find_candidate: _,
         } = self;
         if !owned_scripts.is_empty() {
             return Err(SnapshotError::unsupported("scripts an embedder compiled and holds"));

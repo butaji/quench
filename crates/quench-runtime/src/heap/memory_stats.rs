@@ -25,6 +25,7 @@ pub struct HeapMemoryComposition {
     pub promise_record_reserved_bytes: usize,
     pub await_record_reserved_bytes: usize,
     pub iterator_record_reserved_bytes: usize,
+    pub string_record_reserved_bytes: usize,
     pub legacy_cell_record_reserved_bytes: usize,
     pub free_slot_metadata_bytes: usize,
     pub slot_size_bytes: usize,
@@ -98,15 +99,19 @@ impl Heap {
             let direct_promise = identity.direct_promise_index().is_some();
             let direct_await = identity.direct_await_index().is_some();
             let direct_iterator = identity.direct_iterator_index().is_some();
+            let direct_string = identity.direct_string_index().is_some();
             direct_records += usize::from(
                 direct_object
                     || direct_array
                     || direct_function
                     || direct_promise
                     || direct_await
-                    || direct_iterator,
+                    || direct_iterator
+                    || direct_string,
             );
-            let kind = if direct_iterator {
+            let kind = if direct_string {
+                CellKind::String as usize
+            } else if direct_iterator {
                 CellKind::Iterator as usize
             } else if direct_await {
                 CellKind::AwaitState as usize
@@ -132,6 +137,8 @@ impl Heap {
                 "await_state"
             } else if direct_iterator {
                 "iterator"
+            } else if direct_string {
+                "string"
             } else {
                 cell.expect("live legacy value has a Cell")
                     .profile_variant_name()
@@ -189,10 +196,25 @@ impl Heap {
             } else if direct_iterator {
                 self.iterator(identity)
                     .map_or(0, |iterator| iterator.object.allocated_extra_bytes())
+            } else if let Some(string) = self.string(identity) {
+                string.capacity()
             } else {
                 cell.map_or(0, Self::cell_payload_bytes)
             };
-            if direct_array {
+            if let Some(value) = self.string(identity) {
+                other_cell_payload_bytes += payload_bytes.saturating_sub(value.capacity());
+                let (units, host) = value.memory_parts();
+                if string_identities.insert(units.0) {
+                    string_buffers_bytes += units.1;
+                    string_buffer_count += 1;
+                }
+                if let Some(host) = host
+                    && string_identities.insert(host.0)
+                {
+                    string_buffers_bytes += host.1;
+                    string_buffer_count += 1;
+                }
+            } else if direct_array {
                 let elements = self
                     .array_elements(identity)
                     .expect("live direct array record");
@@ -219,20 +241,6 @@ impl Heap {
                             dense_array_headers_bytes +=
                                 size_of::<Vec<Value>>() + RC_HEADER_WORDS * size_of::<usize>();
                             dense_array_backing_count += 1;
-                        }
-                    }
-                    Some(Cell::String(value)) => {
-                        other_cell_payload_bytes += payload_bytes.saturating_sub(value.capacity());
-                        let (units, host) = value.memory_parts();
-                        if string_identities.insert(units.0) {
-                            string_buffers_bytes += units.1;
-                            string_buffer_count += 1;
-                        }
-                        if let Some(host) = host {
-                            if string_identities.insert(host.0) {
-                                string_buffers_bytes += host.1;
-                                string_buffer_count += 1;
-                            }
                         }
                     }
                     Some(Cell::ArrayBuffer { bytes, .. }) => {
@@ -276,6 +284,7 @@ impl Heap {
             promise_record_reserved_bytes: self.promise_records.allocated_bytes(),
             await_record_reserved_bytes: self.await_records.allocated_bytes(),
             iterator_record_reserved_bytes: self.iterator_records.allocated_bytes(),
+            string_record_reserved_bytes: self.string_records.allocated_bytes(),
             legacy_cell_record_reserved_bytes: 0,
             free_slot_metadata_bytes: self.free_by_slab.capacity() * size_of::<FreeSlotBitmap>()
                 + self.free_slabs.capacity() * size_of::<u32>(),
@@ -343,6 +352,7 @@ impl HeapMemoryComposition {
             + self.promise_record_reserved_bytes
             + self.await_record_reserved_bytes
             + self.iterator_record_reserved_bytes
+            + self.string_record_reserved_bytes
             + self.legacy_cell_record_reserved_bytes
             + self.free_slot_metadata_bytes
             + self.boxed_object_header_bytes

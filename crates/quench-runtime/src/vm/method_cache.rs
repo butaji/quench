@@ -133,7 +133,7 @@ impl<H: Host> Vm<H> {
         self.invalidated_methods.retain(|key, entry| {
             let proto_live = !key.proto.is_heap() || heap.is_live(key.proto);
             let env = match entry.target {
-                CallTarget::User(_, _, env) | CallTarget::NumericUser(_, _, env) => Some(env),
+                CallTarget::User(_, _, env) => Some(env),
                 CallTarget::Native(_) => None,
             };
             proto_live && env.is_none_or(|value| !value.is_heap() || heap.is_live(value))
@@ -367,7 +367,7 @@ fn method_cache_live(heap: &crate::heap::Heap, entry: MethodCache) -> bool {
     let owner_live = !entry.guard.owner.is_heap() || heap.is_live(entry.guard.owner);
     let callee_live = !entry.callee.is_heap() || heap.is_live(entry.callee);
     let env = match entry.target {
-        Some(CallTarget::User(_, _, env) | CallTarget::NumericUser(_, _, env)) => Some(env),
+        Some(CallTarget::User(_, _, env)) => Some(env),
         _ => None,
     };
     key_live

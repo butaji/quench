@@ -139,6 +139,15 @@ impl JsError {
         Self(ErrorMessage { payload: Box::new(ErrorPayload { description: ErrorDescription::ExecutionTerminated, thrown: None, source_location: None }) })
     }
     /// A host termination is uncatchable, not a guest Error object or throw.
+    /// A JavaScript exception: thrown by guest code or raised as a JavaScript error, as
+    /// opposed to a Wasm exception, a trap, a link failure or a terminated execution.
+    pub fn is_javascript_exception(&self) -> bool {
+        matches!(
+            self.0.payload.description,
+            ErrorDescription::Text { .. } | ErrorDescription::DataClone(_)
+        )
+    }
+
     pub fn is_execution_terminated(&self)->bool { matches!(self.0.payload.description,ErrorDescription::ExecutionTerminated) }
 
     pub(crate) fn thrown(value: Value, message: String) -> Self {
@@ -397,7 +406,7 @@ impl<H: Host> Vm<H> {
             stack.append(&self.format_call_site(program, record)?);
         }
         let stack = self.string_build_result(program, stack.finish())?;
-        Ok(self.heap.alloc(Cell::String(stack)))
+        Ok(self.heap.alloc_string(stack))
     }
 
     fn error_call_site_array(
@@ -710,7 +719,7 @@ impl<H: Host> Vm<H> {
         let intrinsics = self.realm.intrinsics.error_intrinsics[&self.realm.globals];
         let getter = intrinsics.stack_getter;
         let setter = intrinsics.stack_setter;
-        let key = self.heap.alloc(Cell::String("stack".into()));
+        let key = self.heap.alloc_string("stack".into());
         self.define_property_or_throw(
             program,
             target,
@@ -803,7 +812,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn call_site_constructor(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
-        let message = self.heap.alloc(Cell::String(JsString::from_str("Not supported")));
+        let message = self.heap.alloc_string(JsString::from_str("Not supported"));
         let error = self.construct_error_native(program, Native::Error, &[message])?;
         Err(JsError::thrown(error, "Error: Not supported".into()))
     }
@@ -833,7 +842,7 @@ impl<H: Host> Vm<H> {
             Native::CallSiteGetFileName if record.eval_origin.is_some() => Ok(Value::UNDEFINED),
             Native::CallSiteGetFileName => Ok(match record.location {
                 CallSiteLocation::Source { file_name, .. } => {
-                    self.heap.alloc(Cell::String(file_name.into()))
+                    self.heap.alloc_string(file_name.into())
                 }
                 CallSiteLocation::Native => Value::NULL,
             }),
@@ -843,10 +852,10 @@ impl<H: Host> Vm<H> {
                 _ => Value::UNDEFINED,
             }),
             Native::CallSiteGetMethodName => Ok(self.call_site_method_name(&record)?
-                .map(|name| self.heap.alloc(Cell::String(name)))
+                .map(|name| self.heap.alloc_string(name))
                 .unwrap_or(Value::NULL)),
             Native::CallSiteGetFunctionName => Ok(self.call_site_name(&record)
-                .map(|name| self.heap.alloc(Cell::String(name)))
+                .map(|name| self.heap.alloc_string(name))
                 .unwrap_or(Value::NULL)),
             Native::CallSiteGetLineNumber => Ok(match record.location {
                 CallSiteLocation::Source { line, .. } => Value::number(f64::from(line)),
@@ -866,13 +875,13 @@ impl<H: Host> Vm<H> {
                 })
             }
             Native::CallSiteGetTypeName => Ok(self.call_site_type_name(&record)?
-                .map(|name| self.heap.alloc(Cell::String(name)))
+                .map(|name| self.heap.alloc_string(name))
                 .unwrap_or(Value::NULL)),
             Native::CallSiteGetEvalOrigin => Ok(record.eval_origin
-                .map(|origin| self.heap.alloc(Cell::String(origin))).unwrap_or(Value::UNDEFINED)),
+                .map(|origin| self.heap.alloc_string(origin)).unwrap_or(Value::UNDEFINED)),
             Native::CallSiteToString => {
                 let text = self.format_call_site(program, &record)?;
-                Ok(self.heap.alloc(Cell::String(text)))
+                Ok(self.heap.alloc_string(text))
             },
             _ => Err(JsError::validation(
                 "invalid CallSite native dispatch".into(),
@@ -940,7 +949,7 @@ impl<H: Host> Vm<H> {
             text.append(&message);
             self.string_build_result(program, text.finish())?
         };
-        Ok(self.heap.alloc(Cell::String(text)))
+        Ok(self.heap.alloc_string(text))
     }
 
     pub(crate) fn format_error(&mut self, program: &ResidualProgram, error: &JsError) -> String {
@@ -958,18 +967,12 @@ impl<H: Host> Vm<H> {
         let name = self
             .get_property(program, value, name_atom)
             .ok()
-            .and_then(|value| match self.heap.get(value) {
-                Some(Cell::String(name)) => Some(name.to_string()),
-                _ => None,
-            })
+            .and_then(|value| self.heap.string(value).map(|name| name.to_string()))
             .unwrap_or_default();
         let message = self
             .get_property(program, value, message_atom)
             .ok()
-            .and_then(|value| match self.heap.get(value) {
-                Some(Cell::String(message)) => Some(message.to_string()),
-                _ => None,
-            })
+            .and_then(|value| self.heap.string(value).map(|message| message.to_string()))
             .unwrap_or_default();
         match (name.is_empty(), message.is_empty()) {
             (true, true) => display,
@@ -980,7 +983,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn type_error(&mut self, program: &ResidualProgram, text: String) -> JsError {
-        let message = self.heap.alloc(Cell::String(JsString::from_str(&text)));
+        let message = self.heap.alloc_string(JsString::from_str(&text));
         let object = self
             .construct_error_native(program, Native::TypeError, &[message])
             .unwrap_or(Value::UNDEFINED);
@@ -1005,15 +1008,15 @@ impl<H: Host> Vm<H> {
             crate::ModuleLoadErrorKind::Error => Native::Error,
             crate::ModuleLoadErrorKind::TypeError => Native::TypeError,
         };
-        let message = self.heap.alloc(Cell::String(JsString::from_str(&error.message)));
+        let message = self.heap.alloc_string(JsString::from_str(&error.message));
         let object = match self.construct_error_native(program, native, &[message]) {
             Ok(object) => object,
             Err(failure) => return failure,
         };
         let code = error.code.map(|code| ("code", code.to_owned()));
         for (name, value) in code.into_iter().chain(error.fields) {
-            let name = self.heap.alloc(Cell::String(JsString::from_str(name)));
-            let value = self.heap.alloc(Cell::String(JsString::from_str(&value)));
+            let name = self.heap.alloc_string(JsString::from_str(name));
+            let value = self.heap.alloc_string(JsString::from_str(&value));
             let defined = self.to_property_key(program, name).and_then(|key| {
                 let record = super::object_descriptors::PropertyDescriptorRecord::data(value);
                 self.define_own_property_record(program, object, key, record)
@@ -1026,7 +1029,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn reference_error(&mut self, program: &ResidualProgram, text: String) -> JsError {
-        let message = self.heap.alloc(Cell::String(JsString::from_str(&text)));
+        let message = self.heap.alloc_string(JsString::from_str(&text));
         let object = self
             .construct_error_native(program, Native::ReferenceError, &[message])
             .unwrap_or(Value::UNDEFINED);
@@ -1044,14 +1047,14 @@ impl<H: Host> Vm<H> {
         let object = self.heap.alloc(Cell::Object(Object::error(prototype)));
         let message = self
             .heap
-            .alloc(Cell::String(crate::stack::STACK_EXHAUSTED_MESSAGE.into()));
+            .alloc_string(crate::stack::STACK_EXHAUSTED_MESSAGE.into());
         self.set_builtin_value_named(object, "message", message)
             .expect("fresh error object accepts message");
         JsError::thrown(object, crate::stack::STACK_EXHAUSTED_MESSAGE.into())
     }
 
     pub(super) fn range_error(&mut self, program: &ResidualProgram, text: String) -> JsError {
-        let message = self.heap.alloc(Cell::String(JsString::from_str(&text)));
+        let message = self.heap.alloc_string(JsString::from_str(&text));
         let object = self
             .construct_error_native(program, Native::RangeError, &[message])
             .unwrap_or(Value::UNDEFINED);
@@ -1059,7 +1062,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn uri_error(&mut self, program: &ResidualProgram, text: String) -> JsError {
-        let message = self.heap.alloc(Cell::String(JsString::from_str(&text)));
+        let message = self.heap.alloc_string(JsString::from_str(&text));
         let object = self
             .construct_error_native(program, Native::URIError, &[message])
             .unwrap_or(Value::UNDEFINED);
@@ -1111,23 +1114,24 @@ impl<H: Host> Vm<H> {
         } else {
             Native::Error
         };
-        let message = self.heap.alloc(Cell::String(JsString::from_str(&text)));
+        let message = self.heap.alloc_string(JsString::from_str(&text));
         self.construct_error_native(program, native, &[message])
             .unwrap_or(Value::UNDEFINED)
     }
 
     pub(super) fn box_primitive_object(&mut self, value: Value) -> Result<Value, JsError> {
-        if !matches!(self.heap.get(value), Some(Cell::String(_) | Cell::Symbol(_) | Cell::BigInt(_)))
+        if !self.heap.is_string(value)
+            && !matches!(self.heap.get(value), Some(Cell::Symbol(_) | Cell::BigInt(_)))
             && value.as_number().is_none() && value.as_bool().is_none()
         { return Ok(self.object()); }
         let prototype = self.primitive_prototype(value).unwrap_or(self.object_proto);
         let object = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
-        if let Some(Cell::String(text)) = self.heap.get(value).cloned() {
+        if let Some(text) = self.heap.string(value).cloned() {
             for (index, unit) in text.units().iter().enumerate() {
                 let key = self.intern_atom(&index.to_string());
                 let character = self
                     .heap
-                    .alloc(Cell::String(super::wtf16::JsString::from_units(&[unit])));
+                    .alloc_string(super::wtf16::JsString::from_units(&[unit]));
                 self.set_property_with_attributes(
                     object,
                     key,
@@ -1142,7 +1146,7 @@ impl<H: Host> Vm<H> {
                     },
                 )?;
             }
-            let length = self.intern_atom("length");
+            let length = self.length_atom;
             self.set_property_with_attributes(
                 object,
                 length,
@@ -1204,7 +1208,7 @@ impl<H: Host> Vm<H> {
             "length",
             Value::number(FUNCTION_PROTOTYPE_LENGTH),
         )?;
-        let prototype_length = self.intern_atom("length");
+        let prototype_length = self.length_atom;
         self.set_property_attributes(
             self.function_proto,
             PropertyKey::string(prototype_length),
@@ -1218,7 +1222,7 @@ impl<H: Host> Vm<H> {
             },
         );
         self.set_builtin_function_name(self.function_proto, "")?;
-        let length = self.intern_atom("length");
+        let length = self.length_atom;
         self.set_builtin_value_named(function, "length", Value::number(1.0))?;
         self.set_property_attributes(
             function,
@@ -1298,11 +1302,11 @@ impl<H: Host> Vm<H> {
         let prototype = self.object();
         self.set_named(program, constructor, "prototype", prototype)?;
         self.set_named(program, prototype, "constructor", constructor)?;
-        let name = self.heap.alloc(Cell::String("AbstractModuleSource".into()));
+        let name = self.heap.alloc_string("AbstractModuleSource".into());
         self.set_named(program, constructor, "name", name)?;
         let name_atom = self.intern_atom("name");
         let prototype_atom = self.prototype_atom();
-        let constructor_atom = self.intern_atom("constructor");
+        let constructor_atom = self.runtime_atoms.constructor;
         self.set_property_attributes(
             constructor,
             PropertyKey::string(prototype_atom),
@@ -1341,8 +1345,7 @@ impl<H: Host> Vm<H> {
         );
         let to_string_tag = self
             .well_known_symbols
-            .get("toStringTag")
-            .copied()
+            .get(WellKnownSymbol::ToStringTag)
             .expect("well-known toStringTag symbol installed before module source intrinsics");
         self.set_symbol_property(prototype, to_string_tag, Value::UNDEFINED)?;
         self.set_property_attributes(
@@ -1386,9 +1389,9 @@ impl<H: Host> Vm<H> {
         for argument in args {
             let text = self.to_string(program, *argument)?;
             if text.trim().starts_with("#!") {
-                let message = self.heap.alloc(Cell::String(
+                let message = self.heap.alloc_string(
                     "hashbang is not allowed in Function source".into(),
-                ));
+                );
                 let error =
                     self.construct_error_native(program, Native::SyntaxError, &[message])?;
                 return Err(JsError::thrown(
@@ -1513,7 +1516,7 @@ impl<H: Host> Vm<H> {
         if let Some(value) = primitive.as_bool() {
             return Ok(self.heap.alloc(Cell::bigint(u8::from(value).into())));
         }
-        if let Some(Cell::String(text)) = self.heap.get(primitive) {
+        if let Some(text) = self.heap.string(primitive) {
             let parsed = crate::bigint::parse_string(text.host_string());
             return match parsed {
                 Some(value) => Ok(self.heap.alloc(Cell::bigint(value))),
@@ -1587,9 +1590,9 @@ impl<H: Host> Vm<H> {
             .insert((global, Native::RealmTypeError), type_error_prototype);
         self.set_named_constant(program, type_error, "prototype", type_error_prototype)?;
         self.set_builtin_value_named(type_error_prototype, "constructor", type_error)?;
-        let type_error_name = self.heap.alloc(Cell::String("TypeError".into()));
+        let type_error_name = self.heap.alloc_string("TypeError".into());
         self.set_builtin_value_named(type_error_prototype, "name", type_error_name)?;
-        let empty_message = self.heap.alloc(Cell::String("".into()));
+        let empty_message = self.heap.alloc_string("".into());
         self.set_builtin_value_named(type_error_prototype, "message", empty_message)?;
         self.set_builtin_function_length(type_error, 1.0)?;
         self.set_builtin_value_named(global, "TypeError", type_error)?;
@@ -1771,7 +1774,7 @@ impl<H: Host> Vm<H> {
                 native,
                 Native::GeneratorFunction | Native::AsyncGeneratorFunction
             ) {
-                let constructor_atom = self.intern_atom("constructor");
+                let constructor_atom = self.runtime_atoms.constructor;
                 self.set_property_attributes(
                     prototype,
                     PropertyKey::string(constructor_atom),
@@ -1800,7 +1803,7 @@ impl<H: Host> Vm<H> {
                         setter: None,
                     },
                 );
-                let constructor_atom = self.intern_atom("constructor");
+                let constructor_atom = self.runtime_atoms.constructor;
                 self.set_property_attributes(
                     prototype,
                     PropertyKey::string(constructor_atom),
@@ -1956,9 +1959,9 @@ impl<H: Host> Vm<H> {
             "constructor",
             realm_error_constructor,
         )?;
-        let realm_error_name = self.heap.alloc(Cell::String("Error".into()));
+        let realm_error_name = self.heap.alloc_string("Error".into());
         self.set_builtin_value_named(realm_error_prototype, "name", realm_error_name)?;
-        let realm_empty_message = self.heap.alloc(Cell::String("".into()));
+        let realm_empty_message = self.heap.alloc_string("".into());
         self.set_builtin_value_named(realm_error_prototype, "message", realm_empty_message)?;
         let realm_is_error = self.native_with_realm(Native::ErrorIsError, global, global);
         self.set_builtin_function_name(realm_is_error, "isError")?;
@@ -1994,9 +1997,9 @@ impl<H: Host> Vm<H> {
                 .insert((global, native), prototype);
             self.set_named_constant(program, constructor, "prototype", prototype)?;
             self.set_builtin_value_named(prototype, "constructor", constructor)?;
-            let name_value = self.heap.alloc(Cell::String(name.into()));
+            let name_value = self.heap.alloc_string(name.into());
             self.set_builtin_value_named(prototype, "name", name_value)?;
-            let empty_message = self.heap.alloc(Cell::String("".into()));
+            let empty_message = self.heap.alloc_string("".into());
             self.set_builtin_value_named(prototype, "message", empty_message)?;
             self.set_builtin_value_named(global, name, constructor)?;
             self.object_data_mut(constructor)
@@ -2120,7 +2123,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         self.set_builtin_function_name(constructor, "Function")?;
         self.set_builtin_value_named(constructor, "length", Value::number(1.0))?;
-        let constructor_length = self.intern_atom("length");
+        let constructor_length = self.length_atom;
         self.set_property_attributes(
             constructor,
             PropertyKey::string(constructor_length),
@@ -2163,7 +2166,7 @@ impl<H: Host> Vm<H> {
         );
         self.set_builtin_value_named(prototype, "constructor", constructor)?;
         self.set_builtin_value_named(prototype, "length", Value::number(0.0))?;
-        let length = self.intern_atom("length");
+        let length = self.length_atom;
         self.set_property_attributes(
             prototype,
             PropertyKey::string(length),
@@ -2187,7 +2190,7 @@ impl<H: Host> Vm<H> {
             self.set_builtin_function_name(method, name)?;
             self.set_builtin_value_named(prototype, name, method)?;
         }
-        if let Some(symbol) = self.well_known_symbols.get("hasInstance").copied() {
+        if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::HasInstance) {
             let method =
                 self.native_with_realm(Native::FunctionPrototypeHasInstance, global, global);
             self.set_builtin_function_name(method, "[Symbol.hasInstance]")?;
@@ -2264,7 +2267,7 @@ impl<H: Host> Vm<H> {
         self.set_named(program, realm_prototype, "constructor", realm_constructor)?;
         let realm_name = self
             .heap
-            .alloc(Cell::String(JsString::from_str("TypeError")));
+            .alloc_string(JsString::from_str("TypeError"));
         self.set_named(program, realm_prototype, "name", realm_name)?;
         Ok(())
     }
@@ -2286,9 +2289,9 @@ impl<H: Host> Vm<H> {
         self.set_named_constant(program, constructor, "prototype", prototype)?;
         self.set_builtin_value_named(prototype, "constructor", constructor)?;
         self.set_builtin_function_name(constructor, name)?;
-        let name_value = self.heap.alloc(Cell::String(JsString::from_str(name)));
+        let name_value = self.heap.alloc_string(JsString::from_str(name));
         self.set_builtin_value_named(prototype, "name", name_value)?;
-        let empty_message = self.heap.alloc(Cell::String(JsString::from_str("")));
+        let empty_message = self.heap.alloc_string(JsString::from_str(""));
         self.set_builtin_value_named(prototype, "message", empty_message)?;
         if native != Native::Error {
             let error_constructor = self.native_value(Native::Error);
@@ -2463,7 +2466,7 @@ impl<H: Host> Vm<H> {
             if let Some(message) = message {
                 let value = self.heap.root_value(message).unwrap();
                 let message = self.coerce_js_string(program, value)?;
-                let message = self.heap.alloc(Cell::String(message));
+                let message = self.heap.alloc_string(message);
                 let object = self.heap.root_value(root).unwrap();
                 self.set_builtin_value_named(object, "message", message)?;
             }
@@ -2501,7 +2504,7 @@ impl<H: Host> Vm<H> {
         options: RootId,
     ) -> Result<(), JsError> {
         let cause_atom = self.intern_atom("cause");
-        let cause_key = self.heap.alloc(Cell::String("cause".into()));
+        let cause_key = self.heap.alloc_string("cause".into());
         let value = self.heap.root_value(options).unwrap();
         if self.has_property(program, value, cause_key)? {
             let options = self.heap.root_value(options).unwrap();
@@ -2548,7 +2551,7 @@ impl<H: Host> Vm<H> {
             if let Some(message) = message {
                 let message = self.heap.root_value(message).unwrap();
                 let message = self.coerce_js_string(program, message)?;
-                let message = self.heap.alloc(Cell::String(message));
+                let message = self.heap.alloc_string(message);
                 let value = self.heap.root_value(root).unwrap();
                 self.set_builtin_value_named(value, "message", message)?;
             }

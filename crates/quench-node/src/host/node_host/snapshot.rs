@@ -121,6 +121,7 @@ impl SharedNodeState {
             net_socket_option_keys,
             net_handle_identities,
             net_handle_close_callbacks,
+            error_event_name,
         } = self;
         require_quiescent(native_tasks.snapshot_quiescent(), "the native task pool")?;
         require_quiescent(scheduler.snapshot_quiescent(), "scheduled callbacks")?;
@@ -201,6 +202,7 @@ impl SharedNodeState {
             net_server_on_connection,
             net_handle_onclose_symbol,
             net_socket_option_keys,
+            error_event_name,
         ] {
             root.write(writer)?;
         }
@@ -272,6 +274,7 @@ impl SharedNodeState {
             &mut self.net_server_on_connection,
             &mut self.net_handle_onclose_symbol,
             &mut self.net_socket_option_keys,
+            &mut self.error_event_name,
         ] {
             *root = HostSnap::read(reader)?;
         }

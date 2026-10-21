@@ -692,7 +692,9 @@ impl<H: Host> Vm<H> {
                 .iter()
                 .map(|job| job.promise),
         );
-        roots.extend(self.realm.jobs.iter().flat_map(PendingJob::roots));
+        for job in &self.realm.jobs {
+            job.push_roots(&mut roots);
+        }
         roots.extend(self.realm.template_objects.values().copied());
         roots.extend(
             self.realm
@@ -705,7 +707,8 @@ impl<H: Host> Vm<H> {
         roots.extend(std::iter::once(self.instanceof_has_instance_holder));
         roots.extend(self.active_call_roots.iter().copied());
         roots.extend(self.symbol_registry.values().copied());
-        roots.extend(self.well_known_symbols.values().copied());
+        roots.extend(self.well_known_symbols.values());
+        roots.extend(self.typeof_names);
         roots.extend(self.startup_intrinsic_roots());
         roots.extend(self.frames.iter().flat_map(|frame| {
             // A missing map means the function uses a register form
@@ -864,7 +867,7 @@ impl<H: Host> Vm<H> {
         #[cfg(feature = "profile-aggregate")]
         self.retain_live_gc_method_snapshots();
         if let Some(strings) = &mut self.dynamic_strings {
-            strings.retain(|_, value| matches!(self.heap.get(*value), Some(Cell::String(_))));
+            strings.retain(|_, value| self.heap.is_live(*value));
         }
         if let Some(concats) = &mut self.string_concats {
             concats.fill(EMPTY_STRING_CONCAT_CACHE);
@@ -936,6 +939,7 @@ impl<H: Host> Vm<H> {
         self.shape_constructors.clear();
         self.transitions = transitions;
         self.shape_slot_memo.clear();
+        self.function_name_shapes.clear();
         self.shape_attribute_memo.clear();
         self.object_shapes.fill(u32::MAX);
         self.invalidate_field_caches();
@@ -1020,17 +1024,19 @@ impl<H: Host> Vm<H> {
         program: &ResidualProgram,
         job: PendingJob,
     ) -> Result<(), JsError> {
-        let roots = job.roots();
+        let start = self.active_call_roots.len();
+        job.push_roots(&mut self.active_call_roots);
         let previous = std::mem::replace(&mut self.native_microtask_running, true);
-        let result = self.with_call_roots(roots, |vm| match job {
+        let result = match job {
             PendingJob::Call {
                 callback,
                 this,
                 args,
-            } => vm.call_value(program, callback, this, &args).map(|_| ()),
-            PendingJob::Reaction(reaction) => vm.run_promise_reaction(program, reaction),
-        });
+            } => self.call_value(program, callback, this, &args).map(|_| ()),
+            PendingJob::Reaction(reaction) => self.run_promise_reaction(program, reaction),
+        };
         self.native_microtask_running = previous;
+        self.active_call_roots.truncate(start);
         result
     }
 

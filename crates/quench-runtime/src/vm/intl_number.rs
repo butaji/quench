@@ -171,7 +171,7 @@ impl<H: Host> Vm<H> {
                 let grouping_value = options.grouping_boolean.map_or_else(
                     || {
                         vm.heap
-                            .alloc(Cell::String(options.grouping_mode.clone().into()))
+                            .alloc_string(options.grouping_mode.clone().into())
                     },
                     |enabled| if enabled { Value::TRUE } else { Value::FALSE },
                 );
@@ -792,7 +792,7 @@ impl<H: Host> Vm<H> {
                 && minimum_significant_digits.is_none()
                 && maximum_significant_digits.is_none()
                 && rounding_increment == 1
-                && let Some(Cell::String(raw)) = vm.heap.get(value)
+                && let Some(raw) = vm.heap.string(value)
                 && let Some(formatted) = format_decimal_string(
                     raw.host_string(),
                     &locale,
@@ -877,7 +877,7 @@ impl<H: Host> Vm<H> {
                 "always" | "exceptZero" if accounting_negative => formatted,
                 _ => formatted,
             };
-            Ok(vm.heap.alloc(Cell::String(formatted.into())))
+            Ok(vm.heap.alloc_string(formatted.into()))
         })
     }
 
@@ -897,45 +897,45 @@ impl<H: Host> Vm<H> {
             let result = vm.heap.alloc(Cell::Object(Self::empty_object(
                 vm.realm_object_prototype(vm.realm.globals),
             )));
-            let locale_value = vm.heap.alloc(Cell::String(locale.clone().into()));
+            let locale_value = vm.heap.alloc_string(locale.clone().into());
             vm.set_named(p, result, "locale", locale_value)?;
             let numbering_system = vm
                 .hidden_string(this, NUMBER_FORMAT_NUMBERING_SYSTEM_SLOT)
                 .filter(|value| !value.is_empty())
                 .unwrap_or_else(|| quench_intl::default_numbering_system(&locale).into());
-            let numbering_system_value = vm.heap.alloc(Cell::String(numbering_system.into()));
+            let numbering_system_value = vm.heap.alloc_string(numbering_system.into());
             vm.set_named(p, result, "numberingSystem", numbering_system_value)?;
-            let style_value = vm.heap.alloc(Cell::String(style.clone().into()));
+            let style_value = vm.heap.alloc_string(style.clone().into());
             vm.set_named(p, result, "style", style_value)?;
             if style == "currency" {
                 let currency = vm
                     .hidden_string(this, NUMBER_FORMAT_CURRENCY_SLOT)
                     .unwrap_or_default();
-                let currency = vm.heap.alloc(Cell::String(currency.into()));
+                let currency = vm.heap.alloc_string(currency.into());
                 vm.set_named(p, result, "currency", currency)?;
-                let display = vm.heap.alloc(Cell::String(
+                let display = vm.heap.alloc_string(
                     vm.hidden_string(this, NUMBER_FORMAT_CURRENCY_DISPLAY_SLOT)
                         .unwrap_or_else(|| "symbol".into())
                         .into(),
-                ));
+                );
                 vm.set_named(p, result, "currencyDisplay", display)?;
-                let sign = vm.heap.alloc(Cell::String(
+                let sign = vm.heap.alloc_string(
                     vm.hidden_string(this, NUMBER_FORMAT_CURRENCY_SIGN_SLOT)
                         .unwrap_or_else(|| "standard".into())
                         .into(),
-                ));
+                );
                 vm.set_named(p, result, "currencySign", sign)?;
             }
             if style == "unit" {
                 let unit = vm
                     .hidden_string(this, NUMBER_FORMAT_UNIT_SLOT)
                     .unwrap_or_default();
-                let unit = vm.heap.alloc(Cell::String(unit.into()));
+                let unit = vm.heap.alloc_string(unit.into());
                 vm.set_named(p, result, "unit", unit)?;
                 let unit_display = vm
                     .hidden_string(this, NUMBER_FORMAT_UNIT_DISPLAY_SLOT)
                     .unwrap_or_else(|| "short".into());
-                let unit_display = vm.heap.alloc(Cell::String(unit_display.into()));
+                let unit_display = vm.heap.alloc_string(unit_display.into());
                 vm.set_named(p, result, "unitDisplay", unit_display)?;
             }
             for (name, slot, fallback) in [
@@ -987,7 +987,7 @@ impl<H: Host> Vm<H> {
             }
             let grouping = vm
                 .hidden_value(this, NUMBER_FORMAT_GROUPING_SLOT)
-                .unwrap_or_else(|| vm.heap.alloc(Cell::String("auto".into())));
+                .unwrap_or_else(|| vm.heap.alloc_string("auto".into()));
             vm.set_named(p, result, "useGrouping", grouping)?;
             let notation = vm
                 .hidden_string(this, NUMBER_FORMAT_NOTATION_SLOT)
@@ -1041,7 +1041,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         self.with_call_roots(std::iter::once(this).chain(args.iter().copied()), |vm| {
             let formatted = vm.intl_number_format_format(p, this, args)?;
-            let Some(Cell::String(formatted)) = vm.heap.get(formatted) else {
+            let Some(formatted) = vm.heap.string(formatted) else {
                 return Err(JsError("NumberFormat output is not a string".into()));
             };
             let text = formatted.to_string();
@@ -1125,7 +1125,7 @@ impl<H: Host> Vm<H> {
                         format!("{first}{separator}{second}")
                     }
                 };
-                Ok(vm.heap.alloc(Cell::String(range.into())))
+                Ok(vm.heap.alloc_string(range.into()))
             })
         })
     }
@@ -1234,7 +1234,7 @@ impl<H: Host> Vm<H> {
         array: Value,
     ) -> Result<String, JsError> {
         let length = self.array_like_length(p, array)?;
-        let value_atom = self.intern_atom("value");
+        let value_atom = self.runtime_atoms.value;
         let mut text = String::new();
         for index in 0..length {
             let part = self.get_index(p, array, Value::number(index as f64))?;
@@ -1504,7 +1504,7 @@ impl<H: Host> Vm<H> {
         value: &str,
     ) -> Result<(), JsError> {
         let atom = self.intern_atom(key);
-        let value = self.heap.alloc(Cell::String(value.into()));
+        let value = self.heap.alloc_string(value.into());
         self.set_property(object, atom, value)
     }
 
@@ -1704,7 +1704,7 @@ impl<H: Host> Vm<H> {
         key: &str,
         value: &str,
     ) -> Result<(), JsError> {
-        let value = self.heap.alloc(Cell::String(value.into()));
+        let value = self.heap.alloc_string(value.into());
         self.set_hidden_value(object, key, value)
     }
 
@@ -1725,10 +1725,7 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn hidden_string(&self, object: Value, key: &str) -> Option<String> {
         let value = self.hidden_value(object, key)?;
-        match self.heap.get(value) {
-            Some(Cell::String(value)) => Some(value.to_string()),
-            _ => None,
-        }
+        self.heap.string(value).map(ToString::to_string)
     }
 }
 

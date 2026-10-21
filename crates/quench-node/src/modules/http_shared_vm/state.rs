@@ -12,12 +12,27 @@ pub(crate) struct State {
     pub(crate) servers: HashMap<u64, Server>,
     pub(crate) connections: HashMap<u64, ServerConnection>,
     pub(crate) responses: HashMap<u64, Response>,
+    /// The collection epoch `responses` was last pruned at (`poll::prune_collected_responses`):
+    /// an ended response's owner can only have died when a collection ran since.
+    pub(crate) responses_pruned_epoch: u64,
     /// Responses whose write returned false, keyed by socket, until their
     /// queued bytes fall below the high-water mark and `drain` is due.
     pub(crate) drain_waiters: HashMap<u64, RootId>,
     pub(crate) requests: HashMap<u64, OutgoingRequest>,
     pub(crate) clients: HashMap<u64, Client>,
     pub(crate) agents: HashMap<u64, HashSet<u64>>,
+}
+
+impl State {
+    /// Remove and return the response records of `socket`, which is closing.
+    pub(crate) fn take_socket_responses(&mut self, socket: u64) -> Vec<Response> {
+        let ids = self
+            .responses
+            .iter()
+            .filter_map(|(id, response)| (response.socket == socket).then_some(*id))
+            .collect::<Vec<_>>();
+        ids.into_iter().filter_map(|id| self.responses.remove(&id)).collect()
+    }
 }
 
 pub(crate) struct Server {
@@ -43,6 +58,9 @@ pub(crate) struct Response {
     pub(crate) http10: bool,
     pub(crate) use_chunked_encoding_by_default: bool,
     pub(crate) lifecycle: ResponseLifecycle,
+    /// The guest response object, held weakly: an ended response keeps its record, which
+    /// answers header reads and late writes, until that object is collected.
+    pub(crate) owner: Option<quench_runtime::HostWeakRoot>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -156,6 +174,7 @@ impl State {
             servers: HashMap::new(),
             connections: HashMap::new(),
             responses: HashMap::new(),
+            responses_pruned_epoch: 0,
             drain_waiters: HashMap::new(),
             requests: HashMap::new(),
             clients: HashMap::new(),
@@ -217,6 +236,8 @@ impl State {
             servers,
             connections,
             responses,
+            // A collection epoch of this process's VM; a restored one counts its own.
+            responses_pruned_epoch: _,
             drain_waiters,
             requests,
             clients,

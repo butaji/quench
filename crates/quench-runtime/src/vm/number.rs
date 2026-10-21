@@ -277,7 +277,7 @@ impl<H: Host> Vm<H> {
             }
             return Ok(self
                 .heap
-                .alloc(Cell::String(number_to_decimal(number).into())));
+                .alloc_string(number_to_decimal(number).into()));
         }
         let digits = digits_value
             .map(|value| self.number_format_digits(p, value))
@@ -311,7 +311,7 @@ impl<H: Host> Vm<H> {
             },
             _ => unreachable!(),
         };
-        Ok(self.heap.alloc(Cell::String(text.into())))
+        Ok(self.heap.alloc_string(text.into()))
     }
 
     fn number_format_digits(
@@ -375,7 +375,7 @@ impl<H: Host> Vm<H> {
                 normalize_exponent_sign(&scientific)
             }
         };
-        Ok(self.heap.alloc(Cell::String(text.into())))
+        Ok(self.heap.alloc_string(text.into()))
     }
 
     pub(super) fn call_number_native(
@@ -662,7 +662,7 @@ impl<H: Host> Vm<H> {
                     return Err(error);
                 }
             };
-            let done_atom = self.intern_atom("done");
+            let done_atom = self.runtime_atoms.done;
             let done = match self.get_property(p, step, done_atom) {
                 Ok(done) => self.truthy(done),
                 Err(error) => {
@@ -673,7 +673,7 @@ impl<H: Host> Vm<H> {
             if done {
                 return Ok(Value::number(state.finish(exact_sum)));
             }
-            let value_atom = self.intern_atom("value");
+            let value_atom = self.runtime_atoms.value;
             let value = match self.get_property(p, step, value_atom) {
                 Ok(value) => value,
                 Err(error) => {

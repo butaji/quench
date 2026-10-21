@@ -44,6 +44,7 @@ pub(super) struct GenerationalPacing {
     pub(super) young: Ratio,
     /// The smallest allocation weight between collections, whatever survived.
     pub(super) minimum_young: usize,
+    pub(super) maximum_young: usize,
     /// Growth of the old generation since the last full collection, as a share of what that
     /// collection kept, that makes the next collection full.
     pub(super) old_growth: Ratio,
@@ -61,6 +62,9 @@ pub(super) struct GenerationalPacing {
     pub(super) full_only_headroom: Ratio,
     /// Full collections between minor collections that probe survival again.
     pub(super) probe_interval: u32,
+    /// Growth of live weight (cells, records and payload) since the last full collection, as
+    /// a share of what it kept, that makes the next collection full; zero disables it.
+    pub(super) weight_growth: Ratio,
 }
 
 /// Fixed-point scale of the survival estimate.
@@ -106,6 +110,8 @@ pub(super) struct CollectionOutcome {
     pub(super) live_weight: usize,
     pub(super) previous_live_weight: usize,
     pub(super) live_after_full: usize,
+    /// Live weight after the last full collection.
+    pub(super) live_weight_after_full: usize,
     /// Weight allocated between the previous collection and this one.
     pub(super) allocated: usize,
     /// Allocation weight since the last full collection.
@@ -130,7 +136,8 @@ impl GenerationalPacing {
         }
         let young = NextCollection {
             threshold: self.young_budget(outcome.live),
-            full: self.full_due(outcome.live_after_full, outcome.live, outcome.since_full),
+            full: self.full_due(outcome.live_after_full, outcome.live, outcome.since_full)
+                || self.weight_growth_due(outcome.live_weight_after_full, outcome.live_weight),
         };
         match state.regime(self) {
             Regime::Generational => young,
@@ -158,13 +165,21 @@ impl GenerationalPacing {
 
 
     pub(super) fn young_budget(&self, live: usize) -> usize {
-        self.young.of(live).max(self.minimum_young)
+        self.young
+            .of(live)
+            .min(self.maximum_young)
+            .max(self.minimum_young)
     }
 
     pub(super) fn full_due(&self, live_after_full: usize, live: usize, since_full: usize) -> bool {
         live.saturating_sub(live_after_full)
             >= self.old_growth.of(live_after_full).max(self.minimum_old_growth)
             || self.allocation_cap_reached(live_after_full, since_full)
+    }
+
+    pub(super) fn weight_growth_due(&self, after_full: usize, live_weight: usize) -> bool {
+        self.weight_growth.numerator > 0
+            && live_weight.saturating_sub(after_full) >= self.weight_growth.of(after_full)
     }
 
     pub(super) fn allocation_cap_reached(&self, live_after_full: usize, since_full: usize) -> bool {
@@ -190,6 +205,7 @@ impl GenerationalPacing {
         Self {
             young: ratio("QUENCH_GC_YOUNG", self.young),
             minimum_young: read("QUENCH_GC_MIN_YOUNG", self.minimum_young),
+            maximum_young: read("QUENCH_GC_MAX_YOUNG", self.maximum_young),
             old_growth: ratio("QUENCH_GC_OLD_GROWTH", self.old_growth),
             minimum_old_growth: read("QUENCH_GC_MIN_OLD_GROWTH", self.minimum_old_growth),
             allocation_cap: ratio("QUENCH_GC_ALLOCATION_CAP", self.allocation_cap),
@@ -197,30 +213,33 @@ impl GenerationalPacing {
             survival_limit: read("QUENCH_GC_SURVIVAL_LIMIT", self.survival_limit as usize) as u32,
             full_only_headroom: ratio("QUENCH_GC_FULL_ONLY", self.full_only_headroom),
             probe_interval: read("QUENCH_GC_PROBE_INTERVAL", self.probe_interval as usize) as u32,
+            weight_growth: ratio("QUENCH_GC_WEIGHT_GROWTH", self.weight_growth),
         }
     }
 }
 
-/// Production pacing: young collections every eighth of a live set, at least
-/// `MINIMUM_YOUNG_ALLOCATION` weight; a full collection once the old generation has doubled or
-/// one live set of allocation has passed since the last one; and, when more than half of
-/// young allocations survive, full collections with one live set between them, probing
-/// survival with a minor collection every fourth one.
+/// Production pacing, memory-first on the owner's direction of 2026-10-17 (TOD-123): young
+/// collections every sixty-fourth of a live set (at least 384 weight; from an eighth, with
+/// read-only pages released after every collection: V8-v7 max RSS RegExp 7244-7500 -> 6852
+/// KiB, EarleyBoyer 7792-8000 -> 9040-9160, the floor-bound fixtures unchanged, static
+/// x86_64 unbolted, 2026-10-18; RSS is this lane's only criterion), a full collection once the old
+/// generation has doubled or one live set of allocation has passed since the last one, and,
+/// when more than half of young allocations survive, full collections with one live set
+/// between them, probing survival with a minor collection every fourth one. The minimums are
+/// the pre-generational 384-cell headroom. The Score lane's table (eight live sets per young
+/// collection, four per full one, 2^15 and 2^18 minimums) raised npm peak RSS by up to 17 MiB
+/// per package (semver 27.6 -> 45.2, typescript-eslint 188 -> 226); the owner reaffirmed
+/// memory-first on 2026-10-18.
 ///
-/// History: memory-first on 2026-10-17 (TOD-123) set a sixty-fourth of a live set and a
-/// 384-weight minimum; the Score lane's table (eight live sets per young collection, 2^15 and
-/// 2^18 minimums) had raised npm peak RSS by up to 17 MiB per package. On 2026-10-20 the
-/// owner set the npm lane to fastest and lowest memory together, and this table was chosen
-/// by both on the npm scenarios (x86_64 Linux VM, 4 cores, CPU ms / peak RSS MiB, three runs):
-/// ms 117/18.1 -> 72/16.1, semver 378/19.0 -> 266/18.3, color-convert 447/18.6 -> 366/18.1,
-/// ajv 323/19.6 -> 230/20.1, typescript-estree 765/106.0 -> 714/103.2, lodash 115/21.9 ->
-/// 103/19.6, date-fns 317/19.2 -> 343/21.6 (Bun 34 MiB). The 384 minimum collected every
-/// few hundred allocations while a program loads, when nearly all of them survive. V8-v7
-/// (ms, max RSS KiB): RayTrace 946/4256 -> 280/4560, RegExp 837/7764 -> 270/9292,
-/// EarleyBoyer 375/11564 -> 311/9856, the others within noise.
+/// The young floor is `YOUNG_MINIMUM_ALLOCATION`, not the 384 headroom: at a sixty-fourth of a
+/// small live set the floor decides the interval, and 384 collected small programs every few
+/// hundred allocations without lowering their peak (TOD-161, quench-node scorecard, x86_64
+/// 4 vCPU, 2026-10-20: 768 against 384 gave V8-v7 Score x1.161 with RayTrace x1.54 and
+/// RegExp x1.60 in 7/7 pairs, frameworks x1.023, max RSS geomean x0.997 and x0.999).
 pub(super) const PRODUCTION_PACING: GenerationalPacing = GenerationalPacing {
-    young: Ratio::new(1, 8),
-    minimum_young: MINIMUM_YOUNG_ALLOCATION,
+    young: Ratio::new(1, 64),
+    minimum_young: YOUNG_MINIMUM_ALLOCATION,
+    maximum_young: MAXIMUM_YOUNG,
     old_growth: Ratio::new(1, 1),
     minimum_old_growth: MEMORY_FIRST_MINIMUM_ALLOCATION,
     allocation_cap: Ratio::new(1, 1),
@@ -228,14 +247,24 @@ pub(super) const PRODUCTION_PACING: GenerationalPacing = GenerationalPacing {
     survival_limit: SURVIVAL_SCALE / 2,
     full_only_headroom: Ratio::new(1, 1),
     probe_interval: 4,
+    weight_growth: Ratio::new(0, 1),
 };
 
 /// The fewest allocations between collections, whatever survived: the pre-generational
-/// minimum headroom, which bounds old growth and the allocation cap.
+/// minimum headroom.
 const MEMORY_FIRST_MINIMUM_ALLOCATION: usize = 384;
+/// The most allocations between young collections, however large the live set. Without it
+/// the young budget is eight live sets: a server whose startup leaves a few hundred thousand
+/// live cells (the Node library plus a framework) allocated millions between collections,
+/// and its peak RSS was mostly garbage. Measured with the `gc-tuning` build, Linux x86_64,
+/// 4 vCPU, 500 connections (evidence/web-gc-young-cap-linux-2026-10-19): peak RSS hono
+/// 84 -> 53 MB, fastify 96 -> 72 MB, express 85 -> 53 MB; V8-v7 earley-boyer 46 -> 28 MB and
+/// splay 161 -> 92 MB, with Scores within the run-to-run band. 2^16 cut little more memory.
+const MAXIMUM_YOUNG: usize = 1 << 17;
 
-/// The fewest allocations between young collections (`PRODUCTION_PACING`).
-const MINIMUM_YOUNG_ALLOCATION: usize = 1 << 14;
+/// The fewest allocations between young collections: twice the headroom, which kept every
+/// scorecard workload's max RSS within 1 MB and 5% (1024 raised koa's by 1.1 MB; TOD-161).
+const YOUNG_MINIMUM_ALLOCATION: usize = 2 * MEMORY_FIRST_MINIMUM_ALLOCATION;
 
 #[cfg(not(feature = "gc-tuning"))]
 pub(super) fn pacing() -> GenerationalPacing {
@@ -268,7 +297,11 @@ mod tests {
         assert!(pacing.full_due(live, live + growth, 0));
         assert!(pacing.full_due(live, live, pacing.allocation_cap.of(live)));
         assert_eq!(pacing.young_budget(0), pacing.minimum_young);
-        assert_eq!(pacing.young_budget(live), pacing.young.of(live));
+        // A live set whose young share lies between the minimum and the maximum budget.
+        let between = pacing.minimum_young * 2 * pacing.young.denominator / pacing.young.numerator;
+        assert_eq!(pacing.young_budget(between), pacing.young.of(between));
+        let huge = pacing.maximum_young * 1024;
+        assert_eq!(pacing.young_budget(huge), pacing.maximum_young);
     }
 
     fn minor(live: usize, previous_live: usize, allocated: usize) -> CollectionOutcome {
@@ -278,6 +311,7 @@ mod tests {
             live_weight: live,
             previous_live_weight: previous_live,
             live_after_full: previous_live,
+            live_weight_after_full: previous_live,
             allocated,
             since_full: allocated,
         }

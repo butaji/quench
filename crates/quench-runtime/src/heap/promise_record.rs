@@ -27,11 +27,15 @@ pub(crate) struct PromiseReaction {
     pub(crate) next: Value,
     pub(crate) execution_context: Option<HostExecutionContext>,
 }
+/// A pending promise's reactions. Most promises gain one `then` before they settle, which
+/// is stored inline in the record's box instead of in an allocation of its own.
+pub(crate) type PromiseReactions = smallvec::SmallVec<[PromiseReaction; 1]>;
+
 #[derive(Clone, Debug)]
 pub(crate) struct PromiseRecord {
     pub(crate) state: PromiseState,
     pub(crate) result: Value,
-    pub(crate) reactions: Vec<PromiseReaction>,
+    pub(crate) reactions: PromiseReactions,
     pub(crate) rejection: PromiseRejectionState,
     /// Set once the host is told of the rejection; identifiers start at one.
     pub(crate) rejection_id: Option<std::num::NonZeroU64>,
@@ -50,6 +54,15 @@ pub(crate) enum PromiseRejectionState {
 }
 
 impl PromiseRecord {
+    /// Bytes the reactions hold outside the record.
+    pub(crate) fn reaction_heap_bytes(&self) -> usize {
+        if self.reactions.spilled() {
+            self.reactions.capacity() * size_of::<PromiseReaction>()
+        } else {
+            0
+        }
+    }
+
     pub(crate) fn roots(&self) -> impl Iterator<Item = Value> + '_ {
         std::iter::once(self.result).chain(
             self.reactions

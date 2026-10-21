@@ -349,6 +349,7 @@ pub(crate) fn poll(
                             continue;
                         }
                         let body_invalid = message.body.is_err();
+                        prune_collected_responses(runtime, shared_state);
                         let request_async_id =
                             crate::modules::async_hooks_shared_vm::create_context(shared_state);
                         let (server_root, response_id, response_factory, incoming_factory) = {
@@ -394,6 +395,7 @@ pub(crate) fn poll(
                                     http10,
                                     use_chunked_encoding_by_default: !http10 || message.headers.iter().any(|(name, value)| name.eq_ignore_ascii_case("te") && value.split(',').any(|token| token.trim().eq_ignore_ascii_case("chunked"))),
                                     lifecycle: super::state::ResponseLifecycle::Open,
+                                    owner: None,
                                 },
                             );
                             (server_root, response_id, response_factory, incoming_factory)
@@ -681,17 +683,7 @@ pub(crate) fn poll(
                         .connections
                         .remove(&socket)
                         .map(|connection| connection.server);
-                    let contexts = host
-                        .http
-                        .responses
-                        .iter()
-                        .filter_map(|(id, response)| {
-                            (response.socket == socket).then_some((*id, response.async_id))
-                        })
-                        .collect::<Vec<_>>();
-                    for (id, _) in &contexts {
-                        host.http.responses.remove(id);
-                    }
+                    let contexts = host.http.take_socket_responses(socket);
                     if let Some(server_id) = server_id {
                         if let Some(server) = host.http.servers.get_mut(&server_id) {
                             server.connections.remove(&socket);
@@ -699,12 +691,8 @@ pub(crate) fn poll(
                     }
                     (server_id, contexts)
                 };
-                for (_, async_id) in contexts {
-                    crate::modules::async_hooks_shared_vm::clear_context(
-                        runtime,
-                        shared_state,
-                        async_id,
-                    );
+                for response in contexts {
+                    retire_response(runtime, shared_state, response);
                 }
                 if server_id.is_some() {
                     net_shared_vm::close_socket(&mut shared_state.borrow_mut().tcp, socket);
@@ -811,17 +799,7 @@ pub(crate) fn poll(
                         .remove(&socket)
                         .map(|connection| connection.server);
                     let client = host.http.clients.remove(&socket);
-                    let contexts = host
-                        .http
-                        .responses
-                        .iter()
-                        .filter_map(|(id, response)| {
-                            (response.socket == socket).then_some((*id, response.async_id))
-                        })
-                        .collect::<Vec<_>>();
-                    for (id, _) in &contexts {
-                        host.http.responses.remove(id);
-                    }
+                    let contexts = host.http.take_socket_responses(socket);
                     if let Some(server_id) = server_id {
                         if let Some(server) = host.http.servers.get_mut(&server_id) {
                             server.connections.remove(&socket);
@@ -833,12 +811,8 @@ pub(crate) fn poll(
                 if let Some(client) = client {
                     fail_client_exchange(runtime, program, client, &message)?;
                 }
-                for (_, async_id) in contexts {
-                    crate::modules::async_hooks_shared_vm::clear_context(
-                        runtime,
-                        shared_state,
-                        async_id,
-                    );
+                for response in contexts {
+                    retire_response(runtime, shared_state, response);
                 }
                 if server_id.is_some() {
                     progressed = true;
@@ -1123,7 +1097,7 @@ pub(crate) fn cleanup(
     runtime: &mut Runtime<NodeHost>,
     shared_state: &Rc<RefCell<SharedNodeState>>,
 ) {
-    let (roots, async_ids) =
+    let (roots, responses) =
         {
             let mut host = shared_state.borrow_mut();
             let shared = std::mem::take(&mut host.http);
@@ -1132,11 +1106,7 @@ pub(crate) fn cleanup(
             roots.extend(shared.clients.into_values().flat_map(|client| {
                 std::iter::once(client.request_root).chain(client.response_root)
             }));
-            let async_ids = shared
-                .responses
-                .into_values()
-                .map(|response| response.async_id)
-                .collect::<Vec<_>>();
+            let responses = shared.responses.into_values().collect::<Vec<_>>();
             roots.extend(shared.response_factory);
             roots.extend(shared.incoming_factory);
             for socket in host.net_sockets.values_mut() {
@@ -1144,13 +1114,58 @@ pub(crate) fn cleanup(
             }
             roots.extend(host.net_closing_sockets.drain().map(|(_, root)| root));
             net_shared_vm::cleanup(&mut host.tcp);
-            (roots, async_ids)
+            (roots, responses)
         };
     for root in roots {
         runtime.release_root(root);
     }
-    for async_id in async_ids {
-        crate::modules::async_hooks_shared_vm::clear_context(runtime, shared_state, async_id);
+    for response in responses {
+        retire_response(runtime, shared_state, response);
+    }
+}
+
+/// Forget a response record: its owner reference and its request context.
+fn retire_response(
+    runtime: &mut Runtime<NodeHost>,
+    shared_state: &Rc<RefCell<SharedNodeState>>,
+    response: super::state::Response,
+) {
+    if let Some(owner) = response.owner {
+        runtime.release_host_weak_root(owner);
+    }
+    crate::modules::async_hooks_shared_vm::clear_context(runtime, shared_state, response.async_id);
+}
+
+/// Retire the records of ended responses whose guest objects were collected: no operation can
+/// name them again. A keep-alive connection otherwise keeps every response it served until it
+/// closes. Owners can only die in a collection, so this runs once per collection epoch.
+fn prune_collected_responses(
+    runtime: &mut Runtime<NodeHost>,
+    shared_state: &Rc<RefCell<SharedNodeState>>,
+) {
+    let epoch = runtime.collection_epoch();
+    let collected = {
+        let mut host = shared_state.borrow_mut();
+        if host.http.responses_pruned_epoch == epoch {
+            return;
+        }
+        host.http.responses_pruned_epoch = epoch;
+        let ids = host
+            .http
+            .responses
+            .iter()
+            .filter(|(_, response)| {
+                response.lifecycle.is_terminal()
+                    && response.owner.is_some_and(|owner| !runtime.host_weak_root_is_live(owner))
+            })
+            .map(|(id, _)| *id)
+            .collect::<Vec<_>>();
+        ids.into_iter()
+            .filter_map(|id| host.http.responses.remove(&id))
+            .collect::<Vec<_>>()
+    };
+    for response in collected {
+        retire_response(runtime, shared_state, response);
     }
 }
 
