@@ -27,6 +27,7 @@ struct JsJitCounters {
     field_return_candidate_entries: u64,
     field_return_fixed_this_entries: u64,
     field_return_fast_entries: u64,
+    numeric_find_fast_entries: u64,
     fallback_entries: u64,
     interpreter_completions: u64,
     interpreter_inclusive_ns: u64,
@@ -213,6 +214,9 @@ pub(crate) struct ProgramStore {
     jit_mapped_bytes: usize,
     /// Allocated only when opt-in JavaScript JIT diagnostics are requested.
     js_jit_diagnostics: Option<FxHashMap<(u32, u32), JsJitCounters>>,
+    /// Last matched numeric loop shape; hot entries keep reusing the same artifact.
+    js_jit_numeric_find_candidate:
+        Option<(ProgramId, u32, super::js_compiled::JsJitNumericFind)>,
 }
 
 impl Default for ProgramStore {
@@ -234,11 +238,29 @@ impl Default for ProgramStore {
             js_jit_diagnostics: std::env::var_os("QUENCH_JS_JIT_STATS")
                 .is_some_and(|value| value == "1")
                 .then(FxHashMap::default),
+            js_jit_numeric_find_candidate: None,
         }
     }
 }
 
 impl ProgramStore {
+    pub(super) fn js_jit_numeric_find_candidate(
+        &mut self,
+        id: ProgramId,
+        function_id: u32,
+        function: &crate::bytecode::Function,
+    ) -> Option<super::js_compiled::JsJitNumericFind> {
+        if let Some((cached_id, cached_function, candidate)) = self.js_jit_numeric_find_candidate
+            && cached_id == id
+            && cached_function == function_id
+        {
+            return Some(candidate);
+        }
+        let candidate = super::js_compiled::numeric_find_candidate(function)?;
+        self.js_jit_numeric_find_candidate = Some((id, function_id, candidate));
+        Some(candidate)
+    }
+
     pub(super) fn cached_global_eval(&self, source: &JsString) -> Option<ProgramId> {
         let program = *self.global_eval_programs.get(source)?;
         self.entry(program).map(|_| program)
@@ -1491,6 +1513,18 @@ impl ProgramStore {
         }
     }
 
+    pub(super) fn record_js_jit_numeric_find_entry(&mut self, id: ProgramId, function: u32) {
+        if let Some(counters) = self
+            .js_jit_diagnostics
+            .as_mut()
+            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
+        {
+            counters.numeric_find_fast_entries = counters
+                .numeric_find_fast_entries
+                .saturating_add(1);
+        }
+    }
+
     pub(super) fn record_js_jit_fallback_entry(&mut self, id: ProgramId, function: u32) {
         if let Some(counters) = self
             .js_jit_diagnostics
@@ -1587,6 +1621,7 @@ impl ProgramStore {
             &crate::bytecode::Function,
             &[Value],
             crate::bytecode::ProgramKind,
+            Option<&[u64]>,
         ) -> super::dispatch_fast::LaneView,
     ) -> Option<*const super::dispatch_fast::LaneView> {
         let entry = self.entry(id)?;
@@ -1598,7 +1633,10 @@ impl ProgramStore {
         if !entry.lane_deferred.get(function as usize)?.replace(true) && !may_loop(code) {
             return None;
         }
-        Some(view.get_or_init(|| derive(code, &entry.constants, entry.residual.kind)))
+        Some(view.get_or_init(|| {
+            let live = entry.residual.register_root_masks(function);
+            derive(code, &entry.constants, entry.residual.kind, live)
+        }))
     }
 
     pub(super) fn lane_view(
@@ -1609,12 +1647,16 @@ impl ProgramStore {
             &crate::bytecode::Function,
             &[Value],
             crate::bytecode::ProgramKind,
+            Option<&[u64]>,
         ) -> super::dispatch_fast::LaneView,
     ) -> Option<*const super::dispatch_fast::LaneView> {
         let entry = self.entry(id)?;
         let code = entry.residual.function_get(function as usize)?;
         let view = entry.lane_views.get(function as usize)?;
-        Some(view.get_or_init(|| derive(code, &entry.constants, entry.residual.kind)))
+        Some(view.get_or_init(|| {
+            let live = entry.residual.register_root_masks(function);
+            derive(code, &entry.constants, entry.residual.kind, live)
+        }))
     }
 
     pub(crate) fn constant(&self, id: ProgramId, index: usize) -> Option<Value> {
@@ -1779,7 +1821,7 @@ impl Drop for ProgramStore {
             }
             let _ = write!(
                 stderr,
-                ",\"status\":\"{status}\",\"parameter_count\":{},\"instruction_count\":{},\"entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"compile_ns\":{},\"native_entries\":{},\"native_entry_coverage_ppm\":{},\"field_return_candidate_entries\":{},\"field_return_fixed_this_entries\":{},\"field_return_fast_entries\":{},\"fallback_entries\":{},\"interpreter_completions\":{},\"interpreter_inclusive_ns\":{},\"guard_census\":{{\"conditional_branch_sites\":{},\"typeof_operations\":{},\"strict_comparison_sites\":{},\"relational_comparison_sites\":{}}},\"opcodes\":[",
+                ",\"status\":\"{status}\",\"parameter_count\":{},\"instruction_count\":{},\"entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"compile_ns\":{},\"native_entries\":{},\"native_entry_coverage_ppm\":{},\"field_return_candidate_entries\":{},\"field_return_fixed_this_entries\":{},\"field_return_fast_entries\":{},\"numeric_find_fast_entries\":{},\"fallback_entries\":{},\"interpreter_completions\":{},\"interpreter_inclusive_ns\":{},\"guard_census\":{{\"conditional_branch_sites\":{},\"typeof_operations\":{},\"strict_comparison_sites\":{},\"relational_comparison_sites\":{}}},\"opcodes\":[",
                 counters.parameter_count,
                 counters.instruction_count,
                 counters.entries,
@@ -1793,6 +1835,7 @@ impl Drop for ProgramStore {
                 counters.field_return_candidate_entries,
                 counters.field_return_fixed_this_entries,
                 counters.field_return_fast_entries,
+                counters.numeric_find_fast_entries,
                 counters.fallback_entries,
                 counters.interpreter_completions,
                 counters.interpreter_inclusive_ns,
