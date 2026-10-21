@@ -988,6 +988,8 @@ pub(super) struct PromiseJob {
 
 #[derive(Clone, Copy, Debug)]
 pub(super) struct ThenableJob {
+    /// The realm the job runs in: the one current when the thenable resolved its promise.
+    pub(super) realm: Value,
     pub(super) then: Value,
     pub(super) thenable: Value,
     pub(super) promise: Value,
@@ -1061,7 +1063,6 @@ pub(super) struct DynamicImportJob {
 pub(super) struct PromiseRuntime {
     pub(super) rejection_notifications: VecDeque<RejectionNotification>,
     pub(super) last_rejection_id: u64,
-    pub(super) thenable_jobs: FxHashMap<Value, ThenableJob>,
     pub(super) finally_handler_callbacks: FxHashMap<Value, FinallyHandlerCallback>,
     pub(super) finally_continuation_callbacks: FxHashMap<Value, FinallyContinuationCallback>,
     pub(super) aggregates: FxHashMap<Value, AggregateRecord>,
@@ -1089,7 +1090,6 @@ impl PromiseRuntime {
                 }
             };
         }
-        edges!(self.thenable_jobs, |job| [job.then, job.thenable, job.promise]);
         edges!(self.finally_handler_callbacks, |callback| [
             callback.handler,
             callback.constructor
@@ -1619,7 +1619,6 @@ impl<H: Host> Vm<H> {
                 self.promise_aggregate(p, this, args, AggregateMode::AllSettledKeyed)
             }
             Native::PromiseAny => self.promise_aggregate(p, this, args, AggregateMode::Any),
-            Native::PromiseThenableJob => self.promise_thenable_job(p),
             Native::PromiseAggregateJob => {
                 self.promise_aggregate_job(p, args.first().copied().unwrap_or(Value::UNDEFINED))
             }
@@ -5142,17 +5141,16 @@ impl<H: Host> Vm<H> {
         if !self.is_function(then) {
             return self.promise_settle(p, promise, PromiseState::Fulfilled, value);
         }
-        let job = self.native_with_env(Native::PromiseThenableJob, Value::NULL);
-        self.realm.promise.thenable_jobs.insert(
-            job,
-            ThenableJob {
-                then,
-                thenable: value,
-                promise,
-                execution_context: self.host.capture_job_context(self.promise_record(promise).and_then(|record| record.host_context)),
-            },
-        );
-        self.enqueue_job(job, vec![]);
+        let execution_context = self
+            .host
+            .capture_job_context(self.promise_record(promise).and_then(|record| record.host_context));
+        self.realm.jobs.push_back(super::PendingJob::Thenable(ThenableJob {
+            realm: self.realm.globals,
+            then,
+            thenable: value,
+            promise,
+            execution_context,
+        }));
         Ok(())
     }
 
