@@ -206,7 +206,7 @@ impl ProgramEntry {
         Ok(Self {
             regexp_literals: vec![None; residual.regexp_literal_sites.len()],
             lane_views: residual.functions.iter().map(|_| std::cell::OnceCell::new()).collect(),
-            lane_deferred: vec![std::cell::Cell::new(false); residual.functions.len()],
+            lane_deferred: vec![std::cell::Cell::new(0); residual.functions.len()],
             residual,
             wasm_signatures: None,
             constants,
