@@ -280,6 +280,39 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
         Ok(id)
     }
 
+    /// Places `value` at `id`, as a snapshot restores it (`crate::snapshot`): ids arrive in
+    /// increasing order, each marked (old), as after a full collection; the ids skipped are
+    /// reusable once `finish_snapshot_inserts` runs. `false` when the id cannot be placed.
+    pub(super) fn insert_snapshot(&mut self, id: RecordId, value: T) -> bool {
+        if !self.ensure_reserved() || id as usize >= RECORD_SPACE_CAPACITY || id < self.next_id {
+            return false;
+        }
+        let (block_index, record_index) = Self::split_id(id);
+        while self.blocks.len() <= block_index {
+            self.blocks.push(RecordBlock::new());
+        }
+        if !self.blocks[block_index].claim(record_index) {
+            return false;
+        }
+        // SAFETY: the occupancy bit claims this previously uninitialized id.
+        unsafe { self.base.as_ptr().add(id as usize).write(MaybeUninit::new(value)) };
+        self.blocks[block_index].mark(record_index);
+        self.next_id = id + 1;
+        self.live += 1;
+        true
+    }
+
+    /// Makes the ids `insert_snapshot` skipped reusable, scanning down from the high water.
+    pub(super) fn finish_snapshot_inserts(&mut self) {
+        self.free_cursor = self.next_id;
+        self.free_word = 0;
+    }
+
+    /// The first id never used: a snapshot restores the space up to it.
+    pub(super) fn high_water_id(&self) -> RecordId {
+        self.next_id
+    }
+
     /// Loads the occupancy word holding the highest reusable ID below `free_cursor` and moves
     /// the cursor to that word's start, or to 0 when no reusable ID remains.
     #[inline(never)]

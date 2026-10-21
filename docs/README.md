@@ -222,8 +222,44 @@ Entries live in `$QUENCH_COMPILE_CACHE`, else `$XDG_CACHE_HOME/quench/compile`, 
 keyed by the executable that wrote it (path, size, modification time and runtime ABI), the
 module's name and the exact text compiled, and is written to a temporary file renamed into
 place. An entry that is missing, unreadable or does not decode costs only the compilation it
-would have saved. Package modules (`node_modules`) still compile on every run, so their
+would have saved.
+
+A decoded program parses nothing, so it reaches none of a compilation's phase boundaries
+(`set_compile_phase_boundary`), where the host releases its read-only pages. The runtime calls
+`Host::cached_program_decoded` after each decode instead. Once bootstrap has finished,
+`quench-node` releases there: without it, a run whose programs all decode keeps the loader's,
+decoder's and bootstrap's pages resident until its first collection. Bootstrap's own programs
+decode back to back without that release, which there only refaulted the same loader code. Package modules (`node_modules`) still compile on every run, so their
 functions keep compiling again on first call.
+
+## Startup snapshot
+
+`quench-node` restores a process's bootstrapped realm from a startup snapshot instead of
+running the bootstrap: Node's bootstrap up to the point before the process's options,
+preloads and entry are installed, with the builtins nearly every program loads already
+loaded (`PRELOADED_BUILTINS`: events, buffer, util, path, fs, url, timers, querystring,
+async_hooks, diagnostics_channel, stream, module, child_process and http), as Node's own
+startup snapshot holds them. The runtime writes the VM (`Runtime::build_snapshot`) with
+every identity space at its indices, so values keep their bits, and the host adds the state
+the heap is bound to (`NodeHost::write_snapshot`); a field of either that is neither written
+nor the restoring process's own must be empty at the snapshot point, or the snapshot is
+refused. A restored host continues the bootstrap (`Host::resume`) after replacing what the
+snapshot holds of the builder's process: `process.argv`, `execArgv`, `execPath`, `argv0`,
+`pid`, `ppid`, the process streams' `isTTY`, the performance time origins and the
+`Math.random` seed. While a snapshot is built, reading `process.env`, `process.cwd()` or
+`perf_hooks` fails the build, since the snapshot would keep the builder's.
+
+A process uses a snapshot when `QUENCH_STARTUP_SNAPSHOT` is `on` or `trace` and it runs a
+file entry on the main thread with no CLI options and no IPC channel (`NODE_CHANNEL_FD`).
+Without it processes boot without one: a restored realm keeps its preloaded builtins
+resident, which a script that loads none of them pays for in max RSS. Snapshots live in a `snapshot` directory beside the
+compile cache's, one directory per build, keyed by the library root and the variables the
+bootstrap reads (`HOME`, `NODE_OPTIONS`, `NODE_PENDING_DEPRECATION`, `NODE_DEBUG`,
+`NODE_PATH`, `QUENCH_PLATFORM`). When an eligible process finds none it starts the
+executable with `QUENCH_BUILD_STARTUP_SNAPSHOT=<file>`, detached and holding a lock file, which
+builds it for later runs and removes other builds' snapshots. A snapshot that does not
+restore boots the process as if there were none. `QUENCH_STARTUP_SNAPSHOT=trace` also
+reports on stderr whether one was restored.
 
 ## Shared runtime host roots
 

@@ -1842,6 +1842,11 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
     randomInt,
   };
   Object.defineProperty(api,"constants",{value:nativeConstants,enumerable:true});
+  // lib/crypto.js: the default list is read once, then replaced by a data property.
+  Object.defineProperty(nativeConstants,"defaultCipherList",{__proto__:null,
+    get(){const value=nativeConstants.defaultCoreCipherList;Object.defineProperty(this,"defaultCipherList",{__proto__:null,writable:true,configurable:true,enumerable:true,value});return value;},
+    set(value){Object.defineProperty(this,"defaultCipherList",{__proto__:null,writable:true,configurable:true,enumerable:true,value});},
+    configurable:true,enumerable:true});
   Object.defineProperties(api, {
     webcrypto: { enumerable: true, get() { return getWebCrypto ? getWebCrypto() : webCrypto; } },
     pseudoRandomBytes: { configurable: true, writable: true, value: pseudoRandomBuffer },

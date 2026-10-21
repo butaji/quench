@@ -53,6 +53,23 @@ struct StaticModuleNode {
     /// Where each export name is defined: a local binding wins over a named or namespace
     /// re-export, and an earlier re-export over a later one. Star re-exports are unnamed.
     sites: FxHashMap<String, StaticExportSite>,
+    /// The module each of its requests names, by specifier (`Vm::static_node_dependency`):
+    /// resolving every export of a module walks the same edges once per name.
+    dependencies: std::cell::RefCell<FxHashMap<String, String>>,
+    /// GetExportedNames from this module with an empty export-star set, once known
+    /// (`Vm::static_module_exported_name_set`); `None` inside when unsupported.
+    exported_names: std::cell::OnceCell<Option<Rc<FxHashSet<String>>>>,
+    /// Its star re-exports, indexed once (`Vm::static_star_index`); `None` inside when one
+    /// of them does not resolve or is unsupported, and each lookup then walks them in order.
+    stars: std::cell::OnceCell<Option<Rc<StaticStarIndex>>>,
+}
+
+/// A module's star re-exports: their modules in source order and, for each name one of them
+/// exports, which of them do, so a name's ResolveExport visits only those.
+#[derive(Default)]
+struct StaticStarIndex {
+    dependencies: Vec<ModuleSource>,
+    exporters: FxHashMap<String, Vec<usize>>,
 }
 
 #[derive(Clone, Copy)]
@@ -77,7 +94,7 @@ impl StaticModuleNode {
                 sites.entry(exported.clone()).or_insert(StaticExportSite::Reexport(index));
             }
         }
-        Rc::new(Self { locals, reexports, sites })
+        Rc::new(Self { locals, reexports, sites, dependencies: Default::default(), exported_names: Default::default(), stars: Default::default() })
     }
 }
 
@@ -3474,14 +3491,16 @@ impl<H: Host> Vm<H> {
     }
 
     /// A static module's program kept by the host's compile cache
-    /// (`Host::kept_compiled_program`) for its exact text: compiled unspecialized, after its
-    /// early errors were ruled out, so neither repeats.
+    /// (`Host::kept_compiled_program`) for its exact text: compiled as this VM specializes,
+    /// after its early errors were ruled out, so neither repeats.
     fn kept_static_module_program(&mut self, module: &ModuleSource) -> Option<ResidualProgram> {
-        let bytes = self
-            .host
-            .kept_compiled_program(&module.name, &[STATIC_MODULE_GOAL, &module.source])?;
+        let bytes = self.host.kept_compiled_program(
+            &module.name,
+            &[self.specialization_part(), STATIC_MODULE_GOAL, &module.source],
+        )?;
         let text = crate::bytecode::SourceText::Shared(std::sync::Arc::from(module.source.as_str()));
-        self.decode_cached_program(bytes, text, 0, &module.name, false).ok()
+        let specialized = self.specialized;
+        self.decode_cached_program(bytes, text, 0, &module.name, specialized).ok()
     }
 
     /// Offers the host the compiled program of a static module (`kept_static_module_program`).
@@ -3490,7 +3509,7 @@ impl<H: Host> Vm<H> {
             && let Some(bytes) = self.encode_cached_program(&residual)
         {
             self.host
-                .keep_compiled_program(&module.name, &[STATIC_MODULE_GOAL, &module.source], &bytes);
+                .keep_compiled_program(&module.name, &[self.specialization_part(), STATIC_MODULE_GOAL, &module.source], &bytes);
         }
     }
 
@@ -3530,7 +3549,7 @@ impl<H: Host> Vm<H> {
                         .syntax_error_result(p, &message)
                         .map(|_| ());
                 }
-                let residual = crate::Engine::specialize_module_unspecialized_with_atom_prefix(
+                let residual = crate::Engine::specialize_module_with_atom_prefix(
                     &module.source,
                     &module.name,
                     &*self,
@@ -4062,7 +4081,7 @@ impl<H: Host> Vm<H> {
         {
             Some(program) => program,
             None => {
-                let residual = crate::Engine::specialize_module_unspecialized_with_atom_prefix(
+                let residual = crate::Engine::specialize_module_with_atom_prefix(
                     &module.source,
                     &module.name,
                     &*self,
@@ -4333,7 +4352,7 @@ impl<H: Host> Vm<H> {
         let Some(link_plan) = plan.link_plan else {
             return Ok(false);
         };
-        let residual = crate::Engine::specialize_module_unspecialized_with_atom_prefix(
+        let residual = crate::Engine::specialize_module_with_atom_prefix(
             &module.source,
             &module.name,
             &*self,
@@ -4393,7 +4412,7 @@ impl<H: Host> Vm<H> {
                 }
                 crate::compile::StaticModuleReexport::Star { source } => {
                     let Some(dependency) =
-                        self.static_module_dependency(p, &module.name, source)?
+                        self.static_node_dependency(p, module, source, nodes)?
                     else {
                         return Ok(None);
                     };
@@ -4438,6 +4457,89 @@ impl<H: Host> Vm<H> {
             .map_err(|error| self.module_load_error(p, error))
     }
 
+    /// `static_module_dependency` of a module with a node in `nodes`, through the node's
+    /// memo of its edges: a dependency whose node exists needs neither the host nor its text.
+    fn static_node_dependency(
+        &mut self,
+        p: &ResidualProgram,
+        module: &ModuleSource,
+        source: &str,
+        nodes: &StaticModuleNodes,
+    ) -> Result<Option<ModuleSource>, JsError> {
+        let node = nodes.get(&crate::module_identity::normalize(std::path::Path::new(&module.name))).cloned();
+        if let Some(node) = &node
+            && let Some(name) = node.dependencies.borrow().get(source)
+            && nodes.contains_key(&crate::module_identity::normalize(std::path::Path::new(name)))
+        {
+            return Ok(Some(ModuleSource::text(name.clone(), "")));
+        }
+        let dependency = self.static_module_dependency(p, &module.name, source)?;
+        if let (Some(node), Some(dependency)) = (&node, &dependency) {
+            node.dependencies.borrow_mut().insert(source.to_owned(), dependency.name.clone());
+        }
+        Ok(dependency)
+    }
+
+    /// GetExportedNames of `module` with an empty export-star set, as a set, memoized on its
+    /// node. A name outside it cannot resolve through `module`: ResolveExport reaches no module
+    /// GetExportedNames does not, so a star re-export of `module` is skipped for it.
+    fn static_module_exported_name_set(
+        &mut self,
+        p: &ResidualProgram,
+        module: &ModuleSource,
+        nodes: &mut StaticModuleNodes,
+    ) -> Result<Option<Rc<FxHashSet<String>>>, JsError> {
+        if !self.ensure_static_module_node(p, module, nodes)? {
+            return Ok(None);
+        }
+        let identity = crate::module_identity::normalize(std::path::Path::new(&module.name));
+        let Some(node) = nodes.get(&identity).cloned() else {
+            return Ok(None);
+        };
+        if let Some(names) = node.exported_names.get() {
+            return Ok(names.clone());
+        }
+        let names = self
+            .static_module_export_names(p, module, nodes, &mut FxHashSet::default())?
+            .map(|names| Rc::new(names.into_iter().collect::<FxHashSet<_>>()));
+        Ok(node.exported_names.get_or_init(|| names).clone())
+    }
+
+    /// `node`'s star re-exports, indexed by the names each exports (`StaticStarIndex`).
+    fn static_star_index(
+        &mut self,
+        p: &ResidualProgram,
+        module: &ModuleSource,
+        node: &Rc<StaticModuleNode>,
+        nodes: &mut StaticModuleNodes,
+    ) -> Result<Option<Rc<StaticStarIndex>>, JsError> {
+        if let Some(index) = node.stars.get() {
+            return Ok(index.clone());
+        }
+        let mut index = StaticStarIndex::default();
+        let mut complete = true;
+        for reexport in &node.reexports {
+            let crate::compile::StaticModuleReexport::Star { source } = reexport else {
+                continue;
+            };
+            let Some(dependency) = self.static_node_dependency(p, module, source, nodes)? else {
+                complete = false;
+                break;
+            };
+            let Some(names) = self.static_module_exported_name_set(p, &dependency, nodes)? else {
+                complete = false;
+                break;
+            };
+            let position = index.dependencies.len();
+            for name in names.iter() {
+                index.exporters.entry(name.clone()).or_default().push(position);
+            }
+            index.dependencies.push(ModuleSource::text(dependency.name, ""));
+        }
+        let index = complete.then(|| Rc::new(index));
+        Ok(node.stars.get_or_init(|| index).clone())
+    }
+
     fn resolve_static_module_export(
         &mut self,
         p: &ResidualProgram,
@@ -4462,7 +4564,7 @@ impl<H: Host> Vm<H> {
             }
             Some(StaticExportSite::Reexport(index)) => match &node.reexports[index] {
                 crate::compile::StaticModuleReexport::Named { source, imported, .. } => {
-                    let Some(dependency) = self.static_module_dependency(p, &module.name, source)?
+                    let Some(dependency) = self.static_node_dependency(p, module, source, nodes)?
                     else {
                         return Ok(StaticModuleResolution::Missing);
                     };
@@ -4475,7 +4577,7 @@ impl<H: Host> Vm<H> {
                     );
                 }
                 crate::compile::StaticModuleReexport::Namespace { source, .. } => {
-                    let Some(dependency) = self.static_module_dependency(p, &module.name, source)?
+                    let Some(dependency) = self.static_node_dependency(p, module, source, nodes)?
                     else {
                         return Ok(StaticModuleResolution::Missing);
                     };
@@ -4534,17 +4636,40 @@ impl<H: Host> Vm<H> {
             },
             None => {}
         }
-        let mut star_resolution: Option<StaticModuleValue> = None;
-        for reexport in &node.reexports {
-            let crate::compile::StaticModuleReexport::Star { source } = reexport else {
-                continue;
-            };
-            if name == "default" {
-                continue;
+        // A star re-export never provides `default`.
+        if name == "default" {
+            return Ok(StaticModuleResolution::Missing);
+        }
+        // The star modules that can provide `name`, in source order: those GetExportedNames
+        // finds it in (`static_module_exported_name_set`).
+        let candidates = match self.static_star_index(p, module, &node, nodes)? {
+            Some(index) => index
+                .exporters
+                .get(name)
+                .map_or_else(Vec::new, |positions| {
+                    positions.iter().map(|&position| index.dependencies[position].clone()).collect()
+                }),
+            None => {
+                let mut candidates = Vec::new();
+                for reexport in &node.reexports {
+                    let crate::compile::StaticModuleReexport::Star { source } = reexport else {
+                        continue;
+                    };
+                    let Some(dependency) = self.static_node_dependency(p, module, source, nodes)? else {
+                        return Ok(StaticModuleResolution::Missing);
+                    };
+                    if !self
+                        .static_module_exported_name_set(p, &dependency, nodes)?
+                        .is_some_and(|names| !names.contains(name))
+                    {
+                        candidates.push(dependency);
+                    }
+                }
+                candidates
             }
-            let Some(dependency) = self.static_module_dependency(p, &module.name, source)? else {
-                return Ok(StaticModuleResolution::Missing);
-            };
+        };
+        let mut star_resolution: Option<StaticModuleValue> = None;
+        for dependency in candidates {
             let mut branch = resolve_set.clone();
             match self.resolve_static_module_export(p, &dependency, name, nodes, &mut branch)? {
                 StaticModuleResolution::Binding(value) => match &star_resolution {
@@ -5519,5 +5644,47 @@ impl<H: Host> Vm<H> {
         self.heap.release_root(receiver);
         self.heap.release_root(handler);
         outcome
+    }
+}
+
+impl PromiseRuntime {
+    /// A snapshot (`crate::snapshot`) is taken between jobs, with no module loading and no
+    /// combinator or reaction in flight, so only the rejection numbering carries over.
+    pub(super) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) -> crate::snapshot::SnapshotResult<()> {
+        let Self {
+            rejection_notifications,
+            last_rejection_id,
+            thenable_jobs,
+            finally_handler_callbacks,
+            finally_continuation_callbacks,
+            aggregates,
+            aggregate_jobs,
+            reaction_capabilities,
+            modules,
+            dynamic_import_jobs,
+            async_module_order,
+            module_sources,
+            waiting_static_modules,
+            active_native,
+        } = self;
+        let pending = [
+            ("a rejection notification", rejection_notifications.is_empty()),
+            ("a thenable job", thenable_jobs.is_empty()),
+            ("a finally callback", finally_handler_callbacks.is_empty() && finally_continuation_callbacks.is_empty()),
+            ("a promise combinator", aggregates.is_empty() && aggregate_jobs.is_empty()),
+            ("a reaction capability", reaction_capabilities.is_empty()),
+            ("a module record", modules.is_empty() && async_module_order.is_empty() && module_sources.is_empty()),
+            ("a module load", dynamic_import_jobs.is_empty() && waiting_static_modules.is_empty()),
+            ("a native activation", active_native.is_empty()),
+        ];
+        if let Some((what, _)) = pending.iter().find(|(_, empty)| !empty) {
+            return Err(crate::snapshot::SnapshotError::unsupported(what));
+        }
+        writer.u64(*last_rejection_id);
+        Ok(())
+    }
+
+    pub(super) fn read_snapshot(reader: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::SnapshotResult<Self> {
+        Ok(Self { last_rejection_id: reader.u64()?, ..Self::default() })
     }
 }

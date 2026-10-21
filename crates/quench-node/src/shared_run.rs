@@ -113,6 +113,7 @@ fn execute_shared_on_worker(
     mode: quench_runtime::ExecutionMode,
 ) -> Result<SharedCompletion, String> {
     let eval_builtin_globals = matches!(&input, SharedInput::Eval { .. });
+    let file_entry = matches!(&input, SharedInput::File { .. });
     let eval_source_nonempty = matches!(&input, SharedInput::Eval { source, .. } if !source.is_empty());
     let inline_source = match &input {
         SharedInput::Stdin { .. } => crate::host::node_host::InlineSource::Stdin,
@@ -177,35 +178,58 @@ fn execute_shared_on_worker(
         }
     };
 
-    let mut host = NodeHost::new(argv).with_exec_argv(exec_argv)?;
-    host.inline_source = inline_source;
-    host.eval_builtin_globals = eval_builtin_globals;
-    host.eval_source_nonempty = eval_source_nonempty;
-    let host = match commonjs_entry {
-        Some(path) => host.with_commonjs_entry_goal(path, entry_goal),
-        None => host,
-    };
-    let shared_state = host.shared_state();
-    shared_state.borrow_mut().messaging.context = worker;
-    {
+    let new_host = |worker: Option<crate::modules::worker_shared_vm::WorkerContext>| -> Result<NodeHost, String> {
+        let mut host = NodeHost::new(argv.clone()).with_exec_argv(exec_argv.clone())?;
+        host.inline_source = inline_source;
+        host.eval_builtin_globals = eval_builtin_globals;
+        host.eval_source_nonempty = eval_source_nonempty;
+        let host = match commonjs_entry.clone() {
+            Some(path) => host.with_commonjs_entry_goal(path, entry_goal),
+            None => host,
+        };
+        let shared_state = host.shared_state();
+        shared_state.borrow_mut().messaging.context = worker;
         let mut state = shared_state.borrow_mut();
         let argv = state.process_argv.clone();
         let exec_argv = state.exec_argv.clone();
         state.trace.open_environment(argv.as_slice(), &exec_argv);
-    }
+        drop(state);
+        Ok(host)
+    };
+    let request = ExecutionRequest { source: &source, name: &name, kind };
+    let in_worker = worker.is_some();
+    let host = new_host(worker)?;
+    let snapshot = crate::host::startup_snapshot::snapshot_path(&host, file_entry, in_worker)
+        .and_then(|path| crate::host::startup_snapshot::load_or_schedule(&path));
     let mut runtime = Runtime::new(host);
     runtime.set_execution_mode(mode);
-    let program = runtime
-        .compile_entry(ExecutionRequest {
-            source: &source,
-            name: &name,
-            kind,
-        })
-        .map_err(|error| format!("{error:?}"))?;
+    let mut program = runtime.compile_entry(request).map_err(|error| format!("{error:?}"))?;
+    let mut restored = false;
+    if let Some(snapshot) = snapshot {
+        match runtime.restore_snapshot(snapshot, &program, |host, reader| host.read_snapshot(reader)) {
+            Ok(entry) => {
+                crate::host::startup_snapshot::report(Ok(()));
+                program = entry;
+                restored = true;
+            }
+            Err(error) => {
+                crate::host::startup_snapshot::report(Err(&error));
+                // The restore may have left the runtime half replaced: boot a fresh one.
+                runtime = Runtime::new(new_host(None)?);
+                runtime.set_execution_mode(mode);
+                program = runtime.compile_entry(request).map_err(|error| format!("{error:?}"))?;
+            }
+        }
+    }
+    let shared_state = runtime.host_mut().shared_state();
     if let Some(worker) = &shared_state.borrow().messaging.context {
         worker.control.set_online();
     }
-    let execution = runtime.execute_deferred_jobs(&program);
+    let execution = if restored {
+        runtime.execute_restored(&program)
+    } else {
+        runtime.execute_deferred_jobs(&program)
+    };
     let completion = match execution {
         Ok(()) => crate::modules::process_shared_vm::finish_execution(&mut runtime, &program),
         Err(error) => {
@@ -298,6 +322,11 @@ pub fn executable_path() -> std::io::Result<PathBuf> {
 
 /// Parse the development CLI's entry form and route it through `execute_shared`.
 pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<ExitCode, String> {
+    // A process started to build a startup snapshot builds it instead (`startup_snapshot`);
+    // its bootstrap cannot read the environment, so the variable stays out of the snapshot.
+    if let Some(path) = std::env::var_os(crate::host::startup_snapshot::BUILD_ENV) {
+        return crate::host::startup_snapshot::build(std::path::Path::new(&path)).map(|()| ExitCode::SUCCESS);
+    }
     crate::host::resident_pages::map_touched_pages_only();
     let args = arguments.into_iter().collect::<Vec<_>>();
     match args.first().map(String::as_str) {

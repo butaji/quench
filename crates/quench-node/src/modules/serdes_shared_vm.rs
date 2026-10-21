@@ -475,3 +475,16 @@ pub(crate) fn read_raw_bytes(c: &mut Context<'_>, _: RootId, args: &[RootId]) ->
         None => Err(throw_error(c, "ReadRawBytes() failed")),
     }
 }
+
+impl State {
+    pub(crate) fn write_snapshot(&self, writer: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> {
+        use crate::host::startup_snapshot::{require_quiescent, HostSnap};
+        let Self { next_id, serializers, deserializers } = self;
+        require_quiescent(serializers.is_empty() && deserializers.is_empty(), "a v8 serializer")?;
+        next_id.write(writer)
+    }
+    pub(crate) fn read_snapshot(&mut self, reader: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<(), String> {
+        self.next_id = crate::host::startup_snapshot::HostSnap::read(reader)?;
+        Ok(())
+    }
+}
