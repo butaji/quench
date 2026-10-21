@@ -2178,7 +2178,7 @@ impl<H: Host> Vm<H> {
             frame.function != super::ROOT_FUNCTION_ID
                 && self.programs.runs_in_global_scope(frame.program)
                 && p.function_get(frame.function as usize)
-                    .is_some_and(|function| function.names_resolve_statically(&p.functions, &p.atoms))
+                    .is_some_and(|function| function.names_resolve_statically(p))
         })
     }
 
@@ -2590,14 +2590,16 @@ fn direct_store_owner<'p>(
     program: super::ProgramId,
     function: u32,
     scope: &crate::heap::EnvironmentScopeRef,
-) -> Option<&'p crate::bytecode::FunctionSlot> {
+) -> Option<&'p crate::bytecode::Function> {
     if function == super::ROOT_FUNCTION_ID
         || function == u32::MAX
         || scope.program().is_some_and(|owner| owner != program.raw())
     {
         return None;
     }
-    p.functions.get(function as usize)
+    // Read on demand: an environment restored from a startup snapshot can outlive its
+    // function's record in this process.
+    p.function_get(function as usize)
 }
 
 /// The `Vm::capture_walks` entry a walk from `env` to `depth` uses.

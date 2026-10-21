@@ -9,9 +9,10 @@ use oxc_span::GetSpan;
 use std::{collections::BTreeSet, path::Path};
 
 pub(super) fn names(path: &Path, source: &str) -> Vec<String> {
-    let resolver = super::commonjs::commonjs_resolver();
     let mut names = BTreeSet::new();
-    collect(path, source, &resolver, &mut BTreeSet::new(), &mut names);
+    super::commonjs::with_commonjs_resolver(|resolver| {
+        collect(path, source, resolver, &mut BTreeSet::new(), &mut names);
+    });
     names.remove("default");
     names.remove("module.exports");
     names.into_iter().collect()
@@ -44,7 +45,7 @@ fn collect(
         let Some(base) = path.parent() else {
             continue;
         };
-        let Ok(resolution) = resolver.resolve(base, &specifier) else {
+        let Ok(resolution) = super::commonjs::resolve_kept(resolver, |resolver| resolver.resolve(base, &specifier)) else {
             continue;
         };
         let resolved = resolution.full_path();

@@ -555,3 +555,21 @@ pub(crate) fn prune(runtime: &mut Runtime<NodeHost>) {
         runtime.release_host_weak_root(entry.identity);
     }
 }
+
+impl State {
+    pub(crate) fn write_snapshot(&self, writer: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> {
+        use crate::host::startup_snapshot::{require_quiescent, HostSnap};
+        let Self { api, dispatch, cache, watchers } = self;
+        require_quiescent(watchers.is_empty(), "a stat watcher")?;
+        api.write(writer)?;
+        dispatch.write(writer)?;
+        cache.write(writer)
+    }
+    pub(crate) fn read_snapshot(&mut self, reader: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<(), String> {
+        use crate::host::startup_snapshot::HostSnap;
+        self.api = HostSnap::read(reader)?;
+        self.dispatch = HostSnap::read(reader)?;
+        self.cache = HostSnap::read(reader)?;
+        Ok(())
+    }
+}

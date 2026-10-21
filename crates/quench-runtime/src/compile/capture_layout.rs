@@ -9,6 +9,10 @@ use crate::bytecode::{Function, Op, WITH_ENTER_BINDING};
 pub(crate) struct LayoutInputs {
     pub(crate) captured: Vec<u16>,
     pub(crate) dynamic_descendant: bool,
+    /// Whether the function is a module's body. Its module-scope bindings live in the module
+    /// environment, which importers and the linker address by slot, and are in `captured`;
+    /// its block bindings are as private to its activation as a function's.
+    pub(crate) module_root: bool,
 }
 
 /// What the program-wide layout analyses read of one function, fixed once it is compiled:
@@ -105,6 +109,7 @@ pub(super) fn inputs(
         .map(|((id, captured), dynamic_descendant)| LayoutInputs {
             captured: complete_captured(captured, arguments(id)),
             dynamic_descendant,
+            module_root: false,
         })
         .collect()
 }
@@ -140,18 +145,20 @@ pub(super) fn apply_function(
     atoms: &CompilerAtoms<'_>,
 ) {
     let mut captured = inputs.captured.clone();
-    if !has_closure(function) {
+    // A module body's `captured` includes the bindings its module environment holds
+    // (`Function::module_environment_slots`), closures or not, so it always splits.
+    if !inputs.module_root && !has_closure(function) {
         // No closure of this activation can exist, and no nested function captures
         // its locals: a per-iteration or block copy of the environment is unobservable
         // under the same layout conditions that let a closure's activation split.
-        if captured.is_empty() && selective_layout_is_safe(function, id, inputs.dynamic_descendant)
+        if captured.is_empty() && selective_layout_is_safe(function, id, inputs)
         {
             remove_unobservable_clones(function, &captured);
         }
         return;
     }
 
-    let can_split = selective_layout_is_safe(function, id, inputs.dynamic_descendant);
+    let can_split = selective_layout_is_safe(function, id, inputs);
     if can_split {
         // The runtime finds compiler bindings such as class home objects by name in
         // the environment, so they live there like captured bindings; the other
@@ -250,10 +257,13 @@ fn inherited_dynamic_scope(functions: &[FunctionFacts]) -> Vec<bool> {
     inherited
 }
 
-fn selective_layout_is_safe(function: &Function, id: usize, has_dynamic_descendant: bool) -> bool {
-    id != 0
-        && function.parent.is_some()
-        && !has_dynamic_descendant
+/// Whether the function's activation may keep its uncaptured locals out of its environment:
+/// a nested function, or a module body, whose environment nothing outside it reads by name.
+fn selective_layout_is_safe(function: &Function, id: usize, inputs: &LayoutInputs) -> bool {
+    let nested = id != 0 && function.parent.is_some();
+    let module_body = inputs.module_root && function.parent.is_none();
+    (nested || module_body)
+        && !inputs.dynamic_descendant
         && !function.is_async
         && !function.is_generator
         && !function.is_class_constructor

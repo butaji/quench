@@ -1032,12 +1032,18 @@ impl quench_runtime::Host for NodeHost {
         self.shared_state.borrow().async_hooks.tracks_promises()
     }
 
-    /// Counts the collection for the release before output (`resident_pages::note_collection`).
-    /// The pages themselves stay: releasing them after every collection refaulted the run's
-    /// hot code after each young one (EarleyBoyer, dynamic x86_64 production build,
-    /// 2026-10-20: ~63K minor faults and ~0.11 s of system time per run against ~15K and
-    /// ~0.035 s without).
+    /// The code a run touched since the last collection leaves the resident set after each
+    /// collection, and before a full one; what still runs comes back from the page cache. The
+    /// collector's code and the program's are then resident one at a time, and the program's
+    /// only as much of it as ran since the last collection (V8-v7 RegExp max RSS, static
+    /// x86_64 unbolted, 2026-10-18: 7244-7500 -> 7136-7328 KiB at every collection's end;
+    /// Splay 39800 -> 38988 KiB with the release before full collections).
+    /// The allocator's free pages, which the collection's sweep just freed, leave with them
+    /// (V8-v7 max RSS, static x86_64 unbolted, 2026-10-19: RegExp 6772-7044 -> 6664-6772 KiB,
+    /// EarleyBoyer 9048-9088 -> 8536-8576, the rest unchanged).
     fn at_collection_boundary(&mut self) {
+        crate::host::resident_pages::release_read_only_pages();
+        crate::host::resident_pages::release_free_heap_pages();
         crate::host::resident_pages::note_collection();
     }
 
@@ -1048,6 +1054,11 @@ impl quench_runtime::Host for NodeHost {
         crate::host::resident_pages::release_read_only_pages();
     }
 
+    /// The snapshot is a tracked read-only mapping (`startup_snapshot::load_or_schedule`).
+    fn snapshot_bytes_read(bytes: &[u8]) {
+        crate::host::resident_pages::release_tracked_bytes(bytes);
+    }
+
     fn kept_compiled_program(&mut self, name: &str, parts: &[&str]) -> Option<quench_runtime::KeptBytes> {
         self.compile_cache.entry(name, parts)?.load()
     }
@@ -1056,6 +1067,20 @@ impl quench_runtime::Host for NodeHost {
             entry.store(bytes);
         }
     }
+    /// A decoded program after bootstrap (the entry and its modules, a builtin or library
+    /// module loaded on first use) releases what loading it touched, as its compilation would
+    /// have at its phase boundary: with the compile cache warm, a run otherwise reaches no
+    /// release between bootstrap and its first collection (CoreMark as a Wasm ES module,
+    /// static x86_64 unbolted, 2026-10-21: max RSS 4404 -> 3412 KiB; through
+    /// `WebAssembly.instantiate`, 4920 -> 4016). Bootstrap's own programs decode back to back,
+    /// where a release after each only refaulted the same loader code (an empty script's run
+    /// 11 -> 18 ms).
+    fn cached_program_decoded(&mut self) {
+        if self.bootstrapped {
+            crate::host::resident_pages::release_read_only_code_and_data();
+        }
+    }
+
     fn proper_tail_calls(&self) -> bool {
         false
     }
@@ -1237,26 +1262,35 @@ impl quench_runtime::Host for NodeHost {
         let path = match path {
             Some(path) => path,
             None => {
-                let resolver = oxc_resolver::Resolver::new(oxc_resolver::ResolveOptions {
-                    extensions: vec![".mjs".into(), ".js".into(), ".json".into(), ".cjs".into()],
-                    main_files: vec!["index".into()],
-                    condition_names: vec!["node".into(), "import".into(), "default".into()],
-                    ..Default::default()
-                });
+                thread_local! {
+                    /// The import resolver, kept as `commonjs::with_commonjs_resolver` keeps
+                    /// the require one.
+                    static IMPORT_RESOLVER: oxc_resolver::Resolver = oxc_resolver::Resolver::new(oxc_resolver::ResolveOptions {
+                        extensions: vec![".mjs".into(), ".js".into(), ".json".into(), ".cjs".into()],
+                        main_files: vec!["index".into()],
+                        condition_names: vec!["node".into(), "import".into(), "default".into()],
+                        ..Default::default()
+                    });
+                }
                 let resolution_specifier = if internal {
                     format!("./{specifier}")
                 } else {
                     specifier.to_owned()
                 };
-                let resolution = match resolver.resolve(&base, &resolution_specifier) {
-                    Ok(resolution) => resolution,
-                    Err(oxc_resolver::ResolveError::Specifier(_)) => return Ok(None),
-                    Err(error) => return Err(esm_errors::unresolved(&resolver, error, specifier, &base, &referrer_path)),
+                let resolved = IMPORT_RESOLVER.with(|resolver| {
+                    match commonjs::resolve_kept(resolver, |resolver| resolver.resolve(&base, &resolution_specifier)) {
+                        Ok(resolution) => Ok(Some(resolution.full_path())),
+                        Err(oxc_resolver::ResolveError::Specifier(_)) => Ok(None),
+                        Err(error) => Err(esm_errors::unresolved(resolver, error, specifier, &base, &referrer_path)),
+                    }
+                })?;
+                let Some(path) = resolved else {
+                    return Ok(None);
                 };
-                resolution.full_path()
+                path
             }
         };
-        let path = std::fs::canonicalize(&path).unwrap_or(path);
+        let path = self.real_path(path);
         if !internal {
             if let Some(error) = esm_errors::unloadable(&path) {
                 return Err(error);
@@ -1288,9 +1322,9 @@ impl quench_runtime::Host for NodeHost {
             return Ok(Some(quench_runtime::ModuleSource::text(name, source)));
         }
         let source = if extension == "json" {
-            String::from_utf8_lossy(&bytes).into_owned()
+            commonjs::source_text(&bytes).into_owned()
         } else {
-            let kind = Self::source_kind(&path)?;
+            let kind = commonjs::source_kind_of_real(&path)?;
             if kind == quench_runtime::SourceKind::Module {
                 String::from_utf8(bytes)
                     .map_err(|error| format!("module {} is not UTF-8: {error}", path.display()))?
@@ -1302,7 +1336,7 @@ impl quench_runtime::Host for NodeHost {
                 );
                 source.push_str("export { __quenchModule as 'module.exports' };\n");
                 for (index, export) in
-                    commonjs_exports::names(&path, &String::from_utf8_lossy(&bytes))
+                    commonjs_exports::names(&path, &commonjs::source_text(&bytes))
                         .into_iter()
                         .enumerate()
                 {
@@ -1479,6 +1513,16 @@ impl quench_runtime::Host for NodeHost {
         commonjs::initialize(context)?;
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_commonjs");
+        context.host_mut().bootstrapped = true;
+        Ok(())
+    }
+
+    fn resume(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
+        crate::host::resident_pages::release_read_only_pages();
+        context.scoped(crate::modules::process_shared_vm::refresh_identity)?;
+        context.scoped(crate::modules::performance_binding_shared_vm::refresh_time_origins)?;
+        commonjs::finish_initialize(context)?;
+        context.host_mut().bootstrapped = true;
         Ok(())
     }
 }
