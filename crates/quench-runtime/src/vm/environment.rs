@@ -2179,14 +2179,14 @@ impl<H: Host> Vm<H> {
             && self.global_scope_names_resolve_statically(p)
     }
 
-    /// Whether the executing activation is a nested function running in the global
-    /// environment whose names, with every enclosing function's, the compiler resolved
-    /// statically: a by-name load there can only denote a global binding.
+    /// Whether the executing activation's names, with every enclosing function's, the compiler
+    /// resolved statically where only global bindings lie beyond them
+    /// (`ProgramStore::unresolved_names_are_global`): a by-name load there can only denote a
+    /// global binding.
     #[inline(always)]
     fn global_scope_names_resolve_statically(&self, p: &ResidualProgram) -> bool {
         self.frames.last().is_some_and(|frame| {
-            frame.function != super::ROOT_FUNCTION_ID
-                && self.programs.runs_in_global_scope(frame.program)
+            self.programs.unresolved_names_are_global(frame.program, frame.function)
                 && p.function_get(frame.function as usize)
                     .is_some_and(|function| function.names_resolve_statically(p))
         })
