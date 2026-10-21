@@ -302,7 +302,7 @@ impl<H: Host> Vm<H> {
                 _ => self.heap.alloc(Cell::Array {
                     object: crate::heap::ArrayObject::new(
                         Self::empty_object(Value::NULL),
-                        values.into(),
+                        values,
                     ),
                 }),
             })

@@ -162,7 +162,7 @@ impl<H: Host> Vm<H> {
                 let Some(elements) = self.heap.array_elements_mut(result) else {
                     unreachable!("fresh copy target remains an array");
                 };
-                Rc::make_mut(elements).push(value);
+                elements.make_mut().push(value);
             }
             Ok(self.heap.root_value(result_root).unwrap())
         })();
