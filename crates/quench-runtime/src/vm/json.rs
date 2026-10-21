@@ -32,6 +32,15 @@ enum JsonValue {
     Object(Vec<(JsString, JsonValue)>),
 }
 
+/// Nesting `json_write_plain` follows before leaving a value to the full algorithm, which
+/// guards the native stack itself.
+const JSON_PLAIN_MAX_DEPTH: usize = 64;
+
+/// The most keys a parsed object takes its literal shape for (`JsonHeapBuilder::object`);
+/// larger objects add their properties one by one, which bounds the shapes a document can
+/// make and lets a wide object become a dictionary.
+const JSON_LITERAL_SHAPE_MAX_KEYS: usize = 32;
+
 struct JsonSerialization {
     replacer: Option<Value>,
     property_list: Option<Vec<Atom>>,
@@ -342,6 +351,19 @@ impl<H: Host> JsonBuilder for JsonHeapBuilder<'_, H> {
         })
     }
     fn object(&mut self, entries: Vec<(Atom, Value)>) -> Value {
+        // Distinct plain names are CreateDataProperty in order onto an empty object: the
+        // object an object literal with those keys makes, allocated with its final shape.
+        let literal = entries.len() <= JSON_LITERAL_SHAPE_MAX_KEYS
+            && entries.iter().enumerate().all(|(index, (atom, _))| {
+                !self.vm.atom_class(*atom).contains(AtomClass::ARRAY_INDEX)
+                    && entries[..index].iter().all(|(earlier, _)| earlier != atom)
+            });
+        if literal {
+            let atoms = entries.iter().map(|(atom, _)| *atom).collect::<Vec<_>>();
+            let values = entries.iter().map(|(_, value)| *value).collect::<Vec<_>>();
+            let shape = self.vm.literal_shape(&atoms);
+            return self.vm.heap.alloc_object_with_properties(self.object_prototype, shape, &values);
+        }
         let object = self
             .vm
             .heap
@@ -892,6 +914,13 @@ impl<H: Host> Vm<H> {
         let value = args.first().copied().unwrap_or(Value::UNDEFINED);
         let replacer = args.get(1).copied().unwrap_or(Value::UNDEFINED);
         let space = args.get(2).copied().unwrap_or(Value::UNDEFINED);
+        if replacer.is_undefined() && space.is_undefined() {
+            let to_json = self.intern_atom("toJSON");
+            let mut text = String::new();
+            if self.json_write_plain(value, to_json, &mut Vec::new(), &mut text) == Some(true) {
+                return Ok(self.heap.alloc(Cell::String(text.into())));
+            }
+        }
         let (replacer, property_list) = self.json_replacer(p, replacer)?;
         let space_root = self.heap.root(space);
         let gap = self.json_gap(p, space);
@@ -917,6 +946,155 @@ impl<H: Host> Vm<H> {
         let mut text = String::new();
         write_json(&value, &mut text, &state.gap, 0);
         Ok(self.heap.alloc(Cell::String(text.into())))
+    }
+
+    /// SerializeJSONProperty without a replacer or gap for a value whose serialization reads
+    /// only data: primitives, and plain objects and hole-free arrays whose properties are
+    /// data and which reach no `toJSON`, written straight to `output`. Each read it makes is
+    /// one the full algorithm makes and none runs guest code, so `None`, for anything else
+    /// (a cycle included), leaves the whole value to the full algorithm, which repeats it.
+    /// `Some(false)` is a value the serialization skips.
+    fn json_write_plain(
+        &self,
+        value: Value,
+        to_json: Atom,
+        ancestors: &mut Vec<Value>,
+        output: &mut String,
+    ) -> Option<bool> {
+        if value.is_undefined() || value.is_deleted() {
+            return Some(false);
+        }
+        if value.is_null() {
+            output.push_str("null");
+            return Some(true);
+        }
+        if let Some(value) = value.as_bool() {
+            output.push_str(if value { "true" } else { "false" });
+            return Some(true);
+        }
+        if let Some(number) = value.as_number() {
+            if number.is_finite() {
+                output.push_str(&crate::number_to_string::format(number));
+            } else {
+                output.push_str("null");
+            }
+            return Some(true);
+        }
+        // An arguments object keeps array storage but serializes as an object; the full
+        // algorithm takes it.
+        let array = self.heap.array(value);
+        if array.is_some_and(|array| array.is_arguments_object()) {
+            return None;
+        }
+        let object = self.heap.object_record(value).is_some()
+            || matches!(self.heap.get(value), Some(Cell::Object(_)));
+        if array.is_none() && !object {
+            return match self.heap.get(value)? {
+                Cell::String(text) => {
+                    write_json_string(text, output);
+                    Some(true)
+                }
+                Cell::Symbol(_) | Cell::Function { .. } => Some(false),
+                _ => None,
+            };
+        }
+        if ancestors.len() == JSON_PLAIN_MAX_DEPTH
+            || ancestors.contains(&value)
+            || self.object_data(value)?.is_raw_json()
+            || self.boxed_primitive_data(value).is_some()
+            || self.json_reaches_property(value, to_json)?
+        {
+            return None;
+        }
+        ancestors.push(value);
+        if let Some(array) = array {
+            if array.has_indexed_descriptors() || self.heap.sparse_length(value).is_some() {
+                return None;
+            }
+            let elements = array.elements();
+            output.push('[');
+            for (index, element) in elements.iter().enumerate() {
+                if index != 0 {
+                    output.push(',');
+                }
+                if element.is_deleted() {
+                    return None;
+                }
+                if !self.json_write_plain(*element, to_json, ancestors, output)? {
+                    output.push_str("null");
+                }
+            }
+            output.push(']');
+        } else {
+            let data = self.object_data(value)?;
+            let accessors = self.shape_may_have_accessors(data.shape());
+            let keys = self.shape_enumerable_slots(value)?;
+            output.push('{');
+            let mut first = true;
+            for &(key, slot) in keys.iter() {
+                let slot = slot as usize;
+                if accessors && self.slot_attributes(data, slot)?.accessor {
+                    return None;
+                }
+                let property = self.heap.property_get(data, slot)?;
+                let mark = output.len();
+                if !first {
+                    output.push(',');
+                }
+                self.json_write_key(key, output);
+                output.push(':');
+                if self.json_write_plain(property, to_json, ancestors, output)? {
+                    first = false;
+                } else {
+                    output.truncate(mark);
+                }
+            }
+            output.push('}');
+        }
+        ancestors.pop();
+        Some(true)
+    }
+
+    /// Whether `value`'s chain, arrays included, has a property named `key`, where shapes
+    /// alone answer it: `None` leaves exotic, namespace and side-described links to the full
+    /// algorithm.
+    fn json_reaches_property(&self, value: Value, key: Atom) -> Option<bool> {
+        let key = PropertyKey::string(key);
+        let mut current = value;
+        loop {
+            let data = self.object_data(current)?;
+            if data.is_module_namespace() || data.deferred_module().is_some() {
+                return None;
+            }
+            if self.property_shape_slot(data.shape(), key).is_some() {
+                return Some(true);
+            }
+            if data.has_side_descriptors() && self.descriptors.contains_key(&(current, key)) {
+                return None;
+            }
+            let proto = data.proto();
+            if proto.is_null() {
+                return Some(false);
+            }
+            current = proto;
+        }
+    }
+
+    /// A property name as QuoteJSONString writes it.
+    fn json_write_key(&self, key: Atom, output: &mut String) {
+        let index = key as usize;
+        if index < self.atom_text.len() {
+            let text = &self.atom_text[index];
+            output.push('"');
+            if text.chars().any(json_escape_needed) {
+                text.chars().for_each(|scalar| write_json_scalar(scalar, output));
+            } else {
+                output.push_str(text);
+            }
+            output.push('"');
+        } else {
+            write_json_string(self.dynamic_atom(index), output);
+        }
     }
 
     fn json_replacer(
@@ -1105,8 +1283,13 @@ impl<H: Host> Vm<H> {
         if self.heap.object_record(value).is_some() {
             return self.json_serialize_object(p, value, state).map(Some);
         }
-        if self.heap.array(value).is_some() {
-            return self.json_serialize_array(p, value, state).map(Some);
+        // An arguments object keeps array storage but is no Array: it serializes as an object.
+        if let Some(array) = self.heap.array(value) {
+            return if array.is_arguments_object() {
+                self.json_serialize_object(p, value, state).map(Some)
+            } else {
+                self.json_serialize_array(p, value, state).map(Some)
+            };
         }
         match self.heap.get(value).cloned() {
             Some(Cell::String(value)) => Ok(Some(JsonValue::String(value))),
