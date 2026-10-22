@@ -72,6 +72,9 @@ pub(super) struct ShapeMemo<K: Copy + Eq + Hash, V: Copy> {
 pub(super) type ShapeSlotMemo = ShapeMemo<super::property_key::PropertyKey, Option<u32>>;
 /// The attributes a shape gives a slot, or `None` when no transition describes it.
 pub(super) type ShapeAttributeMemo = ShapeMemo<u32, Option<super::ShapeAttributes>>;
+/// The shape an empty object of a shape reaches by a plain copy (`Vm::copy_plain_properties`)
+/// of a source of the keyed shape: its enumerable data properties added in order.
+pub(super) type PlainCopyShapeMemo = ShapeMemo<u32, u32>;
 
 impl<K: Copy + Eq + Hash, V: Copy> Default for ShapeMemo<K, V> {
     fn default() -> Self {
