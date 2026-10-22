@@ -2722,7 +2722,7 @@ impl<H: Host> Vm<H> {
         self.install_builtins(program, scope)?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_builtins");
-        self.initialize_host(program)?;
+        self.initialize_host()?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("host_bootstrap");
         Ok(())
