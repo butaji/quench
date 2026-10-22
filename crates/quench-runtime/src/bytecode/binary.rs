@@ -949,13 +949,7 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
         let mut code = input.list(|input| {
             let at = pc;
             pc += 1;
-            let opcode = input.u16()?;
-            let op = Op::from_index(usize::from(opcode))
-                .ok_or_else(|| String::from("invalid residual opcode"))?;
-            let a = input.u16()?;
-            let b = input.u16()?;
-            let c = input.u16()?;
-            let imm = input.immediate(op, b)?;
+            let (op, a, b, c, imm) = input.instruction()?;
             if op.is_wide_marker() {
                 return Instr::wide_from_fields(a, b, c, imm)
                     .ok_or_else(|| String::from("residual wide index exceeds domain"));
@@ -967,12 +961,11 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
             }))
         })?;
         let mut wide = input.list(|input| {
-            let opcode = input.u16()?;
-            let op = Op::from_index(usize::from(opcode))
-                .filter(|op| !op.is_wide_marker())
-                .ok_or_else(|| String::from("invalid residual wide opcode"))?;
-            let (a, b, c) = (input.u16()?, input.u16()?, input.u16()?);
-            Ok(WideInstruction::new(op, a, b, c, input.immediate(op, b)?))
+            let (op, a, b, c, imm) = input.instruction()?;
+            if op.is_wide_marker() {
+                return Err("invalid residual wide opcode".into());
+            }
+            Ok(WideInstruction::new(op, a, b, c, imm))
         })?;
         for (at, instruction) in widened {
             code[at] = Instr::wide(wide.len())
@@ -1211,10 +1204,28 @@ impl<'a> BinaryReader<'a> {
     }
     fn atom(&mut self) -> Result<u32, String> {
         let encoded = self.u32()?;
+        self.atom_id(encoded)
+    }
+    /// The reader's id for the atom `encoded` names (`BinaryWriter::atom`).
+    fn atom_id(&self, encoded: u32) -> Result<u32, String> {
         match &self.atoms {
             None => Ok(encoded),
             Some(ids) => ids.get(encoded as usize).copied().ok_or_else(|| "residual atom outside its table".into()),
         }
+    }
+    /// One instruction's record (`BinaryWriter::instruction`), read whole: its opcode, fields
+    /// and immediate, which is the reader's atom id when it names an atom. Reading the record
+    /// field by field checked its bounds five times.
+    fn instruction(&mut self) -> Result<(Op, u16, u16, u16, u32), String> {
+        const FIELD: usize = size_of::<u16>();
+        const RECORD: usize = 4 * FIELD + size_of::<u32>();
+        let record = self.array::<RECORD>()?;
+        let field = |index: usize| u16::from_le_bytes([record[index * FIELD], record[index * FIELD + 1]]);
+        let op = Op::from_index(usize::from(field(0))).ok_or_else(|| String::from("invalid residual opcode"))?;
+        let (a, b, c) = (field(1), field(2), field(3));
+        let encoded = u32::from_le_bytes(record[4 * FIELD..].try_into().expect("a record ends in its immediate"));
+        let imm = if op.immediate_names_atom(b) { self.atom_id(encoded)? } else { encoded };
+        Ok((op, a, b, c, imm))
     }
     fn option_atom(&mut self) -> Result<Option<u32>, String> {
         let encoded = self.u32()?;
