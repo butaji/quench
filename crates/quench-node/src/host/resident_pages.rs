@@ -169,29 +169,34 @@ pub fn release_read_only_code_and_data() {}
 /// then, at its heap's peak, with the code it ran since the last collection resident (V8-v7
 /// RegExp).
 pub fn at_compile_phase(phase: quench_runtime::CompilePhase) {
-    use quench_runtime::CompilePhase;
     match phase {
-        CompilePhase::CodeGeneration => release_once_per_interval(phase, release_read_only_code_and_data),
-        // The JavaScript tier's code generator runs beside the interpreter's run code: released
-        // before it compiles and after, the two are not resident together (V8-v7 Crypto
-        // --jit's peak, code generation in its first 10 ms of running).
-        CompilePhase::FirstCall | CompilePhase::NativeCodeGeneration | CompilePhase::NativeCodeGenerated => {
-            release_once_per_interval(phase, release_read_only_pages)
+        quench_runtime::CompilePhase::CodeGeneration => {
+            release_once_per_interval(CompileRelease::CodeGeneration, release_read_only_code_and_data)
+        }
+        quench_runtime::CompilePhase::FirstCall => {
+            release_once_per_interval(CompileRelease::FirstCall, release_read_only_pages)
         }
     }
 }
 
-/// When each compile-phase release last ran, indexed by phase (`CompilePhase::ALL`).
+/// The compile-phase releases timed apart from each other (`at_compile_phase`).
+#[derive(Clone, Copy)]
+enum CompileRelease {
+    CodeGeneration,
+    FirstCall,
+}
+
+/// When each compile-phase release last ran, indexed by `CompileRelease`.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-static LAST_COMPILE_RELEASES: std::sync::Mutex<[Option<std::time::Instant>; quench_runtime::CompilePhase::ALL.len()]> =
-    std::sync::Mutex::new([None; quench_runtime::CompilePhase::ALL.len()]);
+static LAST_COMPILE_RELEASES: std::sync::Mutex<[Option<std::time::Instant>; 2]> =
+    std::sync::Mutex::new([None; 2]);
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-fn release_once_per_interval(phase: quench_runtime::CompilePhase, action: fn()) {
+fn release_once_per_interval(release: CompileRelease, action: fn()) {
     let Ok(mut releases) = LAST_COMPILE_RELEASES.lock() else {
         return;
     };
-    let last = &mut releases[phase as usize];
+    let last = &mut releases[release as usize];
     if last.is_some_and(|last| last.elapsed() < LOAD_RELEASE_INTERVAL) {
         return;
     }
@@ -201,7 +206,7 @@ fn release_once_per_interval(phase: quench_runtime::CompilePhase, action: fn()) 
 }
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
-fn release_once_per_interval(_: quench_runtime::CompilePhase, _: fn()) {}
+fn release_once_per_interval(_: CompileRelease, _: fn()) {}
 
 /// Releases before the entry's compilation, the start-up peak, and lets its own code
 /// generation boundary release again whatever `LOAD_RELEASE_INTERVAL` says: only the
@@ -214,7 +219,7 @@ pub fn release_before_entry_compile() {
     release_read_only_code_and_data();
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     if let Ok(mut releases) = LAST_COMPILE_RELEASES.lock() {
-        releases[quench_runtime::CompilePhase::CodeGeneration as usize] = None;
+        releases[CompileRelease::CodeGeneration as usize] = None;
     }
 }
 
