@@ -10951,14 +10951,14 @@ fn js_jit_compiles_cached_numeric_kind_field_switches() {
 fn js_jit_lowers_guarded_numeric_field_reads_into_arithmetic() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
-          function twice(node) { return node.value * 2; }
+          function twice(node, scale) { return node.value * scale; }
           for (let index = 0; index < 40; index++) {
-            if (twice({value: index}) !== index * 2) throw Error('numeric field result');
+            if (twice({value: index}, 2) !== index * 2) throw Error('numeric field result');
           }
           let reads = 0;
           const accessor = { get value() { reads++; return 7; } };
-          if (twice(accessor) !== 14 || reads !== 1) throw Error('accessor fallback');
-          if (twice({value: '7'}) !== 14) throw Error('cache replacement fallback');
+          if (twice(accessor, 2) !== 14 || reads !== 1) throw Error('accessor fallback');
+          if (twice({value: '7'}, 2) !== 14) throw Error('cache replacement fallback');
         "#,
         "js-jit-guarded-field-arithmetic.js",
     ))
@@ -10984,6 +10984,7 @@ fn js_jit_lowers_guarded_numeric_field_reads_into_arithmetic() {
         panic!("numeric field arithmetic should compile");
     };
     assert!(compiled.field_argument().is_some());
+    assert_eq!(compiled.params(), 2);
     assert!(compiled.native_entries() >= 9);
 }
 
