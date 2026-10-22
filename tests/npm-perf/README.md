@@ -181,3 +181,19 @@ production comparisons. The profile attribution is useful for future work, but
 this array-length shortcut is not a performance win. The reports and profile
 logs from these probes remain under the local `work/react-perf` scratch folder;
 Linux RSS sampling is diagnostic, not qualification.
+
+The full-size no-JIT baseline uses 5,000 renders and 250 warmups per sample.
+Its 11-round Linux report is
+[`reports/react-no-jit-full-linux-11.json`](reports/react-no-jit-full-linux-11.json):
+Quench measured 283.8 renders/s / 39.06 MB, Node `--jitless` 1,483.2 / 36.20
+MB, and Bun no-JIT 1,297.4 / 37.38 MB. Output matched at 24,980,000 bytes
+with checksum 414318. Quench misses both the throughput and RSS targets.
+
+The full-size JIT pilot is
+[`reports/react-jit-full-linux-1.json`](reports/react-jit-full-linux-1.json).
+Quench measured 229.9 renders/s / 36.85 MB, Node 10,352.0 / 48.92 MB, and Bun
+13,888.9 / 81.52 MB, with matching output. This one-round pilot is not a
+qualification; it shows Quench's sampled RSS below both engines while speed
+remains much slower. JS-tier diagnostics show the hot object-heavy React
+functions are unsupported by the current narrow compiler tier and have zero
+compile attempts. Linux RSS sampling remains diagnostic, not qualification.
