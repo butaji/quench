@@ -2659,9 +2659,10 @@ script_handler! {
     }
 }
 
-/// A capture of a root environment's global var (`Vm::plain_projected_global_var`), which a
-/// script's functions read for its top-level `var`s: the capture's environment as the general
-/// path finds it, from the frame or from the activation's environment.
+/// A capture of a root environment's global var or global lexical
+/// (`Vm::plain_projected_root_binding`), which a script's functions read for its top-level
+/// `var`s, and in an eval script's context its `let`s and `const`s: the capture's environment
+/// as the general path finds it, from the frame or from the activation's environment.
 #[inline(never)]
 fn lane_projected_capture<H: Host>(cx: *mut LaneContext<H>, depth: u16, slot: u16) -> Option<Value> {
     let vm = unsafe { vm(cx) };
@@ -2671,7 +2672,7 @@ fn lane_projected_capture<H: Host>(cx: *mut LaneContext<H>, depth: u16, slot: u1
     } else {
         vm.environment_capture_env(env, false, depth)?
     };
-    vm.plain_projected_global_var(env, slot)
+    vm.plain_projected_root_binding(env, slot)
 }
 
 script_handler! {
