@@ -7499,8 +7499,10 @@ fn lane_string_or_native_call<H: Host>(
 
 /// A native call whose common case runs no guest code and observes no frame, answered in
 /// place so the lane's activations need not become frames (`lane_call_native`): a dense
-/// array's `indexOf` (`Vm::dense_index_of`) and `String.fromCharCode` of Numbers, which
-/// allocates its string. `None` leaves any other call to `lane_call_native`.
+/// array's `indexOf` (`Vm::dense_index_of`), `String.fromCharCode` of Numbers, which
+/// allocates its string, `Number`'s predicates, which coerce nothing
+/// (`number::number_predicate`), and `ArrayBuffer.isView`. `None` leaves any other call to
+/// `lane_call_native`.
 #[inline(never)]
 fn lane_pure_native<H: Host>(vm: &mut Vm<H>, callee: Value, receiver: Value, args: &[Value]) -> Option<Value> {
     let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = vm.heap.function(callee) else {
@@ -7513,7 +7515,11 @@ fn lane_pure_native<H: Host>(vm: &mut Vm<H>, callee: Value, receiver: Value, arg
             note_allocation(vm);
             Some(text)
         }
-        _ => None,
+        Native::ArrayBufferIsView => {
+            Some(Value::boolean(vm.is_array_buffer_view(args.first().copied().unwrap_or(Value::UNDEFINED))))
+        }
+        native => super::number::number_predicate(native, args.first().copied().unwrap_or(Value::UNDEFINED))
+            .map(Value::boolean),
     }
 }
 
