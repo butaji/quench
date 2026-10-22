@@ -1527,6 +1527,35 @@ unsafe fn vm<'a, H: Host>(cx: *mut LaneContext<H>) -> &'a mut Vm<H> {
     unsafe { &mut *(*cx).vm }
 }
 
+/// Sample the identity and body a script call site targets. Diagnostic builds use this to
+/// determine whether a per-site target memo is worth implementing; production builds compile
+/// every call to this helper away.
+#[cfg(feature = "profile-lane-exits")]
+#[inline(always)]
+fn profile_script_call_target<H: Host>(
+    cx: *mut LaneContext<H>,
+    ip: Ip,
+    callee: Value,
+    target: &ScriptCallTarget,
+) {
+    let vm = unsafe { vm(cx) };
+    let caller = vm
+        .lane_stack
+        .activations
+        .last()
+        .map_or(vm.frames[unsafe { (*cx).frame }].function, |activation| {
+            activation.function
+        });
+    let pc = unsafe { ip.offset_from((*cx).base) } as u32;
+    super::lane_exits::call_target(
+        unsafe { (*cx).program.raw() },
+        caller,
+        pc,
+        callee,
+        target.function,
+    );
+}
+
 /// The handler of the record at `ip`.
 #[inline(always)]
 fn handler<H: Host>(ip: Ip) -> Handler {
@@ -8056,6 +8085,8 @@ script_handler! {
             requicken(ip, handler);
             sibling!(handler, r, ip, Carried::script(cx))
         }
+        #[cfg(feature = "profile-lane-exits")]
+        profile_script_call_target(cx, ip, callee, target);
         // A receiver whose binding needs the heap takes the out-of-line form, so this
         // handler makes no call and keeps its registers.
         let Some(this) = lane_direct_call_this(vm, target, r.get(i.c)) else {
@@ -8161,6 +8192,8 @@ script_handler! {
         let Some(this) = lane_direct_call_this(vm, target, r.get(i.c)) else {
             sibling!(lane_script_call_general::<H>, r, ip, Carried::script(cx))
         };
+        #[cfg(feature = "profile-lane-exits")]
+        profile_script_call_target(cx, ip, callee, target);
         let arguments = ImmediateLayout::call_window_base(i.imm());
         let argc = ImmediateLayout::argument_count(i.imm());
         let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
@@ -8218,6 +8251,8 @@ script_handler! {
         let Some(this) = lane_call_this(vm, target, r.get(i.c)) else {
             return exit(ip);
         };
+        #[cfg(feature = "profile-lane-exits")]
+        profile_script_call_target(cx, ip, callee, target);
         let arguments = ImmediateLayout::call_window_base(i.imm());
         match lane_activate(cx, r, ip, target, arguments, this, false) {
             Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
@@ -8248,6 +8283,8 @@ script_handler! {
         let Some(this) = lane_call_this(vm, target, r.get(i.c)) else {
             return exit(ip);
         };
+        #[cfg(feature = "profile-lane-exits")]
+        profile_script_call_target(cx, ip, callee, target);
         let arguments = ImmediateLayout::call_window_base(i.imm());
         match lane_activate_environment(cx, r, ip, target, arguments, this) {
             Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
@@ -8309,6 +8346,8 @@ script_handler! {
         if target.entry != CallEntry::Activates {
             sibling!(lane_frame_call::<H>, r, ip, Carried::script(cx))
         }
+        #[cfg(feature = "profile-lane-exits")]
+        profile_script_call_target(cx, ip, callee, target);
         let Some(this) = lane_call_this(vm, target, r.get(i.c)) else {
             return exit(ip);
         };
@@ -9293,6 +9332,8 @@ fn lane_call_keeping_activation<H: Host>(
     if !target.forwards() {
         return Err(None);
     }
+    #[cfg(feature = "profile-lane-exits")]
+    profile_script_call_target(cx, ip, r.get(i.b), &target);
     let receiver = r.get(i.c);
     let Some(this) = lane_call_this(vm, &target, receiver) else {
         return Err(Some(exit(ip)));
