@@ -1064,6 +1064,35 @@ impl<H: Host> Vm<H> {
         Some(PrivateBrand { home: *self.private_homes.get(&key)?, name: atom })
     }
 
+    /// The private brand of `atom` at lane site `site` of `function`, whose frame captures
+    /// from `environment`: the home the site found last for that environment
+    /// (`PrivateSiteHomes`), else the running frame's home (`private_name_home`) when `frame`
+    /// is set, or the memoized one (`memoized_private_brand`) for a frameless activation.
+    /// `None` leaves the access to the general path.
+    pub(super) fn site_private_brand(
+        &mut self,
+        p: &ResidualProgram,
+        site: usize,
+        environment: Value,
+        function: u32,
+        frame: bool,
+        atom: Atom,
+    ) -> Option<PrivateBrand> {
+        let epoch = self.heap.collection_epoch();
+        if let Some(home) = self.private_site_homes.home(site, environment, epoch) {
+            return Some(PrivateBrand { home, name: atom });
+        }
+        let brand = if frame {
+            PrivateBrand { home: self.private_name_home(p, atom)?, name: atom }
+        } else {
+            self.memoized_private_brand(p, environment, function, atom)?
+        };
+        if p.function_get(function as usize).is_some_and(|body| body.binding_sites.is_empty()) {
+            self.private_site_homes.record(site, environment, epoch, brand.home);
+        }
+        Some(brand)
+    }
+
     /// `private_field_value` through `memoized_private_brand`.
     pub(super) fn memoized_private_field_value(
         &self,
@@ -1075,22 +1104,6 @@ impl<H: Host> Vm<H> {
     ) -> Option<Value> {
         let brand = self.memoized_private_brand(p, environment, function, atom)?;
         self.object_data(target)?.private_field(brand)
-    }
-
-    /// `set_private_field_value` through `memoized_private_brand`.
-    pub(super) fn memoized_set_private_field_value(
-        &mut self,
-        p: &ResidualProgram,
-        environment: Value,
-        function: u32,
-        target: Value,
-        atom: Atom,
-        value: Value,
-    ) -> bool {
-        let Some(brand) = self.memoized_private_brand(p, environment, function, atom) else {
-            return false;
-        };
-        self.object_data_mut(target).is_some_and(|object| object.set_private_field(brand, value))
     }
 
     /// The store of private field `atom` of `target` under the running frame's home for the

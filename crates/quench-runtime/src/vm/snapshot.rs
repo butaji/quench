@@ -321,6 +321,7 @@ impl<H: Host> Vm<H> {
             shape_slot_memo: _,
             symbol_write_proofs: _,
             symbol_load_proofs: _,
+            private_site_homes: _,
             array_iteration_proof: _,
             function_name_shapes: _,
             typeof_names: _,
@@ -589,6 +590,7 @@ impl<H: Host> Vm<H> {
         self.atoms = hashbrown::HashTable::with_capacity(base + appended);
         self.array_index_atoms.clear();
         self.name_atom_memo.clear();
+        self.private_site_homes.clear();
         self.atom_classes.clear();
         self.atom_classes.reserve(base + appended);
         self.atom_classes.resize_with(base, Default::default);
