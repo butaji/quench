@@ -1751,7 +1751,10 @@ impl<H: Host> Vm<H> {
         if !self.string_field_site_cacheable(p, atom) {
             return None;
         }
+        // A name the cache does not hold, as an absent `type`, is a data walk of the
+        // prototype chain, which the string's own index and `length` keys never shadow.
         self.string_prototype_field_hit(site)
+            .or_else(|| self.plain_named_get(self.string_proto, atom))
     }
 
     /// Whether a string primitive's read of `atom` in `p` can take the `String.prototype`
