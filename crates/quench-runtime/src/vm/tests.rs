@@ -870,6 +870,20 @@ fn property_sites_past_the_site_space_share_a_site_per_name() {
 }
 
 #[test]
+fn super_inside_with_reads_the_home_object() {
+    // A `with` object cannot shadow the compiler's binding of a method's home object.
+    let source = "var o = { m() { with ({ x: 9 }) { return super.x + x + (() => super.x)(); } } };\n\
+                  Object.setPrototypeOf(o, { x: 3 });\n\
+                  var result = o.m();";
+    let program = Engine::specialize(source, "super-inside-with.js").unwrap();
+    let mut vm = Vm::new(SilentHost);
+    vm.execute(&program).unwrap();
+    let name = vm.intern_atom("result");
+    let result = vm.own_property(vm.realm.globals, name).unwrap();
+    assert_eq!(result.as_number(), Some(15.0));
+}
+
+#[test]
 fn name_shared_sites_keep_loads_apart_from_stores() {
     // Past the unique sites, a load of `a` from a read-only field and an inherited getter
     // records entries a store of `a` must not take: the store fails or runs the setter.
