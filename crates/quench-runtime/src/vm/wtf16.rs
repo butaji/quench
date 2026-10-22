@@ -785,16 +785,6 @@ impl JsString {
         })
     }
 
-    /// This string's units as a flat string for one reader's use (`flat_unkept`): the string
-    /// itself when flat, else a flat copy that leaves this rope as it is, so the copy lives
-    /// only as long as the reader holds it.
-    pub(crate) fn unkept_flat(&self) -> Self {
-        match self.flat_unkept() {
-            std::borrow::Cow::Borrowed(_) => self.clone(),
-            std::borrow::Cow::Owned(units) => Self::from_flat(units),
-        }
-    }
-
     /// The flat units without making a rope flat: a reader that needs the text only while it
     /// runs leaves the rope's halves, which share their storage with the strings they were
     /// cut from, in place of a copy kept for the string's life. Regular-expression matching
