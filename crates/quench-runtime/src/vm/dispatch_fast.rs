@@ -1338,7 +1338,7 @@ unsafe fn vm<'a, H: Host>(cx: *mut LaneContext<H>) -> &'a mut Vm<H> {
 #[inline(always)]
 fn handler<H: Host>(ip: Ip) -> Handler {
     #[cfg(feature = "profile-lane-exits")]
-    super::lane_exits::count_record(ip.addr());
+    super::lane_exits::count_record(ip.addr(), std::mem::size_of::<LaneInstruction>());
     // SAFETY: a view is only run by the VM type whose handlers built it, and
     // every reachable record is initialized.
     unsafe { std::mem::transmute::<*const (), Handler>((*ip).handler) }
