@@ -6970,6 +6970,18 @@ fn lane_native_value<H: Host>(
             vm.pure_collection_lookup(native, receiver, key)
                 .or_else(|| lane_string_or_native_call(cx, ip, callee, receiver, args))
         }
+        FunctionKind::Native(Native::MapSet) if vm.map_set(receiver, args) => {
+            note_allocation(vm);
+            Some(receiver)
+        }
+        FunctionKind::Native(Native::ObjectCreate)
+            if args.get(1).is_none_or(|properties| properties.is_undefined()) =>
+        {
+            let proto = args.first().copied().unwrap_or(Value::UNDEFINED);
+            vm.object_create(proto)
+                .inspect(|_| note_allocation(vm))
+                .or_else(|| lane_string_or_native_call(cx, ip, callee, receiver, args))
+        }
         FunctionKind::Native(Native::ArrayIsArray) => vm
             .steady_is_array(args.first().copied().unwrap_or(Value::UNDEFINED))
             .map(|holds| if holds { Value::TRUE } else { Value::FALSE })
