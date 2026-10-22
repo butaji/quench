@@ -2695,15 +2695,18 @@ script_handler! {
 script_handler! {
     /// `lane_set_index` past a record array, appending to a dense array at its length,
     /// filling one of its holes, a Number stored into a typed array
-    /// (`Vm::typed_array_set_number`), or a plain symbol-, string- or integer-keyed write.
+    /// (`Vm::typed_array_set_number`), or a plain symbol-, string- or integer-keyed write. A
+    /// symbol write repeats the step its site recorded for the receiver's shape first
+    /// (`Vm::site_symbol_set`).
     #[inline(never)]
     fn lane_set_index_slot<>(cx, r, ip, i, view) {
         let (object, key, value) = (r.get(i.b), r.get(i.c), r.get(i.a));
         let vm = unsafe { vm(cx) };
-        if !vm.try_replace_dense_element(object, key, value)
+        if !vm.site_symbol_set(ip.addr(), object, key, value)
+            && !vm.try_replace_dense_element(object, key, value)
             && !vm.try_append_dense_element(object, key, value)
             && !vm.try_fill_dense_hole(object, key, value)
-            && !vm.try_plain_symbol_set(object, key, value)
+            && !vm.try_site_symbol_set(ip.addr(), object, key, value)
             && !vm
                 .array_index_key(key)
                 .is_some_and(|index| vm.typed_array_set_number(object, index as usize, value))
