@@ -719,9 +719,17 @@ target/production/bolt-profile $PROFILED_BINARY bolt --order $ORDER \
 # relink with $ORDER, then:
 llvm-bolt $BINARY -o $BINARY-bolt -data=bolt/profile.fdata \
   -reorder-blocks=ext-tsp -split-functions -split-all-cold \
-  -reorder-functions=user -function-order=bolt/function.order \
-  -skip-funcs-file=bolt/skip.funcs -use-gnu-stack -jump-tables=move
+  -reorder-functions=cdsort -skip-funcs-file=bolt/skip.funcs -use-gnu-stack \
+  -jump-tables=move
 ```
+
+`-reorder-functions=cdsort` orders hot functions by the profile's call graph instead of the
+trained symbol order (`bolt/function.order`), which places them by first execution: callers
+and callees a run alternates between share pages. A V8-v7 run had executed about 613 KB of
+code lines spread over 1184 KB of pages; with the call-graph order its max RSS is 50-280 KB
+lower on every fixture without and with `--jit` (bolted static x86_64, 2026-10-22: Richards
+2340 -> 2064 KiB, Crypto 2956 -> 2768, NavierStokes 4180 -> 3996), Score within noise. The
+linked order still lays out start-up and cold code.
 
 The static `quench-node` order and its BOLT profile train on the same scripts without and
 with `--jit` (start-up cachegrind and run-phase callgrind profiles of each), the `--jit`
