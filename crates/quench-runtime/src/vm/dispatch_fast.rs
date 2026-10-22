@@ -7684,7 +7684,7 @@ fn lane_pure_native<H: Host>(vm: &mut Vm<H>, callee: Value, receiver: Value, arg
             Some(value)
         }
         Native::GlobalIsNaN | Native::GlobalIsFinite => {
-            super::number::global_number_predicate(*native, argument.immediate_number()?).map(Value::boolean)
+            super::number::global_number_predicate(*native, vm.primitive_to_number(argument)?).map(Value::boolean)
         }
         native => super::number::number_predicate(*native, argument).map(Value::boolean),
     }
@@ -7727,7 +7727,10 @@ fn lane_call_native<H: Host>(
     let arguments = super::call_arguments::CallArguments::from_slice(args);
     #[cfg(feature = "profile-lane-exits")]
     if !vm.lane_stack.activations.is_empty() {
-        super::lane_exits::record_detail(format!("materializes for native {native:?}"));
+        super::lane_exits::record_detail(match native {
+            Native::HostFunction => format!("materializes for host {}", vm.host_function_name(callee).unwrap_or_default()),
+            native => format!("materializes for native {native:?}"),
+        });
     }
     // The callee observes the frame stack: lane activations become frames first, as leaving
     // the lane would make them, and the call runs from the innermost one.
