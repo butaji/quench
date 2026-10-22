@@ -1811,7 +1811,7 @@ impl Heap {
             let memory_profile = &mut self.memory_profile;
             let properties = &mut self.properties;
             let payload_bytes = &mut self.payload_bytes;
-            let (object_live, object_freed) = self.object_records.sweep(full, |record| match record {
+            let (object_live, object_freed) = self.object_records.sweep(full, full, |record| match record {
                 RecordSweep::Keep(record_id, object) => {
                     if compacts && object.properties().has_compact_range() {
                         direct_property_owners.push((
@@ -1829,7 +1829,7 @@ impl Heap {
                 }
             });
             let (function_live, function_freed) =
-                self.function_records.sweep(full, |record| match record {
+                self.function_records.sweep(full, full, |record| match record {
                     RecordSweep::Keep(record_id, function) => {
                         if compacts && function.object.properties().has_compact_range() {
                             direct_property_owners.push((
@@ -1848,7 +1848,7 @@ impl Heap {
                 });
             let abandoned_job_contexts = &mut self.abandoned_job_contexts;
             let (promise_live, promise_freed) =
-                self.promise_records.sweep(full, |record| match record {
+                self.promise_records.sweep(full, full, |record| match record {
                     RecordSweep::Keep(record_id, promise) => {
                         if compacts && promise.object.properties().has_compact_range() {
                             direct_property_owners.push((
@@ -1868,9 +1868,9 @@ impl Heap {
                 });
             // An await state owns no arena storage; dropping a dead one frees its unresumed
             // continuation.
-            let (await_live, await_freed) = self.await_records.sweep(false, |_| {});
+            let (await_live, await_freed) = self.await_records.sweep(full, false, |_| {});
             let (iterator_live, iterator_freed) =
-                self.iterator_records.sweep(full, |record| match record {
+                self.iterator_records.sweep(full, full, |record| match record {
                     RecordSweep::Keep(record_id, iterator) => {
                         if compacts && iterator.object.properties().has_compact_range() {
                             direct_property_owners.push((
@@ -1887,7 +1887,7 @@ impl Heap {
                         memory_profile.freed_iterator(Value::direct_iterator(_record_id), slots);
                     }
                 });
-            let (string_live, string_freed) = self.string_records.sweep(full, |record| match record {
+            let (string_live, string_freed) = self.string_records.sweep(full, full, |record| match record {
                 RecordSweep::Keep(_, string) => {
                     if full {
                         live_payload_bytes += string.flat_unit_bytes();
@@ -1898,7 +1898,7 @@ impl Heap {
                 }
             });
             let mut dead_arrays = Vec::new();
-            let (array_live, array_freed) = self.array_records.sweep(full, |record| match record {
+            let (array_live, array_freed) = self.array_records.sweep(full, full, |record| match record {
                 RecordSweep::Keep(record_id, array) => {
                     if full {
                         live_payload_bytes += array_payload_bytes(array);
