@@ -3541,6 +3541,23 @@ script_handler! {
         let Some(length) = (unsafe { vm(cx) }).string_length(r.get(i.b)) else {
             sibling!(lane_get_length_arguments::<H>, r, ip, Carried::script(cx))
         };
+        // A site that reads a string's length mostly reads strings, as a scan over one does.
+        requicken(ip, lane_get_length_string::<H>);
+        r.set(i.a, Value::length(length));
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// `lane_get_length` at a site that read a string's length (`lane_get_length_other`):
+    /// a string's length first, then an array's; any other receiver takes
+    /// `lane_get_length_arguments`.
+    fn lane_get_length_string<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let receiver = r.get(i.b);
+        let Some(length) = vm.string_length(receiver).or_else(|| vm.own_array_length(receiver)) else {
+            sibling!(lane_get_length_arguments::<H>, r, ip, Carried::script(cx))
+        };
         r.set(i.a, Value::length(length));
         next!(cx, r, following(ip), Carried::script(cx))
     }
