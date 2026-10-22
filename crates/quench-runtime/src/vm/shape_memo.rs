@@ -12,7 +12,7 @@ use std::hash::{Hash, Hasher};
 /// table is resident from then on: memory-first (TOD-123), 1024 entries, a quarter of the
 /// 4096 sized for the Node HTTP stack's working set, which cost 80 KiB of anon memory for
 /// the two memos in every run.
-const SHAPE_MEMO_ENTRIES: usize = 1 << 10;
+const SHAPE_MEMO_ENTRIES: usize = 1 << 4;
 
 /// One question kind about shapes: `K` names what is asked of a shape, `V` is the answer.
 pub(super) struct ShapeMemo<K: Copy + Eq + Hash, V: Copy> {

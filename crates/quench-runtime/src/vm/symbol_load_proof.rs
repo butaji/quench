@@ -16,7 +16,7 @@ use std::cell::Cell;
 /// objects read a few dozen distinct symbol keys through a handful of receiver shapes per
 /// request, which 256 entries held; the named reads natives make on many shapes share the
 /// table, doubled for them.
-const SYMBOL_LOAD_PROOF_ENTRIES: usize = 1 << 9;
+const SYMBOL_LOAD_PROOF_ENTRIES: usize = 1 << 4;
 
 /// Where a proved walk found the key.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -50,7 +50,7 @@ pub(super) struct SymbolLoadProofs {
 
 /// Direct-mapped site entries: a power of two. A request's symbol-keyed reads run at a few
 /// hundred lane records (Node's Readable state reads), most of them monomorphic.
-pub(super) const SITE_OWN_READ_ENTRIES: usize = 1 << 9;
+pub(super) const SITE_OWN_READ_ENTRIES: usize = 1 << 4;
 
 /// A site's last own-slot answer: what `SymbolLoadAnswer::Own` said for `key` on a receiver
 /// of `shape` under `epoch`, recorded at the read site `site` (a lane record's address).

@@ -12,7 +12,7 @@ use std::cell::Cell;
 
 /// Direct-mapped entries: a power of two that holds the distinct names the Node host glue
 /// passes on a request path.
-const NAME_ATOM_MEMO_ENTRIES: usize = 1 << 9;
+const NAME_ATOM_MEMO_ENTRIES: usize = 1 << 4;
 
 #[derive(Clone, Copy)]
 struct Entry {
@@ -23,7 +23,7 @@ struct Entry {
 
 /// Direct-mapped heap-string entries: a power of two that holds the distinct string keys a
 /// request's keyed accesses use (event names, header names, option keys).
-const STRING_ATOM_MEMO_ENTRIES: usize = 1 << 8;
+const STRING_ATOM_MEMO_ENTRIES: usize = 1 << 4;
 
 #[derive(Clone, Copy)]
 struct StringEntry {
