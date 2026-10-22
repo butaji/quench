@@ -4,6 +4,8 @@
 //! fields below are ordinary runtime data used by the capability handlers;
 //! no second JavaScript object model is introduced.
 
+pub(crate) mod shared_vm;
+
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;

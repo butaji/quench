@@ -394,6 +394,9 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         if let Some(module) = require_fs_module(name) {
             return Ok(module);
         }
+        if let Some(module) = require_crypto_module(name) {
+            return Ok(module);
+        }
         if let Some(module) = require_stream_http_modules(&self.state, name) {
             return Ok(module);
         }

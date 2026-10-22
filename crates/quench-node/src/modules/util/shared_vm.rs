@@ -160,7 +160,81 @@ const UTIL: &str = quench_js_check::checked_js!(
     });
     Object.setPrototypeOf(ctor.prototype, superCtor.prototype);
   };
-  return { inspect, getCallSites, inherits };
+  const utf8Bytes = (value) => {
+    const bytes = [];
+    for (const character of String(value)) {
+      let code = character.codePointAt(0);
+      if (code >= 0xd800 && code <= 0xdfff) code = 0xfffd;
+      if (code <= 0x7f) bytes.push(code);
+      else if (code <= 0x7ff) {
+        bytes.push(0xc0 | (code >> 6), 0x80 | (code & 0x3f));
+      } else if (code <= 0xffff) {
+        bytes.push(0xe0 | (code >> 12), 0x80 | ((code >> 6) & 0x3f), 0x80 | (code & 0x3f));
+      } else {
+        bytes.push(
+          0xf0 | (code >> 18),
+          0x80 | ((code >> 12) & 0x3f),
+          0x80 | ((code >> 6) & 0x3f),
+          0x80 | (code & 0x3f),
+        );
+      }
+    }
+    return bytes;
+  };
+  class TextEncoder {
+    get encoding() {
+      return "utf-8";
+    }
+    encode(value = "") {
+      return Uint8Array.from(utf8Bytes(value));
+    }
+    encodeInto(value, destination) {
+      const source = String(value);
+      let read = 0;
+      let written = 0;
+      for (const character of source) {
+        const width = character.length;
+        const bytes = utf8Bytes(character);
+        if (written + bytes.length > destination.length) break;
+        for (const byte of bytes) destination[written++] = byte;
+        read += width;
+      }
+      return { read, written };
+    }
+  }
+  class TextDecoder {
+    constructor(label = "utf-8") {
+      if (!/^utf-?8$/i.test(String(label))) {
+        throw new RangeError(`The "${label}" encoding is not supported`);
+      }
+      this.encoding = "utf-8";
+      this.fatal = false;
+      this.ignoreBOM = false;
+    }
+    decode(input = new Uint8Array()) {
+      const bytes = input instanceof ArrayBuffer
+        ? new Uint8Array(input)
+        : new Uint8Array(input.buffer, input.byteOffset, input.byteLength);
+      let binary = "";
+      for (let offset = 0; offset < bytes.length; offset += 0x4000) {
+        binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x4000));
+      }
+      try {
+        const text = decodeURIComponent(escape(binary));
+        return this.ignoreBOM ? text : text.replace(/^\uFEFF/, "");
+      } catch {
+        if (this.fatal) throw new TypeError("The encoded data was not valid UTF-8");
+        return "\uFFFD";
+      }
+    }
+  }
+  return {
+    inspect,
+    getCallSites,
+    inherits,
+    TextEncoder,
+    TextDecoder,
+  };
 })()"#
 );
 

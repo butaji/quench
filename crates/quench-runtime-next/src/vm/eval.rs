@@ -272,7 +272,7 @@ impl<H: Host> Vm<H> {
         self.run_global_eval_program(p, program_id)
     }
 
-    fn run_global_eval_program(
+    pub(super) fn run_global_eval_program(
         &mut self,
         p: &ResidualProgram,
         program_id: super::ProgramId,

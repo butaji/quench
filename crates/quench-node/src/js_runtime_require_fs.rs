@@ -413,8 +413,5 @@ fn require_fs_module(name: &str) -> Option<Value> {
         if name == "node:fs/promises" || name == "fs/promises" {
             return Some(fs_promises_surface());
         }
-        if let Some(module) = require_crypto_module(name) {
-            return Some(module);
-    }
     None
 }

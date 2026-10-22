@@ -33,6 +33,10 @@ struct Region {
 }
 
 pub(super) fn report(profile: &Profile, program: &ResidualProgram) {
+    if profile.site_counts.len() > program.functions.len() {
+        eprintln!("{{\"kind\":\"rqj-regional-numeric\",\"complete\":false}}");
+        return;
+    }
     let mut regions = Vec::new();
     let mut general = [0u64; 2];
     let mut numeric_dispatch_binaries = 0u64;
@@ -85,6 +89,10 @@ pub(super) fn report(profile: &Profile, program: &ResidualProgram) {
 }
 
 pub(super) fn report_functions(profile: &Profile, program: &ResidualProgram) {
+    if profile.functions.len() > program.functions.len() {
+        eprintln!(",\"functions\":null,\"functions_complete\":false}}");
+        return;
+    }
     eprint!(",\"functions\":[");
     for (id, count) in profile.functions.iter().enumerate() {
         if id != 0 {

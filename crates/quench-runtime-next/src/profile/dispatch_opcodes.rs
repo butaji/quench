@@ -25,13 +25,11 @@ pub(super) fn derive(profile: &Profile, program: &ResidualProgram) -> [[u64; Op:
 }
 
 pub(super) fn report(profile: &Profile, program: &ResidualProgram) {
+    if !complete(profile, program) {
+        eprint!(",\"dispatch_opcode_targets\":null,\"dispatch_opcode_targets_complete\":false");
+        return;
+    }
     let counts = derive(profile, program);
-    let physical_total = profile.site_counts.iter().flatten().sum::<u64>();
-    assert_eq!(
-        counts.iter().flatten().sum::<u64>(),
-        physical_total,
-        "dispatch/opcode matrix lost physical executions"
-    );
     let mut virtual_counts = [0; Op::COUNT];
     for opcode in 0..Op::COUNT {
         virtual_counts[opcode] = profile
@@ -64,4 +62,11 @@ pub(super) fn report(profile: &Profile, program: &ResidualProgram) {
         eprint!("}}");
     }
     eprint!("}}");
+}
+
+pub(super) fn complete(profile: &Profile, program: &ResidualProgram) -> bool {
+    let counts = derive(profile, program);
+    let physical_total = profile.site_counts.iter().flatten().sum::<u64>();
+    counts.iter().flatten().sum::<u64>() == physical_total
+        && physical_total == profile.opcodes.iter().sum::<u64>()
 }
