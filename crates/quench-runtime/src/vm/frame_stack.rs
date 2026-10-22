@@ -1,6 +1,7 @@
 //! The VM's activation stack, which knows how much of itself a minor collection can skip.
 
 use super::Frame;
+#[cfg(debug_assertions)]
 use crate::value::Value;
 use std::ops::{Deref, Index, IndexMut};
 
