@@ -1,0 +1,1811 @@
+{
+  "scope": "Native TLS CRL and PKCS12 material validation; removal of input-identity checks",
+  "source_commit": "7d92eca6f4f78c25cf8e55b7500335f2e1e05f5c",
+  "build_profile": "iteration",
+  "oracle": "v27.0.0-nightly20260819c79868f102",
+  "fixture_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+  "checks": {
+    "node_oracles": 91,
+    "framework_core": 43,
+    "shared_runtime": "Unchanged since retained 550-pass check"
+  },
+  "scopes": {
+    "crypto": {
+      "summary": {
+        "pass": 58,
+        "skip": 8,
+        "fail": 70,
+        "timeout": 1
+      },
+      "inventory_hash": "1db9bd1a9d5fe7f5",
+      "results": [
+        {
+          "fixture": "test-crypto-aes-wrap.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-argon2-job.js",
+          "status": "skip"
+        },
+        {
+          "fixture": "test-crypto-argon2-unsupported.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-crypto-argon2-unsupported.js:14\nassert.throws(() => crypto.argon2(), { code: 'ERR_CRYPTO_ARGON2_NOT_SUPPORTED' });\n^\n\nAssertionError [ERR_ASSERTION]: The error did not match the expected object.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-argon2-unsupported.js:14:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-argon2.js",
+          "status": "skip"
+        },
+        {
+          "fixture": "test-crypto-async-sign-verify.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-crypto-async-sign-verify.js:48\n  for (const key of [privatePem, privateKey, privateDer]) {\n  ^\n\nError: error:1E08010C:DECODER routines:OSSL_DECODER_from_bio:unsupported:../crypto/encode_decode/decoder_lib.c:104:No supported data to decode.  Input type: DER, Input structure: type-specific, error:068000A8:asn1 encoding routines:asn1_check_tlen:wrong tag:../crypto/asn1/tasn_dec.c:1231:, error:0688010A:asn1 encoding routines:asn1_template_noexp_d2i:nested asn1 error:../crypto/asn1/tasn_dec.c:639:, error:068000A8:asn1 encoding routines:asn1_check_tlen:wrong tag:../crypto/asn1/tasn_dec.c:1231:, error:0688010A:asn1 encoding routines:asn1_item_embed_d2i:nested asn1 error:../crypto/asn1/tasn_dec.c:375:Type=RSAPrivateKey, error:068000A8:asn1 encoding routines:asn1_check_tlen:wrong tag:../crypto/asn1/tasn_dec.c:1231:, error:0688010A:asn1 encoding routines:asn1_item_embed_d2i:nested asn1 error:../crypto/asn1/tasn_dec.c:375:Type=PKCS8_PRIV_KEY_INFO\n    at sign (node:crypto/"
+        },
+        {
+          "fixture": "test-crypto-authenticated-stream.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-authenticated.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-boringssl-evp-list.js",
+          "status": "skip"
+        },
+        {
+          "fixture": "test-crypto-certificate.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-crypto-certificate.js:100\n  checkMethods(new Certificate());\n               ^\n\nTypeError: value is not a constructor\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-certificate.js:100:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-cipheriv-decipheriv.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-classes.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-default-shake-lengths-oneshot.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-default-shake-lengths.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-dep0181.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-dep0183.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-dep0203.js",
+          "status": "fail",
+          "reason_excerpt": "unhandled Promise rejection was not handled"
+        },
+        {
+          "fixture": "test-crypto-dep0204.js",
+          "status": "fail",
+          "reason_excerpt": "unhandled Promise rejection was not handled"
+        },
+        {
+          "fixture": "test-crypto-dep0206.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-des3-wrap.js",
+          "status": "skip"
+        },
+        {
+          "fixture": "test-crypto-dh-constructor.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-dh-curves.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-dh-errors.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-dh-generate-keys.js",
+          "status": "fail",
+          "reason_excerpt": "node:crypto/shared.js:1540\n      if (this._public === undefined) { const error = new Error(\"No public key - did you forget to generate one?\"); error.code = \"ERR_CRYPTO_INVALID_STATE\"; throw error; }\n                                                                                                                                                             ^\n\nError: No public key - did you forget to generate one?\n    at getPublicKey (node:crypto/shared.js:1540:55)\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-dh-generate-keys.js:28:53\n    at testGenerateKeysChangesKeys (/workspace/work/node-fixtures/test/parallel/test-crypto-dh-generate-keys.js:28:28)\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-dh-generate-keys.js:45:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-dh-group-setters.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-dh-leak.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-dh-modp2-views.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-dh-modp2.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-dh-odd-key.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-dh-padding.js",
+          "status": "fail",
+          "reason_excerpt": "node:crypto/shared.js:1531\n        const error = new Error(value <= 1n ? \"Supplied key is too small\" : \"Supplied key is too large\"); error.code = \"ERR_CRYPTO_INVALID_KEYLEN\"; throw error;\n                                                                                                                                                    ^\n\nError: Supplied key is too large\n    at computeSecret (node:crypto/shared.js:1531:23)\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-dh-padding.js:107:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-dh-shared.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-dh-stateless.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-crypto-dh-stateless.js:26\nassert.throws(() => crypto.diffieHellman(), {\n^\n\nAssertionError [ERR_ASSERTION]: The error did not match the expected object.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-dh-stateless.js:26:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-dh.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-domain.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-domains.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-ecb.js",
+          "status": "skip"
+        },
+        {
+          "fixture": "test-crypto-ecdh-convert-key.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-ecdh-setpublickey-deprecation.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-eddsa-variants.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-crypto-eddsa-variants.js:182\nfor (const v of vectors) {\n^\n\nTypeError: The \"algorithm\" argument must be of type string\n    at node:crypto/shared.js:326:23\n    at node:crypto/shared.js:429:20\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-eddsa-variants.js:197:11\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-encap-decap.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-crypto-encap-decap.js:20\nassert.throws(() => crypto.encapsulate(), { code: 'ERR_INVALID_ARG_TYPE',\n^\n\nAssertionError [ERR_ASSERTION]: The error did not match the expected object.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-encap-decap.js:20:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-encoding-validation-error.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-fips.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-crypto-fips.js:81\n  testFipsCrypto() ? 'stdout' : 'stderr',\n  ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-fips.js:81:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-from-binary.js",
+          "status": "timeout"
+        },
+        {
+          "fixture": "test-crypto-gcm-explicit-short-tag.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-gcm-implicit-short-tag.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-getcipherinfo.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-hash-stream-error.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-hash-stream-pipe.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-hash.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-hkdf.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-hmac.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-job-error-parity.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-crypto-job-error-parity.js:48\n  assert(syncErr.code);\n  ^\n\nAssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-job-error-parity.js:48:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-key-objects-messageport.js",
+          "status": "fail",
+          "reason_excerpt": "unhandled Promise rejection was not handled"
+        },
+        {
+          "fixture": "test-crypto-key-objects-raw.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-crypto-key-objects-raw.js:22\n  for (const namedCurve of ['P-256', 'prime256v1']) {\n  ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-key-objects-raw.js:26:24\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-key-objects-to-crypto-key.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-crypto-key-objects-to-crypto-key.js:244\n  for (const namedCurve of namedCurves) {\n  ^\n\nError: Key generation for ec keys is not supported\n    at node:crypto/shared.js:1732:21\n    at ecVectors (/workspace/work/node-fixtures/test/parallel/test-crypto-key-objects-to-crypto-key.js:245:21)\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-key-objects-to-crypto-key.js:334:11\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-key-objects.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-crypto-key-objects.js:52\n  assert.throws(() => new KeyObject(TYPE), {\n  ^\n\nAssertionError [ERR_ASSERTION]: Missing expected exception.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-key-objects.js:52:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-key-store-pkcs11.js",
+          "status": "skip"
+        },
+        {
+          "fixture": "test-crypto-key-store.js",
+          "status": "fail",
+          "reason_excerpt": "node:crypto/shared.js:1733\n      error.code = \"ERR_CRYPTO_OPERATION_FAILED\"; throw error;\n                                                  ^\n\nError: Key generation for ed25519 keys is not supported\n    at node:crypto/shared.js:1732:21\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-key-store.js:38:37\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-keygen-async-dsa-key-object.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/common/index.js:474\n    assert.ifError(err);\n    ^\n\nAssertionError [ERR_ASSERTION]: ifError got unwanted exception: Key generation for dsa keys is not supported\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/common/index.js:474:5\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at process.processTicksAndRejections (native)\n    at node:crypto/shared.js:1732:21\n    at node:crypto/shared.js:1771:22\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-keygen-async-dsa-key-object.js:19:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-keygen-async-dsa.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/common/index.js:474\n    assert.ifError(err);\n    ^\n\nAssertionError [ERR_ASSERTION]: ifError got unwanted exception: Key generation for dsa keys is not supported\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/common/index.js:474:5\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at process.processTicksAndRejections (native)\n    at node:crypto/shared.js:1732:21\n    at node:crypto/shared.js:1771:22\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-keygen-async-dsa.js:29:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-keygen-async-elliptic-curve-jwk-ec.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-crypto-keygen-async-elliptic-curve-jwk-ec.js:33\n    assert.ifError(err);\n    ^\n\nAssertionError [ERR_ASSERTION]: ifError got unwanted exception: Key generation for ec keys is not supported\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-keygen-async-elliptic-curve-jwk-ec.js:33:5\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at process.processTicksAndRejections (native)\n    at node:crypto/shared.js:1732:21\n    at node:crypto/shared.js:1771:22\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-keygen-async-elliptic-curve-jwk-ec.js:20:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-keygen-async-elliptic-curve-jwk-rsa.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-crypto-keygen-async-elliptic-curve-jwk-rsa.js:26\n    assert.strictEqual(publicKey.kty, 'RSA');\n    ^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-keygen-async-elliptic-curve-jwk-rsa.js:26:5\n    at /workspace/work/node-fixtures/test/common/index.js:476:14\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-keygen-async-elliptic-curve-jwk.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-crypto-keygen-async-elliptic-curve-jwk.js:33\n      assert.ifError(err);\n      ^\n\nAssertionError [ERR_ASSERTION]: ifError got unwanted exception: Key generation for ed25519 keys is not supported\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-keygen-async-elliptic-curve-jwk.js:33:7\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at process.processTicksAndRejections (native)\n    at node:crypto/shared.js:1732:21\n    at node:crypto/shared.js:1771:22\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-keygen-async-elliptic-curve-jwk.js:21:5\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-keygen-async-encrypted-private-key-der.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-keygen-async-encrypted-private-key.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-crypto-keygen-async-encrypted-private-key.js:39\n    assert(Buffer.isBuffer(privateKeyDER));\n    ^\n\nAssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-keygen-async-encrypted-private-key.js:39:5\n    at /workspace/work/node-fixtures/test/common/index.js:476:14\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-keygen-async-explicit-elliptic-curve-encrypted-p256.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/common/index.js:474\n    assert.ifError(err);\n    ^\n\nAssertionError [ERR_ASSERTION]: ifError got unwanted exception: Key generation for ec keys is not supported\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/common/index.js:474:5\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at process.processTicksAndRejections (native)\n    at node:crypto/shared.js:1732:21\n    at node:crypto/shared.js:1771:22\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-keygen-async-explicit-elliptic-curve-encrypted-p256.js:25:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-keygen-async-explicit-elliptic-curve-encrypted.js.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-crypto-keygen-async-explicit-elliptic-curve-encrypted.js.js:43\n    assert.ifError(err);\n    ^\n\nAssertionError [ERR_ASSERTION]: ifError got unwanted exception: Key generation for ec keys is not supported\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-keygen-async-explicit-elliptic-curve-encrypted.js.js:43:5\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at process.processTicksAndRejections (native)\n    at node:crypto/shared.js:1732:21\n    at node:crypto/shared.js:1771:22\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-keygen-async-explicit-elliptic-curve-encrypted.js.js:25:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-keygen-async-explicit-elliptic-curve.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/common/index.js:474\n    assert.ifError(err);\n    ^\n\nAssertionError [ERR_ASSERTION]: ifError got unwanted exception: Key generation for ec keys is not supported\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/common/index.js:474:5\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at process.processTicksAndRejections (native)\n    at node:crypto/shared.js:1732:21\n    at node:crypto/shared.js:1771:22\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-keygen-async-explicit-elliptic-curve.js:23:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-keygen-async-named-elliptic-curve-encrypted-p256.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/common/index.js:474\n    assert.ifError(err);\n    ^\n\nAssertionError [ERR_ASSERTION]: ifError got unwanted exception: Key generation for ec keys is not supported\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/common/index.js:474:5\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at process.processTicksAndRejections (native)\n    at node:crypto/shared.js:1732:21\n    at node:crypto/shared.js:1771:22\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-keygen-async-named-elliptic-curve-encrypted-p256.js:21:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-keygen-async-named-elliptic-curve-encrypted.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-crypto-keygen-async-named-elliptic-curve-encrypted.js:40\n    assert.ifError(err);\n    ^\n\nAssertionError [ERR_ASSERTION]: ifError got unwanted exception: Key generation for ec keys is not supported\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-keygen-async-named-elliptic-curve-encrypted.js:40:5\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at process.processTicksAndRejections (native)\n    at node:crypto/shared.js:1732:21\n    at node:crypto/shared.js:1771:22\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-keygen-async-named-elliptic-curve-encrypted.js:22:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-keygen-async-named-elliptic-curve.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/common/index.js:474\n    assert.ifError(err);\n    ^\n\nAssertionError [ERR_ASSERTION]: ifError got unwanted exception: Key generation for ec keys is not supported\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/common/index.js:474:5\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at process.processTicksAndRejections (native)\n    at node:crypto/shared.js:1732:21\n    at node:crypto/shared.js:1771:22\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-keygen-async-named-elliptic-curve.js:20:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-keygen-async-rsa.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-keygen-bit-length.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-crypto-keygen-bit-length.js:56\n      assert.ifError(err);\n      ^\n\nAssertionError [ERR_ASSERTION]: ifError got unwanted exception: Key generation for dsa keys is not supported\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-keygen-bit-length.js:56:7\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at process.processTicksAndRejections (native)\n    at node:crypto/shared.js:1732:21\n    at node:crypto/shared.js:1771:22\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-keygen-bit-length.js:48:5\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-keygen-dh-classic.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/common/index.js:474\n    assert.ifError(err);\n    ^\n\nAssertionError [ERR_ASSERTION]: ifError got unwanted exception: Key generation for dh keys is not supported\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/common/index.js:474:5\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at process.processTicksAndRejections (native)\n    at node:crypto/shared.js:1732:21\n    at node:crypto/shared.js:1771:22\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-keygen-dh-classic.js:18:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-keygen-eddsa.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-crypto-keygen-eddsa.js:16\n  for (const keyType of ['ed25519', 'ed448', 'x25519', 'x448']) {\n  ^\n\nTypeError: The \"callback\" argument must be of type function\n    at node:crypto/shared.js:1767:21\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-keygen-eddsa.js:21:5\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-keygen-empty-passphrase-no-error.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-keygen-empty-passphrase-no-prompt.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-crypto-keygen-empty-passphrase-no-prompt.js:57\n    assert.throws(() => {\n    ^\n\nAssertionError [ERR_ASSERTION]: The error did not match the expected object.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-keygen-empty-passphrase-no-prompt.js:57:5\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-keygen-invalid-parameter-encoding-dsa.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-crypto-keygen-invalid-parameter-encoding-dsa.js:21\n  assert.throws(() => generateKeyPairSync('dsa', {\n  ^\n\nAssertionError [ERR_ASSERTION]: The error did not match the expected object.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-keygen-invalid-parameter-encoding-dsa.js:21:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-keygen-invalid-parameter-encoding-ec.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-crypto-keygen-invalid-parameter-encoding-ec.js:14\n  assert.throws(() => generateKeyPairSync('ec', {\n  ^\n\nAssertionError [ERR_ASSERTION]: The error did not match the expected object.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-keygen-invalid-parameter-encoding-ec.js:14:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-keygen-key-object-without-encoding.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-keygen-key-objects.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-keygen-missing-oid.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-keygen-no-rsassa-pss-params.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-crypto-keygen-no-rsassa-pss-params.js:35\n    assert.strictEqual(\n    ^\n\nAssertionError [ERR_ASSERTION]: 305c300d06092a864886f70d0101010500034b003048024100bcb117e6524339f8e245c8b80c917d40b28ab8db244052f50695e4c4623ac3c89ed65736471db0de0126df088963c7c14f17b907d575f2bec0d37e7d91228af50203010001\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-keygen-no-rsassa-pss-params.js:35:5\n    at /workspace/work/node-fixtures/test/common/index.js:476:14\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-keygen-non-standard-public-exponent.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-keygen-promisify.js",
+          "status": "fail",
+          "reason_excerpt": "unhandled Promise rejection was not handled"
+        },
+        {
+          "fixture": "test-crypto-keygen-raw.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-crypto-keygen-raw.js:24\n  for (const type of types) {\n  ^\n\nError: Key generation for ed25519 keys is not supported\n    at node:crypto/shared.js:1732:21\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-keygen-raw.js:35:39\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-keygen-rfc8017-9-1.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-crypto-keygen-rfc8017-9-1.js:33\n    assert.deepStrictEqual(publicKey.asymmetricKeyDetails, expectedKeyDetails);\n    ^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-keygen-rfc8017-9-1.js:33:5\n    at /workspace/work/node-fixtures/test/common/index.js:476:14\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-keygen-rfc8017-a-2-3.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-crypto-keygen-rfc8017-a-2-3.js:31\n    assert.deepStrictEqual(publicKey.asymmetricKeyDetails, expectedKeyDetails);\n    ^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-keygen-rfc8017-a-2-3.js:31:5\n    at /workspace/work/node-fixtures/test/common/index.js:476:14\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-keygen-rsa-pss.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-crypto-keygen-rsa-pss.js:32\n    assert.deepStrictEqual(publicKey.asymmetricKeyDetails, {\n    ^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-keygen-rsa-pss.js:32:5\n    at /workspace/work/node-fixtures/test/common/index.js:476:14\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-keygen-sync.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-keygen.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-crypto-keygen.js:22\n  assert.throws(() => generateKeyPairSync('ec', {\n  ^\n\nAssertionError [ERR_ASSERTION]: The error did not match the expected object.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-keygen.js:22:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-keyobject-brand-check.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-crypto-keyobject-brand-check.js:24\n  return Object.getOwnPropertyDescriptor(proto, name).get;\n         ^\n\nTypeError: cannot read properties of undefined\n    at getter (/workspace/work/node-fixtures/test/parallel/test-crypto-keyobject-brand-check.js:24:10)\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-keyobject-brand-check.js:33:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-keyobject-clone-transfer.js",
+          "status": "fail",
+          "reason_excerpt": "unhandled Promise rejection was not handled"
+        },
+        {
+          "fixture": "test-crypto-keyobject-hidden-slots.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-crypto-keyobject-hidden-slots.js:45\n    Object.getOwnPropertyDescriptor(secretProto, 'symmetricKeySize');\n    ^\n\nTypeError: cannot convert null or undefined to object\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-keyobject-hidden-slots.js:45:5\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-keyobject-no-own-symbols.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-crypto-keyobject-no-own-symbols.js:29\n  for (const key of [secret, publicKey, privateKey]) {\n  ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-keyobject-no-own-symbols.js:40:5\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-lazy-transform-writable.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-negative-zero.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-no-algorithm.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-crypto-no-algorithm.js:19\n  crypto.setFips(1);\n  ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-no-algorithm.js:19:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-oaep-zero-length.js",
+          "status": "fail",
+          "reason_excerpt": "node:crypto/shared.js:1681\n    return Buffer.from(rsaCryptNative(decrypt, privateKey, keyBytes, cryptoBytes(data), passphrase, format, type, padding));\n                       ^\n\nerror:1E08010C:DECODER routines:OSSL_DECODER_from_bio:unsupported:../crypto/encode_decode/decoder_lib.c:104:No supported data to decode. Input type: PEM\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-oneshot-hash-xof.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-oneshot-hash.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-op-during-process-exit.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-padding-aes256.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-padding.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-pbkdf2.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-pqc-encrypted-pkcs8.js",
+          "status": "skip"
+        },
+        {
+          "fixture": "test-crypto-pqc-key-objects-ml-dsa.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-crypto-pqc-key-objects-ml-dsa.js:21\nfor (const [asymmetricKeyType, pubLen] of [\n^\n\nAssertionError [ERR_ASSERTION]: Missing expected exception.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-pqc-key-objects-ml-dsa.js:104:5\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-pqc-key-objects-ml-kem.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-crypto-pqc-key-objects-ml-kem.js:21\nfor (const [asymmetricKeyType, pubLen] of [\n^\n\nAssertionError [ERR_ASSERTION]: Missing expected exception.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-pqc-key-objects-ml-kem.js:104:5\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-pqc-key-objects-slh-dsa.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-crypto-pqc-key-objects-slh-dsa.js:21\nfor (const asymmetricKeyType of [\n^\n\nAssertionError [ERR_ASSERTION]: Missing expected exception.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-pqc-key-objects-slh-dsa.js:103:5\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-pqc-keygen-ml-dsa.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-crypto-pqc-keygen-ml-dsa.js:15\n  for (const asymmetricKeyType of ['ml-dsa-44', 'ml-dsa-65', 'ml-dsa-87']) {\n  ^\n\nAssertionError [ERR_ASSERTION]: The error did not match the expected object.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-pqc-keygen-ml-dsa.js:16:5\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-pqc-keygen-ml-kem.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-crypto-pqc-keygen-ml-kem.js:20\n  for (const asymmetricKeyType of ['ml-kem-512', 'ml-kem-768', 'ml-kem-1024']) {\n  ^\n\nAssertionError [ERR_ASSERTION]: The error did not match the expected object.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-pqc-keygen-ml-kem.js:21:5\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-pqc-keygen-slh-dsa.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-crypto-pqc-keygen-slh-dsa.js:15\n  for (const asymmetricKeyType of [\n  ^\n\nAssertionError [ERR_ASSERTION]: The error did not match the expected object.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-pqc-keygen-slh-dsa.js:20:5\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-pqc-sign-verify-ml-dsa.js",
+          "status": "skip"
+        },
+        {
+          "fixture": "test-crypto-prime.js",
+          "status": "fail",
+          "reason_excerpt": "node:worker_threads.js:1\n(function() {return (({ isMainThread: true, MessageChannel: globalThis.MessageChannel, MessagePort: globalThis.MessagePort, Worker: class Worker { constructor() { throw Object.assign(new Error('Worker threads are unavailable in this runtime'), { code: 'ERR_WORKER_UNSUPPORTED_OPERATION' }); } } }));\n                                                                                                                                                                   ^\n\nError: Worker threads are unavailable in this runtime\n    at node:worker_threads.js:1:184\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-prime.js:315:18\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-private-decrypt-gh32240.js",
+          "status": "fail",
+          "reason_excerpt": "node:crypto/shared.js:1681\n    return Buffer.from(rsaCryptNative(decrypt, privateKey, keyBytes, cryptoBytes(data), passphrase, format, type, padding));\n                       ^\n\nerror:1E08010C:DECODER routines:OSSL_DECODER_from_bio:unsupported:../crypto/encode_decode/decoder_lib.c:104:No supported data to decode. Input type: PEM\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-psychic-signatures.js",
+          "status": "fail",
+          "reason_excerpt": "node:crypto/shared.js:1733\n      error.code = \"ERR_CRYPTO_OPERATION_FAILED\"; throw error;\n                                                  ^\n\nError: Key generation for ec keys is not supported\n    at node:crypto/shared.js:1732:21\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-psychic-signatures.js:35:17\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-publicDecrypt-fails-first-time.js",
+          "status": "fail",
+          "reason_excerpt": "node:crypto/shared.js:1745\n    const result = generateRsaKeyPairNative(bits, exponent, privateEncoding.cipher || \"\", encryptedPassphrase);\n                   ^\n\nerror:04800071:PEM routines:PEM_ASN1_write_bio_internal:unsupported cipher:../crypto/pem/pem_lib.c:344:\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-random.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-randomfillsync-regression.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-randomuuid.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-randomuuidv7.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-rsa-dsa.js",
+          "status": "fail",
+          "reason_excerpt": "node:crypto/shared.js:1681\n    return Buffer.from(rsaCryptNative(decrypt, privateKey, keyBytes, cryptoBytes(data), passphrase, format, type, padding));\n                       ^\n\nerror:1E08010C:DECODER routines:OSSL_DECODER_from_bio:unsupported:../crypto/encode_decode/decoder_lib.c:104:No supported data to decode. Input type: PEM\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-rsa-oaep-mgf1.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-crypto-rsa-oaep-mgf1.js:55\n  assert.throws(() => {\n  ^\n\nAssertionError [ERR_ASSERTION]: Missing expected exception.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-rsa-oaep-mgf1.js:55:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-rsa-pss-default-salt-length.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-crypto-rsa-pss-default-salt-length.js:16\nfor (const digest of ['sha256', 'sha384', 'sha512']) {\n^\n\nTypeError: cannot read properties of undefined\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-rsa-pss-default-salt-length.js:19:7\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-scrypt.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-sec-level.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-secret-keygen.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-crypto-secret-keygen.js:14\n  assert.throws(() => generateKey(i, 1, common.mustNotCall()), {\n  ^\n\nAssertionError [ERR_ASSERTION]: The error did not match the expected object.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-secret-keygen.js:14:3\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-secret-keygen.js:13:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-secure-heap.js",
+          "status": "fail",
+          "reason_excerpt": "AssertionError: Expected \"actual\" to be strictly unequal to: 0"
+        },
+        {
+          "fixture": "test-crypto-sign-verify.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-crypto-sign-verify.js:57\n  assert.throws(() => {\n  ^\n\nAssertionError [ERR_ASSERTION]: The error did not match the expected object.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-sign-verify.js:57:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-stream.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-subtle-cross-realm.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-crypto-subtle-cross-realm.js:7\nconst { subtle } = globalThis.crypto;\n^\n\nTypeError: cannot destructure null or undefined\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-subtle-cross-realm.js:7:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-subtle-zero-length.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-crypto-subtle-zero-length.js:9\nconst { subtle } = globalThis.crypto;\n^\n\nTypeError: cannot destructure null or undefined\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-subtle-zero-length.js:9:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-update-encoding.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-crypto-verify-failure.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-crypto-verify-failure.js:39\nconst server = tls.Server(options, (socket) => {\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-verify-failure.js:39:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-webcrypto-aes-decrypt-tag-too-small.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-crypto-webcrypto-aes-decrypt-tag-too-small.js:9\nconst { subtle } = globalThis.crypto;\n^\n\nTypeError: cannot destructure null or undefined\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-webcrypto-aes-decrypt-tag-too-small.js:9:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto-worker-thread.js",
+          "status": "fail",
+          "reason_excerpt": "unhandled Promise rejection was not handled"
+        },
+        {
+          "fixture": "test-crypto-x509.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/lib/internal/crypto/keys.js:140\n} = createNativeKeyObjectClass((NativeKeyObject) => {\n    ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/lib/internal/crypto/keys.js:140:5\n    at /workspace/work/node-fixtures/lib/internal/crypto/x509.js:24:5\n    at /workspace/work/node-fixtures/test/parallel/test-crypto-x509.js:18:5\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-crypto.js",
+          "status": "pass"
+        }
+      ],
+      "jobs": 4,
+      "timeout_secs": 30,
+      "raw_sha256": "9467eee0cc2955a4c74c12ec8859328b877862a352fbbd9887d0cef3e0aee2c7"
+    },
+    "tls": {
+      "summary": {
+        "fail": 206,
+        "skip": 15,
+        "pass": 3
+      },
+      "inventory_hash": "8c929d2a1ce1d845",
+      "results": [
+        {
+          "fixture": "test-tls-0-dns-altname.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-0-dns-altname.js:33\nconst server = tls.createServer({\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-0-dns-altname.js:33:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-add-context.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-add-context.js:25\nconst server = tls.createServer(serverOptions, common.mustCall((c) => {\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-add-context.js:25:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-addca.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-addca.js:15\ncontextWithCert.context.addCACert(keys.agent1.ca);\n^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-addca.js:15:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-alert-handling.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-alert-handling.js:49\nconst server = tls.createServer(opts, common.mustCall(function(s) {\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-alert-handling.js:49:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-alert.js",
+          "status": "skip"
+        },
+        {
+          "fixture": "test-tls-alpn-server-client.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-alpn-server-client.js:30\n  const server = tls.createServer(serverOptions, function(c) {\n                 ^\n\nTypeError: value is not callable\n    at runTest (/workspace/work/node-fixtures/test/parallel/test-tls-alpn-server-client.js:30:18)\n    at Test1 (/workspace/work/node-fixtures/test/parallel/test-tls-alpn-server-client.js:84:3)\n    at /workspace/work/node-fixtures/test/parallel/test-tls-alpn-server-client.js:295:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-async-cb-after-socket-end.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-async-cb-after-socket-end.js:22\nconst server = tls.createServer(options, common.mustCall());\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-async-cb-after-socket-end.js:22:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-basic-validations.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-basic-validations.js:10\nassert.throws(\n^\n\nAssertionError [ERR_ASSERTION]: Missing expected exception.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-tls-basic-validations.js:10:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-buffersize.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-buffersize.js:11\nconst server = tls.createServer({\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-buffersize.js:11:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-ca-concat.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/common/index.js:474\n    assert.ifError(err);\n    ^\n\nAssertionError [ERR_ASSERTION]: ifError got unwanted exception: value is not callable\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/common/index.js:474:5\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at connect (/workspace/work/node-fixtures/test/fixtures/tls-connect.js:89:5)\n    at connect (/workspace/work/node-fixtures/test/fixtures/tls-connect.js:53:5)\n    at /workspace/work/node-fixtures/test/parallel/test-tls-ca-concat.js:12:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-canonical-ip.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-canonical-ip.js:13\nassert.strictEqual(canonicalizeIP('127.0.0.1'), '127.0.0.1');\n                   ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-canonical-ip.js:13:20\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-cert-chains-concat.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/common/index.js:474\n    assert.ifError(err);\n    ^\n\nAssertionError [ERR_ASSERTION]: ifError got unwanted exception: value is not callable\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/common/index.js:474:5\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at connect (/workspace/work/node-fixtures/test/fixtures/tls-connect.js:89:5)\n    at connect (/workspace/work/node-fixtures/test/fixtures/tls-connect.js:53:5)\n    at /workspace/work/node-fixtures/test/parallel/test-tls-cert-chains-concat.js:13:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-cert-chains-in-ca.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/common/index.js:474\n    assert.ifError(err);\n    ^\n\nAssertionError [ERR_ASSERTION]: ifError got unwanted exception: value is not callable\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/common/index.js:474:5\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at connect (/workspace/work/node-fixtures/test/fixtures/tls-connect.js:89:5)\n    at connect (/workspace/work/node-fixtures/test/fixtures/tls-connect.js:53:5)\n    at /workspace/work/node-fixtures/test/parallel/test-tls-cert-chains-in-ca.js:18:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-cert-ext-encoding.js",
+          "status": "skip"
+        },
+        {
+          "fixture": "test-tls-cert-regression.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-cert-regression.js:49\n  const server = tls.createServer({\n                 ^\n\nTypeError: value is not callable\n    at test (/workspace/work/node-fixtures/test/parallel/test-tls-cert-regression.js:49:18)\n    at /workspace/work/node-fixtures/test/parallel/test-tls-cert-regression.js:57:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-certcb-sync-write.js",
+          "status": "fail",
+          "reason_excerpt": "node:net/module.js:179\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nError: TLS sockets are not implemented\n    at node:tls/shared.js:25:23\n    at /workspace/work/node-fixtures/test/parallel/test-tls-certcb-sync-write.js:37:18\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:net/module.js:173:123\n    at node:net/module.js:179:118\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-certificate-compression.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-certificate-compression.js:11\nconst supportedAlgs = tls.getCertificateCompressionAlgorithms();\n                      ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-certificate-compression.js:11:23\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-check-server-identity.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-check-server-identity.js:431\n  const err = tls.checkServerIdentity(test.host, test.cert);\n              ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-check-server-identity.js:431:15\n    at /workspace/work/node-fixtures/test/parallel/test-tls-check-server-identity.js:430:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-cipher-list.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-cipher-list.js:22\n      assert.strictEqual(out.trim(), check);\n      ^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-tls-cipher-list.js:22:7\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:stream/shared.js:80:22\n    at emit (node:events/inspection.js:14:49)\n    at completeReadableEnd (node:stream/shared.js:546:5)\n    at node:stream/shared.js:663:13\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-cli-max-version-1.2.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-cli-max-version-1.2.js:11\nassert.strictEqual(tls.DEFAULT_MAX_VERSION, 'TLSv1.2');\n^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-tls-cli-max-version-1.2.js:11:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-cli-max-version-1.3.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-cli-max-version-1.3.js:11\nassert.strictEqual(tls.DEFAULT_MAX_VERSION, 'TLSv1.3');\n^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-tls-cli-max-version-1.3.js:11:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-cli-min-max-conflict.js",
+          "status": "fail",
+          "reason_excerpt": "AssertionError: The expression evaluated to a falsy value"
+        },
+        {
+          "fixture": "test-tls-cli-min-version-1.0.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-cli-min-version-1.0.js:11\nassert.strictEqual(tls.DEFAULT_MAX_VERSION, 'TLSv1.3');\n^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-tls-cli-min-version-1.0.js:11:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-cli-min-version-1.1.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-cli-min-version-1.1.js:11\nassert.strictEqual(tls.DEFAULT_MAX_VERSION, 'TLSv1.3');\n^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-tls-cli-min-version-1.1.js:11:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-cli-min-version-1.2.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-cli-min-version-1.2.js:11\nassert.strictEqual(tls.DEFAULT_MAX_VERSION, 'TLSv1.3');\n^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-tls-cli-min-version-1.2.js:11:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-cli-min-version-1.3.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-cli-min-version-1.3.js:11\nassert.strictEqual(tls.DEFAULT_MAX_VERSION, 'TLSv1.3');\n^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-tls-cli-min-version-1.3.js:11:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-client-abort.js",
+          "status": "fail",
+          "reason_excerpt": "node:tls/shared.js:27\n        throw error;\n        ^\n\nError: TLS sockets are not implemented\n    at node:tls/shared.js:25:23\n    at /workspace/work/node-fixtures/test/parallel/test-tls-client-abort.js:33:14\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-client-abort2.js",
+          "status": "fail",
+          "reason_excerpt": "node:tls/shared.js:27\n        throw error;\n        ^\n\nError: TLS sockets are not implemented\n    at node:tls/shared.js:25:23\n    at /workspace/work/node-fixtures/test/parallel/test-tls-client-abort2.js:29:14\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-client-allow-partial-trust-chain.js",
+          "status": "fail",
+          "reason_excerpt": "unhandled Promise rejection was not handled"
+        },
+        {
+          "fixture": "test-tls-client-auth.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/common/index.js:474\n    assert.ifError(err);\n    ^\n\nAssertionError [ERR_ASSERTION]: ifError got unwanted exception: value is not callable\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/common/index.js:474:5\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at connect (/workspace/work/node-fixtures/test/fixtures/tls-connect.js:89:5)\n    at connect (/workspace/work/node-fixtures/test/fixtures/tls-connect.js:53:5)\n    at /workspace/work/node-fixtures/test/parallel/test-tls-client-auth.js:37:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-client-cert-resumption.js",
+          "status": "fail",
+          "reason_excerpt": "unhandled Promise rejection was not handled"
+        },
+        {
+          "fixture": "test-tls-client-default-ciphers.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-client-default-ciphers.js:40\n  assert.throws(tls.connect, Done);\n  ^\n\nAssertionError [ERR_ASSERTION]: The error did not match the expected function.\n    at node:assert/AssertionError.js:3:5\n    at test1 (/workspace/work/node-fixtures/test/parallel/test-tls-client-default-ciphers.js:40:3)\n    at /workspace/work/node-fixtures/test/parallel/test-tls-client-default-ciphers.js:44:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-client-destroy-soon.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-client-destroy-soon.js:43\nconst server = tls.createServer(options, common.mustCall(function(socket) {\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-client-destroy-soon.js:43:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-client-getephemeralkeyinfo.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-client-getephemeralkeyinfo.js:66\n  const server = tls.createServer(options, onConnection);\n                 ^\n\nTypeError: value is not callable\n    at test (/workspace/work/node-fixtures/test/parallel/test-tls-client-getephemeralkeyinfo.js:66:18)\n    at /workspace/work/node-fixtures/test/parallel/test-tls-client-getephemeralkeyinfo.js:95:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-client-hello-fragmented.js",
+          "status": "fail",
+          "reason_excerpt": "node:net/module.js:179\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nError: TLS sockets are not implemented\n    at node:tls/shared.js:25:23\n    at /workspace/work/node-fixtures/test/parallel/test-tls-client-hello-fragmented.js:33:5\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:net/module.js:173:123\n    at node:net/module.js:179:118\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-client-mindhsize.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-client-mindhsize.js:38\n  const server = tls.createServer(options, function(conn) {\n                 ^\n\nTypeError: value is not callable\n    at test (/workspace/work/node-fixtures/test/parallel/test-tls-client-mindhsize.js:38:18)\n    at testDHE2048 (/workspace/work/node-fixtures/test/parallel/test-tls-client-mindhsize.js:82:3)\n    at testDHE1024 (/workspace/work/node-fixtures/test/parallel/test-tls-client-mindhsize.js:76:20)\n    at /workspace/work/node-fixtures/test/parallel/test-tls-client-mindhsize.js:105:5\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-client-reject-12.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-client-reject.js:37\nconst server = tls.createServer(options, function(socket) {\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-client-reject.js:37:16\n    at /workspace/work/node-fixtures/test/parallel/test-tls-client-reject-12.js:13:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-client-reject.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-client-reject.js:37\nconst server = tls.createServer(options, function(socket) {\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-client-reject.js:37:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-client-renegotiation-13.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/common/index.js:474\n    assert.ifError(err);\n    ^\n\nAssertionError [ERR_ASSERTION]: ifError got unwanted exception: value is not callable\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/common/index.js:474:5\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at connect (/workspace/work/node-fixtures/test/fixtures/tls-connect.js:89:5)\n    at connect (/workspace/work/node-fixtures/test/fixtures/tls-connect.js:53:5)\n    at /workspace/work/node-fixtures/test/parallel/test-tls-client-renegotiation-13.js:20:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-client-renegotiation-limit.js",
+          "status": "skip"
+        },
+        {
+          "fixture": "test-tls-client-resume-12.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-client-resume.js:41\nconst server = tls.Server(options, common.mustCall((socket) => {\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-client-resume.js:41:16\n    at /workspace/work/node-fixtures/test/parallel/test-tls-client-resume-12.js:13:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-client-resume.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-client-resume.js:41\nconst server = tls.Server(options, common.mustCall((socket) => {\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-client-resume.js:41:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-client-verify.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-client-verify.js:80\n  const server = tls.createServer(serverOptions, common.mustCall(function(s) {\n                 ^\n\nTypeError: value is not callable\n    at testServers (/workspace/work/node-fixtures/test/parallel/test-tls-client-verify.js:80:18)\n    at runTest (/workspace/work/node-fixtures/test/parallel/test-tls-client-verify.js:127:3)\n    at /workspace/work/node-fixtures/test/parallel/test-tls-client-verify.js:134:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-clientcertengine-invalid-arg-type.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-clientcertengine-invalid-arg-type.js:11\n  assert.throws(\n  ^\n\nAssertionError [ERR_ASSERTION]: Missing expected exception.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-tls-clientcertengine-invalid-arg-type.js:11:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-clientcertengine-unsupported.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-clientcertengine-unsupported.js:32\n  assert.throws(\n  ^\n\nAssertionError [ERR_ASSERTION]: Missing expected exception.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-tls-clientcertengine-unsupported.js:32:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-clienthello-sync-write.js",
+          "status": "fail",
+          "reason_excerpt": "node:net/module.js:179\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nError: TLS sockets are not implemented\n    at node:tls/shared.js:25:23\n    at /workspace/work/node-fixtures/test/parallel/test-tls-clienthello-sync-write.js:42:18\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:net/module.js:173:123\n    at node:net/module.js:179:118\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-close-error.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-close-error.js:11\nconst server = tls.createServer({\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-close-error.js:11:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-close-event-after-write.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-close-event-after-write.js:26\nconst server = tls.createServer({\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-close-event-after-write.js:26:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-close-notify.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-close-notify.js:34\nconst server = tls.createServer({\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-close-notify.js:34:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-cnnic-whitelist.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-cnnic-whitelist.js:42\n  const server = tls.createServer(tcase.serverOpts, (s) => {\n                 ^\n\nTypeError: value is not callable\n    at runTest (/workspace/work/node-fixtures/test/parallel/test-tls-cnnic-whitelist.js:42:18)\n    at /workspace/work/node-fixtures/test/parallel/test-tls-cnnic-whitelist.js:56:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-connect-abort-controller.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-connect-abort-controller.js:15\nconst server = tls.createServer(serverOptions);\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-connect-abort-controller.js:15:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-connect-address-family.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-connect-address-family.js:15\n  tls.createServer({\n  ^\n\nTypeError: value is not callable\n    at runTest (/workspace/work/node-fixtures/test/parallel/test-tls-connect-address-family.js:15:3)\n    at /workspace/work/node-fixtures/test/parallel/test-tls-connect-address-family.js:46:5\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-connect-allow-half-open-option.js",
+          "status": "fail",
+          "reason_excerpt": "node:tls/shared.js:27\n        throw error;\n        ^\n\nError: TLS sockets are not implemented\n    at node:tls/shared.js:25:23\n    at /workspace/work/node-fixtures/test/parallel/test-tls-connect-allow-half-open-option.js:15:18\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-connect-given-socket.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-connect-given-socket.js:37\nconst server = tls.createServer(options, common.mustCall((socket) => {\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-connect-given-socket.js:37:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-connect-hints-option.js",
+          "status": "fail",
+          "reason_excerpt": "node:tls/shared.js:27\n        throw error;\n        ^\n\nError: TLS sockets are not implemented\n    at node:tls/shared.js:25:23\n    at /workspace/work/node-fixtures/test/parallel/test-tls-connect-hints-option.js:24:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-connect-hwm-option.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-connect-hwm-option.js:15\nconst server = tls.createServer({\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-connect-hwm-option.js:15:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-connect-keepalive-nodelay.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-connect-keepalive-nodelay.js:26\n  const server = tls.createServer({ key, cert }, (socket) => {\n                 ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-connect-keepalive-nodelay.js:26:18\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-connect-memleak.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-connect-memleak.js:37\nconst server = tls.createServer({\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-connect-memleak.js:37:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-connect-no-host.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-connect-no-host.js:17\nconst server = tls.createServer({\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-connect-no-host.js:17:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-connect-pipe.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-connect-pipe.js:39\nconst server = tls.Server(options, common.mustCall(function(socket) {\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-connect-pipe.js:39:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-connect-secure-context.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/common/index.js:474\n    assert.ifError(err);\n    ^\n\nAssertionError [ERR_ASSERTION]: ifError got unwanted exception: value is not callable\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/common/index.js:474:5\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at connect (/workspace/work/node-fixtures/test/fixtures/tls-connect.js:89:5)\n    at connect (/workspace/work/node-fixtures/test/fixtures/tls-connect.js:53:5)\n    at /workspace/work/node-fixtures/test/parallel/test-tls-connect-secure-context.js:11:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-connect-simple.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-connect-simple.js:38\nconst server = tls.Server(options, common.mustCall(function(socket) {\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-connect-simple.js:38:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-connect-stream-writes.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-connect-stream-writes.js:19\nconst server = tls.createServer(options, function(s) {\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-connect-stream-writes.js:19:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-connect-timeout-option.js",
+          "status": "fail",
+          "reason_excerpt": "node:tls/shared.js:27\n        throw error;\n        ^\n\nError: TLS sockets are not implemented\n    at node:tls/shared.js:25:23\n    at /workspace/work/node-fixtures/test/parallel/test-tls-connect-timeout-option.js:14:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-delayed-attach-error.js",
+          "status": "fail",
+          "reason_excerpt": "node:bootstrap/process-surface.js:123\n          try {\n          ^\n\nTypeError: value is not a constructor\n    at /workspace/work/node-fixtures/test/parallel/test-tls-delayed-attach-error.js:20:15\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:bootstrap/process-surface.js:124:20\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-delayed-attach.js",
+          "status": "fail",
+          "reason_excerpt": "node:net/module.js:179\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nError: TLS sockets are not implemented\n    at node:tls/shared.js:25:23\n    at /workspace/work/node-fixtures/test/parallel/test-tls-delayed-attach.js:63:13\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:net/module.js:173:123\n    at node:net/module.js:179:118\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-destroy-stream-12.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-destroy-stream.js:19\nconst tlsServer = tls.createServer(\n                  ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-destroy-stream.js:19:19\n    at /workspace/work/node-fixtures/test/parallel/test-tls-destroy-stream-12.js:13:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-destroy-stream.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-destroy-stream.js:19\nconst tlsServer = tls.createServer(\n                  ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-destroy-stream.js:19:19\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-destroy-whilst-write.js",
+          "status": "fail",
+          "reason_excerpt": "node:tls/shared.js:27\n        throw error;\n        ^\n\nError: TLS sockets are not implemented\n    at node:tls/shared.js:25:23\n    at /workspace/work/node-fixtures/test/parallel/test-tls-destroy-whilst-write.js:22:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-dhe.js",
+          "status": "skip"
+        },
+        {
+          "fixture": "test-tls-dhparam-auto-boringssl.js",
+          "status": "skip"
+        },
+        {
+          "fixture": "test-tls-disable-renegotiation.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-disable-renegotiation.js:26\nconst server = tls.Server(options, common.mustCall((socket) => {\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-disable-renegotiation.js:26:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-ecdh-auto.js",
+          "status": "skip"
+        },
+        {
+          "fixture": "test-tls-ecdh-multiple.js",
+          "status": "skip"
+        },
+        {
+          "fixture": "test-tls-ecdh.js",
+          "status": "skip"
+        },
+        {
+          "fixture": "test-tls-econnreset.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-econnreset.js:34\nconst server = tls.createServer({\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-econnreset.js:34:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-empty-sni-context.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-empty-sni-context.js:16\nconst server = tls.createServer(options, (c) => {\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-empty-sni-context.js:16:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-enable-keylog-cli.js",
+          "status": "fail",
+          "reason_excerpt": "AssertionError: Expected values to be strictly equal"
+        },
+        {
+          "fixture": "test-tls-enable-trace-cli.js",
+          "status": "skip"
+        },
+        {
+          "fixture": "test-tls-enable-trace.js",
+          "status": "skip"
+        },
+        {
+          "fixture": "test-tls-env-bad-extra-ca.js",
+          "status": "fail",
+          "reason_excerpt": "AssertionError: Expected values to be strictly equal"
+        },
+        {
+          "fixture": "test-tls-env-extra-ca-no-crypto.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-tls-env-extra-ca-with-options.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-env-extra-ca-with-options.js:75\n  for (const testNumber in tests) {\n  ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-env-extra-ca-with-options.js:76:20\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-env-extra-ca.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-env-extra-ca.js:31\nconst server = tls.createServer(options, common.mustCall(function(s) {\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-env-extra-ca.js:31:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-error-servername.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-error-servername.js:14\nconst [ clientSide, serverSide ] = duplexPair();\n                                   ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-error-servername.js:14:36\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-error-stack.js",
+          "status": "skip"
+        },
+        {
+          "fixture": "test-tls-exportkeyingmaterial.js",
+          "status": "fail",
+          "reason_excerpt": "node:net/module.js:179\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nError: TLS sockets are not implemented\n    at node:tls/shared.js:25:23\n    at /workspace/work/node-fixtures/test/parallel/test-tls-exportkeyingmaterial.js:101:3\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:net/module.js:173:123\n    at node:net/module.js:179:118\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-external-accessor.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-external-accessor.js:14\n  assert.throws(() => cctx._external, TypeError);\n  ^\n\nAssertionError [ERR_ASSERTION]: Missing expected exception.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-tls-external-accessor.js:14:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-fast-writing.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-fast-writing.js:35\nconst server = tls.createServer(options, onconnection);\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-fast-writing.js:35:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-finished.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-finished.js:21\nconst server = tls.createServer({\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-finished.js:21:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-friendly-error-message.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-friendly-error-message.js:34\ntls.createServer({ key, cert }).on('connection', common.mustCall(function() {\n^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-friendly-error-message.js:34:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-generic-stream.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-generic-stream.js:15\nconst [ clientSide, serverSide ] = duplexPair();\n                                   ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-generic-stream.js:15:36\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-get-ca-certificates-bundled-subset.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-get-ca-certificates-bundled-subset.js:12\nconst defaultSet = new Set(tls.getCACertificates('default'));\n                           ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-get-ca-certificates-bundled-subset.js:12:28\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-get-ca-certificates-bundled.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-get-ca-certificates-bundled.js:12\nconst certs = tls.getCACertificates('bundled');\n              ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-get-ca-certificates-bundled.js:12:15\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-get-ca-certificates-default.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-get-ca-certificates-default.js:13\nconst certs = tls.getCACertificates();\n              ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-get-ca-certificates-default.js:13:15\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-get-ca-certificates-error.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-get-ca-certificates-error.js:12\nfor (const invalid of [1, null, () => {}, true]) {\n^\n\nAssertionError [ERR_ASSERTION]: The error did not match the expected object.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-tls-get-ca-certificates-error.js:13:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-get-ca-certificates-extra-empty.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/common/child_process.js:112\n    throw error;\n    ^\n\nError: - process terminated with status 1, expected 0\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-get-ca-certificates-extra-subset.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/common/child_process.js:112\n    throw error;\n    ^\n\nError: - process terminated with status 1, expected 0\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-get-ca-certificates-extra.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/common/child_process.js:112\n    throw error;\n    ^\n\nError: - process terminated with status 1, expected 0\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-get-ca-certificates-node-use-system-ca.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-get-ca-certificates-node-use-system-ca.js:11\nconst systemCerts = tls.getCACertificates('system');\n                    ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-get-ca-certificates-node-use-system-ca.js:11:21\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-get-ca-certificates-system-without-flag.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-get-ca-certificates-system-without-flag.js:17\nconst certs = tls.getCACertificates('system');\n              ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-get-ca-certificates-system-without-flag.js:17:15\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-get-ca-certificates-system.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-get-ca-certificates-system.js:13\nconst systemCerts = tls.getCACertificates('system');\n                    ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-get-ca-certificates-system.js:13:21\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-get-ca-certificates-worker-no-use-system-ca.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-get-ca-certificates-worker-no-use-system-ca.js:16\nconst systemCerts = tls.getCACertificates('system');\n                    ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-get-ca-certificates-worker-no-use-system-ca.js:16:21\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-get-ca-certificates-worker-use-system-ca.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-get-ca-certificates-worker-use-system-ca.js:16\nconst systemCerts = tls.getCACertificates('system');\n                    ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-get-ca-certificates-worker-use-system-ca.js:16:21\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-getcertificate-x509.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-getcertificate-x509.js:16\nconst server = tls.createServer(options, function(cleartext) {\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-getcertificate-x509.js:16:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-getcipher.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-getcipher.js:42\nconst server = tls.createServer(options, common.mustCall(() => {\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-getcipher.js:42:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-getprotocol.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-getprotocol.js:51\nconst server = tls.createServer(serverConfig, common.mustCall(expectedConnections));\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-getprotocol.js:51:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-handshake-error.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-handshake-error.js:13\nconst server = tls.createServer({\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-handshake-error.js:13:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-handshake-exception.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-handshake-exception.js:56\n  assert(ok, stderr);\n  ^\n\nAssertionError [ERR_ASSERTION]: node:net/module.js:179\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nError: HTTPS transport is unavailable\n    at get (node:https.js:1:137)\n    at onlisten (/workspace/work/node-fixtures/test/parallel/test-tls-handshake-exception.js:31:5)\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:net/module.js:173:123\n    at node:net/module.js:179:118\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0\n\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-tls-handshake-exception.js:56:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-hello-parser-failure.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-hello-parser-failure.js:45\nconst server = tls.createServer(options, function(c) {\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-hello-parser-failure.js:45:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-honorcipherorder.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-honorcipherorder.js:57\n  const server = tls.createServer(soptions, mustCall(function(clearTextStream) {\n                 ^\n\nTypeError: value is not callable\n    at test (/workspace/work/node-fixtures/test/parallel/test-tls-honorcipherorder.js:57:18)\n    at /workspace/work/node-fixtures/test/parallel/test-tls-honorcipherorder.js:87:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-inception.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-inception.js:42\nconst a = tls.createServer(options, function(socket) {\n          ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-inception.js:42:11\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-interleave.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-interleave.js:44\nconst server = tls.createServer(options, function(c) {\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-interleave.js:44:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-invalid-pfx.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-invalid-pfx.js:25\n    assert.strictEqual(e.message, 'Unable to load private key from PFX data');\n    ^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-tls-invalid-pfx.js:25:5\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at connect (/workspace/work/node-fixtures/test/fixtures/tls-connect.js:89:5)\n    at /workspace/work/node-fixtures/test/parallel/test-tls-invalid-pfx.js:14:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-invoke-queued.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-invoke-queued.js:35\nconst server = tls.createServer({\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-invoke-queued.js:35:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-ip-servername-forbidden.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-ip-servername-forbidden.js:13\nassert.throws(() => tls.connect({\n^\n\nAssertionError [ERR_ASSERTION]: The error did not match the expected object.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-tls-ip-servername-forbidden.js:13:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-js-stream.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-js-stream.js:13\nconst server = tls.createServer({\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-js-stream.js:13:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-junk-closes-server.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-junk-closes-server.js:37\nconst server = tls.createServer(options, common.mustNotCall());\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-junk-closes-server.js:37:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-junk-server.js",
+          "status": "fail",
+          "reason_excerpt": "node:net/module.js:179\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nError: HTTPS transport is unavailable\n    at request (node:https.js:1:61)\n    at /workspace/work/node-fixtures/test/parallel/test-tls-junk-server.js:21:15\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:net/module.js:173:123\n    at node:net/module.js:179:118\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-key-mismatch.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-key-mismatch.js:45\nassert.throws(function() {\n^\n\nAssertionError [ERR_ASSERTION]: Missing expected exception.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-tls-key-mismatch.js:45:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-keyengine-invalid-arg-type.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-keyengine-invalid-arg-type.js:10\nassert.throws(\n^\n\nAssertionError [ERR_ASSERTION]: Missing expected exception.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-tls-keyengine-invalid-arg-type.js:10:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-keyengine-unsupported.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-keyengine-unsupported.js:32\n  assert.throws(\n  ^\n\nAssertionError [ERR_ASSERTION]: Missing expected exception.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-tls-keyengine-unsupported.js:32:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-keylog-tlsv13.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-keylog-tlsv13.js:11\nconst server = tls.createServer({\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-keylog-tlsv13.js:11:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-legacy-pfx.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-legacy-pfx.js:29\n  assert.strictEqual(e.code, 'ERR_CRYPTO_UNSUPPORTED_OPERATION');\n  ^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-tls-legacy-pfx.js:29:3\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at connect (/workspace/work/node-fixtures/test/fixtures/tls-connect.js:89:5)\n    at /workspace/work/node-fixtures/test/parallel/test-tls-legacy-pfx.js:21:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-max-send-fragment.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-max-send-fragment.js:41\nconst server = tls.createServer({\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-max-send-fragment.js:41:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-min-max-version.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-min-max-version.js:30\n  assert(proto || cerr || serr, 'test missing any expectations');\n  ^\n\nAssertionError [ERR_ASSERTION]: test missing any expectations\n    at node:assert/AssertionError.js:3:5\n    at test (/workspace/work/node-fixtures/test/parallel/test-tls-min-max-version.js:30:3)\n    at /workspace/work/node-fixtures/test/parallel/test-tls-min-max-version.js:138:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-multi-key.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-multi-key.js:164\n  const server = tls.createServer(options, function(conn) {\n                 ^\n\nTypeError: value is not callable\n    at test (/workspace/work/node-fixtures/test/parallel/test-tls-multi-key.js:164:18)\n    at /workspace/work/node-fixtures/test/parallel/test-tls-multi-key.js:41:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-multi-pfx.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-multi-pfx.js:64\nconst server = tls.createServer(options, function(conn) {\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-multi-pfx.js:64:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-multiple-cas-as-string.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-multiple-cas-as-string.js:19\n  const server = tls.createServer({ ca, cert, key });\n                 ^\n\nTypeError: value is not callable\n    at test (/workspace/work/node-fixtures/test/parallel/test-tls-multiple-cas-as-string.js:19:18)\n    at /workspace/work/node-fixtures/test/parallel/test-tls-multiple-cas-as-string.js:42:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-net-connect-prefer-path.js",
+          "status": "fail",
+          "reason_excerpt": "node:net/module.js:179\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nRangeError: Port should be >= 0 and < 65536. Received test/.tmp.72182-62202a40c26d3a85/node-test.72502.sock\n    at node:net/module.js:18:21\n    at node:net/module.js:194:14\n    at mkServer (/workspace/work/node-fixtures/test/parallel/test-tls-net-connect-prefer-path.js:37:3)\n    at /workspace/work/node-fixtures/test/parallel/test-tls-net-connect-prefer-path.js:42:5\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at /workspace/work/node-fixtures/test/parallel/test-tls-net-connect-prefer-path.js:37:62\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:net/module.js:173:123\n    at node:net/module.js:179:118\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-net-socket-keepalive-12.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-net-socket-keepalive.js:22\nconst server = tls.createServer(options, common.mustCall((conn) => {\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-net-socket-keepalive.js:22:16\n    at /workspace/work/node-fixtures/test/parallel/test-tls-net-socket-keepalive-12.js:13:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-net-socket-keepalive.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-net-socket-keepalive.js:22\nconst server = tls.createServer(options, common.mustCall((conn) => {\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-net-socket-keepalive.js:22:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-no-cert-required.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-no-cert-required.js:37\n  tls.createServer({ ciphers: 'AECDH-NULL-SHA' })\n  ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-no-cert-required.js:37:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-no-rsa-key.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-no-rsa-key.js:36\nconst server = tls.createServer(options, function(conn) {\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-no-rsa-key.js:36:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-no-sslv23.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-no-sslv23.js:9\nassert.throws(function() {\n^\n\nAssertionError [ERR_ASSERTION]: Missing expected exception.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-tls-no-sslv23.js:9:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-no-sslv3.js",
+          "status": "skip"
+        },
+        {
+          "fixture": "test-tls-ocsp-callback.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-ocsp-callback.js:61\n  const server = tls.createServer(options, common.mustCall((cleartext) => {\n                 ^\n\nTypeError: value is not callable\n    at test (/workspace/work/node-fixtures/test/parallel/test-tls-ocsp-callback.js:61:18)\n    at /workspace/work/node-fixtures/test/parallel/test-tls-ocsp-callback.js:118:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-off-thread-cert-loading-disabled.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/common/child_process.js:112\n    throw error;\n    ^\n\nError: - process terminated with status 1, expected 0\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-off-thread-cert-loading-system.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-off-thread-cert-loading-system.js:22\n  ...tls.getCACertificates('system'),\n     ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-off-thread-cert-loading-system.js:22:6\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-off-thread-cert-loading.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-off-thread-cert-loading.js:22\n  ...tls.getCACertificates('bundled'),\n     ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-off-thread-cert-loading.js:22:6\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-on-empty-socket.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-on-empty-socket.js:14\nconst server = tls.createServer({\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-on-empty-socket.js:14:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-onread-static-buffer.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-onread-static-buffer.js:20\ntls.createServer(options, common.mustCall(function(socket) {\n^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-onread-static-buffer.js:20:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-options-boolean-check.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-options-boolean-check.js:83\n    tls.createServer({ key, cert });\n    ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-options-boolean-check.js:83:5\n    at /workspace/work/node-fixtures/test/parallel/test-tls-options-boolean-check.js:81:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-over-http-tunnel.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-over-http-tunnel.js:43\nconst server = https.createServer(options, common.mustCall((req, res) => {\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-over-http-tunnel.js:43:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-passphrase.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-passphrase.js:72\nconst server = tls.Server({\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-passphrase.js:72:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-pause.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-pause.js:43\nconst server = tls.Server(options, common.mustCall((socket) => {\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-pause.js:43:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-peer-certificate-encoding.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-peer-certificate-encoding.js:38\nconst server = tls.createServer(options, (cleartext) => {\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-peer-certificate-encoding.js:38:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-peer-certificate-multi-keys.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-peer-certificate-multi-keys.js:36\nconst server = tls.createServer(options, function(cleartext) {\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-peer-certificate-multi-keys.js:36:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-peer-certificate.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/common/index.js:474\n    assert.ifError(err);\n    ^\n\nAssertionError [ERR_ASSERTION]: ifError got unwanted exception: value is not callable\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/common/index.js:474:5\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at connect (/workspace/work/node-fixtures/test/fixtures/tls-connect.js:89:5)\n    at connect (/workspace/work/node-fixtures/test/fixtures/tls-connect.js:53:5)\n    at /workspace/work/node-fixtures/test/parallel/test-tls-peer-certificate.js:40:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-pfx-authorizationerror.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-pfx-authorizationerror.js:40\nconst server = tls\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-pfx-authorizationerror.js:40:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-psk-alpn-callback-exception-handling.js",
+          "status": "fail",
+          "reason_excerpt": "unhandled Promise rejection was not handled"
+        },
+        {
+          "fixture": "test-tls-psk-circuit.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-psk-circuit.js:37\n  const server = tls.createServer(serverOptions, cb);\n                 ^\n\nTypeError: value is not callable\n    at test (/workspace/work/node-fixtures/test/parallel/test-tls-psk-circuit.js:37:18)\n    at /workspace/work/node-fixtures/test/parallel/test-tls-psk-circuit.js:66:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-psk-errors.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-psk-errors.js:13\n  const server = tls.createServer({\n                 ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-psk-errors.js:13:18\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-psk-server.js",
+          "status": "skip"
+        },
+        {
+          "fixture": "test-tls-reduced-SECLEVEL-in-cipher.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-reduced-SECLEVEL-in-cipher.js:24\n  assert.throws(() => tls.createServer(options, common.mustNotCall()),\n  ^\n\nAssertionError [ERR_ASSERTION]: The error did not match the expected regular expression.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-tls-reduced-SECLEVEL-in-cipher.js:24:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-reinitialize-listeners.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-reinitialize-listeners.js:20\nconst server = tls.createServer({\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-reinitialize-listeners.js:20:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-request-timeout.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-request-timeout.js:36\nconst server = tls.Server(options, common.mustCall(function(socket) {\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-request-timeout.js:36:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-retain-handle-no-abort.js",
+          "status": "fail",
+          "reason_excerpt": "AssertionError: The expression evaluated to a falsy value"
+        },
+        {
+          "fixture": "test-tls-reuse-host-from-socket.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-reuse-host-from-socket.js:32\nconst server = tls.createServer({\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-reuse-host-from-socket.js:32:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-root-certificates.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-root-certificates.js:8\nassert(Array.isArray(tls.rootCertificates));\n^\n\nAssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-tls-root-certificates.js:8:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-secure-context-usage-order.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-secure-context-usage-order.js:37\nconst server = tls.createServer(serverOptions, common.mustCallAtLeast((c) => {\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-secure-context-usage-order.js:37:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-secure-session.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-secure-session.js:21\nconst server = tls.createServer(options, common.mustCall((socket) => {\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-secure-session.js:21:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-server-capture-rejection.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-server-capture-rejection.js:16\nconst server = createServer({ cert, key }, common.mustCall(async (sock) => {\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-server-capture-rejection.js:16:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-server-connection-server.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-server-connection-server.js:16\nconst server = tls.createServer(options, function(s) {\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-server-connection-server.js:16:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-server-failed-handshake-emits-clienterror.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-server-failed-handshake-emits-clienterror.js:14\nconst server = tls.createServer({})\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-server-failed-handshake-emits-clienterror.js:14:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-server-parent-constructor-options.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-server-parent-constructor-options.js:20\n  const server = tls.createServer(options, common.mustCall((socket) => {\n                 ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-server-parent-constructor-options.js:20:18\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-server-setkeycert.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-server-setkeycert.js:38\n  tls.createServer(options, (s) => s.end()).listen(0, common.mustCall(function() {\n  ^\n\nTypeError: value is not callable\n    at next (/workspace/work/node-fixtures/test/parallel/test-tls-server-setkeycert.js:38:3)\n    at /workspace/work/node-fixtures/test/parallel/test-tls-server-setkeycert.js:23:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-server-verify.js",
+          "status": "skip"
+        },
+        {
+          "fixture": "test-tls-session-cache.js",
+          "status": "skip"
+        },
+        {
+          "fixture": "test-tls-session-reuse-different-servername.js",
+          "status": "fail",
+          "reason_excerpt": "unhandled Promise rejection was not handled"
+        },
+        {
+          "fixture": "test-tls-session-timeout-errors.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-session-timeout-errors.js:22\nfor (const sessionTimeout of [-1, -100, -(2 ** 31)]) {\n^\n\nAssertionError [ERR_ASSERTION]: The error did not match the expected object.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-tls-session-timeout-errors.js:23:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-set-ciphers-error.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-set-ciphers-error.js:18\n  assert.throws(() => tls.createServer(options, common.mustNotCall()),\n  ^\n\nAssertionError [ERR_ASSERTION]: The error did not match the expected regular expression.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-tls-set-ciphers-error.js:18:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-set-ciphers.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-set-ciphers.js:73\n    assert.ifError(err);\n    ^\n\nAssertionError [ERR_ASSERTION]: ifError got unwanted exception: value is not callable\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-tls-set-ciphers.js:73:5\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at connect (/workspace/work/node-fixtures/test/fixtures/tls-connect.js:89:5)\n    at connect (/workspace/work/node-fixtures/test/fixtures/tls-connect.js:53:5)\n    at test (/workspace/work/node-fixtures/test/parallel/test-tls-set-ciphers.js:39:3)\n    at /workspace/work/node-fixtures/test/parallel/test-tls-set-ciphers.js:125:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-set-default-ca-certificates-append-fetch.mjs",
+          "status": "fail",
+          "reason_excerpt": "TypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-set-default-ca-certificates-append-fetch.mjs:18:22\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-set-default-ca-certificates-append-https-request.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-set-default-ca-certificates-append-https-request.js:15\nconst bundledCerts = tls.getCACertificates('bundled');\n                     ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-set-default-ca-certificates-append-https-request.js:15:22\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-set-default-ca-certificates-array-buffer.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-set-default-ca-certificates-array-buffer.js:16\ntls.setDefaultCACertificates([Buffer.from(fixtureCert)]);\n^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-set-default-ca-certificates-array-buffer.js:16:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-set-default-ca-certificates-basic.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-set-default-ca-certificates-basic.js:12\nconst originalBundled = tls.getCACertificates('bundled');\n                        ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-set-default-ca-certificates-basic.js:12:25\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-set-default-ca-certificates-error.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-set-default-ca-certificates-error.js:13\nconst defaultCerts = tls.getCACertificates('default');\n                     ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-set-default-ca-certificates-error.js:13:22\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-set-default-ca-certificates-extra-override.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/common/child_process.js:112\n    throw error;\n    ^\n\nError: - process terminated with status 1, expected 0\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-set-default-ca-certificates-mixed-types.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-set-default-ca-certificates-mixed-types.js:11\nconst bundledCerts = tls.getCACertificates('bundled');\n                     ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-set-default-ca-certificates-mixed-types.js:11:22\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-set-default-ca-certificates-precedence-bundled.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-set-default-ca-certificates-precedence-bundled.js:14\nconst server = https.createServer({\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-set-default-ca-certificates-precedence-bundled.js:14:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-set-default-ca-certificates-precedence-empty.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-set-default-ca-certificates-precedence-empty.js:13\nconst server = https.createServer({\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-set-default-ca-certificates-precedence-empty.js:13:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-set-default-ca-certificates-recovery.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-set-default-ca-certificates-recovery.js:38\nconst originalDefaultCerts = tls.getCACertificates('default');\n                             ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-set-default-ca-certificates-recovery.js:38:30\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-set-default-ca-certificates-reset-fetch.mjs",
+          "status": "fail",
+          "reason_excerpt": "TypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-set-default-ca-certificates-reset-fetch.mjs:18:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-set-default-ca-certificates-reset-https-request.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-set-default-ca-certificates-reset-https-request.js:14\nconst server = https.createServer({\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-set-default-ca-certificates-reset-https-request.js:14:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-set-encoding.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-set-encoding.js:42\nconst server = tls.Server(options, common.mustCall(function(socket) {\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-set-encoding.js:42:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-set-secure-context.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-set-secure-context.js:31\nconst server = https.createServer(credentialOptions[0], (req, res) => {\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-set-secure-context.js:31:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-set-sigalgs.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-set-sigalgs.js:37\n      assert.ifError(err);\n      ^\n\nAssertionError [ERR_ASSERTION]: ifError got unwanted exception: value is not callable\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-tls-set-sigalgs.js:37:7\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at connect (/workspace/work/node-fixtures/test/fixtures/tls-connect.js:89:5)\n    at connect (/workspace/work/node-fixtures/test/fixtures/tls-connect.js:53:5)\n    at test (/workspace/work/node-fixtures/test/parallel/test-tls-set-sigalgs.js:17:3)\n    at /workspace/work/node-fixtures/test/parallel/test-tls-set-sigalgs.js:68:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-sni-case-insensitive.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-sni-case-insensitive.js:49\nfor (const { servername, expectedCert, desc } of tests) {\n^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-sni-case-insensitive.js:50:18\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-sni-option.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-sni-option.js:139\n  const server = tls.createServer(serverOptions, common.mustCallAtLeast((c) => {\n                 ^\n\nTypeError: value is not callable\n    at test (/workspace/work/node-fixtures/test/parallel/test-tls-sni-option.js:139:18)\n    at /workspace/work/node-fixtures/test/parallel/test-tls-sni-option.js:72:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-sni-server-client.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-sni-server-client.js:103\n  const server = tls.createServer(serverOptions, common.mustCall((c) => {\n                 ^\n\nTypeError: value is not callable\n    at test (/workspace/work/node-fixtures/test/parallel/test-tls-sni-server-client.js:103:18)\n    at /workspace/work/node-fixtures/test/parallel/test-tls-sni-server-client.js:57:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-sni-servername.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-sni-servername.js:25\n  const server = tls.createServer(serverOptions, common.mustNotCall());\n                 ^\n\nTypeError: value is not callable\n    at test (/workspace/work/node-fixtures/test/parallel/test-tls-sni-servername.js:25:18)\n    at /workspace/work/node-fixtures/test/parallel/test-tls-sni-servername.js:46:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-snicallback-error.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-snicallback-error.js:10\nfor (const SNICallback of ['fhqwhgads', 42, {}, []]) {\n^\n\nAssertionError [ERR_ASSERTION]: The error did not match the expected object.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-tls-snicallback-error.js:11:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-socket-allow-half-open-option.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-socket-allow-half-open-option.js:17\n  const socket = new tls.TLSSocket(new net.Socket(), { allowHalfOpen: true });\n                 ^\n\nTypeError: value is not a constructor\n    at /workspace/work/node-fixtures/test/parallel/test-tls-socket-allow-half-open-option.js:17:18\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-socket-close.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-socket-close.js:16\nconst tlsServer = tls.createServer({ cert, key }, common.mustCall((socket) => {\n                  ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-socket-close.js:16:19\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-socket-constructor-alpn-options-parsing.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-socket-constructor-alpn-options-parsing.js:12\nnew tls.TLSSocket(null, {\n^\n\nTypeError: value is not a constructor\n    at /workspace/work/node-fixtures/test/parallel/test-tls-socket-constructor-alpn-options-parsing.js:12:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-socket-default-options.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-socket-default-options.js:45\n    assert.strictEqual(err.code, 'UNABLE_TO_VERIFY_LEAF_SIGNATURE');\n    ^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-tls-socket-default-options.js:45:5\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at connect (/workspace/work/node-fixtures/test/fixtures/tls-connect.js:89:5)\n    at test (/workspace/work/node-fixtures/test/parallel/test-tls-socket-default-options.js:39:3)\n    at /workspace/work/node-fixtures/test/parallel/test-tls-socket-default-options.js:12:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-socket-destroy.js",
+          "status": "fail",
+          "reason_excerpt": "node:net/module.js:179\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nError: TLS sockets are not implemented\n    at node:tls/shared.js:25:23\n    at /workspace/work/node-fixtures/test/parallel/test-tls-socket-destroy.js:32:3\n    at node:net/module.js:173:123\n    at node:net/module.js:179:118\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-socket-failed-handshake-emits-error.js",
+          "status": "fail",
+          "reason_excerpt": "node:bootstrap/process-surface.js:123\n          try {\n          ^\n\nTypeError: value is not a constructor\n    at /workspace/work/node-fixtures/test/parallel/test-tls-socket-failed-handshake-emits-error.js:15:15\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:bootstrap/process-surface.js:124:20\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-socket-snicallback-without-server.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-socket-snicallback-without-server.js:12\nconst [ clientSide, serverSide ] = duplexPair();\n                                   ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-socket-snicallback-without-server.js:12:36\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-startcom-wosign-whitelist.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-startcom-wosign-whitelist.js:59\n  const server = tls.createServer(tcase.serverOpts, function(s) {\n                 ^\n\nTypeError: value is not callable\n    at runTest (/workspace/work/node-fixtures/test/parallel/test-tls-startcom-wosign-whitelist.js:59:18)\n    at /workspace/work/node-fixtures/test/parallel/test-tls-startcom-wosign-whitelist.js:80:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-starttls-server.js",
+          "status": "fail",
+          "reason_excerpt": "node:net/module.js:179\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nError: TLS sockets are not implemented\n    at node:tls/shared.js:25:23\n    at /workspace/work/node-fixtures/test/parallel/test-tls-starttls-server.js:45:3\n    at node:net/module.js:173:123\n    at node:net/module.js:179:118\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-streamwrap-buffersize.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-streamwrap-buffersize.js:34\n  const server = tls.createServer({\n                 ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-streamwrap-buffersize.js:34:18\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-ticket-12.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-ticket.js:52\n  const server = tls.createServer({\n                 ^\n\nTypeError: value is not callable\n    at createServer (/workspace/work/node-fixtures/test/parallel/test-tls-ticket.js:52:18)\n    at /workspace/work/node-fixtures/test/parallel/test-tls-ticket.js:99:26\n    at /workspace/work/node-fixtures/test/parallel/test-tls-ticket-12.js:12:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-ticket-cluster.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-ticket-cluster.js:107\nconst server = tls.createServer(options, (c) => {\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-ticket-cluster.js:107:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-ticket-invalid-arg.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-ticket-invalid-arg.js:10\nconst server = new tls.Server();\n               ^\n\nTypeError: value is not a constructor\n    at /workspace/work/node-fixtures/test/parallel/test-tls-ticket-invalid-arg.js:10:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-ticket.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-ticket.js:52\n  const server = tls.createServer({\n                 ^\n\nTypeError: value is not callable\n    at createServer (/workspace/work/node-fixtures/test/parallel/test-tls-ticket.js:52:18)\n    at /workspace/work/node-fixtures/test/parallel/test-tls-ticket.js:99:26\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-timeout-server-2.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-timeout-server-2.js:36\nconst server = tls.createServer(options, common.mustCall(function(cleartext) {\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-timeout-server-2.js:36:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-timeout-server.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-timeout-server.js:38\nconst server = tls.createServer(options, common.mustNotCall());\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-timeout-server.js:38:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-tlswrap-segfault-2.js",
+          "status": "fail",
+          "reason_excerpt": "node:tls/shared.js:27\n        throw error;\n        ^\n\nError: TLS sockets are not implemented\n    at node:tls/shared.js:25:23\n    at /workspace/work/node-fixtures/test/parallel/test-tls-tlswrap-segfault-2.js:12:25\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-tlswrap-segfault.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-tlswrap-segfault.js:19\nconst server = tls.createServer(options, function(s) {\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-tlswrap-segfault.js:19:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-translate-peer-certificate.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-tls-transport-destroy-after-own-gc.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-transport-destroy-after-own-gc.js:15\nlet [ clientSide ] = duplexPair();\n                     ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-transport-destroy-after-own-gc.js:15:22\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-use-after-free-regression.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-use-after-free-regression.js:35\nconst server = https.createServer(\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-use-after-free-regression.js:35:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-wrap-econnreset-localaddress.js",
+          "status": "fail",
+          "reason_excerpt": "node:net/module.js:179\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nError: TLS sockets are not implemented\n    at node:tls/shared.js:25:23\n    at /workspace/work/node-fixtures/test/parallel/test-tls-wrap-econnreset-localaddress.js:17:3\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:net/module.js:173:123\n    at node:net/module.js:179:118\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-wrap-econnreset-pipe.js",
+          "status": "fail",
+          "reason_excerpt": "AssertionError: Expected values to be strictly equal"
+        },
+        {
+          "fixture": "test-tls-wrap-econnreset-socket.js",
+          "status": "fail",
+          "reason_excerpt": "node:net/module.js:179\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nError: TLS sockets are not implemented\n    at node:tls/shared.js:25:23\n    at /workspace/work/node-fixtures/test/parallel/test-tls-wrap-econnreset-socket.js:19:3\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:net/module.js:173:123\n    at node:net/module.js:179:118\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-wrap-econnreset.js",
+          "status": "fail",
+          "reason_excerpt": "node:net/module.js:179\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nError: TLS sockets are not implemented\n    at node:tls/shared.js:25:23\n    at /workspace/work/node-fixtures/test/parallel/test-tls-wrap-econnreset.js:17:3\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:net/module.js:173:123\n    at node:net/module.js:179:118\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-wrap-event-emmiter.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-tls-wrap-no-abort.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-wrap-no-abort.js:13\nutil.inspect(new TLSWrap());\n             ^\n\nTypeError: value is not a constructor\n    at /workspace/work/node-fixtures/test/parallel/test-tls-wrap-no-abort.js:13:14\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-wrap-timeout.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/lib/internal/timers.js:184\ntimeoutInfo[0] = 0;\n^\n\nTypeError: cannot set properties of undefined\n    at /workspace/work/node-fixtures/lib/internal/timers.js:184:18\n    at /workspace/work/node-fixtures/test/parallel/test-tls-wrap-timeout.js:5:35\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-write-error.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-write-error.js:29\nconst server = https.createServer(opts, (req, res) => {\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-write-error.js:29:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-writewrap-leak.js",
+          "status": "fail",
+          "reason_excerpt": "node:net/module.js:179\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nError: TLS sockets are not implemented\n    at node:tls/shared.js:25:23\n    at /workspace/work/node-fixtures/test/parallel/test-tls-writewrap-leak.js:14:13\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:net/module.js:173:123\n    at node:net/module.js:179:118\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-tls-zero-clear-in.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-tls-zero-clear-in.js:34\nconst server = tls.createServer({\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-tls-zero-clear-in.js:34:16\n\nNode.js v22.0.0"
+        }
+      ],
+      "jobs": 4,
+      "timeout_secs": 30,
+      "raw_sha256": "3bfc9ba58ecbf401d2267e3c3f206222393eadb237c09279e7df72cd9b7d075a"
+    }
+  },
+  "comparison": "All scope statuses unchanged from complete sweep source debeb1d71068756041547f071e73762d81701728; no lost passes or gains.",
+  "binary_sha256": {
+    "target/iteration/quench-node": "350b855cf254c2e300599caf4f548da018830bf68f274c88680df21a27e659dd",
+    "target/iteration/run-parallel": "7c887660b4df0a159fa85b74d6ef2c2610ffcdcde9a45a5dbd6aeb17dc3ee0a4"
+  },
+  "log_sha256": {
+    "work/tls-material-oracles.log": "424bfe1607e1a927fd82ce5a8cad6375e92658f6016e66d768683da1da8d7a75",
+    "work/tls-material-framework.log": "b41881f94821125815bc87efbbbd7d26b13fd072686394014795864fa55f2ae8"
+  },
+  "richards_diagnostic": {
+    "suite": "stock V8-v7 Richards; exact base.js + richards.js + existing repository RUNNER",
+    "qualification": "One diagnostic round; iteration build, two engines only. No matched production or aggregate performance claim.",
+    "platform": "linux-x86_64",
+    "cpu_max": "400000 100000",
+    "memory_max": "17179869184",
+    "results": [
+      {
+        "engine": "quench-iteration",
+        "argv": [
+          "target/iteration/quench-node"
+        ],
+        "exit_code": 0,
+        "timed_out": false,
+        "elapsed_seconds": 2.4025263599996833,
+        "peak_rss_kib": 117468,
+        "stdout": "__quenchBenchResult: Richards: 165\n----\nScore: 165\n",
+        "stderr": ""
+      },
+      {
+        "engine": "node27-jitless",
+        "argv": [
+          "work/node-v27.0.0-nightly20260819c79868f102-linux-x64/bin/node",
+          "--jitless"
+        ],
+        "exit_code": 0,
+        "timed_out": false,
+        "elapsed_seconds": 2.202565849000166,
+        "peak_rss_kib": 70312,
+        "stdout": "__quenchBenchResult: Richards: 1959\n----\nScore: 1959\n",
+        "stderr": ""
+      }
+    ]
+  },
+  "qualifications": [
+    "Generated PKCS12 with independent password and missing-private-key variant are tested against Node, alongside valid CRLs, malformed data, arrays, iterator close, holes and password type errors.",
+    "Material validation only: SecureContext remains a compatibility shell, without retained SSL_CTX/trust-store configuration or TLS socket handshakes.",
+    "Provider-dependent unsupported-archive error codes and full secure-context option validation remain incomplete.",
+    "Single iteration Richards diagnostic, two engines, one round, no matched production or aggregate performance claim.",
+    "Latest complete total remains 1321 pass, 686 skip, 2605 fail, 115 timeout, 0 crash of 4727; cwd focus gain has not yet been qualified in a complete sweep. All-case goal remains open."
+  ]
+}

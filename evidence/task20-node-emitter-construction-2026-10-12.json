@@ -1,0 +1,165 @@
+{
+  "scope": "Native callable EventEmitter construction, metadata and rejection capture; shared numeric update and primitive constructor names",
+  "branch": "v2-cloud-node",
+  "parent_commit": "ebc797c6532d2ea2cdd53ed4c322adeda0a8997b",
+  "oracle": "Node v27.0.0-nightly20260819c79868f102",
+  "fixture_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+  "validation": {
+    "node_oracle_tests": 60,
+    "oracle_log": "work/emitter-constructor-final-oracles.log",
+    "framework_tests": 43,
+    "framework_log": "work/emitter-constructor-final-framework.log",
+    "scopes": {
+      "events": {
+        "counts": {
+          "pass": 33,
+          "fail": 12
+        },
+        "changes": [
+          {
+            "fixture": "test-event-capture-rejections.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-event-emitter-subclass.js",
+            "before": "fail",
+            "after": "pass"
+          }
+        ],
+        "inventory_hash": "c6219085054c7bc3",
+        "metadata": {
+          "schema_version": 2,
+          "inventory_hash": "c6219085054c7bc3",
+          "timeout_secs": 30,
+          "jobs": 4,
+          "node_version": "v27.0.0-nightly20260819c79868f102",
+          "runtime_commit": "ebc797c6532d2ea2cdd53ed4c322adeda0a8997b",
+          "tests_node_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+          "platform": "linux-x86_64"
+        },
+        "raw": "work/emitter-constructor-final-events-group.json"
+      },
+      "child": {
+        "counts": {
+          "fail": 31,
+          "timeout": 3,
+          "pass": 76,
+          "skip": 2
+        },
+        "changes": [],
+        "inventory_hash": "a3a03b5546a7e293",
+        "metadata": {
+          "schema_version": 2,
+          "inventory_hash": "a3a03b5546a7e293",
+          "timeout_secs": 30,
+          "jobs": 4,
+          "node_version": "v27.0.0-nightly20260819c79868f102",
+          "runtime_commit": "ebc797c6532d2ea2cdd53ed4c322adeda0a8997b",
+          "tests_node_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+          "platform": "linux-x86_64"
+        },
+        "raw": "work/emitter-constructor-final-child-group.json"
+      },
+      "stream": {
+        "counts": {
+          "fail": 102,
+          "pass": 118,
+          "timeout": 1
+        },
+        "changes": [],
+        "inventory_hash": "ae07fe966dc14166",
+        "metadata": {
+          "schema_version": 2,
+          "inventory_hash": "ae07fe966dc14166",
+          "timeout_secs": 30,
+          "jobs": 4,
+          "node_version": "v27.0.0-nightly20260819c79868f102",
+          "runtime_commit": "ebc797c6532d2ea2cdd53ed4c322adeda0a8997b",
+          "tests_node_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+          "platform": "linux-x86_64"
+        },
+        "raw": "work/emitter-constructor-final-stream-group.json"
+      },
+      "stream2": {
+        "counts": {
+          "pass": 10,
+          "fail": 15,
+          "timeout": 2
+        },
+        "changes": [],
+        "inventory_hash": "eab73a390025c54d",
+        "metadata": {
+          "schema_version": 2,
+          "inventory_hash": "eab73a390025c54d",
+          "timeout_secs": 30,
+          "jobs": 4,
+          "node_version": "v27.0.0-nightly20260819c79868f102",
+          "runtime_commit": "ebc797c6532d2ea2cdd53ed4c322adeda0a8997b",
+          "tests_node_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+          "platform": "linux-x86_64"
+        },
+        "raw": "work/emitter-constructor-final-stream2-group.json"
+      },
+      "stream3": {
+        "counts": {
+          "pass": 3,
+          "timeout": 1
+        },
+        "changes": [],
+        "inventory_hash": "d6bbb65c1ab29a05",
+        "metadata": {
+          "schema_version": 2,
+          "inventory_hash": "d6bbb65c1ab29a05",
+          "timeout_secs": 30,
+          "jobs": 4,
+          "node_version": "v27.0.0-nightly20260819c79868f102",
+          "runtime_commit": "ebc797c6532d2ea2cdd53ed4c322adeda0a8997b",
+          "tests_node_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+          "platform": "linux-x86_64"
+        },
+        "raw": "work/emitter-constructor-final-stream3-group.json"
+      }
+    },
+    "runtime_suite": {
+      "passed": 549,
+      "failed": 0,
+      "log": "work/emitter-constructor-runtime-final.log",
+      "execution_modes": "API regressions compare specialized and unspecialized modes"
+    },
+    "stack_test_node_outputs": {
+      "regression_error_stack_setter_uses_captured_records": {
+        "exit": 0,
+        "stdout": "true\ntrue\nsaved\nfunction\nfunction\nfalse\ntrue\n1\n0\n",
+        "stderr": ""
+      },
+      "regression_error_stack_setter_ignores_uncaptured_receivers": {
+        "exit": 0,
+        "stdout": "old\nfalse\n0\nsaved\nshared\n",
+        "stderr": ""
+      },
+      "regression_error_brand_survives_realms_and_aggregate_jobs": {
+        "exit": 0,
+        "stdout": "true\ntrue\nfalse\ntrue\nError: foreign\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\ntrue\nfalse\ntrue\n[object Error]\n",
+        "stderr": ""
+      }
+    },
+    "binary_sha256": {
+      "quench-node": "648fff4b78187991a7998e85f56d42f200665c0fb4064aa3b9a268f957b7e4d1",
+      "run-parallel": "8a14ff0f080f35b86542657f15d6ae46d5d00d1a7014df7283290ff3c205ad95"
+    }
+  },
+  "representation": {
+    "capture": "Private per-emitter Symbol flag, shared prototype default; no duplicated public capture flag",
+    "event_records": "Existing event map is canonical; counts follow event creation/removal",
+    "numeric_update": "Native hosts and bytecode delegate one shared ToNumeric update operation",
+    "primitive_names": "Canonical Number/String function names assigned before prototype aliases"
+  },
+  "memory_events": "low 0\nhigh 0\nmax 4864178\noom 177\noom_kill 47\noom_group_kill 0\n",
+  "qualifications": [
+    "Focused fixture metadata records the parent commit because modifications were not yet committed; qualifying binaries include the listed pending implementation.",
+    "Three runtime tests retained outdated prototype stack accessor expectations after earlier commit 92add329b; updated tests check object-owned captured accessors and exact Node receiver behavior.",
+    "Mutation during emission, duplicate removal, event-map shape transitions, EventTarget warnings and broader utility formatting remain incomplete.",
+    "No performance claim; all-case passing goal remains open."
+  ]
+}

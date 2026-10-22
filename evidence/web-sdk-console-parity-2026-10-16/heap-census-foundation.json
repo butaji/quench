@@ -1,0 +1,12 @@
+{
+  "source": "78fcc1708",
+  "parent_console_source": "33118dc69",
+  "runtime_tests": 673,
+  "default_all_targets_check": true,
+  "profile_memory_all_targets_check": true,
+  "workspace_all_targets_check": true,
+  "new_test": "heap_memory_census_tracks_rooted_records_and_collection_without_guest_hooks",
+  "public_node_memory_usage_changed": false,
+  "console_425_case_and_instruction_proofs_exclude_this_commit": true,
+  "backing_classification_work_excluded": true
+}

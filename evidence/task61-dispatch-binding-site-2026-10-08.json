@@ -1,0 +1,299 @@
+{
+  "schema": 1,
+  "task": "61",
+  "experiment": "Publish binding-site resume PCs only while executing bytecodes that consume that metadata",
+  "decision": "retain as a focused Stage B candidate; all 11 pairs reduced instructions, with a small RSS increase; full V8-v7/Linux qualification remains open",
+  "binding_time": {
+    "static": "The compiler emits binding-site metadata only for direct-eval call continuations, scoped name resolution inside with, deletion name resolution, and closure creation inside with.",
+    "dynamic": "Direct eval, with-object lookup, lexical shadowing, closure capture, and error handling keep their existing semantics.",
+    "representation": "Frame.binding_site_pc is temporarily published at metadata-consuming instructions and actual direct-eval calls, then restored; ordinary opcodes do not update it."
+  },
+  "source": {
+    "base_revision": "fe7ef311f69f64c0b03de4e11461fbe4a24ce410",
+    "worktree_dirty_during_build_and_checks": true,
+    "owner_file": "crates/quench-runtime/src/vm/dispatch.rs",
+    "owner_file_sha256": "1e375586f3fdaf866492c67adab5d35ea30dbeea933404b7e098b18804ea4b59",
+    "cargo_lock_sha256": "1bfdcbb640fdbfc4a6efc2d6a47e190b72595b0a89ecc83ab1715994d5b2bc61",
+    "baseline_binary_sha256": "fcf92c1ae69d112456364eb19a33b5739a1a76fdcfe202df7ae28dade1bed0ac",
+    "candidate_binary_sha256": "3c9ca59daca63d0d79ea963859cc826a5143a55f636d0216372bc80c33cde869",
+    "baseline_profile": "production",
+    "candidate_profile": "production",
+    "binary_size_bytes": 11971872,
+    "macho_segment_delta_candidate_minus_baseline": {
+      "__TEXT_bytes": 0,
+      "__text_bytes": 512,
+      "__DATA_CONST_bytes": 0,
+      "__DATA_CONST_section_bytes": 192
+    }
+  },
+  "host": {
+    "cpu": "Apple M4",
+    "os": "macOS 26.5 build 25F71, ARM64",
+    "kernel": "Darwin 25.5.0",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)"
+  },
+  "attribution": {
+    "fixture": "10,000,000 iterations of a CJS local-store loop; VM dispatch thread 2,327 active samples",
+    "sample_file": "tasks/evidence/task61-dispatch-loop-sample-2026-10-08.txt",
+    "sample_sha256": "03e281262236c68e0cc1515b0e98c2fe40b38e202e0f70b9a86dfbf76fa32d49",
+    "profile_binary_sha256": "7a255d5298511f5f031af5985c15990d0297d36affd8cb8ec66e8012908de3d4",
+    "run_frame_general_until_samples": 2150,
+    "source_line_samples": {
+      "dispatch_frame.rs:736 step/match": 1588,
+      "dispatch_frame.rs:728 wide decode": 288,
+      "dispatch_frame.rs:718 function/code selection": 137,
+      "dispatch_frame.rs:712 stop_pc check": 132,
+      "dispatch_frame.rs:724 instruction fetch": 64,
+      "dispatch_frame.rs:716 frame program": 59
+    },
+    "note": "Before the change, run_frame_general_until published the instruction PC every iteration. The candidate publishes it around compiler-recorded name/closure consumers and true direct-eval calls; the inlined dispatch/match sample bucket obscures the former store in line-level attribution."
+  },
+  "measurement": {
+    "kind": "11 alternating Quench-only production pairs; instruction count is primary, elapsed and maximum RSS are reported as secondary metrics",
+    "fixture": "tasks/evidence/task61-dispatch-binding-site-loop-10m-2026-10-08.cjs",
+    "fixture_sha256": "f6ee2b318578823e134223942530b90fc1506f7435eec7824513ad88f6a9ac2f",
+    "command_template": "/usr/bin/time -l <hash-pinned-binary> tasks/evidence/task61-dispatch-binding-site-loop-10m-2026-10-08.cjs",
+    "rounds": 11,
+    "order_alternated": true,
+    "bootstrap": {
+      "method": "paired percentile bootstrap of median per-pair candidate-minus-baseline percentage for instructions/time/RSS, and median byte delta for RSS",
+      "replicates": 100000,
+      "seed": 610822
+    },
+    "raw_csv": {
+      "path": "tasks/evidence/task61-dispatch-binding-site-pairs-2026-10-08.csv",
+      "sha256": "783debbb5bfb4607d587ef230dde60590dd55a5557d7d4cd1368747b995ee661",
+      "rows": 11
+    },
+    "summary": {
+      "baseline_instruction_median": 10682407697,
+      "candidate_instruction_median": 9973055558,
+      "instruction_delta_median_percent": -6.641147895892743,
+      "instruction_delta_95_percentile_interval": [
+        -6.6455464931798724,
+        -6.635806454618663
+      ],
+      "candidate_lower_instruction_pairs": 11,
+      "baseline_elapsed_median_seconds": 0.29,
+      "candidate_elapsed_median_seconds": 0.27,
+      "elapsed_delta_median_percent": -6.896551724137918,
+      "elapsed_delta_95_percentile_interval": [
+        -6.896551724137918,
+        -6.896551724137918
+      ],
+      "candidate_faster_elapsed_pairs": 10,
+      "baseline_max_rss_median_bytes": 19644416,
+      "candidate_max_rss_median_bytes": 19824640,
+      "max_rss_delta_median_bytes": 163840,
+      "max_rss_delta_95_percentile_interval_bytes": [
+        98304,
+        196608
+      ],
+      "max_rss_delta_median_percent": 0.8340283569641368,
+      "max_rss_delta_95_percentile_interval_percent": [
+        0.502092050209205,
+        1.001669449081803
+      ],
+      "candidate_lower_rss_pairs": 0,
+      "candidate_equal_rss_pairs": 1
+    },
+    "raw_pairs": [
+      {
+        "pair": 1,
+        "order": [
+          "candidate",
+          "baseline"
+        ],
+        "baseline_instructions": 10682394739,
+        "candidate_instructions": 9986123091,
+        "baseline_elapsed_seconds": 0.29,
+        "candidate_elapsed_seconds": 0.79,
+        "baseline_max_rss_bytes": 19824640,
+        "candidate_max_rss_bytes": 20103168
+      },
+      {
+        "pair": 2,
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "baseline_instructions": 10682155061,
+        "candidate_instructions": 9972588707,
+        "baseline_elapsed_seconds": 0.29,
+        "candidate_elapsed_seconds": 0.27,
+        "baseline_max_rss_bytes": 19628032,
+        "candidate_max_rss_bytes": 19824640
+      },
+      {
+        "pair": 3,
+        "order": [
+          "candidate",
+          "baseline"
+        ],
+        "baseline_instructions": 10683010731,
+        "candidate_instructions": 9973066286,
+        "baseline_elapsed_seconds": 0.29,
+        "candidate_elapsed_seconds": 0.27,
+        "baseline_max_rss_bytes": 19578880,
+        "candidate_max_rss_bytes": 19677184
+      },
+      {
+        "pair": 4,
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "baseline_instructions": 10682960523,
+        "candidate_instructions": 9972160146,
+        "baseline_elapsed_seconds": 0.29,
+        "candidate_elapsed_seconds": 0.27,
+        "baseline_max_rss_bytes": 19546112,
+        "candidate_max_rss_bytes": 19644416
+      },
+      {
+        "pair": 5,
+        "order": [
+          "candidate",
+          "baseline"
+        ],
+        "baseline_instructions": 10682939608,
+        "candidate_instructions": 9973055558,
+        "baseline_elapsed_seconds": 0.29,
+        "candidate_elapsed_seconds": 0.27,
+        "baseline_max_rss_bytes": 19841024,
+        "candidate_max_rss_bytes": 19841024
+      },
+      {
+        "pair": 6,
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "baseline_instructions": 10682407697,
+        "candidate_instructions": 9972973203,
+        "baseline_elapsed_seconds": 0.29,
+        "candidate_elapsed_seconds": 0.27,
+        "baseline_max_rss_bytes": 19644416,
+        "candidate_max_rss_bytes": 19791872
+      },
+      {
+        "pair": 7,
+        "order": [
+          "candidate",
+          "baseline"
+        ],
+        "baseline_instructions": 10682686864,
+        "candidate_instructions": 9973436541,
+        "baseline_elapsed_seconds": 0.29,
+        "candidate_elapsed_seconds": 0.27,
+        "baseline_max_rss_bytes": 19791872,
+        "candidate_max_rss_bytes": 19841024
+      },
+      {
+        "pair": 8,
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "baseline_instructions": 10681773002,
+        "candidate_instructions": 9972831103,
+        "baseline_elapsed_seconds": 0.29,
+        "candidate_elapsed_seconds": 0.27,
+        "baseline_max_rss_bytes": 19677184,
+        "candidate_max_rss_bytes": 19906560
+      },
+      {
+        "pair": 9,
+        "order": [
+          "candidate",
+          "baseline"
+        ],
+        "baseline_instructions": 10682946732,
+        "candidate_instructions": 9972918326,
+        "baseline_elapsed_seconds": 0.29,
+        "candidate_elapsed_seconds": 0.27,
+        "baseline_max_rss_bytes": 19578880,
+        "candidate_max_rss_bytes": 19742720
+      },
+      {
+        "pair": 10,
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "baseline_instructions": 10681863994,
+        "candidate_instructions": 9973265429,
+        "baseline_elapsed_seconds": 0.29,
+        "candidate_elapsed_seconds": 0.27,
+        "baseline_max_rss_bytes": 19644416,
+        "candidate_max_rss_bytes": 19808256
+      },
+      {
+        "pair": 11,
+        "order": [
+          "candidate",
+          "baseline"
+        ],
+        "baseline_instructions": 10682287584,
+        "candidate_instructions": 9973431655,
+        "baseline_elapsed_seconds": 0.29,
+        "candidate_elapsed_seconds": 0.27,
+        "baseline_max_rss_bytes": 19628032,
+        "candidate_max_rss_bytes": 19824640
+      }
+    ]
+  },
+  "correctness": {
+    "probe": {
+      "path": "tasks/evidence/task61-dispatch-binding-site-scope-probe-2026-10-08.cjs",
+      "sha256": "a793e517186fc6e7903d63b826b12a65e9a3f4666da310877e3b4455b3c6950c",
+      "node_output": "{\"withRead\":\"block\",\"withDelete\":false,\"withOwnAfterDelete\":true,\"withClosureEval\":\"block\",\"directEval\":[\"outer\",\"inner\",\"outer\"]}",
+      "quench_output": "{\"withRead\":\"block\",\"withDelete\":false,\"withOwnAfterDelete\":true,\"withClosureEval\":\"block\",\"directEval\":[\"outer\",\"inner\",\"outer\"]}",
+      "oracle": "local Node; command outputs byte-identical"
+    },
+    "test262": {
+      "stages": {
+        "3 block-scope": {
+          "passed": 145,
+          "total": 145,
+          "report": "tasks/evidence/task61-dispatch-binding-site-tests-2026-10-08/binding-site-pc-corrected-stage3.json",
+          "sha256": "bd69c8c6eda052a95a8e86fad830104bb47a4916802bf2551ec8daa988e7c608"
+        },
+        "8 eval-code": {
+          "passed": 347,
+          "total": 347,
+          "report": "tasks/evidence/task61-dispatch-binding-site-tests-2026-10-08/binding-site-pc-corrected-stage8.json",
+          "sha256": "f84ee1ed45f7af64ceb5fe36662c641937728ecdadb20ca3d12db626559384c1"
+        },
+        "11 function-code": {
+          "passed": 217,
+          "total": 217,
+          "report": "tasks/evidence/task61-dispatch-binding-site-tests-2026-10-08/binding-site-pc-corrected-stage11.json",
+          "sha256": "9078008a2800a2295746da537a05f486a38315c9849781862790b95e485f51e8"
+        },
+        "14 identifier-resolution": {
+          "passed": 14,
+          "total": 14,
+          "report": "tasks/evidence/task61-dispatch-binding-site-tests-2026-10-08/binding-site-pc-corrected-stage14.json",
+          "sha256": "7b917cdd40a6a8399732dfcd8a7014dc84c2efdd081659f83a06070206e3af6a"
+        },
+        "with statements": {
+          "passed": 180,
+          "total": 181,
+          "report": "tasks/evidence/task61-dispatch-binding-site-tests-2026-10-08/binding-site-pc-corrected-with.json",
+          "sha256": "8ae4b048d5132d067a703df70e46d5b5daff6369fc4691620ac4b40707fb8982",
+          "known_failure": "language/statements/with/12.10-0-9.js fails identically on the pinned baseline and candidate; Node v26.10.0 returns 42."
+        }
+      },
+      "candidate_sha256": "3c9ca59daca63d0d79ea963859cc826a5143a55f636d0216372bc80c33cde869",
+      "runner_sha256": "fcac3d16c2865752f412cd7eca5d27196e4a0499fdf06aa5f29d6ad4dd03f257",
+      "focused_oracle": "Node and candidate output matched on with lookup/deletion, closure plus eval, and direct-eval binding-site restoration.",
+      "baseline_comparison": "One focused with Test262 failure is pre-existing and reproduced on the pinned baseline; candidate introduced no new failure in the checked slices."
+    }
+  },
+  "limitations": [
+    "Focused CJS local-store microbenchmark only; not a V8-v7 score claim.",
+    "RSS increased by a median 163,840 bytes (about 0.8%) on this fixture.",
+    "No Linux qualification yet."
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "oracle_path": "/workspace/shared/node-v26.12.0-linux-x64/bin/node",
+  "oracle_version": "v26.12.0",
+  "oracle_sha256": "caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943",
+  "candidate_source": "faa120035a332d3b5eb232eaadcad1399f306d7d",
+  "candidate_sha256": "d6482c1dbf34b2d0045f033404c6e469c916e893b7ceb8c205a610a7ce0681ff",
+  "fixture_source": "0cc26891e137f6ac14bb36b5c657a27303599b67",
+  "test_binary": "/workspace/quench/target/npm-file-url/debug/deps/child_entry-94fd2328f8a45425",
+  "test_sha256": "f180aacc8e9f485d70fa5b015e0e4f30bbfb03fc0ef182642885eb5798b909f0"
+}

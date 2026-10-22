@@ -1,0 +1,57 @@
+{
+  "schema": 1,
+  "task": "23",
+  "kind": "pinned_wasm_shared_vm_qualification_current",
+  "recorded_at": "2026-10-07",
+  "source": {
+    "revision": "cebb58b5cf4118fb8022386f013d8009193cc306",
+    "dirty": true,
+    "platform": "macOS-26.5-arm64-arm-64bit",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+    "snapshot_algorithm": "SHA-256 over sorted UTF-8 repository-relative path, NUL, file SHA-256 hex, newline records",
+    "snapshot_file_count": 283,
+    "snapshot_sha256": "c7c13ad6e001568bf287b1f3a8242bf507dd2c11ee66534c5e9e0d1134f8f221",
+    "snapshot_roots": [
+      "crates/quench-runtime-next/src",
+      "crates/quench-wasm/src",
+      "crates/quench-wasm-test/src",
+      "vendor/oxc-parser-next/src"
+    ],
+    "snapshot_additional_files": [
+      "Cargo.toml",
+      "Cargo.lock",
+      "crates/quench-runtime-next/Cargo.toml",
+      "crates/quench-wasm/Cargo.toml",
+      "crates/quench-wasm-test/Cargo.toml",
+      "vendor/oxc-parser-next/Cargo.toml"
+    ]
+  },
+  "suite": {
+    "name": "pinned Wasm testsuite",
+    "path": "crates/quench-wasm-test/testsuite",
+    "files": 288,
+    "input_manifest_algorithm": "SHA-256 of compact JSON over ordered [path, sha256] pairs sorted by path",
+    "input_manifest_sha256": "fe78577922f7360f39f0d66cb4ec33218ac3b43b4193e7016f6a2799952e424d",
+    "input_mismatches": 0,
+    "mismatched_paths": []
+  },
+  "run": {
+    "command": "WASM_FILE_TIMEOUT_MS=60000 cargo run --profile iteration -p quench-wasm-test --bin run -- --report target/iteration/task27-current-2026-10-07/wasm.json crates/quench-wasm-test/testsuite",
+    "binary": "target/iteration/run",
+    "binary_sha256": "1d8e00caaecd82a9c6e78947dae404cf956ea49a0890614f2d87300f550c3149",
+    "report": "target/iteration/task27-current-2026-10-07/wasm.json",
+    "report_sha256": "f6734cbc6bf9a2a892f1d038c514860d8696434acefa97fca17e259f92185161"
+  },
+  "result": {
+    "passed": 67124,
+    "failed": 0,
+    "total": 67124,
+    "inventory_complete": true,
+    "file_timeouts": 0,
+    "file_errors": []
+  },
+  "verification": {
+    "unit_tests_run": false
+  },
+  "qualification_limit": "This is current-tree pinned Wasm evidence on the shared VM. It does not prove single-runtime package cleanup. The user permits moving to Stage B with minor suite residuals; this Wasm inventory has no failures. Stage A legacy-runtime removal remains unfinished."
+}

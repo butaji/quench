@@ -1,0 +1,5 @@
+(node:813840) Warning: test
+(Use `quench-node --trace-warnings ...` to show where the warning was created)
+(node:813840) Error: test
+(node:813840) Warning: test
+foo

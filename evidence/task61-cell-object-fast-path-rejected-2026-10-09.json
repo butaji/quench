@@ -1,0 +1,327 @@
+{
+  "schema": "quench.task61.experiment.v1",
+  "task": 61,
+  "experiment": "Cell::object/object_mut Object and Array early-return candidate",
+  "decision": "rejected",
+  "reason": "The Object/Array fast path emitted the expected branch-before-fallback shape and saved instructions in the micro-screen, but the 11-pair fixture evidence did not show a reliable cycles or elapsed-time gain. Richards median cycles increased 3.98% (5/11 faster; 95% paired bootstrap interval -4.50% to +8.52%). DeltaBlue median cycles improved 0.59% (6/11 faster; interval -13.65% to +5.48%). Both intervals include zero; score intervals also include zero. Candidate maximum RSS was lower on both fixtures, within budget, but speed evidence does not support retention.",
+  "source_revision": "855a083a4e398743b359a8ac1efeecee4eea60d4",
+  "candidate_source_diff_sha256": "e4ea5b0b904b10c051da4370e3036f1687c90917a7032f22e45ff50ab725295d",
+  "candidate_source_diff": "tasks/evidence/task61-cell-object-fast-path-2026-10-09.patch",
+  "candidate_source_bytes": 883,
+  "host": {
+    "platform": "macOS-26.5-arm64-arm-64bit",
+    "machine": "arm64",
+    "model": "Mac16,10",
+    "processor": "Apple M4",
+    "memory_bytes": 17179869184
+  },
+  "build": {
+    "profile": "production",
+    "lto": "thin",
+    "baseline_sha256": "2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7",
+    "candidate_sha256": "a5c92c4f93bdbb0d66570f16157b2f606b5501b65e24c326d1b1f2ed4fb3b39c"
+  },
+  "assembly": {
+    "candidate_symbolized_sha256": "a9d73debb40dc0077a33f79954902e59ba682a6bd8fd9b7c2cb11f2e80dfdea4",
+    "candidate_asm": "tasks/evidence/task61-cell-object-fast-path-asm-2026-10-09.txt",
+    "candidate_asm_sha256": "faaef1ab3ee0fae58a17f1622bce096d75b55f0a4c02322d77900bf6fad0b63c",
+    "finding": "Both object() and object_mut() compile to a byte tag load, one ordered comparison/branch for Object or Array, a fixed-offset header address and return; remaining object-like tags reach the existing jump table."
+  },
+  "micro_screen": {
+    "raw": "tasks/evidence/task61-cell-object-fast-path-microbench-2026-10-09.json",
+    "raw_sha256": "586e3a84b4153590778754329a40ab8132e8a240ebdd900dcc9def991a7149f0",
+    "pairs_per_case": 3,
+    "cases": {
+      "object_read": {
+        "median_instruction_change_percent": -0.34,
+        "median_cycle_change_percent": -0.448
+      },
+      "object_write": {
+        "median_instruction_change_percent": -0.658,
+        "median_cycle_change_percent": -0.709
+      },
+      "array_read": {
+        "median_instruction_change_percent": -0.369,
+        "median_cycle_change_percent": -2.115
+      },
+      "array_write": {
+        "median_instruction_change_percent": -1.877,
+        "median_cycle_change_percent": -2.921
+      },
+      "local_control": {
+        "median_instruction_change_percent": -0.017,
+        "median_cycle_change_percent": 3.471
+      }
+    },
+    "interpretation": "Instruction counts moved in the expected direction, but the three-pair cycle screen was noisy; fixture gate decides."
+  },
+  "fixture_pairs": {
+    "raw": "tasks/evidence/task61-cell-object-fast-path-fixture-pairs-2026-10-09.json",
+    "raw_sha256": "040e371d0812fec48e23c494f05e375233a0da9b636df8746583ecd76a3e8a87",
+    "runner": "tasks/evidence/task61-cell-object-fast-path-fixture-pairs-2026-10-09.py",
+    "runner_sha256": "0f6d633df74dbe727d5829edfadc3f0b34e759e1543fe236ba32484a586a68cc",
+    "rounds_per_fixture": 11,
+    "alternating_order": true,
+    "observable_outputs_matched": 22,
+    "results": {
+      "richards.js": {
+        "score": {
+          "baseline_median": 80.8,
+          "candidate_median": 87.1,
+          "median_paired_change_percent": 7.134071340713404,
+          "paired_bootstrap_95_percentile_ci_percent": [
+            -5.433526011560697,
+            14.486638537271466
+          ],
+          "candidate_better_pairs": 8,
+          "pair_changes_percent": [
+            29.519774011299443,
+            -5.433526011560697,
+            0.1249999999999929,
+            2.401746724890833,
+            19.183168316831683,
+            13.400758533501907,
+            7.134071340713404,
+            -6.845965770171142,
+            -22.621359223300967,
+            14.486638537271466,
+            12.213740458015279
+          ],
+          "higher_is_better": true
+        },
+        "cycles_elapsed": {
+          "baseline_median": 3083944647,
+          "candidate_median": 3206599651,
+          "median_paired_change_percent": 3.977211592280567,
+          "paired_bootstrap_95_percentile_ci_percent": [
+            -4.496835480878813,
+            8.523790304236018
+          ],
+          "candidate_better_pairs": 5,
+          "pair_changes_percent": [
+            12.558956426615936,
+            3.977211592280567,
+            -4.496835480878813,
+            -1.1879589961288624,
+            8.523790304236018,
+            8.470204572873474,
+            5.234725494268011,
+            -5.089554700579992,
+            -20.211227701553188,
+            -1.7262077873866448,
+            9.266615778968346
+          ],
+          "higher_is_better": false
+        },
+        "elapsed_seconds": {
+          "baseline_median": 3.1,
+          "candidate_median": 3.1,
+          "median_paired_change_percent": 0.32258064516128343,
+          "paired_bootstrap_95_percentile_ci_percent": [
+            -1.2861736334405156,
+            1.3071895424836613
+          ],
+          "candidate_better_pairs": 5,
+          "pair_changes_percent": [
+            0.32258064516128343,
+            2.931596091205222,
+            1.3071895424836613,
+            0.9708737864077751,
+            -0.6514657980456032,
+            -2.2435897435897525,
+            -0.9584664536741151,
+            2.6229508196721336,
+            -1.2861736334405156,
+            -3.4591194968553554,
+            0.32258064516128343
+          ],
+          "higher_is_better": false
+        },
+        "maximum_rss_bytes": {
+          "baseline_median": 18579456,
+          "candidate_median": 18333696,
+          "median_paired_change_percent": -1.237842617152962,
+          "paired_bootstrap_95_percentile_ci_percent": [
+            -2.2968197879858656,
+            0.0
+          ],
+          "candidate_better_pairs": 8,
+          "pair_changes_percent": [
+            -0.88339222614841,
+            1.8699910952804988,
+            -2.290748898678414,
+            -2.445414847161572,
+            0.3527336860670194,
+            -0.6227758007117438,
+            -1.8134715025906734,
+            -2.2968197879858656,
+            -1.237842617152962,
+            -2.780191138140747,
+            0.0
+          ],
+          "higher_is_better": false
+        },
+        "instructions_retired": {
+          "baseline_median": 16161312329,
+          "candidate_median": 16001788903,
+          "median_paired_change_percent": 3.40724800358769,
+          "paired_bootstrap_95_percentile_ci_percent": [
+            -6.94052135863034,
+            8.904614839427243
+          ],
+          "candidate_better_pairs": 4,
+          "pair_changes_percent": [
+            14.482831266184867,
+            -1.154488089839081,
+            -8.583792283375141,
+            3.40724800358769,
+            8.617951981536196,
+            8.904614839427243,
+            6.460966024743523,
+            -6.94052135863034,
+            -21.524343172700377,
+            0.17076228656958933,
+            9.267393909733466
+          ],
+          "higher_is_better": false
+        }
+      },
+      "deltablue.js": {
+        "score": {
+          "baseline_median": 195.0,
+          "candidate_median": 203.0,
+          "median_paired_change_percent": 0.4524886877828055,
+          "paired_bootstrap_95_percentile_ci_percent": [
+            -4.97737556561086,
+            9.230769230769232
+          ],
+          "candidate_better_pairs": 6,
+          "pair_changes_percent": [
+            17.507418397626108,
+            2.4523160762942737,
+            16.193181818181802,
+            -10.473815461346641,
+            -44.17613636363637,
+            9.230769230769232,
+            -3.3333333333333335,
+            0.966183574879227,
+            -4.97737556561086,
+            -0.8968609865470852,
+            0.4524886877828055
+          ],
+          "higher_is_better": true
+        },
+        "cycles_elapsed": {
+          "baseline_median": 8069698229,
+          "candidate_median": 7760594774,
+          "median_paired_change_percent": -0.5914805187400539,
+          "paired_bootstrap_95_percentile_ci_percent": [
+            -13.64901055131203,
+            5.476510500305704
+          ],
+          "candidate_better_pairs": 6,
+          "pair_changes_percent": [
+            5.476510500305704,
+            -0.5914805187400539,
+            -5.103036565930959,
+            7.654056397660186,
+            -13.64901055131203,
+            -28.134977466118144,
+            47.150102156220896,
+            -33.56515872100201,
+            -3.2415116396343264,
+            1.4231708569083348,
+            1.2146985453277228
+          ],
+          "higher_is_better": false
+        },
+        "elapsed_seconds": {
+          "baseline_median": 3.08,
+          "candidate_median": 3.03,
+          "median_paired_change_percent": 0.49019607843136215,
+          "paired_bootstrap_95_percentile_ci_percent": [
+            -16.81877444589309,
+            13.77245508982036
+          ],
+          "candidate_better_pairs": 4,
+          "pair_changes_percent": [
+            -1.7105263157894723,
+            0.9296148738379733,
+            -16.81877444589309,
+            13.77245508982036,
+            39.03345724907064,
+            -33.116883116883116,
+            47.804878048780495,
+            -33.442622950819676,
+            0.0,
+            0.980392156862746,
+            0.49019607843136215
+          ],
+          "higher_is_better": false
+        },
+        "maximum_rss_bytes": {
+          "baseline_median": 19628032,
+          "candidate_median": 19447808,
+          "median_paired_change_percent": -0.7537688442211055,
+          "paired_bootstrap_95_percentile_ci_percent": [
+            -1.1754827875734677,
+            -0.1669449081803005
+          ],
+          "candidate_better_pairs": 9,
+          "pair_changes_percent": [
+            -1.0851419031719534,
+            -0.7537688442211055,
+            -1.8196856906534327,
+            -1.1754827875734677,
+            -0.25295109612141653,
+            -0.9151414309484194,
+            -1.2510425354462051,
+            0.9212730318257957,
+            0.8340283569641368,
+            -0.3341687552213868,
+            -0.1669449081803005
+          ],
+          "higher_is_better": false
+        },
+        "instructions_retired": {
+          "baseline_median": 41727603326,
+          "candidate_median": 40479232389,
+          "median_paired_change_percent": -1.3976628486712348,
+          "paired_bootstrap_95_percentile_ci_percent": [
+            -17.869232581474286,
+            5.4646034417896665
+          ],
+          "candidate_better_pairs": 6,
+          "pair_changes_percent": [
+            5.4646034417896665,
+            -1.3976628486712348,
+            -3.9939134525131745,
+            5.894403068467597,
+            -17.869232581474286,
+            -25.722595970905704,
+            43.013683227324115,
+            -34.53377454329185,
+            -7.218519964937635,
+            0.007190318873784858,
+            0.010572031933416028
+          ],
+          "higher_is_better": false
+        }
+      }
+    }
+  },
+  "correctness": {
+    "test262_summary": "tasks/evidence/task61-cell-object-fast-path-tests-2026-10-09/summary.json",
+    "test262_summary_sha256": "147a97a4b0a0c9b744301bc5bada78008008b62e0853d569d29dd07595f7845b",
+    "runtime_tests": "534/534",
+    "wasm": "67,124/67,124 over 288 files",
+    "node_oracle": "candidate and baseline were byte-identical; 37 object kinds supported by Node and primitive checks matched Node",
+    "note": "Function stage has one identical baseline/candidate failure; RegExp candidate-only stage passed 1,879/1,879."
+  },
+  "gate": {
+    "maximum_rss_increase_budget_percent": 0.5,
+    "rss_gate": "passed: paired median RSS decreased 1.24% on Richards and 0.75% on DeltaBlue",
+    "performance_gate": "failed: cycles and elapsed time did not show a reliable improvement; paired intervals include zero",
+    "correctness_gate": "passed on affected inventories, with one unchanged baseline failure"
+  }
+}

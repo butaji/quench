@@ -1,0 +1,13 @@
+const saved=Error.prepareStackTrace,internal=require('internal/errors');
+let principalCalls=0;Error.prepareStackTrace=()=>{principalCalls++;return 'principal'};
+const realm=new ShadowRealm();global.gc();
+console.log('descriptor',realm.evaluate(String.raw`const d=Object.getOwnPropertyDescriptor(Error,'prepareStackTrace'),f=d.value;JSON.stringify([f.name,f.length,Object.hasOwn(f,'prototype'),d.writable,d.enumerable,d.configurable,f.constructor===Function])`));
+console.log('default',realm.evaluate(String.raw`function first(){return new Error('inside').stack}first().split('\n')[0]`),principalCalls);
+console.log('local',realm.evaluate(String.raw`Error.prepareStackTrace=()=> 'local';new Error().stack`),principalCalls);
+global.gc();
+console.log('deleted',realm.evaluate(String.raw`delete Error.prepareStackTrace;new Error('deleted').stack.split('\n')[0]`),principalCalls);
+console.log('nonfunction',realm.evaluate(String.raw`Error.prepareStackTrace=false;new Error('false').stack.split('\n')[0]`),principalCalls);
+console.log('nested',realm.evaluate(String.raw`Error.prepareStackTrace=()=> 'parent';const nested=new ShadowRealm();nested.evaluate("new Error('nested').stack.startsWith('Error: nested')")`),principalCalls);
+internal.setInternalPrepareStackTrace(()=> 'principal-internal');Error.prepareStackTrace=saved;
+console.log('internal',new ShadowRealm().evaluate(String.raw`new Error('separate').stack.split('\n')[0]`));
+Error.prepareStackTrace=saved;

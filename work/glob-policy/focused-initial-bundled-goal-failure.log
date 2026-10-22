@@ -1,0 +1,27 @@
+   Compiling quench-node-test v0.1.0 (/workspace/quench/crates/quench-node-test)
+    Finished `iteration` profile [optimized] target(s) in 17.13s
+     Running tests/child_entry.rs (target/iteration/deps/child_entry-bd3128b9292fce1f)
+
+running 1 test
+test fs_glob_uses_original_policy_and_real_dirent_types_across_all_three_apis ... FAILED
+
+failures:
+
+---- fs_glob_uses_original_policy_and_real_dirent_types_across_all_three_apis stdout ----
+
+thread 'fs_glob_uses_original_policy_and_real_dirent_types_across_all_three_apis' (3168886) panicked at crates/quench-node-test/tests/child_entry.rs:1495:9:
+assertion `left == right` failed: Error: No such file or directory (os error 2)
+    at [eval]:27:33
+    at [eval]:58:3
+
+  left: Some(1)
+ right: Some(0)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    fs_glob_uses_original_policy_and_real_dirent_types_across_all_three_apis
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 369 filtered out; finished in 1.01s
+
+error: test failed, to rerun pass `-p quench-node-test --test child_entry`

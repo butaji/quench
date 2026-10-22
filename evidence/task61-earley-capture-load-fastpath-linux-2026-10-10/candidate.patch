@@ -1,0 +1,20 @@
+diff --git a/crates/quench-runtime/src/vm/environment.rs b/crates/quench-runtime/src/vm/environment.rs
+index 864325b06..df6d082eb 100644
+--- a/crates/quench-runtime/src/vm/environment.rs
++++ b/crates/quench-runtime/src/vm/environment.rs
+@@ -1426,6 +1426,15 @@ impl<H: Host> Vm<H> {
+             return Err(JsError("invalid capture".into()));
+         };
+         let slot = usize::from(slot);
++        if *function != super::ROOT_FUNCTION_ID {
++            let value = self
++                .heap
++                .environment_slot(env, slot)
++                .ok_or_else(|| JsError("invalid capture slot".into()))?;
++            if !value.is_deleted() {
++                return Ok(value);
++            }
++        }
+         let owner_id = program
+             .map(super::ProgramId::from_raw)
+             .unwrap_or(self.active_program);

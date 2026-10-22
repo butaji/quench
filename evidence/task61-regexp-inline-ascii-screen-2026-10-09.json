@@ -1,0 +1,615 @@
+{
+  "schema": "quench.task61.regexp-inline-ascii-screen.v1",
+  "date": "2026-10-09",
+  "platform": "macOS-26.5-arm64-arm-64bit",
+  "machine": "arm64",
+  "profile": "production-thin-lto",
+  "baseline_commit": "cbb72f34aa3a8cd15ca8ce8c68f32d9b8650b393",
+  "candidate_source_dirty": true,
+  "source_sha256": {
+    "crates/quench-regexp/Cargo.toml": "6c0f95a16dd506e287f0108d3867c3ecbbde291f55d70ded143b3d6f662a9e44",
+    "crates/quench-regexp/src/lib.rs": "cddf033fb0964d44bee19e052277750c305d068256a1bf9363fd1f11e55ff4b2",
+    "Cargo.lock": "6535bb3e9fa727bd3daba946297ae00988199639838ad34c4340701b0be0177a"
+  },
+  "binaries": {
+    "baseline": {
+      "path": "/Users/admin/Code/GitHub/quench-v2/target/pinned/2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7/quench-node",
+      "sha256": "2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7"
+    },
+    "candidate": {
+      "path": "/Users/admin/Code/GitHub/quench-v2/target/candidate-b/production/quench-node",
+      "sha256": "c4e75b56bf30e916627f8a9b20b4ecf88f74a8c5ec6971a263891db224564a98"
+    }
+  },
+  "inputs": {
+    "regexp-exec-active.cjs": "68ea44b6fe7d9bb12c321e95259d8bb0638df96fc0ebaf339d09de2be67e80de",
+    "regexp-exec-zero.cjs": "6a7421b1a475c1d6acd694ee0fb1ec0f59401276dfa10e8c5693aa317ac36995",
+    "regexp-replace-active.cjs": "06c849ef692c924dce00742bcb9b407b544b12beb5e2220caea69778db04557d",
+    "regexp-replace-zero.cjs": "809143a06368185c52787dc0ae551f1ba83e6311cfd25bc1e1e0376350922fbd"
+  },
+  "method": "Each engine's active and zero-iteration process are run once per alternating pair; subtract process counters and divide by loop iterations.",
+  "pairs": [
+    {
+      "case": "regexp-exec",
+      "pair": 1,
+      "iterations": 100000,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "engines": {
+        "candidate": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/candidate-b/production/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-per-op-budget-2026-10-09/regexp-exec-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2425895291,
+              "cycles_elapsed": 434706784,
+              "maximum_rss_bytes": 18399232,
+              "elapsed_seconds": 0.53
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.53 real         0.13 user         0.01 sys\n            18399232  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1308  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  11  involuntary context switches\n          2425895291  instructions retired\n           434706784  cycles elapsed\n             8749440  peak memory footprint\n",
+            "wall_seconds": 0.534112459
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/candidate-b/production/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-per-op-budget-2026-10-09/regexp-exec-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 221180425,
+              "cycles_elapsed": 61788034,
+              "maximum_rss_bytes": 18022400,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            18022400  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1283  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                   5  involuntary context switches\n           221180425  instructions retired\n            61788034  cycles elapsed\n             8667520  peak memory footprint\n",
+            "wall_seconds": 0.018025292000000026
+          },
+          "net_per_iteration": {
+            "instructions_retired": 22047.14866,
+            "cycles_elapsed": 3729.1875,
+            "elapsed_seconds": 5.2e-06
+          }
+        },
+        "baseline": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-per-op-budget-2026-10-09/regexp-exec-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2445056059,
+              "cycles_elapsed": 419718104,
+              "maximum_rss_bytes": 18464768,
+              "elapsed_seconds": 0.1
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.10 real         0.10 user         0.00 sys\n            18464768  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1309  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   9  involuntary context switches\n          2445056059  instructions retired\n           419718104  cycles elapsed\n             8667544  peak memory footprint\n",
+            "wall_seconds": 0.10729133300000004
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-per-op-budget-2026-10-09/regexp-exec-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 220541599,
+              "cycles_elapsed": 61392425,
+              "maximum_rss_bytes": 17891328,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            17891328  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1274  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   5  involuntary context switches\n           220541599  instructions retired\n            61392425  cycles elapsed\n             8454528  peak memory footprint\n",
+            "wall_seconds": 0.017397333000000015
+          },
+          "net_per_iteration": {
+            "instructions_retired": 22245.1446,
+            "cycles_elapsed": 3583.25679,
+            "elapsed_seconds": 9.000000000000001e-07
+          }
+        }
+      }
+    },
+    {
+      "case": "regexp-exec",
+      "pair": 2,
+      "iterations": 100000,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "engines": {
+        "baseline": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-per-op-budget-2026-10-09/regexp-exec-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2433239180,
+              "cycles_elapsed": 408944591,
+              "maximum_rss_bytes": 18399232,
+              "elapsed_seconds": 0.1
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.10 real         0.10 user         0.00 sys\n            18399232  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1306  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  14  involuntary context switches\n          2433239180  instructions retired\n           408944591  cycles elapsed\n             8601984  peak memory footprint\n",
+            "wall_seconds": 0.10453341699999996
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-per-op-budget-2026-10-09/regexp-exec-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 221656575,
+              "cycles_elapsed": 60915789,
+              "maximum_rss_bytes": 18087936,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            18087936  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1286  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   6  involuntary context switches\n           221656575  instructions retired\n            60915789  cycles elapsed\n             8667544  peak memory footprint\n",
+            "wall_seconds": 0.01750054099999998
+          },
+          "net_per_iteration": {
+            "instructions_retired": 22115.82605,
+            "cycles_elapsed": 3480.28802,
+            "elapsed_seconds": 9.000000000000001e-07
+          }
+        },
+        "candidate": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/candidate-b/production/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-per-op-budget-2026-10-09/regexp-exec-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2409268100,
+              "cycles_elapsed": 407055325,
+              "maximum_rss_bytes": 18497536,
+              "elapsed_seconds": 0.1
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.10 real         0.10 user         0.00 sys\n            18497536  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1311  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   9  involuntary context switches\n          2409268100  instructions retired\n           407055325  cycles elapsed\n             8798592  peak memory footprint\n",
+            "wall_seconds": 0.10418554099999999
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/candidate-b/production/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-per-op-budget-2026-10-09/regexp-exec-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 220878575,
+              "cycles_elapsed": 61001525,
+              "maximum_rss_bytes": 18038784,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            18038784  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1283  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   7  involuntary context switches\n           220878575  instructions retired\n            61001525  cycles elapsed\n             8683928  peak memory footprint\n",
+            "wall_seconds": 0.017192334000000087
+          },
+          "net_per_iteration": {
+            "instructions_retired": 21883.89525,
+            "cycles_elapsed": 3460.538,
+            "elapsed_seconds": 9.000000000000001e-07
+          }
+        }
+      }
+    },
+    {
+      "case": "regexp-exec",
+      "pair": 3,
+      "iterations": 100000,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "engines": {
+        "candidate": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/candidate-b/production/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-per-op-budget-2026-10-09/regexp-exec-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2411467377,
+              "cycles_elapsed": 410576885,
+              "maximum_rss_bytes": 18350080,
+              "elapsed_seconds": 0.1
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.10 real         0.10 user         0.00 sys\n            18350080  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1302  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  24  involuntary context switches\n          2411467377  instructions retired\n           410576885  cycles elapsed\n             8683928  peak memory footprint\n",
+            "wall_seconds": 0.10441437499999995
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/candidate-b/production/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-per-op-budget-2026-10-09/regexp-exec-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 220564540,
+              "cycles_elapsed": 60976713,
+              "maximum_rss_bytes": 17989632,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            17989632  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1280  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   6  involuntary context switches\n           220564540  instructions retired\n            60976713  cycles elapsed\n             8634776  peak memory footprint\n",
+            "wall_seconds": 0.017247416000000015
+          },
+          "net_per_iteration": {
+            "instructions_retired": 21909.02837,
+            "cycles_elapsed": 3496.00172,
+            "elapsed_seconds": 9.000000000000001e-07
+          }
+        },
+        "baseline": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-per-op-budget-2026-10-09/regexp-exec-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2431187506,
+              "cycles_elapsed": 410940999,
+              "maximum_rss_bytes": 18546688,
+              "elapsed_seconds": 0.1
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.10 real         0.10 user         0.00 sys\n            18546688  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1315  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  19  involuntary context switches\n          2431187506  instructions retired\n           410940999  cycles elapsed\n             8765848  peak memory footprint\n",
+            "wall_seconds": 0.10547008299999994
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-per-op-budget-2026-10-09/regexp-exec-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 221721825,
+              "cycles_elapsed": 60572215,
+              "maximum_rss_bytes": 18186240,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            18186240  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1292  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   5  involuntary context switches\n           221721825  instructions retired\n            60572215  cycles elapsed\n             8765848  peak memory footprint\n",
+            "wall_seconds": 0.01729858300000009
+          },
+          "net_per_iteration": {
+            "instructions_retired": 22094.65681,
+            "cycles_elapsed": 3503.68784,
+            "elapsed_seconds": 9.000000000000001e-07
+          }
+        }
+      }
+    },
+    {
+      "case": "regexp-replace",
+      "pair": 1,
+      "iterations": 50000,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "engines": {
+        "baseline": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-per-op-budget-2026-10-09/regexp-replace-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2525547612,
+              "cycles_elapsed": 516276342,
+              "maximum_rss_bytes": 18595840,
+              "elapsed_seconds": 0.12
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.12 real         0.12 user         0.00 sys\n            18595840  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1319  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  16  involuntary context switches\n          2525547612  instructions retired\n           516276342  cycles elapsed\n             8847744  peak memory footprint\n",
+            "wall_seconds": 0.13113008400000004
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-per-op-budget-2026-10-09/regexp-replace-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 220982683,
+              "cycles_elapsed": 61883257,
+              "maximum_rss_bytes": 18038784,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            18038784  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1284  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                   5  involuntary context switches\n           220982683  instructions retired\n            61883257  cycles elapsed\n             8634776  peak memory footprint\n",
+            "wall_seconds": 0.01804895800000006
+          },
+          "net_per_iteration": {
+            "instructions_retired": 46091.29858,
+            "cycles_elapsed": 9087.8617,
+            "elapsed_seconds": 2.2e-06
+          }
+        },
+        "candidate": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/candidate-b/production/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-per-op-budget-2026-10-09/regexp-replace-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2492835094,
+              "cycles_elapsed": 519549084,
+              "maximum_rss_bytes": 18432000,
+              "elapsed_seconds": 0.12
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.12 real         0.12 user         0.00 sys\n            18432000  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1309  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  11  involuntary context switches\n          2492835094  instructions retired\n           519549084  cycles elapsed\n             8782208  peak memory footprint\n",
+            "wall_seconds": 0.13188337500000014
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/candidate-b/production/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-per-op-budget-2026-10-09/regexp-replace-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 221508854,
+              "cycles_elapsed": 62110156,
+              "maximum_rss_bytes": 18071552,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            18071552  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1286  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   7  involuntary context switches\n           221508854  instructions retired\n            62110156  cycles elapsed\n             8733080  peak memory footprint\n",
+            "wall_seconds": 0.017387041999999964
+          },
+          "net_per_iteration": {
+            "instructions_retired": 45426.5248,
+            "cycles_elapsed": 9148.77856,
+            "elapsed_seconds": 2.2e-06
+          }
+        }
+      }
+    },
+    {
+      "case": "regexp-replace",
+      "pair": 2,
+      "iterations": 50000,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "engines": {
+        "candidate": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/candidate-b/production/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-per-op-budget-2026-10-09/regexp-replace-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2492319262,
+              "cycles_elapsed": 517096350,
+              "maximum_rss_bytes": 18284544,
+              "elapsed_seconds": 0.12
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.12 real         0.12 user         0.00 sys\n            18284544  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1300  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   8  involuntary context switches\n          2492319262  instructions retired\n           517096350  cycles elapsed\n             8651160  peak memory footprint\n",
+            "wall_seconds": 0.13085262499999994
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/candidate-b/production/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-per-op-budget-2026-10-09/regexp-replace-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 221397786,
+              "cycles_elapsed": 62134621,
+              "maximum_rss_bytes": 18022400,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            18022400  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1283  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   6  involuntary context switches\n           221397786  instructions retired\n            62134621  cycles elapsed\n             8667544  peak memory footprint\n",
+            "wall_seconds": 0.017595707999999988
+          },
+          "net_per_iteration": {
+            "instructions_retired": 45418.42952,
+            "cycles_elapsed": 9099.23458,
+            "elapsed_seconds": 2.2e-06
+          }
+        },
+        "baseline": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-per-op-budget-2026-10-09/regexp-replace-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2525943363,
+              "cycles_elapsed": 518960360,
+              "maximum_rss_bytes": 18481152,
+              "elapsed_seconds": 0.12
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.12 real         0.12 user         0.00 sys\n            18481152  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1312  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  19  involuntary context switches\n          2525943363  instructions retired\n           518960360  cycles elapsed\n             8749464  peak memory footprint\n",
+            "wall_seconds": 0.13186925000000005
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-per-op-budget-2026-10-09/regexp-replace-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 221298373,
+              "cycles_elapsed": 61502519,
+              "maximum_rss_bytes": 17907712,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            17907712  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1277  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   5  involuntary context switches\n           221298373  instructions retired\n            61502519  cycles elapsed\n             8520088  peak memory footprint\n",
+            "wall_seconds": 0.017889708000000004
+          },
+          "net_per_iteration": {
+            "instructions_retired": 46092.8998,
+            "cycles_elapsed": 9149.15682,
+            "elapsed_seconds": 2.2e-06
+          }
+        }
+      }
+    },
+    {
+      "case": "regexp-replace",
+      "pair": 3,
+      "iterations": 50000,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "engines": {
+        "baseline": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-per-op-budget-2026-10-09/regexp-replace-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2522266918,
+              "cycles_elapsed": 525581959,
+              "maximum_rss_bytes": 18481152,
+              "elapsed_seconds": 0.13
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.13 real         0.12 user         0.00 sys\n            18481152  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1312  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   9  involuntary context switches\n          2522266918  instructions retired\n           525581959  cycles elapsed\n             8749464  peak memory footprint\n",
+            "wall_seconds": 0.13373124999999986
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-per-op-budget-2026-10-09/regexp-replace-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 220587152,
+              "cycles_elapsed": 61866771,
+              "maximum_rss_bytes": 17842176,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            17842176  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1273  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   8  involuntary context switches\n           220587152  instructions retired\n            61866771  cycles elapsed\n             8454552  peak memory footprint\n",
+            "wall_seconds": 0.017722833999999965
+          },
+          "net_per_iteration": {
+            "instructions_retired": 46033.59532,
+            "cycles_elapsed": 9274.30376,
+            "elapsed_seconds": 2.4000000000000003e-06
+          }
+        },
+        "candidate": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/candidate-b/production/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-per-op-budget-2026-10-09/regexp-replace-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2492105172,
+              "cycles_elapsed": 513943612,
+              "maximum_rss_bytes": 18513920,
+              "elapsed_seconds": 0.12
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.12 real         0.12 user         0.00 sys\n            18513920  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1315  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  17  involuntary context switches\n          2492105172  instructions retired\n           513943612  cycles elapsed\n             8880536  peak memory footprint\n",
+            "wall_seconds": 0.13066575000000014
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/candidate-b/production/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-per-op-budget-2026-10-09/regexp-replace-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 221145349,
+              "cycles_elapsed": 60841486,
+              "maximum_rss_bytes": 17891328,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            17891328  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1274  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   4  involuntary context switches\n           221145349  instructions retired\n            60841486  cycles elapsed\n             8536472  peak memory footprint\n",
+            "wall_seconds": 0.017219834000000045
+          },
+          "net_per_iteration": {
+            "instructions_retired": 45419.19646,
+            "cycles_elapsed": 9062.04252,
+            "elapsed_seconds": 2.2e-06
+          }
+        }
+      }
+    }
+  ]
+}

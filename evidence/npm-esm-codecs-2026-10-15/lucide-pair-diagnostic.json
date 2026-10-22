@@ -1,0 +1,16 @@
+{
+  "baseline": {
+    "wall_seconds": 31.593040610998287,
+    "exit": 0,
+    "timeout": false,
+    "stdout": "npm-behavior-ok:lucide-react\n",
+    "stderr": ""
+  },
+  "candidate": {
+    "wall_seconds": 31.384985822998715,
+    "exit": 0,
+    "timeout": false,
+    "stdout": "npm-behavior-ok:lucide-react\n",
+    "stderr": ""
+  }
+}

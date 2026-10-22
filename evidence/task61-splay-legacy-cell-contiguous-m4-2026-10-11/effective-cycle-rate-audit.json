@@ -1,0 +1,222 @@
+{
+  "schema": 1,
+  "platform": "M4 arm64 macOS",
+  "policy": {
+    "reference_cohort": "executable SHA-256 and Work sample kind; pooled across fixture rounds",
+    "reference_percentile": 75,
+    "minimum_effective_cycle_rate_ratio": 0.9,
+    "applies_to": "work samples only; K=0 setup-only is excluded"
+  },
+  "aa_campaigns": {
+    "fixed-work-all-eight-trunk-aa-11.json": [
+      {
+        "binary_sha256": "db950f168f86450ff9d58222691ceafd400f3c18db8c6ef951fd1d88c6865989",
+        "samples": 176,
+        "reference_p75_hz": 3999867400.2666173,
+        "min_hz": 3944453653.240252,
+        "old_clean_samples": 176,
+        "old_clean_below_0_90_reference": 0,
+        "all_below_0_90_reference": 0
+      }
+    ],
+    "direct-object-liveness-holder-corrected-aa-11.json": [
+      {
+        "binary_sha256": "696ffb4b5a847f5fdf83f7569992846aeb7d8b2669b2c785ca7a3b7a0eb03f00",
+        "samples": 176,
+        "reference_p75_hz": 3971597181.989302,
+        "min_hz": 2080311310.9233902,
+        "old_clean_samples": 165,
+        "old_clean_below_0_90_reference": 0,
+        "all_below_0_90_reference": 6
+      }
+    ],
+    "current-trunk-aa-11.json": [
+      {
+        "binary_sha256": "ceeca73f772b141ee7619ae869bffaac1d93eeee99ecba2b07337d8345937e80",
+        "samples": 176,
+        "reference_p75_hz": 3986983687.370201,
+        "min_hz": 3786210792.2771688,
+        "old_clean_samples": 176,
+        "old_clean_below_0_90_reference": 0,
+        "all_below_0_90_reference": 0
+      }
+    ],
+    "prior-candidate-aa-all-eight-11.json": [
+      {
+        "binary_sha256": "6846ff405963d7be0bddf923626f3b4522647ed992c09128d5f322db3fdfce83",
+        "samples": 176,
+        "reference_p75_hz": 3951319556.099453,
+        "min_hz": 1175503934.5331585,
+        "old_clean_samples": 130,
+        "old_clean_below_0_90_reference": 33,
+        "all_below_0_90_reference": 75
+      }
+    ]
+  },
+  "current_screen_reclassification": {
+    "crypto-screen-11.json": {
+      "quench-bench/js-engine-benchmark/v8-v7/crypto.js": {
+        "rounds": 11,
+        "pairs_clean_under_old_policy": 11,
+        "pairs_clean_with_cycle_rate_check": 10,
+        "min_rate_ratio_by_engine": {
+          "quench_baseline": 0.9846070246396516,
+          "quench_candidate": 0.5384524782126648
+        }
+      }
+    },
+    "navierstokes-screen-11.json": {
+      "quench-bench/js-engine-benchmark/v8-v7/navier-stokes.js": {
+        "rounds": 11,
+        "pairs_clean_under_old_policy": 11,
+        "pairs_clean_with_cycle_rate_check": 11,
+        "min_rate_ratio_by_engine": {
+          "quench_baseline": 0.971591260395303,
+          "quench_candidate": 0.9688931289801477
+        }
+      }
+    },
+    "earleyboyer-screen-11.json": {
+      "quench-bench/js-engine-benchmark/v8-v7/earley-boyer.js": {
+        "rounds": 11,
+        "pairs_clean_under_old_policy": 11,
+        "pairs_clean_with_cycle_rate_check": 9,
+        "min_rate_ratio_by_engine": {
+          "quench_baseline": 0.8915411695315336,
+          "quench_candidate": 0.8674042384900772
+        }
+      }
+    },
+    "regexp-screen-11.json": {
+      "quench-bench/js-engine-benchmark/v8-v7/regexp.js": {
+        "rounds": 11,
+        "pairs_clean_under_old_policy": 11,
+        "pairs_clean_with_cycle_rate_check": 10,
+        "min_rate_ratio_by_engine": {
+          "quench_baseline": 0.9209922545524644,
+          "quench_candidate": 0.8149275969782327
+        }
+      }
+    },
+    "prior-vs-contiguous-all-eight-11.json": {
+      "quench-bench/js-engine-benchmark/v8-v7/crypto.js": {
+        "rounds": 11,
+        "pairs_clean_under_old_policy": 11,
+        "pairs_clean_with_cycle_rate_check": 11,
+        "min_rate_ratio_by_engine": {
+          "quench_baseline": 0.9955908823849982,
+          "quench_candidate": 0.9930444240477174
+        }
+      },
+      "quench-bench/js-engine-benchmark/v8-v7/deltablue.js": {
+        "rounds": 11,
+        "pairs_clean_under_old_policy": 11,
+        "pairs_clean_with_cycle_rate_check": 11,
+        "min_rate_ratio_by_engine": {
+          "quench_baseline": 0.996200818537051,
+          "quench_candidate": 0.9956017237724164
+        }
+      },
+      "quench-bench/js-engine-benchmark/v8-v7/earley-boyer.js": {
+        "rounds": 11,
+        "pairs_clean_under_old_policy": 11,
+        "pairs_clean_with_cycle_rate_check": 11,
+        "min_rate_ratio_by_engine": {
+          "quench_baseline": 0.9827415916249992,
+          "quench_candidate": 0.9902461332172182
+        }
+      },
+      "quench-bench/js-engine-benchmark/v8-v7/navier-stokes.js": {
+        "rounds": 11,
+        "pairs_clean_under_old_policy": 11,
+        "pairs_clean_with_cycle_rate_check": 11,
+        "min_rate_ratio_by_engine": {
+          "quench_baseline": 0.9970895933638059,
+          "quench_candidate": 0.9968433269359918
+        }
+      },
+      "quench-bench/js-engine-benchmark/v8-v7/raytrace.js": {
+        "rounds": 11,
+        "pairs_clean_under_old_policy": 11,
+        "pairs_clean_with_cycle_rate_check": 11,
+        "min_rate_ratio_by_engine": {
+          "quench_baseline": 0.9906576688528886,
+          "quench_candidate": 0.9945451959522037
+        }
+      },
+      "quench-bench/js-engine-benchmark/v8-v7/regexp.js": {
+        "rounds": 11,
+        "pairs_clean_under_old_policy": 11,
+        "pairs_clean_with_cycle_rate_check": 11,
+        "min_rate_ratio_by_engine": {
+          "quench_baseline": 0.9972028992614316,
+          "quench_candidate": 0.9991326528054038
+        }
+      },
+      "quench-bench/js-engine-benchmark/v8-v7/richards.js": {
+        "rounds": 11,
+        "pairs_clean_under_old_policy": 11,
+        "pairs_clean_with_cycle_rate_check": 11,
+        "min_rate_ratio_by_engine": {
+          "quench_baseline": 0.9663567765258201,
+          "quench_candidate": 0.9716907094494418
+        }
+      },
+      "quench-bench/js-engine-benchmark/v8-v7/splay.js": {
+        "rounds": 11,
+        "pairs_clean_under_old_policy": 11,
+        "pairs_clean_with_cycle_rate_check": 11,
+        "min_rate_ratio_by_engine": {
+          "quench_baseline": 0.9499243749475215,
+          "quench_candidate": 0.9725163117757527
+        }
+      }
+    }
+  },
+  "setup_only_audit": {
+    "fixed-work-all-eight-trunk-aa-11.json": [
+      {
+        "binary_sha256": "db950f168f86450ff9d58222691ceafd400f3c18db8c6ef951fd1d88c6865989",
+        "samples": 176,
+        "reference_p75_hz": 3872301670.1022253,
+        "minimum_hz": 3057315709.0474563,
+        "samples_below_0_90_reference": 85,
+        "old_clean_samples": 176,
+        "old_clean_below_0_90_reference": 85
+      }
+    ],
+    "direct-object-liveness-holder-corrected-aa-11.json": [
+      {
+        "binary_sha256": "696ffb4b5a847f5fdf83f7569992846aeb7d8b2669b2c785ca7a3b7a0eb03f00",
+        "samples": 176,
+        "reference_p75_hz": 3823766065.146614,
+        "minimum_hz": 2355081467.225907,
+        "samples_below_0_90_reference": 92,
+        "old_clean_samples": 169,
+        "old_clean_below_0_90_reference": 85
+      }
+    ],
+    "current-trunk-aa-11.json": [
+      {
+        "binary_sha256": "ceeca73f772b141ee7619ae869bffaac1d93eeee99ecba2b07337d8345937e80",
+        "samples": 176,
+        "reference_p75_hz": 3836704835.1898527,
+        "minimum_hz": 3005291519.789708,
+        "samples_below_0_90_reference": 83,
+        "old_clean_samples": 176,
+        "old_clean_below_0_90_reference": 83
+      }
+    ],
+    "prior-candidate-aa-all-eight-11.json": [
+      {
+        "binary_sha256": "6846ff405963d7be0bddf923626f3b4522647ed992c09128d5f322db3fdfce83",
+        "samples": 176,
+        "reference_p75_hz": 3523809083.602374,
+        "minimum_hz": 1091290900.0595372,
+        "samples_below_0_90_reference": 104,
+        "old_clean_samples": 130,
+        "old_clean_below_0_90_reference": 62
+      }
+    ]
+  }
+}

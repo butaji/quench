@@ -1,0 +1,97 @@
+{
+  "prototype_only": true,
+  "cases": 20062,
+  "differences": [
+    {
+      "name": "atan2",
+      "args": [
+        "55576fb73e5fd8e0",
+        "d16a68323537c0af"
+      ],
+      "result": "3ff921fb54442d18",
+      "rust_result": "3ff921fb54442d19"
+    },
+    {
+      "name": "atan2",
+      "args": [
+        "307b8b67b05218ae",
+        "ac999ae3b55a29e5"
+      ],
+      "result": "3ff921fb54442d18",
+      "rust_result": "3ff921fb54442d19"
+    },
+    {
+      "name": "atan2",
+      "args": [
+        "49573b7bfeb14ac2",
+        "c5725f20cb91e369"
+      ],
+      "result": "3ff921fb54442d18",
+      "rust_result": "3ff921fb54442d19"
+    },
+    {
+      "name": "atan2",
+      "args": [
+        "4b50e71f91d11933",
+        "c779c18823583c46"
+      ],
+      "result": "3ff921fb54442d18",
+      "rust_result": "3ff921fb54442d19"
+    },
+    {
+      "name": "atan2",
+      "args": [
+        "8af9a5bf1b74452a",
+        "87291c4c32997fb1"
+      ],
+      "result": "bff921fb54442d18",
+      "rust_result": "bff921fb54442d19"
+    },
+    {
+      "name": "atan2",
+      "args": [
+        "5b51280b41c312c4",
+        "d76b67a9691509c3"
+      ],
+      "result": "3ff921fb54442d18",
+      "rust_result": "3ff921fb54442d19"
+    },
+    {
+      "name": "atan2",
+      "args": [
+        "57ebc676601544c8",
+        "d3ec0becd0abd077"
+      ],
+      "result": "3ff921fb54442d18",
+      "rust_result": "3ff921fb54442d19"
+    },
+    {
+      "name": "atan2",
+      "args": [
+        "4dd8ca6b9e0af83a",
+        "c9f99c16e23be981"
+      ],
+      "result": "3ff921fb54442d18",
+      "rust_result": "3ff921fb54442d19"
+    },
+    {
+      "name": "atan2",
+      "args": [
+        "b33ef9fc150ac7c1",
+        "af6cfebf92ba5d3c"
+      ],
+      "result": "bff921fb54442d18",
+      "rust_result": "bff921fb54442d19"
+    },
+    {
+      "name": "atan2",
+      "args": [
+        "41633b0fd5fc7d3d",
+        "bd8f614bd76bc808"
+      ],
+      "result": "3ff921fb54442d18",
+      "rust_result": "3ff921fb54442d19"
+    }
+  ],
+  "fully_integrated": false
+}

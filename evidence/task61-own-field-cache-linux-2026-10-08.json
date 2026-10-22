@@ -1,0 +1,457 @@
+{
+  "schema": 1,
+  "task": "61",
+  "experiment": "Linux Richards paired validation of own-field cache before store preflight",
+  "decision": "retain as a measured candidate; it is one fixture only and does not qualify Task 61",
+  "source": {
+    "revision": "cce40d6c7e093343d795285c55f0131e2b4f6189",
+    "dirty": false,
+    "candidate_source_commit": "36841a5a9",
+    "owner_file": "crates/quench-runtime/src/vm/object.rs",
+    "owner_file_sha256": "ef1e0da14a1cc3de22cc0e4a30c2084f18c3c095cecac99091db90c7baba778e"
+  },
+  "host": {
+    "uname": "Linux 8d342269933b 6.18.44 #1 SMP Sat Sep 26 20:02:31 UTC 2026 x86_64 GNU/Linux",
+    "rustc": "",
+    "model": null,
+    "memory_bytes": 18882699264,
+    "memory_limit_bytes": 17179869184,
+    "cpu_quota": "400000 100000",
+    "process_metrics_backend": "Linux wait4 rusage"
+  },
+  "measurement": {
+    "fixture": "V8-v7 Richards",
+    "pairs": 11,
+    "order": "alternating baseline/candidate",
+    "baseline_score_samples": [
+      91.4,
+      89.4,
+      92.0,
+      89.4,
+      87.9,
+      89.9,
+      92.4,
+      91.6,
+      89.5,
+      81.8,
+      83.7
+    ],
+    "candidate_score_samples": [
+      109.0,
+      117.0,
+      111.0,
+      118.0,
+      114.0,
+      110.0,
+      112.0,
+      108.0,
+      111.0,
+      108.0,
+      100.0
+    ],
+    "baseline_max_rss_bytes_samples": [
+      21360640,
+      21585920,
+      21495808,
+      21573632,
+      21626880,
+      20975616,
+      21622784,
+      21696512,
+      21610496,
+      21585920,
+      21389312
+    ],
+    "candidate_max_rss_bytes_samples": [
+      19103744,
+      18972672,
+      19099648,
+      20803584,
+      18972672,
+      20938752,
+      18841600,
+      20545536,
+      18976768,
+      18841600,
+      20512768
+    ],
+    "summary": {
+      "baseline_score_median": 89.5,
+      "candidate_score_median": 111.0,
+      "score_relative_change_percent": 24.02,
+      "score_delta_95_ci": [
+        17.6,
+        24.6
+      ],
+      "baseline_max_rss_median_bytes": 21585920,
+      "candidate_max_rss_median_bytes": 19099648,
+      "max_rss_relative_change_percent": -11.52,
+      "max_rss_delta_95_ci": [
+        -2650112,
+        -876544
+      ],
+      "all_outputs_equal": true,
+      "score_difference_of_medians": 21.5,
+      "paired_score_delta_median": 20.099999999999994,
+      "max_rss_difference_of_medians_bytes": -2486272,
+      "paired_max_rss_delta_median_bytes": -2396160
+    },
+    "interval_method": "paired percentile bootstrap; 100000 resamples; seeds 0x6100826 (Score), 0x6100827 (RSS)",
+    "progress_file": "target/production/stageb-field-cache-richards-paired/progress.json",
+    "progress_file_sha256": "9b4c6e1009a253d6e4fae976d5b27b7ebdf1879897605a81605cf5743a78f282",
+    "rows": [
+      {
+        "pair": 1,
+        "engine": "baseline",
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "score": 91.4,
+        "max_rss_bytes": 21360640,
+        "wall_ns": 3102038477,
+        "report": "target/production/stageb-field-cache-richards-paired/p00-baseline.json",
+        "report_sha256": "2b9da6e00e68a19d78e6b523cb3671bf1574547ecade98499568e75909972e2b",
+        "binary_sha256": "f96b825482d3f158f624fed98a386f370dd0cc2acc8b840a557c8980c23291c2",
+        "valid": true,
+        "output_equal": true
+      },
+      {
+        "pair": 1,
+        "engine": "candidate",
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "score": 109.0,
+        "max_rss_bytes": 19103744,
+        "wall_ns": 3120924764,
+        "report": "target/production/stageb-field-cache-richards-paired/p00-candidate.json",
+        "report_sha256": "559810ca97d59767c711fab5e72b6de50cc0800ca91efc0d6ec6f101aa82fd7d",
+        "binary_sha256": "360b0c5e1d5a5ef790a3bb487e60244cf5a0eaf41f1f1368ce73e19b8fb864ea",
+        "valid": true,
+        "output_equal": true
+      },
+      {
+        "pair": 2,
+        "engine": "candidate",
+        "order": [
+          "candidate",
+          "baseline"
+        ],
+        "score": 117.0,
+        "max_rss_bytes": 18972672,
+        "wall_ns": 2074288681,
+        "report": "target/production/stageb-field-cache-richards-paired/p01-candidate.json",
+        "report_sha256": "5a733efcfb0794b1d76b71672af57b7ae4f045b8b5066dcc1e8af8c91c4b4791",
+        "binary_sha256": "360b0c5e1d5a5ef790a3bb487e60244cf5a0eaf41f1f1368ce73e19b8fb864ea",
+        "valid": true,
+        "output_equal": true
+      },
+      {
+        "pair": 2,
+        "engine": "baseline",
+        "order": [
+          "candidate",
+          "baseline"
+        ],
+        "score": 89.4,
+        "max_rss_bytes": 21585920,
+        "wall_ns": 3072232397,
+        "report": "target/production/stageb-field-cache-richards-paired/p01-baseline.json",
+        "report_sha256": "3b5ccd1c704b45da4ec13dd6407bd510f2966bf1e58861d3630fe1d8e05f8015",
+        "binary_sha256": "f96b825482d3f158f624fed98a386f370dd0cc2acc8b840a557c8980c23291c2",
+        "valid": true,
+        "output_equal": true
+      },
+      {
+        "pair": 3,
+        "engine": "baseline",
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "score": 92.0,
+        "max_rss_bytes": 21495808,
+        "wall_ns": 3092658089,
+        "report": "target/production/stageb-field-cache-richards-paired/p02-baseline.json",
+        "report_sha256": "37a156de4324000fd3395391b36a4b5c7d02a0811a3e81136bab19d84aad61e7",
+        "binary_sha256": "f96b825482d3f158f624fed98a386f370dd0cc2acc8b840a557c8980c23291c2",
+        "valid": true,
+        "output_equal": true
+      },
+      {
+        "pair": 3,
+        "engine": "candidate",
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "score": 111.0,
+        "max_rss_bytes": 19099648,
+        "wall_ns": 3068716495,
+        "report": "target/production/stageb-field-cache-richards-paired/p02-candidate.json",
+        "report_sha256": "1f057fcc08c22ba557d357ba04623ba39642479d15081f30ca7d1a62c98bbe10",
+        "binary_sha256": "360b0c5e1d5a5ef790a3bb487e60244cf5a0eaf41f1f1368ce73e19b8fb864ea",
+        "valid": true,
+        "output_equal": true
+      },
+      {
+        "pair": 4,
+        "engine": "candidate",
+        "order": [
+          "candidate",
+          "baseline"
+        ],
+        "score": 118.0,
+        "max_rss_bytes": 20803584,
+        "wall_ns": 2057705746,
+        "report": "target/production/stageb-field-cache-richards-paired/p03-candidate.json",
+        "report_sha256": "6f4fcfe0b6ad55f419831d30093f41b8d45df270bfeec5446c5bd412571d3197",
+        "binary_sha256": "360b0c5e1d5a5ef790a3bb487e60244cf5a0eaf41f1f1368ce73e19b8fb864ea",
+        "valid": true,
+        "output_equal": true
+      },
+      {
+        "pair": 4,
+        "engine": "baseline",
+        "order": [
+          "candidate",
+          "baseline"
+        ],
+        "score": 89.4,
+        "max_rss_bytes": 21573632,
+        "wall_ns": 3073111256,
+        "report": "target/production/stageb-field-cache-richards-paired/p03-baseline.json",
+        "report_sha256": "d724d05b73942a7f69ad704d4b23d40acb261f3cf82cd67f81a3e31c09e40629",
+        "binary_sha256": "f96b825482d3f158f624fed98a386f370dd0cc2acc8b840a557c8980c23291c2",
+        "valid": true,
+        "output_equal": true
+      },
+      {
+        "pair": 5,
+        "engine": "baseline",
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "score": 87.9,
+        "max_rss_bytes": 21626880,
+        "wall_ns": 3041542532,
+        "report": "target/production/stageb-field-cache-richards-paired/p04-baseline.json",
+        "report_sha256": "a00cc4ed427e1a36c19bc9809aae4dd3c1554c31e951b2139c4b9e545bfdb595",
+        "binary_sha256": "f96b825482d3f158f624fed98a386f370dd0cc2acc8b840a557c8980c23291c2",
+        "valid": true,
+        "output_equal": true
+      },
+      {
+        "pair": 5,
+        "engine": "candidate",
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "score": 114.0,
+        "max_rss_bytes": 18972672,
+        "wall_ns": 2062887040,
+        "report": "target/production/stageb-field-cache-richards-paired/p04-candidate.json",
+        "report_sha256": "eb0425967fbbe37eda6d7aa48462ceab12c84a1e8989fc7de64a78478b0127b1",
+        "binary_sha256": "360b0c5e1d5a5ef790a3bb487e60244cf5a0eaf41f1f1368ce73e19b8fb864ea",
+        "valid": true,
+        "output_equal": true
+      },
+      {
+        "pair": 6,
+        "engine": "candidate",
+        "order": [
+          "candidate",
+          "baseline"
+        ],
+        "score": 110.0,
+        "max_rss_bytes": 20938752,
+        "wall_ns": 3067490643,
+        "report": "target/production/stageb-field-cache-richards-paired/p05-candidate.json",
+        "report_sha256": "eca593aca220ce02cd1289b8b6a3ce8f743bae475c0f29d5b995f211b6848220",
+        "binary_sha256": "360b0c5e1d5a5ef790a3bb487e60244cf5a0eaf41f1f1368ce73e19b8fb864ea",
+        "valid": true,
+        "output_equal": true
+      },
+      {
+        "pair": 6,
+        "engine": "baseline",
+        "order": [
+          "candidate",
+          "baseline"
+        ],
+        "score": 89.9,
+        "max_rss_bytes": 20975616,
+        "wall_ns": 3071480088,
+        "report": "target/production/stageb-field-cache-richards-paired/p05-baseline.json",
+        "report_sha256": "908dea3bbbcf70b1527af3cee1dc258e8ede28e9f13b5ca5d10632f9e3a46612",
+        "binary_sha256": "f96b825482d3f158f624fed98a386f370dd0cc2acc8b840a557c8980c23291c2",
+        "valid": true,
+        "output_equal": true
+      },
+      {
+        "pair": 7,
+        "engine": "baseline",
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "score": 92.4,
+        "max_rss_bytes": 21622784,
+        "wall_ns": 3083347888,
+        "report": "target/production/stageb-field-cache-richards-paired/p06-baseline.json",
+        "report_sha256": "23eab05afeddb449d78ca45df464ac82158957efb6dd24fa6e533f9339f1cab5",
+        "binary_sha256": "f96b825482d3f158f624fed98a386f370dd0cc2acc8b840a557c8980c23291c2",
+        "valid": true,
+        "output_equal": true
+      },
+      {
+        "pair": 7,
+        "engine": "candidate",
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "score": 112.0,
+        "max_rss_bytes": 18841600,
+        "wall_ns": 2059752087,
+        "report": "target/production/stageb-field-cache-richards-paired/p06-candidate.json",
+        "report_sha256": "a26d37e09a5b770331e01a7cf341f4ed71689179ab0548f39024e187a5581882",
+        "binary_sha256": "360b0c5e1d5a5ef790a3bb487e60244cf5a0eaf41f1f1368ce73e19b8fb864ea",
+        "valid": true,
+        "output_equal": true
+      },
+      {
+        "pair": 8,
+        "engine": "candidate",
+        "order": [
+          "candidate",
+          "baseline"
+        ],
+        "score": 108.0,
+        "max_rss_bytes": 20545536,
+        "wall_ns": 3070069088,
+        "report": "target/production/stageb-field-cache-richards-paired/p07-candidate.json",
+        "report_sha256": "0c37b6e439d2d17232d3696e68a9e3eec33b252a4997228797b2c3fa2e4fbbda",
+        "binary_sha256": "360b0c5e1d5a5ef790a3bb487e60244cf5a0eaf41f1f1368ce73e19b8fb864ea",
+        "valid": true,
+        "output_equal": true
+      },
+      {
+        "pair": 8,
+        "engine": "baseline",
+        "order": [
+          "candidate",
+          "baseline"
+        ],
+        "score": 91.6,
+        "max_rss_bytes": 21696512,
+        "wall_ns": 3097470533,
+        "report": "target/production/stageb-field-cache-richards-paired/p07-baseline.json",
+        "report_sha256": "6c9326be14c29b6410520cd31643bd210ee4328732b03aa10499069e1ca482c6",
+        "binary_sha256": "f96b825482d3f158f624fed98a386f370dd0cc2acc8b840a557c8980c23291c2",
+        "valid": true,
+        "output_equal": true
+      },
+      {
+        "pair": 9,
+        "engine": "baseline",
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "score": 89.5,
+        "max_rss_bytes": 21610496,
+        "wall_ns": 3120868418,
+        "report": "target/production/stageb-field-cache-richards-paired/p08-baseline.json",
+        "report_sha256": "94d0be5cc96713d04d8cb09555dcef7f025c9a0c3570879234ec07c5da15a5d3",
+        "binary_sha256": "f96b825482d3f158f624fed98a386f370dd0cc2acc8b840a557c8980c23291c2",
+        "valid": true,
+        "output_equal": true
+      },
+      {
+        "pair": 9,
+        "engine": "candidate",
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "score": 111.0,
+        "max_rss_bytes": 18976768,
+        "wall_ns": 2062954709,
+        "report": "target/production/stageb-field-cache-richards-paired/p08-candidate.json",
+        "report_sha256": "fb6b2836b3ee3b1bc4544e5ae07ae8ac04d23ec5e9879d8aa19f772cf773060d",
+        "binary_sha256": "360b0c5e1d5a5ef790a3bb487e60244cf5a0eaf41f1f1368ce73e19b8fb864ea",
+        "valid": true,
+        "output_equal": true
+      },
+      {
+        "pair": 10,
+        "engine": "candidate",
+        "order": [
+          "candidate",
+          "baseline"
+        ],
+        "score": 108.0,
+        "max_rss_bytes": 18841600,
+        "wall_ns": 3088974640,
+        "report": "target/production/stageb-field-cache-richards-paired/p09-candidate.json",
+        "report_sha256": "25a4ac9d481698af25e0b11a6007c4eb44ec280e91b98560e34676d214e31199",
+        "binary_sha256": "360b0c5e1d5a5ef790a3bb487e60244cf5a0eaf41f1f1368ce73e19b8fb864ea",
+        "valid": true,
+        "output_equal": true
+      },
+      {
+        "pair": 10,
+        "engine": "baseline",
+        "order": [
+          "candidate",
+          "baseline"
+        ],
+        "score": 81.8,
+        "max_rss_bytes": 21585920,
+        "wall_ns": 3079006473,
+        "report": "target/production/stageb-field-cache-richards-paired/p09-baseline.json",
+        "report_sha256": "389d470dd36e788da3423230e723e9dffd13bb8f3ff9d39cb12a053585fc204a",
+        "binary_sha256": "f96b825482d3f158f624fed98a386f370dd0cc2acc8b840a557c8980c23291c2",
+        "valid": true,
+        "output_equal": true
+      },
+      {
+        "pair": 11,
+        "engine": "baseline",
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "score": 83.7,
+        "max_rss_bytes": 21389312,
+        "wall_ns": 3135162740,
+        "report": "target/production/stageb-field-cache-richards-paired/p10-baseline.json",
+        "report_sha256": "d0a07cb667b8fe5283afa9dad999959085fd64f72af8a4143bf46c453effde42",
+        "binary_sha256": "f96b825482d3f158f624fed98a386f370dd0cc2acc8b840a557c8980c23291c2",
+        "valid": true,
+        "output_equal": true
+      },
+      {
+        "pair": 11,
+        "engine": "candidate",
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "score": 100.0,
+        "max_rss_bytes": 20512768,
+        "wall_ns": 3055007410,
+        "report": "target/production/stageb-field-cache-richards-paired/p10-candidate.json",
+        "report_sha256": "9f92f3fb090bbc7dcf048c6f97107d6aba4e08b2b565a9490d99161e38a6f10d",
+        "binary_sha256": "360b0c5e1d5a5ef790a3bb487e60244cf5a0eaf41f1f1368ce73e19b8fb864ea",
+        "valid": true,
+        "output_equal": true
+      }
+    ]
+  }
+}

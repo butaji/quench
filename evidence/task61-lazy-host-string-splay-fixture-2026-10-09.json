@@ -1,0 +1,698 @@
+{
+  "task": 61,
+  "experiment": "lazy derived UTF-8 view Splay fixture check",
+  "host": {
+    "platform": "macOS-26.5-arm64-arm-64bit",
+    "machine": "arm64",
+    "processor": "arm",
+    "python": "3.9.6"
+  },
+  "rounds": 11,
+  "binary_sha256": {
+    "baseline": "b2602ed749e836b199a42f3477f0725e01a0dd9e6162f12d79bdca0a663547c2",
+    "candidate": "c7b1acaa513ab1fad7dc3e213180d1190139862cacdfe71ffe6efcff9f06aaef"
+  },
+  "materialized_sha256": "31c30963144a07d45bcbfe9988bec95df39f8447485806e4decc7fa457c86215",
+  "base_source_sha256": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51",
+  "fixture_source_sha256": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d",
+  "summary": {
+    "metrics": {
+      "score": {
+        "baseline_median": 2881.0,
+        "candidate_median": 2912.0,
+        "median_absolute_delta": 31.0,
+        "median_change_percent": 1.0760152724748284,
+        "paired_median_change_percent": 1.0760152724748284,
+        "candidate_better_pairs": 7,
+        "pairs": 11
+      },
+      "instructions_retired": {
+        "baseline_median": 53856181783,
+        "candidate_median": 52280072992,
+        "median_absolute_delta": -1576108791,
+        "median_change_percent": -2.926514169442118,
+        "paired_median_change_percent": -2.5620798818588475,
+        "candidate_better_pairs": 10,
+        "pairs": 11
+      },
+      "maximum_rss_bytes": {
+        "baseline_median": 309116928,
+        "candidate_median": 306053120,
+        "median_absolute_delta": -3063808,
+        "median_change_percent": -0.9911485662797426,
+        "paired_median_change_percent": -0.9858483065670165,
+        "candidate_better_pairs": 10,
+        "pairs": 11
+      },
+      "elapsed_seconds": {
+        "baseline_median": 2.28,
+        "candidate_median": 2.29,
+        "median_absolute_delta": 0.010000000000000231,
+        "median_change_percent": 0.43859649122808264,
+        "paired_median_change_percent": 0.0,
+        "candidate_better_pairs": 3,
+        "pairs": 11
+      }
+    },
+    "stdout_equal_every_pair": true
+  },
+  "records": [
+    {
+      "pair": 1,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/materialized-splay.js"
+      ],
+      "exit_code": 0,
+      "score": 2875.0,
+      "instructions_retired": 53759286672,
+      "maximum_rss_bytes": 309084160,
+      "elapsed_seconds": 2.28,
+      "wall_seconds": 2.285212417,
+      "stdout": "__quenchBenchResult: Splay: 2875\n----\nScore: 2875\n",
+      "stderr": "        2.28 real         2.25 user         0.02 sys\n           309084160  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               21359  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                  96  involuntary context switches\n         53759286672  instructions retired\n          9154945435  cycles elapsed\n           299467424  peak memory footprint\n"
+    },
+    {
+      "pair": 1,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/materialized-splay.js"
+      ],
+      "exit_code": 0,
+      "score": 2912.0,
+      "instructions_retired": 52585736574,
+      "maximum_rss_bytes": 306167808,
+      "elapsed_seconds": 2.7,
+      "wall_seconds": 2.7068388339999996,
+      "stdout": "__quenchBenchResult: Splay: 2912\n----\nScore: 2912\n",
+      "stderr": "        2.70 real         2.27 user         0.03 sys\n           306167808  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               21183  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  99  involuntary context switches\n         52585736574  instructions retired\n          9169163824  cycles elapsed\n           296616584  peak memory footprint\n"
+    },
+    {
+      "pair": 2,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/materialized-splay.js"
+      ],
+      "exit_code": 0,
+      "score": 2912.0,
+      "instructions_retired": 52872100482,
+      "maximum_rss_bytes": 306053120,
+      "elapsed_seconds": 2.27,
+      "wall_seconds": 2.281743542,
+      "stdout": "__quenchBenchResult: Splay: 2912\n----\nScore: 2912\n",
+      "stderr": "        2.27 real         2.25 user         0.02 sys\n           306053120  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               21176  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 103  involuntary context switches\n         52872100482  instructions retired\n          9137802844  cycles elapsed\n           296518304  peak memory footprint\n"
+    },
+    {
+      "pair": 2,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/materialized-splay.js"
+      ],
+      "exit_code": 0,
+      "score": 2881.0,
+      "instructions_retired": 53906734304,
+      "maximum_rss_bytes": 309100544,
+      "elapsed_seconds": 2.28,
+      "wall_seconds": 2.2828501250000004,
+      "stdout": "__quenchBenchResult: Splay: 2881\n----\nScore: 2881\n",
+      "stderr": "        2.28 real         2.25 user         0.02 sys\n           309100544  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               21360  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 114  involuntary context switches\n         53906734304  instructions retired\n          9155339510  cycles elapsed\n           299483808  peak memory footprint\n"
+    },
+    {
+      "pair": 3,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/materialized-splay.js"
+      ],
+      "exit_code": 0,
+      "score": 2701.0,
+      "instructions_retired": 53349561401,
+      "maximum_rss_bytes": 309231616,
+      "elapsed_seconds": 2.33,
+      "wall_seconds": 2.3368991250000004,
+      "stdout": "__quenchBenchResult: Splay: 2701\n----\nScore: 2701\n",
+      "stderr": "        2.33 real         2.30 user         0.02 sys\n           309231616  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               21368  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 164  involuntary context switches\n         53349561401  instructions retired\n          9229097589  cycles elapsed\n           299598472  peak memory footprint\n"
+    },
+    {
+      "pair": 3,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/materialized-splay.js"
+      ],
+      "exit_code": 0,
+      "score": 2957.0,
+      "instructions_retired": 50189030398,
+      "maximum_rss_bytes": 299106304,
+      "elapsed_seconds": 2.3,
+      "wall_seconds": 2.3051481250000005,
+      "stdout": "__quenchBenchResult: Splay: 2957\n----\nScore: 2957\n",
+      "stderr": "        2.30 real         2.27 user         0.02 sys\n           299106304  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               20751  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 168  involuntary context switches\n         50189030398  instructions retired\n          9016793531  cycles elapsed\n           289555080  peak memory footprint\n"
+    },
+    {
+      "pair": 4,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/materialized-splay.js"
+      ],
+      "exit_code": 0,
+      "score": 2956.0,
+      "instructions_retired": 52130194417,
+      "maximum_rss_bytes": 305905664,
+      "elapsed_seconds": 2.29,
+      "wall_seconds": 2.2990975000000002,
+      "stdout": "__quenchBenchResult: Splay: 2956\n----\nScore: 2956\n",
+      "stderr": "        2.29 real         2.26 user         0.02 sys\n           305905664  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               21167  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 145  involuntary context switches\n         52130194417  instructions retired\n          9114467561  cycles elapsed\n           296354440  peak memory footprint\n"
+    },
+    {
+      "pair": 4,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/materialized-splay.js"
+      ],
+      "exit_code": 0,
+      "score": 2868.0,
+      "instructions_retired": 53651948860,
+      "maximum_rss_bytes": 309198848,
+      "elapsed_seconds": 2.28,
+      "wall_seconds": 2.283494749999999,
+      "stdout": "__quenchBenchResult: Splay: 2868\n----\nScore: 2868\n",
+      "stderr": "        2.28 real         2.25 user         0.02 sys\n           309198848  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               21366  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  99  involuntary context switches\n         53651948860  instructions retired\n          9127910793  cycles elapsed\n           299582112  peak memory footprint\n"
+    },
+    {
+      "pair": 5,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/materialized-splay.js"
+      ],
+      "exit_code": 0,
+      "score": 2917.0,
+      "instructions_retired": 54262676556,
+      "maximum_rss_bytes": 309116928,
+      "elapsed_seconds": 2.28,
+      "wall_seconds": 2.2829345839999995,
+      "stdout": "__quenchBenchResult: Splay: 2917\n----\nScore: 2917\n",
+      "stderr": "        2.28 real         2.25 user         0.02 sys\n           309116928  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               21361  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 106  involuntary context switches\n         54262676556  instructions retired\n          9133052056  cycles elapsed\n           299467376  peak memory footprint\n"
+    },
+    {
+      "pair": 5,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/materialized-splay.js"
+      ],
+      "exit_code": 0,
+      "score": 2953.0,
+      "instructions_retired": 53219157128,
+      "maximum_rss_bytes": 306069504,
+      "elapsed_seconds": 2.28,
+      "wall_seconds": 2.2836037919999974,
+      "stdout": "__quenchBenchResult: Splay: 2953\n----\nScore: 2953\n",
+      "stderr": "        2.28 real         2.25 user         0.02 sys\n           306069504  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               21176  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 101  involuntary context switches\n         53219157128  instructions retired\n          9138498260  cycles elapsed\n           296501896  peak memory footprint\n"
+    },
+    {
+      "pair": 6,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/materialized-splay.js"
+      ],
+      "exit_code": 0,
+      "score": 2893.0,
+      "instructions_retired": 52673368673,
+      "maximum_rss_bytes": 306413568,
+      "elapsed_seconds": 2.28,
+      "wall_seconds": 2.287956125000001,
+      "stdout": "__quenchBenchResult: Splay: 2893\n----\nScore: 2893\n",
+      "stderr": "        2.28 real         2.25 user         0.02 sys\n           306413568  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               21197  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 340  involuntary context switches\n         52673368673  instructions retired\n          9156171060  cycles elapsed\n           296862368  peak memory footprint\n"
+    },
+    {
+      "pair": 6,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/materialized-splay.js"
+      ],
+      "exit_code": 0,
+      "score": 2900.0,
+      "instructions_retired": 54058387750,
+      "maximum_rss_bytes": 309133312,
+      "elapsed_seconds": 2.28,
+      "wall_seconds": 2.282968209,
+      "stdout": "__quenchBenchResult: Splay: 2900\n----\nScore: 2900\n",
+      "stderr": "        2.28 real         2.25 user         0.02 sys\n           309133312  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               21362  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 109  involuntary context switches\n         54058387750  instructions retired\n          9143403571  cycles elapsed\n           299483760  peak memory footprint\n"
+    },
+    {
+      "pair": 7,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/materialized-splay.js"
+      ],
+      "exit_code": 0,
+      "score": 2876.0,
+      "instructions_retired": 53856181783,
+      "maximum_rss_bytes": 309166080,
+      "elapsed_seconds": 2.27,
+      "wall_seconds": 2.281156540999998,
+      "stdout": "__quenchBenchResult: Splay: 2876\n----\nScore: 2876\n",
+      "stderr": "        2.27 real         2.25 user         0.02 sys\n           309166080  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               21364  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  91  involuntary context switches\n         53856181783  instructions retired\n          9132874030  cycles elapsed\n           299549344  peak memory footprint\n"
+    },
+    {
+      "pair": 7,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/materialized-splay.js"
+      ],
+      "exit_code": 0,
+      "score": 2832.0,
+      "instructions_retired": 52280072992,
+      "maximum_rss_bytes": 306003968,
+      "elapsed_seconds": 2.28,
+      "wall_seconds": 2.285518833000001,
+      "stdout": "__quenchBenchResult: Splay: 2832\n----\nScore: 2832\n",
+      "stderr": "        2.28 real         2.25 user         0.02 sys\n           306003968  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               21172  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 114  involuntary context switches\n         52280072992  instructions retired\n          9110630224  cycles elapsed\n           296452768  peak memory footprint\n"
+    },
+    {
+      "pair": 8,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/materialized-splay.js"
+      ],
+      "exit_code": 0,
+      "score": 2945.0,
+      "instructions_retired": 50092901128,
+      "maximum_rss_bytes": 298532864,
+      "elapsed_seconds": 2.3,
+      "wall_seconds": 2.3054050000000004,
+      "stdout": "__quenchBenchResult: Splay: 2945\n----\nScore: 2945\n",
+      "stderr": "        2.30 real         2.27 user         0.02 sys\n           298532864  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               20717  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 173  involuntary context switches\n         50092901128  instructions retired\n          9020507099  cycles elapsed\n           288965232  peak memory footprint\n"
+    },
+    {
+      "pair": 8,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/materialized-splay.js"
+      ],
+      "exit_code": 0,
+      "score": 2915.0,
+      "instructions_retired": 51073761919,
+      "maximum_rss_bytes": 299040768,
+      "elapsed_seconds": 2.3,
+      "wall_seconds": 2.3101197919999947,
+      "stdout": "__quenchBenchResult: Splay: 2915\n----\nScore: 2915\n",
+      "stderr": "        2.30 real         2.27 user         0.02 sys\n           299040768  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               20746  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 172  involuntary context switches\n         51073761919  instructions retired\n          9045048433  cycles elapsed\n           289407624  peak memory footprint\n"
+    },
+    {
+      "pair": 9,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/materialized-splay.js"
+      ],
+      "exit_code": 0,
+      "score": 2931.0,
+      "instructions_retired": 51423560865,
+      "maximum_rss_bytes": 300875776,
+      "elapsed_seconds": 2.29,
+      "wall_seconds": 2.3013026670000016,
+      "stdout": "__quenchBenchResult: Splay: 2931\n----\nScore: 2931\n",
+      "stderr": "        2.29 real         2.27 user         0.02 sys\n           300875776  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               20858  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 159  involuntary context switches\n         51423560865  instructions retired\n          9005312113  cycles elapsed\n           291242632  peak memory footprint\n"
+    },
+    {
+      "pair": 9,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/materialized-splay.js"
+      ],
+      "exit_code": 0,
+      "score": 2888.0,
+      "instructions_retired": 52229728169,
+      "maximum_rss_bytes": 306118656,
+      "elapsed_seconds": 2.29,
+      "wall_seconds": 2.296886166,
+      "stdout": "__quenchBenchResult: Splay: 2888\n----\nScore: 2888\n",
+      "stderr": "        2.29 real         2.26 user         0.02 sys\n           306118656  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               21179  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 119  involuntary context switches\n         52229728169  instructions retired\n          9143241805  cycles elapsed\n           296567456  peak memory footprint\n"
+    },
+    {
+      "pair": 10,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/materialized-splay.js"
+      ],
+      "exit_code": 0,
+      "score": 2883.0,
+      "instructions_retired": 52769616669,
+      "maximum_rss_bytes": 306167808,
+      "elapsed_seconds": 2.27,
+      "wall_seconds": 2.2815248750000023,
+      "stdout": "__quenchBenchResult: Splay: 2883\n----\nScore: 2883\n",
+      "stderr": "        2.27 real         2.25 user         0.02 sys\n           306167808  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               21183  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 103  involuntary context switches\n         52769616669  instructions retired\n          9120845701  cycles elapsed\n           296632992  peak memory footprint\n"
+    },
+    {
+      "pair": 10,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/materialized-splay.js"
+      ],
+      "exit_code": 0,
+      "score": 2904.0,
+      "instructions_retired": 54164069978,
+      "maximum_rss_bytes": 309051392,
+      "elapsed_seconds": 2.28,
+      "wall_seconds": 2.2852995000000007,
+      "stdout": "__quenchBenchResult: Splay: 2904\n----\nScore: 2904\n",
+      "stderr": "        2.28 real         2.25 user         0.02 sys\n           309051392  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               21357  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 120  involuntary context switches\n         54164069978  instructions retired\n          9136655850  cycles elapsed\n           299434656  peak memory footprint\n"
+    },
+    {
+      "pair": 11,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/materialized-splay.js"
+      ],
+      "exit_code": 0,
+      "score": 2865.0,
+      "instructions_retired": 53905286698,
+      "maximum_rss_bytes": 309198848,
+      "elapsed_seconds": 2.27,
+      "wall_seconds": 2.2819858749999966,
+      "stdout": "__quenchBenchResult: Splay: 2865\n----\nScore: 2865\n",
+      "stderr": "        2.27 real         2.25 user         0.02 sys\n           309198848  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               21366  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  94  involuntary context switches\n         53905286698  instructions retired\n          9114640132  cycles elapsed\n           299565704  peak memory footprint\n"
+    },
+    {
+      "pair": 11,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/materialized-splay.js"
+      ],
+      "exit_code": 0,
+      "score": 2915.0,
+      "instructions_retired": 49794231627,
+      "maximum_rss_bytes": 298369024,
+      "elapsed_seconds": 2.3,
+      "wall_seconds": 2.306577084000004,
+      "stdout": "__quenchBenchResult: Splay: 2915\n----\nScore: 2915\n",
+      "stderr": "        2.30 real         2.27 user         0.02 sys\n           298369024  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               20707  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 190  involuntary context switches\n         49794231627  instructions retired\n          9016010711  cycles elapsed\n           288817800  peak memory footprint\n"
+    }
+  ],
+  "source_and_validation": {
+    "source": {
+      "base_revision": "ff60d06c55546b8b8b2d443697a8c335545d736b",
+      "dirty_at_measurement": true,
+      "modified_file": "crates/quench-runtime/src/vm/wtf16.rs",
+      "modified_file_sha256": "30306e7f783e26d7b23890a2e2f0c1aeefbef7abce63e595c6a684f70be8cffa",
+      "git_diff_sha256": "645808e85bf1f800ab57912b603ec26d9683f7c59bd3a17253bc6583c92e696f"
+    },
+    "build": {
+      "command": "CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=target/iteration/task61-lazy-host-string-20261009 cargo build --profile production -p quench-node --bin quench-node",
+      "profile": "production",
+      "candidate_binary": "target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+      "baseline_binary": "target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+      "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew), host aarch64-apple-darwin, LLVM 23.1.2"
+    },
+    "measurement_environment": {
+      "os": "macOS-26.5-arm64-arm-64bit",
+      "kernel": "25.5.0",
+      "architecture": "arm64",
+      "logical_cpus": 10,
+      "memory_bytes": 17179869184,
+      "tool": "/usr/bin/time -l",
+      "concurrency": "baseline and candidate were run sequentially within each alternating pair; no concurrent test campaign during final measurements"
+    },
+    "validation": {
+      "test262_reports": [
+        {
+          "path": "target/iteration/task61-lazy-host-string-20261009/test262-stage-53.json",
+          "sha256": "e4a93c45bccfb0b2b7f60ba0266ce3f832125297ffcc96a9632ef5669732e964",
+          "passed": 165,
+          "failed": 0,
+          "stages": {
+            "53": {
+              "failed": 0,
+              "passed": 165,
+              "total": 165
+            }
+          }
+        },
+        {
+          "path": "target/iteration/task61-lazy-host-string-20261009/test262-stages-64-65.json",
+          "sha256": "1d02b948ca210ca930189ed1a11858de560098c23785e3e11728c1b8972efacb",
+          "passed": 1896,
+          "failed": 0,
+          "stages": {
+            "64": {
+              "failed": 0,
+              "passed": 1879,
+              "total": 1879
+            },
+            "65": {
+              "failed": 0,
+              "passed": 17,
+              "total": 17
+            }
+          }
+        },
+        {
+          "path": "target/iteration/task61-lazy-host-string-20261009/test262-stages-70-71.json",
+          "sha256": "fbfdf5152e3653d2b0e6b2dbc21aea618fd3ae676c09fa145c366cc8cfbb4862",
+          "passed": 1230,
+          "failed": 0,
+          "stages": {
+            "70": {
+              "failed": 0,
+              "passed": 1223,
+              "total": 1223
+            },
+            "71": {
+              "failed": 0,
+              "passed": 7,
+              "total": 7
+            }
+          }
+        }
+      ],
+      "test262_total_passed": 3291,
+      "test262_total_failed": 0,
+      "focused_unit_test_command": "CARGO_TARGET_DIR=target/iteration/task61-lazy-host-string-20261009 CARGO_INCREMENTAL=0 cargo test -p quench-runtime --features profile-memory vm::wtf16::tests -- --nocapture",
+      "focused_unit_tests_passed": 8,
+      "node_oracle_script": "tasks/evidence/task61-lazy-host-string-node-2026-10-09.cjs",
+      "node_oracle_script_sha256": "105069021842feb22985281a6d17cf4bce3601799edc21faffa180f77eed5133",
+      "node_oracle_runs": {
+        "baseline": {
+          "command": [
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-node-2026-10-09.cjs"
+          ],
+          "exit_code": 0,
+          "stdout": "[1,55296,55296,2,55358,56704,2,\"\\\"\\\\ud800\\\"\",true]\n�\n",
+          "stderr": ""
+        },
+        "candidate": {
+          "command": [
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-node-2026-10-09.cjs"
+          ],
+          "exit_code": 0,
+          "stdout": "[1,55296,55296,2,55358,56704,2,\"\\\"\\\\ud800\\\"\",true]\n�\n",
+          "stderr": ""
+        },
+        "node_26_10_0": {
+          "command": [
+            "/opt/homebrew/bin/node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-node-2026-10-09.cjs"
+          ],
+          "exit_code": 0,
+          "stdout": "[1,55296,55296,2,55358,56704,2,\"\\\"\\\\ud800\\\"\",true]\n�\n",
+          "stderr": ""
+        }
+      },
+      "normalize_control_script": "tasks/evidence/task61-lazy-host-string-normalize-control-2026-10-09.cjs",
+      "normalize_control_script_sha256": "3c4496e0a78fdaf65a346234348e0ccbaf2fa4545451d5b161bdf1edf143b226",
+      "normalize_control_runs": {
+        "baseline": {
+          "command": [
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-normalize-control-2026-10-09.cjs"
+          ],
+          "exit_code": 0,
+          "stdout": "65533\n",
+          "stderr": ""
+        },
+        "candidate": {
+          "command": [
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-normalize-control-2026-10-09.cjs"
+          ],
+          "exit_code": 0,
+          "stdout": "65533\n",
+          "stderr": ""
+        },
+        "node_26_10_0": {
+          "command": [
+            "/opt/homebrew/bin/node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-normalize-control-2026-10-09.cjs"
+          ],
+          "exit_code": 0,
+          "stdout": "55296\n",
+          "stderr": ""
+        }
+      },
+      "pre_existing_normalize_mismatch": {
+        "baseline_quench_output": "65533\n",
+        "candidate_quench_output": "65533\n",
+        "node_26_10_0_output": "55296\n",
+        "same_baseline_and_candidate": true,
+        "status": "Existing lossy host conversion used by String.prototype.normalize; not introduced by the lazy host-view change."
+      }
+    }
+  },
+  "runner_source_sha256": "88e53b2f86527ba45b3926b01c5e6be6e3f15430860bdcc4ca7dd7e9af739c87",
+  "measurement_script_sha256": "0cf4ebbab7dc157debbdc1da7786cde87b307c065cb9f2e2006f865699173126"
+}

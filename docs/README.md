@@ -1,36 +1,43 @@
 # Documentation
 
 - [Repository rules and Lisp mindset](../AGENTS.md)
-- [Active rewrite queue](../tasks/index.json)
-- [Task execution contract](../tasks/README.md)
+- [Backlog, status and lanes (Linear)](https://linear.app/todoxapp/project/quench-abb744c79c4e/overview)
+- [Measurement evidence](../evidence/)
 - [Pinned v2 design decisions](v2/architecture.md) (copied from `../v2` at the indexed reference commit; binding for the next core)
 - [Wasm boundary](spec.md)
 - [Test262 stages](STAGES.md) and [Node stages](../STAGES.md)
+- [Native Node host contracts](node-host-contracts.md)
+- [Shared array operation contracts](shared-array-contracts.md)
 - [V8-v7 commands](v8_v7.md)
+- [GC verification and experiment strategy](v2/gc-verification.md)
+- [JetStream 3 commands](jetstream3.md)
 - [Benchmark micros](../quench-bench/micros/README.md)
 
 Documentation records stable contracts and reproducible commands. Current work
-and status live only in `tasks/index.json` and the numbered task files. Build
+and status live only in the Linear project. Build
 and measurement artifacts belong under ignored `target/` directories and must
 record their source revisions and commands.
 
 The rewrite target is an interpreter-only runtime derived from the pinned
 `../v2` snapshot. Node host behavior remains in `quench-node`; JavaScript
 semantics remain in Quench's shared runtime; OXC owns syntax. The final
-conformance gates are every lower-stage-adjudicated pinned Test262 case, every pinned
+conformance gates are every Node-adjudicated pinned Test262 case, every pinned
 Wasm directive, every upstream Node fixture tagged `framework-core` in
 `parallel.txt`, and the pinned Express, Koa and Fastify scenarios. Direct
-Test262 conflicts follow the lower-numbered-stage rule recorded in
-[task 20](../tasks/20.md#current-conflict-resolution); contradictory higher-stage
-outcomes remain visible as failures and never count as passes. The broader Node
-inventory is diagnostic only.
-The two-stage scope and completion rules live in [tasks/README.md](../tasks/README.md).
+Test262 conflicts follow the local Node-oracle rule recorded in
+the task 20 resolution (git history: `tasks/20.md`); contradicted raw outcomes
+remain visible as explicit waivers and never count as passes. The waivers'
+single authority is `crates/quench-test262/node-waivers.json` (see
+[Node waivers](#test262-node-waivers)). The broader Node inventory is
+diagnostic only.
+The two-stage scope and completion rules live in the [Linear project](https://linear.app/todoxapp/project/quench-abb744c79c4e/overview).
 
-The rewrite gate must use the v2-derived runtime explicitly. Test262 progress
-uses affected stages with `run-stages-next` plus saved-report comparison for
-ordinary changes. Full inventories run only at gates 24/27 and stage transitions. Every case has its own mandatory timeout, and the runner
-reports and executes deterministic batches capped at 100 cases. Task 20 owns
-the current stage and cumulative coverage record.
+The rewrite gate uses Quench's shared runtime. Test262 progress uses affected
+stages with canonical `run-stages` plus saved-report comparison for ordinary
+changes. Full inventories run only at gates 24/27 and stage transitions. Every
+case has its own mandatory timeout, and the runner reports and executes
+deterministic batches capped at 100 cases. Task 20 owns the current stage and
+cumulative coverage record.
 
 The default `dev` profile is incremental and uses no optimization for the
 shortest Rust edit/compile cycle. For conformance iterations, use the
@@ -40,30 +47,40 @@ every edit pay release-build costs. It is not the production/performance-
 evidence profile. Use `--release` for the final release gate and matched
 performance measurements.
 
+Production and benchmark binaries are profile-guided: `tools/pgo-build.sh
+[PROFILE]` (default `production`) builds an instrumented `quench-node`, trains it
+on the interpreter curriculum (`quench-bench/deegen-curriculum`) and the Node
+compatibility fixtures (`tests/node-compat`), then rebuilds `PROFILE` with the
+merged profile into `target/PROFILE/quench-node`. The scored engine suites are
+never part of the training corpus. It needs the toolchain's `llvm-tools`
+component. Measured on x86_64 Linux against the plain production build, V8-v7
+Score rose 7-24% on six fixtures (Splay and NavierStokes flat) and peak RSS fell
+about 1 MiB on all eight.
+
 ```sh
 TEST262_TEST_TIMEOUT_MS=900000 TEST262_JOBS=4 \
-  cargo run --profile iteration -p quench-test262 --bin run-stages-next -- 10 10
+  cargo run --profile iteration -p quench-test262 --bin run-stages -- 10 10
 ```
 
 ```sh
 TEST262_TEST_TIMEOUT_MS=30000 TEST262_JOBS=10 \
-  cargo run --release -p quench-test262 --bin run-all-next
+  cargo run --release -p quench-test262 --bin run-all
 ```
 
 ```sh
 TEST262_TEST_TIMEOUT_MS=30000 \
-  cargo run --release -p quench-test262 --bin run-stages-next -- 0 0
+  cargo run --release -p quench-test262 --bin run-stages -- 0 0
 ```
 
-The existing `run-stages`/`run-all` binaries retain the legacy host for
-reference comparisons and are not evidence for the next-runtime gate.
-Every Test262 execution runner/tool (`run-test`, both stage/all variants, `triage`,
-and execution modes of `compare-runs`) requires a positive `TEST262_TEST_TIMEOUT_MS`;
-the batch wrapper has the same requirement. `run-all-next` and
-`run-stages-next` run case processes concurrently (configurable with
+The canonical `run-stages`, `run-all`, and `run-test` runners use the shared VM.
+Every Test262 execution runner/tool (`run-test`, `run-all`,
+`run-stages`, `triage`, and execution modes of `compare-runs`)
+requires a positive `TEST262_TEST_TIMEOUT_MS`; the batch wrapper has the same
+requirement. `run-all` and `run-stages` run case processes concurrently
+(configurable with
 `TEST262_JOBS`, defaulting to available parallelism), preserve discovery-order
 reports, and keep stage batches capped at 100. The fixture comparison scripts
-`tools/diff-next.mjs` and `tools/run-all-next.mjs` require positive
+`tools/diff.mjs` and `tools/run-all.mjs` require positive
 `DIFF_TIMEOUT_MS` values. Their differential agreement requires completed
 observations on both sides: signals, timeouts, failed launches and missing
 statuses fail verification even if their outputs match. Completed nonzero exits
@@ -76,11 +93,11 @@ The broader inventory and owner audits remain diagnostic and do not add gate
 cases.
 
 Node inventory review uses implementation owners and per-case obligations in
-`tasks/node-compat-inventory.json`. Run from the repository root:
+`evidence/node-compat-inventory.json`. Run from the repository root:
 
 ```sh
 cargo run --profile iteration -p quench-node-test --bin run-compat -- \
-  --inventory tasks/node-compat-inventory.json --list
+  --inventory evidence/node-compat-inventory.json --list
 ```
 
 This lists the diagnostic broad Node inventory and validates every input hash,
@@ -90,9 +107,26 @@ It does not define the Stage A Node gate; profile membership comes from
 runners use isolated child deadlines and preserve stdout/stderr separately from
 case results.
 
-`run-all-next` writes its full per-test report to
-`target/test262-next-report.json` and compares a full-inventory run against
-`target/test262-next-ratchet.json`. A first complete all-pass run freezes the
+<a id="test262-node-waivers"></a>
+Node waivers list, by group and reason, each pinned case whose raw Quench
+failure the local Node oracle reproduces, with that exact failure. The runners
+compile the manifest in. A waived case keeps its raw outcome in every report,
+tagged with its `waiver` group and counted in `waived`; the runners accept it
+only while it fails with exactly the recorded failure. A waived case that
+passes or fails differently fails the run until the manifest is updated. A
+case the oracle cannot run (a module case) is waived only by its group's
+Node-arbitrated rule and is marked `"node": "unverifiable"`.
+Re-adjudicate the manifest, or triage other cases, against the installed Node:
+
+```sh
+node tools/test262-node-oracle.cjs
+node tools/test262-node-oracle.cjs built-ins/Error/prototype/stack/prop-desc.js
+```
+
+`run-all` writes its full per-test report to
+`target/test262-report.json` and compares a full-inventory run against
+`target/test262-quench-ratchet.json`. A first complete run in which every case
+passes or fails as its waiver records freezes the observed passes as the
 baseline; a later lost pass is reported as a regression and fails the command.
 Set `TEST262_REPORT` or `TEST262_RATCHET` to select other paths. A
 `TEST262_BATCH_SIZE` subset still writes its report but does not update or
@@ -103,21 +137,21 @@ executing any cases:
 
 ```sh
 TEST262_TEST_TIMEOUT_MS=30000 \
-  cargo run --profile iteration -p quench-test262 --bin run-all-next -- \
+  cargo run --profile iteration -p quench-test262 --bin run-all -- \
   --freeze-expected-pass-set
 ```
 
 This refuses to overwrite an existing baseline and records
 `basis: user_assumption` and the suite revision, without generating observed
-outcomes. A later complete observed all-pass run replaces that basis with
-`observed`. `run-stages-next` compares only baseline expectations owned by its
+outcomes. A later complete observed run without rejected outcomes replaces
+that basis with `observed`. `run-stages` compares only baseline expectations owned by its
 selected stages and path filter, including previously expected paths removed
 from discovery. Focused runs never update the baseline. `TEST262_RATCHET`
 selects the same baseline in both runners; an explicitly selected missing or
 invalid baseline is an error. A stage selection discovering no cases is an
 error.
 
-`run-stages-next` writes discovery-order case outcomes, stage counts, normalized
+`run-stages` writes discovery-order case outcomes, stage counts, normalized
 failure messages, and source/binary/host provenance to
 `target/iteration/test262-stages-report.json` (override with `TEST262_REPORT`).
 The report is written before a failed-stage verdict, so failures remain available
@@ -136,14 +170,108 @@ cannot silently pass.
 Compare reports with the same selection; a narrower current selection reports
 missing baseline passes as regressions.
 
-For long runs, advance one stage at a time with `run-stages-next`; it divides
+For long runs, advance one stage at a time with `run-stages`; it divides
 large stages into deterministic batches of at most 100 cases and preserves
-discovery order. Do not use the legacy `run-all` batch wrapper for the current
-next-runtime ratchet.
+discovery order. Reserve `run-all` for explicit whole-inventory qualification.
+
+## Compile on first call
+
+A program compiles whole at load, which decides every function's layout, constants and
+sites and reports every early error. A function that can compile again from its own source
+then keeps only its header (`FunctionHeader`: the facts closure creation, `IsConstructor`,
+brand checks and `toString` read) and compiles again on its first call
+(`ResidualProgram::function`). Replayable: function declarations and expressions, arrows,
+object literal methods and class methods, getters and setters (not constructors, field
+initializers, static blocks or decorated methods) of ordinary scripts and modules, that
+resolve every name statically, are reached by no dynamic lookup, resolve no private names,
+and are not called where they are made (an IIFE or a host wrapper). A replayable function
+inside no function that may give it binding sites (direct eval, `with`, `delete` of a name)
+finishes and releases its record as soon as it compiles; the others release theirs when the
+program is stored. Host bodies whose programs keep only static text, and the main
+CommonJS entry, whose functions run at once, stay compiled.
+
+A replay parses the function's text alone in a wrapper that gives it its syntactic context,
+and emits it against what the load recorded (`compile/replay.rs`): table cursors, the
+bindings its scopes provided, its layout inputs and its `arguments` slot. It adds no table
+entry. The `verify-replay` feature checks that each replay equals its load record; run
+Test262 with it and read the log:
+
+```sh
+cargo build --release -p quench-test262 --features verify-replay
+QUENCH_REPLAY_LOG=target/replay.log TEST262_TEST_TIMEOUT_MS=30000 \
+  target/release/run-all
+```
+
+Each program writes a `replay-summary` line; `replay-differs` and `replay-failed` lines name
+a function whose replay does not equal its record or does not compile.
+
+## Host compile cache
+
+`quench-node` keeps the compiled programs of Node's own library modules (the embedded `lib/`
+text) and of its own host scripts across runs, so a process decodes them instead of
+compiling them again. The runtime asks its host for a kept program before compiling one
+(`Host::kept_compiled_program`) and offers it the compiled program's compact form after
+(`Host::keep_compiled_program`). That form names each atom by its text and leaves out the
+source; a later run decodes it under its own VM's atom ids and the text it would have
+compiled. Atom-sorted binding lists are sorted again after decoding. A program naming an
+atom that has no lossless text (a lone surrogate) is not kept. Host scripts are cached only
+outside a direct eval, where their text alone decides what they compile to.
+
+Entries live in `$QUENCH_COMPILE_CACHE`, else `$XDG_CACHE_HOME/quench/compile`, else
+`~/.cache/quench/compile`; an empty `QUENCH_COMPILE_CACHE` turns the cache off. An entry is
+keyed by the executable that wrote it (path, size, modification time and runtime ABI), the
+module's name and the exact text compiled, and is written to a temporary file renamed into
+place. An entry that is missing, unreadable or does not decode costs only the compilation it
+would have saved.
+
+A decoded program parses nothing, so it reaches none of a compilation's phase boundaries
+(`set_compile_phase_boundary`), where the host releases its read-only pages. The runtime calls
+`Host::cached_program_decoded` after each decode instead. Once bootstrap has finished,
+`quench-node` releases there: without it, a run whose programs all decode keeps the loader's,
+decoder's and bootstrap's pages resident until its first collection. Bootstrap's own programs
+decode back to back without that release, which there only refaulted the same loader code. Package modules (`node_modules`) still compile on every run, so their
+functions keep compiling again on first call.
+
+## Startup snapshot
+
+`quench-node` restores a process's bootstrapped realm from a startup snapshot instead of
+running the bootstrap: Node's bootstrap up to the point before the process's options,
+preloads and entry are installed, with the builtins nearly every program loads already
+loaded (`PRELOADED_BUILTINS`: events, buffer, util, path, fs, url, timers, querystring,
+async_hooks, diagnostics_channel, stream, module, child_process and http), as Node's own
+startup snapshot holds them. The runtime writes the VM (`Runtime::build_snapshot`) with
+every identity space at its indices, so values keep their bits, and the host adds the state
+the heap is bound to (`NodeHost::write_snapshot`); a field of either that is neither written
+nor the restoring process's own must be empty at the snapshot point, or the snapshot is
+refused. A restored host continues the bootstrap (`Host::resume`) after replacing what the
+snapshot holds of the builder's process: `process.argv`, `execArgv`, `execPath`, `argv0`,
+`pid`, `ppid`, the process streams' `isTTY`, the performance time origins and the
+`Math.random` seed. While a snapshot is built, reading `process.env`, `process.cwd()` or
+`perf_hooks` fails the build, since the snapshot would keep the builder's.
+
+A process uses a snapshot when `QUENCH_STARTUP_SNAPSHOT` is `on` or `trace` and it runs a
+file entry on the main thread with no CLI options and no IPC channel (`NODE_CHANNEL_FD`).
+Without it processes boot without one. Restoring decodes all a snapshot holds (heap,
+programs, shapes and atoms: about 5 MB resident for the preloaded builtins), so there are
+two kinds (`SnapshotKind`): `preloaded`, as above, and `bootstrap`, without the builtins. A
+process restores `bootstrap` when its entry's static graph cannot reach a builtin
+(`startup_snapshot/entry_graph.rs`): the scan resolves static imports, re-exports and a
+WebAssembly module's imports as the ES module loader does, through packages, and stops at a
+builtin specifier, a dynamic `import()`, the text `require` or `getBuiltinModule`, a `.node`
+addon, a file it cannot resolve or parse, or past 64 files or 1 MiB. Either kind runs a
+program the same way: the kind decides only which builtins are loaded before it starts.
+Snapshots live in a `snapshot` directory beside the compile cache's, one directory per
+build, keyed by the library root and the variables the bootstrap reads (`HOME`,
+`NODE_OPTIONS`, `NODE_PENDING_DEPRECATION`, `NODE_DEBUG`, `NODE_PATH`, `QUENCH_PLATFORM`),
+with the kind in the file name. When an eligible process finds none it starts the
+executable with `QUENCH_BUILD_STARTUP_SNAPSHOT=<file>`, detached and holding a lock file, which
+builds it for later runs and removes other builds' snapshots. A snapshot that does not
+restore boots the process as if there were none. `QUENCH_STARTUP_SNAPSHOT=trace` also
+reports on stderr whether one was restored, and which kind.
 
 ## Shared runtime host roots
 
-The development `quench_runtime_next::Runtime` exposes `global_root`, `string_rooted`,
+The development `quench_runtime::Runtime` exposes `global_root`, `string_rooted`,
 `get_property_rooted`, `set_property_rooted` and `call_rooted`. These use the
 existing VM semantics and derive program context from its owned program store.
 All inputs are live roots belonging to that runtime; validation precedes guest
@@ -200,17 +328,48 @@ CommonJS files and eval retain their respective scopes. Production cutover
 remains task 27; task 24 owns integrated qualification of the selected Node
 gate together with Test262 and Wasm.
 See
-[task 21 qualification](../tasks/evidence/task21-shared-commonjs-loader.json).
+[task 21 qualification](../evidence/task21-shared-commonjs-loader.json).
+
+For local Node oracle checks, put a Node executable matching the pinned
+checkout's major version (`tests/node/src/node_version.h`) on `PATH`. The current
+checkout targets Node 27; earlier majors can differ on API contracts such as
+`util.parseEnv` object prototypes. Run the CLI/API oracle checks with
+`cargo test --profile iteration -p quench-node-test --test child_entry`.
 
 Run the selected upstream Node `test/parallel` profile against the shared VM
-with the separately compiled `run-parallel-next` worker. Profile membership
+with the canonical `run-parallel` worker. Profile membership
 comes from `crates/quench-node-test/node-tests/parallel.txt`; `--filter`
 narrowly selects cases within that profile for affected-case checks.
 
 ```sh
-cargo run --profile iteration -p quench-node-test --bin run-parallel-next -- \
+cargo run --profile iteration -p quench-node-test --bin run-parallel -- \
   --profile framework-core --filter test-path-join.js
 ```
+
+For the full inventory, use an unchanged Node checkout outside any enclosing
+JavaScript package. Otherwise a parent `package.json` can change the module
+type of upstream child scripts. Workers run from that checkout's root, matching
+the upstream harness; production module resolution uses ordinary package scopes.
+The runner supplies that checkout as `QUENCH_NODE_LIBRARY_ROOT` for Node library
+assets. The host resolves this installation root once at startup, so guest cwd
+changes cannot move its internal-module lookup. Direct CLI users can set this
+variable to an installation containing `lib/` and `deps/`; its default is the
+`node/` directory beside the executable. Node library sources use their builtin
+CommonJS wrapper contract independently of enclosing application package scopes.
+
+```sh
+NODE_FIXTURE_WORKTREE=$(mktemp -d)
+git -C tests/node worktree add --detach "$NODE_FIXTURE_WORKTREE" HEAD
+cargo build --profile iteration -p quench-node -p quench-node-test \
+  --bin quench-node --bin run-parallel
+target/iteration/run-parallel --all \
+  --parallel-dir "$NODE_FIXTURE_WORKTREE/test/parallel" \
+  --jobs 4 --timeout-secs 10 --results evidence/node-parallel.json
+```
+
+The report records the selected fixture revision and inventory hash at launch.
+Cases print as they complete. Every worker's process group is stopped after
+completion, failure, or timeout; Linux workers also reap orphaned children.
 
 ## Shared Wasm scopes
 
@@ -230,7 +389,7 @@ WASM_FILE_TIMEOUT_MS=60000 \
 
 Reports preserve every parsed directive with a file/ordinal identity, expected
 and actual results, input hashes, binary hash, command and worker outcomes.
-The `next` report schema is shared with saved Test262 outcome comparisons:
+The canonical report schema is shared with saved Test262 outcome comparisons:
 
 ```sh
 target/debug/compare-runs --reports \
@@ -348,24 +507,24 @@ follow the [core global contract](https://webassembly.github.io/spec/core/exec/i
 `Runtime::wasm_global` reads its typed value; `Runtime::wasm_global_binding`
 projects the identity to root for imports. Mixed global/memory/table declaration
 order derives from one import-name projection
-([qualification](../tasks/evidence/task37-wasm-global-imports.json)).
+([qualification](../evidence/task37-wasm-global-imports.json)).
 Wasm function imports and re-exports retain the original function cell and its
 captured instance. Canonical signatures distinguish source function indices
 from residual body indices; imports generate no forwarding bodies. Direct
 imported calls, starts and function references use the same shared ABI and
 [instantiation contract](https://webassembly.github.io/spec/core/exec/modules.html#exec-instantiation).
 `Runtime::wasm_function` projects that identity to root for imports
-([qualification](../tasks/evidence/task37-wasm-function-imports.json)).
+([qualification](../evidence/task37-wasm-function-imports.json)).
 Exact-function imports retain exactness in the canonical import fact. Linking
 checks the original dynamic callable declaration for equivalence, including
 through inexact re-exports; ordinary imports admit subtypes. Static `ref.func`
 projections are exact only for definitions and exact imports. Initializer
 admission uses that same reference subtype operation
 ([proposal](https://github.com/WebAssembly/custom-descriptors/blob/main/proposals/custom-descriptors/Overview.md),
-[qualification](../tasks/evidence/task37-wasm-exact-imports.json)).
+[qualification](../evidence/task37-wasm-exact-imports.json)).
 Normal and tail reference calls share the null-function trap selector; explicit
 `ref.as_non_null` retains its generic null-reference contract
-([qualification](../tasks/evidence/task37-wasm-null-calls.json)).
+([qualification](../evidence/task37-wasm-null-calls.json)).
 Exception tag declarations allocate distinct identities in the shared heap;
 imports/re-exports retain the original cell. Tag linking compares exact closed
 declaration types, including recursive-group identity, before initialization
@@ -373,25 +532,25 @@ effects. Root exported handles before subsequent VM work and release import
 roots after instantiation. `Runtime::wasm_tag` projects that identity. Tag
 bindings precede the final imported-function suffix in the instance layout
 ([core allocation](https://webassembly.github.io/spec/core/exec/modules.html#alloc-tag),
-[qualification](../tasks/evidence/task37-wasm-tags.json)).
+[qualification](../evidence/task37-wasm-tags.json)).
 Modern `try_table`, `throw` and `throw_ref` use one traced exception cell owning
 the original tag and payload. Static regions derive catch trampolines and existing
 activation handlers; typed error transport preserves reference identity across
 rethrows. Traps bypass catches; null exception references raise a typed trap.
 Root transported exception references before further VM work. Start exceptions
 remain distinct from link errors and traps in the suite adapter
-([qualification](../tasks/evidence/task37-wasm-exceptions.json)).
+([qualification](../evidence/task37-wasm-exceptions.json)).
 Legacy `try`, `catch`, `catch_all` and lexical `rethrow` lower to the same
 exception operations. Only the try body is protected; exceptions from catch arms
 propagate outward, while rethrow retains the original caught reference. Modern
 and legacy lowering share tag matching and payload projection
-([qualification](../tasks/evidence/task37-wasm-legacy-catches.json)).
+([qualification](../evidence/task37-wasm-legacy-catches.json)).
 Legacy `delegate` resolves outer labels during lowering. PC-bounded handlers
 write the original exception to a destination frame slot and jump to its lexical
 rethrow continuation. Normal results bypass that continuation, branch exits end
 protection, and tail transfer discards the replaced frame's handlers. Forward
 jump facts remain lowering-only; runtime handler selection is unchanged
-([qualification](../tasks/evidence/task37-wasm-delegate.json)). Shared tags and
+([qualification](../evidence/task37-wasm-delegate.json)). Shared tags and
 JavaScript/foreign-host exception embedding remain unfinished.
 Custom descriptor constructors share the regular struct construction model.
 The original type graph derives exact descriptor types; the existing GC cell
@@ -401,27 +560,27 @@ the final descriptor input. `ref.get_desc` projects that same reference;
 null descriptors trap separately from null source references. Initializer traps
 retain typed transport. Format68 admits the appended operations without changing
 packed operand widths
-([qualification](../tasks/evidence/task37-wasm-descriptors.json)).
+([qualification](../evidence/task37-wasm-descriptors.json)).
 Descriptor casts and branch-casts share one stored-identity predicate. Descriptor
 input types derive from target exactness and the original graph; null descriptors
 trap before nullable-source admission. Branches carry the original reference and
 other branch payloads. Module admission rejects missing descriptor relationships
 before execution. Format69 admits the cast/test operations without new cells or
 allocation; JavaScript prototype reflection remains unfinished
-([qualification](../tasks/evidence/task37-wasm-descriptor-casts.json)).
+([qualification](../evidence/task37-wasm-descriptor-casts.json)).
 Initializer expressions retain one admitted representation: known values fold
 inline, unresolved immutable globals remain symbolic. Global initializers,
 active segment offsets and nullable func/extern reference initializers evaluate
 against actual instance bindings through the same scalar operations; no imported
 value is substituted during lowering
-([qualification](../tasks/evidence/task37-wasm-initializer-expressions.json)).
+([qualification](../evidence/task37-wasm-initializer-expressions.json)).
 `ref.func` is a symbolic dependency in that same expression model. Instantiation
 roots its environment before installing defined globals in declaration order;
 then table/segment effects and start execution proceed. Function references use
 the original function cache/import identity and captured environment. No
 placeholder globals or forwarding functions are constructed. Frontend reference
 initializers share expression lowering
-([qualification](../tasks/evidence/task37-wasm-function-initializers.json)).
+([qualification](../evidence/task37-wasm-function-initializers.json)).
 `Runtime::wasm_host_function` creates a rooted typed native callable. Its native
 environment owns the immutable signature and embedding operation ID. Linking,
 function-reference validation and indirect calls use one signature projection;
@@ -433,7 +592,7 @@ roots remain caller-owned. `Runtime::invoke_wasm_host_function` and imported cal
 use the same guarded native boundary and result decoder. Host creation initializes
 the VM before publishing its first root. The shared Wast provider installs
 spectest signatures explicitly and records real print effects
-([qualification](../tasks/evidence/task37-wasm-host-functions.json)).
+([qualification](../evidence/task37-wasm-host-functions.json)).
 Original declaration graphs own concrete/exact function and GC reference types
 across callable, global and table boundaries. Unshared i31 values, struct objects
 and arrays use the same Value/root transport; tests, casts, cast branches and
@@ -465,3 +624,137 @@ retains its fresh-execution reset contract. Unsupported shared operations
 are failures, never legacy fallbacks or skips. The legacy `run` target is only a pre-cutover
 reference; task 27 removes it. Module state/imports and remaining operators
 still need the shared implementation and complete suite proof recorded in tasks.
+
+## Wasm execution modes and link order
+
+`coremark -no-jit` (default) runs Wasm on the shared interpreter; `-jit`
+compiles each Wasm function with a compiled denotation through Cranelift
+(`crates/quench-runtime/src/vm/compiled.rs`) and leaves the rest interpreted.
+`run -jit` runs the testsuite in the compiled mode; both modes must pass the
+whole suite. A module is lowered for the mode that runs it
+(`Module::lower_shared_module_for`): the interpreter's residual inlines leaf
+calls up to a large budget, since a call costs it a frame and a dispatch, while
+the compiled mode keeps every call, since Cranelift calls cheaply and a copied
+body only adds register pressure. The residual's meaning is the same in both.
+
+On Linux the harness binaries link position-dependent, and on x86-64 with
+`ld.lld` available they link in the trained symbol order
+`crates/quench-wasm-test/link/x86_64-linux.order`: executed functions share
+pages instead of each faulting in its own fault-around window, which bounds
+resident text. The order is layout only. Symbol names carry the profile's crate
+hashes, so train on the profile you link (debug info and stripping change them;
+`production` keeps its symbol table for this). Retrain after large changes from
+cachegrind profiles of every Wasm kernel and CoreMark in both modes. Profiles
+name executed functions (`--demangle=no`), so they stay valid across relinks;
+cachegrind keeps no call stack, which the lane's sibling-call chains would
+exhaust in callgrind:
+
+```sh
+cargo build --profile production -p quench-wasm-test --bin coremark --bin symbol-order
+for module in KERNELS...; do for mode in no-jit jit; do
+  COREMARK_CLOCK_STEPS_MS=1,1,2000 valgrind --tool=cachegrind --cache-sim=no \
+    --demangle=no --cachegrind-out-file=train/$(basename $module)-$mode.out \
+    target/production/coremark -$mode $module
+done; done
+target/production/symbol-order target/production/coremark \
+  crates/quench-wasm-test/link/x86_64-linux.order \
+  train/coremark-no-jit.out train/coremark-jit.out \
+  train/KERNEL-no-jit.out... train/KERNEL-jit.out...
+```
+
+An order names symbols with the profile's crate hashes, so a change that moves them disables
+it silently. `tools/check-link-order.sh BINARY ORDER` reports the share of the order's
+symbols the binary still has and fails below 90%. Check `quench-node`'s production build
+against `crates/quench-node/link/x86_64-linux.order` after manifest or dependency changes
+(TOD-171).
+
+Profiles go in priority order. Functions are laid out in first-appearance
+order, so the first profile's run touches one contiguous region and later
+profiles add only what earlier ones did not execute. With a compiled-mode
+profile first, the interpreter's functions interleave with the compiler's and
+fault-around makes the whole span resident (CoreMark `-no-jit`: 5.2 -> 6.1 MB).
+
+Qualification builds link the C runtime statically, position-dependent:
+
+```sh
+RUSTFLAGS="-D warnings -C llvm-args=-align-all-functions=6 \
+  -C target-feature=+crt-static -C relocation-model=static" \
+  CARGO_TARGET_DIR=target/static cargo build --profile production \
+  --target x86_64-unknown-linux-gnu -p quench-wasm-test --bin coremark --bin run
+```
+
+`RUSTFLAGS` replaces the workspace `build.rustflags`, so it repeats them; the
+explicit `--target` keeps build scripts and proc macros dynamic. Only the C
+runtime functions a run executes are then resident, laid out by the link
+order instead of faulting in shared-library windows. Static builds name
+symbols differently and use `link/x86_64-linux-static.order`, trained the same
+way on the static binary. Their start code would register `.eh_frame` with
+the unwinder, which reads the whole section at startup; `build.rs` resolves
+the registration hooks to null instead (production aborts on panic, and
+backtraces find frames through `PT_GNU_EH_FRAME`). CoreMark on the x86-64
+container: dynamic -no-jit 5.2 MB / -jit 7.6 MB, static 3.5 MB / 6.3 MB.
+A static position-independent build relocates its read-only pointers at
+startup and measured 9.1 MB.
+
+The static `quench-node` keeps its link relocations (`--emit-relocs`, never
+loaded), and qualification rewrites its block layout with `llvm-bolt` (BOLT
+20, Ubuntu `bolt-20`). A symbol order moves whole functions, but a run
+executes about a third of the bytes of the functions it enters, and fault-around
+keeps every 64 KB window it touches resident. `bolt-profile` (`quench-wasm-test`)
+turns the order's callgrind profiles (taken with `--dump-instr=yes
+--dump-line=no`) into a basic-sample profile, so BOLT moves each function's
+executed blocks into hot text, in the trained function order, and the rest into
+cold text. The interpreter's dispatch (`run_frame_general_until`, the lane
+handlers) stays whole (`--dense`): a program reaches whichever blocks its code
+needs. BOLT leaves code not generated from Rust in place (glibc's
+single-thread atomics jump over a `lock` prefix, which BOLT splits), and
+`symbol-order --foreign-first` packs that code at the start of the original
+text. `bolt-profile` reads the symbols of the binary the profiles ran on and
+writes counts per function offset, so the order's training profiles apply to
+the relinked binary: convert them before relinking.
+
+```sh
+target/production/bolt-profile $PROFILED_BINARY bolt --order $ORDER \
+  --dense 13dispatch_fast --dense run_frame_general_until run/*.out*
+# relink with $ORDER, then:
+llvm-bolt $BINARY -o $BINARY-bolt -data=bolt/profile.fdata \
+  -reorder-blocks=ext-tsp -split-functions -split-all-cold \
+  -reorder-functions=user -function-order=bolt/function.order \
+  -skip-funcs-file=bolt/skip.funcs -use-gnu-stack -jump-tables=move
+```
+
+`-jump-tables=move` lays the jump tables of hot code beside it, apart from the cold
+ones: in place, the `match` tables of the dispatch and the compiler sit among
+`.rodata`'s merged constants, and a run kept about 120 KB of them resident (V8-v7
+max RSS, bolted static x86_64, 2026-10-22: 20-160 KB lower on every fixture).
+
+`quench-node` registers its read-only file mappings with userfaultfd for
+asynchronous write protection at start (`resident_pages::map_touched_pages_only`,
+Linux 6.7 `UFFD_FEATURE_WP_ASYNC`): the kernel then skips fault-around in them,
+so a fault maps only the touched page, not its cached 64 KB neighbourhood or
+whole large folio. The mappings are never written, so the registration changes
+nothing else; without the feature they keep fault-around. Resident code is then
+what a run touches, and the block layout above decides how many pages that is.
+Page-cache state matters far less once faults stop mapping neighbours (a
+freshly written binary measured 0.3 MB above the same file evicted, against 8 MB
+with fault-around), but comparisons still evict every binary first
+(`posix_fadvise(POSIX_FADV_DONTNEED)`).
+
+The static build also turns off glibc's per-thread cache and its heap's top padding
+(`glibc.malloc.tcache_count=0:glibc.malloc.top_pad=0`): cached chunks stay unmerged, and
+the heap grew past them by 70–280 KiB per V8-v7 fixture with the default seven per size
+class, and by up to 400 KiB (RegExp) with two. glibc reads its tunables once, before
+any code of the executable runs, so a run whose environment sets no `GLIBC_TUNABLES`
+re-executes itself once from `.preinit_array` with the setting added, and the re-executed
+run removes it and its marker before the guest or a child process can observe the
+environment. An environment that sets `GLIBC_TUNABLES` leaves the allocator to it.
+Valgrind does not follow the re-execution, so profiling and guard runs set
+`GLIBC_TUNABLES=glibc.malloc.tcache_count=0:glibc.malloc.top_pad=0` themselves (`callgrind-guard.sh` does).
+
+Measure peak RSS with a launcher whose own image is small (`vfork`, `exec`,
+`wait4`): a forked interpreter's pre-`exec` image counts toward the child's
+`ru_maxrss`.
+
+The [no-JIT web framework benchmark](web-benchmarks.md) compares Quench, Node
+and Bun using pinned upstream HTTP workloads and retains correctness and runtime
+identity evidence for each framework/runtime combination.

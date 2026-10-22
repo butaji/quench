@@ -1,0 +1,24 @@
+   Compiling quench-node v0.1.0 (/workspace/quench/crates/quench-node)
+   Compiling quench-node-test v0.1.0 (/workspace/quench/crates/quench-node-test)
+    Finished `iteration` profile [optimized] target(s) in 7.13s
+     Running tests/child_entry.rs (work/host-build/iteration/deps/child_entry-0c4d472d0248eb46)
+
+running 15 tests
+test native_buffer_backing_getters_preserve_descriptors_membership_and_original_hooks ... ok
+test native_buffer_bigint_methods_preserve_layout_original_hooks_errors_and_aliases ... ok
+test native_buffer_binding_fill_preserves_statuses_indices_and_shared_byte_policy ... ok
+test native_buffer_constructor_deprecation_follows_original_vm_filenames_and_process_flags ... ok
+test native_buffer_constructor_preserves_calls_species_original_methods_and_warning_identity ... ok
+test native_buffer_fill_preserves_overloads_views_ranges_coercions_and_overlap ... ok
+test native_buffer_from_and_copy_bytes_preserve_conversion_bounds_brands_and_hooks ... ok
+test native_buffer_inspection_preserves_aliases_limits_properties_and_constructor_errors ... ok
+test native_buffer_of_avoids_legacy_warnings_and_preserves_original_coercions ... ok
+test native_buffer_search_matches_node_offsets_bounds_encodings_and_original_hooks ... ok
+test native_buffer_static_comparison_preserves_brands_detachment_metadata_and_byte_order ... ok
+test native_buffer_string_conversion_preserves_bounds_metadata_encodings_and_original_hooks ... ok
+test native_buffer_string_slices_preserve_detached_views_and_original_conversion_errors ... ok
+test native_buffer_swaps_preserve_generic_views_thresholds_aliases_and_backing_identity ... ok
+test native_buffer_write_preserves_overloads_encodings_bounds_backing_and_hooks ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 285 filtered out; finished in 9.22s
+

@@ -1,0 +1,45 @@
+{
+  "scenarios": {
+    "behavior-pass": 260,
+    "declarations-pass": 13,
+    "quench-failed": 26,
+    "oracle-failed": 1
+  },
+  "surface": {
+    "surface-diff": 143,
+    "surface-match-unqualified": 148,
+    "oracle-failed": 9
+  },
+  "callable_paths": 70236,
+  "behavior_checked_paths": 336,
+  "uncovered_paths": 69900,
+  "qualified": false,
+  "source_commit": "9cfb428b8f794b281febc4d002474f7245bb850f",
+  "source_dirty": false,
+  "node_version": "v26.11.1",
+  "node_sha256": "5a7b8a3cf5ccb57d297519754fd73238f64cf560afd0ef19a2f9bf7384cbb657",
+  "quench_sha256": "12730708b74f914e2640e1583f6e12c9f1ae78dd6d60386d0a7241421674f7b6",
+  "inventory_sha256": "d75fd451e8fe84c11eb1e1c0522745ae99a3deed4e03841a3567e147a933e303",
+  "lock_sha256": "62e8fa517a95fd709da2c1ed7bca2ff63cb7b9133d8444ec590f08b680634d4d",
+  "baseline_scenarios": {
+    "behavior-pass": 252,
+    "declarations-pass": 13,
+    "quench-failed": 34,
+    "oracle-failed": 1
+  },
+  "new_scenario_passes": [
+    "jiti",
+    "fast-glob",
+    "require-from-string",
+    "prettier",
+    "playwright",
+    "foreground-child",
+    "@opentelemetry/instrumentation",
+    "globby"
+  ],
+  "scenario_regressions": [],
+  "runtime_tests_passed": 604,
+  "focused_node_tests_passed": 6,
+  "instruction_guard_max_delta_percent": 0.05756882789695572,
+  "guard_completion_passes": 32
+}

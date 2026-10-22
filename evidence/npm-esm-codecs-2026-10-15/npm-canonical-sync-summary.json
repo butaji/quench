@@ -1,0 +1,123 @@
+{
+  "production_source": "faa120035a332d3b5eb232eaadcad1399f306d7d",
+  "fixture_source": "0cc26891e137f6ac14bb36b5c657a27303599b67",
+  "baseline_source": "fcc81c6a09b8ff4fd68e923885c62cdc9542b6bc",
+  "engines": {
+    "candidate": {
+      "source": "faa120035a332d3b5eb232eaadcad1399f306d7d",
+      "sha256": "d6482c1dbf34b2d0045f033404c6e469c916e893b7ceb8c205a610a7ce0681ff"
+    },
+    "baseline": {
+      "source": "fcc81c6a09b8ff4fd68e923885c62cdc9542b6bc",
+      "sha256": "f9fd7eb0579feaf22def17d914847423593eaa19f8802f45841de1c4f8597a8c"
+    },
+    "node": {
+      "version": "26.12.0",
+      "sha256": "caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943"
+    }
+  },
+  "counts": {
+    "scenarios": {
+      "behavior-pass": 273,
+      "declarations-pass": 13,
+      "quench-failed": 13,
+      "oracle-failed": 1
+    },
+    "baseline-scenarios": {
+      "behavior-pass": 268,
+      "declarations-pass": 13,
+      "quench-failed": 18,
+      "oracle-failed": 1
+    },
+    "surface": {
+      "surface-match-unqualified": 218,
+      "surface-diff": 73,
+      "oracle-failed": 9
+    }
+  },
+  "coverage": {
+    "qualified": false,
+    "checked": 464,
+    "total": 70236
+  },
+  "instruction_guard": [
+    {
+      "fixture": "crypto",
+      "runs": 1,
+      "baseline_per_run": 1764158473.0,
+      "candidate_per_run": 1764227364.0,
+      "delta_percent": 0.0039050346697510094
+    },
+    {
+      "fixture": "deltablue",
+      "runs": 10,
+      "baseline_per_run": 267490303.6,
+      "candidate_per_run": 267462224.9,
+      "delta_percent": -0.010497090781270502
+    },
+    {
+      "fixture": "earley-boyer",
+      "runs": 1,
+      "baseline_per_run": 3095448730.0,
+      "candidate_per_run": 3096091947.0,
+      "delta_percent": 0.020779442856415847
+    },
+    {
+      "fixture": "navier-stokes",
+      "runs": 1,
+      "baseline_per_run": 1425010935.0,
+      "candidate_per_run": 1425012764.0,
+      "delta_percent": 0.00012834989227644068
+    },
+    {
+      "fixture": "raytrace",
+      "runs": 3,
+      "baseline_per_run": 902640151.6666666,
+      "candidate_per_run": 901179712.3333334,
+      "delta_percent": -0.16179640697753664
+    },
+    {
+      "fixture": "regexp",
+      "runs": 1,
+      "baseline_per_run": 1771004002.0,
+      "candidate_per_run": 1771457327.0,
+      "delta_percent": 0.025597062428320813
+    },
+    {
+      "fixture": "richards",
+      "runs": 25,
+      "baseline_per_run": 105419946.8,
+      "candidate_per_run": 105420267.12,
+      "delta_percent": 0.0003038514149655676
+    },
+    {
+      "fixture": "splay",
+      "runs": 75,
+      "baseline_per_run": 24571273.213333335,
+      "candidate_per_run": 24568798.14666667,
+      "delta_percent": -0.010073009425182534
+    }
+  ],
+  "exact_guard_completions": 32,
+  "node_api_provenance": {
+    "oracle_path": "/workspace/shared/node-v26.12.0-linux-x64/bin/node",
+    "oracle_version": "v26.12.0",
+    "oracle_sha256": "caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943",
+    "candidate_source": "faa120035a332d3b5eb232eaadcad1399f306d7d",
+    "candidate_sha256": "d6482c1dbf34b2d0045f033404c6e469c916e893b7ceb8c205a610a7ce0681ff",
+    "fixture_source": "0cc26891e137f6ac14bb36b5c657a27303599b67",
+    "test_binary": "/workspace/quench/target/npm-file-url/debug/deps/child_entry-94fd2328f8a45425",
+    "test_sha256": "f180aacc8e9f485d70fa5b015e0e4f30bbfb03fc0ef182642885eb5798b909f0"
+  },
+  "instruction_findings_over_one_percent": [],
+  "total_node_parity": false,
+  "package_performance_phase_started": false,
+  "scenario_gains": [
+    "whatwg-url",
+    "execa",
+    "@typescript-eslint/scope-manager",
+    "jsdom",
+    "@testing-library/dom"
+  ],
+  "scenario_regressions": []
+}

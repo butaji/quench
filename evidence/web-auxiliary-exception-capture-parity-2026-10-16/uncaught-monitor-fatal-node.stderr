@@ -1,0 +1,10 @@
+file:///workspace/quench/tests/node/test/fixtures/uncaught-exceptions/uncaught-monitor2.js:8
+  missingFunction();
+  ^
+
+ReferenceError: missingFunction is not defined
+    at process.<anonymous> (file:///workspace/quench/tests/node/test/fixtures/uncaught-exceptions/uncaught-monitor2.js:8:3)
+    at process.emit (node:events:514:20)
+    at process._fatalException (node:internal/process/execution:178:13)
+
+Node.js v26.12.0

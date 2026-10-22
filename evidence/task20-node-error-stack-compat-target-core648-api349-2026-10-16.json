@@ -1,0 +1,189 @@
+{
+  "scope": "Configured Node stack policy, original SystemError class and genuine bundled-library compatibility target",
+  "source_commit": "6a83bfc0f6b15d5fabfc4ba9e10064676a557415",
+  "latest_stable": "v26.12.0",
+  "checks": {
+    "core648": {
+      "path": "work/node-error-stack-policy/core-default.log",
+      "bytes": 56843,
+      "sha256": "3c3802b16d761115aa5ac478fac6109a13acb18d4313344e92d4bcbeab0fb0c6"
+    },
+    "unchanged_core": {
+      "path": "work/node-error-stack-policy/core648-source-sha256.json",
+      "bytes": 31189,
+      "sha256": "b827aa348fd5cff594640c44d1a1b16e7364efd538b4c2119d27d35eda002c3b"
+    },
+    "api349": {
+      "path": "work/node-error-stack-policy/all-api.log",
+      "bytes": 28489,
+      "sha256": "cdd71ad376b0f825397439d54046d03831bf18cf96dffb75bc948f0d71f700b3"
+    },
+    "targeted": {
+      "path": "work/node-error-stack-policy/final-targeted.log",
+      "bytes": 344,
+      "sha256": "9bec10c5f96a6e581452443e78bf23da4d510abf2d8a21d2f7b5f9ae2b30f463"
+    },
+    "version": {
+      "path": "work/node-error-stack-policy/version-api.log",
+      "bytes": 416,
+      "sha256": "3681ad2f5e03bfdc7beba8e1159fa68d1822f945a090efb8dd9b4c0482f1aecc"
+    },
+    "framework43": {
+      "path": "work/node-error-stack-policy/framework.log",
+      "bytes": 3798,
+      "sha256": "b41881f94821125815bc87efbbbd7d26b13fd072686394014795864fa55f2ae8"
+    },
+    "shared7": {
+      "path": "work/node-error-stack-policy/shared.log",
+      "bytes": 882,
+      "sha256": "01633245aec2c37145b91bb062d5fd4b142c36370faedbf10108f85fe0aa9533"
+    },
+    "workspace": {
+      "path": "work/node-error-stack-policy/workspace.log",
+      "bytes": 212,
+      "sha256": "28e4bd94f87d6b705b2fb29dae3ca90267232ac2603615d014698bc3db908b6a"
+    },
+    "paired": {
+      "path": "work/node-error-stack-policy/integrated-paired-build.log",
+      "bytes": 217,
+      "sha256": "43e2c58b0f514b4b3e1dd19401c95b2499c6137123a30de4dbbef3c9d2d2e4c8"
+    }
+  },
+  "source": {
+    "path": "work/node-error-stack-brand-bin/source-sha256.json",
+    "bytes": 76840,
+    "sha256": "7cca79d2c4ccf0ab45356b2748db956141ec849a4fd348b321a8484cdd7b79d6"
+  },
+  "binaries": {
+    "path": "work/node-error-stack-brand-bin/sha256.txt",
+    "bytes": 331,
+    "sha256": "cbd7f52159f7b51f6adabf00a607550a733ef51c9ab8cf76e0ab22bb781383be"
+  },
+  "oracle": {
+    "path": "work/node-error-stack-policy/final-oracle.log",
+    "bytes": 1309,
+    "sha256": "35c9a7adb3ea6c40343c4331a462945c286d355a363794c5fe1c1a4b68956603"
+  },
+  "candidate": {
+    "path": "work/node-error-stack-policy/final-candidate.log",
+    "bytes": 1309,
+    "sha256": "35c9a7adb3ea6c40343c4331a462945c286d355a363794c5fe1c1a4b68956603"
+  },
+  "symbol_export_poisoning": {
+    "reference": {
+      "path": "work/node-error-stack-policy/brand-export-poison-oracle.log",
+      "bytes": 139,
+      "sha256": "6d22c2850dcf9a04d5891f021d848d114e32ecf3e3298e442c422590d144e635"
+    },
+    "before": {
+      "path": "work/node-error-stack-policy/brand-export-poison-candidate.log",
+      "bytes": 116,
+      "sha256": "7a6cd0ecb153c351c75d7fcce1654f548cccc56c5ee5099383d222384d6de638"
+    },
+    "after": {
+      "path": "work/node-error-stack-policy/brand-export-poison-final.log",
+      "bytes": 139,
+      "sha256": "6d22c2850dcf9a04d5891f021d848d114e32ecf3e3298e442c422590d144e635"
+    }
+  },
+  "restored_originals": {
+    "dgram": {
+      "path": "work/node-error-stack-policy/dgram-final.json",
+      "bytes": 2304,
+      "sha256": "bcd78661e054922a691de3ff90d944dc50465aa6145fd0dfbe16e1d54efe00ad"
+    },
+    "npm": {
+      "path": "work/node-error-stack-policy/npm-final.json",
+      "bytes": 669,
+      "sha256": "27973e95557dcc094a3db13fadd5911e57d38129ffe5f242e930df9059cec7d4"
+    }
+  },
+  "compatibility_target": {
+    "header": {
+      "path": "tests/node/src/node_version.h",
+      "bytes": 4630,
+      "sha256": "6f14117326f9dfd4d8818e9774fe5f6f4aab198e2b1a031736437e359a69e44f"
+    },
+    "version": "26.12.0",
+    "meaning": "Target of actual bundled standard library, independent of Quench engine version; not complete capability parity."
+  },
+  "family": {
+    "counts": {
+      "pass": 51,
+      "timeout": 1,
+      "fail": 1
+    },
+    "total": 53,
+    "inventory": "647b9535ab7f6745",
+    "gained": [],
+    "lost": [],
+    "raw": {
+      "path": "work/node-error-stack-policy/final-family.json",
+      "bytes": 129596,
+      "sha256": "241e6b1330b69c0dc0a2e1127941a666851c4f62c8ecf448b999301e7c85f024"
+    }
+  },
+  "fixed_work": {
+    "valid": 8,
+    "clean": 0,
+    "speed_claim": false,
+    "raw": {
+      "path": "work/node-error-stack-brand-fixed-work.json",
+      "bytes": 153645,
+      "sha256": "b8503233fc28e0a15272870cec1177d8eede4399940cc392dea6ec529d5d9a9f"
+    }
+  },
+  "design": [
+    "Generic Core optional retained host stack-policy callback receives realm global, original error and genuine captured CallSites. Core hosts without the hook preserve existing behavior. Success caches returned value; throws leave captured stack available for retry.",
+    "Node owns policy via ORIGINAL configured prepareStackTraceCallback and public ErrorPrepareStackTrace. Internal override WeakMap dispatch precedes user hook selection; actual private Node error symbol is captured at bootstrap, independent of later export poisoning.",
+    "UDP buffer errors construct actual configured ERR_SOCKET_BUFFER_SIZE class; original context accessors, class identity and inspection algorithm own results. No error-name/constructor spoof.",
+    "Build derives process.version and versions.node from actual bundled src/node_version.h. Rust owns metadata descriptors; duplicated JavaScript version defaults and incorrect freezing removed.",
+    "Normal shared merge198b79e31 includes dense push/pop lane and static linker order; fresh Core648 and API349 qualify combined behavior."
+  ],
+  "controls": {
+    "core_harness_failure": {
+      "path": "work/node-error-stack-policy/core-test-harness-failure.log",
+      "bytes": 57792,
+      "sha256": "31df00e4e24b0e06bfdca861067a5e554c922ce0a04053b082f180a324f3a767"
+    },
+    "descriptor_failure": {
+      "path": "work/node-error-stack-policy/version-descriptor-failure.log",
+      "bytes": 1422,
+      "sha256": "aa7451f17f234d7e1ef926ae4767cc5fc98dc6af0c80e8d84dcd5c841a934352"
+    },
+    "contended_347_of349": {
+      "path": "work/node-error-stack-policy/all-api-overlap-core.log",
+      "bytes": 30027,
+      "sha256": "222995a8fa4488d61a9e28d371e19fc027df5ed5ead19ff6bf4f0a40405511d4"
+    },
+    "child_reference_after_compile": {
+      "path": "work/node-error-stack-policy/child-reference-after-core.log",
+      "bytes": 351,
+      "sha256": "7261510a22c4d061829099efdc51f8af0f3199f545c1a2d78979bac79ca65fd6"
+    },
+    "watch_reference_after_compile": {
+      "path": "work/node-error-stack-policy/watch-reference-after-core.log",
+      "bytes": 339,
+      "sha256": "30047c883b2a6d570702164bcab4d704272bc8c3478b726c0cf4a8200cea5f99"
+    },
+    "source9c_full349": {
+      "path": "work/node-error-stack-policy/all-api-source9c.log",
+      "bytes": 28489,
+      "sha256": "84d0101d9752d103c932d2a366e7ebfb1a828bc90d86af56c77119dd5b71b74e"
+    },
+    "transport_interrupted_api": {
+      "path": "work/node-error-stack-policy/all-api-transport-interrupted.log",
+      "bytes": 10463,
+      "sha256": "3871eb1fba26d9616340451ea11b33d64c53f100108b4f65ce4254f760ba2666"
+    }
+  },
+  "limitations": [
+    "Goal remains open. Completed full totals remain1770/5015stable and1799/4727pinned on older63bb54bdd; newer immutablec4ad full stable/pinned audits are running separately and exclude this source.",
+    "Both previously lost original fixtures pass selected checks; they are not added to full totals. Family remains51/53 with Buffer-vs-Uint8Array backing/pool gap and broadcast waiter timeout.",
+    "Node stack frame filtering/eval APIs remain incomplete. Legacy Buffer.alloc(-1) error message/private brand and native getErrorSourcePositions remain identified gaps, not fabricated.",
+    "Other process version entries/capability facts require independent native conformance; target version does not claim full implementation.",
+    "First full349API run overlapped Core compilation and hit unchanged500/1000ms child/watch deadlines. Failed logs retained; exact controls pass after compiler exit, full349 succeeds without compiler overlap. No deadlines changed.",
+    "Exec-server transport reset terminated intermediate API and full audit before completion. Partial logs are not complete inventory results. Separate-session supervisors now retain actual process state/heartbeat.",
+    "All8fixed-work valid, zero clean rounds; no performance claim."
+  ]
+}

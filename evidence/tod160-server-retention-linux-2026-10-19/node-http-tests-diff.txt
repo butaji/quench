@@ -1,0 +1,3 @@
+base {'pass': 99, 'fail': 625, 'timeout': 46, 'skip': 3}
+cand {'pass': 99, 'fail': 626, 'timeout': 45, 'skip': 3}
+changed test-http-server.js timeout -> fail

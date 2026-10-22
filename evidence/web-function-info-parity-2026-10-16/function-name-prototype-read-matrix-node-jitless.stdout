@@ -1,0 +1,7 @@
+["read-before","anonymous","anonymous"]
+["read-after","anonymous","Object"]
+["descriptor-after","anonymous","anonymous"]
+["read-after-twice","anonymous","Object"]
+["read-inherited","anonymous","Object"]
+["reflect-after","anonymous","anonymous"]
+["ownkeys-after","anonymous","anonymous"]

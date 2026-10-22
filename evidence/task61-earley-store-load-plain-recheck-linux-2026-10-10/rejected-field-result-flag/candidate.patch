@@ -1,0 +1,189 @@
+diff --git a/crates/quench-runtime/src/bytecode.rs b/crates/quench-runtime/src/bytecode.rs
+index b89d651d0..7849c7d7c 100644
+--- a/crates/quench-runtime/src/bytecode.rs
++++ b/crates/quench-runtime/src/bytecode.rs
+@@ -80,8 +80,8 @@ pub(crate) enum ResultLayout {
+     Register,
+     RegisterReadWrite,
+     Returnable,
+-    ReturnableAndThis,
+     NumericReturnable,
++    ReturnableAndThisAndNumeric,
+ }
+ 
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+@@ -286,20 +286,27 @@ impl ResultLayout {
+             Self::Register => NO_RESULT_FLAGS,
+             Self::RegisterReadWrite => NO_RESULT_FLAGS,
+             Self::Returnable => RETURN_REGISTER,
+-            Self::ReturnableAndThis => RETURN_REGISTER | SET_THIS_REGISTER,
+             Self::NumericReturnable => RETURN_REGISTER | NUMERIC_LOCAL_TARGET,
++            Self::ReturnableAndThisAndNumeric => {
++                RETURN_REGISTER | SET_THIS_REGISTER | NUMERIC_LOCAL_TARGET
++            }
+         }
+     }
+ 
+     const fn allows_return(self) -> bool {
+         matches!(
+             self,
+-            Self::Returnable | Self::ReturnableAndThis | Self::NumericReturnable
++            Self::Returnable
++                | Self::NumericReturnable
++                | Self::ReturnableAndThisAndNumeric
+         )
+     }
+ 
+     const fn allows_this_write(self) -> bool {
+-        matches!(self, Self::ReturnableAndThis)
++        matches!(
++            self,
++            Self::ReturnableAndThisAndNumeric
++        )
+     }
+ 
+     pub(crate) const fn reads_result_register(self) -> bool {
+@@ -307,7 +314,10 @@ impl ResultLayout {
+     }
+ 
+     const fn allows_numeric_local(self) -> bool {
+-        matches!(self, Self::NumericReturnable)
++        matches!(
++            self,
++            Self::NumericReturnable | Self::ReturnableAndThisAndNumeric
++        )
+     }
+ }
+ 
+@@ -548,7 +558,7 @@ opcodes!(
+     Await => READ_THROW.union(Effect::CONTROL); layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
+     Yield => READ_THROW.union(Effect::CONTROL); layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
+     YieldStar => READ_THROW.union(Effect::CONTROL); layout RegisterPair, @ RegisterReadWrite, @ fields(ResultRegister, Register, ReadWriteRegister),
+-    GetField => READ_THROW; layout Scalar; meaning FieldLookup, @ ReturnableAndThis, @ fields(ResultRegister, FieldBase, FieldLookupCacheSiteIndex),
++    GetField => READ_THROW; layout Scalar; meaning FieldLookup, @ ReturnableAndThisAndNumeric, @ fields(ResultRegister, FieldBase, FieldLookupCacheSiteIndex),
+     GetIndex => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, NumericIndexOperand, NumericIndexOperand),
+     ToPropertyKey => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
+     ToNumeric => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
+@@ -1374,7 +1384,7 @@ fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16)
+ }
+ 
+ impl ResidualProgram {
+-    pub const FORMAT_VERSION: u8 = 82;
++    pub const FORMAT_VERSION: u8 = 83;
+     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
+         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
+         const FORMAT_VERSION_SHIFT: u32 = 16;
+diff --git a/crates/quench-runtime/src/bytecode/validate.rs b/crates/quench-runtime/src/bytecode/validate.rs
+index 1a31261d7..7d67b4d68 100644
+--- a/crates/quench-runtime/src/bytecode/validate.rs
++++ b/crates/quench-runtime/src/bytecode/validate.rs
+@@ -694,9 +694,11 @@ impl ResidualProgram {
+                         ));
+                     }
+                 }
+-                if instruction.op() == super::Op::Binary
++                if matches!(instruction.op(), super::Op::Binary | super::Op::GetField)
+                     && instruction.numeric_local_target().is_some_and(|slot| {
+-                        function.dispatch != super::DispatchClass::Numeric
++                        let target_needs_plain_proof = instruction.op() == super::Op::GetField
++                            || function.dispatch != super::DispatchClass::Numeric;
++                        target_needs_plain_proof
+                             && !plain_local_slots
+                                 .get(usize::from(slot))
+                                 .copied()
+@@ -704,7 +706,7 @@ impl ResidualProgram {
+                     })
+                 {
+                     return Err(format!(
+-                        "function {index} has an unproven plain-local binary target"
++                        "function {index} has an unproven plain-local result target"
+                     ));
+                 }
+                 if !instruction.result_flags_valid() {
+diff --git a/crates/quench-runtime/src/compile/rewrite.rs b/crates/quench-runtime/src/compile/rewrite.rs
+index 24feb3586..b6b2b7495 100644
+--- a/crates/quench-runtime/src/compile/rewrite.rs
++++ b/crates/quench-runtime/src/compile/rewrite.rs
+@@ -87,6 +87,21 @@ fusion_recipes! {
+                 second.atom_index() as u32,
+             )
+         };
++    GetFieldStoreLocalPlain: [GetField, StoreLocalPlain] =>
++        |mut first: Instr, second: Instr, _: &mut Vec<FieldSite>| {
++            if first.result_flags() != 0
++                || second.register_a() != first.result_register()
++                || second.optional_register_b().is_some()
++            {
++                return None;
++            }
++            let destination = u16::try_from(second.local_slot()).ok()?;
++            if destination > crate::bytecode::REGISTER_MASK {
++                return None;
++            }
++            first.set_result_local_target(destination);
++            Some(first)
++        };
+     ProducerMove: [
+         LoadConst, Move; LoadLocal, Move; LoadEnvLocal, Move; LoadCapture, Move;
+         LoadName, Move; Binary, Move; Unary, Move; GetField, Move; Move, Move
+@@ -499,6 +514,41 @@ mod tests {
+         assert!(apply_recipe(Recipe::BinaryJumpFalse, binary, other, &mut vec![]).is_none());
+     }
+ 
++    #[test]
++    fn field_read_store_fusion_preserves_lookup_and_plain_destination() {
++        let field = Instr::new(Op::GetField, 2, 3, 5, 17);
++        let store = Instr::new(Op::StoreLocalPlain, 2, 0, 0, 9);
++        let fused =
++            apply_recipe(Recipe::GetFieldStoreLocalPlain, field, store, &mut vec![]).unwrap();
++
++        assert_eq!(fused.op(), Op::GetField);
++        assert_eq!(fused.numeric_local_target(), Some(9));
++        assert_eq!((fused.b(), fused.c(), fused.imm()), (3, 5, 17));
++
++        let mismatched = Instr::new(Op::StoreLocalPlain, 4, 0, 0, 9);
++        assert!(
++            apply_recipe(
++                Recipe::GetFieldStoreLocalPlain,
++                field,
++                mismatched,
++                &mut vec![],
++            )
++            .is_none()
++        );
++
++        let mut this_sink = field;
++        this_sink.set_this_result();
++        assert!(
++            apply_recipe(
++                Recipe::GetFieldStoreLocalPlain,
++                this_sink,
++                store,
++                &mut vec![],
++            )
++            .is_none()
++        );
++    }
++
+     fn rewrite_fixture(code: Vec<Instr>, registers: u16) -> Vec<Instr> {
+         let mut program = Engine::specialize_unspecialized("", "rewrite-liveness.js").unwrap();
+         let function = &mut program.functions[0];
+diff --git a/crates/quench-runtime/src/vm/dispatch.rs b/crates/quench-runtime/src/vm/dispatch.rs
+index 23a8b92db..903554fdb 100644
+--- a/crates/quench-runtime/src/vm/dispatch.rs
++++ b/crates/quench-runtime/src/vm/dispatch.rs
+@@ -454,7 +454,13 @@ impl<H: Host> Vm<H> {
+                 if i.returns_from_frame() {
+                     return Ok(StepResult::Return(v));
+                 }
+-                self.write(f, i.result_register(), v);
++                if let Some(local) = i.numeric_local_target() {
++                    // SAFETY: validation proves this target is an uncaptured
++                    // plain local and bounds it by Function.locals.
++                    unsafe { self.write_validated_local(f, usize::from(local), v) };
++                } else {
++                    self.write(f, i.result_register(), v);
++                }
+             }
+             Op::GetIndex => {
+                 #[cfg(feature = "profile-aggregate")]

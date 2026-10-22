@@ -1,0 +1,830 @@
+{
+  "experiment": "RegExp normalization fast-path, production Quench-only alternating pairs",
+  "diagnostic_only": true,
+  "rounds": 11,
+  "source_revision": "7ea19dcaa0491ef3bec7408b19eb7c3cf1b1866c",
+  "source_worktree_status": "M crates/quench-regexp/src/lib.rs",
+  "source_file_sha256": "c61ac68f6fa6de96df775bdda4e72e0576c20ae98bdcea84221b3dbb5dc8a236",
+  "source_diff_sha256": "d4a6e4210b733709a08e6f9ebb58ee555a2ca5a12d8cca1733f343e428815301",
+  "candidate_build": {
+    "command": "CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=target/iteration/task61-regexp-script-property-fast-path-20261009 cargo build --profile production -p quench-node --bin quench-node",
+    "reported_duration_seconds": 61
+  },
+  "host": {
+    "platform": "macOS-26.5-arm64-arm-64bit",
+    "machine": "arm64",
+    "processor": "arm",
+    "python": "3.9.6"
+  },
+  "binary_sha256": {
+    "baseline": "c7b1acaa513ab1fad7dc3e213180d1190139862cacdfe71ffe6efcff9f06aaef",
+    "candidate": "2dd3af65376e83a748c64dc555f0119032f566a9eb3d2bacba3ce58925c551e6"
+  },
+  "input_path": "target/iteration/task61-regexp-profile-20261009/regexp-materialized.js",
+  "input_sha256": "2ec05d15bfdece58aea94cd92b47dcd60ea605787c81f6e50db0c2830f3cbb16",
+  "stdout_parity": {
+    "equal_every_pair": true,
+    "method": "byte-for-byte comparison after removing only harness metadata lines: Score:, __quenchBenchResult:, and ---- separator",
+    "pairs": [
+      {
+        "pair": 1,
+        "equal_everything_except_harness_score_lines": true,
+        "baseline_non_score_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "candidate_non_score_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "baseline_non_score_bytes": 0,
+        "candidate_non_score_bytes": 0
+      },
+      {
+        "pair": 2,
+        "equal_everything_except_harness_score_lines": true,
+        "baseline_non_score_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "candidate_non_score_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "baseline_non_score_bytes": 0,
+        "candidate_non_score_bytes": 0
+      },
+      {
+        "pair": 3,
+        "equal_everything_except_harness_score_lines": true,
+        "baseline_non_score_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "candidate_non_score_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "baseline_non_score_bytes": 0,
+        "candidate_non_score_bytes": 0
+      },
+      {
+        "pair": 4,
+        "equal_everything_except_harness_score_lines": true,
+        "baseline_non_score_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "candidate_non_score_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "baseline_non_score_bytes": 0,
+        "candidate_non_score_bytes": 0
+      },
+      {
+        "pair": 5,
+        "equal_everything_except_harness_score_lines": true,
+        "baseline_non_score_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "candidate_non_score_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "baseline_non_score_bytes": 0,
+        "candidate_non_score_bytes": 0
+      },
+      {
+        "pair": 6,
+        "equal_everything_except_harness_score_lines": true,
+        "baseline_non_score_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "candidate_non_score_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "baseline_non_score_bytes": 0,
+        "candidate_non_score_bytes": 0
+      },
+      {
+        "pair": 7,
+        "equal_everything_except_harness_score_lines": true,
+        "baseline_non_score_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "candidate_non_score_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "baseline_non_score_bytes": 0,
+        "candidate_non_score_bytes": 0
+      },
+      {
+        "pair": 8,
+        "equal_everything_except_harness_score_lines": true,
+        "baseline_non_score_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "candidate_non_score_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "baseline_non_score_bytes": 0,
+        "candidate_non_score_bytes": 0
+      },
+      {
+        "pair": 9,
+        "equal_everything_except_harness_score_lines": true,
+        "baseline_non_score_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "candidate_non_score_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "baseline_non_score_bytes": 0,
+        "candidate_non_score_bytes": 0
+      },
+      {
+        "pair": 10,
+        "equal_everything_except_harness_score_lines": true,
+        "baseline_non_score_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "candidate_non_score_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "baseline_non_score_bytes": 0,
+        "candidate_non_score_bytes": 0
+      },
+      {
+        "pair": 11,
+        "equal_everything_except_harness_score_lines": true,
+        "baseline_non_score_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "candidate_non_score_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "baseline_non_score_bytes": 0,
+        "candidate_non_score_bytes": 0
+      }
+    ]
+  },
+  "summary": {
+    "score": {
+      "baseline_median": 62.9,
+      "candidate_median": 93.2,
+      "median_delta": 30.300000000000004,
+      "median_change_percent": 48.171701112877585,
+      "paired_median_change_percent": 48.64864864864866,
+      "candidate_better_pairs": 11,
+      "pairs": 11,
+      "paired_changes_percent": [
+        50.551181102362186,
+        41.83673469387757,
+        62.652705061082045,
+        52.15999999999998,
+        35.63402889245586,
+        43.44391785150079,
+        51.11111111111111,
+        49.37499999999999,
+        44.21874999999999,
+        37.12,
+        48.64864864864866
+      ]
+    },
+    "instructions_retired": {
+      "baseline_median": 1071656237864,
+      "candidate_median": 729761866525,
+      "median_delta": -341894371339,
+      "median_change_percent": -31.90336222186845,
+      "paired_median_change_percent": -31.904449826109882,
+      "candidate_better_pairs": 11,
+      "pairs": 11,
+      "paired_changes_percent": [
+        -31.904449826109882,
+        -29.94008484793499,
+        -33.913466399061974,
+        -31.923218754609696,
+        -31.89496025333993,
+        -31.812791046808343,
+        -31.926274066310445,
+        -31.909822285091316,
+        -31.90613244080618,
+        -31.89730736950932,
+        -29.94973687750383
+      ]
+    },
+    "maximum_rss_bytes": {
+      "baseline_median": 59457536,
+      "candidate_median": 59293696,
+      "median_delta": -163840,
+      "median_change_percent": -0.27555800496004146,
+      "paired_median_change_percent": 0.33066960595204975,
+      "candidate_better_pairs": 5,
+      "pairs": 11,
+      "paired_changes_percent": [
+        -2.44909190974133,
+        -0.9406073636119339,
+        -1.511134676564152,
+        2.0874471086036683,
+        0.33066960595204975,
+        1.5426997245179042,
+        1.7494356659142118,
+        -0.41390728476821126,
+        -0.35911602209944826,
+        2.3134122831175885,
+        2.731152204836418
+      ]
+    },
+    "time_real_seconds": {
+      "baseline_median": 49.34,
+      "candidate_median": 34.65,
+      "median_delta": -14.690000000000005,
+      "median_change_percent": -29.77300364815566,
+      "paired_median_change_percent": -28.759627077421978,
+      "candidate_better_pairs": 11,
+      "pairs": 11,
+      "paired_changes_percent": [
+        -30.306748466257673,
+        -25.784369652025106,
+        -37.82479584261321,
+        -32.16515609264854,
+        -24.518072289156613,
+        -27.054026503567783,
+        -31.70186839967506,
+        -31.01174531217804,
+        -28.630278063851698,
+        -25.598712014489834,
+        -28.759627077421978
+      ]
+    },
+    "wall_seconds": {
+      "baseline_median": 49.34930870900007,
+      "candidate_median": 34.65262329199993,
+      "median_delta": -14.69668541700014,
+      "median_change_percent": -29.78093473135083,
+      "paired_median_change_percent": -28.763298559461603,
+      "candidate_better_pairs": 11,
+      "pairs": 11,
+      "paired_changes_percent": [
+        -30.31120882245989,
+        -25.777701142645594,
+        -37.83124769323848,
+        -32.16549018298775,
+        -24.507443115525252,
+        -27.062975601293182,
+        -31.70300104093159,
+        -31.0159768224578,
+        -28.63683962776894,
+        -25.581483880510092,
+        -28.763298559461603
+      ]
+    }
+  },
+  "rows": [
+    {
+      "pair": 1,
+      "variant": "baseline",
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-current-screen-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-regexp-profile-20261009/regexp-materialized.js"
+      ],
+      "exit_code": 0,
+      "score": 63.5,
+      "instructions_retired": 1071606221939,
+      "maximum_rss_bytes": 59539456,
+      "time_real_seconds": 48.9,
+      "wall_seconds": 48.91254875,
+      "stdout_path": "target/iteration/task61-regexp-script-property-fast-path-20261009/raw/pair-01-baseline.stdout",
+      "stderr_path": "target/iteration/task61-regexp-script-property-fast-path-20261009/raw/pair-01-baseline.stderr",
+      "stdout_sha256": "f722266538f7679fef70d80dcc6b7a4e32a2adc89f7ec364d12996fece055125",
+      "stderr_sha256": "ffe5aa81706f487faf40da45211407e977087ae6a60acf49d212adc428848baa",
+      "non_score_stdout_sha256": "0081d13bfe5f52a6304aea4c83d3e4e7d27ce8e054d09476e96321d68c9d0740"
+    },
+    {
+      "pair": 1,
+      "variant": "candidate",
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-regexp-script-property-fast-path-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-regexp-profile-20261009/regexp-materialized.js"
+      ],
+      "exit_code": 0,
+      "score": 95.6,
+      "instructions_retired": 729716152527,
+      "maximum_rss_bytes": 58081280,
+      "time_real_seconds": 34.08,
+      "wall_seconds": 34.086563958000006,
+      "stdout_path": "target/iteration/task61-regexp-script-property-fast-path-20261009/raw/pair-01-candidate.stdout",
+      "stderr_path": "target/iteration/task61-regexp-script-property-fast-path-20261009/raw/pair-01-candidate.stderr",
+      "stdout_sha256": "9d7189107ecafbf3e6c61180eb1c263efc3b99ea84058108559e37f8f88384b7",
+      "stderr_sha256": "b952ede65fe3c136eb093c18947d6f387b9f3cf02e1e355181fe8bdc3a408f75",
+      "non_score_stdout_sha256": "09d974b70ba0f2ff33b579626ba6573a773756ee32c77e1a297c081e5d546d44"
+    },
+    {
+      "pair": 2,
+      "variant": "candidate",
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-regexp-script-property-fast-path-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-regexp-profile-20261009/regexp-materialized.js"
+      ],
+      "exit_code": 0,
+      "score": 83.4,
+      "instructions_retired": 750855762753,
+      "maximum_rss_bytes": 60391424,
+      "time_real_seconds": 39.03,
+      "wall_seconds": 39.039608165999994,
+      "stdout_path": "target/iteration/task61-regexp-script-property-fast-path-20261009/raw/pair-02-candidate.stdout",
+      "stderr_path": "target/iteration/task61-regexp-script-property-fast-path-20261009/raw/pair-02-candidate.stderr",
+      "stdout_sha256": "22851692595b42db82ed764c2ad890fe9d1bf054672b6de2ccfd9ed42022b7ed",
+      "stderr_sha256": "7f0872f6905195b365406c5783db812f8cdfea666be0c1dc9b7aaae16f961bf6",
+      "non_score_stdout_sha256": "cccfac56d6f4d8faaf606b3a5f9e64224480607d8fd83412d377c040437dbe64"
+    },
+    {
+      "pair": 2,
+      "variant": "baseline",
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-current-screen-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-regexp-profile-20261009/regexp-materialized.js"
+      ],
+      "exit_code": 0,
+      "score": 58.8,
+      "instructions_retired": 1071733759773,
+      "maximum_rss_bytes": 60964864,
+      "time_real_seconds": 52.59,
+      "wall_seconds": 52.598220166999994,
+      "stdout_path": "target/iteration/task61-regexp-script-property-fast-path-20261009/raw/pair-02-baseline.stdout",
+      "stderr_path": "target/iteration/task61-regexp-script-property-fast-path-20261009/raw/pair-02-baseline.stderr",
+      "stdout_sha256": "820c787c6e2c565230a6f511e8a5c4b553b44dc4d640533eadb3f1841f8c6b3a",
+      "stderr_sha256": "803fb25842b3797fe04beca5d5759b56571e8fd4a4acb484075c146202b5f663",
+      "non_score_stdout_sha256": "de6d85926f11597942b3cf0c17af7d07825332c2a38c3baff11b1b4f1f176d9d"
+    },
+    {
+      "pair": 3,
+      "variant": "baseline",
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-current-screen-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-regexp-profile-20261009/regexp-materialized.js"
+      ],
+      "exit_code": 0,
+      "score": 57.3,
+      "instructions_retired": 1072917107477,
+      "maximum_rss_bytes": 61800448,
+      "time_real_seconds": 53.88,
+      "wall_seconds": 53.8918405,
+      "stdout_path": "target/iteration/task61-regexp-script-property-fast-path-20261009/raw/pair-03-baseline.stdout",
+      "stderr_path": "target/iteration/task61-regexp-script-property-fast-path-20261009/raw/pair-03-baseline.stderr",
+      "stdout_sha256": "b9c436804cfcf220eb4059c17d618569735ed1c60f7215c91dcb15f19471a15b",
+      "stderr_sha256": "05e730f0cbd62ba8ea0680cd68212f39aeabe8c5df056a236edfc15076745e41",
+      "non_score_stdout_sha256": "7a31aefe73b515238b55d87151779d2bb487bc188d302068f651d0f030b3824d"
+    },
+    {
+      "pair": 3,
+      "variant": "candidate",
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-regexp-script-property-fast-path-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-regexp-profile-20261009/regexp-materialized.js"
+      ],
+      "exit_code": 0,
+      "score": 93.2,
+      "instructions_retired": 709053724743,
+      "maximum_rss_bytes": 60866560,
+      "time_real_seconds": 33.5,
+      "wall_seconds": 33.50388483399999,
+      "stdout_path": "target/iteration/task61-regexp-script-property-fast-path-20261009/raw/pair-03-candidate.stdout",
+      "stderr_path": "target/iteration/task61-regexp-script-property-fast-path-20261009/raw/pair-03-candidate.stderr",
+      "stdout_sha256": "3d44c1c369bd810a10fed6842f24bb57e60fa8eb94365e49418a65bd3b648324",
+      "stderr_sha256": "b307c55bc3f87c048a82c10c13b837ac228e361a00522ec1f9863113066d9fd4",
+      "non_score_stdout_sha256": "0de32393b836e4b5f4606a3ef2d90e6f295c2fc6cca247faff99abaea4e9630e"
+    },
+    {
+      "pair": 4,
+      "variant": "candidate",
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-regexp-script-property-fast-path-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-regexp-profile-20261009/regexp-materialized.js"
+      ],
+      "exit_code": 0,
+      "score": 95.1,
+      "instructions_retired": 729761866525,
+      "maximum_rss_bytes": 59293696,
+      "time_real_seconds": 33.68,
+      "wall_seconds": 33.68750629200002,
+      "stdout_path": "target/iteration/task61-regexp-script-property-fast-path-20261009/raw/pair-04-candidate.stdout",
+      "stderr_path": "target/iteration/task61-regexp-script-property-fast-path-20261009/raw/pair-04-candidate.stderr",
+      "stdout_sha256": "a41302382ad94684a94458ab5634d47824d09e7cb930affb1eb9c09d1a471173",
+      "stderr_sha256": "e053a7d66ce4c60a2de07d1dcd2f79f60a7edbe7598a99e4ac4864bad4d8e3f0",
+      "non_score_stdout_sha256": "6a01bef00bd599ed9fe30721d0befa2fe2e06b4a01f3ffe96009baa545022b60"
+    },
+    {
+      "pair": 4,
+      "variant": "baseline",
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-current-screen-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-regexp-profile-20261009/regexp-materialized.js"
+      ],
+      "exit_code": 0,
+      "score": 62.5,
+      "instructions_retired": 1071968816937,
+      "maximum_rss_bytes": 58081280,
+      "time_real_seconds": 49.65,
+      "wall_seconds": 49.661310125,
+      "stdout_path": "target/iteration/task61-regexp-script-property-fast-path-20261009/raw/pair-04-baseline.stdout",
+      "stderr_path": "target/iteration/task61-regexp-script-property-fast-path-20261009/raw/pair-04-baseline.stderr",
+      "stdout_sha256": "8437e94d5b518e89997c5304fe9f85f97e9f3511a78bc1a69ad647e95496eadc",
+      "stderr_sha256": "2cf779cc4f7bc63f38aa3734a15f038cbef24a70c442a754274b9f16100f6d27",
+      "non_score_stdout_sha256": "d95a35884c493482adb334f6cecdae4d8137ee0ebbd7bbb2ebf1a6fbf4e946a8"
+    },
+    {
+      "pair": 5,
+      "variant": "baseline",
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-current-screen-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-regexp-profile-20261009/regexp-materialized.js"
+      ],
+      "exit_code": 0,
+      "score": 62.3,
+      "instructions_retired": 1072153951213,
+      "maximum_rss_bytes": 59457536,
+      "time_real_seconds": 49.8,
+      "wall_seconds": 49.804203125000015,
+      "stdout_path": "target/iteration/task61-regexp-script-property-fast-path-20261009/raw/pair-05-baseline.stdout",
+      "stderr_path": "target/iteration/task61-regexp-script-property-fast-path-20261009/raw/pair-05-baseline.stderr",
+      "stdout_sha256": "ed0c2e960dd08c3d2183b48a229819a3e2524eaf2be3320db4aa706e4871e85d",
+      "stderr_sha256": "cf01ff2cb6a1b60203d9c9ec3d777fdaff8d397e0f730128ae562bf89790e928",
+      "non_score_stdout_sha256": "1953f42081a965a709557764184de43b9705b8515c81ae91b4d5eeba29512ff4"
+    },
+    {
+      "pair": 5,
+      "variant": "candidate",
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-regexp-script-property-fast-path-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-regexp-profile-20261009/regexp-materialized.js"
+      ],
+      "exit_code": 0,
+      "score": 84.5,
+      "instructions_retired": 730190874619,
+      "maximum_rss_bytes": 59654144,
+      "time_real_seconds": 37.59,
+      "wall_seconds": 37.59846637499999,
+      "stdout_path": "target/iteration/task61-regexp-script-property-fast-path-20261009/raw/pair-05-candidate.stdout",
+      "stderr_path": "target/iteration/task61-regexp-script-property-fast-path-20261009/raw/pair-05-candidate.stderr",
+      "stdout_sha256": "ab3fd39bb924ace6f5b34138d19fb7a5c78597d48467226e94795034c8005b93",
+      "stderr_sha256": "5eb4d840336f877fc193150c5fb257a99f1562fe4b40f0fa9a90f847210d0dc4",
+      "non_score_stdout_sha256": "a5da00dbf2d2e8072be3e06b124303254209dc4d127b3ffa74fe14408248e703"
+    },
+    {
+      "pair": 6,
+      "variant": "candidate",
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-regexp-script-property-fast-path-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-regexp-profile-20261009/regexp-materialized.js"
+      ],
+      "exit_code": 0,
+      "score": 90.8,
+      "instructions_retired": 730707824795,
+      "maximum_rss_bytes": 60391424,
+      "time_real_seconds": 35.78,
+      "wall_seconds": 35.783195250000006,
+      "stdout_path": "target/iteration/task61-regexp-script-property-fast-path-20261009/raw/pair-06-candidate.stdout",
+      "stderr_path": "target/iteration/task61-regexp-script-property-fast-path-20261009/raw/pair-06-candidate.stderr",
+      "stdout_sha256": "1eb8d0f5f28b089ba560ed73447f07f33b5f3e6fbd7cb29c0ab861fe4f8625b2",
+      "stderr_sha256": "8b52c666ce6cfa802def3e765a6e5a53b96f72e39c0393d7a89b82880e0fe7bf",
+      "non_score_stdout_sha256": "23aaab3ed8758ef2a99930de71baaa517885a7a5dac196850c7b086ccbe61d8c"
+    },
+    {
+      "pair": 6,
+      "variant": "baseline",
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-current-screen-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-regexp-profile-20261009/regexp-materialized.js"
+      ],
+      "exit_code": 0,
+      "score": 63.3,
+      "instructions_retired": 1071620082436,
+      "maximum_rss_bytes": 59473920,
+      "time_real_seconds": 49.05,
+      "wall_seconds": 49.06039908399998,
+      "stdout_path": "target/iteration/task61-regexp-script-property-fast-path-20261009/raw/pair-06-baseline.stdout",
+      "stderr_path": "target/iteration/task61-regexp-script-property-fast-path-20261009/raw/pair-06-baseline.stderr",
+      "stdout_sha256": "7315afabbd165a63c1970900d7052a3cd640c025acf5023fa11e874c6dd197f1",
+      "stderr_sha256": "7da7717d48fefd73e3bc7802b2f840977f942cb036c2c7a0fe95fcf388f68438",
+      "non_score_stdout_sha256": "10bae2523ffac43d5e28359422d7d175a6fb5e10270dc5cc1d1280f9604d931d"
+    },
+    {
+      "pair": 7,
+      "variant": "baseline",
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-current-screen-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-regexp-profile-20261009/regexp-materialized.js"
+      ],
+      "exit_code": 0,
+      "score": 63.0,
+      "instructions_retired": 1071888059265,
+      "maximum_rss_bytes": 58064896,
+      "time_real_seconds": 49.24,
+      "wall_seconds": 49.24809333299993,
+      "stdout_path": "target/iteration/task61-regexp-script-property-fast-path-20261009/raw/pair-07-baseline.stdout",
+      "stderr_path": "target/iteration/task61-regexp-script-property-fast-path-20261009/raw/pair-07-baseline.stderr",
+      "stdout_sha256": "430c7c8cd70d9e9d3f68a871200eb2ab423c55919e408c2a9809676ab83c5e0b",
+      "stderr_sha256": "77b2448f968f4cd5bcf139c8899c5f3c4f6f0b06b248da17d3c49a7d3cb73a91",
+      "non_score_stdout_sha256": "39cbb7ac6239f9d05c05f77e70baf12999f55e492ee4804cba478635456a6857"
+    },
+    {
+      "pair": 7,
+      "variant": "candidate",
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-regexp-script-property-fast-path-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-regexp-profile-20261009/regexp-materialized.js"
+      ],
+      "exit_code": 0,
+      "score": 95.2,
+      "instructions_retired": 729674139780,
+      "maximum_rss_bytes": 59080704,
+      "time_real_seconds": 33.63,
+      "wall_seconds": 33.634969791,
+      "stdout_path": "target/iteration/task61-regexp-script-property-fast-path-20261009/raw/pair-07-candidate.stdout",
+      "stderr_path": "target/iteration/task61-regexp-script-property-fast-path-20261009/raw/pair-07-candidate.stderr",
+      "stdout_sha256": "c6f26cc9c38157b57b421aa96029b2b9b24a53ffc36d363762087bb7c8eba6a9",
+      "stderr_sha256": "31dedb10f947814d48019dc856a0181af4a6e2731fae9c42700bd886d50a6e95",
+      "non_score_stdout_sha256": "b3f9f60484f16fd0e7f515070bf975ca323de957357c643824bbd23625ebd2e5"
+    },
+    {
+      "pair": 8,
+      "variant": "candidate",
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-regexp-script-property-fast-path-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-regexp-profile-20261009/regexp-materialized.js"
+      ],
+      "exit_code": 0,
+      "score": 95.6,
+      "instructions_retired": 729595866842,
+      "maximum_rss_bytes": 59129856,
+      "time_real_seconds": 33.48,
+      "wall_seconds": 33.48332987499998,
+      "stdout_path": "target/iteration/task61-regexp-script-property-fast-path-20261009/raw/pair-08-candidate.stdout",
+      "stderr_path": "target/iteration/task61-regexp-script-property-fast-path-20261009/raw/pair-08-candidate.stderr",
+      "stdout_sha256": "9d7189107ecafbf3e6c61180eb1c263efc3b99ea84058108559e37f8f88384b7",
+      "stderr_sha256": "f3ff8bf2163272c4982770e33c89a6f38e27189439bc6a59c671ff5ed0837ba8",
+      "non_score_stdout_sha256": "09d974b70ba0f2ff33b579626ba6573a773756ee32c77e1a297c081e5d546d44"
+    },
+    {
+      "pair": 8,
+      "variant": "baseline",
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-current-screen-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-regexp-profile-20261009/regexp-materialized.js"
+      ],
+      "exit_code": 0,
+      "score": 64.0,
+      "instructions_retired": 1071514117494,
+      "maximum_rss_bytes": 59375616,
+      "time_real_seconds": 48.53,
+      "wall_seconds": 48.53780387500001,
+      "stdout_path": "target/iteration/task61-regexp-script-property-fast-path-20261009/raw/pair-08-baseline.stdout",
+      "stderr_path": "target/iteration/task61-regexp-script-property-fast-path-20261009/raw/pair-08-baseline.stderr",
+      "stdout_sha256": "ea6267940f329998fe508d06258e4c14f25703bfdf6bfcbe55da819d939937b0",
+      "stderr_sha256": "c9e202140e249e1419d79bbbf7733fa98da29f965809d8d977a53635e3985b66",
+      "non_score_stdout_sha256": "82839963729efb627c78d268fa4eaaf9b1b427d28de3e843754b39e781fba293"
+    },
+    {
+      "pair": 9,
+      "variant": "baseline",
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-current-screen-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-regexp-profile-20261009/regexp-materialized.js"
+      ],
+      "exit_code": 0,
+      "score": 64.0,
+      "instructions_retired": 1071552975787,
+      "maximum_rss_bytes": 59310080,
+      "time_real_seconds": 48.55,
+      "wall_seconds": 48.55813995799997,
+      "stdout_path": "target/iteration/task61-regexp-script-property-fast-path-20261009/raw/pair-09-baseline.stdout",
+      "stderr_path": "target/iteration/task61-regexp-script-property-fast-path-20261009/raw/pair-09-baseline.stderr",
+      "stdout_sha256": "ea6267940f329998fe508d06258e4c14f25703bfdf6bfcbe55da819d939937b0",
+      "stderr_sha256": "5b4b59c55837f11b7f8c0656aa75d1fbf9db6ea906e48c77a47c52b1fa021ec5",
+      "non_score_stdout_sha256": "82839963729efb627c78d268fa4eaaf9b1b427d28de3e843754b39e781fba293"
+    },
+    {
+      "pair": 9,
+      "variant": "candidate",
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-regexp-script-property-fast-path-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-regexp-profile-20261009/regexp-materialized.js"
+      ],
+      "exit_code": 0,
+      "score": 92.3,
+      "instructions_retired": 729661864159,
+      "maximum_rss_bytes": 59097088,
+      "time_real_seconds": 34.65,
+      "wall_seconds": 34.65262329199993,
+      "stdout_path": "target/iteration/task61-regexp-script-property-fast-path-20261009/raw/pair-09-candidate.stdout",
+      "stderr_path": "target/iteration/task61-regexp-script-property-fast-path-20261009/raw/pair-09-candidate.stderr",
+      "stdout_sha256": "ea8acf3ba7f52ffad58350b6f513c7c0215951c70f039b5980e0608e7975ee0d",
+      "stderr_sha256": "06ae5a6b64dfd412103c880329f570b25bd466feecab778ec1338b03fb5cb5f4",
+      "non_score_stdout_sha256": "fa60724e34f5ebd99c3d1b3c4fdc67bd75bf443d54ef675ad518ed58b498762c"
+    },
+    {
+      "pair": 10,
+      "variant": "candidate",
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-regexp-script-property-fast-path-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-regexp-profile-20261009/regexp-materialized.js"
+      ],
+      "exit_code": 0,
+      "score": 85.7,
+      "instructions_retired": 729826753728,
+      "maximum_rss_bytes": 60866560,
+      "time_real_seconds": 36.97,
+      "wall_seconds": 36.98165529200003,
+      "stdout_path": "target/iteration/task61-regexp-script-property-fast-path-20261009/raw/pair-10-candidate.stdout",
+      "stderr_path": "target/iteration/task61-regexp-script-property-fast-path-20261009/raw/pair-10-candidate.stderr",
+      "stdout_sha256": "0a52e703854f04c4f5397b6f39d9d7485aef694f49ec8ec872f173b861d12cfd",
+      "stderr_sha256": "f1cf8dbb0e38e3abb2ba194079f09e017f90e6e084d24824ba6d12423f2a1dbf",
+      "non_score_stdout_sha256": "cf5011f836fc824f99976e08a56fbee3a9937fc331aa1ce5aad154a8e8bf0138"
+    },
+    {
+      "pair": 10,
+      "variant": "baseline",
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-current-screen-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-regexp-profile-20261009/regexp-materialized.js"
+      ],
+      "exit_code": 0,
+      "score": 62.5,
+      "instructions_retired": 1071656237864,
+      "maximum_rss_bytes": 59490304,
+      "time_real_seconds": 49.69,
+      "wall_seconds": 49.69415841700004,
+      "stdout_path": "target/iteration/task61-regexp-script-property-fast-path-20261009/raw/pair-10-baseline.stdout",
+      "stderr_path": "target/iteration/task61-regexp-script-property-fast-path-20261009/raw/pair-10-baseline.stderr",
+      "stdout_sha256": "8437e94d5b518e89997c5304fe9f85f97e9f3511a78bc1a69ad647e95496eadc",
+      "stderr_sha256": "aad17e1b49c278d7a6e751c4b257df490104fbe606f387cfcc73ad99b4603b4a",
+      "non_score_stdout_sha256": "d95a35884c493482adb334f6cecdae4d8137ee0ebbd7bbb2ebf1a6fbf4e946a8"
+    },
+    {
+      "pair": 11,
+      "variant": "baseline",
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-current-screen-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-regexp-profile-20261009/regexp-materialized.js"
+      ],
+      "exit_code": 0,
+      "score": 62.9,
+      "instructions_retired": 1071441341196,
+      "maximum_rss_bytes": 57589760,
+      "time_real_seconds": 49.34,
+      "wall_seconds": 49.34930870900007,
+      "stdout_path": "target/iteration/task61-regexp-script-property-fast-path-20261009/raw/pair-11-baseline.stdout",
+      "stderr_path": "target/iteration/task61-regexp-script-property-fast-path-20261009/raw/pair-11-baseline.stderr",
+      "stdout_sha256": "9fcd227ab786346a29e888de97948f30e017f1707042faacbd4344550cd2a66f",
+      "stderr_sha256": "271bf07531e724bbdc256f9c8479483173c46a9c97e81b85cb2b57f3137cab1a",
+      "non_score_stdout_sha256": "a7cfea9c4d5e718b92198b2dc0bd55f0bf22e1f918144a2b071a5ab1d847d7fa"
+    },
+    {
+      "pair": 11,
+      "variant": "candidate",
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-regexp-script-property-fast-path-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-regexp-profile-20261009/regexp-materialized.js"
+      ],
+      "exit_code": 0,
+      "score": 93.5,
+      "instructions_retired": 750547478711,
+      "maximum_rss_bytes": 59162624,
+      "time_real_seconds": 35.15,
+      "wall_seconds": 35.15481970799999,
+      "stdout_path": "target/iteration/task61-regexp-script-property-fast-path-20261009/raw/pair-11-candidate.stdout",
+      "stderr_path": "target/iteration/task61-regexp-script-property-fast-path-20261009/raw/pair-11-candidate.stderr",
+      "stdout_sha256": "4405540b8b8983b3a89083b2a1bc46a554ca057fb5dd15578ad88220cda129ed",
+      "stderr_sha256": "8d3954dc146371ddb378b0f0b0f4a33928ae3e02212ec640add6928c4310dd5b",
+      "non_score_stdout_sha256": "0af9d69fed0f832a64e37604bed6241278020bd3ee79f33a152041c3f463613d"
+    }
+  ],
+  "schema": 1,
+  "task": "61",
+  "decision": "retain: the borrowed normalization fast path improved the full RegExp fixture in all 11 production pairs; this is a focused fixture result, not Task 61 qualification",
+  "change": [
+    "Return a borrowed pattern when it contains no Unicode-script property syntax.",
+    "Skip script alias range construction unless an alias occurs in the pattern.",
+    "Lazily allocate the normalized pattern only when an exact supported property escape is replaced."
+  ],
+  "profile_attribution": {
+    "binary_sha256": "9dd8155a28d572cf892bb824189819f4acc0fad0bd8cc2e300ec109f6d27b9af",
+    "input_sha256": "2ec05d15bfdece58aea94cd92b47dcd60ea605787c81f6e50db0c2830f3cbb16",
+    "sample_sha256": "18534a7b0e7aa8bb1dd88b6f311e0367b4ad50257efc3ab7bcae9d74c0645431",
+    "sample_path": "target/iteration/task61-regexp-profile-20261009/regexp.sample.txt",
+    "top_self_samples": {
+      "StrSearcher::new": 344,
+      "_xzm_free": 317,
+      "Regex::find_from_utf16": 197,
+      "_platform_memmove": 169,
+      "object_property_slot": 162,
+      "shape_attribute": 120,
+      "match_expr_with": 113,
+      "own_property": 93
+    },
+    "attribution": "The StrSearcher::new samples were attributed to normalize_new_unicode_scripts scanning and replacing during regexp compilation. This change targets that measured path."
+  },
+  "correctness": {
+    "quench_regexp_unit_tests": {
+      "passed": 10,
+      "failed": 0,
+      "command": "CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=target/iteration/task61-regexp-script-property-fast-path-20261009 cargo test -p quench-regexp"
+    },
+    "test262": {
+      "stages": "64-70",
+      "passed": 3681,
+      "failed": 0,
+      "report": "target/iteration/task61-regexp-script-property-fast-path-20261009/test262-stages64-70.json",
+      "report_sha256": "20133895fc933ed14162af78a105d361c5b9d6feb248bdce9b1da5cd32717baf"
+    },
+    "production_runs": "All 22 baseline/candidate invocations exited successfully. No guest output was emitted by the fixture; stdout consisted only of benchmark score metadata."
+  },
+  "artifacts": {
+    "pair_report_path": "target/iteration/task61-regexp-script-property-fast-path-20261009/regexp-ab-11-pairs.json",
+    "pair_report_sha256": "b77e6e880fb0a78ad4024a0b481c6d5b60db89d51695697abf23cca2593f7f2d",
+    "driver_path": "target/iteration/task61-regexp-script-property-fast-path-20261009/run-regexp-ab.py",
+    "driver_sha256": "ca53b60357474327d9a60d7ffbac1e3780a45cdeb1f3d13cfffab75e0ee7ec22",
+    "test262_runner_sha256": "b80f912173af0314397623d61c876afe8ae481e03b868891ed959ffcdff97d9f"
+  }
+}

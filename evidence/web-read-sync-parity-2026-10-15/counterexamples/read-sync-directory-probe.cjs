@@ -1,0 +1,1 @@
+const fs=require('node:fs'),out=[],fd=fs.openSync('/tmp','r');try{for(const position of [null,0,2**32,2n**40n])try{out.push(['value',fs.readSync(fd,Buffer.alloc(1),0,1,position)])}catch(e){out.push([e.name,e.code,e.syscall,e.message])}}finally{fs.closeSync(fd)}console.log(JSON.stringify(out));

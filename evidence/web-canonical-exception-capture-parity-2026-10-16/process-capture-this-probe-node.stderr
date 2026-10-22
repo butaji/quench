@@ -1,0 +1,9 @@
+/workspace/quench/work/process-capture-this-probe.cjs:3
+p.setUncaughtExceptionCaptureCallback(function (error) { console.log(JSON.stringify([this === p, Object.keys(this), this.captureFn === arguments.callee, error.message])); });
+                                                                                                                                                 ^
+
+TypeError: 'caller', 'callee', and 'arguments' properties may not be accessed on strict mode functions or the arguments objects for calls to them
+    at Object.captureFn (/workspace/quench/work/process-capture-this-probe.cjs:3:146)
+    at process._fatalException (node:internal/process/execution:181:29)
+
+Node.js v26.12.0

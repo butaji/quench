@@ -1,0 +1,36 @@
+method public isLatin1 1 true true true true
+public 0 true
+public 5 true
+public 4 true
+public 1 false
+public 1 false
+public 1 false
+public 1 false
+public 2 false
+public 3 true
+public 400 true
+method binding isLatin1 0 false true true true
+binding 0 true
+binding 5 true
+binding 4 true
+binding 1 false
+binding 1 false
+binding 1 false
+binding 1 false
+binding 2 false
+binding 3 true
+binding 400 true
+invalid TypeError ERR_INVALID_ARG_TYPE The "input" argument must be of type string. Received undefined
+invalid TypeError ERR_INVALID_ARG_TYPE The "input" argument must be of type string. Received null
+invalid TypeError ERR_INVALID_ARG_TYPE The "input" argument must be of type string. Received type number (1)
+invalid TypeError ERR_INVALID_ARG_TYPE The "input" argument must be of type string. Received type bigint (1n)
+invalid TypeError ERR_INVALID_ARG_TYPE The "input" argument must be of type string. Received type boolean (true)
+invalid TypeError ERR_INVALID_ARG_TYPE The "input" argument must be of type string. Received an instance of Object
+invalid TypeError ERR_INVALID_ARG_TYPE The "input" argument must be of type string. Received an instance of Array
+invalid TypeError ERR_INVALID_ARG_TYPE The "input" argument must be of type string. Received type symbol (Symbol(a))
+invalid TypeError ERR_INVALID_ARG_TYPE The "input" argument must be of type string. Received an instance of Buffer
+invalid TypeError ERR_INVALID_ARG_TYPE The "input" argument must be of type string. Received an instance of Uint8Array
+invalid TypeError ERR_INVALID_ARG_TYPE The "input" argument must be of type string. Received an instance of ArrayBuffer
+invalid TypeError ERR_INVALID_ARG_TYPE The "input" argument must be of type string. Received an instance of String
+invalid TypeError ERR_INVALID_ARG_TYPE The "input" argument must be of type string. Received an instance of Object
+coercions 0

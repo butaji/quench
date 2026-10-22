@@ -1,0 +1,388 @@
+{
+  "schema": 1,
+  "task": "21",
+  "kind": "affected_shared_node_requalification",
+  "run_date": "2026-10-06",
+  "source_revision": "b4b3ca277daf0edb739129fc4315f3ffd5dfb9ac",
+  "source_state": "Historical dirty-worktree snapshot; hashes bind the reported reruns to their captured bytes. Superseded by task21-web-stream-bridge-2026-10-06-current.json and task21-framework-core-shared-2026-10-06-current.json.",
+  "source_snapshot": {
+    "roots": [
+      "crates/quench-node/src",
+      "crates/quench-node-test/src",
+      "crates/quench-runtime-next/src",
+      "crates/quench-runtime/src",
+      "vendor/oxc-parser-next/src"
+    ],
+    "file_count": 1286,
+    "sha256": "9a45e530ec3bccf65ea8f3ae1a5a6b5347dba1ff5d08831fec5bac231c32761a",
+    "digest_method": "SHA-256 over sorted repository-relative path, NUL, file SHA-256, newline records"
+  },
+  "inventory": {
+    "path": "tasks/node-compat-inventory.json",
+    "sha256": "8f020f2f1d60422c39ba0955738789f352e825fffc7f8bb5a4008e20b6f67a0b",
+    "included_assertions": 813,
+    "pending_assertions": 741,
+    "excluded_assertions": 40
+  },
+  "suite": {
+    "path": "tests/node/test/parallel",
+    "submodule_revision": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+    "manifest": "crates/quench-node-test/node-tests/parallel.txt",
+    "manifest_sha256": "d47175407ceaa053849a37287625808115efa03efa5c1e7a05672b579b25ce7e"
+  },
+  "runners": {
+    "parallel": {
+      "path": "target/iteration/run-parallel-next",
+      "sha256": "0a6616f89f6fb6934b65d292e30e435dee0be1ebf4c49821708778b01d784a6b"
+    },
+    "node": {
+      "path": "target/iteration/quench-node-next",
+      "sha256": "13ec7c79ba2cf68bb2aa26bb137e95d7b56406edeb2076694a1f500c6bb01978"
+    }
+  },
+  "runs": [
+    {
+      "selection": "framework-core",
+      "command": "cargo run --quiet --profile iteration -p quench-node-test --bin run-parallel-next -- --profile framework-core --timeout-secs 30",
+      "engine": "shared VM",
+      "result": {
+        "pass": 26,
+        "skip": 0,
+        "fail": 0,
+        "timeout": 0,
+        "crash": 0,
+        "unclassified": 0,
+        "total": 26
+      },
+      "cases": [
+        {
+          "path": "tests/node/test/parallel/test-http-methods.js",
+          "sha256": "8f002f7fd5486e2923715290ac40578fd5320eb677aeec121d47350551fa8cbd",
+          "status": "pass"
+        },
+        {
+          "path": "tests/node/test/parallel/test-stream-auto-destroy.js",
+          "sha256": "ce70ab3322951b022ffad201832c068cb35d225bdd7b2ca4b5560e71790e95c2",
+          "status": "pass"
+        },
+        {
+          "path": "tests/node/test/parallel/test-readable-from.js",
+          "sha256": "81a800f5e3d73933d110e9578b3bf31776e814c73b472910ec34e20bfd3b5124",
+          "status": "pass"
+        },
+        {
+          "path": "tests/node/test/parallel/test-path-extname.js",
+          "sha256": "923a9c4d615770ea3aa054756d21046c17883d350fe53dc7dad22ae65bb24048",
+          "status": "pass"
+        },
+        {
+          "path": "tests/node/test/parallel/test-path-join.js",
+          "sha256": "ee432aef91fdd4e58c91a9d511e31607727fc9f29ee27a1ddfff788db47dd6ff",
+          "status": "pass"
+        },
+        {
+          "path": "tests/node/test/parallel/test-path-normalize.js",
+          "sha256": "334d57232e4a7201b86c41b6220882d2d6d1d52e480699e87cb6a9ce7c633264",
+          "status": "pass"
+        },
+        {
+          "path": "tests/node/test/parallel/test-path-resolve.js",
+          "sha256": "0154a0781d8a3ba011e629d04b224aafe0b95af6cff8afdb7ba4a1e68d79b1e2",
+          "status": "pass"
+        },
+        {
+          "path": "tests/node/test/parallel/test-util-inherits.js",
+          "sha256": "d0a116a7004a87b5575e188abc5f8f42a7dd50de15e5cb3d711865c91e7db114",
+          "status": "pass"
+        },
+        {
+          "path": "tests/node/test/parallel/test-buffer-tostring.js",
+          "sha256": "bad5178a40c2718201d94973026f5f454b74794398e0ce21265d3cd902104c09",
+          "status": "pass"
+        },
+        {
+          "path": "tests/node/test/parallel/test-string-decoder.js",
+          "sha256": "f556e3745ae83dd118dc38f740fcf23da9b8db9a2c7c301d1938e38f97884393",
+          "status": "pass"
+        },
+        {
+          "path": "tests/node/test/parallel/test-event-emitter-get-max-listeners.js",
+          "sha256": "8c1e179c08ca0565afe0fdf71b7ea68a573a0f67403936d476eb5bf969793a83",
+          "status": "pass"
+        },
+        {
+          "path": "tests/node/test/parallel/test-event-emitter-once.js",
+          "sha256": "0eaa75b1102a47f307f9004a60fb9a48b0968e94a4e484e07436228abc4241fd",
+          "status": "pass"
+        },
+        {
+          "path": "tests/node/test/parallel/test-diagnostics-channel-has-subscribers.js",
+          "sha256": "f45355d6191bbbcef10fa8693727c0db02bf5e8505f87e05b1ada609fa9c67f6",
+          "status": "pass"
+        },
+        {
+          "path": "tests/node/test/parallel/test-diagnostics-channel-object-channel-pub-sub.js",
+          "sha256": "80ec1039fa620286f417ea7cf2aa994e24e9985b25d3a30528796806d1f85dca",
+          "status": "pass"
+        },
+        {
+          "path": "tests/node/test/parallel/test-diagnostics-channel-tracing-channel-sync-run-stores.js",
+          "sha256": "3d54d2674fcc699f81cdc3da8d5deaf0c805a9e745cb8184684acb82eb0b2e13",
+          "status": "pass"
+        },
+        {
+          "path": "tests/node/test/parallel/test-http-automatic-headers.js",
+          "sha256": "d2609d4f489072c05656a1e9c13e6ab67fd447480557075bc97f5a36e08d3b57",
+          "status": "pass"
+        },
+        {
+          "path": "tests/node/test/parallel/test-http-content-length.js",
+          "sha256": "e186764239b92c15d0fc1e4c7779cdf51c0920e48d05ebd116919121fb1c6aed",
+          "status": "pass"
+        },
+        {
+          "path": "tests/node/test/parallel/test-http-write-head.js",
+          "sha256": "3cbf91eb1a9ed7a427fc7cb0295ae08ae92d123e7d31279ad5c52cdfd0446c38",
+          "status": "pass"
+        },
+        {
+          "path": "tests/node/test/parallel/test-fs-read-stream-resume.js",
+          "sha256": "10a15e6f5519a5d656112baa16f78d1d5c0c93e66321fa6dd138e3b8576c49b0",
+          "status": "pass"
+        },
+        {
+          "path": "tests/node/test/parallel/test-stream-pipe-flow.js",
+          "sha256": "c4fa2e99f48622811e592d0363687731b1f13d87f59e4bdc928b1c473c5f48f8",
+          "status": "pass"
+        },
+        {
+          "path": "tests/node/test/parallel/test-async-hooks-run-in-async-scope-this-arg.js",
+          "sha256": "ce0e2666d3ac2d752d745c0e2e6009fef7b3bf557c6e9c388130c42a0eb3b56f",
+          "status": "pass"
+        },
+        {
+          "path": "tests/node/test/parallel/test-http-request-end.js",
+          "sha256": "3e0b807998d5d332cb0f0ebaa4d9131776a0889c92729e0092216285e0737c33",
+          "status": "pass"
+        },
+        {
+          "path": "tests/node/test/parallel/test-http-response-readable.js",
+          "sha256": "6fd7cd5b9a45b4ecb5c5204f3af1e4658bf257eee4a8ca80382aaee0adffabac",
+          "status": "pass"
+        },
+        {
+          "path": "tests/node/test/parallel/test-http-allow-content-length-304.js",
+          "sha256": "549f270f168edd84dc9a3f68b60dbdf342064080fd1d37837e8b135ea36863f1",
+          "status": "pass"
+        },
+        {
+          "path": "tests/node/test/parallel/test-http-listening.js",
+          "sha256": "59bf8088ec4ad0fce262e0a50a7ea7c79950d39e4bf202d49634ee9fc30dd0f8",
+          "status": "pass"
+        },
+        {
+          "path": "tests/node/test/parallel/test-global-webstreams.js",
+          "sha256": "eb3016b2899247ca258c8f8229d351150be47703e79711693778a3b33dac2f06",
+          "status": "pass"
+        }
+      ],
+      "local_node_oracle_reference": "tasks/evidence/task21-framework-core-shared-2026-10-06-current.json (fixture hashes unchanged; one Node v26.10.0 version-sensitive expectation mismatch is documented there)"
+    },
+    {
+      "selection": "web-stream-bridge",
+      "command": "target/iteration/run-parallel-next --profile web-stream-bridge --timeout-secs 30",
+      "engine": "shared VM",
+      "result": {
+        "pass": 9,
+        "skip": 0,
+        "fail": 0,
+        "timeout": 0,
+        "crash": 0,
+        "unclassified": 0,
+        "total": 9
+      },
+      "cases": [
+        {
+          "path": "tests/node/test/parallel/test-stream-duplex.js",
+          "sha256": "aea1b7a5eb0f0146315997f4513dd3146e5a34ad3e4eb911c598b5b031e95dd1",
+          "status": "pass"
+        },
+        {
+          "path": "tests/node/test/parallel/test-stream-readable-to-web-byob.js",
+          "sha256": "7b39d7cbec3dba9224f327b808b7cd8e15bb69e34dee7688561eebd3337c08cc",
+          "status": "pass"
+        },
+        {
+          "path": "tests/node/test/parallel/test-stream-readable-strategy-option.js",
+          "sha256": "b3f5846455679ee7ac77d0ce6e7288017199bda60efb39aaeec44f21b16d0f96",
+          "status": "pass"
+        },
+        {
+          "path": "tests/node/test/parallel/test-stream-readable-to-web-termination-byob.js",
+          "sha256": "4a72f6e32ee389d07fbd9937d586acf9ecf3ede26f284d5f7ef55a7af93126d6",
+          "status": "pass"
+        },
+        {
+          "path": "tests/node/test/parallel/test-readable-from-web-enqueue-then-close.js",
+          "sha256": "735b0ff669434b70b92b0ddc2e9eef3552dd9c66c43ecdfa1b66071174d28322",
+          "status": "pass"
+        },
+        {
+          "path": "tests/node/test/parallel/test-stream-toWeb-allows-server-response.js",
+          "sha256": "d6fa98890fb89aebd25dd7f3eaf58d081e4024fc51b8b75c919e02144fd19f3e",
+          "status": "pass"
+        },
+        {
+          "path": "tests/node/test/parallel/test-webstreams-abort-controller.js",
+          "sha256": "520370a830229d640ea8235254f69be93eb93bb5f8a3d375b5d825588b6b0b20",
+          "status": "pass"
+        },
+        {
+          "path": "tests/node/test/parallel/test-webstreams-finished.js",
+          "sha256": "3054293ca750d448df9b6f6bbd244cca8ce431cff0be343d73c8dd0bb69cc3fe",
+          "status": "pass"
+        },
+        {
+          "path": "tests/node/test/parallel/test-webstreams-queue-wraparound.js",
+          "sha256": "e21c793de5a49bb90e463fcff8a7c02f12a7f4e8273e0b7eccc7a5f572b4bbc9",
+          "status": "pass"
+        }
+      ],
+      "local_node_oracle_reference": "tasks/evidence/task21-web-stream-bridge-2026-10-06-current.json (Node v26.10.0 passes the same unchanged fixture hashes)"
+    },
+    {
+      "selection": "console-log-",
+      "command": "target/iteration/run-parallel-next --filter test-console-log- --timeout-secs 30",
+      "engine": "shared VM",
+      "result": {
+        "pass": 2,
+        "skip": 0,
+        "fail": 0,
+        "timeout": 0,
+        "crash": 0,
+        "unclassified": 0,
+        "total": 2
+      },
+      "cases": [
+        {
+          "path": "tests/node/test/parallel/test-console-log-stdio-broken-dest.js",
+          "sha256": "6ecff4702acbcf5b8d4fe52e7ae8d0dd84e38153286536ece70714d77124e070",
+          "status": "pass"
+        },
+        {
+          "path": "tests/node/test/parallel/test-console-log-throw-primitive.js",
+          "sha256": "488c375fa39447990470de8f7e430d38c64549917bb18fb5c3b610a1c615a4d1",
+          "status": "pass"
+        }
+      ],
+      "local_node_oracle_reference": "tasks/evidence/task21-shared-console-2026-10-06.json (Node v26.10.0 passes the same unchanged fixture hashes)"
+    },
+    {
+      "selection": "test-stream-readable-to-web-termination.js",
+      "shared_vm_command": "target/iteration/run-parallel-next --filter test-stream-readable-to-web-termination.js --timeout-secs 30",
+      "shared_vm": {
+        "pass": 0,
+        "fail": 1,
+        "exit_code": 1,
+        "error": "Cannot find module 'timers/promises'"
+      },
+      "local_node": {
+        "command": "node v26.10.0 with byte-identical temporary adjacent .cjs copy and NODE_SKIP_FLAG_CHECK=1",
+        "exit_code": 0,
+        "status": "pass"
+      },
+      "membership": "included; the timeout helper is implemented legacy support, while shared NodeHost still lacks the builtin route"
+    },
+    {
+      "selection": "pinned-framework-packages",
+      "build_command": "cargo build --profile iteration -p quench-node --bin quench-node-next",
+      "working_directory": "tests/frameworks",
+      "results": [
+        {
+          "scenario": "express",
+          "node_exit": 0,
+          "shared_exit": 0,
+          "stdout_equal": true,
+          "node_stdout": "ICONV InternalDecoder utf8 function object function\nICONV made decoder function utf8\nICONV write entry function true Buffer 2062\nICONV before string decoder function utf8 Buffer\nstatuses 200,200,200,200,404\n",
+          "shared_stdout": "ICONV InternalDecoder utf8 function object function\nICONV made decoder function utf8\nICONV write entry function true Buffer 2062\nICONV before string decoder function utf8 Buffer\nstatuses 200,200,200,200,404\n"
+        },
+        {
+          "scenario": "koa",
+          "node_exit": 0,
+          "shared_exit": 0,
+          "stdout_equal": true,
+          "node_stdout": "statuses 200,200,200,200,404\n",
+          "shared_stdout": "statuses 200,200,200,200,404\n"
+        },
+        {
+          "scenario": "fastify",
+          "node_exit": 0,
+          "shared_exit": 0,
+          "stdout_equal": true,
+          "node_stdout": "statuses 200,200,200,200,404\n",
+          "shared_stdout": "statuses 200,200,200,200,404\n"
+        }
+      ],
+      "result": "Express, Koa and Fastify pass on local Node and shared VM with exact stdout matches; driver assertions also check response bodies, streams, gzip and Express ETag/304."
+    }
+  ],
+  "owner_sha256": {
+    "crates/quench-node-test/src/bin/run-parallel-next.rs": "7b4fa402270d313ecdf9286c00719abd63b1f19f3e5fa578c9e08de7cc845e05",
+    "crates/quench-node-test/src/case_process.rs": "c3c22940bebc194360df3329218e7e9e514ca2b8eaa1d845ff7a46d2d37c5317",
+    "crates/quench-node-test/src/parallel_profile.rs": "6d2659e5c805584e43b43ca79d43af3731e29caa5ea81a86350ba1ea48d97564",
+    "crates/quench-node-test/src/reader.rs": "d33e66fda4b9cf9246bba99db8b5db6e6575408b097f7bd425c528cc1886ee40",
+    "crates/quench-node-test/src/shared_runner.rs": "a21fad01f23d3910168d726c9cf375c5b0dd48bd38619669d475e88c1aed52e1",
+    "crates/quench-node/src/dispatch.rs": "99a5f136ad9ce3b0b1419fcce4b69e5ae2d9dfe94296adeb8864cec75e4f6b87",
+    "crates/quench-node/src/host.rs": "301cee4a20d9537f395a530e0d71ffa733f0202377027a5da709934b1ff2734e",
+    "crates/quench-node/src/host/shared_vm.rs": "a30c88586729aefdaa8696b9c1b592c769dfc920a72ae65f6ed5da2d4f2da085",
+    "crates/quench-node/src/host/shared_vm/commonjs.rs": "929b39332ccd1f4429d859cea4077acc81d3cf98b3a260150cb82896d65a928b",
+    "crates/quench-node/src/modules/assert/shared_vm.rs": "27e8904f589920c7c77b62460cc450c636bf8d66443acaa199dad3a2085de579",
+    "crates/quench-node/src/modules/async_hooks/shared_vm.rs": "5b473bd3c127924b9e3071f4b9147633218aa96f70adf6a52043a5db3bd85fb6",
+    "crates/quench-node/src/modules/buffer/shared_vm.rs": "cfc199ff6eb0e79442e3fec7bdca3b952f2bec76824a81c7ddc09cdc9c8aeafd",
+    "crates/quench-node/src/modules/console.rs": "bd4f77439f393cc1248f962eb3f654b51ba34bb51e1eea92b26085181e62b76b",
+    "crates/quench-node/src/modules/console/shared_vm.rs": "47bbcb75cfc3d2f79e594b48e0304bee48f31a160dfacb52a56e666fd1f13a7e",
+    "crates/quench-node/src/modules/diagnostics_channel/shared_vm.rs": "d5f8f6c82ddeff4707a34b909cb5eb756c7e5433154b8cbefe065f21279d66f6",
+    "crates/quench-node/src/modules/event_loop.rs": "c5f2c025555a5bc4e393594324b5776885e3eb8833bcd6e2f9244aa06595e925",
+    "crates/quench-node/src/modules/event_target.rs": "9ea680e1f2efd336d19ca81db99b8e856fc24dc8f339513760ec6eca4a4f322a",
+    "crates/quench-node/src/modules/fs/shared_vm.rs": "7acea43e6b14e59ea18b4f57f9ca2ce8c45d9ab59dc67fcfaaa8573b1c8e5382",
+    "crates/quench-node/src/modules/http.rs": "28632bfb0ac4bfd7fba14a9e8478b8480c7ba716ea211c54aa5f1fa80cc20559",
+    "crates/quench-node/src/modules/http/shared_vm.rs": "9e6eba33723670901b710a1fbdbf7b7033da40b0d7b03070a838ae84b0451500",
+    "crates/quench-node/src/modules/http/shared_vm/client.rs": "eca03cf2c061f1780eb6ca54c98a3600c1427fc064d60d16a2324509601afc37",
+    "crates/quench-node/src/modules/http/shared_vm/operations.rs": "161c31d45a95e2b30dc01b887a3119de54d6beeb6df17bb1275c3efdd44d98b7",
+    "crates/quench-node/src/modules/http/shared_vm/poll.rs": "32e2b684b8776cd349e7167ffd1c4e34f507526c71cc85f542bdfea5ad2cfe55",
+    "crates/quench-node/src/modules/http/shared_vm/protocol.rs": "d2e67e80b7ec3065117538e5a4cce7a382660a26ba07644dbadf303996b6014a",
+    "crates/quench-node/src/modules/http/shared_vm/state.rs": "8d18b11bfe01018ed4e854f02e3daf7580fc6daf3682f91043228ea436210404",
+    "crates/quench-node/src/modules/http_client.rs": "143d30979f2a4dd889c8e900847c8620c921b3757ba9d7bd9c1c25594a6e8800",
+    "crates/quench-node/src/modules/http_res.rs": "47e5d1769970df5f8ee863da58ad382ce484eaf419ccea7f0ce27b278bed130c",
+    "crates/quench-node/src/modules/mod.rs": "101e64ccaee1409dd8ea01f0c75a9cd91c149a4dbc77d98e87acf8625f71ff4e",
+    "crates/quench-node/src/modules/path/shared_vm.rs": "206ab111353ae03f2082f2f1acffcfc748e2a2ad41ac4df0ec53e910dce39c55",
+    "crates/quench-node/src/modules/path_parts.rs": "b8585fa5cbd741934b38cc2d1f0c7d96071b16b7f743ecf3fd6ee1f9281c6939",
+    "crates/quench-node/src/modules/path_posix.rs": "07b50e2e3dfb4bcdb4c84aac296e1b81b54249a4fb84a1ee1d4f15dd1ede4fad",
+    "crates/quench-node/src/modules/path_win32_extra.rs": "473855f9783101c5109793c1bceebf5c21071ec1aa9ef9630d591009284c5b4c",
+    "crates/quench-node/src/modules/process.rs": "fc5e285ed5b6f02c2e06de7133cd34a55666cb4e32cfb5226140cb85d262144b",
+    "crates/quench-node/src/modules/process/shared_vm.rs": "e157c2a5f895301a665d731d18f3769d4d2df55097758029221f5bd77e5f1467",
+    "crates/quench-node/src/modules/stream.rs": "6139556c6298f999e4d1e1182c478d6dfbbc256435dd9f8dc5523b7c0d395e87",
+    "crates/quench-node/src/modules/stream/shared_vm.rs": "7c2f9974486854a06b7ab7235e9f98f089977199c41082694ddf5eab39cc65fc",
+    "crates/quench-node/src/modules/stream_prelude.js": "74e2a9eb5b896c5cfeebc73bcfae8e1cf845f2a5e257ea0de376381d61272a49",
+    "crates/quench-node/src/modules/string_decoder/shared_vm.rs": "9368f0d57aa043f222282b9864a25a8480b1f5838beaadee2e2c8b60eac6b761",
+    "crates/quench-node/src/modules/timers.rs": "40208fbacfaecc5be68df27d2b8299b8bfd60bf99cb14640f5e3f34458ec8cce",
+    "crates/quench-node/src/modules/timers/shared_vm.rs": "d7300f677b2f2ab867d568d761db503c8e61daffbd9847bdd6029a9bba68ea52",
+    "crates/quench-node/src/modules/timers_promises.rs": "523786e8655276ca8b79d4d7ef788cdee931da44bff8535f50cf747f47cb7050",
+    "crates/quench-node/src/modules/util/shared_vm.rs": "2fba1df2567c131bd404656363243ea64df2c6b319336b15338844a4b7bd2e4a",
+    "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs": "585954accb0f3cdf73643395d8273501f7e87f7cca635b4e00d221e77eec52f9",
+    "crates/quench-node/src/polyfills/bootstrap/target.rs": "c465f125db2c5793b7db7ddc52402d27644bb5a33563b8a834ce3575ba2fd6de",
+    "crates/quench-node/src/polyfills/bootstrap/web_streams.rs": "b930c86dc40fcc2b4f5bc94f6d624ae0e8db15c0836e659b6717c1b26ed2509d",
+    "crates/quench-node/src/polyfills/bootstrap/web_streams_require.rs": "21f53ea6f633b92ed8eb482b7b915036fda6110641266a4194ac14cc688db000",
+    "crates/quench-node/src/registry.rs": "896f15e044f1b557cb86fc3fcd0cc999c1d938007742795959b7a17907f783a0",
+    "crates/quench-node/src/shared_run.rs": "03422080be80bd935166f15b135636c0e4523d61d4607c1924f3215eaf9f5cb4",
+    "crates/quench-runtime-next/src/vm/dispatch.rs": "82ae9df71835a80838b5138cce02c990f2de814fcc0833f882d4a034ea22672d",
+    "crates/quench-runtime-next/src/vm/gc.rs": "8f9504c6334c3eefa1362414a72fbadb80caa397fd725377f722420cc20f5b78",
+    "crates/quench-runtime-next/src/vm/promise.rs": "8182f9a0fef267966a05d6bb09b6d7f7468b9328237730722315602250c0784d",
+    "crates/quench-runtime-next/src/vm/promise_jobs.rs": "e01c1b741fe1abcdaa43e06617442337a6de283596bb1fafc82000528fec1100"
+  },
+  "qualification": "Development shared-VM evidence at the recorded source snapshot only. The timers/promises module gap in that snapshot is superseded by the current focused bridge and timer fixture runs. Remaining timer-promise operations, options and disposal still need qualification; this report does not qualify production quench-node or close Task 22.",
+  "superseded_by": [
+    "tasks/evidence/task21-web-stream-bridge-2026-10-06-current.json",
+    "tasks/evidence/task21-framework-core-shared-2026-10-06-current.json"
+  ]
+}

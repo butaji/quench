@@ -1,0 +1,20 @@
+diff --git a/crates/quench-runtime/src/vm/operations.rs b/crates/quench-runtime/src/vm/operations.rs
+index 01445b4f1..5867762a2 100644
+--- a/crates/quench-runtime/src/vm/operations.rs
++++ b/crates/quench-runtime/src/vm/operations.rs
+@@ -56,6 +56,15 @@ impl<H: Host> Vm<H> {
+         this: Value,
+         args: &[Value],
+     ) -> Result<Value, JsError> {
++        if native == Native::StringFromCharCode
++            && let [value] = args
++            && let Some(number) = value.as_number()
++        {
++            return self.with_call_roots([this, *value], |vm| {
++                let unit = Self::uint16_from_value(number);
++                vm.string_from_units(std::slice::from_ref(&unit))
++            });
++        }
+         self.with_call_roots(std::iter::once(this).chain(args.iter().copied()), |vm| {
+             let receiver = vm.string_method_receiver(p, native, this)?;
+             vm.with_call_roots([receiver], |vm| {

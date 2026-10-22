@@ -1,0 +1,23 @@
+    Checking quench-runtime v0.1.0 (/workspace/quench/crates/quench-runtime)
+error[E0599]: no method named `is_empty` found for struct `wtf16::JsString` in the current scope
+   --> crates/quench-runtime/src/vm/error.rs:587:16
+    |
+587 |         (!name.is_empty()).then_some(name)
+    |                ^^^^^^^^ method not found in `wtf16::JsString`
+    |
+   ::: crates/quench-runtime/src/vm/wtf16.rs:11:1
+    |
+ 11 | pub(crate) struct JsString {
+    | -------------------------- method `is_empty` not found for this struct
+    |
+    = help: items from traits can only be used if the trait is implemented and in scope
+    = note: the following traits define an item `is_empty`, perhaps you need to implement one of them:
+            candidate #1: `ExactSizeIterator`
+            candidate #2: `RangeBounds`
+            candidate #3: `Reader`
+            candidate #4: `bitflags::traits::Flags`
+
+For more information about this error, try `rustc --explain E0599`.
+error: could not compile `quench-runtime` (lib) due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `quench-runtime` (lib test) due to 1 previous error

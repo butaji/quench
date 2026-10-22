@@ -1,0 +1,32 @@
+{
+  "platform": "Linux-6.18.44-x86_64-with-glibc2.41",
+  "machine": "x86_64",
+  "binaries": {
+    "baseline": {
+      "path": "/workspace/scratch/npm300-clock-candidate",
+      "sha256": "273804599ef71f152bb9d646df4582b32f79bb1d51c4ccad1371f31ef76c0ea5"
+    },
+    "pre_utf16_candidate": {
+      "path": "/workspace/scratch/npm-capabilities-merged-candidate",
+      "sha256": "19e094f71a6550bfe3d195d18136174f59695cb975c44eb2eb14178bd15cf462"
+    },
+    "node": {
+      "path": "/workspace/shared/node-v26.11.1-linux-x64/bin/node",
+      "sha256": "5a7b8a3cf5ccb57d297519754fd73238f64cf560afd0ef19a2f9bf7384cbb657"
+    },
+    "final_candidate": {
+      "path": "/workspace/scratch/npm-capabilities-final-candidate",
+      "sha256": "12730708b74f914e2640e1583f6e12c9f1ae78dd6d60386d0a7241421674f7b6"
+    }
+  },
+  "linux_online_cpu_records": 5,
+  "cgroup": {
+    "/sys/fs/cgroup/cpu.max": "400000 100000",
+    "/sys/fs/cgroup/memory.max": "17179869184"
+  },
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)",
+  "qualification": false,
+  "tested_source_commit": "9cfb428b8f794b281febc4d002474f7245bb850f",
+  "integration_contained": "500e152c6",
+  "build_profile": "iteration; opt-level=1, codegen-units=256, LTO disabled, function alignment 6; no ld.lld"
+}

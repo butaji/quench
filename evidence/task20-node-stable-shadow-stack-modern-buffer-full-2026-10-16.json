@@ -1,0 +1,188 @@
+{
+  "scope": "Complete unchanged stable parallel inventory after modern Buffer and realm-local original Node error policy",
+  "source_commit": "c4f7844bd397cd702363a2ba54185e613c6d8273",
+  "release": "v26.12.0",
+  "fixture_commit": "26e72d85a611e222e3f06025de8a3c496923bacd",
+  "counts": {
+    "timeout": 97,
+    "fail": 2492,
+    "pass": 1789,
+    "skip": 637
+  },
+  "total": 5015,
+  "inventory_hash": "a3820c977f97ed07",
+  "baseline": {
+    "counts": {
+      "timeout": 94,
+      "fail": 2497,
+      "pass": 1787,
+      "skip": 637
+    },
+    "total": 5015,
+    "inventory_hash": "a3820c977f97ed07"
+  },
+  "gained": [
+    "test-buffer-alloc-alignment.js",
+    "test-buffer-islatin1.js",
+    "test-common-must-not-call.js",
+    "test-shadow-realm-prepare-stack-trace.js",
+    "test-startup-empty-regexp-statics.js"
+  ],
+  "lost": [
+    "test-shadow-realm-gc-module.js",
+    "test-stream2-read-sync-stack.js",
+    "test-stringbytes-external.js"
+  ],
+  "skip_changes": {},
+  "memory_events_delta": {
+    "low": 0,
+    "high": 0,
+    "max": 0,
+    "oom": 0,
+    "oom_kill": 0,
+    "oom_group_kill": 0
+  },
+  "elapsed_seconds": 1886.0892518609762,
+  "raw": [
+    {
+      "path": "work/full-shadow-stack-modern-buffer-stable/results.json",
+      "bytes": 13395460,
+      "sha256": "5b81a7e0b3787556113eca099e6f0c080214f80a182d75ea27a899fe020034f2"
+    },
+    {
+      "path": "work/full-shadow-stack-modern-buffer-stable/runner.log",
+      "bytes": 516191,
+      "sha256": "8d78232525385d5dfa667cf208c60dfaa1295e952e647279d5c6064303a7beda"
+    },
+    {
+      "path": "work/full-shadow-stack-modern-buffer-stable/receipt-before.json",
+      "bytes": 1120,
+      "sha256": "bb25c52c66bfebc7bcc8d552c990b2adbafd3c576280e23e203e6c8c8b51e5f6"
+    },
+    {
+      "path": "work/full-shadow-stack-modern-buffer-stable/receipt.json",
+      "bytes": 1764,
+      "sha256": "fd2fbf4e242f523fade4f11046300f610eba73c8369e4d46ffcdb42c44b5951a"
+    },
+    {
+      "path": "work/full-shadow-stack-modern-buffer-stable/summary.json",
+      "bytes": 150,
+      "sha256": "2010475de24af00f5fe4d55bad3263f702a6f053f12e955887774d845a9c5195"
+    },
+    {
+      "path": "work/full-shadow-stack-modern-buffer-stable/comparison.json",
+      "bytes": 369,
+      "sha256": "8a7c70536c7d6216be4564cccc49ae02e961f3f4bbd58d8969548d741a6386fb"
+    },
+    {
+      "path": "work/full-shadow-stack-modern-buffer-stable/baseline-control-test-shadow-realm-gc-module.js.json",
+      "bytes": 680,
+      "sha256": "aafe356ac5d0e4956dadbaf696c523812bdbe1d086becc697043ba79001b8ada"
+    },
+    {
+      "path": "work/full-shadow-stack-modern-buffer-stable/baseline-control-test-shadow-realm-gc-module.js.log",
+      "bytes": 199,
+      "sha256": "646ad2afab0069bbed84fb269a26e4af37bd90b887d0401b80e2f3a780684287"
+    },
+    {
+      "path": "work/full-shadow-stack-modern-buffer-stable/baseline-control-test-stream2-read-sync-stack.js.json",
+      "bytes": 1133,
+      "sha256": "9cb62847d1f5d9006febd3df5e37f2de1ee7b937b93293e1a3ea335375c3124e"
+    },
+    {
+      "path": "work/full-shadow-stack-modern-buffer-stable/baseline-control-test-stream2-read-sync-stack.js.log",
+      "bytes": 200,
+      "sha256": "8ab7382c364429aef6f16f66e36a18b5e610f31cbfcb5f900b962583ec9c1b9d"
+    },
+    {
+      "path": "work/full-shadow-stack-modern-buffer-stable/baseline-control-test-stringbytes-external.js.json",
+      "bytes": 641,
+      "sha256": "61a4d10372494d98488821703eeff1b79caac5243c980eb6fcea47f6670ddfb7"
+    },
+    {
+      "path": "work/full-shadow-stack-modern-buffer-stable/baseline-control-test-stringbytes-external.js.log",
+      "bytes": 200,
+      "sha256": "e1fe2d9145cbc540a30d1ce218f05097077c939d656fad286be98ef111ace4a3"
+    },
+    {
+      "path": "work/full-shadow-stack-modern-buffer-stable/baseline-lost-controls.json",
+      "bytes": 1737,
+      "sha256": "aef91ded63234358f13f0577287deae4c0a3f14d7bfb1b7324eeb04eac341a82"
+    },
+    {
+      "path": "work/full-shadow-stack-modern-buffer-stable/control-test-shadow-realm-gc-module.js.json",
+      "bytes": 643,
+      "sha256": "8b9501d8f7c6cf590970bf0b7b8ffe44f5513a448079a5a192da5e5c6a15c168"
+    },
+    {
+      "path": "work/full-shadow-stack-modern-buffer-stable/control-test-shadow-realm-gc-module.js.log",
+      "bytes": 202,
+      "sha256": "c76148d3f79084dfc5bed8feef9749f115e180ec98067c8223bfe09cf1f1a7aa"
+    },
+    {
+      "path": "work/full-shadow-stack-modern-buffer-stable/control-test-stream2-read-sync-stack.js.json",
+      "bytes": 644,
+      "sha256": "a44ec1dcf98dd357ce9ffba07329e964ae9cf8bfa6510d370fea33274073d9a0"
+    },
+    {
+      "path": "work/full-shadow-stack-modern-buffer-stable/control-test-stream2-read-sync-stack.js.log",
+      "bytes": 203,
+      "sha256": "4861b4eb1bcd365561fb942fce42a9b22f317d1c5ab276c7e54a42588b8f8b73"
+    },
+    {
+      "path": "work/full-shadow-stack-modern-buffer-stable/control-test-stringbytes-external.js.json",
+      "bytes": 641,
+      "sha256": "10d08219378f9b4bfdb4b42b6ac613ae507752c5a25dcb6b3712f50499b5a29f"
+    },
+    {
+      "path": "work/full-shadow-stack-modern-buffer-stable/control-test-stringbytes-external.js.log",
+      "bytes": 200,
+      "sha256": "e1fe2d9145cbc540a30d1ce218f05097077c939d656fad286be98ef111ace4a3"
+    },
+    {
+      "path": "work/full-shadow-stack-modern-buffer-stable/lost-controls.json",
+      "bytes": 1698,
+      "sha256": "9b5865e11c58c64090415c84a6216deacb39960237f018cc4145027939ba33fb"
+    },
+    {
+      "path": "work/full-shadow-stack-modern-buffer-stable/post-oracle-control-test-shadow-realm-gc-module.js.json",
+      "bytes": 643,
+      "sha256": "8b9501d8f7c6cf590970bf0b7b8ffe44f5513a448079a5a192da5e5c6a15c168"
+    },
+    {
+      "path": "work/full-shadow-stack-modern-buffer-stable/post-oracle-control-test-shadow-realm-gc-module.js.log",
+      "bytes": 202,
+      "sha256": "c76148d3f79084dfc5bed8feef9749f115e180ec98067c8223bfe09cf1f1a7aa"
+    },
+    {
+      "path": "work/full-shadow-stack-modern-buffer-stable/post-oracle-control-test-stream2-read-sync-stack.js.json",
+      "bytes": 644,
+      "sha256": "a44ec1dcf98dd357ce9ffba07329e964ae9cf8bfa6510d370fea33274073d9a0"
+    },
+    {
+      "path": "work/full-shadow-stack-modern-buffer-stable/post-oracle-control-test-stream2-read-sync-stack.js.log",
+      "bytes": 203,
+      "sha256": "4861b4eb1bcd365561fb942fce42a9b22f317d1c5ab276c7e54a42588b8f8b73"
+    },
+    {
+      "path": "work/full-shadow-stack-modern-buffer-stable/post-oracle-control-test-stringbytes-external.js.json",
+      "bytes": 641,
+      "sha256": "10d08219378f9b4bfdb4b42b6ac613ae507752c5a25dcb6b3712f50499b5a29f"
+    },
+    {
+      "path": "work/full-shadow-stack-modern-buffer-stable/post-oracle-control-test-stringbytes-external.js.log",
+      "bytes": 200,
+      "sha256": "e1fe2d9145cbc540a30d1ce218f05097077c939d656fad286be98ef111ace4a3"
+    },
+    {
+      "path": "work/full-shadow-stack-modern-buffer-stable/post-oracle-lost-controls.json",
+      "bytes": 1863,
+      "sha256": "316136093649b3e1ac630cc99461c23f1d4b6d06a0147f2199234d39c582b969"
+    }
+  ],
+  "limitations": [
+    "Goal remains open; all nonpass outcomes retained. No selected-case sums, skips/deadline/budget changes or speed claim.",
+    "This frozen c4f run excludes incoming operation-position/eval-origin work and the newer glob/Dirent candidate.",
+    "Native compilation and the independent official Node baseline overlapped part of this run; resource deltas retained. Lost-case controls do not replace raw full outcomes."
+  ]
+}

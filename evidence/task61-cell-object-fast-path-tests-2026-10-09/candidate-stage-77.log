@@ -1,0 +1,10 @@
+stage  77 batch   1/8   passed=100 failed=0 total=100
+stage  77 batch   2/8   passed=100 failed=0 total=100
+stage  77 batch   3/8   passed=100 failed=0 total=100
+stage  77 batch   4/8   passed=100 failed=0 total=100
+stage  77 batch   5/8   passed=100 failed=0 total=100
+stage  77 batch   6/8   passed=100 failed=0 total=100
+stage  77 batch   7/8   passed=100 failed=0 total=100
+stage  77 batch   8/8   passed=38 failed=0 total=38
+stage  77: built-ins/TypedArrayConstructors passed=738 failed=0 total=738
+stages=1 passed=738 failed=0 total=738

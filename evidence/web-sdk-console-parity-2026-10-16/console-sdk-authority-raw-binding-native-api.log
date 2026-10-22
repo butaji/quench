@@ -1,0 +1,147 @@
+
+running 120 tests
+test callsites_share_native_prototypes_and_supported_methods_preserve_descriptors_and_brands ... ok
+test canonical_string_decoder_preserves_native_boundaries_and_live_state_views ... ok
+test canonical_util_types_preserve_native_sources_javascript_sources_export_order_and_identity ... ok
+test child_disposal_and_sync_shell_options_observe_public_hooks_and_native_validation ... ok
+test child_options_snapshot_getters_once_and_validate_common_fields_in_native_code ... ok
+test filesystem_readdir_sync_uses_sdk_policy_with_raw_names_and_recursive_native_layout ... ok
+test function_prototype_info_lookups_preserve_native_accessor_layout_and_descriptor_transitions ... ok
+test inferred_debug_names_preserve_empty_public_names_and_native_name_property_state ... ok
+test module_cache_protocol_types_come_from_configured_sdk_and_preserve_native_descriptors ... ok
+test native_binary_inspection_preserves_view_layouts_backing_and_detached_state ... ok
+test native_brotli_streaming_bytes_dictionaries_and_errors_match_node ... ok
+test native_buffer_backing_allocations_preserve_real_alignment_and_snapshots ... ok
+test native_buffer_backing_getters_preserve_descriptors_membership_and_original_hooks ... ok
+test native_buffer_bigint_methods_preserve_layout_original_hooks_errors_and_aliases ... ok
+test native_buffer_binding_fill_preserves_statuses_indices_and_shared_byte_policy ... FAILED
+test native_buffer_concat_preserves_pooling_proxy_reads_reentrancy_and_padding ... ok
+test native_buffer_constructor_deprecation_follows_original_vm_filenames_and_process_flags ... ok
+test native_buffer_constructor_preserves_calls_species_original_methods_and_warning_identity ... ok
+test native_buffer_fill_preserves_overloads_views_ranges_coercions_and_overlap ... ok
+test native_buffer_from_and_copy_bytes_preserve_conversion_bounds_brands_and_hooks ... ok
+test native_buffer_inspection_preserves_aliases_limits_properties_and_constructor_errors ... ok
+test native_buffer_latin1_classifies_actual_units_and_preserves_original_validation ... ok
+test native_buffer_of_avoids_legacy_warnings_and_preserves_original_coercions ... ok
+test native_buffer_pool_shares_real_aligned_backing_and_preserves_reentrant_copies ... ok
+test native_buffer_public_policy_captures_original_validators_and_coded_constructors ... ok
+test native_buffer_search_matches_node_offsets_bounds_encodings_and_original_hooks ... ok
+test native_buffer_static_comparison_preserves_brands_detachment_metadata_and_byte_order ... ok
+test native_buffer_string_conversion_preserves_bounds_metadata_encodings_and_original_hooks ... ok
+test native_buffer_string_slices_preserve_detached_views_and_original_conversion_errors ... ok
+test native_buffer_swaps_preserve_generic_views_thresholds_aliases_and_backing_identity ... ok
+test native_buffer_unsafe_allocations_preserve_alignment_pooling_snapshots_and_errors ... ok
+test native_buffer_write_preserves_overloads_encodings_bounds_backing_and_hooks ... ok
+test native_builtin_setup_preserves_regexp_and_crypto_uses_canonical_streams ... ok
+test native_caller_location_uses_original_activations_independently_of_error_hooks ... ok
+test native_collection_previews_keep_iterator_positions_live_slots_and_return_conventions ... ok
+test native_constructed_names_preserve_base_identity_and_use_prototype_fallback_for_subclasses ... ok
+test native_constructor_names_preserve_creation_provenance_and_prototype_roles ... ok
+test native_constructor_names_use_safe_mutable_debug_names_and_original_prototype_names ... ok
+test native_contextify_scripts_compile_once_keep_template_sites_and_return_global_functions ... ok
+test native_encoding_and_array_buffer_copy_match_stable_slots_and_byte_ranges ... ok
+test native_fs_watch_ignore_validation_and_filters_match_node ... ok
+test native_fs_watch_inherited_options_and_encoding_getters_match_node ... ok
+test native_fs_watch_keeps_roots_across_gc_and_routes_original_callback_errors ... ok
+test native_fs_watch_matches_node_events_close_references_and_abort_lifecycle ... ok
+test native_fs_watch_missing_path_and_unreferenced_exit_match_node ... ok
+test native_http_status_reasons_preserve_mutable_map_coercion_errors_and_wire_bytes ... ok
+test native_immediate_destroyed_setter_failure_preserves_original_callback_ownership ... ok
+test native_inspection_class_fallback_uses_slots_and_data_tags_without_public_getters ... ok
+test native_internal_key_filters_and_raw_engine_binding_match_node ... ok
+test native_internal_microtask_queue_keeps_original_identity_and_job_order ... ok
+test native_internal_timer_clock_preserves_metadata_and_monotonic_origin ... ok
+test native_internal_timer_require_and_resolution_obey_exposure_flag ... ok
+test native_internal_unref_timers_and_promise_init_reference_state_match_node ... ok
+test native_key_slots_preserve_material_comparison_and_reject_spoofed_brands ... ok
+test native_net_accepted_resources_are_visible_inside_original_connection_callback ... ok
+test native_net_delivery_gates_preserve_connection_before_bytes_and_write_completion ... ok
+test native_net_resource_visibility_follows_original_connection_delivery_and_close ... ok
+test native_net_unconsumed_bytes_remain_buffered_and_count_before_data_listeners ... ok
+test native_paused_connected_socket_keeps_reference_bit_without_active_loop_work ... ok
+test native_performance_queries_preserve_identity_order_coercion_and_errors ... ok
+test native_promise_inspection_preserves_slots_identity_and_rejection_handling ... ok
+test native_promise_watch_abort_preserves_cause_and_descriptor_like_node ... ok
+test native_promise_watch_abort_resists_stopped_propagation_like_node ... ok
+test native_promise_watch_buffers_burst_events_and_closes_like_node ... ok
+test native_promise_watch_lazy_validation_matches_node ... ok
+test native_promise_watch_overflow_error_releases_handle_like_node ... ok
+test native_protocol_constants_derive_from_configured_sdk_headers_and_preserve_descriptors ... ok
+test native_proxy_details_preserve_slot_identity_revocation_and_trap_isolation ... ok
+test native_recursive_watch_callback_rm_is_async_and_preserves_errors_like_node ... ok
+test native_recursive_watch_class_close_and_per_path_hooks_match_node ... ok
+test native_recursive_watch_discovery_changes_and_ignore_match_node ... ok
+test native_recursive_watch_globstar_root_and_nested_paths_match_node ... ok
+test native_recursive_watch_internal_url_conversion_preserves_brands_and_identity ... ok
+test native_recursive_watch_iterator_and_gc_match_node ... ok
+test native_recursive_watch_promises_forward_iterator_and_abort_cause_like_node ... ok
+test native_recursive_watch_validation_matches_node ... ok
+test native_socket_endpoint_getters_follow_original_handle_and_cache_like_node ... ok
+test native_socket_paused_accept_defers_actual_reads_until_resume ... ok
+test native_stat_exact_bigint_metadata_matches_node_across_sync_callback_and_promises ... ok
+test native_stat_watch_bigint_timestamps_and_original_callback_error_match_node ... ok
+test native_stat_watch_cache_stop_order_and_reference_counts_match_node ... ok
+test native_stat_watch_initial_request_survives_unreference_like_node ... ok
+test native_stat_watch_missing_creation_stats_match_node ... ok
+test native_stat_watch_stats_constructor_projection_matches_node ... ok
+test native_stat_watch_validation_option_getters_and_stop_removal_match_node ... ok
+test native_stream_duplex_pair_preserves_metadata_demand_finish_and_peer_destruction ... ok
+test native_stream_emitters_preserve_capture_flags_limits_and_domain_owner ... ok
+test native_timer_callbacks_and_resource_projection_match_node ... ok
+test native_timer_custom_promisify_getters_preserve_exports_identity_and_mutation ... ok
+test native_timer_disposal_metadata_and_destroyed_phases_match_node ... ok
+test native_timer_duration_coercion_warning_policy_and_overflow_delay_match_node ... ok
+test native_timer_primitive_aliases_cancel_original_handles_like_node ... ok
+test native_timer_promise_options_validate_with_original_getters_and_coded_errors ... ok
+test native_timer_refresh_reactivates_original_slots_and_repeat_transitions_like_node ... ok
+test native_tls_bundled_roots_preserve_stable_trust_material_cache_metadata_and_intrinsic_hooks ... ok
+test native_tls_cipher_discovery_and_cached_copy_contract_match_node ... ok
+test native_tls_client_exchanges_encrypted_bytes_with_independent_node_peer ... ok
+test native_tls_context_engine_errors_and_shared_crypto_warning_match_node ... ok
+test native_tls_context_internal_binding_constructor_snapshot_and_missing_engine_hooks_match_node ... FAILED
+test native_tls_context_option_getter_and_native_method_hook_order_match_node ... ok
+test native_tls_context_protocol_options_errors_match_node ... ok
+test native_tls_context_retains_real_certificate_material_and_view_offsets_match_node ... ok
+test native_tls_context_versions_constructors_and_weak_gc_match_node ... ok
+test native_tls_hostname_authorization_values_errors_and_getter_order_match_node ... ok
+test native_tls_server_accepts_encrypted_bytes_from_independent_node_client ... ok
+test native_util_extend_preserves_reverse_copy_effects_metadata_errors_and_deprecation ... ok
+test native_util_string_format_preserves_primitives_builtin_objects_and_original_hooks ... ok
+test native_vfs_descriptors_share_live_positions_registry_identity_and_close_ownership ... ok
+test native_zlib_streaming_counts_bytes_pending_close_and_iterable_pipelines_match_node ... ok
+test native_zstd_streaming_frames_dictionaries_pledges_and_errors_match_node ... ok
+test net_default_listener_and_native_endpoint_addresses_match_node ... ok
+test os_memory_functions_report_native_values_names_and_primitive_conversion ... ok
+test os_priority_validation_native_system_errors_and_process_effects_match_node ... ok
+test os_user_info_reads_account_records_and_native_encodings_without_public_hooks ... ok
+test process_kill_matches_node_coercion_errors_and_mutable_native_hook ... ok
+test process_memory_reports_kernel_constraints_and_native_function_metadata ... ok
+test process_native_cpu_resource_and_rss_facts_use_sdk_validation_and_live_os_data ... ok
+test process_report_configuration_uses_sdk_descriptors_validation_and_shared_native_state ... ok
+test process_report_native_compact_uses_truthiness_without_coercion_hooks ... ok
+test write_sync_raw_views_positions_encoding_fallbacks_and_native_errors_match_node ... ok
+
+failures:
+
+---- native_buffer_binding_fill_preserves_statuses_indices_and_shared_byte_policy stdout ----
+
+thread 'native_buffer_binding_fill_preserves_statuses_indices_and_shared_byte_policy' (885065) panicked at crates/quench-node-test/tests/child_entry.rs:1510:5:
+assertion `left == right` failed
+  left: [91, 48, 44, 110, 117, 108, 108, 44, 34, 91, 116, 114, 117, 101, 44, 91, 92, 34, 102, 105, 108, 108, 92, 34, 44, 48, 44, 102, 97, 108, 115, 101, 93, 44, 91, 92, 34, 82, 97, 110, 103, 101, 69, 114, 114, 111, 114, 92, 34, 44, 92, 34, 69, 82, 82, 95, 79, 85, 84, 95, 79, 70, 95, 82, 65, 78, 71, 69, 92, 34, 44, 92, 34, 73, 110, 100, 101, 120, 32, 111, 117, 116, 32, 111, 102, 32, 114, 97, 110, 103, 101, 92, 34, 44, 91, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 93, 93, 44, 91, 92, 34, 82, 97, 110, 103, 101, 69, 114, 114, 111, 114, 92, 34, 44, 92, 34, 69, 82, 82, 95, 79, 85, 84, 95, 79, 70, 95, 82, 65, 78, 71, 69, 92, 34, 44, 92, 34, 73, 110, 100, 101, 120, 32, 111, 117, 116, 32, 111, 102, 32, 114, 97, 110, 103, 101, 92, 34, 44, 91, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 93, 93, 44, 91, 92, 34, 117, 110, 100, 101, 102, 105, 110, 101, 100, 92, 34, 44, 91, 49, 44, 49, 44, 49, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 93, 93, 44, 91, 92, 34, 117, 110, 100, 101, 102, 105, 110, 101, 100, 92, 34, 44, 91, 57, 55, 44, 57, 56, 44, 57, 55, 44, 57, 56, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 93, 93, 44, 91, 45, 49, 44, 91, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 93, 93, 44, 91, 45, 49, 44, 91, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 93, 93, 44, 91, 92, 34, 117, 110, 100, 101, 102, 105, 110, 101, 100, 92, 34, 44, 91, 49, 50, 55, 44, 49, 44, 49, 44, 49, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 93, 93, 44, 91, 92, 34, 117, 110, 100, 101, 102, 105, 110, 101, 100, 92, 34, 44, 91, 49, 50, 55, 44, 50, 44, 51, 44, 50, 44, 51, 44, 50, 44, 51, 44, 49, 50, 55, 93, 93, 93, 92, 110, 34, 44, 34, 34, 93, 10]
+ right: [91, 48, 44, 110, 117, 108, 108, 44, 34, 91, 116, 114, 117, 101, 44, 91, 92, 34, 102, 105, 108, 108, 92, 34, 44, 48, 44, 102, 97, 108, 115, 101, 93, 44, 91, 92, 34, 82, 97, 110, 103, 101, 69, 114, 114, 111, 114, 92, 34, 44, 92, 34, 69, 82, 82, 95, 79, 85, 84, 95, 79, 70, 95, 82, 65, 78, 71, 69, 92, 34, 44, 92, 34, 73, 110, 100, 101, 120, 32, 111, 117, 116, 32, 111, 102, 32, 114, 97, 110, 103, 101, 92, 34, 44, 91, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 93, 93, 44, 91, 92, 34, 82, 97, 110, 103, 101, 69, 114, 114, 111, 114, 92, 34, 44, 92, 34, 69, 82, 82, 95, 79, 85, 84, 95, 79, 70, 95, 82, 65, 78, 71, 69, 92, 34, 44, 92, 34, 73, 110, 100, 101, 120, 32, 111, 117, 116, 32, 111, 102, 32, 114, 97, 110, 103, 101, 92, 34, 44, 91, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 93, 93, 44, 91, 92, 34, 117, 110, 100, 101, 102, 105, 110, 101, 100, 92, 34, 44, 91, 49, 44, 49, 44, 49, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 93, 93, 44, 91, 92, 34, 117, 110, 100, 101, 102, 105, 110, 101, 100, 92, 34, 44, 91, 57, 55, 44, 57, 56, 44, 57, 55, 44, 57, 56, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 93, 93, 44, 91, 45, 49, 44, 91, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 93, 93, 44, 91, 45, 49, 44, 91, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 93, 93, 44, 91, 92, 34, 117, 110, 100, 101, 102, 105, 110, 101, 100, 92, 34, 44, 91, 49, 50, 55, 44, 49, 44, 49, 44, 49, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 44, 49, 50, 55, 93, 93, 44, 91, 92, 34, 117, 110, 100, 101, 102, 105, 110, 101, 100, 92, 34, 44, 91, 49, 50, 55, 44, 50, 44, 51, 44, 50, 44, 51, 44, 50, 44, 51, 44, 49, 50, 55, 93, 93, 93, 92, 110, 34, 44, 34, 40, 110, 111, 100, 101, 58, 56, 56, 53, 48, 56, 50, 41, 32, 105, 110, 116, 101, 114, 110, 97, 108, 47, 116, 101, 115, 116, 47, 98, 105, 110, 100, 105, 110, 103, 58, 32, 84, 104, 101, 115, 101, 32, 65, 80, 73, 115, 32, 97, 114, 101, 32, 102, 111, 114, 32, 105, 110, 116, 101, 114, 110, 97, 108, 32, 116, 101, 115, 116, 105, 110, 103, 32, 111, 110, 108, 121, 46, 32, 68, 111, 32, 110, 111, 116, 32, 117, 115, 101, 32, 116, 104, 101, 109, 46, 92, 110, 40, 85, 115, 101, 32, 96, 113, 117, 101, 110, 99, 104, 45, 110, 111, 100, 101, 32, 45, 45, 116, 114, 97, 99, 101, 45, 119, 97, 114, 110, 105, 110, 103, 115, 32, 46, 46, 46, 96, 32, 116, 111, 32, 115, 104, 111, 119, 32, 119, 104, 101, 114, 101, 32, 116, 104, 101, 32, 119, 97, 114, 110, 105, 110, 103, 32, 119, 97, 115, 32, 99, 114, 101, 97, 116, 101, 100, 41, 92, 110, 34, 93, 10]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- native_tls_context_internal_binding_constructor_snapshot_and_missing_engine_hooks_match_node stdout ----
+
+thread 'native_tls_context_internal_binding_constructor_snapshot_and_missing_engine_hooks_match_node' (886209) panicked at crates/quench-node-test/tests/child_entry.rs:5998:5:
+assertion `left == right` failed
+  left: [91, 34, 69, 114, 114, 111, 114, 34, 44, 34, 69, 82, 82, 95, 67, 82, 89, 80, 84, 79, 95, 67, 85, 83, 84, 79, 77, 95, 69, 78, 71, 73, 78, 69, 95, 78, 79, 84, 95, 83, 85, 80, 80, 79, 82, 84, 69, 68, 34, 44, 34, 67, 117, 115, 116, 111, 109, 32, 101, 110, 103, 105, 110, 101, 115, 32, 110, 111, 116, 32, 115, 117, 112, 112, 111, 114, 116, 101, 100, 32, 98, 121, 32, 116, 104, 105, 115, 32, 79, 112, 101, 110, 83, 83, 76, 34, 44, 91, 34, 99, 111, 100, 101, 34, 93, 93, 10, 91, 34, 69, 114, 114, 111, 114, 34, 44, 34, 69, 82, 82, 95, 67, 82, 89, 80, 84, 79, 95, 67, 85, 83, 84, 79, 77, 95, 69, 78, 71, 73, 78, 69, 95, 78, 79, 84, 95, 83, 85, 80, 80, 79, 82, 84, 69, 68, 34, 44, 34, 67, 117, 115, 116, 111, 109, 32, 101, 110, 103, 105, 110, 101, 115, 32, 110, 111, 116, 32, 115, 117, 112, 112, 111, 114, 116, 101, 100, 32, 98, 121, 32, 116, 104, 105, 115, 32, 79, 112, 101, 110, 83, 83, 76, 34, 44, 91, 34, 99, 111, 100, 101, 34, 93, 93, 10, 55, 55, 49, 32, 51, 10, 91, 91, 34, 84, 104, 101, 115, 101, 32, 65, 80, 73, 115, 32, 97, 114, 101, 32, 102, 111, 114, 32, 105, 110, 116, 101, 114, 110, 97, 108, 32, 116, 101, 115, 116, 105, 110, 103, 32, 111, 110, 108, 121, 46, 32, 68, 111, 32, 110, 111, 116, 32, 117, 115, 101, 32, 116, 104, 101, 109, 46, 34, 44, 34, 105, 110, 116, 101, 114, 110, 97, 108, 47, 116, 101, 115, 116, 47, 98, 105, 110, 100, 105, 110, 103, 34, 93, 93, 10]
+ right: [91, 34, 69, 114, 114, 111, 114, 34, 44, 34, 69, 82, 82, 95, 67, 82, 89, 80, 84, 79, 95, 67, 85, 83, 84, 79, 77, 95, 69, 78, 71, 73, 78, 69, 95, 78, 79, 84, 95, 83, 85, 80, 80, 79, 82, 84, 69, 68, 34, 44, 34, 67, 117, 115, 116, 111, 109, 32, 101, 110, 103, 105, 110, 101, 115, 32, 110, 111, 116, 32, 115, 117, 112, 112, 111, 114, 116, 101, 100, 32, 98, 121, 32, 116, 104, 105, 115, 32, 79, 112, 101, 110, 83, 83, 76, 34, 44, 91, 34, 99, 111, 100, 101, 34, 93, 93, 10, 91, 34, 69, 114, 114, 111, 114, 34, 44, 34, 69, 82, 82, 95, 67, 82, 89, 80, 84, 79, 95, 67, 85, 83, 84, 79, 77, 95, 69, 78, 71, 73, 78, 69, 95, 78, 79, 84, 95, 83, 85, 80, 80, 79, 82, 84, 69, 68, 34, 44, 34, 67, 117, 115, 116, 111, 109, 32, 101, 110, 103, 105, 110, 101, 115, 32, 110, 111, 116, 32, 115, 117, 112, 112, 111, 114, 116, 101, 100, 32, 98, 121, 32, 116, 104, 105, 115, 32, 79, 112, 101, 110, 83, 83, 76, 34, 44, 91, 34, 99, 111, 100, 101, 34, 93, 93, 10, 55, 55, 49, 32, 51, 10, 91, 93, 10]
+
+
+failures:
+    native_buffer_binding_fill_preserves_statuses_indices_and_shared_byte_policy
+    native_tls_context_internal_binding_constructor_snapshot_and_missing_engine_hooks_match_node
+
+test result: FAILED. 118 passed; 2 failed; 0 ignored; 0 measured; 301 filtered out; finished in 64.49s
+

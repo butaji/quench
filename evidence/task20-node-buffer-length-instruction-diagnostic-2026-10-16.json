@@ -1,0 +1,179 @@
+{
+  "scope": "Diagnostic unchanged standalone Buffer.length workload; real instruction counts only, no wall-time claim or full-test count adjustment",
+  "rows": [
+    {
+      "role": "before321",
+      "iterations": 0,
+      "source_sha256": "4991dcb8a1fb9ef79987a81aa1180c6fb8128ca460ed279e27588ba670513104",
+      "binary": "/workspace/quench/work/sdk-primitives-bin/quench-node",
+      "binary_sha256": "7220e65fa1f11c8ba2e3452cb1df210eb7d2fc8301818f0670f2b0cb966460da",
+      "command": [
+        "/workspace/quench/work/valgrind-local/root/usr/bin/valgrind",
+        "--tool=callgrind",
+        "--trace-children=no",
+        "--log-file=/workspace/quench/work/function-info-cost/before321-0.log",
+        "--callgrind-out-file=/workspace/quench/work/function-info-cost/before321-0.callgrind",
+        "/workspace/quench/work/sdk-primitives-bin/quench-node",
+        "/workspace/quench/work/function-info-cost/length-0.cjs"
+      ],
+      "exit": 0,
+      "stdout": "0\n",
+      "instructions": 1937013332,
+      "elapsed_seconds": 17.349478513002396
+    },
+    {
+      "role": "owned7f",
+      "iterations": 0,
+      "source_sha256": "4991dcb8a1fb9ef79987a81aa1180c6fb8128ca460ed279e27588ba670513104",
+      "binary": "/workspace/quench/work/owned-script-bin/quench-node",
+      "binary_sha256": "c46f4110bbaaa0fe53f956a981cefa8e0f38fab3bb3b3d034ea3a295cbf023be",
+      "command": [
+        "/workspace/quench/work/valgrind-local/root/usr/bin/valgrind",
+        "--tool=callgrind",
+        "--trace-children=no",
+        "--log-file=/workspace/quench/work/function-info-cost/owned7f-0.log",
+        "--callgrind-out-file=/workspace/quench/work/function-info-cost/owned7f-0.callgrind",
+        "/workspace/quench/work/owned-script-bin/quench-node",
+        "/workspace/quench/work/function-info-cost/length-0.cjs"
+      ],
+      "exit": 0,
+      "stdout": "0\n",
+      "instructions": 1937735575,
+      "elapsed_seconds": 18.435702367976774
+    },
+    {
+      "role": "before321",
+      "iterations": 100000,
+      "source_sha256": "930ac0372f634a888dab151448107f2e7f78a30b49f964ca0927f68266155fbe",
+      "binary": "/workspace/quench/work/sdk-primitives-bin/quench-node",
+      "binary_sha256": "7220e65fa1f11c8ba2e3452cb1df210eb7d2fc8301818f0670f2b0cb966460da",
+      "command": [
+        "/workspace/quench/work/valgrind-local/root/usr/bin/valgrind",
+        "--tool=callgrind",
+        "--trace-children=no",
+        "--log-file=/workspace/quench/work/function-info-cost/before321-100000.log",
+        "--callgrind-out-file=/workspace/quench/work/function-info-cost/before321-100000.callgrind",
+        "/workspace/quench/work/sdk-primitives-bin/quench-node",
+        "/workspace/quench/work/function-info-cost/length-100000.cjs"
+      ],
+      "exit": 0,
+      "stdout": "51200000\n",
+      "instructions": 2660016287,
+      "elapsed_seconds": 24.72273875697283
+    },
+    {
+      "role": "owned7f",
+      "iterations": 100000,
+      "source_sha256": "930ac0372f634a888dab151448107f2e7f78a30b49f964ca0927f68266155fbe",
+      "binary": "/workspace/quench/work/owned-script-bin/quench-node",
+      "binary_sha256": "c46f4110bbaaa0fe53f956a981cefa8e0f38fab3bb3b3d034ea3a295cbf023be",
+      "command": [
+        "/workspace/quench/work/valgrind-local/root/usr/bin/valgrind",
+        "--tool=callgrind",
+        "--trace-children=no",
+        "--log-file=/workspace/quench/work/function-info-cost/owned7f-100000.log",
+        "--callgrind-out-file=/workspace/quench/work/function-info-cost/owned7f-100000.callgrind",
+        "/workspace/quench/work/owned-script-bin/quench-node",
+        "/workspace/quench/work/function-info-cost/length-100000.cjs"
+      ],
+      "exit": 0,
+      "stdout": "51200000\n",
+      "instructions": 2826455445,
+      "elapsed_seconds": 26.984680115012452
+    }
+  ],
+  "marginal": {
+    "before321": 723002955,
+    "owned7f": 888719870,
+    "relative_delta": 0.22920641451596824
+  },
+  "limitations": [
+    "Standalone Buffer.length diagnostic isolates the repeated loop by subtracting its zero-iteration image; it does not establish which function caused the increase.",
+    "Retained native images have stripped symbols; raw call graphs contain addresses and cannot directly attribute cost to named Rust functions.",
+    "No original test deadlines, iterations or fixture source were changed. This diagnostic is separate from the unchanged full test results."
+  ],
+  "latest_stable_node_control": {
+    "version": "v26.12.0",
+    "exit": 0,
+    "stdout": "51200000\n",
+    "stderr": ""
+  },
+  "raw": [
+    {
+      "path": "work/function-info-cost/before321-0.callgrind",
+      "bytes": 1146393,
+      "sha256": "d241f779fe48a861e2e0772b78ab7c850abedfe2b6e79e2147556c3f08341474"
+    },
+    {
+      "path": "work/function-info-cost/before321-0.log",
+      "bytes": 889,
+      "sha256": "0ef1f5eb13bcbad1e5974199df151569453c66c02340a7991441da0340372e24"
+    },
+    {
+      "path": "work/function-info-cost/before321-100000.callgrind",
+      "bytes": 1148014,
+      "sha256": "f4afffb0bc99302c422ffbde4c759bbeeb68c6140f2baca51281ec092886f229"
+    },
+    {
+      "path": "work/function-info-cost/before321-100000.log",
+      "bytes": 894,
+      "sha256": "4cc3acf588932b3bf8b8681cdc11d1de3d510150965dd20158cf818d0f8825a5"
+    },
+    {
+      "path": "work/function-info-cost/config.json",
+      "bytes": 259,
+      "sha256": "bb7af27a78936a2a012957f0bbd88d151b2ab80fc70ddd4619fa84828c090ab6"
+    },
+    {
+      "path": "work/function-info-cost/length-0.cjs",
+      "bytes": 102,
+      "sha256": "4991dcb8a1fb9ef79987a81aa1180c6fb8128ca460ed279e27588ba670513104"
+    },
+    {
+      "path": "work/function-info-cost/length-100000.cjs",
+      "bytes": 107,
+      "sha256": "930ac0372f634a888dab151448107f2e7f78a30b49f964ca0927f68266155fbe"
+    },
+    {
+      "path": "work/function-info-cost/owned7f-0.callgrind",
+      "bytes": 1148098,
+      "sha256": "8c94fe9367233acaab48830f04be372e939f8362d78b98b1a43fc1285de38eeb"
+    },
+    {
+      "path": "work/function-info-cost/owned7f-0.log",
+      "bytes": 887,
+      "sha256": "a51bd5312e7f732906f53bb7df8a51f1e2b4ce952f03379e5171df7f842a5dcc"
+    },
+    {
+      "path": "work/function-info-cost/owned7f-100000.annotated.txt",
+      "bytes": 20503,
+      "sha256": "aa8a5b28ab38a05cd49f81f2de704029e22d037536982732281690f46d2759ec"
+    },
+    {
+      "path": "work/function-info-cost/owned7f-100000.callgrind",
+      "bytes": 1149814,
+      "sha256": "8792251db2a7709afa9b6a75733fb52542cd7e3729001f2a4297707997713bf7"
+    },
+    {
+      "path": "work/function-info-cost/owned7f-100000.log",
+      "bytes": 892,
+      "sha256": "6e95f9bb3196f2e9640602d85e62909631a646178e3b3fa614ff7cd67cac756e"
+    },
+    {
+      "path": "work/function-info-cost/profile.py",
+      "bytes": 1753,
+      "sha256": "ed0bbe91c9088811058d554ebebc510f32a8e1f241eb885b6aebcbda6f5c8e0c"
+    },
+    {
+      "path": "work/function-info-cost/receipt.json",
+      "bytes": 4527,
+      "sha256": "41b2ad7a5e7cfe2e5877ec557a459b25ed4aa91b4e1c91a75b92565147ff1805"
+    },
+    {
+      "path": "work/function-info-cost/supervisor.log",
+      "bytes": 98,
+      "sha256": "5f7cb731a057ec17a562a254bbd401d7d31f526aa27619672e09f4b8cc6839b1"
+    }
+  ],
+  "host": "Linux-6.18.44-x86_64-with-glibc2.41"
+}

@@ -1,0 +1,4 @@
+Merge made by the 'ort' strategy.
+ .../quench-runtime/src/compile/ast/destructure.rs  | 26 ++++++++++++++++++++--
+ crates/quench-runtime/tests/subset.rs              | 11 +++++++++
+ 2 files changed, 35 insertions(+), 2 deletions(-)

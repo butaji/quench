@@ -1,0 +1,99 @@
+{
+  "schema": 1,
+  "task": "27",
+  "kind": "shared_buffer_codec_boundary",
+  "recorded_on": "2026-10-08",
+  "source": {
+    "revision": "609d48aca",
+    "worktree_dirty": true,
+    "platform": "Darwin arm64",
+    "node": "v26.10.0",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+    "files_sha256": {
+      "crates/quench-node/src/modules/buffer_codec.rs": "af3302fd8362e32f20764db92c05eb80c0de33546ce689a4e608f91a9ad8afb0",
+      "crates/quench-node/src/modules/buffer_enc.rs": "19fe8bcd164942422efba6a5004cdc53335a232ca3e683c22c8ee00b5582db8f",
+      "crates/quench-node/src/modules/buffer/shared_vm.rs": "b82e6595f8e3a648344d169f78cf998eeeb8d6dc7361b3d8e848115ae1d1dcd9",
+      "crates/quench-node/src/modules/mod.rs": "fc8fb395a608f5dcf211b8edb9dcb8c371b3aaeb95af948105b38d77d0485762"
+    },
+    "binaries_sha256": {
+      "target/iteration/quench-node": "827771a924ec5c1988e8866db9abe857661b67918dd2d6d2b3a1362fa18d1dbe",
+      "target/iteration/run-parallel": "35271dd71390511d29c5e83b71dd05e5ba9f56d5722abadbc705ac823330b9a3"
+    },
+    "parallel_manifest_sha256": "0209917422a2f0f3fa241d941ec4bc88c9917d5322b69014ab1a662a52e9dfca"
+  },
+  "change": {
+    "shared_owner": "crates/quench-node/src/modules/buffer_codec.rs",
+    "moved": [
+      "canonical Buffer encoding names",
+      "UTF-8 and UTF-16 encoding, including lone-surrogate replacement",
+      "UTF-16 decoding, forgiving Base64 and Node hex truncation"
+    ],
+    "legacy_adapter": "buffer_enc.rs retains Value/error adaptation and delegates pure byte operations to buffer_codec.rs",
+    "shared_adapter": "buffer/shared_vm.rs now calls buffer_codec.rs directly",
+    "legacy_package_dependency_removed": false
+  },
+  "verification": {
+    "cargo_check_workspace_iteration": "passed",
+    "cargo_build_quench_node_iteration": "passed",
+    "framework_core": {
+      "command": "cargo run --profile iteration -p quench-node-test --bin run-parallel -- --profile framework-core --timeout-secs 60",
+      "cases": 43,
+      "passed": 43,
+      "skipped": 0,
+      "failed": 0,
+      "timeouts": 0,
+      "crashes": 0,
+      "unclassified": 0
+    },
+    "framework_scenarios": {
+      "comparison": "Local Node and target/iteration/quench-node, exact exit status/stdout/stderr",
+      "driver_sha256": "e8dd245f9bbfcdcd3a430ff7ed663c3310fdf32fae23cfc5c24d24cbeda96bfb",
+      "stdout": "statuses 200,200,200,200,404\n",
+      "stdout_sha256": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "scenarios": {
+        "express": { "result": "MATCH", "status": [0, 0], "input_sha256": "85eebbbc5c9cfaa01f2f16b6c7e181a4c4bc2e308bd1bb179f49c5d9700f8158" },
+        "koa": { "result": "MATCH", "status": [0, 0], "input_sha256": "962e4c326df72b30eed4306494e2218475456c7c816220a6e46a898b040185f9" },
+        "fastify": { "result": "MATCH", "status": [0, 0], "input_sha256": "1ff4fc87e2a4c792761c286bc0f255d0ab9be27e810dbf98938a1ac717d1ba6a" }
+      }
+    },
+    "upstream_parallel_probes": {
+      "runner": "target/iteration/run-parallel --one PATH; default 30-second isolated-worker timeout",
+      "fixture_sha256": {
+        "tests/node/test/parallel/test-buffer-isencoding.js": "5da97872ab091d569c27f7f4293db094637ff3e66b4b0fccb991fccfa4b6e7f7",
+        "tests/node/test/parallel/test-buffer-ascii.js": "21982d237b9fc6b4c57cd81cf30d7408c145db31c1ff1f9d7b36782efd4149bb",
+        "tests/node/test/parallel/test-buffer-badhex.js": "fc3dfab4f76e4171b0b48656088a266bf22b775354be397094785e230681e79f",
+        "tests/node/test/parallel/test-buffer-from.js": "57a051541f292810da965a6ba608007de9c141b01c86cfc571adff82725bd160",
+        "tests/node/test/parallel/test-buffer-tostring.js": "bad5178a40c2718201d94973026f5f454b74794398e0ce21265d3cd902104c09",
+        "tests/node/test/parallel/test-buffer-tostring-range.js": "84de95ad801e0b43b4a6da69e61bae784e13e0d224d9f8b5a87be82ab7b70988",
+        "tests/node/test/parallel/test-buffer-bytelength.js": "a3cb0933149792fdc96895fd0a11b98e884aaa9ca0afeadfce002ff2f6f2d0b9",
+        "tests/node/test/parallel/test-string-decoder.js": "f556e3745ae83dd118dc38f740fcf23da9b8db9a2c7c301d1938e38f97884393",
+        "tests/node/test/parallel/test-string-decoder-end.js": "7c7a2001863059594d112a8450e3808e891f6c8e06d0f62e57920411545a8cb9",
+        "tests/node/test/parallel/test-string-decoder-fuzz.js": "a3e665a923c69dcfe39c0992ec670adcd4d418b53a91aa93d8957f59666b0c28",
+        "tests/node/test/parallel/test-string-decoder-utf8-large.js": "09ceb86f330939b5c1169377554ca7ba0b7ab4dedfddfaa685a56ee6ddab5b6e",
+        "tests/node/test/parallel/test-stream-decoder-objectmode.js": "4a211b658bb1a06db91b77b7f23f2af228c7a6ef49526f5b5625bdfced60735a"
+      },
+      "passed": [
+        "test-buffer-isencoding.js",
+        "test-buffer-ascii.js",
+        "test-buffer-tostring.js",
+        "test-buffer-tostring-range.js",
+        "test-string-decoder.js",
+        "test-string-decoder-end.js",
+        "test-string-decoder-fuzz.js",
+        "test-stream-decoder-objectmode.js"
+      ],
+      "failed_outside_framework_gate": {
+        "test-buffer-badhex.js": "TypeError: value is not callable; this fixture exercises Buffer.write, which the shared Buffer surface does not yet expose",
+        "test-buffer-from.js": "fixture setup stops at missing node:vm before its Buffer assertions",
+        "test-buffer-bytelength.js": "fixture setup stops at missing node:vm before its Buffer assertions"
+      },
+      "timed_out_outside_framework_gate": {
+        "test-string-decoder-utf8-large.js": "exceeded the default isolated-worker timeout"
+      }
+    },
+    "test262_dependency_check": "cargo tree -p quench-test262 contains no quench-node package",
+    "wasm_dependency_check": "cargo tree -p quench-wasm-test contains no quench-node package",
+    "unit_tests": "not run"
+  }
+}

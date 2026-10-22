@@ -1,0 +1,17 @@
+/workspace/quench/work/function-constructor-canonical-core-oracle.cjs:7
+if(parameter.getLineNumber()!==1||parameter.getColumnNumber()!==24)throw Error('parameter position');
+                                                                   ^
+
+[Error: parameter position
+    [
+      CallSite {},
+      CallSite {},
+      CallSite {},
+      CallSite {},
+      CallSite {},
+      CallSite {},
+      CallSite {},
+      CallSite {}
+    ]]
+
+Node.js v26.12.0

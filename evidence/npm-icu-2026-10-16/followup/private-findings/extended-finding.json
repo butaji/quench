@@ -1,0 +1,1192 @@
+{
+  "source": "5dfcf152c056f6ba6974be3c1ae94d486307064f",
+  "sha256": "49f4b6e458937483618ddcef1e68eb0684084ab952747664409c487eb9d24013",
+  "cases": 84,
+  "differences": 74,
+  "rows": [
+    {
+      "node": {
+        "name": "instance-read-object",
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot read private member #field from an object whose class did not declare it"
+        }
+      },
+      "quench": {
+        "name": "instance-read-object",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "instance-read-null",
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot read properties of null (reading '#field')"
+        }
+      },
+      "quench": {
+        "name": "instance-read-null",
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot read properties of null (reading '\u0000quench:private:/workspace/scratch/npm-private-brand-draft/extended.cjs:0:field')"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "instance-read-undefined",
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot read properties of undefined (reading '#field')"
+        }
+      },
+      "quench": {
+        "name": "instance-read-undefined",
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot read properties of undefined (reading '\u0000quench:private:/workspace/scratch/npm-private-brand-draft/extended.cjs:0:field')"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "instance-read-number",
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot read private member #field from an object whose class did not declare it"
+        }
+      },
+      "quench": {
+        "name": "instance-read-number",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "instance-read-proxy",
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot read private member #field from an object whose class did not declare it"
+        }
+      },
+      "quench": {
+        "name": "instance-read-proxy",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "instance-write-object",
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot write private member #field to an object whose class did not declare it"
+        }
+      },
+      "quench": {
+        "name": "instance-write-object",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "instance-write-null",
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot set properties of null (setting '#field')"
+        }
+      },
+      "quench": {
+        "name": "instance-write-null",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "instance-write-undefined",
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot set properties of undefined (setting '#field')"
+        }
+      },
+      "quench": {
+        "name": "instance-write-undefined",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "instance-write-number",
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot write private member #field to an object whose class did not declare it"
+        }
+      },
+      "quench": {
+        "name": "instance-write-number",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "instance-write-proxy",
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot write private member #field to an object whose class did not declare it"
+        }
+      },
+      "quench": {
+        "name": "instance-write-proxy",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "instance-method-object",
+        "error": {
+          "name": "TypeError",
+          "message": "Receiver must be an instance of class Named"
+        }
+      },
+      "quench": {
+        "name": "instance-method-object",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "instance-method-null",
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot read properties of null (reading 'Named')"
+        }
+      },
+      "quench": {
+        "name": "instance-method-null",
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot read properties of null (reading '\u0000quench:private:/workspace/scratch/npm-private-brand-draft/extended.cjs:1:method')"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "instance-method-undefined",
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot read properties of undefined (reading 'Named')"
+        }
+      },
+      "quench": {
+        "name": "instance-method-undefined",
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot read properties of undefined (reading '\u0000quench:private:/workspace/scratch/npm-private-brand-draft/extended.cjs:1:method')"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "instance-method-number",
+        "error": {
+          "name": "TypeError",
+          "message": "Receiver must be an instance of class Named"
+        }
+      },
+      "quench": {
+        "name": "instance-method-number",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "instance-method-proxy",
+        "error": {
+          "name": "TypeError",
+          "message": "Receiver must be an instance of class Named"
+        }
+      },
+      "quench": {
+        "name": "instance-method-proxy",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "instance-getAccessor-object",
+        "error": {
+          "name": "TypeError",
+          "message": "Receiver must be an instance of class Named"
+        }
+      },
+      "quench": {
+        "name": "instance-getAccessor-object",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "instance-getAccessor-null",
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot read properties of null (reading 'Named')"
+        }
+      },
+      "quench": {
+        "name": "instance-getAccessor-null",
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot read properties of null (reading '\u0000quench:private:/workspace/scratch/npm-private-brand-draft/extended.cjs:2:accessor')"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "instance-getAccessor-undefined",
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot read properties of undefined (reading 'Named')"
+        }
+      },
+      "quench": {
+        "name": "instance-getAccessor-undefined",
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot read properties of undefined (reading '\u0000quench:private:/workspace/scratch/npm-private-brand-draft/extended.cjs:2:accessor')"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "instance-getAccessor-number",
+        "error": {
+          "name": "TypeError",
+          "message": "Receiver must be an instance of class Named"
+        }
+      },
+      "quench": {
+        "name": "instance-getAccessor-number",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "instance-getAccessor-proxy",
+        "error": {
+          "name": "TypeError",
+          "message": "Receiver must be an instance of class Named"
+        }
+      },
+      "quench": {
+        "name": "instance-getAccessor-proxy",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "instance-setAccessor-object",
+        "error": {
+          "name": "TypeError",
+          "message": "Receiver must be an instance of class Named"
+        }
+      },
+      "quench": {
+        "name": "instance-setAccessor-object",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "instance-setAccessor-null",
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot read properties of null (reading 'Named')"
+        }
+      },
+      "quench": {
+        "name": "instance-setAccessor-null",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "instance-setAccessor-undefined",
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot read properties of undefined (reading 'Named')"
+        }
+      },
+      "quench": {
+        "name": "instance-setAccessor-undefined",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "instance-setAccessor-number",
+        "error": {
+          "name": "TypeError",
+          "message": "Receiver must be an instance of class Named"
+        }
+      },
+      "quench": {
+        "name": "instance-setAccessor-number",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "instance-setAccessor-proxy",
+        "error": {
+          "name": "TypeError",
+          "message": "Receiver must be an instance of class Named"
+        }
+      },
+      "quench": {
+        "name": "instance-setAccessor-proxy",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "instance-setMethod-instance",
+        "error": {
+          "name": "TypeError",
+          "message": "Private method '#method' is not writable"
+        }
+      },
+      "quench": {
+        "name": "instance-setMethod-instance",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "instance-setMethod-object",
+        "error": {
+          "name": "TypeError",
+          "message": "Receiver must be an instance of class Named"
+        }
+      },
+      "quench": {
+        "name": "instance-setMethod-object",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "instance-setMethod-null",
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot read properties of null (reading 'Named')"
+        }
+      },
+      "quench": {
+        "name": "instance-setMethod-null",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "instance-setMethod-undefined",
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot read properties of undefined (reading 'Named')"
+        }
+      },
+      "quench": {
+        "name": "instance-setMethod-undefined",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "instance-setMethod-number",
+        "error": {
+          "name": "TypeError",
+          "message": "Receiver must be an instance of class Named"
+        }
+      },
+      "quench": {
+        "name": "instance-setMethod-number",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "instance-setMethod-proxy",
+        "error": {
+          "name": "TypeError",
+          "message": "Receiver must be an instance of class Named"
+        }
+      },
+      "quench": {
+        "name": "instance-setMethod-proxy",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "instance-setReadonly-instance",
+        "error": {
+          "name": "TypeError",
+          "message": "'#readonly' was defined without a setter"
+        }
+      },
+      "quench": {
+        "name": "instance-setReadonly-instance",
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot set property \u0000quench:private:/workspace/scratch/npm-private-brand-draft/extended.cjs:3:readonly of #<Object> which has only a getter"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "instance-setReadonly-object",
+        "error": {
+          "name": "TypeError",
+          "message": "Receiver must be an instance of class Named"
+        }
+      },
+      "quench": {
+        "name": "instance-setReadonly-object",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "instance-setReadonly-null",
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot read properties of null (reading 'Named')"
+        }
+      },
+      "quench": {
+        "name": "instance-setReadonly-null",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "instance-setReadonly-undefined",
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot read properties of undefined (reading 'Named')"
+        }
+      },
+      "quench": {
+        "name": "instance-setReadonly-undefined",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "instance-setReadonly-number",
+        "error": {
+          "name": "TypeError",
+          "message": "Receiver must be an instance of class Named"
+        }
+      },
+      "quench": {
+        "name": "instance-setReadonly-number",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "instance-setReadonly-proxy",
+        "error": {
+          "name": "TypeError",
+          "message": "Receiver must be an instance of class Named"
+        }
+      },
+      "quench": {
+        "name": "instance-setReadonly-proxy",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "instance-getWriteonly-instance",
+        "error": {
+          "name": "TypeError",
+          "message": "'#writeonly' was defined without a getter"
+        }
+      },
+      "quench": {
+        "name": "instance-getWriteonly-instance",
+        "error": {
+          "name": "TypeError",
+          "message": "private accessor does not have a getter"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "instance-getWriteonly-object",
+        "error": {
+          "name": "TypeError",
+          "message": "Receiver must be an instance of class Named"
+        }
+      },
+      "quench": {
+        "name": "instance-getWriteonly-object",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "instance-getWriteonly-null",
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot read properties of null (reading 'Named')"
+        }
+      },
+      "quench": {
+        "name": "instance-getWriteonly-null",
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot read properties of null (reading '\u0000quench:private:/workspace/scratch/npm-private-brand-draft/extended.cjs:4:writeonly')"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "instance-getWriteonly-undefined",
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot read properties of undefined (reading 'Named')"
+        }
+      },
+      "quench": {
+        "name": "instance-getWriteonly-undefined",
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot read properties of undefined (reading '\u0000quench:private:/workspace/scratch/npm-private-brand-draft/extended.cjs:4:writeonly')"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "instance-getWriteonly-number",
+        "error": {
+          "name": "TypeError",
+          "message": "Receiver must be an instance of class Named"
+        }
+      },
+      "quench": {
+        "name": "instance-getWriteonly-number",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "instance-getWriteonly-proxy",
+        "error": {
+          "name": "TypeError",
+          "message": "Receiver must be an instance of class Named"
+        }
+      },
+      "quench": {
+        "name": "instance-getWriteonly-proxy",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "static-read-object",
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot read private member #staticField from an object whose class did not declare it"
+        }
+      },
+      "quench": {
+        "name": "static-read-object",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "static-read-null",
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot read properties of null (reading '#staticField')"
+        }
+      },
+      "quench": {
+        "name": "static-read-null",
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot read properties of null (reading '\u0000quench:private:/workspace/scratch/npm-private-brand-draft/extended.cjs:5:staticField')"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "static-read-undefined",
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot read properties of undefined (reading '#staticField')"
+        }
+      },
+      "quench": {
+        "name": "static-read-undefined",
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot read properties of undefined (reading '\u0000quench:private:/workspace/scratch/npm-private-brand-draft/extended.cjs:5:staticField')"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "static-read-number",
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot read private member #staticField from an object whose class did not declare it"
+        }
+      },
+      "quench": {
+        "name": "static-read-number",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "static-read-proxy",
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot read private member #staticField from an object whose class did not declare it"
+        }
+      },
+      "quench": {
+        "name": "static-read-proxy",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "static-write-object",
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot write private member #staticField to an object whose class did not declare it"
+        }
+      },
+      "quench": {
+        "name": "static-write-object",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "static-write-null",
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot set properties of null (setting '#staticField')"
+        }
+      },
+      "quench": {
+        "name": "static-write-null",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "static-write-undefined",
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot set properties of undefined (setting '#staticField')"
+        }
+      },
+      "quench": {
+        "name": "static-write-undefined",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "static-write-number",
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot write private member #staticField to an object whose class did not declare it"
+        }
+      },
+      "quench": {
+        "name": "static-write-number",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "static-write-proxy",
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot write private member #staticField to an object whose class did not declare it"
+        }
+      },
+      "quench": {
+        "name": "static-write-proxy",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "static-method-object",
+        "error": {
+          "name": "TypeError",
+          "message": "Receiver must be class Named"
+        }
+      },
+      "quench": {
+        "name": "static-method-object",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "static-method-null",
+        "error": {
+          "name": "TypeError",
+          "message": "Receiver must be class Named"
+        }
+      },
+      "quench": {
+        "name": "static-method-null",
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot read properties of null (reading '\u0000quench:private:/workspace/scratch/npm-private-brand-draft/extended.cjs:6:staticMethod')"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "static-method-undefined",
+        "error": {
+          "name": "TypeError",
+          "message": "Receiver must be class Named"
+        }
+      },
+      "quench": {
+        "name": "static-method-undefined",
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot read properties of undefined (reading '\u0000quench:private:/workspace/scratch/npm-private-brand-draft/extended.cjs:6:staticMethod')"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "static-method-number",
+        "error": {
+          "name": "TypeError",
+          "message": "Receiver must be class Named"
+        }
+      },
+      "quench": {
+        "name": "static-method-number",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "static-method-proxy",
+        "error": {
+          "name": "TypeError",
+          "message": "Receiver must be class Named"
+        }
+      },
+      "quench": {
+        "name": "static-method-proxy",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "static-getAccessor-object",
+        "error": {
+          "name": "TypeError",
+          "message": "Receiver must be class Named"
+        }
+      },
+      "quench": {
+        "name": "static-getAccessor-object",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "static-getAccessor-null",
+        "error": {
+          "name": "TypeError",
+          "message": "Receiver must be class Named"
+        }
+      },
+      "quench": {
+        "name": "static-getAccessor-null",
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot read properties of null (reading '\u0000quench:private:/workspace/scratch/npm-private-brand-draft/extended.cjs:7:staticAccessor')"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "static-getAccessor-undefined",
+        "error": {
+          "name": "TypeError",
+          "message": "Receiver must be class Named"
+        }
+      },
+      "quench": {
+        "name": "static-getAccessor-undefined",
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot read properties of undefined (reading '\u0000quench:private:/workspace/scratch/npm-private-brand-draft/extended.cjs:7:staticAccessor')"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "static-getAccessor-number",
+        "error": {
+          "name": "TypeError",
+          "message": "Receiver must be class Named"
+        }
+      },
+      "quench": {
+        "name": "static-getAccessor-number",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "static-getAccessor-proxy",
+        "error": {
+          "name": "TypeError",
+          "message": "Receiver must be class Named"
+        }
+      },
+      "quench": {
+        "name": "static-getAccessor-proxy",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "static-setAccessor-object",
+        "error": {
+          "name": "TypeError",
+          "message": "Receiver must be class Named"
+        }
+      },
+      "quench": {
+        "name": "static-setAccessor-object",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "static-setAccessor-null",
+        "error": {
+          "name": "TypeError",
+          "message": "Receiver must be class Named"
+        }
+      },
+      "quench": {
+        "name": "static-setAccessor-null",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "static-setAccessor-undefined",
+        "error": {
+          "name": "TypeError",
+          "message": "Receiver must be class Named"
+        }
+      },
+      "quench": {
+        "name": "static-setAccessor-undefined",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "static-setAccessor-number",
+        "error": {
+          "name": "TypeError",
+          "message": "Receiver must be class Named"
+        }
+      },
+      "quench": {
+        "name": "static-setAccessor-number",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "static-setAccessor-proxy",
+        "error": {
+          "name": "TypeError",
+          "message": "Receiver must be class Named"
+        }
+      },
+      "quench": {
+        "name": "static-setAccessor-proxy",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "static-setMethod-class",
+        "error": {
+          "name": "TypeError",
+          "message": "Private method '#staticMethod' is not writable"
+        }
+      },
+      "quench": {
+        "name": "static-setMethod-class",
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot assign to read only property '\u0000quench:private:/workspace/scratch/npm-private-brand-draft/extended.cjs:6:staticMethod' of object '[object Function]'"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "static-setMethod-object",
+        "error": {
+          "name": "TypeError",
+          "message": "Receiver must be class Named"
+        }
+      },
+      "quench": {
+        "name": "static-setMethod-object",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "static-setMethod-null",
+        "error": {
+          "name": "TypeError",
+          "message": "Receiver must be class Named"
+        }
+      },
+      "quench": {
+        "name": "static-setMethod-null",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "static-setMethod-undefined",
+        "error": {
+          "name": "TypeError",
+          "message": "Receiver must be class Named"
+        }
+      },
+      "quench": {
+        "name": "static-setMethod-undefined",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "static-setMethod-number",
+        "error": {
+          "name": "TypeError",
+          "message": "Receiver must be class Named"
+        }
+      },
+      "quench": {
+        "name": "static-setMethod-number",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "static-setMethod-proxy",
+        "error": {
+          "name": "TypeError",
+          "message": "Receiver must be class Named"
+        }
+      },
+      "quench": {
+        "name": "static-setMethod-proxy",
+        "error": {
+          "name": "TypeError",
+          "message": "private member is not present on this object"
+        }
+      }
+    }
+  ]
+}

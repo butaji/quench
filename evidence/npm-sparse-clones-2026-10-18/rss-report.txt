@@ -1,0 +1,19 @@
+packages 300  quench lowest 283  not lowest 17
+  @typescript-eslint/type-utils            behavior-pass      quench   220.4  node   203.0  bun 123.2 
+  @typescript-eslint/tsconfig-utils        behavior-pass      quench   151.6  node   140.1  bun 79.8 
+  @typescript-eslint/project-service       behavior-pass      quench   132.3  node   122.9  bun 77.7 
+  @typescript-eslint/scope-manager         behavior-pass      quench   137.0  node   142.9  bun 89.7 
+  @typescript-eslint/eslint-plugin         behavior-pass      quench   183.7  node   230.5  bun 140.4 
+  @typescript-eslint/typescript-estree     behavior-pass      quench   132.5  node   138.3  bun 91.6 
+  @typescript-eslint/parser                behavior-pass      quench   132.2  node   143.1  bun 91.7 
+  typescript-eslint                        behavior-pass      quench   184.6  node   230.9  bun 147.4 
+  playwright                               behavior-pass      quench   118.4  node   136.7  bun 99.0 
+  jiti                                     behavior-pass      quench    56.7  node    96.7  bun 38.9 
+  jsdom                                    behavior-pass      quench   110.3  node   178.0  bun 98.1 
+  @types/babel__template                   declarations-pass  quench    54.3  node    69.6  bun 52.8 
+  undici-types                             declarations-pass  quench    74.8  node    74.1  bun 74.2 
+  undici                                   behavior-pass      quench    34.3  node    86.5  bun 33.6 
+  @types/react                             declarations-pass  quench    53.5  node    69.7  bun 53.3 
+  @types/yargs                             declarations-pass  quench    46.0  node    69.8  bun 45.9 
+  @testing-library/dom                     behavior-pass      quench   122.2  node   193.4  bun 122.1 
+median MiB quench 19.5 node 70.3 bun 37.4

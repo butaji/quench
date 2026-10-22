@@ -1,0 +1,13 @@
+{
+  "node_version": "v26.12.0",
+  "source_commit": "26e72d85a611e222e3f06025de8a3c496923bacd",
+  "fixture_sha256": "8711f0348ab12f36d86a79c46084508b72a38553a2c35ae6c1e1bbb26a86bdd0",
+  "standalone_oracle_exit": 0,
+  "standalone_counts": {
+    "tests": 117,
+    "passed": 117,
+    "failed": 0
+  },
+  "nested_scope_failure": "CommonJS parse-args.js fixture inherits /workspace/quench/package.json type:module",
+  "implementation_status": "util.parseArgs remains absent in Quench; Node oracle baseline only"
+}

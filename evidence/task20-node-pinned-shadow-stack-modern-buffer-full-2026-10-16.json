@@ -1,0 +1,81 @@
+{
+  "scope": "Complete unchanged pinned parallel inventory after modern Buffer and realm-local original Node error policy",
+  "source_commit": "c4f7844bd397cd702363a2ba54185e613c6d8273",
+  "release": "v27.0.0-nightly20260819c79868f102",
+  "fixture_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+  "counts": {
+    "timeout": 81,
+    "fail": 2152,
+    "pass": 1817,
+    "skip": 677
+  },
+  "total": 4727,
+  "inventory_hash": "1e51ca4121020d14",
+  "baseline": {
+    "counts": {
+      "timeout": 80,
+      "fail": 2155,
+      "pass": 1815,
+      "skip": 677
+    },
+    "total": 4727,
+    "inventory_hash": "1e51ca4121020d14"
+  },
+  "gained": [
+    "test-buffer-alloc-alignment.js",
+    "test-common-must-not-call.js",
+    "test-shadow-realm-prepare-stack-trace.js",
+    "test-startup-empty-regexp-statics.js"
+  ],
+  "lost": [
+    "test-stream2-read-sync-stack.js",
+    "test-stringbytes-external.js"
+  ],
+  "skip_changes": {},
+  "memory_events_delta": {
+    "low": 0,
+    "high": 0,
+    "max": 0,
+    "oom": 0,
+    "oom_kill": 0,
+    "oom_group_kill": 0
+  },
+  "elapsed_seconds": 1642.9589739419753,
+  "raw": [
+    {
+      "path": "work/full-shadow-stack-modern-buffer-pinned/results.json",
+      "bytes": 14063137,
+      "sha256": "faaa69a32caf8fd34e38d8e3b1b35ef26ffc2cff5bb5b808d81f66e53c3f63de"
+    },
+    {
+      "path": "work/full-shadow-stack-modern-buffer-pinned/runner.log",
+      "bytes": 391273,
+      "sha256": "14e0bdbb39c1882f22f38c9a232d27c644cd826505149798507f9323566730bb"
+    },
+    {
+      "path": "work/full-shadow-stack-modern-buffer-pinned/receipt-before.json",
+      "bytes": 1125,
+      "sha256": "54fef0a2fa1015580d1b7f1b5e99da7184762b7ae0000953bf4fd778817fc3ae"
+    },
+    {
+      "path": "work/full-shadow-stack-modern-buffer-pinned/receipt.json",
+      "bytes": 1769,
+      "sha256": "86ce602cab65f5f0cafbc9fb2293e41bfbe09c4f249d02e67ebd76526cecdb58"
+    },
+    {
+      "path": "work/full-shadow-stack-modern-buffer-pinned/summary.json",
+      "bytes": 150,
+      "sha256": "51806569b8adfe6544349df2e7237f35af8791f93e9eeb5c9339c87aade14753"
+    },
+    {
+      "path": "work/full-shadow-stack-modern-buffer-pinned/comparison.json",
+      "bytes": 300,
+      "sha256": "c95c823f3e24c902a6fc1634cdb11e149363a8244d122cb331295bc2b84c5864"
+    }
+  ],
+  "limitations": [
+    "Goal remains open; all nonpass outcomes retained. No selected-case sums, skips/deadline/budget changes or speed claim.",
+    "This frozen c4f run excludes incoming operation-position/eval-origin work and the newer glob/Dirent candidate.",
+    "Native compilation and the independent official Node baseline overlapped part of this run; resource deltas retained. Lost-case controls do not replace raw full outcomes."
+  ]
+}

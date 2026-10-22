@@ -1,0 +1,101 @@
+{
+  "node_version": "v24.19.0",
+  "cases": [
+    {
+      "case": "one-argument",
+      "sha256": "38a81823f80eb5a5286d6fa873d0761787fb08e99c3cfd9519b63510c1103d93",
+      "node_exit_code": 0,
+      "node_stdout": "5\n",
+      "node_stderr": "",
+      "baseline": {
+        "exit_code": 0,
+        "stdout": "5\n",
+        "stderr": "",
+        "matches_node": true
+      },
+      "candidate": {
+        "exit_code": 0,
+        "stdout": "5\n",
+        "stderr": "",
+        "matches_node": true
+      }
+    },
+    {
+      "case": "multiple-arguments",
+      "sha256": "fae89d82b31042536b156384626bf644b76627cb7f84428e207fee2c6d7feb5f",
+      "node_exit_code": 0,
+      "node_stdout": "10\n",
+      "node_stderr": "",
+      "baseline": {
+        "exit_code": 0,
+        "stdout": "10\n",
+        "stderr": "",
+        "matches_node": true
+      },
+      "candidate": {
+        "exit_code": 0,
+        "stdout": "10\n",
+        "stderr": "",
+        "matches_node": true
+      }
+    },
+    {
+      "case": "receiver",
+      "sha256": "2590060f6a9d1303966d66df9e4ddc27e6b4c6d66599f33f489bbc5d10384271",
+      "node_exit_code": 0,
+      "node_stdout": "13 13\n",
+      "node_stderr": "",
+      "baseline": {
+        "exit_code": 0,
+        "stdout": "13 13\n",
+        "stderr": "",
+        "matches_node": true
+      },
+      "candidate": {
+        "exit_code": 0,
+        "stdout": "13 13\n",
+        "stderr": "",
+        "matches_node": true
+      }
+    },
+    {
+      "case": "direct-eval",
+      "sha256": "70c2e19105216e1c67b9e67fe189848e07b4ed84efb284a61e456341831596e1",
+      "node_exit_code": 0,
+      "node_stdout": "3\n",
+      "node_stderr": "",
+      "baseline": {
+        "exit_code": 0,
+        "stdout": "3\n",
+        "stderr": "",
+        "matches_node": true
+      },
+      "candidate": {
+        "exit_code": 0,
+        "stdout": "3\n",
+        "stderr": "",
+        "matches_node": true
+      }
+    },
+    {
+      "case": "caught-object",
+      "sha256": "1bb60d2781c5a535856b78cc3f8ad04f2c20247b839b5db1e44a8afe954a889a",
+      "node_exit_code": 0,
+      "node_stdout": "true\n",
+      "node_stderr": "",
+      "baseline": {
+        "exit_code": 0,
+        "stdout": "true\n",
+        "stderr": "",
+        "matches_node": true
+      },
+      "candidate": {
+        "exit_code": 0,
+        "stdout": "true\n",
+        "stderr": "",
+        "matches_node": true
+      }
+    }
+  ],
+  "all_match_node": true
+}

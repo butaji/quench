@@ -1,0 +1,242 @@
+{
+  "schema_version": 2,
+  "inventory_hash": "f938c688fba61da2",
+  "timeout_secs": 30,
+  "jobs": 4,
+  "node_version": "v26.12.0",
+  "runtime_commit": "3218431de1e87a51b63fee8bd3091aa631eec046",
+  "tests_node_commit": "unknown",
+  "platform": "linux-x86_64",
+  "results": [
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert-async.js",
+      "status": "fail",
+      "observation": {
+        "Ok": {
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "fail",
+            "reason": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /rejects/. Input:\n\n'AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:\\n' +\n  '+ actual - expected\\n' +\n  '\\n' +\n  '+ null\\n' +\n  '- {\\n' +\n  \"-   code: 'FOO'\\n\" +\n  '- }\\n'\n\n    at /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert-async.js:140:12\n    at /workspace/work/node-stable-release/node-v26.12.0/test/common/index.js:512:15\n    at expectedException (node:assert:547:17)\n    at expectsError (node:assert:672:21)\n    at rejects (node:assert:738:3)\n\nNode.js v26.12.0"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert-checktag.js",
+      "status": "fail",
+      "observation": {
+        "Ok": {
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "fail",
+            "reason": "/workspace/work/node-stable-release/node-v26.12.0/lib/internal/assert/utils.js:146\n  throw error;\n  ^\n\nAssertionError [ERR_ASSERTION]: Expected values not to be loosely deep-equal:\n\n{\n  atob: [Function: atob],\n  btoa: [Function: btoa],\n  crypto: {\n    getRandomValues: [Function (anonymous)]\n  },\n  global: <ref *1> {\n    atob: [Function: atob],\n    btoa: [Function: btoa],\n    crypto: [Getter] {\n      getRandomValues: [Function (anonymous)]\n    },\n    global: [Circular *1],\n    performance: [Getter/Setter] {\n      Symbol(performance): true,\n      clearMarks: [Function: clearMarks],\n      clearMeasures: [Function: clearMeasures],\n      getEntries: [Function: getEntries],\n      getEntri...\n\nshould not loosely deep-equal\n\n<ref *1> {\n  atob: [Function: atob],\n  btoa: [Function: btoa],\n  crypto: [Getter] {\n    getRandomValues: [Function (anonymous)]\n  },\n  global: [Circular *1],\n  performance: [Getter/Setter] {\n    Symbol(performance): true,\n    clearMarks: [Function: clearMarks],\n    clearMeasures: [Function: clearMeasures],\n    getEntries: [Function: getEntries],\n    getEntriesByName: [Function: getEntriesByName],\n    getEntriesByType: [Function: getEntriesByType],\n    mark: [Function: mark],\n    measure: [Function: measu...\n    at /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert-checktag.js:56:12\n    at invoke (eval at <anonymous> (/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert-checktag.js:3:18), <anonymous>:41:63)\n    at run (eval at <anonymous> (/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert-checktag.js:3:18), <anonymous>:44:63)\n    at /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert-checktag.js:15:1\n\nNode.js v26.12.0"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert-class-destructuring.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert-class.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert-deep-with-error.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert-deep.js",
+      "status": "fail",
+      "observation": {
+        "Ok": {
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "fail",
+            "reason": "/workspace/work/node-stable-release/node-v26.12.0/lib/assert.js:510\n      for (const key of keys) {\n      ^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:\n+ actual - expected\n\n  Comparison {\n+   message: 'proxy ownKeys trap omitted a required key',\n-   message: \"'ownKeys' on proxy: trap result did not include 'length'\",\n    name: 'TypeError'\n  }\n\n    at /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert-deep.js:1179:10\n    at invoke (eval at <anonymous> (/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert-deep.js:6:18), <anonymous>:41:63)\n    at run (eval at <anonymous> (/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert-deep.js:6:18), <anonymous>:44:63)\n    at /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert-deep.js:1164:1\n\nNode.js v26.12.0"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert-esm-cjs-message-verify.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert-fail.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert-first-line.js",
+      "status": "fail",
+      "observation": {
+        "Ok": {
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "fail",
+            "reason": "/workspace/work/node-stable-release/node-v26.12.0/lib/assert.js:510\n      for (const key of keys) {\n      ^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:\n+ actual - expected\n\n  Comparison {\n+   message: 'value is not callable',\n+   name: 'TypeError'\n-   message: \"The expression evaluated to a falsy value:\\n\\n  ässört.ok('')\\n\",\n-   name: 'AssertionError'\n  }\n\n    at /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert-first-line.js:11:10\n    at invoke (eval at <anonymous> (/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert-first-line.js:7:18), <anonymous>:41:63)\n    at run (eval at <anonymous> (/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert-first-line.js:7:18), <anonymous>:44:63)\n    at /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert-first-line.js:10:1\n\nNode.js v26.12.0"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert-if-error.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert-myers-diff.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert-partial-deep-equal.js",
+      "status": "fail",
+      "observation": {
+        "Ok": {
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "fail",
+            "reason": "/workspace/work/node-stable-release/node-v26.12.0/lib/internal/assert/utils.js:146\n  throw error;\n  ^\n\nAssertionError [ERR_ASSERTION]: Missing expected exception (Error).\n    at /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert-partial-deep-equal.js:566:18\n    at invoke (eval at <anonymous> (/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert-partial-deep-equal.js:6:26), <anonymous>:41:63)\n    at run (eval at <anonymous> (/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert-partial-deep-equal.js:6:26), <anonymous>:44:63)\n    at /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert-partial-deep-equal.js:565:9\n    at /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert-partial-deep-equal.js:564:13\n    at invoke (eval at <anonymous> (/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert-partial-deep-equal.js:6:26), <anonymous>:41:63)\n    at eval (eval at <anonymous> (/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert-partial-deep-equal.js:6:26), <anonymous>:48:43)\n    at /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert-partial-deep-equal.js:42:5\n    at invoke (eval at <anonymous> (/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert-partial-deep-equal.js:6:26), <anonymous>:41:63)\n    at eval (eval at <anonymous> (/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert-partial-deep-equal.js:6:26), <anonymous>:48:43)\n\nNode.js v26.12.0"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert-typedarray-deepequal.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert.js",
+      "status": "fail",
+      "observation": {
+        "Ok": {
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "fail",
+            "reason": "/workspace/work/node-stable-release/node-v26.12.0/lib/assert.js:573\n    throw err;\n    ^\n\nAssertionError [ERR_ASSERTION]: ok(false)\n    at /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert.js:48:10\n    at invoke (eval at <anonymous> (/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert.js:27:18), <anonymous>:41:63)\n    at run (eval at <anonymous> (/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert.js:27:18), <anonymous>:44:63)\n    at /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert.js:44:1\n\nNode.js v26.12.0"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    }
+  ]
+}

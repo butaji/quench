@@ -1,0 +1,2 @@
+cargo:rerun-if-changed=/workspace/quench/tests/node/src/node_exit_code.h
+cargo:rerun-if-changed=/workspace/quench/tests/node/src/compile_cache.h

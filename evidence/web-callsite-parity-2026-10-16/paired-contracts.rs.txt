@@ -1,0 +1,51 @@
+fn callsites_share_native_prototypes_and_supported_methods_preserve_descriptors_and_brands() {
+    compare_node_source_with_args(r#"
+Error.prepareStackTrace=(_,frames)=>frames;function Frame(){return new Error};const first=Frame().stack,second=Frame().stack,site=first[0],proto=Object.getPrototypeOf(site),C=proto.constructor,out=[];
+const methods=['getColumnNumber','getEvalOrigin','getFileName','getFunctionName','getLineNumber','getMethodName','getThis','getTypeName','isConstructor','isEval','isNative','toString'];
+out.push(Reflect.ownKeys(site),Object.getPrototypeOf(first[1])===proto,Object.getPrototypeOf(second[0])===proto,C.name,C.length,Function.prototype.toString.call(C),Object.getOwnPropertyDescriptor(C,'prototype'),Object.getOwnPropertyDescriptor(proto,'constructor'));
+for(const key of methods){const f=proto[key];out.push([key,f.name,f.length,Function.prototype.toString.call(f),Object.getOwnPropertyDescriptor(proto,key)]);}
+for(const value of [undefined,null,1,'x',true,Symbol('s'),1n,{},()=>{},proto,new Proxy({}, {})])try{proto.getFileName.call(value)}catch(e){out.push([e.name,e.message])}
+for(const invoke of [()=>C(),()=>new C])try{invoke()}catch(e){out.push([e.name,e.message])}
+const get=require('internal/test/binding').internalBinding('util').getConstructorName;out.push(get(site));Object.defineProperty(C,'name',{value:'Changed'});proto.constructor=null;out.push(get(site));
+console.log(JSON.stringify(out));
+"#, &["--expose-internals","--no-warnings"]);
+}
+
+fn callsite_function_identity_obeys_strict_frame_visibility_and_ignores_name_getters() {
+    compare_node_source_with_args(r#"
+Error.prepareStackTrace=(_,frames)=>frames;
+function Loose(){return new Error}
+function Strict(){'use strict';return Loose()}
+function StrictLeaf(){'use strict';return new Error}
+function Outer(){return StrictLeaf()}
+const out=[];
+for(const [invoke,expected] of [[Loose,[Loose]],[Strict,[Loose,Strict]],[Outer,[StrictLeaf,Outer]]]){
+ const sites=invoke().stack;out.push(sites.slice(0,expected.length).map((site,index)=>[site.getFunction()===expected[index],site.getFunction()===undefined,site.getThis()===undefined]));
+}
+const site=Loose().stack[0];Object.defineProperty(Loose,'name',{get(){throw Error('name getter')}});out.push(site.getFunction()===Loose);
+const method=Object.getPrototypeOf(site).getFunction;out.push(method.name,method.length,Function.prototype.toString.call(method),Object.getOwnPropertyDescriptor(Object.getPrototypeOf(site),'getFunction'));
+for(const receiver of [{},undefined])try{method.call(receiver)}catch(e){out.push([e.name,e.message])}
+console.log(JSON.stringify(out));
+"#, &[]);
+}
+
+fn callsite_method_names_follow_receiver_descriptors_without_getters_or_proxy_traps() {
+    compare_node_source_with_args(
+        r#"
+Error.prepareStackTrace=(_,frames)=>frames[0];function Original(){return new Error().stack}
+const out=[];
+for(const object of [{Original},{renamed:Original},{a:Original,b:Original},Object.create({inherited:Original}),Object.defineProperty({},'hidden',{value:Original}),{0:Original},Object.defineProperty({},'Original',{value:Original})]){
+ const key=Reflect.ownKeys(object)[0]??'inherited';const site=object[key]();out.push([key,site.getFunctionName(),site.getMethodName()]);
+}
+const strict={go:function Named(){'use strict';return new Error().stack}};out.push(strict.go().getMethodName());
+const object={get value(){return new Error().stack}};out.push(object.value.getMethodName());
+let calls=0;const proxy=new Proxy({alias:Original},{get(){calls++;throw Error('trap')},ownKeys(){calls++;throw Error('keys')},getPrototypeOf(){calls++;throw Error('prototype')}});out.push(Original.call(proxy).getMethodName(),calls);
+const changing={old:Original};const site=changing.old();delete changing.old;changing.new=Original;out.push(site.getMethodName());
+Object.defineProperty(Original,'name',{get(){calls++;throw Error('function name')}});out.push(site.getMethodName(),calls);
+const wide={'\ud800':Original};out.push(wide['\ud800']().getMethodName());
+const numeric={0(){return new Error().stack}};out.push(numeric[0]().getMethodName());
+console.log(JSON.stringify(out));
+"#,
+        &[],
+    );
+}

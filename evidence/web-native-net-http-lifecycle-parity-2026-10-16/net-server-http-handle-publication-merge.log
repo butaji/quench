@@ -1,0 +1,8 @@
+Auto-merging crates/quench-node-test/tests/child_entry.rs
+Auto-merging crates/quench-node/src/host/shared_vm.rs
+Auto-merging crates/quench-node/src/modules/mod.rs
+Auto-merging crates/quench-runtime/src/api_native.rs
+Auto-merging crates/quench-runtime/src/api_native_tests.rs
+Auto-merging docs/node-host-contracts.md
+CONFLICT (content): Merge conflict in docs/node-host-contracts.md
+Automatic merge failed; fix conflicts and then commit the result.

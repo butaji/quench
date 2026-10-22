@@ -1,0 +1,14 @@
+   Compiling quench-runtime v0.1.0 (/workspace/quench/crates/quench-runtime)
+   Compiling quench-wasm v0.1.0 (/workspace/quench/crates/quench-wasm)
+   Compiling quench-node v0.1.0 (/workspace/quench/crates/quench-node)
+   Compiling quench-node-test v0.1.0 (/workspace/quench/crates/quench-node-test)
+    Finished `iteration` profile [optimized] target(s) in 54.61s
+     Running tests/child_entry.rs (work/host-build/iteration/deps/child_entry-0c4d472d0248eb46)
+
+running 3 tests
+test canonical_inspection_preserves_inherited_getter_receivers_cycles_and_depth ... ok
+test canonical_inspection_previews_collection_iterators_without_consuming_or_public_hooks ... ok
+test canonical_inspection_unwraps_proxies_without_traps_and_keeps_binding_identity ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 297 filtered out; finished in 0.90s
+

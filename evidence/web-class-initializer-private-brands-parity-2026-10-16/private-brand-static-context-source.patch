@@ -1,0 +1,176 @@
+diff --git a/crates/quench-node-test/tests/child_entry.rs b/crates/quench-node-test/tests/child_entry.rs
+index 4ebdfe11f..d84464fff 100644
+--- a/crates/quench-node-test/tests/child_entry.rs
++++ b/crates/quench-node-test/tests/child_entry.rs
+@@ -9617,3 +9617,13 @@ fn private_fields_keep_class_creation_identity_and_atomic_internal_initializatio
+ fn private_eval_environments_cross_static_instance_and_ordinary_function_boundaries() {
+     compare_node_source_with_args(include_str!("../node-tests/test-private-eval-environments.js"), &[]);
+ }
++
++#[test]
++fn private_brands_follow_initialization_without_branding_the_declaring_prototype() {
++    compare_node_source_with_args(include_str!("../node-tests/test-private-brand-initialization.js"), &[]);
++}
++
++#[test]
++fn static_blocks_retain_strict_eval_super_receiver_and_separate_var_contexts() {
++    compare_node_source_with_args(include_str!("../node-tests/test-static-block-context.js"), &[]);
++}
+diff --git a/crates/quench-runtime/src/compile/class.rs b/crates/quench-runtime/src/compile/class.rs
+index 9b714ea0b..806e5c827 100644
+--- a/crates/quench-runtime/src/compile/class.rs
++++ b/crates/quench-runtime/src/compile/class.rs
+@@ -317,39 +317,28 @@ impl FunctionCompiler<'_, '_> {
+         self.define_class_method(prototype, class_value, None, Some("constructor"));
+         self.store_atom(constructor_home_atom, prototype);
+ 
++        // Static methods/accessors exist before static fields execute. Data
++        // fields acquire their brand only when their initializer completes;
++        // instance members never brand the prototype merely by being declared.
++        let mut initialized_static_names = FxHashSet::default();
+         for element in &class.body.body {
+-            let (name, is_static) = match element {
+-                ClassElement::PropertyDefinition(field) => match &field.key {
+-                    PropertyKey::PrivateIdentifier(identifier) => {
+-                        (Some(identifier.span), field.r#static)
+-                    }
+-                    _ => (None, false),
+-                },
+-                ClassElement::MethodDefinition(method) => match &method.key {
+-                    PropertyKey::PrivateIdentifier(identifier) => {
+-                        (Some(identifier.span), method.r#static)
+-                    }
+-                    _ => (None, false),
+-                },
+-                ClassElement::AccessorProperty(accessor) => {
+-                    (Some(accessor.span), accessor.r#static)
++            let (name, accessor_name) = match element {
++                ClassElement::MethodDefinition(method) if method.r#static => {
++                    (matches!(&method.key, PropertyKey::PrivateIdentifier(_))
++                        .then(|| method.key.span()), None)
+                 }
+-                _ => (None, false),
+-            };
+-            let accessor_name = match element {
+-                ClassElement::AccessorProperty(accessor) => {
+-                    matches!(&accessor.key, PropertyKey::PrivateIdentifier(_))
+-                        .then(|| accessor.key.span())
++                ClassElement::AccessorProperty(accessor) if accessor.r#static => {
++                    (Some(accessor.span), matches!(&accessor.key, PropertyKey::PrivateIdentifier(_))
++                        .then(|| accessor.key.span()))
+                 }
+-                _ => None,
++                _ => continue,
+             };
+             for name in name.into_iter().chain(accessor_name) {
+-                let target = if is_static { class_value } else { prototype };
+                 let atom = self.owner.private_name_atom(name);
+-                if self.owner.private_name_is_overridden(atom) {
+-                    continue;
+-                }
+-                self.emit(Op::MarkPrivateName, 0, target, target, atom);
++                if self.owner.private_name_is_overridden(atom)
++                    || !initialized_static_names.insert(atom)
++                { continue; }
++                self.emit(Op::MarkPrivateName, 0, class_value, class_value, atom);
+             }
+         }
+ 
+@@ -627,6 +616,7 @@ impl FunctionCompiler<'_, '_> {
+                         block,
+                         &scopes,
+                         Some(self.function_id),
++                        class_home_atom,
+                         self.with_depth,
+                     );
+                     let function = self.reg();
+@@ -1032,6 +1022,7 @@ impl Compiler<'_> {
+         block: &StaticBlock<'_>,
+         scopes: &[Rc<FxHashMap<Atom, u16>>],
+         parent: Option<u32>,
++        home_atom: Atom,
+         with_depth: u16,
+     ) -> u32 {
+         self.compile_function(
+@@ -1054,12 +1045,12 @@ impl Compiler<'_> {
+                 instance_fields: None,
+                 instance_private_methods: None,
+                 super_static: true,
+-                super_home: false,
+-                super_home_atom: None,
++                super_home: true,
++                super_home_atom: Some(home_atom),
+                 rest_override: false,
+                 implicit_super: false,
+                 with_depth,
+-                strict: false,
++                strict: true,
+             },
+         )
+     }
+diff --git a/crates/quench-runtime/src/vm/tests.rs b/crates/quench-runtime/src/vm/tests.rs
+index e52ac6d7f..7e050fd99 100644
+--- a/crates/quench-runtime/src/vm/tests.rs
++++ b/crates/quench-runtime/src/vm/tests.rs
+@@ -10285,3 +10285,61 @@ new Negative().read()();
+         std::fs::remove_file(path).unwrap();
+     }
+ }
++
++#[test]
++fn private_brands_follow_field_initialization_in_original_and_decoded_programs() {
++    let source = r#"
++class Instance {#field=1;#method(){}get #accessor(){return 2}static has(object){return [#field in object,#method in object,#accessor in object]}}
++if(Instance.has(Instance.prototype).join(',')!=='false,false,false')throw Error('prototype branded');
++if(Instance.has(new Instance()).join(',')!=='true,true,true')throw Error('instance missing brand');
++class Static {static before=[#field in this,#method in this,#accessor in this];static #field=1;static #method(){}static get #accessor(){return 2}static after=[#field in this,#method in this,#accessor in this]}
++if(Static.before.join(',')!=='false,true,true'||Static.after.join(',')!=='true,true,true')throw Error('static ordering');
++class Base {constructor(object){return object}}
++class Stamp extends Base {#x=7;static has(object){return #x in object}static read(object){return object.#x}}
++if(Stamp.has(Stamp.prototype))throw Error('prototype already stamped');
++new Stamp(Stamp.prototype);
++if(!Stamp.has(Stamp.prototype)||Stamp.read(Stamp.prototype)!==7)throw Error('prototype stamp missing');
++"#;
++    for compile in [Engine::specialize, Engine::specialize_unspecialized] {
++        let program = compile(source, "private-brand-initialization.js").unwrap();
++        Vm::new(SilentHost).execute(&program).unwrap();
++        let path = std::env::temp_dir().join(format!("quench-private-brands-{}-{}", std::process::id(), program.specialized));
++        program.write_binary(&path).unwrap();
++        let decoded = crate::ResidualProgram::read_binary(&path).unwrap();
++        Vm::new(SilentHost).execute(&decoded).unwrap();
++        std::fs::remove_file(path).unwrap();
++    }
++}
++
++#[test]
++fn static_block_eval_inherits_strictness_and_its_actual_super_home() {
++    let source = r#"
++class Base {static value=7;static get receiver(){return this.name}static set update(value){this.updated=value}}
++class Derived extends Base {
++ static #value=3;
++ static {
++  if(eval('super.value')!==7||eval('super.receiver')!=='Derived'||eval('this.#value')!==3)throw Error('static context');
++  if((()=>eval('super.value'))()!==7)throw Error('arrow home');
++  let invalid;try{(function(){eval('super.value')})()}catch(error){invalid=error.name}
++  if(invalid!=='SyntaxError')throw Error('ordinary super accepted');
++  if(!eval('new.target === undefined'))throw Error('static new.target');
++  eval('super.update=9');if(this.updated!==9)throw Error('setter receiver');
++  let strict;try{eval('quenchStaticUnbound=1')}catch(error){strict=error.name}
++  if(strict!=='ReferenceError')throw Error('sloppy static eval');
++  Object.defineProperty(this,'locked',{value:1});let locked;try{this.locked=2}catch(error){locked=error.name}
++  if(locked!=='TypeError')throw Error('sloppy static write');
++  var local=11;if(eval('local')!==11)throw Error('local missing');
++ }
++ static {if(typeof local!=='undefined')throw Error('static scopes merged')}
++}
++"#;
++    for compile in [Engine::specialize, Engine::specialize_unspecialized] {
++        let program = compile(source, "static-block-context.js").unwrap();
++        Vm::new(SilentHost).execute(&program).unwrap();
++        let path = std::env::temp_dir().join(format!("quench-static-context-{}-{}", std::process::id(), program.specialized));
++        program.write_binary(&path).unwrap();
++        let decoded = crate::ResidualProgram::read_binary(&path).unwrap();
++        Vm::new(SilentHost).execute(&decoded).unwrap();
++        std::fs::remove_file(path).unwrap();
++    }
++}

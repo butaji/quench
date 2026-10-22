@@ -1,0 +1,24 @@
+   Compiling quench-node-test v0.1.0 (/workspace/quench/crates/quench-node-test)
+    Finished `iteration` profile [optimized] target(s) in 6.77s
+     Running tests/child_entry.rs (target/iteration/deps/child_entry-37d870d271c8d35b)
+
+running 1 test
+test node_compatibility_version_follows_bundled_library_target ... FAILED
+
+failures:
+
+---- node_compatibility_version_follows_bundled_library_target stdout ----
+
+thread 'node_compatibility_version_follows_bundled_library_target' (2827987) panicked at crates/quench-node-test/tests/child_entry.rs:1507:5:
+assertion `left == right` failed
+  left: [118, 50, 54, 46, 49, 50, 46, 48, 32, 50, 54, 46, 49, 50, 46, 48, 32, 116, 114, 117, 101, 10, 102, 97, 108, 115, 101, 32, 116, 114, 117, 101, 32, 116, 114, 117, 101, 10, 102, 97, 108, 115, 101, 32, 116, 114, 117, 101, 32, 116, 114, 117, 101, 10]
+ right: [118, 50, 54, 46, 49, 50, 46, 48, 32, 50, 54, 46, 49, 50, 46, 48, 32, 116, 114, 117, 101, 10, 116, 114, 117, 101, 32, 116, 114, 117, 101, 32, 116, 114, 117, 101, 10, 102, 97, 108, 115, 101, 32, 116, 114, 117, 101, 32, 102, 97, 108, 115, 101, 10]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    node_compatibility_version_follows_bundled_library_target
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 348 filtered out; finished in 0.29s
+
+error: test failed, to rerun pass `-p quench-node-test --test child_entry`

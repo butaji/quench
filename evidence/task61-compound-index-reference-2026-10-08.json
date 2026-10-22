@@ -1,0 +1,204 @@
+{
+  "schema": 1,
+  "task": "61",
+  "kind": "compound_index_assignment_raw_key_fast_path_candidate",
+  "recorded_on": "2026-10-08",
+  "decision": "retain_node_compatible_candidate_with_documented_test262_conflict",
+  "source": {
+    "base_revision": "2bf8c15f6fb25d07be01bfd862fdc635e1e302c6",
+    "working_tree_dirty": true,
+    "change_files": [
+      {
+        "path": "crates/quench-runtime/src/compile/ast/destructure.rs",
+        "sha256": "b7e0f157b9397b946b33e277cc2651542062180c0a6aec9fdab8e4e1dc37c2ce"
+      },
+      {
+        "path": "crates/quench-runtime/src/vm/index.rs",
+        "sha256": "eb577b1b1a59c0f07ec5058114fcf5da28da9fffc2395885f132a2293816b7d9"
+      },
+      {
+        "path": "crates/quench-runtime/src/vm/object_static.rs",
+        "sha256": "33b49f24f127da6030ec6a6b826771c7bef46c36fc781f6d32cba2786a1a0fb7"
+      }
+    ],
+    "scoped_source_diff_sha256": "b2b3d2f246324432cf937b6dc48a7f1df45e3c816ba5f16bfb0e1624f302b55b"
+  },
+  "host": {
+    "model": "Mac16,10",
+    "cpu": "Apple M4",
+    "architecture": "aarch64-apple-darwin",
+    "operating_system": "macOS 25.5.0",
+    "memory_bytes": 17179869184,
+    "rustc": "1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+    "process_metrics_backend": "macOS /usr/bin/time -l"
+  },
+  "change": {
+    "behavior": "Ordinary computed assignment references retain their evaluated raw key register through GetIndex and SetIndex instead of emitting an eager ToPropertyKey instruction. The shared index access path accepts tagged nonnegative integers and canonical decimal-index strings; already-string and symbol keys do not undergo a redundant ToPropertyKey call on the slow path.",
+    "representation": "The key remains the existing VM Value in the existing register. Canonical array-index parsing remains owned by object_static::array_index; no second key table, opcode, or serialized format was added.",
+    "ordering": "The base and key expressions are evaluated once. GetIndex performs key coercion before the getter and right-hand side; SetIndex performs key coercion at the write boundary. This matches local Node 26.10.0 for object keys whose ToPrimitive is observable.",
+    "scope": "This candidate intentionally follows the configured Node compatibility oracle on compound computed assignment. Node/V8 invokes observable ToPropertyKey twice for the affected object-key cases; the current Test262 cases require one conversion."
+  },
+  "production_build": {
+    "command": "cargo build --profile production -p quench-runtime --bin quench",
+    "baseline_binary": "target/iteration/compound-index-string-key-2026-10-08/baseline-quench",
+    "baseline_binary_sha256": "5b954f7930e4b15c12c70629c804c9b5aed13d41ed063781c7ddabcda506d6bd",
+    "candidate_binary": "target/production/quench",
+    "candidate_binary_sha256": "5e359d09bf1ec9304a3f8a3bc9e83be24c1d9ff7c88fc0bd408f57a9b6db6390",
+    "paired_candidate_copy": "target/iteration/compound-index-string-key-2026-10-08/node-oracle-candidate-quench",
+    "hash_named_binary_archive": [
+      "target/iteration/compound-index-string-key-2026-10-08/quench-5b954f7930e4b15c12c70629c804c9b5aed13d41ed063781c7ddabcda506d6bd",
+      "target/iteration/compound-index-string-key-2026-10-08/quench-5e359d09bf1ec9304a3f8a3bc9e83be24c1d9ff7c88fc0bd408f57a9b6db6390"
+    ],
+    "comparison": "The paired baseline and candidate were built on the same dirty workspace; the scoped source delta is the three files above. Unrelated pre-existing workspace edits were common to both binaries."
+  },
+  "paired_microbenchmark": {
+    "runner": "tasks/evidence/task61-compound-index-paired-2026-10-08.py",
+    "runner_sha256": "d9022213658d4d7450da5941e7d9384d501b53dd347a3a73bf06a0a8c62e5b84",
+    "command": "python3 tasks/evidence/task61-compound-index-paired-2026-10-08.py target/iteration/compound-index-string-key-2026-10-08/baseline-quench target/iteration/compound-index-string-key-2026-10-08/node-oracle-candidate-quench tasks/evidence/task61-compound-index-fixtures-2026-10-08 tasks/evidence/task61-compound-index-paired-2026-10-08.csv",
+    "raw_pairs": "tasks/evidence/task61-compound-index-paired-2026-10-08.csv",
+    "raw_pairs_sha256": "30017f2e1ba4d4a2cc09ce8254ad561719d064789d73f54aa42fbb7c196d9cbe",
+    "summary": "tasks/evidence/task61-compound-index-paired-summary-2026-10-08.json",
+    "summary_sha256": "3dbcf1a968761868d8f00ec0f73cc497bfd49a350e85e11ef414163a22436e89",
+    "pairs_per_case": 11,
+    "alternation": "The first engine alternates by pair. Each fixture runs in a fresh process.",
+    "measurements": [
+      "instructions retired",
+      "elapsed seconds",
+      "stdout equality"
+    ],
+    "maximum_rss": "not captured by this runner",
+    "analysis": {
+      "method": "paired bootstrap over per-round candidate-minus-baseline percentages",
+      "bootstrap_samples": 100000,
+      "seed": 61102027,
+      "cases": {
+        "dense-literal": {
+          "fixture": "tasks/evidence/task61-compound-index-fixtures-2026-10-08/dense-literal.js",
+          "fixture_sha256": "a2b126fd4f24f61f3861a412efd3c2707248ed81d557abadf4f86bd25ddec3a0",
+          "instructions_per_iteration_baseline_median": 25617.6856988,
+          "instructions_per_iteration_candidate_median": 4175.3876412,
+          "instruction_delta_median_percent": -83.7011544030951,
+          "instruction_delta_95_percentile_interval": [
+            -83.70181645628554,
+            -83.7005192192903
+          ],
+          "candidate_lower_instruction_pairs": 11,
+          "elapsed_delta_median_percent": -87.42514970059881,
+          "candidate_faster_elapsed_pairs": 11,
+          "stdout": "1252000"
+        },
+        "new-array-filled": {
+          "fixture": "tasks/evidence/task61-compound-index-fixtures-2026-10-08/new-array-filled.js",
+          "fixture_sha256": "d135a238bc9060f5a554a86cd95c9dc5cbf39a04106c2f53e280918fe292fff0",
+          "instructions_per_iteration_baseline_median": 26221.5659514,
+          "instructions_per_iteration_candidate_median": 15060.9742973,
+          "instruction_delta_median_percent": -42.56264356898228,
+          "instruction_delta_95_percentile_interval": [
+            -42.58735099390359,
+            -42.546373635237295
+          ],
+          "candidate_lower_instruction_pairs": 11,
+          "elapsed_delta_median_percent": -45.13018322082931,
+          "candidate_faster_elapsed_pairs": 11,
+          "stdout": "1252000"
+        }
+      }
+    },
+    "scope_limit": "Focused operation evidence only; this is not a V8-v7 fixture qualification.",
+    "single_run_quickjs_context": {
+      "fixture": "tasks/evidence/task61-compound-index-fixtures-2026-10-08/dense-literal.js",
+      "fixture_sha256": "a2b126fd4f24f61f3861a412efd3c2707248ed81d557abadf4f86bd25ddec3a0",
+      "quench_binary_sha256": "5e359d09bf1ec9304a3f8a3bc9e83be24c1d9ff7c88fc0bd408f57a9b6db6390",
+      "quickjs_binary": "/opt/homebrew/Cellar/quickjs/2026-06-04/bin/qjs",
+      "quickjs_binary_sha256": "4b0d0da1beae0a88d0724c7a0869797dee7a24c5bc1e74cfb5d2f69d17811c2b",
+      "command_template": "/usr/bin/time -l <binary> tasks/evidence/task61-compound-index-fixtures-2026-10-08/dense-literal.js",
+      "iterations": 10000000,
+      "quench_instructions_retired": 41771265346,
+      "quench_instructions_per_iteration": 4177.1265346,
+      "quickjs_instructions_retired": 2261868727,
+      "quickjs_instructions_per_iteration": 226.1868727,
+      "quench_to_quickjs_instruction_ratio": 18.467590469497658,
+      "stdout": "1252000",
+      "limitation": "One run per engine; ratio is contextual and not a paired estimate."
+    },
+    "stale_measurement_correction": "An earlier 25,706 instructions/iteration and 117x QuickJS figure came from an intermediate binary and is not a current-candidate result. The hash-pinned production candidate above measured 4,177 instructions/iteration in a direct one-run check."
+  },
+  "verification": {
+    "build": "Production build completed successfully; rustfmt --check and git diff --check passed.",
+    "node_oracle": {
+      "script": "tasks/evidence/task61-compound-index-node-oracle-2026-10-08.js",
+      "script_sha256": "401e93017fdf762d460ebaef55565653a80b9dbe9449d59e7422ee6d98dc6b4b",
+      "node": "v26.10.0",
+      "candidate_binary_sha256": "5e359d09bf1ec9304a3f8a3bc9e83be24c1d9ff7c88fc0bd408f57a9b6db6390",
+      "node_command": "node -e 'global.print=console.log; require(\"./tasks/evidence/task61-compound-index-node-oracle-2026-10-08.js\")'",
+      "quench_command": "target/production/quench tasks/evidence/task61-compound-index-node-oracle-2026-10-08.js",
+      "both_outputs": [
+        "base,expression,key:string,get,rhs,key:string,set:7",
+        "getter,proxy-set:string:0:5,inherited-setter:5"
+      ],
+      "observations": [
+        "Computed base and key expressions run once; Node and Quench agree on Get, RHS, second key conversion and Set order for the object-key compound assignment probe.",
+        "A Proxy in an array prototype chain receives the Set trap before the inherited setter; Node and Quench traces match."
+      ]
+    },
+    "test262": {
+      "runner": "cargo run --profile iteration -p quench-test262 --bin run-stages -- <stage> <stage> <filter>",
+      "reports_are_under": "target/iteration (generated reports are not committed)",
+      "slices": [
+        {
+          "stage": 5,
+          "filter": "computed-property-names",
+          "passed": 48,
+          "failed": 0,
+          "total": 48,
+          "report": "target/iteration/test262-computed-property-raw-key-2026-10-08.json",
+          "report_sha256": "5276cd9edbd0bc911aba876c4991ce5be3adf562a391a3bafac931afb22fe633"
+        },
+        {
+          "stage": 10,
+          "filter": "compound-assignment",
+          "passed": 445,
+          "failed": 11,
+          "total": 456,
+          "report": "target/iteration/test262-compound-assignment-raw-key-2026-10-08.json",
+          "report_sha256": "c7a801ee9aade4a4daf46dd00b77a8f60f44629556339682b1ff8b4ab198c9fb",
+          "failed_cases": "S11.13.2_A7.1_T4.js through S11.13.2_A7.11_T4.js",
+          "failure_cause": "Those tests expect exactly one observable ToPropertyKey conversion. Local Node 26.10.0 produces two conversions for the same compound assignment pattern; V8 upstream marks the cases as known failures under issue 4248.",
+          "upstream_status": "https://github.com/v8/v8/blob/main/test/test262/test262.status#L2240-L2265"
+        },
+        {
+          "stage": 31,
+          "filter": "built-ins/Array",
+          "passed": 3081,
+          "failed": 0,
+          "total": 3081,
+          "report": "target/iteration/test262-array-raw-key-2026-10-08.json",
+          "report_sha256": "5d9e57f80c58686ce49068374c171539a29f4092c55f1aa55dc7582cfbbe4efb"
+        }
+      ],
+      "spec_preserving_comparison": {
+        "binary_sha256": "620cc9e729e82bc1191bce583c9d3bc41ba3a56d8d98dea871591b4bac8a75aa",
+        "stage_10": "456/456 passed",
+        "report": "target/iteration/test262-compound-assignment-report-spec-preserving.json",
+        "report_sha256": "fcd7a7058baf63d09e14ac1a37421d4396a06f72f6258beb92290d7bd9014d82",
+        "single_run_instruction_counts": {
+          "dense_literal_raw_key": 41765178415,
+          "dense_literal_spec_preserving": 111895882910,
+          "new_array_filled_raw_key": 150576645022,
+          "new_array_filled_spec_preserving": 152779806155
+        },
+        "limitation": "Single-run comparison; directional only, not paired evidence."
+      }
+    },
+    "rust_unit_tests": "not run"
+  },
+  "normative_note": {
+    "ecma_262": "The current GetValue/PutValue reference algorithms canonicalize a computed reference name during GetValue and reuse it for PutValue, giving one observable conversion.",
+    "references": [
+      "https://tc39.es/ecma262/2026/multipage/ecmascript-language-expressions.html#sec-assignment-operators-runtime-semantics-evaluation",
+      "https://tc39.es/ecma262/2026/multipage/ecmascript-data-types-and-values.html#sec-getvalue",
+      "https://tc39.es/ecma262/2026/multipage/ecmascript-data-types-and-values.html#sec-putvalue"
+    ],
+    "decision_basis": "Per the configured Node compatibility priority, retain the behavior matching local Node/V8 for this known discrepancy. Keep the Test262 failures visible and revisit if the compatibility policy changes."
+  }
+}

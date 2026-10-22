@@ -1,0 +1,55 @@
+{
+  "scope": "Complete unchanged parallel inventory measured with frozen 8649f3475 binaries",
+  "source_commit": "8649f3475625c5dbcb3d37929086f23cbc391c8d",
+  "oracle": "v27.0.0-nightly20260819c79868f102",
+  "inventory_hash": "1e51ca4121020d14",
+  "fixture_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+  "total": 4727,
+  "counts": {
+    "timeout": 136,
+    "fail": 2765,
+    "pass": 1145,
+    "skip": 678,
+    "crash": 3
+  },
+  "jobs": 4,
+  "timeout_secs": 10,
+  "raw_results": "work/parallel-source.json",
+  "log": "work/parallel-source.log",
+  "frozen_binary_hashes": [
+    "833429907fe151f5b5a5fe3e0bbe2612217c6c34ac80848dcdfd8d79633da0da  work/sweep-source-bin/run-parallel",
+    "86ccd95e29b0f711f23bbc3b65eced0d43e0db4f07a5fae37daf72a1650c34cc  work/sweep-source-bin/quench-node"
+  ],
+  "new_passes": [
+    "test-child-process-execfile-maxbuf.js",
+    "test-child-process-execfile.js",
+    "test-domain-error-types.js",
+    "test-domain-multiple-errors.js",
+    "test-errors-hide-stack-frames.js",
+    "test-shadow-realm-prepare-stack-trace.js",
+    "test-util-callbackify.js"
+  ],
+  "prior_passes_lost": [
+    [
+      "test-net-socket-destroy-twice.js",
+      "timeout"
+    ]
+  ],
+  "lost_pass_followup": {
+    "fixture": "test-net-socket-destroy-twice.js",
+    "isolated_rerun": "pass",
+    "concurrent_reruns": {
+      "pass": 20,
+      "fail": 0,
+      "timeout": 0,
+      "concurrent_runners": 4
+    },
+    "logs": "work/net-destroy-repeat",
+    "qualification": "Original full-sweep timeout remains in measured counts; not reproducible in follow-up."
+  },
+  "memory_events_before": "low 0\nhigh 0\nmax 4283082\noom 167\noom_kill 40\noom_group_kill 0\n",
+  "memory_events_after": "low 0\nhigh 0\nmax 4329128\noom 167\noom_kill 40\noom_group_kill 0\n",
+  "memory_qualification": "max pressure events increased 46046; oom and oom_kill unchanged.",
+  "remaining": "Parallel goal incomplete. This sweep predates subsequent native exec, promisification, stream close and kill override commits.",
+  "performance_claim": false
+}

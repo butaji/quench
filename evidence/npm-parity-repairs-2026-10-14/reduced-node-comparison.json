@@ -1,0 +1,116 @@
+[
+  {
+    "case": "module-catch",
+    "side": "node",
+    "command": [
+      "/workspace/shared/node-v26.11.1-linux-x64/bin/node",
+      "/workspace/quench/tests/npm-top300/regressions/module-catch/entry.mjs"
+    ],
+    "status": 0,
+    "stdout": "null\n",
+    "stderr": "",
+    "executable_sha256": "5a7b8a3cf5ccb57d297519754fd73238f64cf560afd0ef19a2f9bf7384cbb657"
+  },
+  {
+    "case": "module-catch",
+    "side": "base",
+    "command": [
+      "/workspace/scratch/npm300-clock-base",
+      "/workspace/quench/tests/npm-top300/regressions/module-catch/entry.mjs"
+    ],
+    "status": 0,
+    "stdout": "escaped marker\n",
+    "stderr": "",
+    "executable_sha256": "a2fb35294714c229654924531ea025a613dcb78fb2aebf7344b1feeaab6d42b7"
+  },
+  {
+    "case": "module-catch",
+    "side": "candidate",
+    "command": [
+      "/workspace/scratch/npm300-clock-candidate",
+      "/workspace/quench/tests/npm-top300/regressions/module-catch/entry.mjs"
+    ],
+    "status": 0,
+    "stdout": "null\n",
+    "stderr": "",
+    "executable_sha256": "273804599ef71f152bb9d646df4582b32f79bb1d51c4ccad1371f31ef76c0ea5"
+  },
+  {
+    "case": "clone-array",
+    "side": "node",
+    "command": [
+      "/workspace/shared/node-v26.11.1-linux-x64/bin/node",
+      "-e",
+      "console.log(JSON.stringify(structuredClone([2])))"
+    ],
+    "status": 0,
+    "stdout": "[2]\n",
+    "stderr": "",
+    "executable_sha256": "5a7b8a3cf5ccb57d297519754fd73238f64cf560afd0ef19a2f9bf7384cbb657"
+  },
+  {
+    "case": "clone-array",
+    "side": "base",
+    "command": [
+      "/workspace/scratch/npm300-clock-base",
+      "-e",
+      "console.log(JSON.stringify(structuredClone([2])))"
+    ],
+    "status": 0,
+    "stdout": "[null]\n",
+    "stderr": "",
+    "executable_sha256": "a2fb35294714c229654924531ea025a613dcb78fb2aebf7344b1feeaab6d42b7"
+  },
+  {
+    "case": "clone-array",
+    "side": "candidate",
+    "command": [
+      "/workspace/scratch/npm300-clock-candidate",
+      "-e",
+      "console.log(JSON.stringify(structuredClone([2])))"
+    ],
+    "status": 0,
+    "stdout": "[2]\n",
+    "stderr": "",
+    "executable_sha256": "273804599ef71f152bb9d646df4582b32f79bb1d51c4ccad1371f31ef76c0ea5"
+  },
+  {
+    "case": "esm-console",
+    "side": "node",
+    "command": [
+      "/workspace/shared/node-v26.11.1-linux-x64/bin/node",
+      "/workspace/quench/evidence/npm-parity-repairs-2026-10-14/esm-console-entry.mjs"
+    ],
+    "status": 0,
+    "stdout": "null undefined 42\nanswer:42:{\"value\":null}\nnull undefined\n",
+    "stderr": "",
+    "executable_sha256": "5a7b8a3cf5ccb57d297519754fd73238f64cf560afd0ef19a2f9bf7384cbb657",
+    "fixture_source": "crates/quench-node-test/tests/child_entry.rs::console_formats_module_values_without_a_global_require"
+  },
+  {
+    "case": "esm-console",
+    "side": "base",
+    "command": [
+      "/workspace/scratch/npm300-clock-base",
+      "/workspace/quench/evidence/npm-parity-repairs-2026-10-14/esm-console-entry.mjs"
+    ],
+    "status": 0,
+    "stdout": "  42\n%s:%d:%j answer 42 [object Object]\n \n",
+    "stderr": "",
+    "executable_sha256": "a2fb35294714c229654924531ea025a613dcb78fb2aebf7344b1feeaab6d42b7",
+    "fixture_source": "crates/quench-node-test/tests/child_entry.rs::console_formats_module_values_without_a_global_require"
+  },
+  {
+    "case": "esm-console",
+    "side": "candidate",
+    "command": [
+      "/workspace/scratch/npm300-clock-candidate",
+      "/workspace/quench/evidence/npm-parity-repairs-2026-10-14/esm-console-entry.mjs"
+    ],
+    "status": 0,
+    "stdout": "null undefined 42\nanswer:42:{\"value\":null}\nnull undefined\n",
+    "stderr": "",
+    "executable_sha256": "273804599ef71f152bb9d646df4582b32f79bb1d51c4ccad1371f31ef76c0ea5",
+    "fixture_source": "crates/quench-node-test/tests/child_entry.rs::console_formats_module_values_without_a_global_require"
+  }
+]

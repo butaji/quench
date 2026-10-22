@@ -1,0 +1,162 @@
+diff --git a/crates/quench-runtime/src/bytecode.rs b/crates/quench-runtime/src/bytecode.rs
+index b46df8d3e..1475fb84b 100644
+--- a/crates/quench-runtime/src/bytecode.rs
++++ b/crates/quench-runtime/src/bytecode.rs
+@@ -1342,6 +1342,18 @@ pub struct ResidualProgram {
+     pub(crate) register_roots: Vec<u64>,
+ }
+ 
++impl ResidualProgram {
++    pub(crate) fn register_roots_at(&self, function: &Function, pc: usize) -> Option<u64> {
++        let offset = function.register_root_offset;
++        if offset == NO_REGISTER_ROOT_MAP {
++            return None;
++        }
++        self.register_roots
++            .get(usize::try_from(offset).ok()?.checked_add(pc)?)
++            .copied()
++    }
++}
++
+ #[cold]
+ #[inline(never)]
+ fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16) -> bool {
+diff --git a/crates/quench-runtime/src/vm.rs b/crates/quench-runtime/src/vm.rs
+index 5ec2019fb..113c19463 100644
+--- a/crates/quench-runtime/src/vm.rs
++++ b/crates/quench-runtime/src/vm.rs
+@@ -183,9 +183,18 @@ pub(super) struct Frame {
+     with_base: usize,
+ }
+ impl Frame {
+-    fn prepare_registers(&mut self, register_count: usize) {
++    fn prepare_registers(&mut self, register_count: usize, entry_live: Option<u64>) {
+         self.registers.resize(register_count, Value::UNDEFINED);
+-        self.registers.fill(Value::UNDEFINED);
++        if let Some(mut live) = entry_live {
++            while live != 0 {
++                let register = live.trailing_zeros() as usize;
++                debug_assert!(register < register_count);
++                self.registers[register] = Value::UNDEFINED;
++                live &= live - 1;
++            }
++        } else {
++            self.registers.fill(Value::UNDEFINED);
++        }
+     }
+ }
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+diff --git a/crates/quench-runtime/src/vm/dispatch_frame.rs b/crates/quench-runtime/src/vm/dispatch_frame.rs
+index 34c07e445..c5c8ac86f 100644
+--- a/crates/quench-runtime/src/vm/dispatch_frame.rs
++++ b/crates/quench-runtime/src/vm/dispatch_frame.rs
+@@ -279,7 +279,7 @@ impl<H: Host> Vm<H> {
+         let register_count = function.registers as usize;
+         let run_numeric = numeric_frame_is_safe(function, capture_constructor_this);
+         debug_assert!(!push_to_dispatch || !run_numeric);
+-        frame.prepare_registers(register_count);
++        frame.prepare_registers(register_count, p.register_roots_at(function, 0));
+         self.frames.push(frame);
+         let frame_index = self.frames.len() - 1;
+         if id == super::ROOT_FUNCTION_ID
+@@ -461,7 +461,7 @@ impl<H: Host> Vm<H> {
+         let new_target = self.construct_target.take().unwrap_or(Value::UNDEFINED);
+         self.initialize_activation_bindings(&mut frame, arrow, new_target);
+         let register_count = function.registers as usize;
+-        frame.prepare_registers(register_count);
++        frame.prepare_registers(register_count, p.register_roots_at(function, 0));
+         self.frames[frame_index] = frame;
+         Ok(())
+     }
+diff --git a/crates/quench-runtime/src/vm/gc.rs b/crates/quench-runtime/src/vm/gc.rs
+index fdf36f7b5..f273ed9e5 100644
+--- a/crates/quench-runtime/src/vm/gc.rs
++++ b/crates/quench-runtime/src/vm/gc.rs
+@@ -488,14 +488,7 @@ impl<H: Host> Vm<H> {
+                 // conservative scan for that activation.
+                 let register_mask = self.programs.get(frame.program).and_then(|program| {
+                     let function = program.functions.get(frame.function as usize)?;
+-                    (function.register_root_offset != crate::bytecode::NO_REGISTER_ROOT_MAP)
+-                        .then(|| {
+-                            program
+-                                .register_roots
+-                                .get(function.register_root_offset as usize + frame.pc)
+-                        })
+-                        .flatten()
+-                        .copied()
++                    program.register_roots_at(function, frame.pc)
+                 });
+                 [frame.env, frame.this]
+                     .into_iter()
+diff --git a/crates/quench-runtime/src/vm/generator.rs b/crates/quench-runtime/src/vm/generator.rs
+index bf30802da..bb981a85f 100644
+--- a/crates/quench-runtime/src/vm/generator.rs
++++ b/crates/quench-runtime/src/vm/generator.rs
+@@ -134,7 +134,7 @@ impl<H: Host> Vm<H> {
+         frame.captured = false;
+         frame.with_base = self.with_stack.len();
+         let register_count = function.registers as usize;
+-        frame.prepare_registers(register_count);
++        frame.prepare_registers(register_count, p.register_roots_at(function, 0));
+         if function.parameter_end_pc != 0 {
+             self.frames.push(frame);
+             let result = self.run_frame_general_until(
+diff --git a/crates/quench-runtime/src/vm/tests.rs b/crates/quench-runtime/src/vm/tests.rs
+index 795a0619c..342551c90 100644
+--- a/crates/quench-runtime/src/vm/tests.rs
++++ b/crates/quench-runtime/src/vm/tests.rs
+@@ -3830,11 +3830,11 @@ fn pooled_frame_registers_are_reset_when_their_length_is_reused() {
+         with_base: 0,
+     };
+ 
+-    frame.prepare_registers(1);
++    frame.prepare_registers(1, None);
+     assert_eq!(frame.registers, [Value::UNDEFINED]);
+ 
+     frame.registers[0] = Value::heap(13);
+-    frame.prepare_registers(3);
++    frame.prepare_registers(3, None);
+     assert_eq!(
+         frame.registers,
+         [Value::UNDEFINED, Value::UNDEFINED, Value::UNDEFINED]
+@@ -3847,6 +3847,40 @@ fn pooled_frame_registers_are_reset_when_their_length_is_reused() {
+     assert!(recycled.with_objects.is_empty());
+ }
+ 
++#[test]
++fn pooled_frame_register_setup_clears_only_entry_live_registers() {
++    let mut frame = super::Frame {
++        context: super::activation::CallContext::Internal,
++        original_arguments: vec![],
++        program: super::program_store::ProgramId::MAIN,
++        function: 0,
++        pc: 0,
++        binding_site_pc: None,
++        env: Value::NULL,
++        this: Value::UNDEFINED,
++        locals: vec![],
++        dynamic_bindings: vec![],
++        captured: false,
++        registers: vec![Value::heap(11), Value::heap(12), Value::heap(13)],
++        active_iterators: vec![],
++        with_objects: Vec::new(),
++        with_base: 0,
++    };
++
++    frame.prepare_registers(3, Some((1 << 0) | (1 << 2)));
++    assert_eq!(
++        frame.registers,
++        [Value::UNDEFINED, Value::heap(12), Value::UNDEFINED]
++    );
++    frame.prepare_registers(3, Some(0));
++    assert_eq!(
++        frame.registers,
++        [Value::UNDEFINED, Value::heap(12), Value::UNDEFINED]
++    );
++    frame.prepare_registers(3, None);
++    assert_eq!(frame.registers, [Value::UNDEFINED; 3]);
++}
++
+ #[test]
+ fn regression_collection_preserves_unused_regexp_iterator_prototype() {
+     for (mode, compile) in [

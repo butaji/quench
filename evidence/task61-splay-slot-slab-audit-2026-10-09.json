@@ -1,0 +1,374 @@
+{
+  "schema": 1,
+  "task": "61",
+  "date": "2026-10-09",
+  "experiment": "M4 Splay post-sweep slot-slab occupancy diagnostic",
+  "decision": "Reject whole-slab reclamation as an optimization target: all 763 slabs contain live cells at the observed high-water collections; no whole slabs can be returned without moving live cells and remapping handles.",
+  "source": {
+    "revision": "a4f9acf608d3",
+    "diagnostic_edits": "Temporary profile-memory-only occupancy histogram in heap.rs and heap/slots.rs; restored after the run. No production behavior changed.",
+    "restored_heap_rs_sha256": "e2913be604f1a0349e661e1154acf0828dcf26ed0fc8e505e123883e38723eec",
+    "restored_slots_rs_sha256": "084157b2a6b8e540be6d7d71f028a604ad83be002b9de9c2414eb86d11f7817c"
+  },
+  "host": {
+    "platform": "macOS 26.5",
+    "darwin": "25.5.0",
+    "machine": "Apple M4 Mac16,10 arm64",
+    "memory_bytes": 17179869184,
+    "cpu_quota": null
+  },
+  "input": {
+    "description": "Pinned materialized V8-v7 Splay input",
+    "path": "target/iteration/task61-lazy-host-string-20261009/materialized-splay.js",
+    "sha256": "31c30963144a07d45bcbfe9988bec95df39f8447485806e4decc7fa457c86215"
+  },
+  "build": {
+    "command": "CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=target/iteration/task61-splay-gc-profile-20261009 cargo build --profile production -p quench-node --features profile-memory",
+    "run_command": "QUENCH_MEMORY=1 target/iteration/task61-splay-gc-profile-20261009/production/quench-node target/iteration/task61-lazy-host-string-20261009/materialized-splay.js",
+    "diagnostic_binary_sha256": "aa120f76f2c7d93bd1d955f9d06f8d58651e35d56c0d802c011f84ea9da18522",
+    "restored_pinned_binary_sha256": "8bf571af3ce37f159117f898ec4be578dd41f99fda0ac14fb26ef4a0214e29aa",
+    "slot_bytes": 96,
+    "slots_per_slab": 2048,
+    "slab_capacity_bytes": 196608,
+    "performance_result_note": "Single profile-memory diagnostic run returned Score 2962; excluded from production performance evidence."
+  },
+  "measurement": {
+    "collections": 20,
+    "classes_order": [
+      "empty",
+      "1..<25%",
+      "25..<50%",
+      "50..<75%",
+      "75..<100%",
+      "full"
+    ],
+    "classes_definition": "For each slab, live cells divided by allocated in-length slots; the final partial in-length slab excludes its unused tail from the density denominator.",
+    "whole_empty_slabs": 0,
+    "high_water": {
+      "collection": 20,
+      "slab_capacity": 1562624,
+      "slabs": 763,
+      "in_length_slots": 1562166,
+      "live_slots": 781054,
+      "occupancy_percent": 50.0,
+      "class_counts": [
+        0,
+        16,
+        377,
+        355,
+        15,
+        0
+      ],
+      "slot_bytes": 150011904,
+      "free_list_capacity_bytes": 3145728,
+      "last_slab_in_length_slots": 1590,
+      "last_slab_unused_slot_bytes": 43968
+    },
+    "earlier_high_water_collection": {
+      "collection": 15,
+      "slab_capacity": 1562624,
+      "slabs": 763,
+      "in_length_slots": 1562157,
+      "live_slots": 781053,
+      "class_counts": [
+        0,
+        39,
+        423,
+        193,
+        108,
+        0
+      ]
+    },
+    "rows": [
+      {
+        "collection": 1,
+        "capacity_slots": 6144,
+        "in_length_slots": 4271,
+        "live_slots": 3739,
+        "class_counts": [
+          0,
+          0,
+          0,
+          1,
+          2,
+          0
+        ]
+      },
+      {
+        "collection": 2,
+        "capacity_slots": 6144,
+        "in_length_slots": 5874,
+        "live_slots": 4324,
+        "class_counts": [
+          0,
+          0,
+          1,
+          0,
+          2,
+          0
+        ]
+      },
+      {
+        "collection": 3,
+        "capacity_slots": 8192,
+        "in_length_slots": 6497,
+        "live_slots": 4819,
+        "class_counts": [
+          0,
+          0,
+          1,
+          1,
+          2,
+          0
+        ]
+      },
+      {
+        "collection": 4,
+        "capacity_slots": 8192,
+        "in_length_slots": 7283,
+        "live_slots": 7180,
+        "class_counts": [
+          0,
+          0,
+          0,
+          0,
+          3,
+          1
+        ]
+      },
+      {
+        "collection": 5,
+        "capacity_slots": 12288,
+        "in_length_slots": 10816,
+        "live_slots": 10672,
+        "class_counts": [
+          0,
+          0,
+          0,
+          0,
+          4,
+          2
+        ]
+      },
+      {
+        "collection": 6,
+        "capacity_slots": 16384,
+        "in_length_slots": 16025,
+        "live_slots": 15813,
+        "class_counts": [
+          0,
+          0,
+          0,
+          0,
+          5,
+          3
+        ]
+      },
+      {
+        "collection": 7,
+        "capacity_slots": 24576,
+        "in_length_slots": 23792,
+        "live_slots": 23476,
+        "class_counts": [
+          0,
+          0,
+          0,
+          0,
+          7,
+          5
+        ]
+      },
+      {
+        "collection": 8,
+        "capacity_slots": 36864,
+        "in_length_slots": 35293,
+        "live_slots": 34825,
+        "class_counts": [
+          0,
+          0,
+          0,
+          0,
+          10,
+          8
+        ]
+      },
+      {
+        "collection": 9,
+        "capacity_slots": 53248,
+        "in_length_slots": 52298,
+        "live_slots": 51606,
+        "class_counts": [
+          0,
+          0,
+          0,
+          0,
+          13,
+          13
+        ]
+      },
+      {
+        "collection": 10,
+        "capacity_slots": 77824,
+        "in_length_slots": 77462,
+        "live_slots": 76438,
+        "class_counts": [
+          0,
+          0,
+          0,
+          0,
+          21,
+          17
+        ]
+      },
+      {
+        "collection": 11,
+        "capacity_slots": 153600,
+        "in_length_slots": 152895,
+        "live_slots": 149867,
+        "class_counts": [
+          0,
+          0,
+          0,
+          0,
+          49,
+          26
+        ]
+      },
+      {
+        "collection": 12,
+        "capacity_slots": 301056,
+        "in_length_slots": 299751,
+        "live_slots": 293815,
+        "class_counts": [
+          0,
+          0,
+          0,
+          0,
+          104,
+          43
+        ]
+      },
+      {
+        "collection": 13,
+        "capacity_slots": 587776,
+        "in_length_slots": 587725,
+        "live_slots": 576085,
+        "class_counts": [
+          0,
+          0,
+          0,
+          0,
+          203,
+          84
+        ]
+      },
+      {
+        "collection": 14,
+        "capacity_slots": 1153024,
+        "in_length_slots": 1152184,
+        "live_slots": 781053,
+        "class_counts": [
+          0,
+          0,
+          40,
+          377,
+          145,
+          1
+        ]
+      },
+      {
+        "collection": 15,
+        "capacity_slots": 1562624,
+        "in_length_slots": 1562157,
+        "live_slots": 781053,
+        "class_counts": [
+          0,
+          39,
+          423,
+          193,
+          108,
+          0
+        ]
+      },
+      {
+        "collection": 16,
+        "capacity_slots": 1562624,
+        "in_length_slots": 1562161,
+        "live_slots": 781053,
+        "class_counts": [
+          0,
+          28,
+          360,
+          329,
+          45,
+          1
+        ]
+      },
+      {
+        "collection": 17,
+        "capacity_slots": 1562624,
+        "in_length_slots": 1562161,
+        "live_slots": 781053,
+        "class_counts": [
+          0,
+          16,
+          365,
+          373,
+          9,
+          0
+        ]
+      },
+      {
+        "collection": 18,
+        "capacity_slots": 1562624,
+        "in_length_slots": 1562166,
+        "live_slots": 781054,
+        "class_counts": [
+          0,
+          20,
+          367,
+          360,
+          15,
+          1
+        ]
+      },
+      {
+        "collection": 19,
+        "capacity_slots": 1562624,
+        "in_length_slots": 1562166,
+        "live_slots": 781054,
+        "class_counts": [
+          0,
+          16,
+          383,
+          347,
+          17,
+          0
+        ]
+      },
+      {
+        "collection": 20,
+        "capacity_slots": 1562624,
+        "in_length_slots": 1562166,
+        "live_slots": 781054,
+        "class_counts": [
+          0,
+          16,
+          377,
+          355,
+          15,
+          0
+        ]
+      }
+    ],
+    "raw_output_sha256": {
+      "stdout": "9eef5756d28f575bdb4df78da051f2a87e9515317bb249859835834f24274428",
+      "stderr": "8f76cecb9487ff4a174375d9b27fe34da71b190c6a996e18267e9f111f069b3e"
+    }
+  },
+  "analysis": {
+    "conclusion": "There were no fully empty slabs at any of the 20 post-sweep snapshots. At the last collection, live slots are distributed over 763 slabs, mostly at 25\u201375% occupancy. Releasing entire slabs has no direct target.",
+    "stable_identity_constraint": "Value::heap stores a flat slot index; the free list, generations, marks, sparse-array sidecar, weak handles, and object/property references use that identity. Moving live cells would require remapping these references and roots. An indirection redesign would require separate evidence.",
+    "related_existing_evidence": "The M4 occupancy capture shows about 2.00x occupied slots before collection relative to post-sweep survivors. The prior Linux live/2 pacing trial reduced RSS by about 54.4 MB but regressed Score by 16.94%; see task61-splay-gc-threshold-2026-10-08.json."
+  }
+}

@@ -1,0 +1,34 @@
+Auto-merging crates/quench-node-test/tests/child_entry.rs
+On branch v2-web
+Your branch is up to date with 'origin/v2-web'.
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   crates/quench-node-test/tests/child_entry.rs
+	modified:   crates/quench-runtime/src/compile.rs
+	modified:   crates/quench-runtime/src/compile/ast/call.rs
+	modified:   crates/quench-runtime/src/compile/ast/destructure.rs
+	modified:   crates/quench-runtime/src/compile/ast/expression.rs
+	modified:   crates/quench-runtime/src/compile/ast/optional.rs
+	modified:   crates/quench-runtime/src/vm.rs
+	modified:   crates/quench-runtime/src/vm/activation.rs
+	modified:   crates/quench-runtime/src/vm/dispatch.rs
+	modified:   crates/quench-runtime/src/vm/dispatch_fast.rs
+	modified:   crates/quench-runtime/src/vm/dispatch_frame.rs
+	modified:   crates/quench-runtime/src/vm/error.rs
+	modified:   crates/quench-runtime/src/vm/generator.rs
+	modified:   crates/quench-runtime/src/vm/tests.rs
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	crates/quench-node-test/node-tests/test-assignment-access-columns.js
+	crates/quench-node-test/node-tests/test-call-column-trivia.js
+	crates/quench-node-test/node-tests/test-complex-call-columns.js
+	crates/quench-node-test/node-tests/test-getter-call-columns.js
+	crates/quench-node-test/node-tests/test-optional-private-call-columns.js
+	crates/quench-node-test/node-tests/test-property-access-columns.js
+	crates/quench-node-test/node-tests/test-source-line-terminators.js
+	crates/quench-node-test/node-tests/test-special-call-columns.js
+
+no changes added to commit (use "git add" and/or "git commit -a")

@@ -1,0 +1,14 @@
+{
+  "base": "6ded4eada9ecd399601ad59078f57251e5549b85",
+  "source_files": {
+    "crates/quench-node-test/tests/child_entry.rs": "d79d0b15578af36f02db6b06be0c9e288b756dc5c45cf49de152c82a7f75aa0c",
+    "crates/quench-runtime/src/compile/class.rs": "0edd4c81426caccd377696f0d06cf431fd0b08aeaa2ba265bb8a0e48d8caa61b",
+    "crates/quench-runtime/src/vm/tests.rs": "a09f82587b721737eb69cd83c963cdca1e3928b62faaae92879291f265854bad",
+    "crates/quench-node-test/node-tests/test-private-brand-initialization.js": "fcadd4f3dbc2330dd68e4ff0032d5ae73f4513150af4cb3bc82d9e75c6b21e07",
+    "crates/quench-node-test/node-tests/test-static-block-context.js": "30848ce07592f11eb0624b3008b5ca21ff711648f8e0a1e38d7abd68c0c12003"
+  },
+  "early_host_build": "failed after mistaken deletion of active incremental cache; no verdict",
+  "early_host_retry": "started before static-block home/strictness edits; not used as proof for those edits",
+  "runtime_build": "started after all brand/static-block source and test edits; nonincremental",
+  "parent_frozen_instruction_measurement_excludes_this_work": true
+}

@@ -1,0 +1,10 @@
+79506a1169ac718c56a2bbd5d7115c38b33bc195ef802184b5e0c62cb7a05a3c  evidence/task94-splay-growth-policy-linux-2026-10-11/fixed-half-no-page-11.json.gz
+0f3a5395dcd93b2801ea4b010c13aaabdf84c715bc248bb43125957932123698  evidence/task94-splay-growth-policy-linux-2026-10-11/fixed-half-page-return-11.json.gz
+599c575b501a4b587d6b41fe365b499c243a5218f5c82cd36598b52d0f5ebdba  evidence/task94-splay-growth-policy-linux-2026-10-11/fixed-quarter-11.json.gz
+15bf0db01e2e2aa19cb4a955e1a3c517a413f350fddbd2154f916d9993df16cc  evidence/task94-splay-growth-policy-linux-2026-10-11/stock-half-no-page-11.json.gz
+2031068839c53bb3fda7ac2e1563e6488b21edfd44d74e26c702db43394af03c  evidence/task94-splay-growth-policy-linux-2026-10-11/stock-half-page-return-11.json.gz
+26b91ef6f570c48ee16abd5fe8abbd5ba86200bed344c78533fcb04b040bba06  evidence/task94-splay-growth-policy-linux-2026-10-11/stock-quarter-11.json.gz
+dfdf11edbb730f2e5c30ca47fd56b484be0f3e1731b2b40013f13054b69b7443  evidence/task94-splay-growth-policy-linux-2026-10-11/half-growth-page-return.patch.gz
+ae954cd6e34a356d737afe9fb4b6f2edcaf9e848e55c629b86e47f9d2a2c448c  evidence/task94-splay-growth-policy-linux-2026-10-11/binary-half-no-page.sha256
+6cd7dcbe7942d9030d3590d145aaa29af0f8076a2adf32f711a7c789d24e928a  evidence/task94-splay-growth-policy-linux-2026-10-11/binary-half-page.sha256
+b453b0e34654fe6a94ec620c8b155b4cd568e1d4d2ad5f77dd7004c85d183abf  evidence/task94-splay-growth-policy-linux-2026-10-11/binary-quarter.sha256

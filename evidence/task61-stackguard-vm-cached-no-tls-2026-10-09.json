@@ -1,0 +1,128 @@
+{
+  "schema": 1,
+  "task": "61",
+  "date": "2026-10-09",
+  "experiment": "VM-cached stack origin and logical frame limit for trampoline calls",
+  "decision": "inconclusive-not-retained",
+  "qualification_ready": false,
+  "hypothesis": "Capture the active thread stack origin at interpreter entry; check current stack distance and logical guest-frame depth in the VM before a trampoline frame push, without per-call TLS access or StackGuard Drop bookkeeping.",
+  "decision_reason": "The CJS call loop retired 0.778% fewer instructions but had a 0.451% median cycle increase (95% paired bootstrap interval -1.394% to +1.053%) and 1.053% median elapsed increase. The unrelated local-store control moved +5.407% in cycles and +8.0% elapsed, so it dominates the microbench delta. On Richards, cycles were effectively flat while median Score fell 1.255%; DeltaBlue had a 0.650% median cycle improvement whose 95% interval included zero and no median Score change. Fixture outcomes are small and inconsistent, so there is no reliable task-relevant speed win. The mechanism is not rejected as slower because control movement exceeded the target effect; the source candidate is not retained pending a less layout-sensitive hypothesis or measurement.",
+  "source": {
+    "baseline_revision": "974d31f09",
+    "workspace_revision": "8f639741c",
+    "candidate_patch": "tasks/evidence/task61-stackguard-vm-cached-no-tls-2026-10-09.patch",
+    "candidate_patch_sha256": "8cde7afd90e7518c6570a7fad051f45a1febe6bdeeb4404779928d63899e829b",
+    "touched_source_files": [
+      "crates/quench-stack/src/lib.rs",
+      "crates/quench-runtime/src/vm.rs",
+      "crates/quench-runtime/src/vm/vm_init.rs",
+      "crates/quench-runtime/src/vm/dispatch.rs",
+      "crates/quench-runtime/src/vm/dispatch_frame.rs"
+    ]
+  },
+  "host": {
+    "cpu": "Apple M4",
+    "os": "macOS 26.5 ARM64",
+    "kernel": "Darwin 25.5",
+    "memory_bytes": 17179869184,
+    "resource_limits": "No container memory or CPU quota reported",
+    "measurement": "/usr/bin/time -l; alternating production Quench binary pairs"
+  },
+  "build": {
+    "command": "CARGO_TARGET_DIR=target/candidate-b CARGO_INCREMENTAL=0 CARGO_PROFILE_PRODUCTION_STRIP=symbols cargo build --locked --offline --profile production -p quench-node --bin quench-node",
+    "baseline_binary": "target/pinned/cf3916764bd3b59ac3dcb91bd9787cb31ec01537245eaa785ae1cd9e7d6d1d57/quench-node",
+    "baseline_binary_sha256": "cf3916764bd3b59ac3dcb91bd9787cb31ec01537245eaa785ae1cd9e7d6d1d57",
+    "candidate_binary": "target/pinned/90a9e38aaa767256b22f979b50499dc7630463c2bbea3c5a7241641c3240f449/quench-node",
+    "candidate_binary_sha256": "90a9e38aaa767256b22f979b50499dc7630463c2bbea3c5a7241641c3240f449"
+  },
+  "preliminary_screen": {
+    "call_pairs": "tasks/evidence/task61-stackguard-no-tls-screen-call-2026-10-09.csv",
+    "call_pairs_sha256": "5e01290720028e1e9a2531014f13f1acd344cb3be3faeaeef332886354e784f8",
+    "control_pairs": "tasks/evidence/task61-stackguard-no-tls-screen-control-2026-10-09.csv",
+    "control_pairs_sha256": "28884763fbdcb02199e076d4ba2ac5dcb1dc16858b466b302e8ed8c4f9393ca8",
+    "note": "Three-pair screening showed target instructions down 0.8% with cycles up 0.7% to 1.1%; control cycles moved up 1.1% to 4.5%, so the screen proceeded to the 11-pair gate."
+  },
+  "microbench": {
+    "method": "11 alternating Quench-only pairs per target/control, CJS-shaped scripts, /usr/bin/time -l; paired bootstrap interval over median percentage delta",
+    "call_pairs": "tasks/evidence/task61-stackguard-no-tls-call-pairs-2026-10-09.csv",
+    "call_pairs_sha256": "90972e96aee84256ecf5e2b3b4e46b3ee6269865d3f44f1db2208f94e4eb2c99",
+    "control_pairs": "tasks/evidence/task61-stackguard-no-tls-control-pairs-2026-10-09.csv",
+    "control_pairs_sha256": "003e56b0878edf9e165dc0321dad723fa8c07a20a8dad02513e665aecfaa0db2",
+    "call_target": {
+      "instructions_retired_median_delta_pct": -0.778,
+      "instructions_retired_95pct_ci": [-0.7802, -0.775],
+      "instructions_retired_wins": "11/11",
+      "cycles_elapsed_median_delta_pct": 0.4507,
+      "cycles_elapsed_95pct_ci": [-1.3944, 1.0534],
+      "cycles_elapsed_wins": "3/11",
+      "elapsed_seconds_median_delta_pct": 1.0526,
+      "elapsed_seconds_95pct_ci": [-1.0526, 1.0638],
+      "elapsed_seconds_wins": "3/11",
+      "maximum_rss_median_delta_pct": 0.0,
+      "maximum_rss_95pct_ci": [-0.4562, 0.4575]
+    },
+    "local_store_control": {
+      "instructions_retired_median_delta_pct": 1.2032,
+      "instructions_retired_95pct_ci": [1.1909, 1.2117],
+      "cycles_elapsed_median_delta_pct": 5.4069,
+      "cycles_elapsed_95pct_ci": [3.4689, 8.2585],
+      "elapsed_seconds_median_delta_pct": 8.0,
+      "elapsed_seconds_95pct_ci": [4.0, 8.0],
+      "maximum_rss_median_delta_pct": -0.0917,
+      "maximum_rss_95pct_ci": [-0.6393, 0.1823]
+    }
+  },
+  "fixtures": {
+    "method": "11 alternating Quench-only pairs per V8-v7 fixture, materialized base.js plus fixture plus benchmark runner; exact observable output match checked each pair",
+    "report": "tasks/evidence/task61-stackguard-no-tls-fixture-pairs-2026-10-09.json",
+    "report_sha256": "d07943a369785001b9415afa73d7e3d95ae7ed89a9568f428cbb76eddb541ac5",
+    "runner": "tasks/evidence/task61-stackguard-no-tls-fixture-pairs-2026-10-09.py",
+    "runner_sha256": "74f4bc8be7f67ab486d1888c564620cd5aa0970638790e09725f5272ac0ccac3",
+    "richards": {
+      "score_median_delta_pct": -1.2552,
+      "score_95pct_ci": [-1.9027, -0.4211],
+      "score_wins": "1/11",
+      "instructions_retired_median_delta_pct": -1.9961,
+      "cycles_elapsed_median_delta_pct": 0.1249,
+      "cycles_elapsed_95pct_ci": [-0.2819, 0.3098],
+      "elapsed_seconds_median_delta_pct": 0.0,
+      "maximum_rss_median_delta_pct": 0.1748
+    },
+    "deltablue": {
+      "score_median_delta_pct": 0.0,
+      "score_95pct_ci": [-0.8696, 0.8772],
+      "score_wins": "5/11",
+      "instructions_retired_median_delta_pct": -0.3708,
+      "cycles_elapsed_median_delta_pct": -0.65,
+      "cycles_elapsed_95pct_ci": [-0.8421, 0.0725],
+      "elapsed_seconds_median_delta_pct": -0.4902,
+      "maximum_rss_median_delta_pct": 0.5029
+    }
+  },
+  "correctness": {
+    "quench_stack_tests": "4/4 passed",
+    "runtime_exhaustion_tests": "3/3 passed",
+    "vm_unit_tests": "117/117 passed",
+    "runtime_tests": "534/534 passed; subset integration tests 6/6 passed",
+    "test262": {
+      "stage_1_arguments": "263/263",
+      "stage_8_eval": "347/347",
+      "stage_11_function_code": "217/217",
+      "stage_36_to_38_async_generators": "89/89",
+      "stage_47_finalization_registry": "47/47",
+      "stage_48_function": "508/509; the sole failure was reproduced on clean baseline revision 974d31f09 with the identical message",
+      "stage_49_generator_function": "23/23",
+      "stage_50_generator_prototype": "61/61",
+      "stage_61_promise": "729/729",
+      "stage_62_proxy": "311/311",
+      "stage_80_weak_ref": "29/29"
+    },
+    "wasm_directives": "67124/67124",
+    "node_oracle": "RangeError class, message and recovery matched baseline and Node --jitless for the stack-exhaustion probe; the separate Test262 Function realm failure is pre-existing and local Node passes it",
+    "logs": "target/candidate-a/test-stackguard-vm-limit/{logs,reports}",
+    "baseline_function_realm_failure_classification": "target/candidate-a/test-stackguard-vm-limit/baseline-check/result.txt",
+    "baseline_function_realm_failure_classification_sha256": "a6b21fe50c53d8fcfc9091e4e4fe5a5f6481964d233b6f1a8747979a9a69c0da",
+    "timing_ran_concurrently_with_tests": false
+  },
+  "follow_up": "The earlier single-TLS-cell measurement remains separately classified as inconclusive. This no-TLS VM-cached mechanism was tested independently and its candidate source was removed because fixture-level cycles and Score did not demonstrate a reliable gain."
+}

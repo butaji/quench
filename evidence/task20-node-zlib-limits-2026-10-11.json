@@ -1,0 +1,2091 @@
+{
+  "scope": "Native CRC32, strict codec inputs, bounded synchronous outputs, and single callback completion",
+  "source_parent": "0e1b9ce7c",
+  "branch": "v2-cloud-node",
+  "oracle": "v27.0.0-nightly20260819c79868f102",
+  "fixture_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+  "host": {
+    "platform": "linux-x86_64",
+    "cpu_max": "400000 100000",
+    "memory_max_bytes": 17179869184
+  },
+  "oracle_checks": {
+    "pass": 37,
+    "fail": 0,
+    "log": "work/zlib-limits-final-oracles.log"
+  },
+  "zlib_group": {
+    "counts": {
+      "pass": 27,
+      "fail": 56
+    },
+    "total": 83,
+    "jobs": 2,
+    "timeout_secs": 15,
+    "inventory_hash": "2d0288047bb3f326",
+    "new_passes": [
+      "test-zlib-brotli-kmaxlength-rangeerror.js",
+      "test-zlib-crc32.js",
+      "test-zlib-kmaxlength-rangeerror.js",
+      "test-zlib-maxOutputLength.js",
+      "test-zlib-not-string-or-buffer.js",
+      "test-zlib-zip-internals.js",
+      "test-zlib-zstd-kmaxlength-rangeerror.js"
+    ],
+    "lost_passes": [],
+    "results": [
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-brotli-16GB.js",
+        "status": "pass",
+        "observation": {
+          "Ok": {
+            "exit_code": 0,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "pass"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-brotli-dictionary.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "/workspace/work/node-fixtures/test/parallel/test-zlib-brotli-dictionary.js:64\n  assert.throws(() => {\n  ^\n\nAssertionError [ERR_ASSERTION]: Missing expected exception.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-brotli-dictionary.js:64:3\n\nNode.js v22.0.0"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-brotli-flush-invalid-kind.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "/workspace/work/node-fixtures/test/parallel/test-zlib-brotli-flush-invalid-kind.js:48\nfor (const { factories, validKinds } of flushKindTestCases) {\n^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-brotli-flush-invalid-kind.js:53:7\n\nNode.js v22.0.0"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-brotli-flush.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "AssertionError: Expected values to be strictly deep-equal"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-brotli-from-brotli.js",
+        "status": "pass",
+        "observation": {
+          "Ok": {
+            "exit_code": 0,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "pass"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-brotli-from-string.js",
+        "status": "pass",
+        "observation": {
+          "Ok": {
+            "exit_code": 0,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "pass"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-brotli-kmaxlength-rangeerror.js",
+        "status": "pass",
+        "observation": {
+          "Ok": {
+            "exit_code": 0,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "pass"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-brotli.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "/workspace/work/node-fixtures/test/parallel/test-zlib-brotli.js:35\n  assert.throws(() => {\n  ^\n\nAssertionError [ERR_ASSERTION]: Missing expected exception.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-brotli.js:35:3\n\nNode.js v22.0.0"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-close-after-error.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "/workspace/work/node-fixtures/test/parallel/test-zlib-close-after-error.js:15\nassert.strictEqual(decompress._closed, false);\n^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-close-after-error.js:15:1\n\nNode.js v22.0.0"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-close-after-write.js",
+        "status": "pass",
+        "observation": {
+          "Ok": {
+            "exit_code": 0,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "pass"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-close-in-ondata.js",
+        "status": "pass",
+        "observation": {
+          "Ok": {
+            "exit_code": 0,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "pass"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-const.js",
+        "status": "pass",
+        "observation": {
+          "Ok": {
+            "exit_code": 0,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "pass"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-convenience-methods.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "/workspace/work/node-fixtures/test/parallel/test-zlib-convenience-methods.js:43\nfor (const [type, expect] of [\n^\n\nAssertionError [ERR_ASSERTION]: Should get engine Gzip after gzip string with info option.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-convenience-methods.js:112:7\n\nNode.js v22.0.0"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-crc32.js",
+        "status": "pass",
+        "observation": {
+          "Ok": {
+            "exit_code": 0,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "pass"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-create-raw.js",
+        "status": "pass",
+        "observation": {
+          "Ok": {
+            "exit_code": 0,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "pass"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-deflate-constructors.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "/workspace/work/node-fixtures/test/parallel/test-zlib-deflate-constructors.js:12\nassert.throws(() => zlib.Deflate(), {\n^\n\nAssertionError [ERR_ASSERTION]: The error did not match the expected object.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-deflate-constructors.js:12:1\n\nNode.js v22.0.0"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-deflate-raw-inherits.js",
+        "status": "pass",
+        "observation": {
+          "Ok": {
+            "exit_code": 0,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "pass"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-destroy-pipe.js",
+        "status": "pass",
+        "observation": {
+          "Ok": {
+            "exit_code": 0,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "pass"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-destroy.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "/workspace/work/node-fixtures/test/parallel/test-zlib-destroy.js:14\n  assert.strictEqual(ts._handle, null);\n  ^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-destroy.js:14:3\n\nNode.js v22.0.0"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-dictionary-fail.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 0,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "guestexit",
+              "code": 1
+            },
+            "stdout": [
+              77,
+              105,
+              115,
+              109,
+              97,
+              116,
+              99,
+              104,
+              101,
+              100,
+              32,
+              37,
+              115,
+              32,
+              102,
+              117,
+              110,
+              99,
+              116,
+              105,
+              111,
+              110,
+              32,
+              99,
+              97,
+              108,
+              108,
+              115,
+              46,
+              32,
+              69,
+              120,
+              112,
+              101,
+              99,
+              116,
+              101,
+              100,
+              32,
+              37,
+              115,
+              44,
+              32,
+              97,
+              99,
+              116,
+              117,
+              97,
+              108,
+              32,
+              37,
+              100,
+              46,
+              32,
+              60,
+              97,
+              110,
+              111,
+              110,
+              121,
+              109,
+              111,
+              117,
+              115,
+              62,
+              32,
+              101,
+              120,
+              97,
+              99,
+              116,
+              108,
+              121,
+              32,
+              49,
+              32,
+              48,
+              10,
+              32,
+              32,
+              32,
+              32,
+              97,
+              116,
+              32,
+              47,
+              119,
+              111,
+              114,
+              107,
+              115,
+              112,
+              97,
+              99,
+              101,
+              47,
+              119,
+              111,
+              114,
+              107,
+              47,
+              110,
+              111,
+              100,
+              101,
+              45,
+              102,
+              105,
+              120,
+              116,
+              117,
+              114,
+              101,
+              115,
+              47,
+              116,
+              101,
+              115,
+              116,
+              47,
+              112,
+              97,
+              114,
+              97,
+              108,
+              108,
+              101,
+              108,
+              47,
+              116,
+              101,
+              115,
+              116,
+              45,
+              122,
+              108,
+              105,
+              98,
+              45,
+              100,
+              105,
+              99,
+              116,
+              105,
+              111,
+              110,
+              97,
+              114,
+              121,
+              45,
+              102,
+              97,
+              105,
+              108,
+              46,
+              106,
+              115,
+              58,
+              51,
+              51,
+              58,
+              50,
+              50,
+              10,
+              77,
+              105,
+              115,
+              109,
+              97,
+              116,
+              99,
+              104,
+              101,
+              100,
+              32,
+              37,
+              115,
+              32,
+              102,
+              117,
+              110,
+              99,
+              116,
+              105,
+              111,
+              110,
+              32,
+              99,
+              97,
+              108,
+              108,
+              115,
+              46,
+              32,
+              69,
+              120,
+              112,
+              101,
+              99,
+              116,
+              101,
+              100,
+              32,
+              37,
+              115,
+              44,
+              32,
+              97,
+              99,
+              116,
+              117,
+              97,
+              108,
+              32,
+              37,
+              100,
+              46,
+              32,
+              60,
+              97,
+              110,
+              111,
+              110,
+              121,
+              109,
+              111,
+              117,
+              115,
+              62,
+              32,
+              101,
+              120,
+              97,
+              99,
+              116,
+              108,
+              121,
+              32,
+              49,
+              32,
+              48,
+              10,
+              32,
+              32,
+              32,
+              32,
+              97,
+              116,
+              32,
+              47,
+              119,
+              111,
+              114,
+              107,
+              115,
+              112,
+              97,
+              99,
+              101,
+              47,
+              119,
+              111,
+              114,
+              107,
+              47,
+              110,
+              111,
+              100,
+              101,
+              45,
+              102,
+              105,
+              120,
+              116,
+              117,
+              114,
+              101,
+              115,
+              47,
+              116,
+              101,
+              115,
+              116,
+              47,
+              112,
+              97,
+              114,
+              97,
+              108,
+              108,
+              101,
+              108,
+              47,
+              116,
+              101,
+              115,
+              116,
+              45,
+              122,
+              108,
+              105,
+              98,
+              45,
+              100,
+              105,
+              99,
+              116,
+              105,
+              111,
+              110,
+              97,
+              114,
+              121,
+              45,
+              102,
+              97,
+              105,
+              108,
+              46,
+              106,
+              115,
+              58,
+              52,
+              51,
+              58,
+              50,
+              50,
+              10,
+              77,
+              105,
+              115,
+              109,
+              97,
+              116,
+              99,
+              104,
+              101,
+              100,
+              32,
+              37,
+              115,
+              32,
+              102,
+              117,
+              110,
+              99,
+              116,
+              105,
+              111,
+              110,
+              32,
+              99,
+              97,
+              108,
+              108,
+              115,
+              46,
+              32,
+              69,
+              120,
+              112,
+              101,
+              99,
+              116,
+              101,
+              100,
+              32,
+              37,
+              115,
+              44,
+              32,
+              97,
+              99,
+              116,
+              117,
+              97,
+              108,
+              32,
+              37,
+              100,
+              46,
+              32,
+              60,
+              97,
+              110,
+              111,
+              110,
+              121,
+              109,
+              111,
+              117,
+              115,
+              62,
+              32,
+              101,
+              120,
+              97,
+              99,
+              116,
+              108,
+              121,
+              32,
+              49,
+              32,
+              48,
+              10,
+              32,
+              32,
+              32,
+              32,
+              97,
+              116,
+              32,
+              47,
+              119,
+              111,
+              114,
+              107,
+              115,
+              112,
+              97,
+              99,
+              101,
+              47,
+              119,
+              111,
+              114,
+              107,
+              47,
+              110,
+              111,
+              100,
+              101,
+              45,
+              102,
+              105,
+              120,
+              116,
+              117,
+              114,
+              101,
+              115,
+              47,
+              116,
+              101,
+              115,
+              116,
+              47,
+              112,
+              97,
+              114,
+              97,
+              108,
+              108,
+              101,
+              108,
+              47,
+              116,
+              101,
+              115,
+              116,
+              45,
+              122,
+              108,
+              105,
+              98,
+              45,
+              100,
+              105,
+              99,
+              116,
+              105,
+              111,
+              110,
+              97,
+              114,
+              121,
+              45,
+              102,
+              97,
+              105,
+              108,
+              46,
+              106,
+              115,
+              58,
+              53,
+              51,
+              58,
+              50,
+              50,
+              10
+            ],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-dictionary.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "/workspace/work/node-fixtures/test/parallel/test-zlib-dictionary.js:170\nfor (const dict of [spdyDict, ...common.getBufferSources(spdyDict)]) {\n^\n\nTypeError: value is not callable\n    at deflateResetDictionaryTest (/workspace/work/node-fixtures/test/parallel/test-zlib-dictionary.js:103:3)\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-dictionary.js:172:3\n\nNode.js v22.0.0"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-empty-buffer.js",
+        "status": "pass",
+        "observation": {
+          "Ok": {
+            "exit_code": 0,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "pass"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-failed-init.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "/workspace/work/node-fixtures/test/parallel/test-zlib-failed-init.js:18\nassert.throws(\n^\n\nAssertionError [ERR_ASSERTION]: Missing expected exception.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-failed-init.js:18:1\n\nNode.js v22.0.0"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-flush-drain-longblock.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "/workspace/work/node-fixtures/test/parallel/test-zlib-flush-drain-longblock.js:16\nzipper.flush();\n^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-flush-drain-longblock.js:16:1\n\nNode.js v22.0.0"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-flush-drain.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "/workspace/work/node-fixtures/test/parallel/test-zlib-flush-drain.js:22\n  flush.call(this, kind, callback);\n  ^\n\nTypeError: cannot read properties of undefined\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-flush-drain.js:22:3\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-flush-drain.js:34:1\n\nNode.js v22.0.0"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-flush-flags.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "/workspace/work/node-fixtures/test/parallel/test-zlib-flush-flags.js:8\nassert.throws(\n^\n\nAssertionError [ERR_ASSERTION]: Missing expected exception.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-flush-flags.js:8:1\n\nNode.js v22.0.0"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-flush-write-sync-interleaved.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "/workspace/work/node-fixtures/test/parallel/test-zlib-flush-write-sync-interleaved.js:18\nfor (const chunk of ['abc', 'def', 'ghi']) {\n^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-flush-write-sync-interleaved.js:20:3\n\nNode.js v22.0.0"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-flush.js",
+        "status": "pass",
+        "observation": {
+          "Ok": {
+            "exit_code": 0,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "pass"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-from-concatenated-gzip.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "/workspace/work/node-fixtures/test/parallel/test-zlib-from-concatenated-gzip.js:65\n      assert.strictEqual(\n      ^\n\nAssertionError [ERR_ASSERTION]: result should match original input (offset = 0)\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-from-concatenated-gzip.js:65:7\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:stream/shared.js:80:22\n    at node:bootstrap/event-emitter.js:127:24\n    at emit (node:bootstrap/event-emitter.js:125:5)\n    at node:stream/shared.js:2561:9\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-from-gzip-with-trailing-garbage.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "node:zlib/shared.js:45\n  const encode = (mode, input, options) => Buffer.from(transform(\n                                                       ^\n\nError: invalid gzip header\n    at node:zlib/shared.js:45:56\n    at node:zlib/shared.js:89:46\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-from-gzip-with-trailing-garbage.js:15:20\n\nNode.js v22.0.0"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-from-gzip.js",
+        "status": "pass",
+        "observation": {
+          "Ok": {
+            "exit_code": 0,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "pass"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-from-string.js",
+        "status": "pass",
+        "observation": {
+          "Ok": {
+            "exit_code": 0,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "pass"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-invalid-arg-value-brotli-compress.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "/workspace/work/node-fixtures/test/parallel/test-zlib-invalid-arg-value-brotli-compress.js:18\nassert.throws(() => new BrotliCompress(opts), {\n^\n\nAssertionError [ERR_ASSERTION]: Missing expected exception.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-invalid-arg-value-brotli-compress.js:18:1\n\nNode.js v22.0.0"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-invalid-input-memory.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 0,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "guestexit",
+              "code": 1
+            },
+            "stdout": [
+              77,
+              105,
+              115,
+              109,
+              97,
+              116,
+              99,
+              104,
+              101,
+              100,
+              32,
+              37,
+              115,
+              32,
+              102,
+              117,
+              110,
+              99,
+              116,
+              105,
+              111,
+              110,
+              32,
+              99,
+              97,
+              108,
+              108,
+              115,
+              46,
+              32,
+              69,
+              120,
+              112,
+              101,
+              99,
+              116,
+              101,
+              100,
+              32,
+              37,
+              115,
+              44,
+              32,
+              97,
+              99,
+              116,
+              117,
+              97,
+              108,
+              32,
+              37,
+              100,
+              46,
+              32,
+              110,
+              111,
+              111,
+              112,
+              32,
+              101,
+              120,
+              97,
+              99,
+              116,
+              108,
+              121,
+              32,
+              49,
+              32,
+              48,
+              10,
+              32,
+              32,
+              32,
+              32,
+              97,
+              116,
+              32,
+              47,
+              119,
+              111,
+              114,
+              107,
+              115,
+              112,
+              97,
+              99,
+              101,
+              47,
+              119,
+              111,
+              114,
+              107,
+              47,
+              110,
+              111,
+              100,
+              101,
+              45,
+              102,
+              105,
+              120,
+              116,
+              117,
+              114,
+              101,
+              115,
+              47,
+              116,
+              101,
+              115,
+              116,
+              47,
+              112,
+              97,
+              114,
+              97,
+              108,
+              108,
+              101,
+              108,
+              47,
+              116,
+              101,
+              115,
+              116,
+              45,
+              122,
+              108,
+              105,
+              98,
+              45,
+              105,
+              110,
+              118,
+              97,
+              108,
+              105,
+              100,
+              45,
+              105,
+              110,
+              112,
+              117,
+              116,
+              45,
+              109,
+              101,
+              109,
+              111,
+              114,
+              121,
+              46,
+              106,
+              115,
+              58,
+              49,
+              49,
+              58,
+              49,
+              52,
+              10
+            ],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-invalid-input.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "/workspace/work/node-fixtures/test/parallel/test-zlib-invalid-input.js:72\n  assert.throws(() => {\n  ^\n\nAssertionError [ERR_ASSERTION]: Missing expected exception.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-invalid-input.js:72:3\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-invalid-input.js:59:1\n\nNode.js v22.0.0"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-kmaxlength-rangeerror.js",
+        "status": "pass",
+        "observation": {
+          "Ok": {
+            "exit_code": 0,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "pass"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-maxOutputLength.js",
+        "status": "pass",
+        "observation": {
+          "Ok": {
+            "exit_code": 0,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "pass"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-negative-zero.js",
+        "status": "pass",
+        "observation": {
+          "Ok": {
+            "exit_code": 0,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "pass"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-no-stream.js",
+        "status": "pass",
+        "observation": {
+          "Ok": {
+            "exit_code": 0,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "pass"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-not-string-or-buffer.js",
+        "status": "pass",
+        "observation": {
+          "Ok": {
+            "exit_code": 0,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "pass"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-object-write.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "/workspace/work/node-fixtures/test/parallel/test-zlib-object-write.js:9\nassert.throws(() => {\n^\n\nAssertionError [ERR_ASSERTION]: Missing expected exception.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-object-write.js:9:1\n\nNode.js v22.0.0"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-params.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "AssertionError: Expected values to be strictly deep-equal"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-premature-end.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "/workspace/work/node-fixtures/test/parallel/test-zlib-premature-end.js:29\n      assert.strictEqual(stream.bytesWritten, compressed.length);\n      ^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-premature-end.js:29:7\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:stream/shared.js:80:22\n    at node:bootstrap/event-emitter.js:127:24\n    at emit (node:bootstrap/event-emitter.js:125:5)\n    at completeReadableEnd (node:stream/shared.js:546:5)\n    at node:stream/shared.js:663:13\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-random-byte-pipes.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "node:crypto/shared.js:125\n        throw finalized();\n        ^\n\nError: Digest already called\n    at node:crypto/shared.js:12:19\n    at digest (node:crypto/shared.js:125:15)\n    at _process (/workspace/work/node-fixtures/test/parallel/test-zlib-random-byte-pipes.js:82:20)\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-reject-garbage-after-end.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "/workspace/work/node-fixtures/test/parallel/test-zlib-reject-garbage-after-end.js:128\n  for (const value of [1, 'true', null]) {\n  ^\n\nAssertionError [ERR_ASSERTION]: Missing expected exception.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-reject-garbage-after-end.js:129:5\n    at node:test/shared.js:41:63\n    at node:test/shared.js:44:63\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-reject-garbage-after-end.js:125:1\n\nNode.js v22.0.0"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-reset-before-write.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "/workspace/work/node-fixtures/test/parallel/test-zlib-reset-before-write.js:10\nfor (const fn of [\n^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-reset-before-write.js:12:5\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-reset-before-write.js:29:3\n\nNode.js v22.0.0"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-reset-during-write.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "/workspace/work/node-fixtures/test/parallel/test-zlib-reset-during-write.js:9\nfor (const factory of [createBrotliCompress, createDeflate]) {\n^\n\nAssertionError [ERR_ASSERTION]: The error did not match the expected object.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-reset-during-write.js:18:3\n\nNode.js v22.0.0"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-sync-no-event.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "/workspace/work/node-fixtures/test/parallel/test-zlib-sync-no-event.js:12\nconst zipped = zipper._processChunk(buffer, zlib.constants.Z_FINISH);\n               ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-sync-no-event.js:12:16\n\nNode.js v22.0.0"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-truncated.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "/workspace/work/node-fixtures/test/parallel/test-zlib-truncated.js:106\n    assert.match(error.message, errMessage);\n    ^\n\nAssertionError [ERR_ASSERTION]: The input did not match the regular expression\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-truncated.js:106:5\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:stream/shared.js:80:22\n    at node:bootstrap/event-emitter.js:127:24\n    at emit (node:bootstrap/event-emitter.js:125:5)\n    at node:stream/shared.js:2394:9\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-type-error.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "/workspace/work/node-fixtures/test/parallel/test-zlib-type-error.js:55\n  assert.throws(\n  ^\n\nAssertionError [ERR_ASSERTION]: Missing expected exception.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-type-error.js:55:3\n    at node:test/shared.js:41:63\n    at node:test/shared.js:44:63\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-type-error.js:49:1\n\nNode.js v22.0.0"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-unused-weak.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "/workspace/work/node-fixtures/test/parallel/test-zlib-unused-weak.js:17\nassert((afterGC - before) / (afterCreation - before) <= 0.05,\n^\n\nAssertionError [ERR_ASSERTION]: Expected after-GC delta 0 to be less than 5 % of before-GC delta 0\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-unused-weak.js:17:1\n\nNode.js v22.0.0"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-unzip-one-byte-chunks.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "/workspace/work/node-fixtures/test/parallel/test-zlib-unzip-one-byte-chunks.js:20\n    assert.strictEqual(unzipped, 'abcdef',\n    ^\n\nAssertionError [ERR_ASSERTION]: '' should match 'abcdef' after zipping and unzipping\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-unzip-one-byte-chunks.js:20:5\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:stream/shared.js:80:22\n    at node:bootstrap/event-emitter.js:127:24\n    at emit (node:bootstrap/event-emitter.js:125:5)\n    at node:stream/shared.js:2561:9\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-write-after-close.js",
+        "status": "pass",
+        "observation": {
+          "Ok": {
+            "exit_code": 0,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "pass"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-write-after-end.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "unhandled Promise rejection was not handled"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-write-after-flush.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "/workspace/work/node-fixtures/test/parallel/test-zlib-write-after-flush.js:29\nfor (const [ createCompress, createDecompress ] of [\n^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-write-after-flush.js:49:3\n\nNode.js v22.0.0"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-zero-byte.js",
+        "status": "pass",
+        "observation": {
+          "Ok": {
+            "exit_code": 0,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "pass"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-zero-windowBits.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "/workspace/work/node-fixtures/test/parallel/test-zlib-zero-windowBits.js:24\n  assert.throws(() => zlib.createGzip({ windowBits: 0 }), {\n  ^\n\nAssertionError [ERR_ASSERTION]: Missing expected exception.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-zero-windowBits.js:24:3\n    at node:test/shared.js:41:63\n    at node:test/shared.js:44:63\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-zero-windowBits.js:23:1\n\nNode.js v22.0.0"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-zip-coverage.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "/workspace/work/node-fixtures/test/parallel/test-zlib-zip-coverage.js:60\n  buf.writeBigUInt64LE(44n, 4);\n  ^\n\nTypeError: value is not callable\n    at buildZip64Record (/workspace/work/node-fixtures/test/parallel/test-zlib-zip-coverage.js:60:3)\n    at buildMinimalZip64Archive (/workspace/work/node-fixtures/test/parallel/test-zlib-zip-coverage.js:100:5)\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-zip-coverage.js:107:15\n    at node:test/shared.js:41:63\n    at node:test/shared.js:44:63\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-zip-coverage.js:106:1\n\nNode.js v22.0.0"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-zip-edgecases.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "/workspace/work/node-fixtures/test/parallel/test-zlib-zip-edgecases.js:84\n  const [entry] = zlib.ZipEntry.read(archive);\n                  ^\n\nTypeError: cannot read properties of undefined\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-zip-edgecases.js:84:19\n    at node:test/shared.js:41:63\n    at node:test/shared.js:44:63\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-zip-edgecases.js:77:1\n\nNode.js v22.0.0"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-zip-encoding.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "/workspace/work/node-fixtures/test/parallel/test-zlib-zip-encoding.js:82\n  const [entry] = zlib.ZipEntry.read(buildEntryArchive({ nameBuffer }));\n                  ^\n\nTypeError: cannot read properties of undefined\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-zip-encoding.js:82:19\n    at node:test/shared.js:41:63\n    at node:test/shared.js:44:63\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-zip-encoding.js:79:1\n\nNode.js v22.0.0"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-zip-experimental-warning.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "/workspace/work/node-fixtures/test/parallel/test-zlib-zip-experimental-warning.js:25\n  assert.strictEqual(r.status, 0, r.stderr);\n  ^\n\nTypeError: The \"message\" argument must be one of type string or function. Received an instance of Object\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-zip-experimental-warning.js:25:3\n    at node:test/shared.js:41:63\n    at node:test/shared.js:44:63\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-zip-experimental-warning.js:20:1\n\nNode.js v22.0.0"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-zip-file-lifecycle.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "/workspace/work/node-fixtures/test/parallel/test-zlib-zip-file-lifecycle.js:51\n  writeArchive(file, [zlib.ZipEntry.createSync('first.txt', Buffer.from('original'),\n                      ^\n\nTypeError: cannot read properties of undefined\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-zip-file-lifecycle.js:51:23\n    at node:test/shared.js:41:63\n    at node:test/shared.js:44:63\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-zip-file-lifecycle.js:48:1\n\nNode.js v22.0.0"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-zip-files.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "unhandled Promise rejection was not handled"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-zip-fuzz.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "unhandled Promise rejection was not handled"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-zip-hardening.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "/workspace/work/node-fixtures/test/parallel/test-zlib-zip-hardening.js:33\n  for (const buf of [Buffer.alloc(0), Buffer.alloc(10), Buffer.from('not a zip')]) {\n  ^\n\nAssertionError [ERR_ASSERTION]: The error did not match the expected object.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-zip-hardening.js:34:5\n    at node:test/shared.js:41:63\n    at node:test/shared.js:44:63\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-zip-hardening.js:32:1\n\nNode.js v22.0.0"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-zip-internals.js",
+        "status": "pass",
+        "observation": {
+          "Ok": {
+            "exit_code": 0,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "pass"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-zip-interop.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "unhandled Promise rejection was not handled"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-zip-metadata.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "unhandled Promise rejection was not handled"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-zip-property.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "unhandled Promise rejection was not handled"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-zip-security-hardening.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "/workspace/work/node-fixtures/test/parallel/test-zlib-zip-security-hardening.js:30\n  const entry = zlib.ZipEntry.createSync(name, Buffer.from(content), { method });\n                ^\n\nTypeError: cannot read properties of undefined\n    at buildStored (/workspace/work/node-fixtures/test/parallel/test-zlib-zip-security-hardening.js:30:17)\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-zip-security-hardening.js:55:15\n    at node:test/shared.js:41:63\n    at node:test/shared.js:44:63\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-zip-security-hardening.js:54:1\n\nNode.js v22.0.0"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-zip-security.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "unhandled Promise rejection was not handled"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-zip-sync.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "/workspace/work/node-fixtures/test/parallel/test-zlib-zip-sync.js:30\n  const deflateEntry = zlib.ZipEntry.createSync('a.txt', Buffer.from('a'.repeat(1000)));\n                       ^\n\nTypeError: cannot read properties of undefined\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-zip-sync.js:30:24\n    at node:test/shared.js:41:63\n    at node:test/shared.js:44:63\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-zip-sync.js:29:1\n\nNode.js v22.0.0"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-zip-writable.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "unhandled Promise rejection was not handled"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-zip-zip64.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "unhandled Promise rejection was not handled"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-zip.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "unhandled Promise rejection was not handled"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-zstd-dictionary.js",
+        "status": "pass",
+        "observation": {
+          "Ok": {
+            "exit_code": 0,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "pass"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-zstd-flush.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "TypeError: cannot read properties of undefined"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-zstd-from-string.js",
+        "status": "pass",
+        "observation": {
+          "Ok": {
+            "exit_code": 0,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "pass"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-zstd-from-zstd.js",
+        "status": "pass",
+        "observation": {
+          "Ok": {
+            "exit_code": 0,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "pass"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-zstd-kmaxlength-rangeerror.js",
+        "status": "pass",
+        "observation": {
+          "Ok": {
+            "exit_code": 0,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "pass"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-zstd-pledged-src-size.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "/workspace/work/node-fixtures/test/parallel/test-zlib-zstd-pledged-src-size.js:56\nfor (const testCase of testCases) {\n^\n\nAssertionError [ERR_ASSERTION]: Missing expected exception.\n    at node:assert/AssertionError.js:3:5\n    at compressSyncWithPledgedSrcSize (/workspace/work/node-fixtures/test/parallel/test-zlib-zstd-pledged-src-size.js:42:5)\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-zstd-pledged-src-size.js:58:3\n\nNode.js v22.0.0"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-zstd.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "/workspace/work/node-fixtures/test/parallel/test-zlib-zstd.js:35\n  assert.throws(() => {\n  ^\n\nAssertionError [ERR_ASSERTION]: Missing expected exception.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-zlib-zstd.js:35:3\n\nNode.js v22.0.0"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "/workspace/work/node-fixtures/test/parallel/test-zlib.js:32\nassert.throws(() => zlib.gzipSync(Buffer.alloc(0), { windowBits: 8 }), {\n^\n\nAssertionError [ERR_ASSERTION]: Missing expected exception.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-zlib.js:32:1\n\nNode.js v22.0.0"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      }
+    ]
+  },
+  "reduction": [
+    "CRC32 uses crc32fast with one native type/seed validator; public wrapper only preserves function shape.",
+    "Type union errors share the existing received-value formatter; object constructor access matches Node order.",
+    "Captured Buffer.kMaxLength and optional maxOutputLength bound decoder reads; fractional limits retain original diagnostics.",
+    "Native callback completion captures an engine receiver, dispatches after initial jobs, and invokes guest callbacks outside codec exception handling."
+  ],
+  "limitations": [
+    "Codec options, dictionaries, incremental compression, finishFlush and info are incomplete.",
+    "Callback input is snapshotted; scheduling relative to I/O and public option getter timing require further work.",
+    "Native received-value inspection fallback for objects without constructors is incomplete.",
+    "No performance claim; all 4,727 cases remain the completion target."
+  ]
+}

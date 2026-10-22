@@ -1,0 +1,37 @@
+   Compiling quench-node-test v0.1.0 (/workspace/quench/crates/quench-node-test)
+    Finished `iteration` profile [optimized] target(s) in 9.54s
+     Running tests/child_entry.rs (target/iteration/deps/child_entry-bd3128b9292fce1f)
+
+running 1 test
+test error_source_positions_preserve_captured_compiler_metadata_without_guest_hooks ... FAILED
+
+failures:
+
+---- error_source_positions_preserve_captured_compiler_metadata_without_guest_hooks stdout ----
+
+thread 'error_source_positions_preserve_captured_compiler_metadata_without_guest_hooks' (3239587) panicked at crates/quench-node-test/tests/child_entry.rs:1495:9:
+assertion `left == right` failed: /workspace/quench/target/iteration/node/lib/internal/assert/utils.js:146
+  throw error;
+  ^
+
+AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
++ actual - expected
+
++ 'MODULE_NOT_FOUND'
+- 'ERR_ASSERTION'
+
+    at [eval]:59:8
+
+Node.js v26.12.0
+
+  left: Some(1)
+ right: Some(0)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    error_source_positions_preserve_captured_compiler_metadata_without_guest_hooks
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 374 filtered out; finished in 0.60s
+
+error: test failed, to rerun pass `-p quench-node-test --test child_entry`

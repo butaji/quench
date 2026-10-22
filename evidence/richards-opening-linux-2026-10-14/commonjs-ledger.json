@@ -1,0 +1,204 @@
+{
+  "entry_policy": "/tmp/*.js CommonJS, argv[]; same as stock",
+  "opcodes_per_run": {
+    "LoadConst": 15805.0,
+    "LoadEnvLocal": 3.0,
+    "StoreEnvLocal": 1.0,
+    "LoadCapture": 41306.0,
+    "LoadName": 9.0,
+    "LoadThis": 9008.0,
+    "GetField": 185154.0,
+    "GetIndex": 4252.0,
+    "SetField": 7985.0,
+    "SetThisField": 28535.0,
+    "SetIndex": 942.0,
+    "Binary": 40615.0,
+    "IncDec": 6123.0,
+    "Move": 16724.0,
+    "Call": 40466.0,
+    "Construct": 30.0,
+    "Jump": 16344.0,
+    "JumpFalse": 21343.0,
+    "JumpBinaryFalse": 49829.0,
+    "Return": 11652.0,
+    "JumpTrue": 1.0
+  },
+  "functions_per_run": [
+    {
+      "program": 112,
+      "function": "runRichards",
+      "calls_per_run": 1.0
+    },
+    {
+      "program": 112,
+      "function": "Scheduler",
+      "calls_per_run": 1.0
+    },
+    {
+      "program": 112,
+      "function": "TaskControlBlock",
+      "calls_per_run": 6.0
+    },
+    {
+      "program": 112,
+      "function": "IdleTask",
+      "calls_per_run": 1.0
+    },
+    {
+      "program": 112,
+      "function": "DeviceTask",
+      "calls_per_run": 2.0
+    },
+    {
+      "program": 112,
+      "function": "WorkerTask",
+      "calls_per_run": 1.0
+    },
+    {
+      "program": 112,
+      "function": "HandlerTask",
+      "calls_per_run": 2.0
+    },
+    {
+      "program": 112,
+      "function": "Packet",
+      "calls_per_run": 8.0
+    },
+    {
+      "program": 112,
+      "function": "<script>",
+      "calls_per_run": 1.0
+    },
+    {
+      "program": 112,
+      "function": "<script>",
+      "calls_per_run": 1.0
+    },
+    {
+      "program": 112,
+      "function": "<script>",
+      "calls_per_run": 2.0
+    },
+    {
+      "program": 112,
+      "function": "<script>",
+      "calls_per_run": 2.0
+    },
+    {
+      "program": 112,
+      "function": "<script>",
+      "calls_per_run": 1.0
+    },
+    {
+      "program": 112,
+      "function": "<script>",
+      "calls_per_run": 6.0
+    },
+    {
+      "program": 112,
+      "function": "<script>",
+      "calls_per_run": 1.0
+    },
+    {
+      "program": 112,
+      "function": "<script>",
+      "calls_per_run": 999.0
+    },
+    {
+      "program": 112,
+      "function": "<script>",
+      "calls_per_run": 928.0
+    },
+    {
+      "program": 112,
+      "function": "<script>",
+      "calls_per_run": 2324.0
+    },
+    {
+      "program": 112,
+      "function": "<script>",
+      "calls_per_run": 2322.0
+    },
+    {
+      "program": 112,
+      "function": "<script>",
+      "calls_per_run": 1.0
+    },
+    {
+      "program": 112,
+      "function": "<script>",
+      "calls_per_run": 999.0
+    },
+    {
+      "program": 112,
+      "function": "<script>",
+      "calls_per_run": 928.0
+    },
+    {
+      "program": 112,
+      "function": "<script>",
+      "calls_per_run": 10671.0
+    },
+    {
+      "program": 112,
+      "function": "<script>",
+      "calls_per_run": 2324.0
+    },
+    {
+      "program": 112,
+      "function": "<script>",
+      "calls_per_run": 1479.0
+    },
+    {
+      "program": 112,
+      "function": "<script>",
+      "calls_per_run": 6573.0
+    },
+    {
+      "program": 112,
+      "function": "<script>",
+      "calls_per_run": 2322.0
+    },
+    {
+      "program": 112,
+      "function": "<script>",
+      "calls_per_run": 1000.0
+    },
+    {
+      "program": 112,
+      "function": "<script>",
+      "calls_per_run": 2777.0
+    },
+    {
+      "program": 112,
+      "function": "<script>",
+      "calls_per_run": 468.0
+    },
+    {
+      "program": 112,
+      "function": "<script>",
+      "calls_per_run": 2328.0
+    },
+    {
+      "program": 112,
+      "function": "<script>",
+      "calls_per_run": 2008.0
+    }
+  ],
+  "calls_per_run": [
+    40466.0,
+    0.0,
+    0.0,
+    0.0,
+    30.0
+  ],
+  "method_cache_hits": 0,
+  "method_cache_misses": 0,
+  "total_opcodes_per_run": 496127.0,
+  "instructions_per_run": 102307782.95,
+  "self_function_instructions_reconciliation": 102307782.95,
+  "notes": [
+    "Global scalar counters read from one report only; program-specific opcode and function counters summed across installed programs.",
+    "Earlier repository-path module diagnostic is a counterfactual, not stock attribution."
+  ]
+}

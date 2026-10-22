@@ -1,0 +1,887 @@
+{
+  "scope": "Native synchronous child stdin/stdio/deadline ownership, Linux signal projection and UTF-16 Buffer input codec",
+  "source_commit": "f95d073d66f8c0db77e9ec41078201000f605550",
+  "build_profile": "iteration",
+  "compiled_runner_metadata": "db90dd752; binaries include subsequent f95d073d6 source commit",
+  "oracle": "v27.0.0-nightly20260819c79868f102",
+  "fixture_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+  "checks": {
+    "node_oracles": 96,
+    "framework_core": 43,
+    "shared_runtime": "Unchanged since retained 550-pass check"
+  },
+  "scopes": {
+    "child": {
+      "summary": {
+        "fail": 27,
+        "timeout": 3,
+        "pass": 80,
+        "skip": 2
+      },
+      "inventory_hash": "a3a03b5546a7e293",
+      "jobs": 4,
+      "timeout_secs": 30,
+      "results": [
+        {
+          "fixture": "test-child-process-advanced-serialization-host-objects.js",
+          "status": "fail",
+          "reason_excerpt": "unhandled Promise rejection was not handled"
+        },
+        {
+          "fixture": "test-child-process-advanced-serialization-largebuffer.js",
+          "status": "timeout"
+        },
+        {
+          "fixture": "test-child-process-advanced-serialization-splitted-length-field.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-advanced-serialization.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-child-process-advanced-serialization.js:9\n  for (const value of [null, 42, Infinity, 'foo']) {\n  ^\n\nAssertionError [ERR_ASSERTION]: Missing expected exception.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-advanced-serialization.js:10:5\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-child-process-bad-stdio.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-can-write-to-stdout.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-constructor.js",
+          "status": "fail",
+          "reason_excerpt": "node:child_process/shared.js:7\n      this.pid = started.pid ?? undefined;\n                 ^\n\nTypeError: cannot read properties of undefined\n    at node:child_process/shared.js:7:18\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-constructor.js:10:17\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-child-process-cwd.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-default-options.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-destroy.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-child-process-destroy.js:24\ncat[Symbol.dispose]();\n^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-destroy.js:24:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-child-process-detached.js",
+          "status": "timeout"
+        },
+        {
+          "fixture": "test-child-process-dgram-reuseport.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-disconnect.js",
+          "status": "timeout"
+        },
+        {
+          "fixture": "test-child-process-double-pipe.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-env.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-exec-abortcontroller-promisified.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-exec-any-shells-windows.js",
+          "status": "skip"
+        },
+        {
+          "fixture": "test-child-process-exec-cwd.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-exec-encoding.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-exec-env.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-exec-error.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-exec-kill-throws.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-exec-maxbuf.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-exec-std-encoding.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-exec-stdout-stderr-data-string.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-exec-timeout-expire.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-exec-timeout-kill.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-exec-timeout-not-expired.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-execFile-promisified-abortController.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-execfile-maxbuf.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-execfile.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-execfilesync-maxbuf.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-execsync-maxbuf.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-exit-code.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-flush-stdio.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-fork-abort-signal.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-fork-advanced-header-serialization.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-fork-and-spawn.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-fork-args.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-fork-close.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-fork-closed-channel-segfault.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-fork-detached.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-fork-dgram.js",
+          "status": "fail",
+          "reason_excerpt": "node:dgram/bootstrap.js:645\n  for (const callback of listeners[event] || []) callback.apply(socket, args);\n  ^\n\nError: This handle type cannot be sent\n    at node:child_process/ipc-surface.js:11:65\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-fork-dgram.js:68:5\n    at node:dgram/bootstrap.js:645:50\n    at node:dgram/bootstrap.js:986:31\n    at node:dgram/bootstrap.js:125:24\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-child-process-fork-exec-argv.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-fork-exec-path.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-fork-getconnections.js",
+          "status": "fail",
+          "reason_excerpt": "node:net/module.js:179\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nError: This handle type cannot be sent\n    at node:child_process/ipc-surface.js:11:65\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-fork-getconnections.js:71:5\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:net/module.js:179:118\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-child-process-fork-net-server.js",
+          "status": "fail",
+          "reason_excerpt": "node:net/module.js:179\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nError: This handle type cannot be sent\n    at node:child_process/ipc-surface.js:11:65\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-fork-net-server.js:116:7\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:net/module.js:179:118\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-child-process-fork-net-socket.js",
+          "status": "fail",
+          "reason_excerpt": "node:net/module.js:179\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nError: This handle type cannot be sent\n    at node:child_process/ipc-surface.js:11:65\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-fork-net-socket.js:65:7\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:net/module.js:179:118\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-child-process-fork-net.js",
+          "status": "fail",
+          "reason_excerpt": "node:net/module.js:179\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nError: This handle type cannot be sent\n    at node:child_process/ipc-surface.js:11:65\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-fork-net.js:103:9\n    at node:net/module.js:179:118\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-child-process-fork-no-shell.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-fork-ref.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-fork-ref2.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-fork-stdio-string-variant.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-fork-stdio.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-child-process-fork-stdio.js:53\n  child.stdio[4].write(buf);\n  ^\n\nTypeError: cannot read properties of null\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-fork-stdio.js:53:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-child-process-fork-timeout-kill-signal.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-fork-url.mjs",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-fork.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-fork3.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-http-socket-leak.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/lib/internal/timers.js:184\ntimeoutInfo[0] = 0;\n^\n\nTypeError: cannot set properties of undefined\n    at /workspace/work/node-fixtures/lib/internal/timers.js:184:18\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-http-socket-leak.js:21:22\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-child-process-internal.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-ipc-next-tick.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-ipc.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-kill.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-net-reuseport.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-no-deprecation.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-pipe-dataflow.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-child-process-pipe-dataflow.js:43\n  cat.stdout._handle.readStart = common.mustNotCall();\n  ^\n\nTypeError: cannot set properties of undefined\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-pipe-dataflow.js:43:34\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-child-process-promisified.js",
+          "status": "fail",
+          "reason_excerpt": "unhandled Promise rejection was not handled"
+        },
+        {
+          "fixture": "test-child-process-prototype-tampering.mjs",
+          "status": "fail",
+          "reason_excerpt": "AssertionError: Unexpected global(s) found: cwd"
+        },
+        {
+          "fixture": "test-child-process-recv-handle.js",
+          "status": "fail",
+          "reason_excerpt": "TypeError: cannot read properties of null"
+        },
+        {
+          "fixture": "test-child-process-reject-null-bytes.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-child-process-reject-null-bytes.js:29\nassert.throws(() => execSync(`${process.execPath} ${__filename} AAA BBB\\0XXX CCC`), {\n^\n\nAssertionError [ERR_ASSERTION]: The error did not match the expected object.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-reject-null-bytes.js:29:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-child-process-send-after-close.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-send-cb.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-send-keep-open.js",
+          "status": "fail",
+          "reason_excerpt": "node:net/module.js:179\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nError: This handle type cannot be sent\n    at node:child_process/ipc-surface.js:11:65\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-send-keep-open.js:35:5\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:net/module.js:179:118\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-child-process-send-returns-boolean.js",
+          "status": "fail",
+          "reason_excerpt": "node:net/module.js:179\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-send-returns-boolean.js:44:5\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:net/module.js:173:123\n    at node:net/module.js:179:118\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-child-process-send-type-error.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-child-process-send-type-error.js:8\n  assert.throws(() => {\n  ^\n\nAssertionError [ERR_ASSERTION]: Missing expected exception.\n    at node:assert/AssertionError.js:3:5\n    at fail (/workspace/work/node-fixtures/test/parallel/test-child-process-send-type-error.js:8:3)\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-send-type-error.js:23:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-child-process-send-utf8.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-server-close.js",
+          "status": "fail",
+          "reason_excerpt": "AssertionError: Expected values to be strictly equal"
+        },
+        {
+          "fixture": "test-child-process-set-blocking.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-silent.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-spawn-args.mjs",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-spawn-argv0.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-spawn-controller.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-spawn-error.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-spawn-event.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-spawn-shell.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-spawn-timeout-kill-signal.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-spawn-typeerror.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-spawn-windows-batch-file.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-spawnsync-args.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-spawnsync-env.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-spawnsync-input.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-spawnsync-kill-signal.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-child-process-spawnsync-maxbuf.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-spawnsync-non-string-args.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-spawnsync-shell.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-child-process-spawnsync-timeout.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-spawnsync-validation-errors.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-child-process-spawnsync-validation-errors.js:21\n  assert.throws(() => {\n  ^\n\nAssertionError [ERR_ASSERTION]: Missing expected exception.\n    at node:assert/AssertionError.js:3:5\n    at fail (/workspace/work/node-fixtures/test/parallel/test-child-process-spawnsync-validation-errors.js:21:3)\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-spawnsync-validation-errors.js:46:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-child-process-spawnsync.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-stdin-ipc.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-stdin.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-child-process-stdin.js:38\nassert.strictEqual(cat.stdin.readable, false);\n^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-stdin.js:38:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-child-process-stdio-big-write-end.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-stdio-inherit.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-stdio-merge-stdouts-into-cat.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-stdio-overlapped.js",
+          "status": "skip"
+        },
+        {
+          "fixture": "test-child-process-stdio-reuse-readable-stdio.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-stdio.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-stdout-flush-exit.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-stdout-flush.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-stdout-ipc.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-uid-gid.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-child-process-uid-gid.js:11\n  assert.throws(() => {\n  ^\n\nAssertionError [ERR_ASSERTION]: Missing expected exception.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-uid-gid.js:11:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-child-process-validate-stdio.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-child-process-validate-stdio.js:11\nassert.throws(() => getValidStdio('foo'), expectedError);\n^\n\nAssertionError [ERR_ASSERTION]: The error did not match the expected object.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-validate-stdio.js:11:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-child-process-windows-hide.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-child-process-windows-hide.js:24\n  assert.strictEqual(spy.mock.calls.length, 1);\n  ^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-windows-hide.js:24:3\n    at node:test/shared.js:41:63\n    at node:test/shared.js:44:63\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-windows-hide.js:16:1\n\nNode.js v22.0.0"
+        }
+      ],
+      "raw_sha256": "0eeaf447e7753d7e730563cccc20beaca3e09ddc495b7a2154bafbf05cf85ede"
+    },
+    "buffer": {
+      "summary": {
+        "fail": 34,
+        "skip": 2,
+        "pass": 35,
+        "timeout": 1
+      },
+      "inventory_hash": "463e41f6e56dd224",
+      "jobs": 4,
+      "timeout_secs": 30,
+      "results": [
+        {
+          "fixture": "test-buffer-alloc-alignment.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-buffer-alloc-alignment.js:30\nfor (const alloc of [Buffer.allocUnsafe, Buffer.allocUnsafeSlow]) {\n^\n\nTypeError: value is not callable\n    at assertAligned (/workspace/work/node-fixtures/test/parallel/test-buffer-alloc-alignment.js:19:19)\n    at /workspace/work/node-fixtures/test/parallel/test-buffer-alloc-alignment.js:36:9\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-buffer-alloc-unsafe-is-initialized-with-zero-fill-flag.js",
+          "status": "skip"
+        },
+        {
+          "fixture": "test-buffer-alloc-unsafe-is-uninitialized.js",
+          "status": "skip"
+        },
+        {
+          "fixture": "test-buffer-alloc.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-buffer-alloc.js:14\nassert.throws(\n^\n\nAssertionError [ERR_ASSERTION]: The error did not match the expected object.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-buffer-alloc.js:14:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-buffer-arraybuffer.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-buffer-arraybuffer.js:15\nassert.strictEqual(buf.parent, buf.buffer);\n^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-buffer-arraybuffer.js:15:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-buffer-ascii.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-buffer-backing-arraybuffer.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-buffer-backing-arraybuffer.js:15\nfor (const { length, expectOnHeap } of tests) {\n^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-buffer-backing-arraybuffer.js:28:23\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-buffer-badhex.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-buffer-bigint64.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-buffer-bigint64.js:10\n  buf[`writeBigInt64${endianness}`](val, 0);\n  ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-buffer-bigint64.js:10:3\n    at /workspace/work/node-fixtures/test/parallel/test-buffer-bigint64.js:7:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-buffer-bytelength.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-buffer-compare-offset.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-buffer-compare.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-buffer-concat.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-buffer-constants.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-buffer-constants.js:11\nassert.throws(() => ' '.repeat(MAX_STRING_LENGTH + 1),\n^\n\nAssertionError [ERR_ASSERTION]: The error did not match the expected regular expression.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-buffer-constants.js:11:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-buffer-constructor-deprecation-error.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-buffer-constructor-node-modules-paths.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-buffer-constructor-node-modules-paths.js:20\n    assert.strictEqual(stderr.trim(), '');\n    ^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at test (/workspace/work/node-fixtures/test/parallel/test-buffer-constructor-node-modules-paths.js:20:5)\n    at /workspace/work/node-fixtures/test/parallel/test-buffer-constructor-node-modules-paths.js:23:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-buffer-constructor-node-modules.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/common/child_process.js:112\n    throw error;\n    ^\n\nError: - stderr did not match /DEP0005/\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-buffer-constructor-outside-node-modules.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-buffer-copy-immutable.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-buffer-copy.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-buffer-equals.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-buffer-failed-alloc-typed-arrays.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-buffer-fakes.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-buffer-fakes.js:20\nassert.throws(function() {\n^\n\nAssertionError [ERR_ASSERTION]: Missing expected exception.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-buffer-fakes.js:20:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-buffer-fill.js",
+          "status": "fail",
+          "reason_excerpt": "node:buffer/shared.js:294\n        throw error;\n        ^\n\nRangeError: The value of \"length\" is out of range. It must be >= 0 && <= 25. Received 28\n    at write (node:buffer/shared.js:292:23)\n    at writeToFill (/workspace/work/node-fixtures/test/parallel/test-buffer-fill.js:271:21)\n    at testBufs (/workspace/work/node-fixtures/test/parallel/test-buffer-fill.js:290:26)\n    at /workspace/work/node-fixtures/test/parallel/test-buffer-fill.js:13:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-buffer-from.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-buffer-from.js:29\nassert.deepStrictEqual(Buffer.from(new String(checkString)), check);\n^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-buffer-from.js:29:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-buffer-generic-methods.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-buffer-generic-methods.js:116\nassert.deepStrictEqual(expectedMethods.filter((v) => !actualMethods.includes(v)), []);\n^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-buffer-generic-methods.js:116:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-buffer-includes.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-buffer-includes.js:12\nassert(b.includes('a'));\n^\n\nAssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-buffer-includes.js:12:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-buffer-indexof.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-buffer-indexof.js:14\nassert.strictEqual(b.indexOf('a'), 0);\n^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-buffer-indexof.js:14:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-buffer-inheritance.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-buffer-inspect.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-buffer-inspect.js:38\nassert.strictEqual(util.inspect(b), expected);\n^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-buffer-inspect.js:38:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-buffer-isascii.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-buffer-isencoding.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-buffer-isutf8-isascii-fast.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-buffer-isutf8-isascii-fast.js:19\neval('%PrepareFunctionForOptimization(isAscii)');\n^\n\nSyntaxError: Unexpected token\n    at /workspace/work/node-fixtures/test/parallel/test-buffer-isutf8-isascii-fast.js:19:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-buffer-isutf8.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-buffer-iterator.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-buffer-new.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-buffer-new.js:6\nassert.throws(() => new Buffer(42, 'utf8'), {\n^\n\nAssertionError [ERR_ASSERTION]: Missing expected exception.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-buffer-new.js:6:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-buffer-no-negative-allocation.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-buffer-no-negative-allocation.js:13\nassert.throws(() => Buffer(-Buffer.poolSize), msg);\n^\n\nAssertionError [ERR_ASSERTION]: The error did not match the expected object.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-buffer-no-negative-allocation.js:13:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-buffer-nopendingdep-map.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-buffer-of-no-deprecation.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-buffer-over-max-length.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-buffer-over-max-length.js:14\nassert.throws(() => Buffer(kMaxLength + 1), bufferMaxSizeMsg);\n^\n\nAssertionError [ERR_ASSERTION]: The error did not match the expected object.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-buffer-over-max-length.js:14:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-buffer-parent-property.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-buffer-parent-property.js:11\nassert((new Buffer(0)).parent instanceof ArrayBuffer);\n^\n\nAssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-buffer-parent-property.js:11:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-buffer-pending-deprecation.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-buffer-pool-untransferable.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-buffer-pool-untransferable.js:12\nassert.strictEqual(a.buffer, b.buffer);\n^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-buffer-pool-untransferable.js:12:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-buffer-prototype-inspect.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-buffer-prototype-inspect.js:12\n  assert.strictEqual(util.inspect(buf), '<Buffer 66 68 71 77 68 67 61 64 73>');\n  ^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-buffer-prototype-inspect.js:12:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-buffer-read.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-buffer-readdouble.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-buffer-readfloat.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-buffer-readint.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-buffer-readuint.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-buffer-resizable.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-buffer-safe-unsafe.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-buffer-set-inspect-max-bytes.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-buffer-set-inspect-max-bytes.js:10\nfor (const obj of rangeErrorObjs) {\n^\n\nAssertionError [ERR_ASSERTION]: Missing expected exception.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-buffer-set-inspect-max-bytes.js:11:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-buffer-sharedarraybuffer.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-buffer-slice.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-buffer-slice.js:28\nassert.strictEqual(Buffer('hello', 'utf8').slice(0, 0).length, 0);\n                   ^\n\nTypeError: class constructor cannot be called without new\n    at /workspace/work/node-fixtures/test/parallel/test-buffer-slice.js:28:20\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-buffer-slow.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-buffer-swap-fast.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-buffer-swap-fast.js:34\neval('%PrepareFunctionForOptimization(Buffer.prototype.swap16)');\n^\n\nSyntaxError: Unexpected token\n    at /workspace/work/node-fixtures/test/parallel/test-buffer-swap-fast.js:34:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-buffer-swap.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-buffer-swap.js:11\n  assert.strictEqual(buf, buf.swap16());\n                          ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-buffer-swap.js:11:27\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-buffer-tojson.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-buffer-tostring-4gb.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-buffer-tostring-4gb.js:18\n  throw e;\n  ^\n\nRangeError: The value of \"size\" is out of range\n    at alloc (node:buffer/shared.js:123:23)\n    at /workspace/work/node-fixtures/test/parallel/test-buffer-tostring-4gb.js:13:17\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-buffer-tostring-range.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-buffer-tostring-rangeerror.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-buffer-tostring-rangeerror.js:37\n  assert.throws(() => { buf.toString('utf8'); }, message);\n  ^\n\nAssertionError [ERR_ASSERTION]: The error did not match the expected object.\n    at node:assert/AssertionError.js:3:5\n    at test (/workspace/work/node-fixtures/test/parallel/test-buffer-tostring-rangeerror.js:37:3)\n    at /workspace/work/node-fixtures/test/parallel/test-buffer-tostring-rangeerror.js:40:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-buffer-tostring.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-buffer-write-fast.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-buffer-write-fast.js:41\neval('%PrepareFunctionForOptimization(utf8Write)');\n^\n\nSyntaxError: Unexpected token\n    at /workspace/work/node-fixtures/test/parallel/test-buffer-write-fast.js:41:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-buffer-write-utf8-two-byte.js",
+          "status": "timeout"
+        },
+        {
+          "fixture": "test-buffer-write.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-buffer-writedouble.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-buffer-writefloat.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-buffer-writeint.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-buffer-writeuint.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-buffer-zero-fill-cli.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-buffer-zero-fill-cli.js:34\n    Buffer(20),\n    ^\n\nTypeError: class constructor cannot be called without new\n    at /workspace/work/node-fixtures/test/parallel/test-buffer-zero-fill-cli.js:34:5\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-buffer-zero-fill-reset.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-buffer-zero-fill.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-buffer-zero-fill.js:7\nconst buf1 = Buffer(100);\n             ^\n\nTypeError: class constructor cannot be called without new\n    at /workspace/work/node-fixtures/test/parallel/test-buffer-zero-fill.js:7:14\n\nNode.js v22.0.0"
+        }
+      ],
+      "raw_sha256": "f77df55bcd23a5e0c74c7502a440537404a2ef97fb8ae949d3ddd86ad18abbeb"
+    }
+  },
+  "comparison": "Child scope gains stdin and timeout cases vs 78-pass source 8e137049d; no pass losses. Buffer scope unchanged vs frozen complete source debeb1d71.",
+  "binary_sha256": {
+    "target/iteration/quench-node": "b683b0f9e15ec2a94f2a8cc535a54433618f73bbd5178e8b35b44fd6caf69be7",
+    "target/iteration/run-parallel": "8c75ca1dac4fe00dc0e672226b53f4f28047705be0b69ca19612f3225cb89175"
+  },
+  "log_sha256": {
+    "work/child-sync-collector-final-oracles.log": "bd0c43fdccfd386327def0984ecfe8229c4201174885b8a2f99ec6e9fa17a709",
+    "work/child-sync-collector-final-framework.log": "b41881f94821125815bc87efbbbd7d26b13fd072686394014795864fa55f2ae8"
+  },
+  "richards_diagnostic": {
+    "suite": "stock V8-v7 Richards; exact base.js + richards.js + existing repository RUNNER",
+    "qualification": "One diagnostic round; iteration build, two engines only. No matched production or aggregate performance claim.",
+    "platform": "linux-x86_64",
+    "cpu_max": "400000 100000",
+    "memory_max": "17179869184",
+    "results": [
+      {
+        "engine": "quench-iteration",
+        "argv": [
+          "target/iteration/quench-node"
+        ],
+        "exit_code": 0,
+        "timed_out": false,
+        "elapsed_seconds": 2.405807092000032,
+        "peak_rss_kib": 117436,
+        "stdout": "__quenchBenchResult: Richards: 170\n----\nScore: 170\n",
+        "stderr": ""
+      },
+      {
+        "engine": "node27-jitless",
+        "argv": [
+          "work/node-v27.0.0-nightly20260819c79868f102-linux-x64/bin/node",
+          "--jitless"
+        ],
+        "exit_code": 0,
+        "timed_out": false,
+        "elapsed_seconds": 2.202236281998921,
+        "peak_rss_kib": 70368,
+        "stdout": "__quenchBenchResult: Richards: 1878\n----\nScore: 1878\n",
+        "stderr": ""
+      }
+    ]
+  },
+  "qualifications": [
+    "96 final oracle checks include raw/encoded input, inherited/ignored standard descriptors, signal selection, timeout handler exit code 7, and grandchild-held pipe closure preserving direct-child status 0.",
+    "Child scope precedes a behavior-equivalent codec allocation reduction; final 96-oracle/framework checks and buffer scope use the final reduction.",
+    "A trial with wrap-based synchronous stdio was removed after the pinned Node itself aborted on invalid child stdio type wrap; no compatibility claim for that unsupported route.",
+    "Verified host is Linux x86_64. Poll collection is implemented for Unix; non-Unix retains wait_with_output and previous collection behavior. Signal selection/constants additions are qualified on Linux.",
+    "Extra synchronous stdio channels, complete argument/option validation and mutable internal child-process routing remain incomplete. Existing text-only output sink/Writable callbacks are not qualified by this checkpoint.",
+    "Single iteration Richards diagnostic, two engines/one round; no matched production or aggregate speed claim.",
+    "Latest complete sweep remains 1321 pass / 686 skip / 2605 fail / 115 timeout / 0 crash of 4727. Focus gains do not establish a new full total; goal remains open."
+  ]
+}

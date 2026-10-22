@@ -1,0 +1,16 @@
+{
+  "HEAD": {
+    "tests": 365,
+    "all_names_retained": true,
+    "all_chunks_verbatim_except_external_blank_line": [
+      "eval_uses_parsed_program_completion_grammar_and_original_source_positions"
+    ]
+  },
+  "MERGE_HEAD": {
+    "tests": 363,
+    "all_names_retained": true,
+    "all_chunks_verbatim_except_external_blank_line": []
+  },
+  "merged_tests": 365,
+  "count_scope": "column-zero test chunks; nested declarations remain inside verbatim chunks; actual runner count is measured separately"
+}

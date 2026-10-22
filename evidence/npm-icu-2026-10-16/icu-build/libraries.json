@@ -1,0 +1,12 @@
+[
+  {
+    "file": "libicudata.a",
+    "bytes": 33108876,
+    "sha256": "6b11c9fe912169016304ba10f459a7fbe036d3ef119269b2430039e6e3cb3020"
+  },
+  {
+    "file": "libicuuc.a",
+    "bytes": 3653788,
+    "sha256": "0dc8387eecc1bc9165e5758f1df34e16d7df13afb4920da22e3ba2f922c3c764"
+  }
+]

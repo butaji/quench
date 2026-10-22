@@ -1,0 +1,35 @@
+{
+  "node": "26.12.0",
+  "node_sha256": "caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943",
+  "performance_phase_started": false,
+  "observations": [
+    {
+      "flags": [
+        "--jitless"
+      ],
+      "exit_code": 0,
+      "stdout": "{\"flags\":[\"--jitless\",\"-e\",\"console.log(JSON.stringify({flags:process.execArgv,WebAssembly_type:typeof WebAssembly}))\"],\"WebAssembly_type\":\"undefined\"}\n",
+      "stderr": ""
+    },
+    {
+      "flags": [
+        "--jitless",
+        "--wasm-jitless"
+      ],
+      "exit_code": 0,
+      "stdout": "{\"flags\":[\"--jitless\",\"--wasm-jitless\",\"-e\",\"console.log(JSON.stringify({flags:process.execArgv,WebAssembly_type:typeof WebAssembly}))\"],\"WebAssembly_type\":\"undefined\"}\n",
+      "stderr": ""
+    },
+    {
+      "flags": [
+        "--jitless",
+        "--wasm-jitless",
+        "--expose-wasm"
+      ],
+      "exit_code": 9,
+      "stdout": "",
+      "stderr": "/workspace/shared/node-v26.12.0-linux-x64/bin/node: bad option: --expose-wasm\n"
+    }
+  ],
+  "consequence": "Any later package workload requiring WebAssembly must preserve this limitation as unsupported in a stock Node --jitless comparison; unsupported execution is not a Quench speed win."
+}

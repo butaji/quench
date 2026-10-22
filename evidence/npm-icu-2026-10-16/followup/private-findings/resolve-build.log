@@ -1,0 +1,35 @@
+error[E0609]: no field `errors` on type `ParserReturn<'_>`
+ --> /workspace/scratch/npm-private-brand-draft/resolve-main.rs:6:106
+  |
+6 |  let parsed=oxc_parser::Parser::new(&allocator,&text,oxc_span::SourceType::cjs()).parse();assert!(parsed.errors.is_empty(),"{:?}",par...
+  |                                                                                                          ^^^^^^ unknown field
+  |
+  = note: available fields are: `program`, `module_record`, `diagnostics`, `irregular_whitespaces`, `tokens` ... and 3 others
+
+error[E0609]: no field `errors` on type `ParserReturn<'_>`
+ --> /workspace/scratch/npm-private-brand-draft/resolve-main.rs:6:138
+  |
+6 | ...parse();assert!(parsed.errors.is_empty(),"{:?}",parsed.errors);
+  |                                                           ^^^^^^ unknown field
+  |
+  = note: available fields are: `program`, `module_record`, `diagnostics`, `irregular_whitespaces`, `tokens` ... and 3 others
+
+error[E0609]: no field `errors` on type `SemanticBuilderReturn<'_>`
+ --> /workspace/scratch/npm-private-brand-draft/resolve-main.rs:7:92
+  |
+7 |  let semantic=oxc_semantic::SemanticBuilder::new().build(&parsed.program);assert!(semantic.errors.is_empty(),"{:?}",semantic.errors);
+  |                                                                                            ^^^^^^ unknown field
+  |
+  = note: available fields are: `semantic`, `diagnostics`
+
+error[E0609]: no field `errors` on type `SemanticBuilderReturn<'_>`
+ --> /workspace/scratch/npm-private-brand-draft/resolve-main.rs:7:126
+  |
+7 |  let semantic=oxc_semantic::SemanticBuilder::new().build(&parsed.program);assert!(semantic.errors.is_empty(),"{:?}",semantic.errors);
+  |                                                                                                                              ^^^^^^ unknown field
+  |
+  = note: available fields are: `semantic`, `diagnostics`
+
+error: aborting due to 4 previous errors
+
+For more information about this error, try `rustc --explain E0609`.

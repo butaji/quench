@@ -1,0 +1,8 @@
+
+running 3 tests
+test text_decoder_descriptors_validation_and_utf8_encoding_match_node ... ok
+test text_decoder_stream_boundaries_and_repeated_flush_match_node ... ok
+test text_decoder_unicode_labels_bom_fatal_errors_and_recovery_match_node ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 299 filtered out; finished in 8.72s
+

@@ -1,0 +1,30 @@
+[
+  {
+    "test": "native_recursive_watch_class_close_and_per_path_hooks_match_node",
+    "engine": "node",
+    "exit_code": 0,
+    "stdout": "[[\"paths\",[\"\",\"link\",\"sub\"]],[\"meta\",\"FSWatcher\",[\"_events\",\"_eventsCount\",\"_maxListeners\"],[\"Symbol(kFSWatchStart)\",\"Symbol(Symbol.asyncIterator)\"],[[\"close\",0,false],[\"ref\",0,false],[\"unref\",0,false]]],[\"references\",[[\"\",\"ref\"],[\"link\",\"ref\"],[\"sub\",\"ref\"],[\"\",\"unref\"],[\"link\",\"unref\"],[\"sub\",\"unref\"]]],\"close\"]\n",
+    "stderr": ""
+  },
+  {
+    "test": "native_recursive_watch_class_close_and_per_path_hooks_match_node",
+    "engine": "quench_before",
+    "exit_code": 0,
+    "stdout": "[[\"paths\",[\"\",\"link\",\"sub\",\"sub/file\"]],[\"meta\",\"FSWatcher\",[\"_events\",\"_eventsCount\",\"_maxListeners\"],[\"Symbol(kFSWatchStart)\",\"Symbol(Symbol.asyncIterator)\"],[[\"close\",0,false],[\"ref\",0,false],[\"unref\",0,false]]],[\"references\",[]],\"close\"]\n",
+    "stderr": ""
+  },
+  {
+    "test": "native_recursive_watch_discovery_changes_and_ignore_match_node",
+    "engine": "node",
+    "exit_code": 0,
+    "stdout": "[[\"change\",\"sub/visible\"],[\"rename\",\"new/added\"]]\n",
+    "stderr": ""
+  },
+  {
+    "test": "native_recursive_watch_discovery_changes_and_ignore_match_node",
+    "engine": "quench_before",
+    "exit_code": 0,
+    "stdout": "[[\"change\",\"sub/visible\"],[\"rename\",\"new/added\"]]\n",
+    "stderr": ""
+  }
+]

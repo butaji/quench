@@ -1,0 +1,12 @@
+ee3c1ff66654a827e7b01be95baf94bbccc0d047
+crates/quench-node/src/host/shared_vm/commonjs.rs
+
+Auto-merging crates/quench-node-test/tests/child_entry.rs
+Auto-merging crates/quench-node/src/host/node_host.rs
+Auto-merging crates/quench-node/src/host/shared_vm.rs
+Auto-merging crates/quench-node/src/host/shared_vm/commonjs.rs
+CONFLICT (content): Merge conflict in crates/quench-node/src/host/shared_vm/commonjs.rs
+Auto-merging crates/quench-node/src/modules/fs_shared_vm.rs
+Auto-merging crates/quench-node/src/modules/mod.rs
+Auto-merging crates/quench-node/src/modules/node_errors_shared_vm.rs
+Auto-merging crates/quench-runtime/src/api_native.rs

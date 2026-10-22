@@ -1,0 +1,358 @@
+    Finished `iteration` profile [optimized] target(s) in 0.05s
+     Running `/Users/admin/Code/GitHub/quench-v2/target/candidate-a/iteration/run-stages --continue --max-failures 40 --root /Users/admin/Code/GitHub/quench-v2/tests/test262 31 81`
+stage  31 batch   1/31  passed=100 failed=0 total=100
+stage  31 batch   2/31  passed=100 failed=0 total=100
+stage  31 batch   3/31  passed=100 failed=0 total=100
+stage  31 batch   4/31  passed=100 failed=0 total=100
+stage  31 batch   5/31  passed=100 failed=0 total=100
+stage  31 batch   6/31  passed=100 failed=0 total=100
+stage  31 batch   7/31  passed=100 failed=0 total=100
+stage  31 batch   8/31  passed=100 failed=0 total=100
+stage  31 batch   9/31  passed=100 failed=0 total=100
+stage  31 batch  10/31  passed=100 failed=0 total=100
+stage  31 batch  11/31  passed=100 failed=0 total=100
+stage  31 batch  12/31  passed=100 failed=0 total=100
+stage  31 batch  13/31  passed=100 failed=0 total=100
+stage  31 batch  14/31  passed=100 failed=0 total=100
+stage  31 batch  15/31  passed=100 failed=0 total=100
+stage  31 batch  16/31  passed=100 failed=0 total=100
+stage  31 batch  17/31  passed=100 failed=0 total=100
+stage  31 batch  18/31  passed=100 failed=0 total=100
+stage  31 batch  19/31  passed=100 failed=0 total=100
+stage  31 batch  20/31  passed=100 failed=0 total=100
+stage  31 batch  21/31  passed=100 failed=0 total=100
+stage  31 batch  22/31  passed=100 failed=0 total=100
+stage  31 batch  23/31  passed=100 failed=0 total=100
+stage  31 batch  24/31  passed=100 failed=0 total=100
+stage  31 batch  25/31  passed=100 failed=0 total=100
+stage  31 batch  26/31  passed=100 failed=0 total=100
+stage  31 batch  27/31  passed=100 failed=0 total=100
+stage  31 batch  28/31  passed=100 failed=0 total=100
+stage  31 batch  29/31  passed=100 failed=0 total=100
+stage  31 batch  30/31  passed=100 failed=0 total=100
+stage  31 batch  31/31  passed=81 failed=0 total=81
+stage  31: built-ins/Array passed=3081 failed=0 total=3081
+stage  32 batch   1/3   passed=100 failed=0 total=100
+stage  32 batch   2/3   passed=100 failed=0 total=100
+stage  32 batch   3/3   passed=21 failed=0 total=21
+stage  32: built-ins/ArrayBuffer passed=221 failed=0 total=221
+stage  33 batch   1/1   passed=27 failed=0 total=27
+stage  33: built-ins/ArrayIteratorPrototype passed=27 failed=0 total=27
+stage  34 batch   1/2   passed=100 failed=0 total=100
+stage  34 batch   2/2   passed=4 failed=0 total=4
+stage  34: built-ins/AsyncDisposableStack passed=104 failed=0 total=104
+stage  35 batch   1/1   passed=38 failed=0 total=38
+stage  35: built-ins/AsyncFromSyncIteratorPrototype passed=38 failed=0 total=38
+stage  36 batch   1/1   passed=18 failed=0 total=18
+stage  36: built-ins/AsyncFunction passed=18 failed=0 total=18
+stage  37 batch   1/1   passed=23 failed=0 total=23
+stage  37: built-ins/AsyncGeneratorFunction passed=23 failed=0 total=23
+stage  38 batch   1/1   passed=48 failed=0 total=48
+stage  38: built-ins/AsyncGeneratorPrototype passed=48 failed=0 total=48
+stage  39 batch   1/1   passed=13 failed=0 total=13
+stage  39: built-ins/AsyncIteratorPrototype passed=13 failed=0 total=13
+stage  40 batch   1/4   passed=100 failed=0 total=100
+stage  40 batch   2/4   passed=100 failed=0 total=100
+stage  40 batch   3/4   passed=100 failed=0 total=100
+stage  40 batch   4/4   passed=89 failed=0 total=89
+stage  40: built-ins/Atomics passed=389 failed=0 total=389
+stage  41 batch   1/1   passed=77 failed=0 total=77
+stage  41: built-ins/BigInt passed=77 failed=0 total=77
+stage  42 batch   1/1   passed=51 failed=0 total=51
+stage  42: built-ins/Boolean passed=51 failed=0 total=51
+stage  43 batch   1/6   passed=100 failed=0 total=100
+stage  43 batch   2/6   passed=100 failed=0 total=100
+stage  43 batch   3/6   passed=100 failed=0 total=100
+stage  43 batch   4/6   passed=100 failed=0 total=100
+stage  43 batch   5/6   passed=100 failed=0 total=100
+stage  43 batch   6/6   passed=61 failed=0 total=61
+stage  43: built-ins/DataView passed=561 failed=0 total=561
+stage  44 batch   1/6   passed=100 failed=0 total=100
+stage  44 batch   2/6   passed=100 failed=0 total=100
+stage  44 batch   3/6   passed=100 failed=0 total=100
+stage  44 batch   4/6   passed=100 failed=0 total=100
+stage  44 batch   5/6   passed=100 failed=0 total=100
+stage  44 batch   6/6   passed=94 failed=0 total=94
+stage  44: built-ins/Date passed=594 failed=0 total=594
+stage  45 batch   1/1   passed=93 failed=0 total=93
+stage  45: built-ins/DisposableStack passed=93 failed=0 total=93
+stage  46 batch   1/1   passed=93 failed=0 total=93
+stage  46: built-ins/Error passed=93 failed=0 total=93
+stage  47 batch   1/1   passed=47 failed=0 total=47
+stage  47: built-ins/FinalizationRegistry passed=47 failed=0 total=47
+stage  48 batch   1/6   passed=100 failed=0 total=100
+stage  48 batch   2/6   passed=99 failed=1 total=100
+stage  48 batch   3/6   passed=100 failed=0 total=100
+stage  48 batch   4/6   passed=100 failed=0 total=100
+stage  48 batch   5/6   passed=100 failed=0 total=100
+stage  48 batch   6/6   passed=9 failed=0 total=9
+stage  48: built-ins/Function passed=508 failed=1 total=509
+  failure families=1 cases=1
+  family count=1: quench runtime: Test#Error: string constructor Expected SameValue(«…», «…») to be true
+    /Users/admin/Code/GitHub/quench-v2/tests/test262/test/built-ins/Function/call-bind-this-realm-value.js
+stage  49 batch   1/1   passed=23 failed=0 total=23
+stage  49: built-ins/GeneratorFunction passed=23 failed=0 total=23
+stage  50 batch   1/1   passed=61 failed=0 total=61
+stage  50: built-ins/GeneratorPrototype passed=61 failed=0 total=61
+stage  51 batch   1/1   passed=6 failed=0 total=6
+stage  51: built-ins/Infinity passed=6 failed=0 total=6
+stage  52 batch   1/6   passed=100 failed=0 total=100
+stage  52 batch   2/6   passed=100 failed=0 total=100
+stage  52 batch   3/6   passed=100 failed=0 total=100
+stage  52 batch   4/6   passed=100 failed=0 total=100
+stage  52 batch   5/6   passed=100 failed=0 total=100
+stage  52 batch   6/6   passed=14 failed=0 total=14
+stage  52: built-ins/Iterator passed=514 failed=0 total=514
+stage  53 batch   1/2   passed=100 failed=0 total=100
+stage  53 batch   2/2   passed=65 failed=0 total=65
+stage  53: built-ins/JSON passed=165 failed=0 total=165
+stage  54 batch   1/3   passed=100 failed=0 total=100
+stage  54 batch   2/3   passed=100 failed=0 total=100
+stage  54 batch   3/3   passed=4 failed=0 total=4
+stage  54: built-ins/Map passed=204 failed=0 total=204
+stage  55 batch   1/1   passed=11 failed=0 total=11
+stage  55: built-ins/MapIteratorPrototype passed=11 failed=0 total=11
+stage  56 batch   1/4   passed=100 failed=0 total=100
+stage  56 batch   2/4   passed=100 failed=0 total=100
+stage  56 batch   3/4   passed=100 failed=0 total=100
+stage  56 batch   4/4   passed=27 failed=0 total=27
+stage  56: built-ins/Math passed=327 failed=0 total=327
+stage  57 batch   1/1   passed=6 failed=0 total=6
+stage  57: built-ins/NaN passed=6 failed=0 total=6
+stage  58 batch   1/1   passed=94 failed=0 total=94
+stage  58: built-ins/NativeErrors passed=94 failed=0 total=94
+stage  59 batch   1/4   passed=100 failed=0 total=100
+stage  59 batch   2/4   passed=100 failed=0 total=100
+stage  59 batch   3/4   passed=100 failed=0 total=100
+stage  59 batch   4/4   passed=40 failed=0 total=40
+stage  59: built-ins/Number passed=340 failed=0 total=340
+stage  60 batch   1/35  passed=100 failed=0 total=100
+stage  60 batch   2/35  passed=100 failed=0 total=100
+stage  60 batch   3/35  passed=100 failed=0 total=100
+stage  60 batch   4/35  passed=100 failed=0 total=100
+stage  60 batch   5/35  passed=100 failed=0 total=100
+stage  60 batch   6/35  passed=100 failed=0 total=100
+stage  60 batch   7/35  passed=100 failed=0 total=100
+stage  60 batch   8/35  passed=100 failed=0 total=100
+stage  60 batch   9/35  passed=100 failed=0 total=100
+stage  60 batch  10/35  passed=100 failed=0 total=100
+stage  60 batch  11/35  passed=100 failed=0 total=100
+stage  60 batch  12/35  passed=100 failed=0 total=100
+stage  60 batch  13/35  passed=100 failed=0 total=100
+stage  60 batch  14/35  passed=100 failed=0 total=100
+stage  60 batch  15/35  passed=100 failed=0 total=100
+stage  60 batch  16/35  passed=100 failed=0 total=100
+stage  60 batch  17/35  passed=100 failed=0 total=100
+stage  60 batch  18/35  passed=100 failed=0 total=100
+stage  60 batch  19/35  passed=100 failed=0 total=100
+stage  60 batch  20/35  passed=100 failed=0 total=100
+stage  60 batch  21/35  passed=100 failed=0 total=100
+stage  60 batch  22/35  passed=100 failed=0 total=100
+stage  60 batch  23/35  passed=100 failed=0 total=100
+stage  60 batch  24/35  passed=100 failed=0 total=100
+stage  60 batch  25/35  passed=100 failed=0 total=100
+stage  60 batch  26/35  passed=100 failed=0 total=100
+stage  60 batch  27/35  passed=100 failed=0 total=100
+stage  60 batch  28/35  passed=100 failed=0 total=100
+stage  60 batch  29/35  passed=100 failed=0 total=100
+stage  60 batch  30/35  passed=100 failed=0 total=100
+stage  60 batch  31/35  passed=100 failed=0 total=100
+stage  60 batch  32/35  passed=100 failed=0 total=100
+stage  60 batch  33/35  passed=100 failed=0 total=100
+stage  60 batch  34/35  passed=100 failed=0 total=100
+stage  60 batch  35/35  passed=11 failed=0 total=11
+stage  60: built-ins/Object passed=3411 failed=0 total=3411
+stage  61 batch   1/8   passed=100 failed=0 total=100
+stage  61 batch   2/8   passed=100 failed=0 total=100
+stage  61 batch   3/8   passed=100 failed=0 total=100
+stage  61 batch   4/8   passed=100 failed=0 total=100
+stage  61 batch   5/8   passed=100 failed=0 total=100
+stage  61 batch   6/8   passed=100 failed=0 total=100
+stage  61 batch   7/8   passed=100 failed=0 total=100
+stage  61 batch   8/8   passed=29 failed=0 total=29
+stage  61: built-ins/Promise passed=729 failed=0 total=729
+stage  62 batch   1/4   passed=100 failed=0 total=100
+stage  62 batch   2/4   passed=100 failed=0 total=100
+stage  62 batch   3/4   passed=100 failed=0 total=100
+stage  62 batch   4/4   passed=11 failed=0 total=11
+stage  62: built-ins/Proxy passed=311 failed=0 total=311
+stage  63 batch   1/2   passed=100 failed=0 total=100
+stage  63 batch   2/2   passed=53 failed=0 total=53
+stage  63: built-ins/Reflect passed=153 failed=0 total=153
+stage  64 batch   1/19  passed=100 failed=0 total=100
+stage  64 batch   2/19  passed=100 failed=0 total=100
+stage  64 batch   3/19  passed=100 failed=0 total=100
+stage  64 batch   4/19  passed=100 failed=0 total=100
+stage  64 batch   5/19  passed=100 failed=0 total=100
+stage  64 batch   6/19  passed=100 failed=0 total=100
+stage  64 batch   7/19  passed=100 failed=0 total=100
+stage  64 batch   8/19  passed=100 failed=0 total=100
+stage  64 batch   9/19  passed=100 failed=0 total=100
+stage  64 batch  10/19  passed=100 failed=0 total=100
+stage  64 batch  11/19  passed=100 failed=0 total=100
+stage  64 batch  12/19  passed=100 failed=0 total=100
+stage  64 batch  13/19  passed=100 failed=0 total=100
+stage  64 batch  14/19  passed=100 failed=0 total=100
+stage  64 batch  15/19  passed=100 failed=0 total=100
+stage  64 batch  16/19  passed=100 failed=0 total=100
+stage  64 batch  17/19  passed=100 failed=0 total=100
+stage  64 batch  18/19  passed=100 failed=0 total=100
+stage  64 batch  19/19  passed=79 failed=0 total=79
+stage  64: built-ins/RegExp passed=1879 failed=0 total=1879
+stage  65 batch   1/1   passed=17 failed=0 total=17
+stage  65: built-ins/RegExpStringIteratorPrototype passed=17 failed=0 total=17
+stage  66 batch   1/4   passed=100 failed=0 total=100
+stage  66 batch   2/4   passed=100 failed=0 total=100
+stage  66 batch   3/4   passed=100 failed=0 total=100
+stage  66 batch   4/4   passed=83 failed=0 total=83
+stage  66: built-ins/Set passed=383 failed=0 total=383
+stage  67 batch   1/1   passed=11 failed=0 total=11
+stage  67: built-ins/SetIteratorPrototype passed=11 failed=0 total=11
+stage  68 batch   1/1   passed=64 failed=0 total=64
+stage  68: built-ins/ShadowRealm passed=64 failed=0 total=64
+stage  69 batch   1/2   passed=100 failed=0 total=100
+stage  69 batch   2/2   passed=4 failed=0 total=4
+stage  69: built-ins/SharedArrayBuffer passed=104 failed=0 total=104
+stage  70 batch   1/13  passed=100 failed=0 total=100
+stage  70 batch   2/13  passed=100 failed=0 total=100
+stage  70 batch   3/13  passed=100 failed=0 total=100
+stage  70 batch   4/13  passed=100 failed=0 total=100
+stage  70 batch   5/13  passed=100 failed=0 total=100
+stage  70 batch   6/13  passed=100 failed=0 total=100
+stage  70 batch   7/13  passed=100 failed=0 total=100
+stage  70 batch   8/13  passed=100 failed=0 total=100
+stage  70 batch   9/13  passed=100 failed=0 total=100
+stage  70 batch  10/13  passed=100 failed=0 total=100
+stage  70 batch  11/13  passed=100 failed=0 total=100
+stage  70 batch  12/13  passed=100 failed=0 total=100
+stage  70 batch  13/13  passed=23 failed=0 total=23
+stage  70: built-ins/String passed=1223 failed=0 total=1223
+stage  71 batch   1/1   passed=7 failed=0 total=7
+stage  71: built-ins/StringIteratorPrototype passed=7 failed=0 total=7
+stage  72 batch   1/1   passed=22 failed=0 total=22
+stage  72: built-ins/SuppressedError passed=22 failed=0 total=22
+stage  73 batch   1/1   passed=98 failed=0 total=98
+stage  73: built-ins/Symbol passed=98 failed=0 total=98
+stage  74 batch   1/47  passed=100 failed=0 total=100
+stage  74 batch   2/47  passed=97 failed=3 total=100
+stage  74 batch   3/47  passed=100 failed=0 total=100
+stage  74 batch   4/47  passed=98 failed=2 total=100
+stage  74 batch   5/47  passed=100 failed=0 total=100
+stage  74 batch   6/47  passed=99 failed=1 total=100
+stage  74 batch   7/47  passed=99 failed=1 total=100
+stage  74 batch   8/47  passed=99 failed=1 total=100
+stage  74 batch   9/47  passed=99 failed=1 total=100
+stage  74 batch  10/47  passed=100 failed=0 total=100
+stage  74 batch  11/47  passed=100 failed=0 total=100
+stage  74 batch  12/47  passed=100 failed=0 total=100
+stage  74 batch  13/47  passed=99 failed=1 total=100
+stage  74 batch  14/47  passed=100 failed=0 total=100
+stage  74 batch  15/47  passed=99 failed=1 total=100
+stage  74 batch  16/47  passed=100 failed=0 total=100
+stage  74 batch  17/47  passed=99 failed=1 total=100
+stage  74 batch  18/47  passed=99 failed=1 total=100
+stage  74 batch  19/47  passed=100 failed=0 total=100
+stage  74 batch  20/47  passed=99 failed=1 total=100
+stage  74 batch  21/47  passed=99 failed=1 total=100
+stage  74 batch  22/47  passed=99 failed=1 total=100
+stage  74 batch  23/47  passed=100 failed=0 total=100
+stage  74 batch  24/47  passed=100 failed=0 total=100
+stage  74 batch  25/47  passed=97 failed=3 total=100
+stage  74 batch  26/47  passed=100 failed=0 total=100
+stage  74 batch  27/47  passed=99 failed=1 total=100
+stage  74 batch  28/47  passed=100 failed=0 total=100
+stage  74 batch  29/47  passed=99 failed=1 total=100
+stage  74 batch  30/47  passed=99 failed=1 total=100
+stage  74 batch  31/47  passed=99 failed=1 total=100
+stage  74 batch  32/47  passed=99 failed=1 total=100
+stage  74 batch  33/47  passed=100 failed=0 total=100
+stage  74 batch  34/47  passed=99 failed=1 total=100
+stage  74 batch  35/47  passed=100 failed=0 total=100
+stage  74 batch  36/47  passed=99 failed=1 total=100
+stage  74 batch  37/47  passed=99 failed=1 total=100
+stage  74 batch  38/47  passed=100 failed=0 total=100
+stage  74 batch  39/47  passed=99 failed=1 total=100
+stage  74 batch  40/47  passed=100 failed=0 total=100
+stage  74 batch  41/47  passed=99 failed=1 total=100
+stage  74 batch  42/47  passed=100 failed=0 total=100
+stage  74 batch  43/47  passed=98 failed=2 total=100
+stage  74 batch  44/47  passed=100 failed=0 total=100
+stage  74 batch  45/47  passed=100 failed=0 total=100
+stage  74 batch  46/47  passed=96 failed=4 total=100
+stage  74 batch  47/47  passed=3 failed=0 total=3
+stage  74: built-ins/Temporal passed=4568 failed=35 total=4603
+  failure families=1 cases=35
+  family count=35: quench runtime: TypeError: cannot read properties of undefined
+    /Users/admin/Code/GitHub/quench-v2/tests/test262/test/built-ins/Temporal/Duration/prototype/abs/subclassing-ignored.js
+    /Users/admin/Code/GitHub/quench-v2/tests/test262/test/built-ins/Temporal/Duration/prototype/add/subclassing-ignored.js
+    /Users/admin/Code/GitHub/quench-v2/tests/test262/test/built-ins/Temporal/Duration/prototype/negated/subclassing-ignored.js
+    /Users/admin/Code/GitHub/quench-v2/tests/test262/test/built-ins/Temporal/Duration/prototype/round/subclassing-ignored.js
+    /Users/admin/Code/GitHub/quench-v2/tests/test262/test/built-ins/Temporal/Duration/prototype/subtract/subclassing-ignored.js
+    /Users/admin/Code/GitHub/quench-v2/tests/test262/test/built-ins/Temporal/Duration/prototype/with/subclassing-ignored.js
+    /Users/admin/Code/GitHub/quench-v2/tests/test262/test/built-ins/Temporal/Instant/prototype/add/subclassing-ignored.js
+    /Users/admin/Code/GitHub/quench-v2/tests/test262/test/built-ins/Temporal/Instant/prototype/round/subclassing-ignored.js
+    /Users/admin/Code/GitHub/quench-v2/tests/test262/test/built-ins/Temporal/Instant/prototype/subtract/subclassing-ignored.js
+    /Users/admin/Code/GitHub/quench-v2/tests/test262/test/built-ins/Temporal/PlainDate/prototype/add/subclassing-ignored.js
+    /Users/admin/Code/GitHub/quench-v2/tests/test262/test/built-ins/Temporal/PlainDate/prototype/subtract/subclassing-ignored.js
+    /Users/admin/Code/GitHub/quench-v2/tests/test262/test/built-ins/Temporal/PlainDate/prototype/with/subclassing-ignored.js
+    /Users/admin/Code/GitHub/quench-v2/tests/test262/test/built-ins/Temporal/PlainDate/prototype/withCalendar/subclassing-ignored.js
+    /Users/admin/Code/GitHub/quench-v2/tests/test262/test/built-ins/Temporal/PlainDateTime/prototype/add/subclassing-ignored.js
+    /Users/admin/Code/GitHub/quench-v2/tests/test262/test/built-ins/Temporal/PlainDateTime/prototype/round/subclassing-ignored.js
+    /Users/admin/Code/GitHub/quench-v2/tests/test262/test/built-ins/Temporal/PlainDateTime/prototype/subtract/subclassing-ignored.js
+    /Users/admin/Code/GitHub/quench-v2/tests/test262/test/built-ins/Temporal/PlainDateTime/prototype/with/subclassing-ignored.js
+    /Users/admin/Code/GitHub/quench-v2/tests/test262/test/built-ins/Temporal/PlainDateTime/prototype/withCalendar/subclassing-ignored.js
+    /Users/admin/Code/GitHub/quench-v2/tests/test262/test/built-ins/Temporal/PlainDateTime/prototype/withPlainTime/subclassing-ignored.js
+    /Users/admin/Code/GitHub/quench-v2/tests/test262/test/built-ins/Temporal/PlainMonthDay/prototype/with/subclassing-ignored.js
+    /Users/admin/Code/GitHub/quench-v2/tests/test262/test/built-ins/Temporal/PlainTime/prototype/add/subclassing-ignored.js
+    /Users/admin/Code/GitHub/quench-v2/tests/test262/test/built-ins/Temporal/PlainTime/prototype/round/subclassing-ignored.js
+    /Users/admin/Code/GitHub/quench-v2/tests/test262/test/built-ins/Temporal/PlainTime/prototype/subtract/subclassing-ignored.js
+    /Users/admin/Code/GitHub/quench-v2/tests/test262/test/built-ins/Temporal/PlainTime/prototype/with/subclassing-ignored.js
+    /Users/admin/Code/GitHub/quench-v2/tests/test262/test/built-ins/Temporal/PlainYearMonth/prototype/add/subclassing-ignored.js
+    /Users/admin/Code/GitHub/quench-v2/tests/test262/test/built-ins/Temporal/PlainYearMonth/prototype/subtract/subclassing-ignored.js
+    /Users/admin/Code/GitHub/quench-v2/tests/test262/test/built-ins/Temporal/PlainYearMonth/prototype/with/subclassing-ignored.js
+    /Users/admin/Code/GitHub/quench-v2/tests/test262/test/built-ins/Temporal/ZonedDateTime/prototype/add/subclassing-ignored.js
+    /Users/admin/Code/GitHub/quench-v2/tests/test262/test/built-ins/Temporal/ZonedDateTime/prototype/round/subclassing-ignored.js
+    /Users/admin/Code/GitHub/quench-v2/tests/test262/test/built-ins/Temporal/ZonedDateTime/prototype/startOfDay/subclassing-ignored.js
+    /Users/admin/Code/GitHub/quench-v2/tests/test262/test/built-ins/Temporal/ZonedDateTime/prototype/subtract/subclassing-ignored.js
+    /Users/admin/Code/GitHub/quench-v2/tests/test262/test/built-ins/Temporal/ZonedDateTime/prototype/with/subclassing-ignored.js
+    /Users/admin/Code/GitHub/quench-v2/tests/test262/test/built-ins/Temporal/ZonedDateTime/prototype/withCalendar/subclassing-ignored.js
+    /Users/admin/Code/GitHub/quench-v2/tests/test262/test/built-ins/Temporal/ZonedDateTime/prototype/withPlainTime/subclassing-ignored.js
+    /Users/admin/Code/GitHub/quench-v2/tests/test262/test/built-ins/Temporal/ZonedDateTime/prototype/withTimeZone/subclassing-ignored.js
+stage  75 batch   1/1   passed=14 failed=0 total=14
+stage  75: built-ins/ThrowTypeError passed=14 failed=0 total=14
+stage  76 batch   1/15  passed=100 failed=0 total=100
+stage  76 batch   2/15  passed=100 failed=0 total=100
+stage  76 batch   3/15  passed=100 failed=0 total=100
+stage  76 batch   4/15  passed=100 failed=0 total=100
+stage  76 batch   5/15  passed=100 failed=0 total=100
+stage  76 batch   6/15  passed=100 failed=0 total=100
+stage  76 batch   7/15  passed=100 failed=0 total=100
+stage  76 batch   8/15  passed=100 failed=0 total=100
+stage  76 batch   9/15  passed=100 failed=0 total=100
+stage  76 batch  10/15  passed=100 failed=0 total=100
+stage  76 batch  11/15  passed=100 failed=0 total=100
+stage  76 batch  12/15  passed=100 failed=0 total=100
+stage  76 batch  13/15  passed=100 failed=0 total=100
+stage  76 batch  14/15  passed=100 failed=0 total=100
+stage  76 batch  15/15  passed=46 failed=0 total=46
+stage  76: built-ins/TypedArray passed=1446 failed=0 total=1446
+stage  77 batch   1/8   passed=100 failed=0 total=100
+stage  77 batch   2/8   passed=100 failed=0 total=100
+stage  77 batch   3/8   passed=100 failed=0 total=100
+stage  77 batch   4/8   passed=100 failed=0 total=100
+stage  77 batch   5/8   passed=100 failed=0 total=100
+stage  77 batch   6/8   passed=100 failed=0 total=100
+stage  77 batch   7/8   passed=100 failed=0 total=100
+stage  77 batch   8/8   passed=38 failed=0 total=38
+stage  77: built-ins/TypedArrayConstructors passed=738 failed=0 total=738
+stage  78 batch   1/1   passed=70 failed=0 total=70
+stage  78: built-ins/Uint8Array passed=70 failed=0 total=70
+stage  79 batch   1/2   passed=100 failed=0 total=100
+stage  79 batch   2/2   passed=41 failed=0 total=41
+stage  79: built-ins/WeakMap passed=141 failed=0 total=141
+stage  80 batch   1/1   passed=29 failed=0 total=29
+stage  80: built-ins/WeakRef passed=29 failed=0 total=29
+stage  81 batch   1/1   passed=85 failed=0 total=85
+stage  81: built-ins/WeakSet passed=85 failed=0 total=85
+stages=51 passed=23240 failed=36 total=23276
+FAIL: one or more selected stages failed

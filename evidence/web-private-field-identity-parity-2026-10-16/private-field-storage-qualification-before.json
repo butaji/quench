@@ -1,0 +1,47 @@
+{
+  "base_source": "dc1671919d8ccdb50392c2a4a0e7a6b10523f89a",
+  "source_files": {
+    "crates/quench-node-test/node-tests/test-private-field-identity.js": "60de153be9a822ebd51062c6dcad8aa8299d25c89336cca6506b3e7ed18766f6",
+    "crates/quench-node-test/tests/child_entry.rs": "664de1cc362012ba38327ee7a898411f62cdbabe1cb22727ce564f3cb037baa0",
+    "crates/quench-runtime/src/bytecode.rs": "0e51b88e6b0be35bb69bbd89730cf069d13e96540eefcaf5d6978328af5a5e41",
+    "crates/quench-runtime/src/compile/ast/call.rs": "c01af69a2cfdab89d30430df0e8ef96a2eaa7016276c7443975f22976bb4c33c",
+    "crates/quench-runtime/src/compile/class.rs": "86c94383dc42a1fbe3033bc17e411c03343c10f27420f4203c01e1364470ed39",
+    "crates/quench-runtime/src/heap/cell.rs": "3e7af56cf3f7dab516ef6354a48c25cb5c217734edd5cf325c071a1c7cb1fe98",
+    "crates/quench-runtime/src/vm/dispatch.rs": "cddc95bfacbd8fbadbd1c99bb8731af831d2a0c5bef5aa1200c34200e62bb514",
+    "crates/quench-runtime/src/vm/eval.rs": "dcf6afa618613bac5ee9b58f4a743140f4cc5bc9b5a56307b03a3cf59156e0dd",
+    "crates/quench-runtime/src/vm/object.rs": "e27edebd93407da433e02806f7072e1534ab4e6409c42afb44dea5568dfd499f",
+    "crates/quench-runtime/src/vm/object_get.rs": "5292ef443a0d897cdc6e46e1dfc9f58c2c715c15c96895a15b250e1c0401441c",
+    "crates/quench-runtime/src/vm/tests.rs": "fddea4a6b1a7f418a2d073e3b9649529515f1dc2c644a80b0f176e6d8299ebf3",
+    "docs/node-host-contracts.md": "b090307ef06b45a5b0d13e4a13edd92110c970d16f9804fdbdf83989c41615af"
+  },
+  "patch": "work/private-field-storage-source.patch",
+  "patch_sha256": "a35f2fb906b07c2c4f27c77960e75ca0d2f4f94f25536c84c82f35c09529a44a",
+  "binaries": {
+    "cli": {
+      "path": "work/quench-private-field-qualified",
+      "sha256": "e14f25e3c87f0366abe3c13baf8419c98f0382402e90cc1e8671ff792463d8d2"
+    },
+    "host_cli": {
+      "path": "work/host-build/iteration/quench-node",
+      "sha256": "e14f25e3c87f0366abe3c13baf8419c98f0382402e90cc1e8671ff792463d8d2"
+    },
+    "runner": {
+      "path": "work/host-build/iteration/run-parallel",
+      "sha256": "7388af6362d19b3ba61c1720a8d5039bbb74cc77de5851f6a510901d0583f930"
+    },
+    "api_tests": {
+      "path": "work/host-build/iteration/deps/child_entry-70660f0a4dee9e77",
+      "sha256": "0d58cdd284a0835c6f42fd58376878b7c7c04501a85eab22aeb4175a578d8ed7"
+    }
+  },
+  "oracle": {
+    "path": "work/node-v26.12.0-linux-x64/bin/node",
+    "version": "v26.12.0",
+    "sha256": "caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943"
+  },
+  "bytecode_format": 92,
+  "runtime_tests": 663,
+  "runtime_exit": 0,
+  "workspace_exit": 0,
+  "no_authored_optimization": true
+}

@@ -1,0 +1,16 @@
+[
+  {
+    "fixture": "test-function-constructor-debug-names",
+    "both_exit": 0,
+    "stdout_sha256": "fabff7f604b1b82ce552180dde11c8a9690bf575080dcb228236256c5c63a621",
+    "bytes": 3286,
+    "equal": true
+  },
+  {
+    "fixture": "test-function-prototype-info-lookups",
+    "both_exit": 0,
+    "stdout_sha256": "93da6bab75cbb69898476d323bed80d93241ac0ce1d003295f025ddb7c9a5dce",
+    "bytes": 4882,
+    "equal": true
+  }
+]

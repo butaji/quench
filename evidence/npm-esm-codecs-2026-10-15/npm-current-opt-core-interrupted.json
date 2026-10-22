@@ -1,0 +1,5 @@
+{
+  "source": "aeae0c1351f908188e112de84404178619b717aa",
+  "status": "interrupted-not-passed",
+  "reason": "Stop newly started compilation to repair the observed events.on abort stopImmediatePropagation counterexample before rebuilding production CLI. Core source is unchanged by the follow-up."
+}

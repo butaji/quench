@@ -1,0 +1,8 @@
+/workspace/quench/crates/quench-node-test/node-tests/test-function-prototype-info-lookups.js:1
+const {internalBinding}=require('internal/test/binding');
+                        ^
+
+ReferenceError: require is not defined
+    at file:///workspace/quench/crates/quench-node-test/node-tests/test-function-prototype-info-lookups.js:1:25
+
+Node.js v26.12.0

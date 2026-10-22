@@ -1,0 +1,11 @@
+    Finished `iteration` profile [optimized] target(s) in 0.13s
+     Running tests/child_entry.rs (work/host-build/iteration/deps/child_entry-a67896ab5b9c716a)
+
+running 4 tests
+test text_decoder_descriptors_validation_and_utf8_encoding_match_node ... ok
+test text_decoder_stream_boundaries_and_repeated_flush_match_node ... ok
+test text_decoder_stream_errors_recover_and_reset_bom_match_node ... ok
+test text_decoder_unicode_labels_bom_fatal_errors_and_recovery_match_node ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 330 filtered out; finished in 1.48s
+

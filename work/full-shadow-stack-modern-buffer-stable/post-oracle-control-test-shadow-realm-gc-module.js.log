@@ -1,0 +1,2 @@
+Timeout /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-shadow-realm-gc-module.js
+all: pass=0 skip=0 fail=0 timeout=1 crash=0 unclassified=0 total=1 inventory_hash=ccf5a7dde8211c3c

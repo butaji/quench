@@ -1,0 +1,4200 @@
+{
+  "schema": 5,
+  "created_unix_ns": 1791932501795320004,
+  "rounds_requested": 11,
+  "timeout_ms": 300000,
+  "source_revision": "f76795545b4f2f8cc7cf423da49e758215525b9f",
+  "source_dirty": false,
+  "corpus": {
+    "pinned_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+    "checkout_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+    "checkout_clean": true,
+    "fixture_set_matches": false
+  },
+  "host": {
+    "uname": "Linux 9626741a7713 6.18.44 #1 SMP Sat Sep 26 20:02:31 UTC 2026 x86_64 GNU/Linux",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)\nbinary: rustc\ncommit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4\ncommit-date: 2026-09-28\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.0\nLLVM version: 23.1.1",
+    "model": null,
+    "memory_bytes": 18882699264,
+    "memory_limit_bytes": 17179869184,
+    "cpu_quota": "400000 100000",
+    "logical_cpus": 4,
+    "process_metrics_backend": "Linux wait4 rusage"
+  },
+  "engines": [
+    {
+      "name": "quench",
+      "executable": "/workspace/work/quench-target-pgo-general-native/production/quench-node",
+      "executable_sha256": "6b5e200c9dd8de5fcd159b99dc039d81fcdefc25e5ed6fc7a0796f3b90c7085e",
+      "version": "Quench shared-VM interpreter build; package 0.1.0",
+      "argv": [],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/workspace/.local/usr/bin:/workspace/.cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "interpreter",
+      "jit_proof_command": [
+        "/workspace/work/quench-target-pgo-general-native/production/quench-node"
+      ],
+      "jit_proof": "the measured shared VM executes interpreter bytecode; no guest JIT path is enabled"
+    },
+    {
+      "name": "quickjs",
+      "executable": "/workspace/quickjs/qjs",
+      "executable_sha256": "d918d3a101bc5f390b675b07a458bfbec8f15ba72453aefeb5b67b3439bae12a",
+      "version": "QuickJS version 2026-06-04",
+      "argv": [],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/workspace/.local/usr/bin:/workspace/.cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "interpreter",
+      "jit_proof_command": [
+        "/workspace/quickjs/qjs",
+        "--version"
+      ],
+      "jit_proof": "QuickJS qjs executes bytecode in its interpreter; binary version and SHA-256 are recorded"
+    },
+    {
+      "name": "bun",
+      "executable": "/workspace/.local/usr/bin/bun",
+      "executable_sha256": "7ce7d6b654eddeec20afddf2396317fba6dc19ab52788a27e894e1806bf8f24b",
+      "version": "1.4.3",
+      "argv": [],
+      "environment": {
+        "BUN_JSC_useJIT": "0",
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/workspace/.local/usr/bin:/workspace/.cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "disabled-and-probed",
+      "jit_proof_command": [
+        "BUN_JSC_useJIT=0",
+        "BUN_JSC_dumpOptions=1",
+        "/workspace/.local/usr/bin/bun",
+        "-e",
+        "console.log(Bun.version)"
+      ],
+      "jit_proof": "command succeeded and reported \"useJIT=false\": 1.4.3\n\nModified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)"
+    },
+    {
+      "name": "node",
+      "executable": "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+      "executable_sha256": "bc17c508ffeed0ec622934f9b7fa72f8e78da65350e63c3eceb56fa688aa5e12",
+      "version": "v24.19.0",
+      "argv": [
+        "--jitless"
+      ],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/workspace/.local/usr/bin:/workspace/.cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "disabled-and-probed",
+      "jit_proof_command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "-e",
+        "console.log(process.execArgv.includes('--jitless'))"
+      ],
+      "jit_proof": "command succeeded and reported \"true\": true"
+    }
+  ],
+  "suite_inputs": [
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/base.js",
+      "size_bytes": 9351,
+      "modified_unix_ns": 1791900681369011304,
+      "sha256": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/crypto.js",
+      "size_bytes": 48043,
+      "modified_unix_ns": 1791900681369464169,
+      "sha256": "5321d2ada9b61e01d5f281609513467cbaa7c0effb12c577ed08088d812453af"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/deltablue.js",
+      "size_bytes": 25653,
+      "modified_unix_ns": 1791900681369464169,
+      "sha256": "74b5a95f4877701073c6efef08e4ae306562747067e292925b69cbd629a511b9"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/earley-boyer.js",
+      "size_bytes": 195205,
+      "modified_unix_ns": 1791900681369464169,
+      "sha256": "dbf3aeb6b3d056e8ea35b5f19aa8c8a4fb1053e41d07f096c22483b2c1c6ee01"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/navier-stokes.js",
+      "size_bytes": 12690,
+      "modified_unix_ns": 1791900681369464169,
+      "sha256": "ce241465ffeee77b5c4f7119f522aa971fe1fe92c3aed76f7514ea43e07fec84"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/raytrace.js",
+      "size_bytes": 27996,
+      "modified_unix_ns": 1791900681369464169,
+      "sha256": "d52183ca324cdb88d9ee3e78326433fe2ca28d6436f0a6c3ec013ab67cb798eb"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/regexp.js",
+      "size_bytes": 111299,
+      "modified_unix_ns": 1791900681369464169,
+      "sha256": "5268b0d15931fda4e331de35fc58e5beded9a250b60764e1cc7cfc898ab53602"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/richards.js",
+      "size_bytes": 15776,
+      "modified_unix_ns": 1791900681369464169,
+      "sha256": "d86eac4108343a54ba6e10621a77b46f82f554c3b0a46e8fb4032d5cf65a2a11"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/splay.js",
+      "size_bytes": 10746,
+      "modified_unix_ns": 1791900681369464169,
+      "sha256": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d"
+    }
+  ],
+  "fixtures": {
+    "quench-bench/js-engine-benchmark/v8-v7/splay.js": {
+      "source": {
+        "path": "quench-bench/js-engine-benchmark/v8-v7/splay.js",
+        "size_bytes": 10746,
+        "modified_unix_ns": 1791900681369464169,
+        "sha256": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d"
+      },
+      "valid": true,
+      "output_equal": true,
+      "summaries": {
+        "bun": {
+          "median_score": 5403.0,
+          "median_max_rss_bytes": 63930368,
+          "valid_samples": 11
+        },
+        "node": {
+          "median_score": 7466.0,
+          "median_max_rss_bytes": 504348672,
+          "valid_samples": 11
+        },
+        "quench": {
+          "median_score": 4611.0,
+          "median_max_rss_bytes": 111472640,
+          "valid_samples": 11
+        },
+        "quickjs": {
+          "median_score": 3517.0,
+          "median_max_rss_bytes": 149569536,
+          "valid_samples": 11
+        }
+      },
+      "rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            "quench",
+            "quickjs",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2136341603,
+              "peak_rss_bytes": 64557056,
+              "score": 5550.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 12797,
+              "page_reclaims": 12797,
+              "involuntary_context_switches": 638,
+              "host_before": {
+                "captured_unix_ns": 1791932506796611120,
+                "load_average": {
+                  "one_minute": 1.93,
+                  "five_minutes": 2.0,
+                  "fifteen_minutes": 1.76
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 2.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791932508935663102,
+                "load_average": {
+                  "one_minute": 1.93,
+                  "five_minutes": 2.0,
+                  "fifteen_minutes": 1.76
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.9,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 5550\n----\nScore: 5550\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2203859918,
+              "peak_rss_bytes": 507359232,
+              "score": 7057.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 124175,
+              "page_reclaims": 124175,
+              "involuntary_context_switches": 665,
+              "host_before": {
+                "captured_unix_ns": 1791932508937655070,
+                "load_average": {
+                  "one_minute": 1.93,
+                  "five_minutes": 2.0,
+                  "fifteen_minutes": 1.76
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.9,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791932511145082103,
+                "load_average": {
+                  "one_minute": 2.18,
+                  "five_minutes": 2.05,
+                  "fifteen_minutes": 1.78
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.7,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 7057\n----\nScore: 7057\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2319627412,
+              "peak_rss_bytes": 111472640,
+              "score": 4468.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 27050,
+              "page_reclaims": 27050,
+              "involuntary_context_switches": 2176,
+              "host_before": {
+                "captured_unix_ns": 1791932501952680260,
+                "load_average": {
+                  "one_minute": 1.84,
+                  "five_minutes": 1.99,
+                  "fifteen_minutes": 1.75
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 7.0,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791932504275290678,
+                "load_average": {
+                  "one_minute": 1.84,
+                  "five_minutes": 1.99,
+                  "fifteen_minutes": 1.75
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 2.8,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 4468\n----\nScore: 4468\n",
+              "stderr": ""
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2512855989,
+              "peak_rss_bytes": 149659648,
+              "score": 3374.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 36437,
+              "page_reclaims": 36437,
+              "involuntary_context_switches": 67,
+              "host_before": {
+                "captured_unix_ns": 1791932504278335745,
+                "load_average": {
+                  "one_minute": 1.84,
+                  "five_minutes": 1.99,
+                  "fifteen_minutes": 1.75
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 2.8,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791932506794030475,
+                "load_average": {
+                  "one_minute": 1.93,
+                  "five_minutes": 2.0,
+                  "fifteen_minutes": 1.76
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 2.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 3374\n----\nScore: 3374\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 1,
+          "execution_order": [
+            "quickjs",
+            "bun",
+            "node",
+            "quench"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2132761217,
+              "peak_rss_bytes": 63868928,
+              "score": 5251.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 12454,
+              "page_reclaims": 12454,
+              "involuntary_context_switches": 584,
+              "host_before": {
+                "captured_unix_ns": 1791932513698514092,
+                "load_average": {
+                  "one_minute": 2.18,
+                  "five_minutes": 2.05,
+                  "fifteen_minutes": 1.78
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791932515834029302,
+                "load_average": {
+                  "one_minute": 2.24,
+                  "five_minutes": 2.07,
+                  "fifteen_minutes": 1.78
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.5,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 5251\n----\nScore: 5251\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2164974351,
+              "peak_rss_bytes": 504344576,
+              "score": 8117.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 123462,
+              "page_reclaims": 123462,
+              "involuntary_context_switches": 861,
+              "host_before": {
+                "captured_unix_ns": 1791932515836583428,
+                "load_average": {
+                  "one_minute": 2.24,
+                  "five_minutes": 2.07,
+                  "fifteen_minutes": 1.78
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.5,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791932518004097733,
+                "load_average": {
+                  "one_minute": 2.24,
+                  "five_minutes": 2.07,
+                  "fifteen_minutes": 1.78
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.5,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 8117\n----\nScore: 8117\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2298098311,
+              "peak_rss_bytes": 111472640,
+              "score": 4472.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 27050,
+              "page_reclaims": 27050,
+              "involuntary_context_switches": 7,
+              "host_before": {
+                "captured_unix_ns": 1791932518006193856,
+                "load_average": {
+                  "one_minute": 2.24,
+                  "five_minutes": 2.07,
+                  "fifteen_minutes": 1.78
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.5,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791932520306844200,
+                "load_average": {
+                  "one_minute": 2.14,
+                  "five_minutes": 2.05,
+                  "fifteen_minutes": 1.78
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.5,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 4472\n----\nScore: 4472\n",
+              "stderr": ""
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2546071302,
+              "peak_rss_bytes": 149630976,
+              "score": 3045.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 36381,
+              "page_reclaims": 36381,
+              "involuntary_context_switches": 23,
+              "host_before": {
+                "captured_unix_ns": 1791932511147220979,
+                "load_average": {
+                  "one_minute": 2.18,
+                  "five_minutes": 2.05,
+                  "fifteen_minutes": 1.78
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.7,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791932513695983701,
+                "load_average": {
+                  "one_minute": 2.18,
+                  "five_minutes": 2.05,
+                  "fifteen_minutes": 1.78
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 3045\n----\nScore: 3045\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 2,
+          "execution_order": [
+            "bun",
+            "node",
+            "quench",
+            "quickjs"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2120549852,
+              "peak_rss_bytes": 64966656,
+              "score": 5916.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 13041,
+              "page_reclaims": 13041,
+              "involuntary_context_switches": 508,
+              "host_before": {
+                "captured_unix_ns": 1791932520308860484,
+                "load_average": {
+                  "one_minute": 2.14,
+                  "five_minutes": 2.05,
+                  "fifteen_minutes": 1.78
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.5,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791932522431866075,
+                "load_average": {
+                  "one_minute": 2.14,
+                  "five_minutes": 2.05,
+                  "fifteen_minutes": 1.78
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 5916\n----\nScore: 5916\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2152033888,
+              "peak_rss_bytes": 508145664,
+              "score": 7179.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 124379,
+              "page_reclaims": 124379,
+              "involuntary_context_switches": 532,
+              "host_before": {
+                "captured_unix_ns": 1791932522433942599,
+                "load_average": {
+                  "one_minute": 2.14,
+                  "five_minutes": 2.05,
+                  "fifteen_minutes": 1.78
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791932524588494719,
+                "load_average": {
+                  "one_minute": 2.14,
+                  "five_minutes": 2.05,
+                  "fifteen_minutes": 1.78
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 7179\n----\nScore: 7179\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2292839392,
+              "peak_rss_bytes": 111517696,
+              "score": 4762.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 27050,
+              "page_reclaims": 27050,
+              "involuntary_context_switches": 26,
+              "host_before": {
+                "captured_unix_ns": 1791932524590562189,
+                "load_average": {
+                  "one_minute": 2.14,
+                  "five_minutes": 2.05,
+                  "fifteen_minutes": 1.78
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791932526886365718,
+                "load_average": {
+                  "one_minute": 2.05,
+                  "five_minutes": 2.03,
+                  "fifteen_minutes": 1.77
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 4762\n----\nScore: 4762\n",
+              "stderr": ""
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2514245632,
+              "peak_rss_bytes": 149434368,
+              "score": 3696.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 36379,
+              "page_reclaims": 36379,
+              "involuntary_context_switches": 31,
+              "host_before": {
+                "captured_unix_ns": 1791932526888363885,
+                "load_average": {
+                  "one_minute": 2.05,
+                  "five_minutes": 2.03,
+                  "fifteen_minutes": 1.77
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791932529405127538,
+                "load_average": {
+                  "one_minute": 2.05,
+                  "five_minutes": 2.03,
+                  "fifteen_minutes": 1.77
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 3696\n----\nScore: 3696\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 3,
+          "execution_order": [
+            "node",
+            "quench",
+            "quickjs",
+            "bun"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2133899262,
+              "peak_rss_bytes": 63930368,
+              "score": 5145.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 12792,
+              "page_reclaims": 12792,
+              "involuntary_context_switches": 487,
+              "host_before": {
+                "captured_unix_ns": 1791932536505266884,
+                "load_average": {
+                  "one_minute": 1.89,
+                  "five_minutes": 2.0,
+                  "fifteen_minutes": 1.77
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791932538641948000,
+                "load_average": {
+                  "one_minute": 1.89,
+                  "five_minutes": 2.0,
+                  "fifteen_minutes": 1.77
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 5145\n----\nScore: 5145\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2208661870,
+              "peak_rss_bytes": 507490304,
+              "score": 7937.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 124295,
+              "page_reclaims": 124295,
+              "involuntary_context_switches": 525,
+              "host_before": {
+                "captured_unix_ns": 1791932529407106426,
+                "load_average": {
+                  "one_minute": 2.05,
+                  "five_minutes": 2.03,
+                  "fifteen_minutes": 1.77
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791932531618291505,
+                "load_average": {
+                  "one_minute": 1.97,
+                  "five_minutes": 2.02,
+                  "fifteen_minutes": 1.77
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 7937\n----\nScore: 7937\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2318163549,
+              "peak_rss_bytes": 111472640,
+              "score": 3591.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 27048,
+              "page_reclaims": 27048,
+              "involuntary_context_switches": 27,
+              "host_before": {
+                "captured_unix_ns": 1791932531620303743,
+                "load_average": {
+                  "one_minute": 1.97,
+                  "five_minutes": 2.02,
+                  "fifteen_minutes": 1.77
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791932533944035449,
+                "load_average": {
+                  "one_minute": 1.97,
+                  "five_minutes": 2.02,
+                  "fifteen_minutes": 1.77
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 3591\n----\nScore: 3591\n",
+              "stderr": ""
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2546416361,
+              "peak_rss_bytes": 149663744,
+              "score": 3517.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 36382,
+              "page_reclaims": 36382,
+              "involuntary_context_switches": 28,
+              "host_before": {
+                "captured_unix_ns": 1791932533949105724,
+                "load_average": {
+                  "one_minute": 1.97,
+                  "five_minutes": 2.02,
+                  "fifteen_minutes": 1.77
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791932536502516766,
+                "load_average": {
+                  "one_minute": 1.89,
+                  "five_minutes": 2.0,
+                  "fifteen_minutes": 1.77
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 3517\n----\nScore: 3517\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 4,
+          "execution_order": [
+            "quench",
+            "quickjs",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2129640361,
+              "peak_rss_bytes": 63938560,
+              "score": 5953.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 12506,
+              "page_reclaims": 12506,
+              "involuntary_context_switches": 18,
+              "host_before": {
+                "captured_unix_ns": 1791932543420110243,
+                "load_average": {
+                  "one_minute": 1.82,
+                  "five_minutes": 1.98,
+                  "fifteen_minutes": 1.76
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791932545552303687,
+                "load_average": {
+                  "one_minute": 1.75,
+                  "five_minutes": 1.97,
+                  "fifteen_minutes": 1.76
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 5953\n----\nScore: 5953\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2155571686,
+              "peak_rss_bytes": 504086528,
+              "score": 7416.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 123454,
+              "page_reclaims": 123454,
+              "involuntary_context_switches": 558,
+              "host_before": {
+                "captured_unix_ns": 1791932545554279210,
+                "load_average": {
+                  "one_minute": 1.75,
+                  "five_minutes": 1.97,
+                  "fifteen_minutes": 1.76
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791932547712414697,
+                "load_average": {
+                  "one_minute": 1.75,
+                  "five_minutes": 1.97,
+                  "fifteen_minutes": 1.76
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 7416\n----\nScore: 7416\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2298431738,
+              "peak_rss_bytes": 111546368,
+              "score": 4853.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 27049,
+              "page_reclaims": 27049,
+              "involuntary_context_switches": 31,
+              "host_before": {
+                "captured_unix_ns": 1791932538644569827,
+                "load_average": {
+                  "one_minute": 1.89,
+                  "five_minutes": 2.0,
+                  "fifteen_minutes": 1.77
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791932540945526948,
+                "load_average": {
+                  "one_minute": 1.82,
+                  "five_minutes": 1.98,
+                  "fifteen_minutes": 1.76
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 4853\n----\nScore: 4853\n",
+              "stderr": ""
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2466759419,
+              "peak_rss_bytes": 149569536,
+              "score": 3569.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 36383,
+              "page_reclaims": 36383,
+              "involuntary_context_switches": 26,
+              "host_before": {
+                "captured_unix_ns": 1791932540948295793,
+                "load_average": {
+                  "one_minute": 1.82,
+                  "five_minutes": 1.98,
+                  "fifteen_minutes": 1.76
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791932543417778299,
+                "load_average": {
+                  "one_minute": 1.82,
+                  "five_minutes": 1.98,
+                  "fifteen_minutes": 1.76
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 3569\n----\nScore: 3569\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 5,
+          "execution_order": [
+            "quickjs",
+            "bun",
+            "node",
+            "quench"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2144701473,
+              "peak_rss_bytes": 63381504,
+              "score": 4880.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 12177,
+              "page_reclaims": 12177,
+              "involuntary_context_switches": 605,
+              "host_before": {
+                "captured_unix_ns": 1791932550234020124,
+                "load_average": {
+                  "one_minute": 1.69,
+                  "five_minutes": 1.95,
+                  "fifteen_minutes": 1.75
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791932552381878882,
+                "load_average": {
+                  "one_minute": 1.69,
+                  "five_minutes": 1.95,
+                  "fifteen_minutes": 1.75
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 4880\n----\nScore: 4880\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2177127408,
+              "peak_rss_bytes": 509456384,
+              "score": 7098.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 124680,
+              "page_reclaims": 124680,
+              "involuntary_context_switches": 651,
+              "host_before": {
+                "captured_unix_ns": 1791932552384619876,
+                "load_average": {
+                  "one_minute": 1.69,
+                  "five_minutes": 1.95,
+                  "fifteen_minutes": 1.75
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791932554564402320,
+                "load_average": {
+                  "one_minute": 1.69,
+                  "five_minutes": 1.95,
+                  "fifteen_minutes": 1.75
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 7098\n----\nScore: 7098\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2324623124,
+              "peak_rss_bytes": 111472640,
+              "score": 4547.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 27049,
+              "page_reclaims": 27049,
+              "involuntary_context_switches": 2162,
+              "host_before": {
+                "captured_unix_ns": 1791932554567412665,
+                "load_average": {
+                  "one_minute": 1.69,
+                  "five_minutes": 1.95,
+                  "fifteen_minutes": 1.75
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791932556894586310,
+                "load_average": {
+                  "one_minute": 1.64,
+                  "five_minutes": 1.93,
+                  "fifteen_minutes": 1.75
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 4547\n----\nScore: 4547\n",
+              "stderr": ""
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2513378007,
+              "peak_rss_bytes": 149483520,
+              "score": 3362.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 36378,
+              "page_reclaims": 36378,
+              "involuntary_context_switches": 8,
+              "host_before": {
+                "captured_unix_ns": 1791932547715063543,
+                "load_average": {
+                  "one_minute": 1.75,
+                  "five_minutes": 1.97,
+                  "fifteen_minutes": 1.76
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791932550231450106,
+                "load_average": {
+                  "one_minute": 1.69,
+                  "five_minutes": 1.95,
+                  "fifteen_minutes": 1.75
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 3362\n----\nScore: 3362\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 6,
+          "execution_order": [
+            "bun",
+            "node",
+            "quench",
+            "quickjs"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2133626264,
+              "peak_rss_bytes": 64978944,
+              "score": 5566.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 13004,
+              "page_reclaims": 13004,
+              "involuntary_context_switches": 531,
+              "host_before": {
+                "captured_unix_ns": 1791932556897315806,
+                "load_average": {
+                  "one_minute": 1.64,
+                  "five_minutes": 1.93,
+                  "fifteen_minutes": 1.75
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791932559033590604,
+                "load_average": {
+                  "one_minute": 1.64,
+                  "five_minutes": 1.93,
+                  "fifteen_minutes": 1.75
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 5566\n----\nScore: 5566\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2185308071,
+              "peak_rss_bytes": 468840448,
+              "score": 7466.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 114802,
+              "page_reclaims": 114802,
+              "involuntary_context_switches": 472,
+              "host_before": {
+                "captured_unix_ns": 1791932559035571734,
+                "load_average": {
+                  "one_minute": 1.64,
+                  "five_minutes": 1.93,
+                  "fifteen_minutes": 1.75
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791932561223318556,
+                "load_average": {
+                  "one_minute": 1.59,
+                  "five_minutes": 1.92,
+                  "fifteen_minutes": 1.74
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 7466\n----\nScore: 7466\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2337975372,
+              "peak_rss_bytes": 111472640,
+              "score": 3691.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 27049,
+              "page_reclaims": 27049,
+              "involuntary_context_switches": 7,
+              "host_before": {
+                "captured_unix_ns": 1791932561225291864,
+                "load_average": {
+                  "one_minute": 1.59,
+                  "five_minutes": 1.92,
+                  "fifteen_minutes": 1.74
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791932563567603501,
+                "load_average": {
+                  "one_minute": 1.59,
+                  "five_minutes": 1.92,
+                  "fifteen_minutes": 1.74
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 3691\n----\nScore: 3691\n",
+              "stderr": ""
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2542367355,
+              "peak_rss_bytes": 149635072,
+              "score": 3504.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 36386,
+              "page_reclaims": 36386,
+              "involuntary_context_switches": 9,
+              "host_before": {
+                "captured_unix_ns": 1791932563570288218,
+                "load_average": {
+                  "one_minute": 1.59,
+                  "five_minutes": 1.92,
+                  "fifteen_minutes": 1.74
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791932566115109413,
+                "load_average": {
+                  "one_minute": 1.54,
+                  "five_minutes": 1.9,
+                  "fifteen_minutes": 1.74
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 3504\n----\nScore: 3504\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 7,
+          "execution_order": [
+            "node",
+            "quench",
+            "quickjs",
+            "bun"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2126953421,
+              "peak_rss_bytes": 64028672,
+              "score": 5173.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 12654,
+              "page_reclaims": 12654,
+              "involuntary_context_switches": 565,
+              "host_before": {
+                "captured_unix_ns": 1791932573116566628,
+                "load_average": {
+                  "one_minute": 1.49,
+                  "five_minutes": 1.89,
+                  "fifteen_minutes": 1.74
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791932575246467677,
+                "load_average": {
+                  "one_minute": 1.45,
+                  "five_minutes": 1.87,
+                  "fifteen_minutes": 1.73
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 5173\n----\nScore: 5173\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2175973228,
+              "peak_rss_bytes": 504348672,
+              "score": 7888.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 123444,
+              "page_reclaims": 123444,
+              "involuntary_context_switches": 502,
+              "host_before": {
+                "captured_unix_ns": 1791932566120464957,
+                "load_average": {
+                  "one_minute": 1.54,
+                  "five_minutes": 1.9,
+                  "fifteen_minutes": 1.74
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791932568298929650,
+                "load_average": {
+                  "one_minute": 1.54,
+                  "five_minutes": 1.9,
+                  "fifteen_minutes": 1.74
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 7888\n----\nScore: 7888\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2310374428,
+              "peak_rss_bytes": 111472640,
+              "score": 4636.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 27049,
+              "page_reclaims": 27049,
+              "involuntary_context_switches": 1066,
+              "host_before": {
+                "captured_unix_ns": 1791932568301031187,
+                "load_average": {
+                  "one_minute": 1.54,
+                  "five_minutes": 1.9,
+                  "fifteen_minutes": 1.74
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791932570614147562,
+                "load_average": {
+                  "one_minute": 1.49,
+                  "five_minutes": 1.89,
+                  "fifteen_minutes": 1.74
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 4636\n----\nScore: 4636\n",
+              "stderr": ""
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2495097332,
+              "peak_rss_bytes": 149487616,
+              "score": 3489.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 36380,
+              "page_reclaims": 36380,
+              "involuntary_context_switches": 30,
+              "host_before": {
+                "captured_unix_ns": 1791932570616412627,
+                "load_average": {
+                  "one_minute": 1.49,
+                  "five_minutes": 1.89,
+                  "fifteen_minutes": 1.74
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791932573114136249,
+                "load_average": {
+                  "one_minute": 1.49,
+                  "five_minutes": 1.89,
+                  "fifteen_minutes": 1.74
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 3489\n----\nScore: 3489\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 8,
+          "execution_order": [
+            "quench",
+            "quickjs",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2125308010,
+              "peak_rss_bytes": 62889984,
+              "score": 5794.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 12130,
+              "page_reclaims": 12130,
+              "involuntary_context_switches": 21,
+              "host_before": {
+                "captured_unix_ns": 1791932580052229557,
+                "load_average": {
+                  "one_minute": 1.45,
+                  "five_minutes": 1.87,
+                  "fifteen_minutes": 1.73
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791932582180113311,
+                "load_average": {
+                  "one_minute": 1.42,
+                  "five_minutes": 1.86,
+                  "fifteen_minutes": 1.73
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 5794\n----\nScore: 5794\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2172828039,
+              "peak_rss_bytes": 506183680,
+              "score": 7538.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 123878,
+              "page_reclaims": 123878,
+              "involuntary_context_switches": 519,
+              "host_before": {
+                "captured_unix_ns": 1791932582182161617,
+                "load_average": {
+                  "one_minute": 1.42,
+                  "five_minutes": 1.86,
+                  "fifteen_minutes": 1.73
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791932584357470177,
+                "load_average": {
+                  "one_minute": 1.42,
+                  "five_minutes": 1.86,
+                  "fifteen_minutes": 1.73
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 7538\n----\nScore: 7538\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2305627492,
+              "peak_rss_bytes": 111472640,
+              "score": 4757.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 27049,
+              "page_reclaims": 27049,
+              "involuntary_context_switches": 11,
+              "host_before": {
+                "captured_unix_ns": 1791932575248536690,
+                "load_average": {
+                  "one_minute": 1.45,
+                  "five_minutes": 1.87,
+                  "fifteen_minutes": 1.73
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791932577556733598,
+                "load_average": {
+                  "one_minute": 1.45,
+                  "five_minutes": 1.87,
+                  "fifteen_minutes": 1.73
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 4757\n----\nScore: 4757\n",
+              "stderr": ""
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2488885689,
+              "peak_rss_bytes": 149487616,
+              "score": 3720.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 36382,
+              "page_reclaims": 36382,
+              "involuntary_context_switches": 7,
+              "host_before": {
+                "captured_unix_ns": 1791932577558645137,
+                "load_average": {
+                  "one_minute": 1.45,
+                  "five_minutes": 1.87,
+                  "fifteen_minutes": 1.73
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791932580050139436,
+                "load_average": {
+                  "one_minute": 1.45,
+                  "five_minutes": 1.87,
+                  "fifteen_minutes": 1.73
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 3720\n----\nScore: 3720\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 9,
+          "execution_order": [
+            "quickjs",
+            "bun",
+            "node",
+            "quench"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2128557197,
+              "peak_rss_bytes": 62988288,
+              "score": 5403.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 12347,
+              "page_reclaims": 12347,
+              "involuntary_context_switches": 38,
+              "host_before": {
+                "captured_unix_ns": 1791932586873608986,
+                "load_average": {
+                  "one_minute": 1.38,
+                  "five_minutes": 1.84,
+                  "fifteen_minutes": 1.72
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791932589004759897,
+                "load_average": {
+                  "one_minute": 1.38,
+                  "five_minutes": 1.84,
+                  "fifteen_minutes": 1.72
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 5403\n----\nScore: 5403\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2150504638,
+              "peak_rss_bytes": 503300096,
+              "score": 7701.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 123226,
+              "page_reclaims": 123226,
+              "involuntary_context_switches": 727,
+              "host_before": {
+                "captured_unix_ns": 1791932589006677934,
+                "load_average": {
+                  "one_minute": 1.38,
+                  "five_minutes": 1.84,
+                  "fifteen_minutes": 1.72
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791932591159814683,
+                "load_average": {
+                  "one_minute": 1.67,
+                  "five_minutes": 1.9,
+                  "fifteen_minutes": 1.74
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 7701\n----\nScore: 7701\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2305022619,
+              "peak_rss_bytes": 111472640,
+              "score": 4769.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 27049,
+              "page_reclaims": 27049,
+              "involuntary_context_switches": 8,
+              "host_before": {
+                "captured_unix_ns": 1791932591161803045,
+                "load_average": {
+                  "one_minute": 1.67,
+                  "five_minutes": 1.9,
+                  "fifteen_minutes": 1.74
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791932593469536850,
+                "load_average": {
+                  "one_minute": 1.67,
+                  "five_minutes": 1.9,
+                  "fifteen_minutes": 1.74
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 4769\n----\nScore: 4769\n",
+              "stderr": ""
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2509268090,
+              "peak_rss_bytes": 149622784,
+              "score": 3606.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 36380,
+              "page_reclaims": 36380,
+              "involuntary_context_switches": 40,
+              "host_before": {
+                "captured_unix_ns": 1791932584359469325,
+                "load_average": {
+                  "one_minute": 1.42,
+                  "five_minutes": 1.86,
+                  "fifteen_minutes": 1.73
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791932586871237135,
+                "load_average": {
+                  "one_minute": 1.38,
+                  "five_minutes": 1.84,
+                  "fifteen_minutes": 1.72
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 3606\n----\nScore: 3606\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 10,
+          "execution_order": [
+            "bun",
+            "node",
+            "quench",
+            "quickjs"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2130345390,
+              "peak_rss_bytes": 63799296,
+              "score": 4938.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 12726,
+              "page_reclaims": 12726,
+              "involuntary_context_switches": 836,
+              "host_before": {
+                "captured_unix_ns": 1791932593472143291,
+                "load_average": {
+                  "one_minute": 1.67,
+                  "five_minutes": 1.9,
+                  "fifteen_minutes": 1.74
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791932595605194289,
+                "load_average": {
+                  "one_minute": 1.62,
+                  "five_minutes": 1.88,
+                  "fifteen_minutes": 1.74
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 4938\n----\nScore: 4938\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2203242147,
+              "peak_rss_bytes": 504344576,
+              "score": 6241.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 123460,
+              "page_reclaims": 123460,
+              "involuntary_context_switches": 541,
+              "host_before": {
+                "captured_unix_ns": 1791932595607352594,
+                "load_average": {
+                  "one_minute": 1.62,
+                  "five_minutes": 1.88,
+                  "fifteen_minutes": 1.74
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791932597813978760,
+                "load_average": {
+                  "one_minute": 1.62,
+                  "five_minutes": 1.88,
+                  "fifteen_minutes": 1.74
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 6241\n----\nScore: 6241\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2301681125,
+              "peak_rss_bytes": 111472640,
+              "score": 4611.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 27050,
+              "page_reclaims": 27050,
+              "involuntary_context_switches": 2174,
+              "host_before": {
+                "captured_unix_ns": 1791932597816403484,
+                "load_average": {
+                  "one_minute": 1.62,
+                  "five_minutes": 1.88,
+                  "fifteen_minutes": 1.74
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791932600120621899,
+                "load_average": {
+                  "one_minute": 1.62,
+                  "five_minutes": 1.88,
+                  "fifteen_minutes": 1.74
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 4611\n----\nScore: 4611\n",
+              "stderr": ""
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2485856145,
+              "peak_rss_bytes": 149434368,
+              "score": 3602.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 36381,
+              "page_reclaims": 36381,
+              "involuntary_context_switches": 4,
+              "host_before": {
+                "captured_unix_ns": 1791932600122627009,
+                "load_average": {
+                  "one_minute": 1.62,
+                  "five_minutes": 1.88,
+                  "fifteen_minutes": 1.74
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791932602611264713,
+                "load_average": {
+                  "one_minute": 1.57,
+                  "five_minutes": 1.87,
+                  "fifteen_minutes": 1.73
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 211793,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 182284,
+                    "cpu_percent": 0.1,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 3602\n----\nScore: 3602\n",
+              "stderr": ""
+            }
+          }
+        }
+      ]
+    }
+  },
+  "complete": true,
+  "qualification_ready": false
+}

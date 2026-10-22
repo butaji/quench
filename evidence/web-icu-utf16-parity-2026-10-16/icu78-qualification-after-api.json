@@ -1,0 +1,23 @@
+{
+  "candidate_source": "d40beb63fff0d7e6bc93967f4ef1e4b2597cd954",
+  "binaries": {
+    "cli": {
+      "path": "work/quench-icu78-qualified",
+      "sha256": "d68cb30fa8c3d5d83f2c0d01d7727f4e5877ab45a5a751f23cef691effb9e131"
+    },
+    "runner": {
+      "path": "work/host-build/iteration/run-parallel",
+      "sha256": "487ac9f87c3a626e5a735abef890715e35e027d33069eb4f6ccf5fa345db0048"
+    },
+    "api_tests": {
+      "path": "work/host-build/iteration/deps/child_entry-a67896ab5b9c716a",
+      "sha256": "7368ceb00ffdb460ac29c4cc8bcb33b028e99eb92cef155fa0b6d6a616ec2dba"
+    }
+  },
+  "identity_checks": {
+    "cli": true,
+    "runner": true,
+    "api_tests": true
+  },
+  "api_exit_code": 0
+}

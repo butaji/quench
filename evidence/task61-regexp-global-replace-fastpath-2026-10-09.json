@@ -1,0 +1,85 @@
+{
+  "schema": 1,
+  "task": "61",
+  "experiment": "Fast path pristine global zero-capture RegExp replacement",
+  "decision": "retain; the isolated M4 /o/g loop retired 81.25% fewer instructions in 11 alternating pairs with byte-identical output; median workload RSS increased 160 KiB",
+  "source": {
+    "base_revision": "ddfa0c04fa871eaa8a18ac14bdfa2e181f2c41f3",
+    "regexp_diff_sha256": "65c8fef17cf10d908733fe94cf71a5cf50936444fa780e6f6fd498c31b0daf5f",
+    "files": [
+      "crates/quench-regexp/src/lib.rs",
+      "crates/quench-runtime/src/vm/regexp.rs"
+    ],
+    "baseline_binary_sha256": "6a6176e2f6240571d78e2c4a61ec2a183faf88c03bc216ce097d7e0273b6d3aa",
+    "candidate_binary_sha256": "2f46dd365de6cbbf950f040a22fb1efd28666d1f393a96e3817e588037ec3d09",
+    "candidate_also_contains": "The independently measured property-add transition cache; this replacement loop does not construct ordinary user objects.",
+    "candidate_build_command": "CARGO_INCREMENTAL=0 cargo build -p quench-node --profile production"
+  },
+  "host": {
+    "platform": "macOS 26.5; Apple M4 (Mac16,10), arm64",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+    "measurement_backend": "/usr/bin/time -l"
+  },
+  "measurement": {
+    "kind": "11 alternating production-binary instruction-retirement pairs, CJS-shaped; each workload subtracts its same-binary matched control",
+    "iterations": 50000,
+    "workload": "var subject = \"The quick brown fox jumps over the lazy dog; foo and ooo.\"; var iterations = 50000; var pattern = /o/g; function run(){var result=subject;for(var i=0;i<iterations;i++)result=subject.replace(pattern,\"0\");return result;} console.log(run());",
+    "control": "var subject = \"The quick brown fox jumps over the lazy dog; foo and ooo.\"; var iterations = 50000; function run(){var result=subject;for(var i=0;i<iterations;i++)result=subject;return result;} console.log(run());",
+    "baseline": {
+      "median_corrected_instructions": 21072762462,
+      "corrected_instructions_per_replacement": 421455.2,
+      "corrected_instructions_per_replacement_range": [421298.5, 421682.5],
+      "median_elapsed_seconds": 0.91,
+      "median_workload_rss_bytes": 21053440
+    },
+    "candidate": {
+      "median_corrected_instructions": 3952073464,
+      "corrected_instructions_per_replacement": 79041.5,
+      "corrected_instructions_per_replacement_range": [79011.2, 79054.1],
+      "median_elapsed_seconds": 0.18,
+      "median_workload_rss_bytes": 21217280
+    },
+    "candidate_instruction_change_percent": -81.2456,
+    "candidate_rss_delta_bytes": 163840,
+    "pairs": 11,
+    "successful_pairs": 11,
+    "output_equal_all_pairs": true,
+    "workload_output": "The quick br0wn f0x jumps 0ver the lazy d0g; f00 and 000.",
+    "artifacts": {
+      "summary": {"path": "target/iteration/regexp-fastpath-ab-20261009/summary.md", "sha256": "b8c051237a6d80a293de60ff9f979710b842c22b0c00cabf1adfd579761d54bf"},
+      "raw_results": {"path": "target/iteration/regexp-fastpath-ab-20261009/raw-results.jsonl", "sha256": "a02ad69264d31afeaeb928cc4316cf147983d93018a0de9a59ee5424088b31e7"},
+      "driver": {"path": "target/iteration/regexp-fastpath-ab-20261009/run-ab.py", "sha256": "19e88c567b6d41af202a2af164bf3bd39cdc1a02dfcd41e55d3636adf73c5f28"},
+      "workload_script": {"path": "target/iteration/regexp-fastpath-ab-20261009/replace-cjs.js", "sha256": "9ad0d713343c5f7a7fdb0721680cca0c65d65c13d8cf6dd537b3371e103afd26"},
+      "control_script": {"path": "target/iteration/regexp-fastpath-ab-20261009/control-cjs.js", "sha256": "182c01ad9a9f1d22bdfc01926ad5e775b790f59c43dea55b0c6a331142349e45"}
+    },
+    "scope_limit": "Focused microbenchmark only; no V8-v7 fixture confirmation or Task 61 qualification is claimed."
+  },
+  "implementation": "For RegExp.prototype[Symbol.replace] calls that reach this builtin, use a direct matcher loop only for a global intrinsic RegExp with zero captures, no own exec/flags/accessor shadow, writable own data lastIndex, and unchanged intrinsic RegExp prototype exec/flags/flag accessors. Other cases use the observable generic algorithm. The fast path resets lastIndex at entry and completion, advances Unicode empty matches by code point, and uses the existing replacement-substitution semantics.",
+  "verification": {
+    "quench_regexp_unit_tests": {"passed": 8, "failed": 0, "command": "CARGO_TARGET_DIR=/tmp/quench-regexp-validation-target CARGO_INCREMENTAL=0 cargo test -p quench-regexp"},
+    "test262": {
+      "stages": "RegExp stages 64–70",
+      "passed": 3681,
+      "failed": 0,
+      "report": {"path": "target/iteration/task61-regexp-fastpath-20261009/correctness/test262-stages64-70.json", "sha256": "ce6891ca019f2492db059fc2d3d0b552d5476b47e36220431212d0795597e3e1"}
+    },
+    "node_oracle": {
+      "matched": true,
+      "cases": [
+        "global zero-capture replacement",
+        "replacement tokens $$, $&, $`, and $'",
+        "global no-match and match lastIndex reset",
+        "empty global Unicode and sticky matches",
+        "capture-template generic fallback",
+        "callback generic fallback and callback count",
+        "own exec and flags fallback",
+        "own global and unicode shadow properties",
+        "non-writable lastIndex TypeError"
+      ],
+      "script": {"path": "target/iteration/task61-regexp-fastpath-20261009/correctness/node-probes.js", "sha256": "83b6c776b5a5f9434f0931c49e643de94de34a0600b2d5730d4f24ddc0fb9902"},
+      "node_output_sha256": "02f01a867b8affa9c5331be2b6bbe671458bbf08977dfff36e01205ab3682b73",
+      "quench_output_sha256": "02f01a867b8affa9c5331be2b6bbe671458bbf08977dfff36e01205ab3682b73"
+    },
+    "regression_fixed": "The repeated empty-match search previously did not terminate when the next Unicode search offset exceeded the input length. find_from and find_from_utf16 now return no match for an out-of-range start; the regression is covered by empty_match_search_past_input_end_terminates."
+  }
+}

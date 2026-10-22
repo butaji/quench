@@ -1,0 +1,30 @@
+
+== nojit ==  engine | n | median score [min..max] | median max RSS MB
+quench-dyn-order:nojit       11     2981.7 [2928..3001]    8.07
+quench-static-noorder:nojit  11     2966.9 [2917..3061]    7.93
+quench-static-order:nojit    11     2951.6 [2832..3005]    6.99
+wasmi:nojit                  11     2769.3 [2695..2788]    5.71
+stitch:nojit                 11     2048.5 [1981..2074]    5.07
+wasm3:nojit                  11     1874.8 [1854..1895]    4.16
+wamr:nojit                   11     1757.6 [1670..1786]    4.20
+pulley:nojit                 11     1385.7 [1340..1425]   15.82
+wasmi-v1:nojit               11     1235.2 [1217..1247]    6.04
+bun:nojit                    11      663.9 [654..691]   18.50
+tinywasm:nojit               11      606.7 [587..621]    5.81
+bars: Score wasmi:nojit 2769.3; RSS wasm3:nojit 4.16 MB
+  quench-dyn-order:nojit: score 1.077x of bar (WIN, ahead in 11/11 rounds); RSS 1.937x of bar (behind)
+  quench-static-noorder:nojit: score 1.071x of bar (WIN, ahead in 11/11 rounds); RSS 1.905x of bar (behind)
+  quench-static-order:nojit: score 1.066x of bar (WIN, ahead in 11/11 rounds); RSS 1.678x of bar (behind)
+
+== jit ==  engine | n | median score [min..max] | median max RSS MB
+node26:jit                   11    20040.1 [19580..20216]   55.32
+bun:jit                      11    19507.1 [19272..20126]   27.24
+quench-static-noorder:jit    11    19480.5 [18898..19703]   12.17
+quench-dyn-order:jit         11    19293.8 [19045..19539]   10.56
+quench-static-order:jit      11    19155.9 [19016..19541]    9.48
+wasmtime:jit                 11    18653.2 [18294..18823]   15.00
+winch:jit                    11     9673.7 [9311..9824]   13.32
+bars: Score node26:jit 20040.1; RSS winch:jit 13.32 MB
+  quench-dyn-order:jit: score 0.963x of bar (behind, ahead in 0/11 rounds); RSS 0.793x of bar (WIN)
+  quench-static-noorder:jit: score 0.972x of bar (behind, ahead in 0/11 rounds); RSS 0.914x of bar (WIN)
+  quench-static-order:jit: score 0.956x of bar (behind, ahead in 0/11 rounds); RSS 0.712x of bar (WIN)

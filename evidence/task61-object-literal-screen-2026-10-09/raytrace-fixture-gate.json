@@ -1,0 +1,572 @@
+{
+  "task": 61,
+  "experiment": "VM-cached no-TLS StackGuard fixture gate",
+  "platform": "macOS-26.5-arm64-arm-64bit",
+  "machine": "arm64",
+  "rounds_per_fixture": 11,
+  "binary_sha256": {
+    "baseline": "2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7",
+    "candidate": "697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02"
+  },
+  "runner_sha256": "88e53b2f86527ba45b3926b01c5e6be6e3f15430860bdcc4ca7dd7e9af739c87",
+  "base_sha256": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51",
+  "inputs": {
+    "raytrace.js": {
+      "source_sha256": "d52183ca324cdb88d9ee3e78326433fe2ca28d6436f0a6c3ec013ab67cb798eb",
+      "materialized_sha256": "ccd66592e52747004326c0ce469d24e82212c25decfdd534be5fa74dc6edf18b",
+      "materialized_path": "tasks/evidence/task61-object-literal-screen-2026-10-09/raytrace-fixture-gate/materialized-raytrace.js"
+    }
+  },
+  "records": [
+    {
+      "fixture": "raytrace.js",
+      "pair": 1,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "results": {
+        "candidate": {
+          "fixture": "raytrace.js",
+          "pair": 1,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/raytrace-fixture-gate/materialized-raytrace.js"
+          ],
+          "exit_code": 0,
+          "score": 102.0,
+          "instructions_retired": 82629874899,
+          "cycles_elapsed": 21155094680,
+          "maximum_rss_bytes": 19382272,
+          "elapsed_seconds": 24.62,
+          "wall_seconds": 24.627398958,
+          "stdout": "__quenchBenchResult: RayTrace: 102\n----\nScore: 102\n",
+          "stderr": "       24.62 real         7.04 user         0.06 sys\n            19382272  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1281  page reclaims\n                 354  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   2  voluntary context switches\n                8516  involuntary context switches\n         82629874899  instructions retired\n         21155094680  cycles elapsed\n             9896344  peak memory footprint\n"
+        },
+        "baseline": {
+          "fixture": "raytrace.js",
+          "pair": 1,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/raytrace-fixture-gate/materialized-raytrace.js"
+          ],
+          "exit_code": 0,
+          "score": 112.0,
+          "instructions_retired": 82631287514,
+          "cycles_elapsed": 21133821716,
+          "maximum_rss_bytes": 19562496,
+          "elapsed_seconds": 22.23,
+          "wall_seconds": 22.245967874999998,
+          "stdout": "__quenchBenchResult: RayTrace: 112\n----\nScore: 112\n",
+          "stderr": "       22.23 real         6.85 user         0.06 sys\n            19562496  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1279  page reclaims\n                 352  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  11  voluntary context switches\n                8999  involuntary context switches\n         82631287514  instructions retired\n         21133821716  cycles elapsed\n            10011008  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "raytrace.js",
+      "pair": 2,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "results": {
+        "baseline": {
+          "fixture": "raytrace.js",
+          "pair": 2,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/raytrace-fixture-gate/materialized-raytrace.js"
+          ],
+          "exit_code": 0,
+          "score": 99.7,
+          "instructions_retired": 85048092871,
+          "cycles_elapsed": 21918933390,
+          "maximum_rss_bytes": 19513344,
+          "elapsed_seconds": 25.63,
+          "wall_seconds": 25.639714999999995,
+          "stdout": "__quenchBenchResult: RayTrace: 99.7\n----\nScore: 99.7\n",
+          "stderr": "       25.63 real         7.08 user         0.06 sys\n            19513344  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1609  page reclaims\n                  48  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  12  voluntary context switches\n                9772  involuntary context switches\n         85048092871  instructions retired\n         21918933390  cycles elapsed\n             9978264  peak memory footprint\n"
+        },
+        "candidate": {
+          "fixture": "raytrace.js",
+          "pair": 2,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/raytrace-fixture-gate/materialized-raytrace.js"
+          ],
+          "exit_code": 0,
+          "score": 102.0,
+          "instructions_retired": 82625470095,
+          "cycles_elapsed": 21178295609,
+          "maximum_rss_bytes": 19218432,
+          "elapsed_seconds": 24.42,
+          "wall_seconds": 24.43458858400001,
+          "stdout": "__quenchBenchResult: RayTrace: 102\n----\nScore: 102\n",
+          "stderr": "       24.42 real         6.88 user         0.06 sys\n            19218432  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1296  page reclaims\n                 351  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  14  voluntary context switches\n                8865  involuntary context switches\n         82625470095  instructions retired\n         21178295609  cycles elapsed\n             9781680  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "raytrace.js",
+      "pair": 3,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "results": {
+        "candidate": {
+          "fixture": "raytrace.js",
+          "pair": 3,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/raytrace-fixture-gate/materialized-raytrace.js"
+          ],
+          "exit_code": 0,
+          "score": 108.0,
+          "instructions_retired": 82586453264,
+          "cycles_elapsed": 20785368213,
+          "maximum_rss_bytes": 19202048,
+          "elapsed_seconds": 23.06,
+          "wall_seconds": 23.06917483299999,
+          "stdout": "__quenchBenchResult: RayTrace: 108\n----\nScore: 108\n",
+          "stderr": "       23.06 real         6.82 user         0.05 sys\n            19202048  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1603  page reclaims\n                  40  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  11  voluntary context switches\n                8420  involuntary context switches\n         82586453264  instructions retired\n         20785368213  cycles elapsed\n             9765296  peak memory footprint\n"
+        },
+        "baseline": {
+          "fixture": "raytrace.js",
+          "pair": 3,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/raytrace-fixture-gate/materialized-raytrace.js"
+          ],
+          "exit_code": 0,
+          "score": 105.0,
+          "instructions_retired": 85055759438,
+          "cycles_elapsed": 21805610100,
+          "maximum_rss_bytes": 19660800,
+          "elapsed_seconds": 24.47,
+          "wall_seconds": 24.482755707999985,
+          "stdout": "__quenchBenchResult: RayTrace: 105\n----\nScore: 105\n",
+          "stderr": "       24.47 real         7.29 user         0.06 sys\n            19660800  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1319  page reclaims\n                 353  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  13  voluntary context switches\n                9344  involuntary context switches\n         85055759438  instructions retired\n         21805610100  cycles elapsed\n            10109360  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "raytrace.js",
+      "pair": 4,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "results": {
+        "baseline": {
+          "fixture": "raytrace.js",
+          "pair": 4,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/raytrace-fixture-gate/materialized-raytrace.js"
+          ],
+          "exit_code": 0,
+          "score": 285.0,
+          "instructions_retired": 94669037453,
+          "cycles_elapsed": 21649143070,
+          "maximum_rss_bytes": 19988480,
+          "elapsed_seconds": 11.03,
+          "wall_seconds": 11.036553416999993,
+          "stdout": "__quenchBenchResult: RayTrace: 285\n----\nScore: 285\n",
+          "stderr": "       11.03 real         7.26 user         0.04 sys\n            19988480  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1371  page reclaims\n                  48  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  13  voluntary context switches\n                4956  involuntary context switches\n         94669037453  instructions retired\n         21649143070  cycles elapsed\n            10289584  peak memory footprint\n"
+        },
+        "candidate": {
+          "fixture": "raytrace.js",
+          "pair": 4,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/raytrace-fixture-gate/materialized-raytrace.js"
+          ],
+          "exit_code": 0,
+          "score": 593.0,
+          "instructions_retired": 106709206370,
+          "cycles_elapsed": 19266094600,
+          "maximum_rss_bytes": 19431424,
+          "elapsed_seconds": 5.51,
+          "wall_seconds": 5.519994416999992,
+          "stdout": "__quenchBenchResult: RayTrace: 593\n----\nScore: 593\n",
+          "stderr": "        5.51 real         5.47 user         0.01 sys\n            19431424  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1054  page reclaims\n                 330  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   2  voluntary context switches\n                1318  involuntary context switches\n        106709206370  instructions retired\n         19266094600  cycles elapsed\n             9716120  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "raytrace.js",
+      "pair": 5,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "results": {
+        "candidate": {
+          "fixture": "raytrace.js",
+          "pair": 5,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/raytrace-fixture-gate/materialized-raytrace.js"
+          ],
+          "exit_code": 0,
+          "score": 570.0,
+          "instructions_retired": 99427843088,
+          "cycles_elapsed": 18201109237,
+          "maximum_rss_bytes": 19431424,
+          "elapsed_seconds": 5.32,
+          "wall_seconds": 5.326527708000015,
+          "stdout": "__quenchBenchResult: RayTrace: 570\n----\nScore: 570\n",
+          "stderr": "        5.32 real         5.30 user         0.01 sys\n            19431424  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1369  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                1244  involuntary context switches\n         99427843088  instructions retired\n         18201109237  cycles elapsed\n             9716120  peak memory footprint\n"
+        },
+        "baseline": {
+          "fixture": "raytrace.js",
+          "pair": 5,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/raytrace-fixture-gate/materialized-raytrace.js"
+          ],
+          "exit_code": 0,
+          "score": 594.0,
+          "instructions_retired": 101849363665,
+          "cycles_elapsed": 18426340313,
+          "maximum_rss_bytes": 19628032,
+          "elapsed_seconds": 5.29,
+          "wall_seconds": 5.296809541999977,
+          "stdout": "__quenchBenchResult: RayTrace: 594\n----\nScore: 594\n",
+          "stderr": "        5.29 real         5.27 user         0.01 sys\n            19628032  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1382  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                1020  involuntary context switches\n        101849363665  instructions retired\n         18426340313  cycles elapsed\n             9912728  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "raytrace.js",
+      "pair": 6,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "results": {
+        "baseline": {
+          "fixture": "raytrace.js",
+          "pair": 6,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/raytrace-fixture-gate/materialized-raytrace.js"
+          ],
+          "exit_code": 0,
+          "score": 697.0,
+          "instructions_retired": 121195685774,
+          "cycles_elapsed": 21163367218,
+          "maximum_rss_bytes": 19759104,
+          "elapsed_seconds": 5.33,
+          "wall_seconds": 5.336577665999982,
+          "stdout": "__quenchBenchResult: RayTrace: 697\n----\nScore: 697\n",
+          "stderr": "        5.33 real         5.31 user         0.01 sys\n            19759104  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1389  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                 514  involuntary context switches\n        121195685774  instructions retired\n         21163367218  cycles elapsed\n            10027416  peak memory footprint\n"
+        },
+        "candidate": {
+          "fixture": "raytrace.js",
+          "pair": 6,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/raytrace-fixture-gate/materialized-raytrace.js"
+          ],
+          "exit_code": 0,
+          "score": 699.0,
+          "instructions_retired": 121177568001,
+          "cycles_elapsed": 21022562197,
+          "maximum_rss_bytes": 19611648,
+          "elapsed_seconds": 5.3,
+          "wall_seconds": 5.310145750000004,
+          "stdout": "__quenchBenchResult: RayTrace: 699\n----\nScore: 699\n",
+          "stderr": "        5.30 real         5.28 user         0.01 sys\n            19611648  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1380  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   2  voluntary context switches\n                 511  involuntary context switches\n        121177568001  instructions retired\n         21022562197  cycles elapsed\n             9896344  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "raytrace.js",
+      "pair": 7,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "results": {
+        "candidate": {
+          "fixture": "raytrace.js",
+          "pair": 7,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/raytrace-fixture-gate/materialized-raytrace.js"
+          ],
+          "exit_code": 0,
+          "score": 516.0,
+          "instructions_retired": 113943687951,
+          "cycles_elapsed": 21528738895,
+          "maximum_rss_bytes": 19644416,
+          "elapsed_seconds": 6.4,
+          "wall_seconds": 6.404928499999983,
+          "stdout": "__quenchBenchResult: RayTrace: 516\n----\nScore: 516\n",
+          "stderr": "        6.40 real         6.35 user         0.01 sys\n            19644416  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1382  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                2151  involuntary context switches\n        113943687951  instructions retired\n         21528738895  cycles elapsed\n             9945520  peak memory footprint\n"
+        },
+        "baseline": {
+          "fixture": "raytrace.js",
+          "pair": 7,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/raytrace-fixture-gate/materialized-raytrace.js"
+          ],
+          "exit_code": 0,
+          "score": 484.0,
+          "instructions_retired": 101867777780,
+          "cycles_elapsed": 19159867592,
+          "maximum_rss_bytes": 19742720,
+          "elapsed_seconds": 6.5,
+          "wall_seconds": 6.506608708000016,
+          "stdout": "__quenchBenchResult: RayTrace: 484\n----\nScore: 484\n",
+          "stderr": "        6.50 real         6.45 user         0.01 sys\n            19742720  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1388  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   2  voluntary context switches\n                1535  involuntary context switches\n        101867777780  instructions retired\n         19159867592  cycles elapsed\n            10027416  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "raytrace.js",
+      "pair": 8,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "results": {
+        "baseline": {
+          "fixture": "raytrace.js",
+          "pair": 8,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/raytrace-fixture-gate/materialized-raytrace.js"
+          ],
+          "exit_code": 0,
+          "score": 617.0,
+          "instructions_retired": 104286412179,
+          "cycles_elapsed": 18521880270,
+          "maximum_rss_bytes": 19857408,
+          "elapsed_seconds": 5.37,
+          "wall_seconds": 5.3772690000000125,
+          "stdout": "__quenchBenchResult: RayTrace: 617\n----\nScore: 617\n",
+          "stderr": "        5.37 real         5.35 user         0.01 sys\n            19857408  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1395  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                1163  involuntary context switches\n        104286412179  instructions retired\n         18521880270  cycles elapsed\n            10125744  peak memory footprint\n"
+        },
+        "candidate": {
+          "fixture": "raytrace.js",
+          "pair": 8,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/raytrace-fixture-gate/materialized-raytrace.js"
+          ],
+          "exit_code": 0,
+          "score": 651.0,
+          "instructions_retired": 113916040143,
+          "cycles_elapsed": 20007252240,
+          "maximum_rss_bytes": 19496960,
+          "elapsed_seconds": 5.29,
+          "wall_seconds": 5.2958331250000015,
+          "stdout": "__quenchBenchResult: RayTrace: 651\n----\nScore: 651\n",
+          "stderr": "        5.29 real         5.27 user         0.01 sys\n            19496960  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1372  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   2  voluntary context switches\n                 561  involuntary context switches\n        113916040143  instructions retired\n         20007252240  cycles elapsed\n             9765272  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "raytrace.js",
+      "pair": 9,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "results": {
+        "candidate": {
+          "fixture": "raytrace.js",
+          "pair": 9,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/raytrace-fixture-gate/materialized-raytrace.js"
+          ],
+          "exit_code": 0,
+          "score": 703.0,
+          "instructions_retired": 121176860669,
+          "cycles_elapsed": 20990149399,
+          "maximum_rss_bytes": 19513344,
+          "elapsed_seconds": 5.26,
+          "wall_seconds": 5.2666723330000025,
+          "stdout": "__quenchBenchResult: RayTrace: 703\n----\nScore: 703\n",
+          "stderr": "        5.26 real         5.23 user         0.01 sys\n            19513344  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1373  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                 675  involuntary context switches\n        121176860669  instructions retired\n         20990149399  cycles elapsed\n             9798040  peak memory footprint\n"
+        },
+        "baseline": {
+          "fixture": "raytrace.js",
+          "pair": 9,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/raytrace-fixture-gate/materialized-raytrace.js"
+          ],
+          "exit_code": 0,
+          "score": 654.0,
+          "instructions_retired": 116368463900,
+          "cycles_elapsed": 20751753740,
+          "maximum_rss_bytes": 19742720,
+          "elapsed_seconds": 5.41,
+          "wall_seconds": 5.4113398329999995,
+          "stdout": "__quenchBenchResult: RayTrace: 654\n----\nScore: 654\n",
+          "stderr": "        5.41 real         5.39 user         0.01 sys\n            19742720  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1388  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   2  voluntary context switches\n                 579  involuntary context switches\n        116368463900  instructions retired\n         20751753740  cycles elapsed\n             9994624  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "raytrace.js",
+      "pair": 10,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "results": {
+        "baseline": {
+          "fixture": "raytrace.js",
+          "pair": 10,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/raytrace-fixture-gate/materialized-raytrace.js"
+          ],
+          "exit_code": 0,
+          "score": 604.0,
+          "instructions_retired": 106680759422,
+          "cycles_elapsed": 18926277110,
+          "maximum_rss_bytes": 19742720,
+          "elapsed_seconds": 5.41,
+          "wall_seconds": 5.41182866699998,
+          "stdout": "__quenchBenchResult: RayTrace: 604\n----\nScore: 604\n",
+          "stderr": "        5.41 real         5.39 user         0.01 sys\n            19742720  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1386  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                 947  involuntary context switches\n        106680759422  instructions retired\n         18926277110  cycles elapsed\n             9994648  peak memory footprint\n"
+        },
+        "candidate": {
+          "fixture": "raytrace.js",
+          "pair": 10,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/raytrace-fixture-gate/materialized-raytrace.js"
+          ],
+          "exit_code": 0,
+          "score": 708.0,
+          "instructions_retired": 121176834225,
+          "cycles_elapsed": 20925816403,
+          "maximum_rss_bytes": 19447808,
+          "elapsed_seconds": 5.27,
+          "wall_seconds": 5.278949250000011,
+          "stdout": "__quenchBenchResult: RayTrace: 708\n----\nScore: 708\n",
+          "stderr": "        5.27 real         5.25 user         0.01 sys\n            19447808  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1369  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                 740  involuntary context switches\n        121176834225  instructions retired\n         20925816403  cycles elapsed\n             9732528  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "raytrace.js",
+      "pair": 11,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "results": {
+        "candidate": {
+          "fixture": "raytrace.js",
+          "pair": 11,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/raytrace-fixture-gate/materialized-raytrace.js"
+          ],
+          "exit_code": 0,
+          "score": 716.0,
+          "instructions_retired": 121173679352,
+          "cycles_elapsed": 20740831849,
+          "maximum_rss_bytes": 19251200,
+          "elapsed_seconds": 5.19,
+          "wall_seconds": 5.196167499999973,
+          "stdout": "__quenchBenchResult: RayTrace: 716\n----\nScore: 716\n",
+          "stderr": "        5.19 real         5.17 user         0.01 sys\n            19251200  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1358  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                 528  involuntary context switches\n        121173679352  instructions retired\n         20740831849  cycles elapsed\n             9535896  peak memory footprint\n"
+        },
+        "baseline": {
+          "fixture": "raytrace.js",
+          "pair": 11,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/raytrace-fixture-gate/materialized-raytrace.js"
+          ],
+          "exit_code": 0,
+          "score": 707.0,
+          "instructions_retired": 121198970017,
+          "cycles_elapsed": 20971915923,
+          "maximum_rss_bytes": 19677184,
+          "elapsed_seconds": 5.25,
+          "wall_seconds": 5.25698808300001,
+          "stdout": "__quenchBenchResult: RayTrace: 707\n----\nScore: 707\n",
+          "stderr": "        5.25 real         5.23 user         0.01 sys\n            19677184  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1384  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                 356  involuntary context switches\n        121198970017  instructions retired\n         20971915923  cycles elapsed\n             9945496  peak memory footprint\n"
+        }
+      }
+    }
+  ]
+}

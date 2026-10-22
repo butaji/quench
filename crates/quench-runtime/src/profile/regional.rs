@@ -1,0 +1,188 @@
+use super::Profile;
+use crate::bytecode::{ControlFlowLayout, DispatchClass, Instr, Op, ResidualProgram};
+
+impl Profile {
+    #[inline(always)]
+    pub(super) fn site(&mut self, program: u32, function: u32, pc: usize) {
+        let program = program as usize;
+        let function = function as usize;
+        if self.site_counts.len() <= program {
+            self.site_counts.resize_with(program + 1, Vec::new);
+        }
+        let functions = &mut self.site_counts[program];
+        if functions.len() <= function {
+            functions.resize_with(function + 1, Vec::new);
+        }
+        let sites = &mut functions[function];
+        if sites.len() <= pc {
+            sites.resize(pc + 1, 0);
+        }
+        sites[pc] += 1;
+    }
+
+    #[inline(always)]
+    pub(crate) fn regional_binary(&mut self, program: u32, function: u32, pc: u32, fast: bool) {
+        self.regional_binary_inputs
+            .entry((program, function, pc))
+            .or_default()[usize::from(fast)] += 1;
+    }
+}
+
+#[derive(Clone, Copy)]
+struct Region {
+    function: usize,
+    start: usize,
+    end: usize,
+    executions: u64,
+    binaries: [u64; 2],
+}
+
+pub(super) fn report(profile: &Profile, program_id: u32, program: &ResidualProgram) {
+    let mut regions = Vec::new();
+    let mut general = [0u64; 2];
+    let mut numeric_dispatch_binaries = 0u64;
+    for (id, function) in program.functions.iter().enumerate().filter_map(|(id, slot)| slot.record().map(|function| (id, function))) {
+        let counts = profile
+            .site_counts
+            .get(program_id as usize)
+            .and_then(|functions| functions.get(id))
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        if function.dispatch == DispatchClass::Numeric {
+            numeric_dispatch_binaries += binary_count(function, counts);
+            continue;
+        }
+        for (&(site_program, function_id, _), counts) in &profile.regional_binary_inputs {
+            if site_program == program_id && function_id as usize == id {
+                general[0] += counts[0];
+                general[1] += counts[1];
+            }
+        }
+        for (pc, instruction) in function.code.iter().enumerate() {
+            if let Some(start) = backward_edge_target(*instruction, pc) {
+                regions.push(region(profile, program_id, id, start, pc, counts));
+            }
+        }
+    }
+    regions.sort_unstable_by_key(|region| std::cmp::Reverse(region.binaries.iter().sum::<u64>()));
+    eprint!(
+        "{{\"kind\":\"quench-regional-numeric\",\"general_binary\":{{\"fast_integer\":{},\"fallback\":{},\"total\":{}}},\"numeric_dispatch_binary\":{numeric_dispatch_binaries},\"backward_regions\":[",
+        general[1],
+        general[0],
+        general.iter().sum::<u64>(),
+    );
+    for (position, region) in regions.iter().take(32).enumerate() {
+        if position != 0 {
+            eprint!(",");
+        }
+        let binaries = region.binaries.iter().sum::<u64>();
+        eprint!(
+            "{{\"function\":{},\"start\":{},\"end\":{},\"instructions\":{},\"executions\":{},\"binary_executions\":{binaries},\"fast_integer\":{},\"fallback\":{}}}",
+            region.function,
+            region.start,
+            region.end,
+            region.end - region.start + 1,
+            region.executions,
+            region.binaries[1],
+            region.binaries[0],
+        );
+    }
+    eprintln!("]}}");
+}
+
+pub(super) fn report_functions(profile: &Profile, program_id: u32, program: &ResidualProgram) {
+    eprint!(",\"functions\":[");
+    let counts = profile
+        .functions
+        .get(program_id as usize)
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    for (id, (function, count)) in program.functions.iter().map(crate::bytecode::FunctionSlot::record).zip(counts).enumerate().filter_map(|(id, (function, count))| function.map(|function| (id, (function, count)))) {
+        if id != 0 {
+            eprint!(",");
+        }
+        let name = function
+            .name
+            .map(|atom| program.atoms[atom as usize].as_ref())
+            .unwrap_or("<script>");
+        let max_live = program.register_root_masks(id as u32).map(|masks| {
+            masks.iter().map(|mask| mask.count_ones()).max().unwrap_or(0)
+        });
+        let executed: u64 = profile
+            .site_counts
+            .get(program_id as usize)
+            .and_then(|functions| functions.get(id))
+            .map_or(0, |sites| sites.iter().sum());
+        eprint!(
+            "{{\"id\":{id},\"name\":\"{name}\",\"count\":{count},\"executed\":{executed},\"instructions\":{},\"registers\":{},\"max_live\":{},\"dispatch\":\"{:?}\"}}",
+            function.code.len(),
+            function.registers,
+            max_live
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "null".into()),
+            function.dispatch,
+        );
+    }
+    eprintln!("]}}");
+}
+
+fn region(
+    profile: &Profile,
+    program_id: u32,
+    function: usize,
+    start: usize,
+    end: usize,
+    counts: &[u64],
+) -> Region {
+    let mut binaries = [0; 2];
+    for (&(site_program, id, pc), values) in &profile.regional_binary_inputs {
+        if site_program == program_id
+            && id as usize == function
+            && (start..=end).contains(&(pc as usize))
+        {
+            binaries[0] += values[0];
+            binaries[1] += values[1];
+        }
+    }
+    Region {
+        function,
+        start,
+        end,
+        executions: counts.get(start..=end).unwrap_or(&[]).iter().sum(),
+        binaries,
+    }
+}
+
+fn binary_count(function: &crate::bytecode::Function, counts: &[u64]) -> u64 {
+    function
+        .code
+        .iter()
+        .enumerate()
+        .filter(|(_, instruction)| {
+            matches!(
+                instruction.op(),
+                Op::Binary | Op::NumericAdd | Op::NumericMultiply
+            )
+        })
+        .map(|(pc, _)| counts.get(pc).copied().unwrap_or(0))
+        .sum()
+}
+
+fn backward_edge_target(instruction: Instr, pc: usize) -> Option<usize> {
+    if !matches!(
+        instruction.op().control_flow_layout(),
+        ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump
+    ) {
+        return None;
+    }
+    let target = instruction.jump_target() as usize;
+    (target <= pc).then_some(target)
+}
+
+impl Profile {
+    #[inline(always)]
+    pub fn function(&mut self, program: u32, id: usize) {
+        let counts = super::ensure_program_counter(&mut self.functions, program, id + 1);
+        counts[id] += 1;
+    }
+}

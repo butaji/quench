@@ -1,0 +1,12 @@
+   Compiling quench-runtime v0.1.0 (/workspace/quench/crates/quench-runtime)
+   Compiling quench-wasm v0.1.0 (/workspace/quench/crates/quench-wasm)
+   Compiling quench-node v0.1.0 (/workspace/quench/crates/quench-node)
+   Compiling quench-node-test v0.1.0 (/workspace/quench/crates/quench-node-test)
+    Finished `iteration` profile [optimized] target(s) in 2m 06s
+     Running tests/child_entry.rs (work/host-build/iteration/deps/child_entry-a67896ab5b9c716a)
+
+running 1 test
+test stack_function_names_follow_mutation_after_capture_and_preserve_utf16_without_getters ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 327 filtered out; finished in 0.81s
+

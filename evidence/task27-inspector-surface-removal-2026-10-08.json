@@ -1,0 +1,100 @@
+{
+  "schema": 1,
+  "task": "27",
+  "kind": "legacy_inspector_surface_removal",
+  "recorded_on": "2026-10-08",
+  "source": {
+    "revision": "641e9ea23c267290cd9bc7537a93bcd87c9a9326",
+    "worktree_dirty": true,
+    "platform": "Darwin arm64",
+    "node": "v26.10.0",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+    "files_sha256": {
+      "crates/quench-node/src/dispatch.rs": "0585a69795017d360036380e3c2e84dbd4062d621e8a35b210038192193c641a",
+      "crates/quench-node/src/modules/mod.rs": "538a705d2a765b98cd601d41d676b3769e96b392f1db9ee1cfe64b8f48e4583e",
+      "crates/quench-node/src/modules/require.rs": "99820ace296bbc680258b6ddc41ca0fd1e528d1044127713fdb4bb2ee90a34c4",
+      "crates/quench-node/src/registry.rs": "82f88351c8721c5c6095b200926165925a81bf1e1f02c899a11b61d8d8c40bfe",
+      "crates/quench-node-test/node-tests/parallel.txt": "0209917422a2f0f3fa241d941ec4bc88c9917d5322b69014ab1a662a52e9dfca",
+      "crates/quench-node-test/node-tests/test-inspector.js": "b83f7fef9681d67875c5143b82fe4bcba5b49dbda2e5e36f10c4c16e39fc51c9",
+      "target/iteration/quench-node": "c03d1adb3486c341109de1baa9659a291cfbbf1a4ba8aa9684d82f217bb8e86b",
+      "target/iteration/run-parallel": "879ca477c23b51d04e76a57bac8185e27a4b2ac4d9d3f9596d8b61b976ef1e31",
+      "tests/frameworks/driver.cjs": "e8dd245f9bbfcdcd3a430ff7ed663c3310fdf32fae23cfc5c24d24cbeda96bfb",
+      "tests/frameworks/scenarios/express.cjs": "85eebbbc5c9cfaa01f2f16b6c7e181a4c4bc2e308bd1bb179f49c5d9700f8158",
+      "tests/frameworks/scenarios/koa.cjs": "962e4c326df72b30eed4306494e2218475456c7c816220a6e46a898b040185f9",
+      "tests/frameworks/scenarios/fastify.cjs": "1ff4fc87e2a4c792761c286bc0f255d0ab9be27e810dbf98938a1ac717d1ba6a"
+    },
+    "removed_source_sha256": {
+      "crates/quench-node/src/modules/inspector.rs": "99dcffeb66aab935ea9094537eac285d4e5d5b9052c4c2440c8e08aa3bba2c9b"
+    }
+  },
+  "change": {
+    "removed": [
+      "quench-node's live Inspector NodeSpecs and capability IDs",
+      "legacy node:inspector require route and built-in module listing",
+      "legacy inspector dispatch and constructor handlers",
+      "legacy crates/quench-node/src/modules/inspector.rs implementation"
+    ],
+    "scope_basis": "Inspector is absent from the 43 framework-core fixtures and the pinned Express, Koa, and Fastify scenarios.",
+    "preserved": [
+      "the local Inspector fixture and its node-compat-inventory identity as diagnostic inputs",
+      "process.features.inspector=false",
+      "--allow-inspector parsing and permission facts",
+      "trace_events API surface"
+    ],
+    "remaining_references": "Inspector names remain in diagnostic framework inventories and dormant, unregistered polyfill source fragments; no live Rust module, require route, or dispatch handler remains.",
+    "runtime_dependency_removed": false
+  },
+  "verification": {
+    "checks": [
+      {
+        "command": "cargo build --profile iteration -p quench-node --bin quench-node",
+        "exit_code": 0,
+        "result": "passed; existing deprecated Atomic::fetch_update warnings in quench-runtime"
+      },
+      {
+        "command": "cargo build --profile iteration -p quench-node-test --bin run-parallel",
+        "exit_code": 0,
+        "result": "passed; existing deprecated Atomic::fetch_update warnings in quench-runtime"
+      },
+      {
+        "command": "rustfmt --edition 2021 --check crates/quench-node/src/dispatch.rs crates/quench-node/src/registry.rs crates/quench-node/src/modules/mod.rs crates/quench-node/src/modules/require.rs",
+        "exit_code": 0,
+        "result": "passed"
+      },
+      {
+        "command": "node tools/check-task-coherence.mjs",
+        "exit_code": 0,
+        "result": "passed; 80 tasks, 1 active, next=27, framework-core fixtures=43, package scenarios=3"
+      },
+      {
+        "command": "JSON parse of tasks/node-compat-inventory.json and tasks/index.json; git diff --check",
+        "exit_code": 0,
+        "result": "passed"
+      },
+      {
+        "command": "target/iteration/run-parallel --profile framework-core",
+        "exit_code": 0,
+        "result": {
+          "pass": 43,
+          "skip": 0,
+          "fail": 0,
+          "timeout": 0,
+          "crash": 0,
+          "unclassified": 0,
+          "total": 43
+        }
+      },
+      {
+        "command": "node driver.cjs scenarios/{express,koa,fastify}.cjs and ../../target/iteration/quench-node driver.cjs scenarios/{express,koa,fastify}.cjs from tests/frameworks",
+        "exit_code": 0,
+        "result": "all six processes exited 0; each Quench stdout/stderr byte stream matched local Node: statuses 200,200,200,200,404 followed by newline; stderr empty"
+      },
+      {
+        "command": "cargo fmt --all -- --check",
+        "exit_code": 1,
+        "result": "pre-existing formatting diffs in crates/quench-regexp and crates/quench-runtime-next; changed Rust files pass focused rustfmt check"
+      }
+    ],
+    "unit_tests": "not run"
+  }
+}

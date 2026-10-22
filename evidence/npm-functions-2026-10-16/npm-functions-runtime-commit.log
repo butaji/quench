@@ -1,0 +1,4 @@
+[v2-cand-npm-streams 6e21cc54a] fix(runtime): match Node math rounding and implicit constructor arity
+ 9 files changed, 268 insertions(+), 8 deletions(-)
+ create mode 100644 crates/quench-runtime/src/vm/fdlibm_math.LICENSE
+ create mode 100644 crates/quench-runtime/src/vm/fdlibm_math.rs

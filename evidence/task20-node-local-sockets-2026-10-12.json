@@ -1,0 +1,1964 @@
+{
+  "scope": "Native Unix-domain net transport, endpoint overloads and OS failures",
+  "runtime_commit": "d092d59fc52dd0bf4e09431174a49ded361d8b9c",
+  "branch": "v2-cloud-node",
+  "oracle": "v27.0.0-nightly20260819c79868f102",
+  "fixture_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+  "host": {
+    "platform": "linux-x86_64",
+    "cpu_max": "400000 100000",
+    "memory_max": "17179869184"
+  },
+  "oracles": {
+    "passed": 106,
+    "failed": 0,
+    "test_threads": 1,
+    "log_sha256": "0de3cd9994435cc4c3f2d281b70b12215fa3a870a9bf14aee15af07247bfe168",
+    "new_checks": [
+      "External Python AF_UNIX process exchanges non-UTF8 bytes with net.Server",
+      "Filesystem listener close unlinks the socket",
+      "Path string and options overloads; actual ENOENT/code/errno/syscall/address",
+      "Asynchronous bind conflict/EADDRINUSE/address/port and overlong EINVAL",
+      "Linux abstract socket close/rebind",
+      "Invalid options and numeric/string port errors match Node codes and complete messages"
+    ]
+  },
+  "framework": {
+    "passed": 43,
+    "failed": 0
+  },
+  "shared_runtime": {
+    "passed": 550,
+    "qualification": "Unchanged shared runtime since the earlier native child-options checkpoint; not rerun for Node-only changes."
+  },
+  "previous_full_source": "0dba0cc564497fa303990ca0b14c125748de992e",
+  "previous_full_counts": {
+    "timeout": 114,
+    "fail": 2604,
+    "pass": 1334,
+    "skip": 675
+  },
+  "groups": {
+    "net": {
+      "counts": {
+        "fail": 96,
+        "pass": 43,
+        "timeout": 24
+      },
+      "total": 163,
+      "inventory_hash": "3eebd3979d1f2256",
+      "jobs": 4,
+      "timeout_secs": 30,
+      "runner_commit_metadata": "d092d59fc52dd0bf4e09431174a49ded361d8b9c",
+      "gained_passes": [
+        "test-net-better-error-messages-listen-path.js",
+        "test-net-better-error-messages-path.js",
+        "test-net-pipe-connect-errors.js",
+        "test-net-pipe-with-long-path.js"
+      ],
+      "lost_passes": [],
+      "raw_sha256": "8bdfef0b5f61d7785d11c36c246ede0f3746f5e0ca7c578269e87aca0ee10ecc",
+      "results": [
+        {
+          "fixture": "test-net-access-byteswritten.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-net-access-byteswritten.js:15\nassert.strictEqual(Object.getPrototypeOf(tls.TLSSocket).prototype.bytesWritten,\n                   ^\n\nTypeError: cannot convert null or undefined to object\n    at /workspace/work/node-fixtures/test/parallel/test-net-access-byteswritten.js:15:20\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-after-close.js",
+          "status": "pass",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "stderr": {
+            "bytes": 41,
+            "sha256": "8b8ffac7692d8e380260cb1a9cf80aa266aa0a7eab62ceb94f0b2bef5b17c933",
+            "excerpt": "SERVER: got connection\nconnection closed\n"
+          }
+        },
+        {
+          "fixture": "test-net-allow-half-open-async-iter.js",
+          "status": "timeout",
+          "exit_code": null,
+          "signal": 9,
+          "timed_out": true
+        },
+        {
+          "fixture": "test-net-allow-half-open.js",
+          "status": "fail",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "stdout": {
+            "bytes": 692,
+            "sha256": "c6a5db9cb1fa0597a623f1772bd47779dc59f3baad28b35ec6766d96e2a1574d",
+            "excerpt": "Mismatched %s function calls. Expected %s, actual %d. <anonymous> exactly 1 0\n    at /workspace/work/node-fixtures/test/parallel/test-net-allow-half-open.js:36:22\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:net/module.js:146:123\n    at node:net/module.js:152:118\n    at process.processTicksAndRejections (native)\nMismatched %s function calls. Expected %s, actual %d. <anonymous> exactly 1 0\n    at /workspace/work/node-fixtures/test/parallel/test-net-allow-half-open.js:22:25\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:net/module.js:146:123\n    at node:net/module.js:152:118\n    at process.processTicksAndRejections (native)\n"
+          }
+        },
+        {
+          "fixture": "test-net-autoselectfamily-attempt-timeout-cli-option.js",
+          "status": "pass",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false
+        },
+        {
+          "fixture": "test-net-autoselectfamily-attempt-timeout-default-value.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-net-autoselectfamily-attempt-timeout-default-value.js:8\nassert.strictEqual(getDefaultAutoSelectFamilyAttemptTimeout(), platformTimeout(2500));\n^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-net-autoselectfamily-attempt-timeout-default-value.js:8:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-autoselectfamily-commandline-option.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-net-autoselectfamily-commandline-option.js:34\n        assert.strictEqual(error.code, 'ECONNREFUSED');\n        ^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-net-autoselectfamily-commandline-option.js:34:9\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:stream/shared.js:80:22\n    at emit (node:bootstrap/event-emitter.js:37:12)\n    at emit (node:events/inspection.js:14:49)\n    at node:net/module.js:13:48\n    at node:stream/shared.js:2402:9\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-autoselectfamily-default.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "node:net/module.js:152\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-net-autoselectfamily-default.js:21:5\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:net/module.js:146:123\n    at node:net/module.js:152:118\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-autoselectfamily-ipv4first.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "node:bootstrap/event-emitter.js:24\n      if (error instanceof Error) throw error;\n                                  ^\n\nError: connect ENETUNREACH [2606:4700:10::6814:1a88]:42147 (Network is unreachable (os error 101))\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-autoselectfamily.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-net-autoselectfamily.js:172\n    assert.deepStrictEqual(connection.autoSelectFamilyAttemptedAddresses, ['::1:10', '127.0.0.1:10']);\n    ^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-net-autoselectfamily.js:172:5\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:stream/shared.js:80:22\n    at emit (node:bootstrap/event-emitter.js:37:12)\n    at emit (node:events/inspection.js:14:49)\n    at node:net/module.js:13:48\n    at node:stream/shared.js:2402:9\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-better-error-messages-listen-path.js",
+          "status": "pass",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false
+        },
+        {
+          "fixture": "test-net-better-error-messages-listen.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "node:net/module.js:159\n      listenOperation(this, port, host, options);\n      ^\n\nCannot assign requested address (os error 99)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-better-error-messages-path.js",
+          "status": "pass",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false
+        },
+        {
+          "fixture": "test-net-better-error-messages-port-hostname.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-net-better-error-messages-port-hostname.js:29\n  assert.throws(() => { throw error; }, {\n  ^\n\nAssertionError [ERR_ASSERTION]: The error did not match the expected object.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-net-better-error-messages-port-hostname.js:29:3\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:stream/shared.js:80:22\n    at emit (node:bootstrap/event-emitter.js:37:12)\n    at emit (node:events/inspection.js:14:49)\n    at node:net/module.js:13:48\n    at node:stream/shared.js:2402:9\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-binary.js",
+          "status": "pass",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false
+        },
+        {
+          "fixture": "test-net-bind-twice.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "node:net/module.js:152\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nError: Address already in use (os error 98)\n    at node:net/module.js:152:118\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-blocklist.js",
+          "status": "pass",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false
+        },
+        {
+          "fixture": "test-net-boundsocket.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-net-boundsocket.js:14\n  const bound = new net.BoundSocket({ host: '127.0.0.1', port: 0 });\n                ^\n\nTypeError: value is not a constructor\n    at /workspace/work/node-fixtures/test/parallel/test-net-boundsocket.js:14:17\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-buffersize.js",
+          "status": "timeout",
+          "exit_code": null,
+          "signal": 9,
+          "timed_out": true
+        },
+        {
+          "fixture": "test-net-bytes-read.js",
+          "status": "fail",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "stdout": {
+            "bytes": 341,
+            "sha256": "2cd5d4021ca4834920d0c8d8ba798d2fd40c9f19d0698fa58c44e669e846919b",
+            "excerpt": "Mismatched %s function calls. Expected %s, actual %d. <anonymous> exactly 1 0\n    at /workspace/work/node-fixtures/test/parallel/test-net-bytes-read.js:26:17\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:net/module.js:146:123\n    at node:net/module.js:152:118\n    at process.processTicksAndRejections (native)\n"
+          }
+        },
+        {
+          "fixture": "test-net-bytes-stats.js",
+          "status": "timeout",
+          "exit_code": null,
+          "signal": 9,
+          "timed_out": true,
+          "stdout": {
+            "bytes": 100,
+            "sha256": "20521e7170f6d2235d20bfd13b22c750e2bddfb691d3a55a715001c20c080d8b",
+            "excerpt": "tcp server connection\ntcp socket disconnect #1\nBytes read: 6\nBytes written: 6\ntcp server connection\n"
+          },
+          "stderr": {
+            "bytes": 147,
+            "sha256": "7728271b1b6e6870ad47720ae5d83a97106e8ee53def97481a1883485987cccd",
+            "excerpt": "listening\nCLIENT connect #%d 1\nCLIENT: write cb\nCLIENT end event #%d 1\nCLIENT close event #%d 1\nRECONNECTING\nCLIENT connect #%d 2\nCLIENT: write cb\n"
+          }
+        },
+        {
+          "fixture": "test-net-bytes-written-large.js",
+          "status": "timeout",
+          "exit_code": null,
+          "signal": 9,
+          "timed_out": true
+        },
+        {
+          "fixture": "test-net-can-reset-timeout.js",
+          "status": "timeout",
+          "exit_code": null,
+          "signal": 9,
+          "timed_out": true,
+          "stdout": {
+            "bytes": 24,
+            "sha256": "f5f8f7645e2ebb774c073a7d20212b4ead578f9a19ed50c036c92535951cabad",
+            "excerpt": "timeout\nserver side end\n"
+          }
+        },
+        {
+          "fixture": "test-net-child-process-connect-reset.js",
+          "status": "pass",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false
+        },
+        {
+          "fixture": "test-net-client-bind-twice.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/common/index.js:569\n    assert.fail(\n    ^\n\nAssertionError [ERR_ASSERTION]: function should not have been called at /workspace/work/node-fixtures/test/parallel/test-net-client-bind-twice.js:0\n    at node:assert/AssertionError.js:3:5\n    at mustNotCall (/workspace/work/node-fixtures/test/common/index.js:569:5)\n    at node:stream/shared.js:65:7\n    at node:stream/shared.js:80:22\n    at emit (node:events/inspection.js:14:49)\n    at node:net/module.js:13:48\n    at node:stream/shared.js:210:14\n    at emit (node:net/module.js:39:16)\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-connect-abort-controller.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "unhandled Promise rejection was not handled"
+        },
+        {
+          "fixture": "test-net-connect-after-destroy.js",
+          "status": "pass",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false
+        },
+        {
+          "fixture": "test-net-connect-buffer.js",
+          "status": "pass",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "stderr": {
+            "bytes": 40,
+            "sha256": "72935a46200ac9ec741a6962d5b7b4c06b70977da905ab7ef2e932d1d78c9f67",
+            "excerpt": "write cb\nSERVER: end L'\u00c9tat, c'est moi\n"
+          }
+        },
+        {
+          "fixture": "test-net-connect-buffer2.js",
+          "status": "pass",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "stderr": {
+            "bytes": 40,
+            "sha256": "72935a46200ac9ec741a6962d5b7b4c06b70977da905ab7ef2e932d1d78c9f67",
+            "excerpt": "write cb\nSERVER: end L'\u00c9tat, c'est moi\n"
+          }
+        },
+        {
+          "fixture": "test-net-connect-call-socket-connect.js",
+          "status": "timeout",
+          "exit_code": null,
+          "signal": 9,
+          "timed_out": true
+        },
+        {
+          "fixture": "test-net-connect-custom-lookup-non-string-address.mjs",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-net-connect-custom-lookup-non-string-address.mjs:21\n      t.assert.strictEqual(err.code, 'ERR_INVALID_IP_ADDRESS');\n      ^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-net-connect-custom-lookup-non-string-address.mjs:21:7\n    at node:stream/shared.js:80:22\n    at emit (node:bootstrap/event-emitter.js:37:12)\n    at emit (node:events/inspection.js:14:49)\n    at node:net/module.js:13:48\n    at node:stream/shared.js:2402:9\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-connect-destroy.js",
+          "status": "pass",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false
+        },
+        {
+          "fixture": "test-net-connect-immediate-destroy.js",
+          "status": "pass",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false
+        },
+        {
+          "fixture": "test-net-connect-immediate-finish.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-net-connect-immediate-finish.js:50\n  assert.throws(() => { throw error; }, {\n  ^\n\nAssertionError [ERR_ASSERTION]: The error did not match the expected object.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-net-connect-immediate-finish.js:50:3\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:stream/shared.js:65:7\n    at node:stream/shared.js:80:22\n    at emit (node:bootstrap/event-emitter.js:37:12)\n    at emit (node:events/inspection.js:14:49)\n    at node:net/module.js:13:48\n    at node:stream/shared.js:2402:9\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-connect-keepalive.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "node:net/module.js:152\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nTypeError: cannot set properties of null\n    at /workspace/work/node-fixtures/test/parallel/test-net-connect-keepalive.js:23:37\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:net/module.js:146:123\n    at node:net/module.js:152:118\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-connect-memleak.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-net-connect-memleak.js:54\n    assert.strictEqual(collected, true);\n    ^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-net-connect-memleak.js:54:5\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:bootstrap/process-surface.js:156:18\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-connect-no-arg.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-net-connect-no-arg.js:9\nassert.throws(() => {\n^\n\nAssertionError [ERR_ASSERTION]: The error did not match the expected object.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-net-connect-no-arg.js:9:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-connect-nodelay.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "node:net/module.js:152\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nTypeError: cannot set properties of null\n    at /workspace/work/node-fixtures/test/parallel/test-net-connect-nodelay.js:21:33\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:net/module.js:146:123\n    at node:net/module.js:152:118\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-connect-options-allowhalfopen.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "node:bootstrap/process-surface.js:123\n          try {\n          ^\n\nAssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-net-connect-options-allowhalfopen.js:75:11\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:bootstrap/process-surface.js:124:20\n\nNode.js v22.0.0",
+          "stdout": {
+            "bytes": 972,
+            "sha256": "6e25a8d503a176fa783e81cc8bfcc71ae09d7a57057a3275d2a54eae4d229de5",
+            "excerpt": "Server started listening at 127.0.0.1:36043\n'connect' emitted on Client 2\n'connect' emitted on Client 6\n'connect' emitted on Client 4\n'connect' emitted on Client 5\n'connect' emitted on Client 1\n'connect' emitted on Client 3\n'connection' 1 emitted on server\nServer has sent 1 FIN\n'connection' 2 emitted on server\nServer has sent 2 FIN\n'connection' 3 emitted on server\nServer has sent 3 FIN\n'connection' 4 emitted on server\nServer has sent 4 FIN\n'connection' 5 emitted on server\nServer has sent 5 FIN\n'connection' 6 emitted on server\nServer has sent 6 FIN\nconnection 2 has been closed by both sides, 1 clients have closed\nconnection 4 has been closed by both sides, 2 clients have closed\nconnection 6 has been closed by both sides, 3 clients have closed\nconnection 1 has been closed by both sides, 4 clients have closed\nconnection 3 has been closed by both sides, 5 clients have closed\nconnection 5 has been closed by both sides, 6 clients have closed\nclient 2 received FIN\n"
+          }
+        },
+        {
+          "fixture": "test-net-connect-options-fd.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "node:net/module.js:152\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nAssertionError [ERR_ASSERTION]: [Pipe server]Error: listen EINVAL: invalid argument test/.tmp.168449-d672a5018672f7ce/node-test.168618.sock-net-connect-options-fd-server\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-net-connect-options-fd.js:72:5\n    at node:net/module.js:152:118\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0",
+          "stderr": {
+            "bytes": 125,
+            "sha256": "030a04c9aadcebd90c8fafd67be295ed7c79e79c1eac5078da19fe6d94c627b6",
+            "excerpt": "Error: listen EINVAL: invalid argument test/.tmp.168449-d672a5018672f7ce/node-test.168618.sock-net-connect-options-fd-server\n"
+          }
+        },
+        {
+          "fixture": "test-net-connect-options-invalid.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-net-connect-options-invalid.js:19\n    assert.throws(() => {\n    ^\n\nAssertionError [ERR_ASSERTION]: Missing expected exception.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-net-connect-options-invalid.js:19:5\n    at /workspace/work/node-fixtures/test/parallel/test-net-connect-options-invalid.js:12:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-connect-options-ipv6.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "node:bootstrap/event-emitter.js:24\n      if (error instanceof Error) throw error;\n                                  ^\n\nError: getaddrinfo ENOTFOUND dummy\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-connect-options-path.js",
+          "status": "fail",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "stdout": {
+            "bytes": 337,
+            "sha256": "4ffc0495884108ce389356afea33983f493ec536ae11f01dfe16f58c4b611e82",
+            "excerpt": "Mismatched %s function calls. Expected %s, actual %d. <anonymous> exactly 12 0\n    at /workspace/work/node-fixtures/test/parallel/test-net-connect-options-path.js:19:21\nMismatched %s function calls. Expected %s, actual %d. <anonymous> exactly 1 0\n    at /workspace/work/node-fixtures/test/parallel/test-net-connect-options-path.js:22:23\n"
+          }
+        },
+        {
+          "fixture": "test-net-connect-options-port.js",
+          "status": "pass",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false
+        },
+        {
+          "fixture": "test-net-connect-paused-connection.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "node:bootstrap/process-surface.js:123\n          try {\n          ^\n\nAssertionError [ERR_ASSERTION]: expected to exit at /workspace/work/node-fixtures/test/parallel/test-net-connect-paused-connection.js:0\n    at node:assert/AssertionError.js:3:5\n    at mustNotCall (/workspace/work/node-fixtures/test/common/index.js:569:5)\n    at node:bootstrap/process-surface.js:124:20\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-connect-reset-after-destroy.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-net-connect-reset-after-destroy.js:19\n    assert.strictEqual(conn, conn.resetAndDestroy().destroy());\n                             ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-net-connect-reset-after-destroy.js:19:30\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:stream/shared.js:80:22\n    at emit (node:events/inspection.js:14:49)\n    at node:net/module.js:13:48\n    at node:stream/shared.js:210:14\n    at emit (node:net/module.js:39:16)\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-connect-reset-before-connected.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-net-connect-reset-before-connected.js:11\nsocket.resetAndDestroy();\n^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-net-connect-reset-before-connected.js:11:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-connect-reset-until-connected.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "node:net/module.js:152\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-net-connect-reset-until-connected.js:17:35\n    at /workspace/work/node-fixtures/test/parallel/test-net-connect-reset-until-connected.js:9:7\n    at /workspace/work/node-fixtures/test/parallel/test-net-connect-reset-until-connected.js:20:5\n    at node:net/module.js:152:118\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-connect-reset.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-net-connect-reset.js:6\nsocket.resetAndDestroy();\n^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-net-connect-reset.js:6:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-dns-custom-lookup.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/common/index.js:744\n    assert.throws(() => { throw error; }, validator);\n    ^\n\nAssertionError [ERR_ASSERTION]: The error did not match the expected object.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/common/index.js:744:5\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:stream/shared.js:80:22\n    at emit (node:bootstrap/event-emitter.js:37:12)\n    at emit (node:events/inspection.js:14:49)\n    at node:net/module.js:13:48\n    at node:stream/shared.js:2402:9\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-dns-error.js",
+          "status": "fail",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "stdout": {
+            "bytes": 157,
+            "sha256": "5b48c4ef935c89874e7208f906b64d1613859e8d3b81644155e036697b820ca3",
+            "excerpt": "Mismatched %s function calls. Expected %s, actual %d. <anonymous> exactly 1 0\n    at /workspace/work/node-fixtures/test/parallel/test-net-dns-error.js:36:21\n"
+          }
+        },
+        {
+          "fixture": "test-net-dns-lookup-skip.js",
+          "status": "pass",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false
+        },
+        {
+          "fixture": "test-net-dns-lookup.js",
+          "status": "fail",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "stdout": {
+            "bytes": 342,
+            "sha256": "44d8c4b9b16eb50285edc6e1dbe39f8c65fb028e530b0f524c5f050f1011d988",
+            "excerpt": "Mismatched %s function calls. Expected %s, actual %d. <anonymous> at least 1 0\n    at /workspace/work/node-fixtures/test/parallel/test-net-dns-lookup.js:34:19\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:net/module.js:146:123\n    at node:net/module.js:152:118\n    at process.processTicksAndRejections (native)\n"
+          }
+        },
+        {
+          "fixture": "test-net-during-close.js",
+          "status": "pass",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false
+        },
+        {
+          "fixture": "test-net-eaddrinuse.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "node:net/module.js:152\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nError: Address already in use (os error 98)\n    at node:net/module.js:152:118\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-end-close.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "AssertionError: Expected values to be strictly deep-equal"
+        },
+        {
+          "fixture": "test-net-end-destroyed.js",
+          "status": "timeout",
+          "exit_code": null,
+          "signal": 9,
+          "timed_out": true
+        },
+        {
+          "fixture": "test-net-end-without-connect.js",
+          "status": "pass",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false
+        },
+        {
+          "fixture": "test-net-error-twice.js",
+          "status": "timeout",
+          "exit_code": null,
+          "signal": 9,
+          "timed_out": true
+        },
+        {
+          "fixture": "test-net-isip.js",
+          "status": "pass",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false
+        },
+        {
+          "fixture": "test-net-isipv4.js",
+          "status": "pass",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false
+        },
+        {
+          "fixture": "test-net-isipv6.js",
+          "status": "pass",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false
+        },
+        {
+          "fixture": "test-net-keepalive-interval-count.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-net-keepalive-interval-count.js:66\n        client._handle.setKeepAlive = common.mustCall(\n        ^\n\nTypeError: cannot set properties of null\n    at /workspace/work/node-fixtures/test/parallel/test-net-keepalive-interval-count.js:66:39\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:stream/shared.js:65:7\n    at node:stream/shared.js:80:22\n    at emit (node:events/inspection.js:14:49)\n    at node:net/module.js:13:48\n    at node:stream/shared.js:210:14\n    at emit (node:net/module.js:39:16)\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-keepalive.js",
+          "status": "pass",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false
+        },
+        {
+          "fixture": "test-net-large-string.js",
+          "status": "timeout",
+          "exit_code": null,
+          "signal": 9,
+          "timed_out": true
+        },
+        {
+          "fixture": "test-net-listen-after-destroying-stdin.js",
+          "status": "pass",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "stdout": {
+            "bytes": 44,
+            "sha256": "68cb3855aa903bfb1254cda2acae987532b7622347327b1ed8cabf53b706f950",
+            "excerpt": "listening...\naccepted...\nfinished...\nclosed\n"
+          }
+        },
+        {
+          "fixture": "test-net-listen-close-server-callback-is-not-function.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "node:net/module.js:152\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nAssertionError [ERR_ASSERTION]: function should not have been called at /workspace/work/node-fixtures/test/parallel/test-net-listen-close-server-callback-is-not-function.js:0\n    at node:assert/AssertionError.js:3:5\n    at mustNotCall (/workspace/work/node-fixtures/test/common/index.js:569:5)\n    at node:net/module.js:146:123\n    at node:net/module.js:152:118\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-listen-close-server.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "node:net/module.js:152\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nAssertionError [ERR_ASSERTION]: function should not have been called at /workspace/work/node-fixtures/test/parallel/test-net-listen-close-server.js:0\n    at node:assert/AssertionError.js:3:5\n    at mustNotCall (/workspace/work/node-fixtures/test/common/index.js:569:5)\n    at node:net/module.js:146:123\n    at node:net/module.js:152:118\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-listen-error.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "node:net/module.js:159\n      listenOperation(this, port, host, options);\n      ^\n\nCannot assign requested address (os error 99)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-listen-exclusive-random-ports.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "node:net/module.js:152\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-net-listen-exclusive-random-ports.js:35:5\n    at node:net/module.js:146:123\n    at node:net/module.js:152:118\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-listen-fd0.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "node:net/module.js:155\n      const plan = endpointOperation(port, host, callback, false);\n                   ^\n\nTypeError: The argument 'options' must have the property \"port\" or \"path\". Received { fd: 0 }\n    at node:net/module.js:155:20\n    at /workspace/work/node-fixtures/test/parallel/test-net-listen-fd0.js:28:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-listen-handle-in-cluster-1.js",
+          "status": "fail",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "stdout": {
+            "bytes": 174,
+            "sha256": "6a067e4896d8d1f973315c2c714126d82f0fe8e15ec15477367a06c9638744db",
+            "excerpt": "Mismatched %s function calls. Expected %s, actual %d. <anonymous> exactly 1 0\n    at /workspace/work/node-fixtures/test/parallel/test-net-listen-handle-in-cluster-1.js:23:25\n"
+          }
+        },
+        {
+          "fixture": "test-net-listen-handle-in-cluster-2.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-net-listen-handle-in-cluster-2.js:15\n  const errno = handle.bind('0.0.0.0', 0);\n                ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-net-listen-handle-in-cluster-2.js:15:17\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-listen-invalid-port.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "node:net/module.js:152\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-net-listen-invalid-port.js:17:3\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:net/module.js:146:123\n    at node:net/module.js:152:118\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-listen-ipv6only.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/common/index.js:569\n    assert.fail(\n    ^\n\nAssertionError [ERR_ASSERTION]: function should not have been called at /workspace/work/node-fixtures/test/parallel/test-net-listen-ipv6only.js:0\n    at node:assert/AssertionError.js:3:5\n    at mustNotCall (/workspace/work/node-fixtures/test/common/index.js:569:5)\n    at node:stream/shared.js:80:22\n    at emit (node:events/inspection.js:14:49)\n    at node:net/module.js:13:48\n    at node:stream/shared.js:210:14\n    at emit (node:net/module.js:39:16)\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-listen-twice.js",
+          "status": "timeout",
+          "exit_code": null,
+          "signal": 9,
+          "timed_out": true
+        },
+        {
+          "fixture": "test-net-listening.js",
+          "status": "pass",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false
+        },
+        {
+          "fixture": "test-net-local-address-port.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "node:net/module.js:152\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-net-local-address-port.js:28:3\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:net/module.js:152:118\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-localerror.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-net-localerror.js:28\n  assert.throws(\n  ^\n\nAssertionError [ERR_ASSERTION]: Missing expected exception.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-net-localerror.js:28:3\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at /workspace/work/node-fixtures/test/parallel/test-net-localerror.js:34:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-negative-zero.js",
+          "status": "pass",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false
+        },
+        {
+          "fixture": "test-net-normalize-args.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-net-normalize-args.js:9\n  const args = net._normalizeArgs(input);\n               ^\n\nTypeError: value is not callable\n    at validateNormalizedArgs (/workspace/work/node-fixtures/test/parallel/test-net-normalize-args.js:9:16)\n    at /workspace/work/node-fixtures/test/parallel/test-net-normalize-args.js:18:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-onread-static-buffer.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/common/index.js:569\n    assert.fail(\n    ^\n\nAssertionError [ERR_ASSERTION]: function should not have been called at /workspace/work/node-fixtures/test/parallel/test-net-onread-static-buffer.js:0\ncalled with arguments: { '0': 104, '1': 101, '2': 108, '3': 108, '4': 111, '5': 32, '6': 119, '7': 111, '8': 114, '9': 108, '10': 100 }\n    at node:assert/AssertionError.js:3:5\n    at mustNotCall (/workspace/work/node-fixtures/test/common/index.js:569:5)\n    at node:stream/shared.js:80:22\n    at emit (node:events/inspection.js:14:49)\n    at node:net/module.js:13:48\n    at addReadableChunk (node:stream/shared.js:757:9)\n    at push (node:stream/shared.js:953:9)\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-options-lookup.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-net-options-lookup.js:16\n  assert.throws(() => {\n  ^\n\nAssertionError [ERR_ASSERTION]: Missing expected exception.\n    at node:assert/AssertionError.js:3:5\n    at connectThrows (/workspace/work/node-fixtures/test/parallel/test-net-options-lookup.js:16:3)\n    at /workspace/work/node-fixtures/test/parallel/test-net-options-lookup.js:6:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-pause-resume-connecting.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/common/index.js:569\n    assert.fail(\n    ^\n\nAssertionError [ERR_ASSERTION]: function should not have been called at /workspace/work/node-fixtures/test/parallel/test-net-pause-resume-connecting.js:0\ncalled with arguments: { '0': 84, '1': 104, '2': 105, '3': 115, '4': 32, '5': 119, '6': 97, '7': 115, '8': 32, '9': 116, '10': 104, '11': 101, '12': 32, '13': 121, '14': 101, '15': 97, '16': 114, '17': 32, '18': 104, '19': 101, '20': 32, '21': 102, '22': 101, '23': 108, '24': 108, '25': 32, '26': 116, '27': 111, '28': 32, '29': 112, '30': 105, '31': 101, '32': 99, '33': 101, '34': 115, '35': 46 }\n    at node:assert/AssertionError.js:3:5\n    at mustNotCall (/workspace/work/node-fixtures/test/common/index.js:569:5)\n    at node:stream/shared.js:80:22\n    at emit (node:events/inspection.js:14:49)\n    at node:net/module.js:13:48\n    at addReadableChunk (node:stream/shared.js:757:9)\n    at push (node:stream/shared.js:953:9)\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-perf_hooks.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-net-perf_hooks.js:14\nconst obs = new PerformanceObserver(common.mustCallAtLeast((items) => {\n            ^\n\nTypeError: value is not a constructor\n    at /workspace/work/node-fixtures/test/parallel/test-net-perf_hooks.js:14:13\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-persistent-keepalive.js",
+          "status": "pass",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false
+        },
+        {
+          "fixture": "test-net-persistent-nodelay.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-net-persistent-nodelay.js:33\n    assert.strictEqual(callCount, 1);\n    ^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-net-persistent-nodelay.js:33:5\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:stream/shared.js:80:22\n    at emit (node:events/inspection.js:14:49)\n    at node:net/module.js:13:48\n    at completeReadableEnd (node:stream/shared.js:546:5)\n    at node:stream/shared.js:663:13\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-persistent-ref-unref.js",
+          "status": "fail",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "stdout": {
+            "bytes": 338,
+            "sha256": "6a6de99f5c6bebce6498d66ddd2023254a56db64369eaaea7271ba9cbfb3f2a2",
+            "excerpt": "Mismatched %s function calls. Expected %s, actual %d. <anonymous> at least 1 0\n    at /workspace/work/node-fixtures/test/parallel/test-net-persistent-ref-unref.js:18:25\nMismatched %s function calls. Expected %s, actual %d. <anonymous> at least 1 0\n    at /workspace/work/node-fixtures/test/parallel/test-net-persistent-ref-unref.js:24:27\n"
+          }
+        },
+        {
+          "fixture": "test-net-pingpong.js",
+          "status": "timeout",
+          "exit_code": null,
+          "signal": 9,
+          "timed_out": true
+        },
+        {
+          "fixture": "test-net-pipe-connect-errors.js",
+          "status": "pass",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false
+        },
+        {
+          "fixture": "test-net-pipe-with-long-path.js",
+          "status": "pass",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false
+        },
+        {
+          "fixture": "test-net-promises-connect.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-net-promises-connect.js:6\nconst { connect } = require('net/promises');\n                    ^\n\nError: Cannot find module 'net/promises'\nRequire stack:\n- /workspace/work/node-fixtures/test/parallel/test-net-promises-connect.js\n    at /workspace/work/node-fixtures/test/parallel/test-net-promises-connect.js:6:21\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-promises-listen.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-net-promises-listen.js:6\nconst { listen } = require('net/promises');\n                   ^\n\nError: Cannot find module 'net/promises'\nRequire stack:\n- /workspace/work/node-fixtures/test/parallel/test-net-promises-listen.js\n    at /workspace/work/node-fixtures/test/parallel/test-net-promises-listen.js:6:20\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-reconnect.js",
+          "status": "timeout",
+          "exit_code": null,
+          "signal": 9,
+          "timed_out": true,
+          "stdout": {
+            "bytes": 79,
+            "sha256": "fb637b1b9d01c5b9f14f8acbd7407c97548312ef51afcec76b5a89666f813034",
+            "excerpt": "SERVER listening\nclient_recv_count 1\nSERVER had_error: false\nCLIENT disconnect\n"
+          },
+          "stderr": {
+            "bytes": 243,
+            "sha256": "8f64d2e3ac95da1e52203c24c24b7635a8aa5c1781bb615265a249d63418f4d9",
+            "excerpt": "CLIENT connected [object Object]\nSERVER: got socket connection\nSERVER connect, writing\nCLIENT: calling end [object Object]\nSERVER socket end, calling end()\nCLIENT connected [object Object]\nSERVER: got socket connection\nSERVER connect, writing\n"
+          }
+        },
+        {
+          "fixture": "test-net-remote-address-port.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-net-remote-address-port.js:75\n    assert.ok(remoteAddrCandidates.includes(client2.remoteAddress));\n    ^\n\nAssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-net-remote-address-port.js:75:5\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:stream/shared.js:80:22\n    at emit (node:events/inspection.js:14:49)\n    at node:net/module.js:13:48\n    at node:stream/shared.js:210:14\n    at emit (node:net/module.js:39:16)\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-remote-address.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-net-remote-address.js:16\n    assert.strictEqual(socket.remoteAddress !== undefined, true);\n    ^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-net-remote-address.js:16:5\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:stream/shared.js:80:22\n    at emit (node:events/inspection.js:14:49)\n    at node:net/module.js:13:48\n    at node:stream/shared.js:210:14\n    at emit (node:net/module.js:39:16)\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-reuseport.js",
+          "status": "pass",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false
+        },
+        {
+          "fixture": "test-net-server-async-dispose.mjs",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "unhandled Promise rejection was not handled"
+        },
+        {
+          "fixture": "test-net-server-async-iterator.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "unhandled Promise rejection was not handled"
+        },
+        {
+          "fixture": "test-net-server-blocklist.js",
+          "status": "timeout",
+          "exit_code": null,
+          "signal": 9,
+          "timed_out": true
+        },
+        {
+          "fixture": "test-net-server-call-listen-multiple-times.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-net-server-call-listen-multiple-times.js:32\n  assert.throws(() => server.listen(), {\n  ^\n\nAssertionError [ERR_ASSERTION]: Missing expected exception.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-net-server-call-listen-multiple-times.js:32:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-server-capture-rejection.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "unhandled Promise rejection was not handled"
+        },
+        {
+          "fixture": "test-net-server-close-before-calling-lookup-callback.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "node:net/module.js:152\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nAssertionError [ERR_ASSERTION]: function should not have been called at /workspace/work/node-fixtures/test/parallel/test-net-server-close-before-calling-lookup-callback.js:0\n    at node:assert/AssertionError.js:3:5\n    at mustNotCall (/workspace/work/node-fixtures/test/common/index.js:569:5)\n    at node:net/module.js:146:123\n    at node:net/module.js:152:118\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-server-close-before-ipc-response.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "node:net/module.js:152\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nAssertionError [ERR_ASSERTION]: function should not have been called at /workspace/work/node-fixtures/test/parallel/test-net-server-close-before-ipc-response.js:0\n    at node:assert/AssertionError.js:3:5\n    at mustNotCall (/workspace/work/node-fixtures/test/common/index.js:569:5)\n    at node:net/module.js:146:123\n    at node:net/module.js:152:118\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-server-close.js",
+          "status": "pass",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false
+        },
+        {
+          "fixture": "test-net-server-drop-connections.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "node:net/module.js:152\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nAssertionError [ERR_ASSERTION]: function should not have been called at /workspace/work/node-fixtures/test/parallel/test-net-server-drop-connections.js:0\ncalled with arguments: { _emitter: { _events: { error: [Function: onError], close: [Function (anonymous)], data: [Function (anonymous)] }, _eventsCount: 3, _maxListeners: undefined, emit: [Function (anonymous)] }, _listenerWrappers: [ { name: 'close', fn: [Function (anonymous)], wrapper: [Function (anonymous)] }, { name: 'data', fn: [Function (anonymous)], wrapper: [Function (anonymous)] } ], _events: { close: [Function (anonymous)], data: [Function (anonymous)] }, _eventsCount: 2, _readableState: { objectMode: false, highWaterMark: 65536, buffer: [], bufferIndex: 0, length: [Getter], sync: false, flowing: true, flowScheduled: false, reading: true, readableListening: false, needReadable: false, readingMore: true, readingMoreScheduled: false, resumeScheduled: false, resumeEventPending: false, readRequests: 1, ended: false, endEmitted: false, endScheduled: false, emittedReadable: false, errorEmitted: false, errored: null, closeEmitted: false, encoding: null, decoder: null, awaitDrainWriters: null, pipes: [], pipeListeners: [], autoDestroy: true, defaultEncoding: 'utf8', paused: false }, readable: true, readableDidRead: false, destroyed: false, closed: false, readableAborted: false, _read: [Function: read], _destroy: [Function: destroy], _isDuplex: true, _writableState: { objectMode: false, writable: undefined, decodeStrings: true, defaultEncoding: 'utf8', highWaterMark: 65536, buffered: 0, needDrain: false, drainPending: false, bufferedRequestCount: 0, pending: [], writing: false, ending: false, ended: false, finished: false, errored: null, errorEmitted: false, corked: 0, prefinished: false, finishScheduled: false, final: [Funct"
+        },
+        {
+          "fixture": "test-net-server-keepalive.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-net-server-keepalive.js:25\nconst onconnection = server._handle.onconnection;\n                     ^\n\nTypeError: cannot read properties of undefined\n    at /workspace/work/node-fixtures/test/parallel/test-net-server-keepalive.js:25:22\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-server-listen-handle.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-net-server-listen-handle.js:43\n    errno = handle.bind('0.0.0.0', 0);\n            ^\n\nTypeError: value is not callable\n    at randomHandle (/workspace/work/node-fixtures/test/parallel/test-net-server-listen-handle.js:43:13)\n    at /workspace/work/node-fixtures/test/parallel/test-net-server-listen-handle.js:68:13\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-server-listen-options-signal.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-net-server-listen-options-signal.js:9\n  assert.throws(\n  ^\n\nAssertionError [ERR_ASSERTION]: Missing expected exception.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-net-server-listen-options-signal.js:9:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-server-listen-options.js",
+          "status": "pass",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false
+        },
+        {
+          "fixture": "test-net-server-listen-path.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "node:net/module.js:152\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nAssertionError [ERR_ASSERTION]: Expected \"actual\" to be strictly unequal to: 0\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-net-server-listen-path.js:67:9\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:net/module.js:146:123\n    at node:net/module.js:152:118\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-server-listen-remove-callback.js",
+          "status": "pass",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "stdout": {
+            "bytes": 42,
+            "sha256": "6722c49c98ccd1ec0be02450c2da512e9e45abcb8b17c64843c5c886851048e6",
+            "excerpt": "Closed, listeners: 0\nClosed, listeners: 0\n"
+          }
+        },
+        {
+          "fixture": "test-net-server-listen2-deprecation.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "node:net/module.js:152\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-net-server-listen2-deprecation.js:25:5\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:net/module.js:146:123\n    at node:net/module.js:152:118\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-server-listen2-monkeypatch.js",
+          "status": "fail",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "stdout": {
+            "bytes": 427,
+            "sha256": "50b044bb5c2a9727f6a9901100e92967724d1f39761583e04d6714894477390a",
+            "excerpt": "Mismatched %s function calls. Expected %s, actual %d. <anonymous> exactly 1 0\n    at expectWarning (/workspace/work/node-fixtures/test/common/index.js:724:31)\n    at /workspace/work/node-fixtures/test/parallel/test-net-server-listen2-monkeypatch.js:9:1\nMismatched %s function calls. Expected %s, actual %d. <anonymous> exactly 1 0\n    at /workspace/work/node-fixtures/test/parallel/test-net-server-listen2-monkeypatch.js:15:33\n"
+          }
+        },
+        {
+          "fixture": "test-net-server-max-connections-close-makes-more-available.js",
+          "status": "timeout",
+          "exit_code": null,
+          "signal": 9,
+          "timed_out": true,
+          "stderr": {
+            "bytes": 205,
+            "sha256": "4e7caa1ac6abe972dddf510ef55e8940174ea4e9dc322ded8bd88cdd9875fe6a",
+            "excerpt": "creating connection 0\nsending message: 0\nreceived message: 0\nconnection 0 received response\ncreating connection 1\nsending message: 1\nreceived message: 1\nconnection 1 received response\nclosing connection 0\n"
+          }
+        },
+        {
+          "fixture": "test-net-server-max-connections.js",
+          "status": "timeout",
+          "exit_code": null,
+          "signal": 9,
+          "timed_out": true
+        },
+        {
+          "fixture": "test-net-server-nodelay.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-net-server-nodelay.js:17\nconst onconnection = server._handle.onconnection;\n                     ^\n\nTypeError: cannot read properties of undefined\n    at /workspace/work/node-fixtures/test/parallel/test-net-server-nodelay.js:17:22\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-server-options.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-net-server-options.js:6\nassert.throws(() => net.createServer('path'),\n^\n\nAssertionError [ERR_ASSERTION]: Missing expected exception.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-net-server-options.js:6:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-server-pause-on-connect.js",
+          "status": "timeout",
+          "exit_code": null,
+          "signal": 9,
+          "timed_out": true
+        },
+        {
+          "fixture": "test-net-server-reset.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "node:net/module.js:152\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-net-server-reset.js:15:28\n    at /workspace/work/node-fixtures/test/parallel/test-net-server-reset.js:15:5\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:net/module.js:152:118\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-server-transfer-worker.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "node:worker_threads.js:1\n(function() {return (({ isMainThread: true, MessageChannel: globalThis.MessageChannel, MessagePort: globalThis.MessagePort, Worker: class Worker { constructor() { throw Object.assign(new Error('Worker threads are unavailable in this runtime'), { code: 'ERR_WORKER_UNSUPPORTED_OPERATION' }); } } }));\n                                                                                                                                                                   ^\n\nError: Worker threads are unavailable in this runtime\n    at node:worker_threads.js:1:184\n    at /workspace/work/node-fixtures/test/parallel/test-net-server-transfer-worker.js:29:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-server-try-ports.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "node:net/module.js:152\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nError: Address already in use (os error 98)\n    at node:net/module.js:152:118\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-server-unref-persistent.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "node:bootstrap/process-surface.js:123\n          try {\n          ^\n\nAssertionError [ERR_ASSERTION]: function should not have been called at /workspace/work/node-fixtures/test/parallel/test-net-server-unref-persistent.js:0\n    at node:assert/AssertionError.js:3:5\n    at mustNotCall (/workspace/work/node-fixtures/test/common/index.js:569:5)\n    at node:bootstrap/process-surface.js:124:20\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-server-unref.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "node:bootstrap/process-surface.js:123\n          try {\n          ^\n\nAssertionError [ERR_ASSERTION]: function should not have been called at /workspace/work/node-fixtures/test/parallel/test-net-server-unref.js:0\n    at node:assert/AssertionError.js:3:5\n    at mustNotCall (/workspace/work/node-fixtures/test/common/index.js:569:5)\n    at node:bootstrap/process-surface.js:124:20\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-settimeout.js",
+          "status": "pass",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false
+        },
+        {
+          "fixture": "test-net-socket-byteswritten.js",
+          "status": "pass",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false
+        },
+        {
+          "fixture": "test-net-socket-close-after-end.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-net-socket-close-after-end.js:21\n    assert(endEmitted);\n    ^\n\nAssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-net-socket-close-after-end.js:21:5\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:stream/shared.js:80:22\n    at emit (node:events/inspection.js:14:49)\n    at node:net/module.js:13:48\n    at node:stream/shared.js:2404:7\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-socket-connect-invalid-autoselectfamily.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-net-socket-connect-invalid-autoselectfamily.js:7\nassert.throws(() => {\n^\n\nAssertionError [ERR_ASSERTION]: Missing expected exception.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-net-socket-connect-invalid-autoselectfamily.js:7:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-socket-connect-invalid-autoselectfamilyattempttimeout.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-net-socket-connect-invalid-autoselectfamilyattempttimeout.js:8\nfor (const autoSelectFamilyAttemptTimeout of [-10, 0]) {\n^\n\nAssertionError [ERR_ASSERTION]: Missing expected exception.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-net-socket-connect-invalid-autoselectfamilyattempttimeout.js:9:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-socket-connect-without-cb.js",
+          "status": "pass",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false
+        },
+        {
+          "fixture": "test-net-socket-connecting.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "node:net/module.js:152\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-net-socket-connecting.js:20:3\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:net/module.js:146:123\n    at node:net/module.js:152:118\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-socket-constructor.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-net-socket-constructor.js:8\nassert.throws(() => {\n^\n\nAssertionError [ERR_ASSERTION]: Missing expected exception.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-net-socket-constructor.js:8:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-socket-destroy-send.js",
+          "status": "pass",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false
+        },
+        {
+          "fixture": "test-net-socket-destroy-twice.js",
+          "status": "pass",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false
+        },
+        {
+          "fixture": "test-net-socket-end-before-connect.js",
+          "status": "pass",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false
+        },
+        {
+          "fixture": "test-net-socket-end-callback.js",
+          "status": "timeout",
+          "exit_code": null,
+          "signal": 9,
+          "timed_out": true
+        },
+        {
+          "fixture": "test-net-socket-local-address.js",
+          "status": "timeout",
+          "exit_code": null,
+          "signal": 9,
+          "timed_out": true
+        },
+        {
+          "fixture": "test-net-socket-no-halfopen-enforcer.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-net-socket-no-halfopen-enforcer.js:11\nassert.strictEqual(socket.listenerCount('end'), 1);\n^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-net-socket-no-halfopen-enforcer.js:11:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-socket-ready-without-cb.js",
+          "status": "fail",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "stdout": {
+            "bytes": 354,
+            "sha256": "5f2baa1f864ccd8d43508ea7ac56a8734702fe9579e8d6b9d544cb28fdb5164f",
+            "excerpt": "Mismatched %s function calls. Expected %s, actual %d. <anonymous> exactly 1 0\n    at /workspace/work/node-fixtures/test/parallel/test-net-socket-ready-without-cb.js:15:22\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:net/module.js:146:123\n    at node:net/module.js:152:118\n    at process.processTicksAndRejections (native)\n"
+          }
+        },
+        {
+          "fixture": "test-net-socket-reset-send.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-net-socket-reset-send.js:20\n    assert.strictEqual(conn, conn.resetAndDestroy().destroy());\n                             ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-net-socket-reset-send.js:20:30\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:stream/shared.js:80:22\n    at emit (node:events/inspection.js:14:49)\n    at node:net/module.js:13:48\n    at node:stream/shared.js:210:14\n    at emit (node:net/module.js:39:16)\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-socket-reset-twice.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-net-socket-reset-twice.js:11\n  conn.resetAndDestroy();\n  ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-net-socket-reset-twice.js:11:3\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:stream/shared.js:80:22\n    at emit (node:bootstrap/event-emitter.js:37:12)\n    at emit (node:events/inspection.js:14:49)\n    at node:net/module.js:13:48\n    at node:stream/shared.js:2402:9\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-socket-setnodelay.js",
+          "status": "pass",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false
+        },
+        {
+          "fixture": "test-net-socket-timeout-unref.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "node:bootstrap/process-surface.js:123\n          try {\n          ^\n\nError: socket timed out unexpectedly\n    at /workspace/work/node-fixtures/test/parallel/test-net-socket-timeout-unref.js:47:17\n    at node:stream/shared.js:65:7\n    at node:stream/shared.js:80:22\n    at emit (node:events/inspection.js:14:49)\n    at node:net/module.js:13:48\n    at node:stream/shared.js:210:14\n    at emit (node:net/module.js:48:14)\n    at node:bootstrap/process-surface.js:124:20\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-socket-timeout.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-net-socket-timeout.js:40\n  assert.throws(() => {\n  ^\n\nAssertionError [ERR_ASSERTION]: The error did not match the expected object.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-net-socket-timeout.js:40:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-socket-tos.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "node:net/module.js:152\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-net-socket-tos.js:19:5\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:net/module.js:146:123\n    at node:net/module.js:152:118\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-socket-transfer-worker-http.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "node:worker_threads.js:1\n(function() {return (({ isMainThread: true, MessageChannel: globalThis.MessageChannel, MessagePort: globalThis.MessagePort, Worker: class Worker { constructor() { throw Object.assign(new Error('Worker threads are unavailable in this runtime'), { code: 'ERR_WORKER_UNSUPPORTED_OPERATION' }); } } }));\n                                                                                                                                                                   ^\n\nError: Worker threads are unavailable in this runtime\n    at node:worker_threads.js:1:184\n    at /workspace/work/node-fixtures/test/parallel/test-net-socket-transfer-worker-http.js:38:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-socket-transfer-worker.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "node:worker_threads.js:1\n(function() {return (({ isMainThread: true, MessageChannel: globalThis.MessageChannel, MessagePort: globalThis.MessagePort, Worker: class Worker { constructor() { throw Object.assign(new Error('Worker threads are unavailable in this runtime'), { code: 'ERR_WORKER_UNSUPPORTED_OPERATION' }); } } }));\n                                                                                                                                                                   ^\n\nError: Worker threads are unavailable in this runtime\n    at node:worker_threads.js:1:184\n    at /workspace/work/node-fixtures/test/parallel/test-net-socket-transfer-worker.js:30:16\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-socket-write-after-close.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-net-socket-write-after-close.js:37\n      client._handle.close();\n      ^\n\nTypeError: cannot read properties of null\n    at /workspace/work/node-fixtures/test/parallel/test-net-socket-write-after-close.js:37:7\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:stream/shared.js:65:7\n    at node:stream/shared.js:80:22\n    at emit (node:events/inspection.js:14:49)\n    at node:net/module.js:13:48\n    at node:stream/shared.js:210:14\n    at emit (node:net/module.js:39:16)\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-socket-write-error.js",
+          "status": "pass",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false
+        },
+        {
+          "fixture": "test-net-stream.js",
+          "status": "fail",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "stdout": {
+            "bytes": 303,
+            "sha256": "cf1e039089917a312e1210ec4376b5d8b9217c510e43aef345cf5db9a9b049cd",
+            "excerpt": "Mismatched %s function calls. Expected %s, actual %d. <anonymous> exactly 1 0\n    at /workspace/work/node-fixtures/test/parallel/test-net-stream.js:35:22\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:net/module.js:152:118\n    at process.processTicksAndRejections (native)\n"
+          }
+        },
+        {
+          "fixture": "test-net-sync-cork.js",
+          "status": "pass",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false
+        },
+        {
+          "fixture": "test-net-throttle.js",
+          "status": "timeout",
+          "exit_code": null,
+          "signal": 9,
+          "timed_out": true
+        },
+        {
+          "fixture": "test-net-timeout-no-handle.js",
+          "status": "pass",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false
+        },
+        {
+          "fixture": "test-net-transfer-guards.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-net-transfer-guards.js:18\n  assert.throws(() => port1.postMessage({ server }, [server]), {\n  ^\n\nAssertionError [ERR_ASSERTION]: The error did not match the expected object.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-net-transfer-guards.js:18:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-writable.js",
+          "status": "pass",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false
+        },
+        {
+          "fixture": "test-net-write-after-close.js",
+          "status": "timeout",
+          "exit_code": null,
+          "signal": 9,
+          "timed_out": true
+        },
+        {
+          "fixture": "test-net-write-after-end-nt.js",
+          "status": "timeout",
+          "exit_code": null,
+          "signal": 9,
+          "timed_out": true
+        },
+        {
+          "fixture": "test-net-write-arguments.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-net-write-arguments.js:31\n  assert.throws(() => {\n  ^\n\nAssertionError [ERR_ASSERTION]: The error did not match the expected object.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-net-write-arguments.js:31:3\n    at /workspace/work/node-fixtures/test/parallel/test-net-write-arguments.js:17:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-write-cb-on-destroy-before-connect.js",
+          "status": "pass",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false
+        },
+        {
+          "fixture": "test-net-write-connect-write.js",
+          "status": "timeout",
+          "exit_code": null,
+          "signal": 9,
+          "timed_out": true
+        },
+        {
+          "fixture": "test-net-write-fully-async-buffer.js",
+          "status": "pass",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false
+        },
+        {
+          "fixture": "test-net-write-fully-async-hex-string.js",
+          "status": "timeout",
+          "exit_code": null,
+          "signal": 9,
+          "timed_out": true
+        },
+        {
+          "fixture": "test-net-write-slow.js",
+          "status": "timeout",
+          "exit_code": null,
+          "signal": 9,
+          "timed_out": true
+        }
+      ]
+    },
+    "http_server": {
+      "counts": {
+        "fail": 40,
+        "timeout": 11,
+        "pass": 3
+      },
+      "total": 54,
+      "inventory_hash": "32c51679700fe530",
+      "jobs": 4,
+      "timeout_secs": 30,
+      "runner_commit_metadata": "218b11d61252df83290c727061794b7de171e283",
+      "gained_passes": [],
+      "lost_passes": [],
+      "raw_sha256": "ea2e7744981ce97e8911cde508b130ebe7bd0650ace8547d122ddab46e2eaa91",
+      "results": [
+        {
+          "fixture": "test-http-server-async-dispose.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "TypeError: value is not callable"
+        },
+        {
+          "fixture": "test-http-server-capture-rejections.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "node:bootstrap/event-emitter.js:24\n      if (error instanceof Error) throw error;\n                                  ^\n\nError: kaboom\n    at /workspace/work/node-fixtures/test/parallel/test-http-server-capture-rejections.js:14:11\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at emit (node:events/inspection.js:14:49)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-http-server-clear-timer.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "TypeError: cannot read properties of undefined"
+        },
+        {
+          "fixture": "test-http-server-client-error.js",
+          "status": "timeout",
+          "exit_code": null,
+          "signal": 9,
+          "timed_out": true
+        },
+        {
+          "fixture": "test-http-server-close-all.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-http-server-close-all.js:40\n        assert(response.startsWith('HTTP/1.1 200 OK\\r\\nConnection: keep-alive'));\n        ^\n\nAssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-http-server-close-all.js:40:9\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:stream/shared.js:80:22\n    at emit (node:events/inspection.js:14:49)\n    at node:net/module.js:13:48\n    at addReadableChunk (node:stream/shared.js:757:9)\n    at push (node:stream/shared.js:953:9)\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-http-server-close-destroy-timeout.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "TypeError: cannot read properties of undefined"
+        },
+        {
+          "fixture": "test-http-server-close-idle-connections-pre-request.js",
+          "status": "timeout",
+          "exit_code": null,
+          "signal": 9,
+          "timed_out": true
+        },
+        {
+          "fixture": "test-http-server-close-idle-wait-response.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "node:bootstrap/process-surface.js:123\n          try {\n          ^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-http-server-close-idle-wait-response.js:23:7\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:bootstrap/process-surface.js:124:20\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-http-server-close-idle.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-http-server-close-idle.js:42\n        assert(response.startsWith('HTTP/1.1 200 OK\\r\\nConnection: keep-alive'));\n        ^\n\nAssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-http-server-close-idle.js:42:9\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:stream/shared.js:80:22\n    at emit (node:events/inspection.js:14:49)\n    at node:net/module.js:13:48\n    at addReadableChunk (node:stream/shared.js:757:9)\n    at push (node:stream/shared.js:953:9)\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-http-server-connection-list-when-close.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "TypeError: cannot set properties of undefined"
+        },
+        {
+          "fixture": "test-http-server-connections-checking-leak.js",
+          "status": "fail",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "stdout": {
+            "bytes": 249,
+            "sha256": "7fd2b7b7af6eea25081611daaed1769e32177d3d7a542b92c7c11ee7d4baea87",
+            "excerpt": "Mismatched %s function calls. Expected %s, actual %d. <anonymous> exactly 1 0\n    at /workspace/work/node-fixtures/test/common/countdown.js:13:23\n    at /workspace/work/node-fixtures/test/parallel/test-http-server-connections-checking-leak.js:15:19\n"
+          }
+        },
+        {
+          "fixture": "test-http-server-consumed-timeout.js",
+          "status": "timeout",
+          "exit_code": null,
+          "signal": 9,
+          "timed_out": true
+        },
+        {
+          "fixture": "test-http-server-de-chunked-trailer.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "AssertionError: Missing expected exception."
+        },
+        {
+          "fixture": "test-http-server-delete-parser.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-http-server-delete-parser.js:24\nserver.unref();\n^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-http-server-delete-parser.js:24:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-http-server-destroy-socket-on-client-error.js",
+          "status": "timeout",
+          "exit_code": null,
+          "signal": 9,
+          "timed_out": true
+        },
+        {
+          "fixture": "test-http-server-drop-connections-in-cluster.js",
+          "status": "timeout",
+          "exit_code": null,
+          "signal": 9,
+          "timed_out": true
+        },
+        {
+          "fixture": "test-http-server-headers-null-proto.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "TypeError: value is not callable"
+        },
+        {
+          "fixture": "test-http-server-headers-timeout-delayed-headers.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-http-server-headers-timeout-delayed-headers.js:25\nassert.strictEqual(server.headersTimeout, headersTimeout);\n^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-http-server-headers-timeout-delayed-headers.js:25:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-http-server-headers-timeout-interrupted-headers.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-http-server-headers-timeout-interrupted-headers.js:25\nassert.strictEqual(server.headersTimeout, headersTimeout);\n^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-http-server-headers-timeout-interrupted-headers.js:25:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-http-server-headers-timeout-keepalive.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-http-server-headers-timeout-keepalive.js:38\nassert.strictEqual(server.headersTimeout, headersTimeout);\n^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-http-server-headers-timeout-keepalive.js:38:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-http-server-headers-timeout-pipelining.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-http-server-headers-timeout-pipelining.js:24\nassert.strictEqual(server.headersTimeout, headersTimeout);\n^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-http-server-headers-timeout-pipelining.js:24:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-http-server-incomingmessage-destroy.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "AssertionError: function onUncaught(error) {} at /workspace/work/node-fixtures/test/parallel/test-http-server-incomingmessage-destroy.js:0\ncalled with arguments: Error: Destroy test\n    at /workspace/work/node-fixtures/test/parallel/test-http-server-incomingmessage-destroy.js:8:15\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at emit (node:events/inspection.js:14:49), 'uncaughtException'"
+        },
+        {
+          "fixture": "test-http-server-invalid-headers-timeout-no-abort.js",
+          "status": "pass",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false
+        },
+        {
+          "fixture": "test-http-server-keep-alive-defaults.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "AssertionError: Expected values to be strictly equal"
+        },
+        {
+          "fixture": "test-http-server-keep-alive-max-requests-null.js",
+          "status": "timeout",
+          "exit_code": null,
+          "signal": 9,
+          "timed_out": true
+        },
+        {
+          "fixture": "test-http-server-keep-alive-timeout.js",
+          "status": "timeout",
+          "exit_code": null,
+          "signal": 9,
+          "timed_out": true
+        },
+        {
+          "fixture": "test-http-server-keepalive-end.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-http-server-keepalive-end.js:22\nserver.unref();\n^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-http-server-keepalive-end.js:22:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-http-server-keepalive-req-gc.js",
+          "status": "timeout",
+          "exit_code": null,
+          "signal": 9,
+          "timed_out": true
+        },
+        {
+          "fixture": "test-http-server-method.query.js",
+          "status": "pass",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false
+        },
+        {
+          "fixture": "test-http-server-multiheaders.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "TypeError: Invalid HTTP header name"
+        },
+        {
+          "fixture": "test-http-server-multiheaders2.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "TypeError: Invalid HTTP header name"
+        },
+        {
+          "fixture": "test-http-server-multiple-client-error.js",
+          "status": "fail",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "stdout": {
+            "bytes": 177,
+            "sha256": "36fef52bc2b4f7b18c55df9c99943b9ff903cb5c7ed0f193f8bd3e68c50b8dfe",
+            "excerpt": "Mismatched %s function calls. Expected %s, actual %d. <anonymous> exactly 1 0\n    at /workspace/work/node-fixtures/test/parallel/test-http-server-multiple-client-error.js:29:32\n"
+          }
+        },
+        {
+          "fixture": "test-http-server-non-utf8-header.js",
+          "status": "pass",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false
+        },
+        {
+          "fixture": "test-http-server-optimize-empty-requests.js",
+          "status": "timeout",
+          "exit_code": null,
+          "signal": 9,
+          "timed_out": true
+        },
+        {
+          "fixture": "test-http-server-options-highwatermark.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "AssertionError: Expected values to be strictly equal"
+        },
+        {
+          "fixture": "test-http-server-options-incoming-message.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "TypeError: value is not callable"
+        },
+        {
+          "fixture": "test-http-server-options-server-response.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "TypeError: value is not callable"
+        },
+        {
+          "fixture": "test-http-server-reject-chunked-with-content-length.js",
+          "status": "timeout",
+          "exit_code": null,
+          "signal": 9,
+          "timed_out": true
+        },
+        {
+          "fixture": "test-http-server-reject-cr-no-lf.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "AssertionError: function should not have been called at /workspace/work/node-fixtures/test/parallel/test-http-server-reject-cr-no-lf.js:0\ncalled with arguments: { _emitter: { _events: { error: [Function: onError] }, _eventsCount: 1, _maxListeners: undefined }, _listenerWrappers: [], _events: {}, _eventsCount: 0, _readableState: { objectMode: false, highWaterMark: 65536, buffer: [], bufferIndex: 0, length: [Getter], sync: false, flowing: null, flowScheduled: false, reading: false, readableListening: false, needReadable: false, readingMore: true, readingMoreScheduled: false, resumeScheduled: false, resumeEventPending: false, readRequests: 0, ended: true, endEmitted: false, endScheduled: true, emittedReadable: false, errorEmitted: false, errored: null, closeEmitted: false, encoding: null, decoder: null, awaitDrainWriters: null, pipes: [], pipeListeners: [], autoDestroy: true, defaultEncoding: 'utf8' }, readable: true, readableDidRead: false, destroyed: false, closed: false, readableAborted: false, _read: [Function: read], method: 'GET', url: '/', httpVersion: '1.1', httpVersionMajor: 1, httpVersionMinor: 1, headers: { dummy: 'Header\\rContent-Length: 1' }, rawHeaders: [ 'Dummy', 'Header\\rContent-Length: 1' ], socket: { readable: true, writable: true }, complete: true }, { _emitter: { _events: {}, _eventsCount: 0, _maxListeners: undefined }, _listenerWrappers: [], _events: {}, _eventsCount: 0, _writableState: { objectMode: false, writable: undefined, decodeStrings: true, defaultEncoding: 'utf8', highWaterMark: 65536, buffered: 0, needDrain: false, drainPending: false, bufferedRequestCount: 0, pending: [], writing: false, ending: false, ended: false, finished: false, errored: null, errorEmitted: false, corked: 0, prefinished: false, finishScheduled: false, final: [Function: final], endCallbacks: [], autoDestroy: false, destroyed: false, getBuffer: [Function (anonymous)] }, writable: true, writableAborted: false, _write: [Function: write], _destroy: [Function: destroy], finished: false, statusCode: 200, statusMessage: '"
+        },
+        {
+          "fixture": "test-http-server-request-timeout-delayed-body.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-http-server-request-timeout-delayed-body.js:37\nassert.strictEqual(server.requestTimeout, requestTimeout);\n^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-http-server-request-timeout-delayed-body.js:37:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-http-server-request-timeout-delayed-headers.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-http-server-request-timeout-delayed-headers.js:25\nassert.strictEqual(server.requestTimeout, requestTimeout);\n^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-http-server-request-timeout-delayed-headers.js:25:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-http-server-request-timeout-interrupted-body.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-http-server-request-timeout-interrupted-body.js:37\nassert.strictEqual(server.requestTimeout, requestTimeout);\n^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-http-server-request-timeout-interrupted-body.js:37:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-http-server-request-timeout-interrupted-headers.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-http-server-request-timeout-interrupted-headers.js:25\nassert.strictEqual(server.requestTimeout, requestTimeout);\n^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-http-server-request-timeout-interrupted-headers.js:25:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-http-server-request-timeout-keepalive.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-http-server-request-timeout-keepalive.js:38\nassert.strictEqual(server.requestTimeout, requestTimeout);\n^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-http-server-request-timeout-keepalive.js:38:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-http-server-request-timeout-pipelining.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-http-server-request-timeout-pipelining.js:23\nassert.strictEqual(server.requestTimeout, requestTimeout);\n^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-http-server-request-timeout-pipelining.js:23:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-http-server-request-timeout-upgrade.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-http-server-request-timeout-upgrade.js:23\nassert.strictEqual(server.requestTimeout, requestTimeout);\n^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-http-server-request-timeout-upgrade.js:23:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-http-server-response-standalone.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-http-server-response-standalone.js:32\nres.assignSocket(ws);\n^\n\nTypeError: value is not callable\n    at /workspace/work/node-fixtures/test/parallel/test-http-server-response-standalone.js:32:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-http-server-stale-close.js",
+          "status": "timeout",
+          "exit_code": null,
+          "signal": 9,
+          "timed_out": true
+        },
+        {
+          "fixture": "test-http-server-timeouts-validation.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-http-server-timeouts-validation.js:11\n  assert.strictEqual(server.headersTimeout, 60000);\n  ^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-http-server-timeouts-validation.js:11:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-http-server-unconsume-consume.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "AssertionError: function should not have been called at /workspace/work/node-fixtures/test/parallel/test-http-server-unconsume-consume.js:0\ncalled with arguments: { _emitter: { _events: { error: [Function: onError] }, _eventsCount: 1, _maxListeners: undefined }, _listenerWrappers: [], _events: {}, _eventsCount: 0, _readableState: { objectMode: false, highWaterMark: 65536, buffer: [], bufferIndex: 0, length: [Getter], sync: false, flowing: null, flowScheduled: false, reading: false, readableListening: false, needReadable: false, readingMore: true, readingMoreScheduled: false, resumeScheduled: false, resumeEventPending: false, readRequests: 0, ended: true, endEmitted: false, endScheduled: true, emittedReadable: false, errorEmitted: false, errored: null, closeEmitted: false, encoding: null, decoder: null, awaitDrainWriters: null, pipes: [], pipeListeners: [], autoDestroy: true, defaultEncoding: 'utf8' }, readable: true, readableDidRead: false, destroyed: false, closed: false, readableAborted: false, _read: [Function: read], method: 'CONNECT', url: '/', httpVersion: '1.1', httpVersionMajor: 1, httpVersionMinor: 1, headers: { host: 'localhost:36405', connection: 'keep-alive' }, rawHeaders: [ 'Host', 'localhost:36405', 'Connection', 'keep-alive' ], socket: { readable: true, writable: true }, complete: true }, { _emitter: { _events: {}, _eventsCount: 0, _maxListeners: undefined }, _listenerWrappers: [], _events: {}, _eventsCount: 0, _writableState: { objectMode: false, writable: undefined, decodeStrings: true, defaultEncoding: 'utf8', highWaterMark: 65536, buffered: 0, needDrain: false, drainPending: false, bufferedRequestCount: 0, pending: [], writing: false, ending: false, ended: false, finished: false, errored: null, errorEmitted: false, corked: 0, prefinished: false, finishScheduled: false, final: [Function: final], endCallbacks: [], autoDestroy: false, destroyed: false, getBuffer: [Function (anonymous)] }, writable: true, writableAborted: false, _write: [Function: write], _destroy: [Function: destroy], finished: fa"
+        },
+        {
+          "fixture": "test-http-server-unconsume.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-http-server-unconsume.js:29\n        assert.strictEqual(received, 'hello world',\n        ^\n\nAssertionError [ERR_ASSERTION]: failed for socket.addListener\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-http-server-unconsume.js:29:9\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:stream/shared.js:80:22\n    at emit (node:events/inspection.js:14:49)\n    at node:net/module.js:13:48\n    at completeReadableEnd (node:stream/shared.js:546:5)\n    at node:stream/shared.js:663:13\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-http-server-write-after-end.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "node:http/response-factory.js:38\n      write(id, chunk, !ending, response.statusCode, response.statusMessage);\n      ^\n\nError: write after end\n    at node:http/response-factory.js:38:7\n    at /workspace/work/node-fixtures/test/parallel/test-http-server-write-after-end.js:17:5\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:bootstrap/process-surface.js:156:18\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-http-server-write-end-after-end.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "node:http/response-factory.js:38\n      write(id, chunk, !ending, response.statusCode, response.statusMessage);\n      ^\n\nError: write after end\n    at node:http/response-factory.js:38:7\n    at /workspace/work/node-fixtures/test/parallel/test-http-server-write-end-after-end.js:19:5\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:bootstrap/process-surface.js:156:18\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-http-server.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "AssertionError: Expected values to be strictly equal"
+        }
+      ]
+    },
+    "final_error_paths": {
+      "counts": {
+        "pass": 2,
+        "fail": 2
+      },
+      "total": 4,
+      "inventory_hash": "85901bb8ffa0c8ec",
+      "jobs": 4,
+      "timeout_secs": 30,
+      "runner_commit_metadata": "218b11d61252df83290c727061794b7de171e283",
+      "gained_passes": [
+        "test-net-better-error-messages-listen-path.js",
+        "test-net-better-error-messages-path.js"
+      ],
+      "lost_passes": [],
+      "raw_sha256": "e0718d4c8c3bc700988bf4e89271aeb73dd7499cccdadcad49a916d54d753757",
+      "results": [
+        {
+          "fixture": "test-net-better-error-messages-listen-path.js",
+          "status": "pass",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false
+        },
+        {
+          "fixture": "test-net-better-error-messages-listen.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "node:net/module.js:159\n      listenOperation(this, port, host, options);\n      ^\n\nCannot assign requested address (os error 99)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-net-better-error-messages-path.js",
+          "status": "pass",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false
+        },
+        {
+          "fixture": "test-net-better-error-messages-port-hostname.js",
+          "status": "fail",
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-net-better-error-messages-port-hostname.js:29\n  assert.throws(() => { throw error; }, {\n  ^\n\nAssertionError [ERR_ASSERTION]: The error did not match the expected object.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-net-better-error-messages-port-hostname.js:29:3\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:stream/shared.js:80:22\n    at emit (node:bootstrap/event-emitter.js:37:12)\n    at emit (node:events/inspection.js:14:49)\n    at node:net/module.js:13:48\n    at node:stream/shared.js:2402:9\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        }
+      ]
+    },
+    "final_listen_options": {
+      "counts": {
+        "pass": 1
+      },
+      "total": 1,
+      "inventory_hash": "522f9cfcd434f7f8",
+      "jobs": 1,
+      "timeout_secs": 30,
+      "runner_commit_metadata": "218b11d61252df83290c727061794b7de171e283",
+      "gained_passes": [],
+      "lost_passes": [],
+      "raw_sha256": "a4c7d9d4d88b330c70162e0e75f347f408c33d6ad504227fae93c5900c01220b",
+      "results": [
+        {
+          "fixture": "test-net-server-listen-options.js",
+          "status": "pass",
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false
+        }
+      ]
+    }
+  },
+  "richards_diagnostic": {
+    "suite": "stock V8-v7 Richards; exact base.js + richards.js + existing repository RUNNER",
+    "qualification": "One diagnostic round; iteration build, two engines only. No matched production or aggregate performance claim.",
+    "platform": "linux-x86_64",
+    "cpu_max": "400000 100000",
+    "memory_max": "17179869184",
+    "results": [
+      {
+        "engine": "quench-iteration",
+        "argv": [
+          "target/iteration/quench-node"
+        ],
+        "exit_code": 0,
+        "timed_out": false,
+        "elapsed_seconds": 2.401913843001239,
+        "peak_rss_kib": 117648,
+        "stdout": "__quenchBenchResult: Richards: 155\n----\nScore: 155\n",
+        "stderr": ""
+      },
+      {
+        "engine": "node27-jitless",
+        "argv": [
+          "work/node-v27.0.0-nightly20260819c79868f102-linux-x64/bin/node",
+          "--jitless"
+        ],
+        "exit_code": 0,
+        "timed_out": false,
+        "elapsed_seconds": 2.2018360899965046,
+        "peak_rss_kib": 70444,
+        "stdout": "__quenchBenchResult: Richards: 1897\n----\nScore: 1897\n",
+        "stderr": ""
+      }
+    ]
+  },
+  "qualifications": [
+    "The 4,727-case all-pass goal remains open; focused results do not establish new overall full-suite counts.",
+    "Full final-source net group uses unchanged binaries with no overlapping builds or other guest tests. Initial focused checks overlapped independent oracle compilation and guest tests; retained HTTP-server group ran before the final error-format-only correction, with no lost passes.",
+    "Final 106-oracle run used one test thread. An earlier concurrent run failed the child-reference PID-within-500ms assertion; the unchanged child implementation passes isolated qualification.",
+    "The prior net group briefly lost listen-options and was corrected before publishing. Source commit d092d59fc records final implementation; compiled binary metadata reports 218b11d61.",
+    "Unix listeners/streams and Linux abstract namespaces are real OS resources. This does not establish Windows named-pipe support, server fd adoption, full options/getter ordering, permissions flags or socket/server reference behavior. Absolute resolution of relative paths can affect sockaddr_un length and does not preserve fd-relative rename races.",
+    "One-round, two-engine iteration Richards diagnostic only; no matched production or aggregate performance claim.",
+    "A large hex write previously timed out and passed in a preceding focused group. This timing-sensitive transition does not by itself establish a functional cause; the final retained net results are authoritative."
+  ]
+}

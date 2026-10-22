@@ -1,0 +1,11 @@
+Baseline production layout (rustc 1.99.0, x86_64 Linux):
+print-type-size type: `heap::Slot`: 96 bytes, alignment: 16 bytes
+print-type-size type: `heap::cell::Cell`: 96 bytes, alignment: 16 bytes
+print-type-size     variant `TemporalZonedDateTime`: 63 bytes
+print-type-size     variant `TemporalInstant`: 31 bytes
+
+Candidate production layout (same toolchain/target):
+print-type-size type: `heap::Slot`: 88 bytes, alignment: 8 bytes
+print-type-size type: `heap::cell::Cell`: 88 bytes, alignment: 8 bytes
+print-type-size     variant `TemporalZonedDateTime`: 55 bytes
+print-type-size     variant `TemporalInstant`: 23 bytes

@@ -1,0 +1,13 @@
+{
+  "status": "complete",
+  "commands": [
+    [
+      "bash",
+      "/workspace/quench/work/native-buffer-unsafe/qualify-quiet.sh"
+    ]
+  ],
+  "exit": 0,
+  "supervisor_pid": 2961952,
+  "session_id": 2961951,
+  "utc": "2026-10-16T07:15:00.601633+00:00"
+}

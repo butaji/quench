@@ -1,0 +1,49 @@
+{
+  "schema": 1,
+  "task": "61",
+  "experiment": "Lazily build per-shape property lookup indexes for long shapes",
+  "decision": "reject and remove: repeated long-shape reads improve, but startup max RSS rises by about 4.2 MiB even for an empty process; no fixture-level result justifies this global memory cost",
+  "source": {
+    "base_revision": "d8a4a0987e86250ae7aa6442c28c808aa87cf6d3",
+    "threshold_candidate_source_diff_sha256": "77fcc7820ee54e525f3f69c73eca29573cb95b709f80a8aec667b2d5ad90354c",
+    "inline_candidate_source_diff_sha256": "ed0536afd4300cb3ea39b074fe051e8e49a13c0191e31ca1dbda48761c4b3f09",
+    "threshold_candidate_binary_sha256": "95e794637d39f5c3e92d3bd3ba1fbe9d1efb5502923aeababf1555ae81fbbaf3",
+    "inline_candidate_binary_sha256": "e674a62e1456aaddd9e4f6e85ea071b76ecc854016b1aba6958e7e3b9d2e2afb",
+    "baseline_binary_sha256": "d57de12813b4e251b1c4c1f3167bcf1eaa86e67ef0f525e6b518d488cb0a0b41",
+    "implementation_status": "removed from the working tree"
+  },
+  "host": {
+    "cpu": "Apple M4",
+    "os": "macOS 26.5 ARM64"
+  },
+  "measurement": {
+    "steady_state": {
+      "cjs_inherited_read": "1,000,000 reads per process, matched loop control, three process replicates",
+      "instructions_per_read_by_shape_size": {
+        "8_properties": {"baseline": 2273, "candidate": 2304},
+        "16_properties": {"baseline": 2753, "candidate": 2792},
+        "32_properties": {"baseline": 3714, "candidate": 1882},
+        "48_properties": {"baseline": 4674, "candidate": 1883},
+        "64_properties": {"baseline": 5634, "candidate": 1884}
+      },
+      "primitive_string_char_code_at": {
+        "baseline_instructions_per_call": 13114,
+        "candidate_instructions_per_call": 4009,
+        "change_percent": -69.4
+      },
+      "own_field_control": "effectively tied"
+    },
+    "startup_max_rss": {
+      "empty_eval_baseline_mib": 18.766,
+      "empty_eval_candidate_mib": 22.969,
+      "paired_delta_range_mib": [4.09, 4.38],
+      "print_baseline_mib": 18.859,
+      "print_candidate_mib": 23.047,
+      "print_paired_delta_range_mib": [4.17, 4.27],
+      "__TEXT_change": "unchanged"
+    },
+    "artifact_directory": "target/iteration/lazy-shape-index-inclusive-amortization-20261008",
+    "interpretation": "The index speeds repeated lookups on shapes with at least 32 properties but is also built during startup lookups of builtin shapes. First-use break-even on ordinary fixture sites and fixture-level score/RSS remain unqualified."
+  },
+  "next_candidate": "Evaluate inherited prototype-holder or primitive-receiver site caches first; these can remove hot searches without persistent indexes on every long shape."
+}

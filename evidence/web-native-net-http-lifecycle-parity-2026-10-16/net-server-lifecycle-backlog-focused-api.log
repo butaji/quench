@@ -1,0 +1,49 @@
+
+running 2 tests
+test tcp_default_listen_backlog_matches_node_when_syscall_tracing_is_available ... FAILED
+test tcp_option_listen_backlog_matches_node_truthiness_and_int32_when_tracing_is_available ... FAILED
+
+failures:
+
+---- tcp_default_listen_backlog_matches_node_when_syscall_tracing_is_available stdout ----
+
+thread 'tcp_default_listen_backlog_matches_node_when_syscall_tracing_is_available' (688122) panicked at crates/quench-node-test/tests/child_entry.rs:1495:9:
+assertion `left == right` failed: <eval>:6
+ try {
+ ^
+
+Error: Command failed: strace
+    at synchronousCommand (eval at <anonymous> ([eval]:1:13), <anonymous>:214:37)
+    at execFileSync (eval at <anonymous> ([eval]:1:13), <anonymous>:229:12)
+    at [eval]:9:9
+
+Node.js v26.12.0
+
+  left: Some(1)
+ right: Some(0)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- tcp_option_listen_backlog_matches_node_truthiness_and_int32_when_tracing_is_available stdout ----
+
+thread 'tcp_option_listen_backlog_matches_node_truthiness_and_int32_when_tracing_is_available' (688149) panicked at crates/quench-node-test/tests/child_entry.rs:1495:9:
+assertion `left == right` failed: <eval>:6
+ try {
+ ^
+
+Error: Command failed: strace
+    at synchronousCommand (eval at <anonymous> ([eval]:1:13), <anonymous>:214:37)
+    at execFileSync (eval at <anonymous> ([eval]:1:13), <anonymous>:229:12)
+    at [eval]:9:9
+
+Node.js v26.12.0
+
+  left: Some(1)
+ right: Some(0)
+
+
+failures:
+    tcp_default_listen_backlog_matches_node_when_syscall_tracing_is_available
+    tcp_option_listen_backlog_matches_node_truthiness_and_int32_when_tracing_is_available
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 382 filtered out; finished in 2.45s
+

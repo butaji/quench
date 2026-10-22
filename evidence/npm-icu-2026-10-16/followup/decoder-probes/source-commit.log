@@ -1,0 +1,4 @@
+[v2-cand-npm-streams 5dfcf152c] fix(node): run canonical encoding over persistent native ICU converters
+ 12 files changed, 864 insertions(+), 169 deletions(-)
+ create mode 100644 crates/quench-node/src/modules/icu_binding_shared_vm.rs
+ create mode 100644 tools/build-node-icu.py

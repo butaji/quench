@@ -1,0 +1,196 @@
+{
+  "schema": 1,
+  "task": "27",
+  "kind": "current_framework_node_requalification",
+  "reviewed_on": "2026-10-08",
+  "source": {
+    "revision": "415404ba53cdbd9243737754eefec80e265b47d9",
+    "dirty": true,
+    "platform": "Darwin arm64",
+    "snapshot_algorithm": "SHA-256 over sorted UTF-8 relative path, NUL, file SHA-256 hex, newline records",
+    "snapshot_file_count": 1234,
+    "snapshot_sha256": "ebfbc80096b22887fdf18ac9c704aa37d4891e8d80dcd7b5224c808a01de8cb7",
+    "snapshot_roots": [
+      "crates/quench-node/src",
+      "crates/quench-node-test/src",
+      "crates/quench-runtime-next/src",
+      "crates/quench-runtime/src",
+      "vendor/oxc-parser-next/src"
+    ],
+    "snapshot_additional_files": [
+      "Cargo.toml",
+      "Cargo.lock",
+      "crates/quench-node/Cargo.toml",
+      "crates/quench-node-test/Cargo.toml",
+      "crates/quench-runtime-next/Cargo.toml",
+      "crates/quench-runtime/Cargo.toml",
+      "vendor/oxc-parser-next/Cargo.toml",
+      "crates/quench-node-test/node-tests/parallel.txt"
+    ]
+  },
+  "node": {
+    "version": "v26.10.0",
+    "executable": "/opt/homebrew/bin/node"
+  },
+  "authority": {
+    "profile": "framework-core",
+    "node_parallel_manifest": "crates/quench-node-test/node-tests/parallel.txt",
+    "node_parallel_manifest_sha256": "0209917422a2f0f3fa241d941ec4bc88c9917d5322b69014ab1a662a52e9dfca",
+    "cases_selected_from_manifest": 43,
+    "prior_case_manifest": "tasks/evidence/task21-framework-core-final-2026-10-07.json"
+  },
+  "binaries": {
+    "run-parallel_sha256": "78816d96464983364e090040623e2609495536d0a7cbbdc1902f5cf48759d9e3",
+    "quench-node_sha256": "542378914c002094efcc26c0445bb72784a787ff876d8b778a6644cdbdd8e728"
+  },
+  "profile_result": {
+    "command": "target/iteration/run-parallel --profile framework-core",
+    "pass": 43,
+    "skip": 0,
+    "fail": 0,
+    "timeout": 0,
+    "crash": 0,
+    "unclassified": 0,
+    "total": 43,
+    "stdout_artifact": "target/iteration/task27-framework-core-after-prune-2026-10-08.stdout",
+    "stderr_artifact": "target/iteration/task27-framework-core-after-prune-2026-10-08.stderr",
+    "stdout_sha256": "2f2d921dcfce7bd620f630e927555625fcd4e20465e3fc2110af3973bf050cc9",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "framework_scenario_inputs_sha256": {
+    "tests/frameworks/driver.cjs": "e8dd245f9bbfcdcd3a430ff7ed663c3310fdf32fae23cfc5c24d24cbeda96bfb",
+    "tests/frameworks/scenarios/express.cjs": "85eebbbc5c9cfaa01f2f16b6c7e181a4c4bc2e308bd1bb179f49c5d9700f8158",
+    "tests/frameworks/scenarios/koa.cjs": "962e4c326df72b30eed4306494e2218475456c7c816220a6e46a898b040185f9",
+    "tests/frameworks/scenarios/fastify.cjs": "1ff4fc87e2a4c792761c286bc0f255d0ab9be27e810dbf98938a1ac717d1ba6a",
+    "tests/frameworks/scenarios/asset.txt": "d74d6fb7af1951d71bc36de5b5f9f50c09c6adb8ab00b82e2041415715b213ce",
+    "tests/frameworks/package.json": "5f82b6f9cf2dd1e2ad385afebeda3627ac952366004c76350e4f87b0bac170d5",
+    "tests/frameworks/package-lock.json": "fb752f9a87781cc8132c88ced58a8c17ebaacc1789d244b8b7c4a6c9888d5759"
+  },
+  "scenarios": {
+    "express": {
+      "node": {
+        "command": [
+          "/opt/homebrew/bin/node",
+          "driver.cjs",
+          "scenarios/express.cjs"
+        ],
+        "exit_status": 0,
+        "timeout": false,
+        "stdout_bytes": 29,
+        "stderr_bytes": 0,
+        "stdout_sha256": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout_text": "statuses 200,200,200,200,404\n",
+        "stderr_text": "",
+        "raw_artifacts": {
+          "stdout": "target/iteration/task27-framework-current-2026-10-08/express-node.stdout",
+          "stderr": "target/iteration/task27-framework-current-2026-10-08/express-node.stderr"
+        }
+      },
+      "quench": {
+        "command": [
+          "/Users/admin/Code/GitHub/quench-v2/target/iteration/quench-node",
+          "driver.cjs",
+          "scenarios/express.cjs"
+        ],
+        "exit_status": 0,
+        "timeout": false,
+        "stdout_bytes": 29,
+        "stderr_bytes": 0,
+        "stdout_sha256": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout_text": "statuses 200,200,200,200,404\n",
+        "stderr_text": "",
+        "raw_artifacts": {
+          "stdout": "target/iteration/task27-framework-current-2026-10-08/express-quench.stdout",
+          "stderr": "target/iteration/task27-framework-current-2026-10-08/express-quench.stderr"
+        }
+      },
+      "exact_match": true
+    },
+    "koa": {
+      "node": {
+        "command": [
+          "/opt/homebrew/bin/node",
+          "driver.cjs",
+          "scenarios/koa.cjs"
+        ],
+        "exit_status": 0,
+        "timeout": false,
+        "stdout_bytes": 29,
+        "stderr_bytes": 0,
+        "stdout_sha256": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout_text": "statuses 200,200,200,200,404\n",
+        "stderr_text": "",
+        "raw_artifacts": {
+          "stdout": "target/iteration/task27-framework-current-2026-10-08/koa-node.stdout",
+          "stderr": "target/iteration/task27-framework-current-2026-10-08/koa-node.stderr"
+        }
+      },
+      "quench": {
+        "command": [
+          "/Users/admin/Code/GitHub/quench-v2/target/iteration/quench-node",
+          "driver.cjs",
+          "scenarios/koa.cjs"
+        ],
+        "exit_status": 0,
+        "timeout": false,
+        "stdout_bytes": 29,
+        "stderr_bytes": 0,
+        "stdout_sha256": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout_text": "statuses 200,200,200,200,404\n",
+        "stderr_text": "",
+        "raw_artifacts": {
+          "stdout": "target/iteration/task27-framework-current-2026-10-08/koa-quench.stdout",
+          "stderr": "target/iteration/task27-framework-current-2026-10-08/koa-quench.stderr"
+        }
+      },
+      "exact_match": true
+    },
+    "fastify": {
+      "node": {
+        "command": [
+          "/opt/homebrew/bin/node",
+          "driver.cjs",
+          "scenarios/fastify.cjs"
+        ],
+        "exit_status": 0,
+        "timeout": false,
+        "stdout_bytes": 29,
+        "stderr_bytes": 0,
+        "stdout_sha256": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout_text": "statuses 200,200,200,200,404\n",
+        "stderr_text": "",
+        "raw_artifacts": {
+          "stdout": "target/iteration/task27-framework-current-2026-10-08/fastify-node.stdout",
+          "stderr": "target/iteration/task27-framework-current-2026-10-08/fastify-node.stderr"
+        }
+      },
+      "quench": {
+        "command": [
+          "/Users/admin/Code/GitHub/quench-v2/target/iteration/quench-node",
+          "driver.cjs",
+          "scenarios/fastify.cjs"
+        ],
+        "exit_status": 0,
+        "timeout": false,
+        "stdout_bytes": 29,
+        "stderr_bytes": 0,
+        "stdout_sha256": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout_text": "statuses 200,200,200,200,404\n",
+        "stderr_text": "",
+        "raw_artifacts": {
+          "stdout": "target/iteration/task27-framework-current-2026-10-08/fastify-quench.stdout",
+          "stderr": "target/iteration/task27-framework-current-2026-10-08/fastify-quench.stderr"
+        }
+      },
+      "exact_match": true
+    }
+  },
+  "result": "All 43 framework-core fixtures pass. Express, Koa, and Fastify pass under Quench and local Node with matching stdout, stderr, and exit status.",
+  "qualification_limit": "This scoped Node requalification is on the captured dirty source snapshot. The legacy quench-runtime dependency and compile-reachable legacy host/dispatch graph remain; this does not close task 27 or replace the final integrated gate."
+}

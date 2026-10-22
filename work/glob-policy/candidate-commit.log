@@ -1,0 +1,4 @@
+[node-glob-policy e1598b30c] Reuse original Node glob policy over native directory entry types
+ 8 files changed, 156 insertions(+), 53 deletions(-)
+ create mode 100644 crates/quench-node-test/node-tests/test-fs-original-glob-policy.js
+ create mode 100644 crates/quench-node/src/node_source_dependencies.rs

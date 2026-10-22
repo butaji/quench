@@ -1,0 +1,511 @@
+{
+  "host": "Linux-6.18.44-x86_64-with-glibc2.41",
+  "profile": "production",
+  "binary_sha256": {
+    "baseline": "dac6eedb039e109bbb5b227b4b7612c05d3c67ae42d4eb16db22d8856307962b",
+    "candidate": "8082d298492833669d0a501e5480938cfe5590f9411f9d2a41d4468a0c457cc1"
+  },
+  "script_sha256": "d8392dc4d70c70d01dc6ce88142da7a76c8a3ed5d1358d7dc32da55f9b1d97e6",
+  "oracle_stdout": "32990",
+  "summary": {
+    "wall_ns": {
+      "baseline_median": 1194486776,
+      "candidate_median": 1062034352,
+      "delta_percent": -11.088647163055743,
+      "paired_interval": {
+        "lower_95": -191026904.0,
+        "upper_95": -70754026.0,
+        "resamples": 100000,
+        "method": "paired percentile bootstrap of difference in medians",
+        "seed": 20261009
+      }
+    },
+    "maximum_rss_bytes": {
+      "baseline_median": 16805888,
+      "candidate_median": 16932864,
+      "delta_percent": 0.755544723373136,
+      "paired_interval": {
+        "lower_95": 126976.0,
+        "upper_95": 126976.0,
+        "resamples": 100000,
+        "method": "paired percentile bootstrap of difference in medians",
+        "seed": 20261009
+      }
+    }
+  },
+  "rounds": [
+    {
+      "round": 0,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "samples": {
+        "baseline": {
+          "command": [
+            "/workspace/quench/work/bin/production-baseline",
+            "/workspace/quench/evidence/tod132-shape-roots-linux-2026-10-14/slots-tokenizer-pairs/tokens-10.js"
+          ],
+          "exit_code": 0,
+          "timed_out": false,
+          "score": null,
+          "maximum_rss_bytes": 16805888,
+          "wall_ns": 1258452585,
+          "result_lines": [],
+          "semantic_output": [
+            "32990"
+          ],
+          "stdout": "32990\n",
+          "stderr": ""
+        },
+        "candidate": {
+          "command": [
+            "/workspace/quench/work/bin/production-slots",
+            "/workspace/quench/evidence/tod132-shape-roots-linux-2026-10-14/slots-tokenizer-pairs/tokens-10.js"
+          ],
+          "exit_code": 0,
+          "timed_out": false,
+          "score": null,
+          "maximum_rss_bytes": 16932864,
+          "wall_ns": 1003459872,
+          "result_lines": [],
+          "semantic_output": [
+            "32990"
+          ],
+          "stdout": "32990\n",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "round": 1,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "samples": {
+        "candidate": {
+          "command": [
+            "/workspace/quench/work/bin/production-slots",
+            "/workspace/quench/evidence/tod132-shape-roots-linux-2026-10-14/slots-tokenizer-pairs/tokens-10.js"
+          ],
+          "exit_code": 0,
+          "timed_out": false,
+          "score": null,
+          "maximum_rss_bytes": 16932864,
+          "wall_ns": 1137142539,
+          "result_lines": [],
+          "semantic_output": [
+            "32990"
+          ],
+          "stdout": "32990\n",
+          "stderr": ""
+        },
+        "baseline": {
+          "command": [
+            "/workspace/quench/work/bin/production-baseline",
+            "/workspace/quench/evidence/tod132-shape-roots-linux-2026-10-14/slots-tokenizer-pairs/tokens-10.js"
+          ],
+          "exit_code": 0,
+          "timed_out": false,
+          "score": null,
+          "maximum_rss_bytes": 16805888,
+          "wall_ns": 1276530519,
+          "result_lines": [],
+          "semantic_output": [
+            "32990"
+          ],
+          "stdout": "32990\n",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "round": 2,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "samples": {
+        "baseline": {
+          "command": [
+            "/workspace/quench/work/bin/production-baseline",
+            "/workspace/quench/evidence/tod132-shape-roots-linux-2026-10-14/slots-tokenizer-pairs/tokens-10.js"
+          ],
+          "exit_code": 0,
+          "timed_out": false,
+          "score": null,
+          "maximum_rss_bytes": 16805888,
+          "wall_ns": 1177550172,
+          "result_lines": [],
+          "semantic_output": [
+            "32990"
+          ],
+          "stdout": "32990\n",
+          "stderr": ""
+        },
+        "candidate": {
+          "command": [
+            "/workspace/quench/work/bin/production-slots",
+            "/workspace/quench/evidence/tod132-shape-roots-linux-2026-10-14/slots-tokenizer-pairs/tokens-10.js"
+          ],
+          "exit_code": 0,
+          "timed_out": false,
+          "score": null,
+          "maximum_rss_bytes": 16932864,
+          "wall_ns": 1054826937,
+          "result_lines": [],
+          "semantic_output": [
+            "32990"
+          ],
+          "stdout": "32990\n",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "round": 3,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "samples": {
+        "candidate": {
+          "command": [
+            "/workspace/quench/work/bin/production-slots",
+            "/workspace/quench/evidence/tod132-shape-roots-linux-2026-10-14/slots-tokenizer-pairs/tokens-10.js"
+          ],
+          "exit_code": 0,
+          "timed_out": false,
+          "score": null,
+          "maximum_rss_bytes": 16932864,
+          "wall_ns": 1145071938,
+          "result_lines": [],
+          "semantic_output": [
+            "32990"
+          ],
+          "stdout": "32990\n",
+          "stderr": ""
+        },
+        "baseline": {
+          "command": [
+            "/workspace/quench/work/bin/production-baseline",
+            "/workspace/quench/evidence/tod132-shape-roots-linux-2026-10-14/slots-tokenizer-pairs/tokens-10.js"
+          ],
+          "exit_code": 0,
+          "timed_out": false,
+          "score": null,
+          "maximum_rss_bytes": 16805888,
+          "wall_ns": 1123890413,
+          "result_lines": [],
+          "semantic_output": [
+            "32990"
+          ],
+          "stdout": "32990\n",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "round": 4,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "samples": {
+        "baseline": {
+          "command": [
+            "/workspace/quench/work/bin/production-baseline",
+            "/workspace/quench/evidence/tod132-shape-roots-linux-2026-10-14/slots-tokenizer-pairs/tokens-10.js"
+          ],
+          "exit_code": 0,
+          "timed_out": false,
+          "score": null,
+          "maximum_rss_bytes": 16805888,
+          "wall_ns": 1312788608,
+          "result_lines": [],
+          "semantic_output": [
+            "32990"
+          ],
+          "stdout": "32990\n",
+          "stderr": ""
+        },
+        "candidate": {
+          "command": [
+            "/workspace/quench/work/bin/production-slots",
+            "/workspace/quench/evidence/tod132-shape-roots-linux-2026-10-14/slots-tokenizer-pairs/tokens-10.js"
+          ],
+          "exit_code": 0,
+          "timed_out": false,
+          "score": null,
+          "maximum_rss_bytes": 16932864,
+          "wall_ns": 1123732750,
+          "result_lines": [],
+          "semantic_output": [
+            "32990"
+          ],
+          "stdout": "32990\n",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "round": 5,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "samples": {
+        "candidate": {
+          "command": [
+            "/workspace/quench/work/bin/production-slots",
+            "/workspace/quench/evidence/tod132-shape-roots-linux-2026-10-14/slots-tokenizer-pairs/tokens-10.js"
+          ],
+          "exit_code": 0,
+          "timed_out": false,
+          "score": null,
+          "maximum_rss_bytes": 16932864,
+          "wall_ns": 1096982283,
+          "result_lines": [],
+          "semantic_output": [
+            "32990"
+          ],
+          "stdout": "32990\n",
+          "stderr": ""
+        },
+        "baseline": {
+          "command": [
+            "/workspace/quench/work/bin/production-baseline",
+            "/workspace/quench/evidence/tod132-shape-roots-linux-2026-10-14/slots-tokenizer-pairs/tokens-10.js"
+          ],
+          "exit_code": 0,
+          "timed_out": false,
+          "score": null,
+          "maximum_rss_bytes": 16805888,
+          "wall_ns": 1244918843,
+          "result_lines": [],
+          "semantic_output": [
+            "32990"
+          ],
+          "stdout": "32990\n",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "round": 6,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "samples": {
+        "baseline": {
+          "command": [
+            "/workspace/quench/work/bin/production-baseline",
+            "/workspace/quench/evidence/tod132-shape-roots-linux-2026-10-14/slots-tokenizer-pairs/tokens-10.js"
+          ],
+          "exit_code": 0,
+          "timed_out": false,
+          "score": null,
+          "maximum_rss_bytes": 16805888,
+          "wall_ns": 1194486776,
+          "result_lines": [],
+          "semantic_output": [
+            "32990"
+          ],
+          "stdout": "32990\n",
+          "stderr": ""
+        },
+        "candidate": {
+          "command": [
+            "/workspace/quench/work/bin/production-slots",
+            "/workspace/quench/evidence/tod132-shape-roots-linux-2026-10-14/slots-tokenizer-pairs/tokens-10.js"
+          ],
+          "exit_code": 0,
+          "timed_out": false,
+          "score": null,
+          "maximum_rss_bytes": 16932864,
+          "wall_ns": 1072286291,
+          "result_lines": [],
+          "semantic_output": [
+            "32990"
+          ],
+          "stdout": "32990\n",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "round": 7,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "samples": {
+        "candidate": {
+          "command": [
+            "/workspace/quench/work/bin/production-slots",
+            "/workspace/quench/evidence/tod132-shape-roots-linux-2026-10-14/slots-tokenizer-pairs/tokens-10.js"
+          ],
+          "exit_code": 0,
+          "timed_out": false,
+          "score": null,
+          "maximum_rss_bytes": 16932864,
+          "wall_ns": 1017976346,
+          "result_lines": [],
+          "semantic_output": [
+            "32990"
+          ],
+          "stdout": "32990\n",
+          "stderr": ""
+        },
+        "baseline": {
+          "command": [
+            "/workspace/quench/work/bin/production-baseline",
+            "/workspace/quench/evidence/tod132-shape-roots-linux-2026-10-14/slots-tokenizer-pairs/tokens-10.js"
+          ],
+          "exit_code": 0,
+          "timed_out": false,
+          "score": null,
+          "maximum_rss_bytes": 16805888,
+          "wall_ns": 1163408009,
+          "result_lines": [],
+          "semantic_output": [
+            "32990"
+          ],
+          "stdout": "32990\n",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "round": 8,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "samples": {
+        "baseline": {
+          "command": [
+            "/workspace/quench/work/bin/production-baseline",
+            "/workspace/quench/evidence/tod132-shape-roots-linux-2026-10-14/slots-tokenizer-pairs/tokens-10.js"
+          ],
+          "exit_code": 0,
+          "timed_out": false,
+          "score": null,
+          "maximum_rss_bytes": 16805888,
+          "wall_ns": 1204144657,
+          "result_lines": [],
+          "semantic_output": [
+            "32990"
+          ],
+          "stdout": "32990\n",
+          "stderr": ""
+        },
+        "candidate": {
+          "command": [
+            "/workspace/quench/work/bin/production-slots",
+            "/workspace/quench/evidence/tod132-shape-roots-linux-2026-10-14/slots-tokenizer-pairs/tokens-10.js"
+          ],
+          "exit_code": 0,
+          "timed_out": false,
+          "score": null,
+          "maximum_rss_bytes": 16932864,
+          "wall_ns": 1062034352,
+          "result_lines": [],
+          "semantic_output": [
+            "32990"
+          ],
+          "stdout": "32990\n",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "round": 9,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "samples": {
+        "candidate": {
+          "command": [
+            "/workspace/quench/work/bin/production-slots",
+            "/workspace/quench/evidence/tod132-shape-roots-linux-2026-10-14/slots-tokenizer-pairs/tokens-10.js"
+          ],
+          "exit_code": 0,
+          "timed_out": false,
+          "score": null,
+          "maximum_rss_bytes": 16932864,
+          "wall_ns": 970991233,
+          "result_lines": [],
+          "semantic_output": [
+            "32990"
+          ],
+          "stdout": "32990\n",
+          "stderr": ""
+        },
+        "baseline": {
+          "command": [
+            "/workspace/quench/work/bin/production-baseline",
+            "/workspace/quench/evidence/tod132-shape-roots-linux-2026-10-14/slots-tokenizer-pairs/tokens-10.js"
+          ],
+          "exit_code": 0,
+          "timed_out": false,
+          "score": null,
+          "maximum_rss_bytes": 16805888,
+          "wall_ns": 1184512830,
+          "result_lines": [],
+          "semantic_output": [
+            "32990"
+          ],
+          "stdout": "32990\n",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "round": 10,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "samples": {
+        "baseline": {
+          "command": [
+            "/workspace/quench/work/bin/production-baseline",
+            "/workspace/quench/evidence/tod132-shape-roots-linux-2026-10-14/slots-tokenizer-pairs/tokens-10.js"
+          ],
+          "exit_code": 0,
+          "timed_out": false,
+          "score": null,
+          "maximum_rss_bytes": 16805888,
+          "wall_ns": 1132526605,
+          "result_lines": [],
+          "semantic_output": [
+            "32990"
+          ],
+          "stdout": "32990\n",
+          "stderr": ""
+        },
+        "candidate": {
+          "command": [
+            "/workspace/quench/work/bin/production-slots",
+            "/workspace/quench/evidence/tod132-shape-roots-linux-2026-10-14/slots-tokenizer-pairs/tokens-10.js"
+          ],
+          "exit_code": 0,
+          "timed_out": false,
+          "score": null,
+          "maximum_rss_bytes": 16932864,
+          "wall_ns": 1054445991,
+          "result_lines": [],
+          "semantic_output": [
+            "32990"
+          ],
+          "stdout": "32990\n",
+          "stderr": ""
+        }
+      }
+    }
+  ]
+}

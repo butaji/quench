@@ -1,0 +1,252 @@
+use super::*;
+
+const ARRAY_CONSTRUCTOR_LENGTH: f64 = 1.0;
+const ARRAY_PROTOTYPE_METHODS: &[(&str, Native)] = &[
+    ("push", Native::ArrayPush),
+    ("pop", Native::ArrayPop),
+    ("slice", Native::ArraySlice),
+    ("includes", Native::ArrayIncludes),
+    ("join", Native::ArrayJoin),
+    ("concat", Native::ArrayConcat),
+    ("flat", Native::ArrayFlat),
+    ("reverse", Native::ArrayReverse),
+    ("shift", Native::ArrayShift),
+    ("unshift", Native::ArrayUnshift),
+    ("splice", Native::ArraySplice),
+    ("fill", Native::ArrayFill),
+    ("at", Native::ArrayAt),
+    ("lastIndexOf", Native::ArrayLastIndexOf),
+    ("indexOf", Native::ArrayIndexOf),
+    ("copyWithin", Native::ArrayCopyWithin),
+    ("with", Native::ArrayWith),
+    ("forEach", Native::ArrayForEach),
+    ("map", Native::ArrayMap),
+    ("filter", Native::ArrayFilter),
+    ("some", Native::ArraySome),
+    ("every", Native::ArrayEvery),
+    ("find", Native::ArrayFind),
+    ("findIndex", Native::ArrayFindIndex),
+    ("findLast", Native::ArrayFindLast),
+    ("findLastIndex", Native::ArrayFindLastIndex),
+    ("group", Native::ArrayGroup),
+    ("groupToMap", Native::ArrayGroupToMap),
+    ("flatMap", Native::ArrayFlatMap),
+    ("reduce", Native::ArrayReduce),
+    ("reduceRight", Native::ArrayReduceRight),
+    ("toReversed", Native::ArrayToReversed),
+    ("toSpliced", Native::ArrayToSpliced),
+    ("sort", Native::ArraySort),
+    ("toSorted", Native::ArrayToSorted),
+    ("toString", Native::ArrayToString),
+    ("toLocaleString", Native::ArrayToLocaleString),
+    ("keys", Native::ArrayKeys),
+    ("values", Native::ArrayValues),
+    ("entries", Native::ArrayEntries),
+];
+const ARRAY_STATIC_METHODS: &[(&str, Native)] = &[
+    ("from", Native::ArrayFrom),
+    ("fromAsync", Native::ArrayFromAsync),
+    ("of", Native::ArrayOf),
+    ("isArray", Native::ArrayIsArray),
+];
+
+impl<H: Host> Vm<H> {
+    pub(super) fn install_array(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
+        let array = self.native_value(Native::Array);
+        self.array_proto = self.heap.alloc(Cell::Array {
+            object: crate::heap::ArrayObject::new(
+                Self::empty_object(self.object_proto),
+                Vec::new(),
+            ),
+        });
+        self.realm
+            .intrinsics
+            .builtin_prototypes
+            .insert((self.realm.globals, Native::Array), self.array_proto);
+        self.set_builtin_function_name(array, "Array")?;
+        for &(name, native) in ARRAY_PROTOTYPE_METHODS {
+            self.set_builtin_named(program, self.array_proto, name, native)?;
+        }
+        self.set_builtin_named(program, self.array_proto, "constructor", Native::Array)?;
+        self.set_builtin_value_named(array, "length", Value::number(ARRAY_CONSTRUCTOR_LENGTH))?;
+        let length_atom = self.length_atom;
+        self.set_property_attributes(
+            array,
+            PropertyKey::string(length_atom),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
+        self.set_builtin_value_named(array, "prototype", self.array_proto)?;
+        let prototype_atom = self.prototype_atom();
+        self.set_property_attributes(
+            array,
+            PropertyKey::string(prototype_atom),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: false,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
+        for &(name, native) in ARRAY_STATIC_METHODS {
+            self.set_builtin_named(program, array, name, native)?;
+        }
+        self.global(program, "Array", array)
+    }
+
+    pub(super) fn install_array_for_realm(
+        &mut self,
+        program: &ResidualProgram,
+        global: Value,
+        prototype: Value,
+    ) -> Result<(), JsError> {
+        let array = self.native_with_realm(Native::Array, global, global);
+        self.realm
+            .intrinsics
+            .builtin_prototypes
+            .insert((global, Native::Array), prototype);
+        self.set_builtin_function_name(array, "Array")?;
+        self.set_builtin_value_named(array, "prototype", prototype)?;
+        self.set_builtin_value_named(prototype, "constructor", array)?;
+        self.set_builtin_value_named(array, "length", Value::number(ARRAY_CONSTRUCTOR_LENGTH))?;
+        let length = self.length_atom;
+        self.set_property_attributes(
+            array,
+            PropertyKey::string(length),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
+        let prototype_atom = self.prototype_atom();
+        self.set_property_attributes(
+            array,
+            PropertyKey::string(prototype_atom),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: false,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
+        for &(name, native) in ARRAY_PROTOTYPE_METHODS {
+            self.set_realm_builtin_named(program, prototype, name, native, Some(global))?;
+        }
+        if let Some(iterator_symbol) = self.well_known_symbols.get(WellKnownSymbol::Iterator) {
+            let values_atom = self.intern_atom("values");
+            let values = self.get_property(program, prototype, values_atom)?;
+            self.set_symbol_property(prototype, iterator_symbol, values)?;
+            self.set_property_attributes(
+                prototype,
+                PropertyKey::symbol(iterator_symbol),
+                PropertyAttributes {
+                    writable: true,
+                    enumerable: false,
+                    configurable: true,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            );
+        }
+        for &(name, native) in ARRAY_STATIC_METHODS {
+            self.set_realm_builtin_named(program, array, name, native, Some(global))?;
+        }
+        if let Some(species) = self.well_known_symbols.get(WellKnownSymbol::Species) {
+            let getter = self.native_with_realm(Native::ArraySpecies, global, global);
+            self.set_builtin_function_name(getter, "get [Symbol.species]")?;
+            self.set_symbol_property(array, species, Value::UNDEFINED)?;
+            self.set_property_attributes(
+                array,
+                PropertyKey::symbol(species),
+                PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: true,
+                    accessor: true,
+                    getter: Some(getter),
+                    setter: None,
+                },
+            );
+        }
+        self.install_array_unscopables(prototype)?;
+        self.set_builtin_value_named(global, "Array", array)
+    }
+
+    pub(super) fn install_array_species(&mut self) -> Result<(), JsError> {
+        let array = self.native_value(Native::Array);
+        let species = self.well_known_symbols.get(WellKnownSymbol::Species).unwrap();
+        let getter = self.native_value(Native::ArraySpecies);
+        self.set_builtin_function_name(getter, "get [Symbol.species]")?;
+        self.set_symbol_property(array, species, Value::UNDEFINED)?;
+        self.set_property_attributes(
+            array,
+            PropertyKey::symbol(species),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                accessor: true,
+                getter: Some(getter),
+                setter: None,
+            },
+        );
+        Ok(())
+    }
+
+    pub(super) fn install_array_unscopables(&mut self, array_proto: Value) -> Result<(), JsError> {
+        let unscopables = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+        for name in [
+            "at",
+            "copyWithin",
+            "entries",
+            "fill",
+            "find",
+            "findIndex",
+            "findLast",
+            "findLastIndex",
+            "flat",
+            "flatMap",
+            "includes",
+            "keys",
+            "values",
+            "toReversed",
+            "toSorted",
+            "toSpliced",
+        ] {
+            let atom = self.intern_atom(name);
+            self.set_property(unscopables, atom, Value::TRUE)?;
+        }
+        let symbol = self.well_known_symbols.get(WellKnownSymbol::Unscopables).unwrap();
+        self.set_symbol_property(array_proto, symbol, unscopables)?;
+        self.set_property_attributes(
+            array_proto,
+            PropertyKey::symbol(symbol),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
+        Ok(())
+    }
+}

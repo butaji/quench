@@ -1,0 +1,167 @@
+{
+  "schema": 1,
+  "task": "27",
+  "kind": "shared_async_identity_owner",
+  "recorded_on": "2026-10-08",
+  "source": {
+    "revision": "86080cabde62987434ebcf19126cce4218a218aa",
+    "worktree_dirty": true,
+    "platform": "darwin arm64",
+    "node": "v26.10.0",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+    "tests_node_revision": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+    "binaries_sha256": {
+      "target/iteration/quench-node": "5d64d0bc7405d4ca35dbaf79aa09ae7143feceb2e71afb7f2b48b35d1f011873",
+      "target/iteration/run-parallel": "21881358ed1c86e98af15d3b79195aabc65818ec56fe4185c0866ec99a54358c"
+    },
+    "files_sha256": {
+      "crates/quench-node/src/host.rs": "79a802d0fea574bd0bf80bf7c35efde9037483745c2e5cec3ed3e541b277d052",
+      "crates/quench-node/src/host/shared_vm.rs": "949be1fcc97e29472f22e99efde6661188396357af50294e1b203579f5f64051",
+      "crates/quench-node/src/modules/async_hooks.rs": "8f76a167e00fb328644d52bdc6c1570347a09499bcc9886f89338105c7582b2a",
+      "crates/quench-node/src/modules/async_hooks/shared_vm.rs": "966606990f39ac02b9010833527c397c3632c21356d76cda88bc7f5c4e9bd8bc",
+      "crates/quench-node/src/modules/http/shared_vm.rs": "febf670fda520b9541a73482ef41b1ce3393889290d22f883c36ef92eae7f696",
+      "crates/quench-node/src/modules/http/shared_vm/operations.rs": "e6b5908a07b5be244eb1e81bfe86e43e68f37f0d33e95a0b8dccb352ca727f25",
+      "crates/quench-node/src/modules/http/shared_vm/poll.rs": "4270660123777166105a5636d48cf09351c1a7b23385a956fb117710565fb15a",
+      "crates/quench-node/src/modules/process/shared_vm.rs": "2a9db8de9b75bebc5ab80e524a84117a2d09631f037e620d84b8fcf5f4fb4785",
+      "tasks/27.md": "bc54815f127b5d51609696cbe4cc01b69bcb48ee732c3939787914d3aa21838d",
+      "crates/quench-node-test/node-tests/parallel.txt": "0209917422a2f0f3fa241d941ec4bc88c9917d5322b69014ab1a662a52e9dfca",
+      "tests/node/test/parallel/test-async-local-storage-enter-with.js": "270f18f158138a227baa0c2e5e6a52b7c77be6d640fe493765992206b15b1a24",
+      "tests/node/test/parallel/test-async-hooks-run-in-async-scope-this-arg.js": "ce0e2666d3ac2d752d745c0e2e6009fef7b3bf557c6e9c388130c42a0eb3b56f",
+      "tests/node/test/parallel/test-diagnostics-channel-tracing-channel-promise-run-stores.js": "29a2d0c6131ef63cd8b706e2e9cba6b38e9cdd869b69a615e95d64c1c4b92d00",
+      "tests/node/test/parallel/test-diagnostics-channel-tracing-channel-callback-run-stores.js": "5e3fe6cd5b4054e9d997b4c5800cc4c8920a1a3ac4c18fa3b4121f4d2224cef2",
+      "tests/node/test/parallel/test-diagnostics-channel-tracing-channel-sync-run-stores.js": "3d54d2674fcc699f81cdc3da8d5deaf0c805a9e745cb8184684acb82eb0b2e13",
+      "tests/frameworks/driver.cjs": "e8dd245f9bbfcdcd3a430ff7ed663c3310fdf32fae23cfc5c24d24cbeda96bfb",
+      "tests/frameworks/package.json": "5f82b6f9cf2dd1e2ad385afebeda3627ac952366004c76350e4f87b0bac170d5",
+      "tests/frameworks/package-lock.json": "fb752f9a87781cc8132c88ced58a8c17ebaacc1789d244b8b7c4a6c9888d5759",
+      "tests/frameworks/scenarios/express.cjs": "85eebbbc5c9cfaa01f2f16b6c7e181a4c4bc2e308bd1bb179f49c5d9700f8158",
+      "tests/frameworks/scenarios/koa.cjs": "962e4c326df72b30eed4306494e2218475456c7c816220a6e46a898b040185f9",
+      "tests/frameworks/scenarios/fastify.cjs": "1ff4fc87e2a4c792761c286bc0f255d0ab9be27e810dbf98938a1ac717d1ba6a",
+      "target/iteration/task27-async-identity-boundary-2026-10-08/status.json": "6d5843c6237124082fb997ab3575eed29b37be4cbcbdfcb20e3d519bc0fcb4f2",
+      "target/iteration/task27-async-identity-boundary-2026-10-08/framework-core.stdout": "2f2d921dcfce7bd620f630e927555625fcd4e20465e3fc2110af3973bf050cc9",
+      "target/iteration/task27-async-identity-boundary-2026-10-08/framework-core.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "target/iteration/task27-async-identity-boundary-2026-10-08/focused/test-async-local-storage-enter-with.js.stdout": "cca37e56440779484ea24e23a89a4012ca1d9e189ac58a8ffc85c8afeff5a4b9",
+      "target/iteration/task27-async-identity-boundary-2026-10-08/focused/test-async-local-storage-enter-with.js.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "target/iteration/task27-async-identity-boundary-2026-10-08/focused/test-async-hooks-run-in-async-scope-this-arg.js.stdout": "1906fcdc46bab3a06962936e38e8a007ab733a33e6dded720ba62fd107812968",
+      "target/iteration/task27-async-identity-boundary-2026-10-08/focused/test-async-hooks-run-in-async-scope-this-arg.js.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "target/iteration/task27-async-identity-boundary-2026-10-08/focused/test-diagnostics-channel-tracing-channel-promise-run-stores.js.stdout": "92404f3e0277fa0d9507e8ea1878057f3f8c9e40b3b7ed93289fa0a7d9eb09ab",
+      "target/iteration/task27-async-identity-boundary-2026-10-08/focused/test-diagnostics-channel-tracing-channel-promise-run-stores.js.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "target/iteration/task27-async-identity-boundary-2026-10-08/focused/test-diagnostics-channel-tracing-channel-callback-run-stores.js.stdout": "761951500df30ffb90f43221a90cd742494cc4f548857a14c4484e839b358859",
+      "target/iteration/task27-async-identity-boundary-2026-10-08/focused/test-diagnostics-channel-tracing-channel-callback-run-stores.js.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "target/iteration/task27-async-identity-boundary-2026-10-08/focused/test-diagnostics-channel-tracing-channel-sync-run-stores.js.stdout": "b21c8469d2af9c61b95826a4412a2c4a1df73da49aadc5ea9e1192f6f3d14602",
+      "target/iteration/task27-async-identity-boundary-2026-10-08/focused/test-diagnostics-channel-tracing-channel-sync-run-stores.js.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "target/iteration/task27-async-identity-boundary-2026-10-08/apps/express-node.stdout": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+      "target/iteration/task27-async-identity-boundary-2026-10-08/apps/express-node.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "target/iteration/task27-async-identity-boundary-2026-10-08/apps/express-quench.stdout": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+      "target/iteration/task27-async-identity-boundary-2026-10-08/apps/express-quench.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "target/iteration/task27-async-identity-boundary-2026-10-08/apps/koa-node.stdout": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+      "target/iteration/task27-async-identity-boundary-2026-10-08/apps/koa-node.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "target/iteration/task27-async-identity-boundary-2026-10-08/apps/koa-quench.stdout": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+      "target/iteration/task27-async-identity-boundary-2026-10-08/apps/koa-quench.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "target/iteration/task27-async-identity-boundary-2026-10-08/apps/fastify-node.stdout": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+      "target/iteration/task27-async-identity-boundary-2026-10-08/apps/fastify-node.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "target/iteration/task27-async-identity-boundary-2026-10-08/apps/fastify-quench.stdout": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+      "target/iteration/task27-async-identity-boundary-2026-10-08/apps/fastify-quench.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "target/iteration/task27-async-identity-boundary-2026-10-08/focused/results.json": "0cc51dd887ecad6e7b732e666c2da24a33eca62a15d294fdb4cf6896fe04075a",
+      "target/iteration/task27-async-identity-boundary-2026-10-08/build.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "target/iteration/task27-async-identity-boundary-2026-10-08/build.stderr": "ebef6e3d4df872455a3603a09fe6db30b7ef8e6fca82e1345759221261ac5f0e",
+      "target/iteration/task27-async-identity-boundary-2026-10-08/build.status.json": "dad9348dfec27b1afca89e990f56936a402302fe0b56fe8b05f07e3ba8818619"
+    }
+  },
+  "change": {
+    "authority": "NodeHost constructs one AsyncIdentity and passes shallow handles to HostState.async_hooks and SharedNodeState.async_hooks. It owns next async ID, current async ID, and next AsyncLocalStorage ID.",
+    "shared_path": "Shared AsyncHooks operations and HTTP poll/context handling read and update identity through SharedNodeState; HTTP shared poll no longer accepts HostState.",
+    "legacy_path": "Legacy callbacks use the same identity handle. Legacy Value hook callbacks, current resources, and resource stack remain in HostState; shared RootId local-store values remain in SharedNodeState.",
+    "transitions": "Identity allocate/replace operations preserve the existing root ID 1, no-trigger ID 0, first resource ID 2, and first local-storage ID 1.",
+    "inventory_membership_changed": false
+  },
+  "verification": {
+    "checks": [
+      {
+        "command": "cargo build --profile iteration -p quench-node --bin quench-node -p quench-node-test --bin run-parallel",
+        "exit_code": 0,
+        "result": "passed; only existing deprecated Atomic::fetch_update warnings in quench-runtime",
+        "raw_stdout_artifact": "target/iteration/task27-async-identity-boundary-2026-10-08/build.stdout",
+        "raw_stderr_artifact": "target/iteration/task27-async-identity-boundary-2026-10-08/build.stderr",
+        "status_artifact": "target/iteration/task27-async-identity-boundary-2026-10-08/build.status.json"
+      },
+      {
+        "command": "target/iteration/run-parallel --one <five async identity fixtures>",
+        "exit_code": 0,
+        "result": "all five focused fixtures passed",
+        "artifact": "target/iteration/task27-async-identity-boundary-2026-10-08/focused/results.json"
+      },
+      {
+        "command": "target/iteration/run-parallel --profile framework-core --timeout-secs 60",
+        "exit_code": 0,
+        "result": "parallel: pass=43 skip=0 fail=0 timeout=0 crash=0 unclassified=0 total=43",
+        "stdout_artifact": "target/iteration/task27-async-identity-boundary-2026-10-08/framework-core.stdout",
+        "stderr_artifact": "target/iteration/task27-async-identity-boundary-2026-10-08/framework-core.stderr"
+      },
+      {
+        "command": "From tests/frameworks, run local Node and target/iteration/quench-node driver.cjs scenarios/{express,koa,fastify}.cjs; compare status, stdout and stderr exactly",
+        "exit_code": 0,
+        "result": "all six processes exited 0 with no signal/error; each Node/Quench pair had identical stdout and empty stderr",
+        "status_artifact": "target/iteration/task27-async-identity-boundary-2026-10-08/status.json"
+      },
+      {
+        "unit_tests": "not run"
+      }
+    ]
+  },
+  "app_results": [
+    {
+      "framework": "express",
+      "engine": "node",
+      "exit_code": 0,
+      "signal": null,
+      "error": null,
+      "stdout_sha256": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "framework": "express",
+      "engine": "quench",
+      "exit_code": 0,
+      "signal": null,
+      "error": null,
+      "stdout_sha256": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "framework": "koa",
+      "engine": "node",
+      "exit_code": 0,
+      "signal": null,
+      "error": null,
+      "stdout_sha256": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "framework": "koa",
+      "engine": "quench",
+      "exit_code": 0,
+      "signal": null,
+      "error": null,
+      "stdout_sha256": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "framework": "fastify",
+      "engine": "node",
+      "exit_code": 0,
+      "signal": null,
+      "error": null,
+      "stdout_sha256": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "framework": "fastify",
+      "engine": "quench",
+      "exit_code": 0,
+      "signal": null,
+      "error": null,
+      "stdout_sha256": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ]
+}

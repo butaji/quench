@@ -1,0 +1,2514 @@
+{
+  "fixture": "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js",
+  "fixture_sha256": "c6e5fd39715ae35ebb5bca9474b69a6eeb180da5ac2fc1455ed4d7ff4a29b60c",
+  "pairs": [
+    {
+      "pair": 1,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "baseline": {
+        "binary": "/tmp/quench-call-args-2026-10-08/quench",
+        "binary_sha256": "79d90ef3cc4587bd70b84b51276e7f682ea5ed7903050695ccc268aaa016bc07",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/quench",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 211.0,
+        "max_rss_bytes": 15089664,
+        "instructions_retired": 47853390399,
+        "wall_seconds": 2.025482875,
+        "stdout": "__quenchBenchResult: Richards: 211\n----\nScore: 211\n",
+        "stderr": "        2.02 real         2.01 user         0.00 sys\n            15089664  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1085  page reclaims\n                  19  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  53  involuntary context switches\n         47853390399  instructions retired\n          8140961370  cycles elapsed\n             7012736  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "candidate": {
+        "binary": "/tmp/quench-call-args-2026-10-08/candidate",
+        "binary_sha256": "48b04834459e74147d2a25bc07b1081afba6a3cfe218527df3978643bf2e3670",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/candidate",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 209.0,
+        "max_rss_bytes": 15040512,
+        "instructions_retired": 47564069825,
+        "wall_seconds": 2.033460416,
+        "stdout": "__quenchBenchResult: Richards: 209\n----\nScore: 209\n",
+        "stderr": "        2.03 real         2.02 user         0.00 sys\n            15040512  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1092  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  34  involuntary context switches\n         47564069825  instructions retired\n          8180622800  cycles elapsed\n             6979968  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "exact_stdout_equal": false,
+      "completion_signature_equal": true,
+      "score_delta_percent": -0.9478672985781977,
+      "rss_delta_percent": -0.32573289902280145,
+      "rss_delta_bytes": -49152,
+      "instructions_delta_percent": -0.6045978593944068
+    },
+    {
+      "pair": 2,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "baseline": {
+        "binary": "/tmp/quench-call-args-2026-10-08/quench",
+        "binary_sha256": "79d90ef3cc4587bd70b84b51276e7f682ea5ed7903050695ccc268aaa016bc07",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/quench",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 209.0,
+        "max_rss_bytes": 15089664,
+        "instructions_retired": 47851204046,
+        "wall_seconds": 2.031944459,
+        "stdout": "__quenchBenchResult: Richards: 209\n----\nScore: 209\n",
+        "stderr": "        2.02 real         2.02 user         0.00 sys\n            15089664  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1095  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  27  involuntary context switches\n         47851204046  instructions retired\n          8163396772  cycles elapsed\n             7029120  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "candidate": {
+        "binary": "/tmp/quench-call-args-2026-10-08/candidate",
+        "binary_sha256": "48b04834459e74147d2a25bc07b1081afba6a3cfe218527df3978643bf2e3670",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/candidate",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 206.0,
+        "max_rss_bytes": 15040512,
+        "instructions_retired": 46374491337,
+        "wall_seconds": 2.023541,
+        "stdout": "__quenchBenchResult: Richards: 206\n----\nScore: 206\n",
+        "stderr": "        2.02 real         2.01 user         0.00 sys\n            15040512  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1092  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  45  involuntary context switches\n         46374491337  instructions retired\n          8145665023  cycles elapsed\n             6979968  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "exact_stdout_equal": false,
+      "completion_signature_equal": true,
+      "score_delta_percent": -1.4354066985645897,
+      "rss_delta_percent": -0.32573289902280145,
+      "rss_delta_bytes": -49152,
+      "instructions_delta_percent": -3.0860513093472375
+    },
+    {
+      "pair": 3,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "baseline": {
+        "binary": "/tmp/quench-call-args-2026-10-08/quench",
+        "binary_sha256": "79d90ef3cc4587bd70b84b51276e7f682ea5ed7903050695ccc268aaa016bc07",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/quench",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 209.0,
+        "max_rss_bytes": 15089664,
+        "instructions_retired": 47849704684,
+        "wall_seconds": 2.031568542,
+        "stdout": "__quenchBenchResult: Richards: 209\n----\nScore: 209\n",
+        "stderr": "        2.02 real         2.02 user         0.00 sys\n            15089664  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1094  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  26  involuntary context switches\n         47849704684  instructions retired\n          8165964185  cycles elapsed\n             7029120  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "candidate": {
+        "binary": "/tmp/quench-call-args-2026-10-08/candidate",
+        "binary_sha256": "48b04834459e74147d2a25bc07b1081afba6a3cfe218527df3978643bf2e3670",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/candidate",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 210.0,
+        "max_rss_bytes": 14942208,
+        "instructions_retired": 47564311962,
+        "wall_seconds": 2.029158875,
+        "stdout": "__quenchBenchResult: Richards: 210\n----\nScore: 210\n",
+        "stderr": "        2.02 real         2.02 user         0.00 sys\n            14942208  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1086  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  50  involuntary context switches\n         47564311962  instructions retired\n          8152960996  cycles elapsed\n             6881664  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "exact_stdout_equal": false,
+      "completion_signature_equal": true,
+      "score_delta_percent": 0.4784688995215225,
+      "rss_delta_percent": -0.9771986970684043,
+      "rss_delta_bytes": -147456,
+      "instructions_delta_percent": -0.5964357019227928
+    },
+    {
+      "pair": 4,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "baseline": {
+        "binary": "/tmp/quench-call-args-2026-10-08/quench",
+        "binary_sha256": "79d90ef3cc4587bd70b84b51276e7f682ea5ed7903050695ccc268aaa016bc07",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/quench",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 208.0,
+        "max_rss_bytes": 15089664,
+        "instructions_retired": 47056509245,
+        "wall_seconds": 2.011337333,
+        "stdout": "__quenchBenchResult: Richards: 208\n----\nScore: 208\n",
+        "stderr": "        2.00 real         2.00 user         0.00 sys\n            15089664  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1095  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  33  involuntary context switches\n         47056509245  instructions retired\n          8075677858  cycles elapsed\n             7029120  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "candidate": {
+        "binary": "/tmp/quench-call-args-2026-10-08/candidate",
+        "binary_sha256": "48b04834459e74147d2a25bc07b1081afba6a3cfe218527df3978643bf2e3670",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/candidate",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 210.0,
+        "max_rss_bytes": 15155200,
+        "instructions_retired": 47565071030,
+        "wall_seconds": 2.029252041,
+        "stdout": "__quenchBenchResult: Richards: 210\n----\nScore: 210\n",
+        "stderr": "        2.02 real         2.02 user         0.00 sys\n            15155200  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1098  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  68  involuntary context switches\n         47565071030  instructions retired\n          8158623774  cycles elapsed\n             7078272  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "exact_stdout_equal": false,
+      "completion_signature_equal": true,
+      "score_delta_percent": 0.9615384615384581,
+      "rss_delta_percent": 0.43431053203040193,
+      "rss_delta_bytes": 65536,
+      "instructions_delta_percent": 1.0807469426858063
+    },
+    {
+      "pair": 5,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "baseline": {
+        "binary": "/tmp/quench-call-args-2026-10-08/quench",
+        "binary_sha256": "79d90ef3cc4587bd70b84b51276e7f682ea5ed7903050695ccc268aaa016bc07",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/quench",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 209.0,
+        "max_rss_bytes": 15122432,
+        "instructions_retired": 47851731044,
+        "wall_seconds": 2.030573417,
+        "stdout": "__quenchBenchResult: Richards: 209\n----\nScore: 209\n",
+        "stderr": "        2.02 real         2.02 user         0.00 sys\n            15122432  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1096  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  45  involuntary context switches\n         47851731044  instructions retired\n          8156208359  cycles elapsed\n             7061912  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "candidate": {
+        "binary": "/tmp/quench-call-args-2026-10-08/candidate",
+        "binary_sha256": "48b04834459e74147d2a25bc07b1081afba6a3cfe218527df3978643bf2e3670",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/candidate",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 210.0,
+        "max_rss_bytes": 14925824,
+        "instructions_retired": 47562788700,
+        "wall_seconds": 2.027883333,
+        "stdout": "__quenchBenchResult: Richards: 210\n----\nScore: 210\n",
+        "stderr": "        2.02 real         2.02 user         0.00 sys\n            14925824  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1085  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  43  involuntary context switches\n         47562788700  instructions retired\n          8157502198  cycles elapsed\n             6865280  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "exact_stdout_equal": false,
+      "completion_signature_equal": true,
+      "score_delta_percent": 0.4784688995215225,
+      "rss_delta_percent": -1.300108342361861,
+      "rss_delta_bytes": -196608,
+      "instructions_delta_percent": -0.6038284043148101
+    },
+    {
+      "pair": 6,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "baseline": {
+        "binary": "/tmp/quench-call-args-2026-10-08/quench",
+        "binary_sha256": "79d90ef3cc4587bd70b84b51276e7f682ea5ed7903050695ccc268aaa016bc07",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/quench",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 210.0,
+        "max_rss_bytes": 15122432,
+        "instructions_retired": 47851755337,
+        "wall_seconds": 2.0264445,
+        "stdout": "__quenchBenchResult: Richards: 210\n----\nScore: 210\n",
+        "stderr": "        2.02 real         2.01 user         0.00 sys\n            15122432  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1096  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  60  involuntary context switches\n         47851755337  instructions retired\n          8155582296  cycles elapsed\n             7061912  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "candidate": {
+        "binary": "/tmp/quench-call-args-2026-10-08/candidate",
+        "binary_sha256": "48b04834459e74147d2a25bc07b1081afba6a3cfe218527df3978643bf2e3670",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/candidate",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 209.0,
+        "max_rss_bytes": 15024128,
+        "instructions_retired": 47163855389,
+        "wall_seconds": 2.023890208,
+        "stdout": "__quenchBenchResult: Richards: 209\n----\nScore: 209\n",
+        "stderr": "        2.02 real         2.01 user         0.00 sys\n            15024128  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1091  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  20  involuntary context switches\n         47163855389  instructions retired\n          8141892162  cycles elapsed\n             6963584  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "exact_stdout_equal": false,
+      "completion_signature_equal": true,
+      "score_delta_percent": -0.4761904761904745,
+      "rss_delta_percent": -0.650054171180936,
+      "rss_delta_bytes": -98304,
+      "instructions_delta_percent": -1.4375647103338385
+    },
+    {
+      "pair": 7,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "baseline": {
+        "binary": "/tmp/quench-call-args-2026-10-08/quench",
+        "binary_sha256": "79d90ef3cc4587bd70b84b51276e7f682ea5ed7903050695ccc268aaa016bc07",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/quench",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 209.0,
+        "max_rss_bytes": 15089664,
+        "instructions_retired": 47851127012,
+        "wall_seconds": 2.028525667,
+        "stdout": "__quenchBenchResult: Richards: 209\n----\nScore: 209\n",
+        "stderr": "        2.02 real         2.02 user         0.00 sys\n            15089664  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1094  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  56  involuntary context switches\n         47851127012  instructions retired\n          8173208589  cycles elapsed\n             7012736  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "candidate": {
+        "binary": "/tmp/quench-call-args-2026-10-08/candidate",
+        "binary_sha256": "48b04834459e74147d2a25bc07b1081afba6a3cfe218527df3978643bf2e3670",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/candidate",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 210.0,
+        "max_rss_bytes": 15089664,
+        "instructions_retired": 47564392255,
+        "wall_seconds": 2.029927792,
+        "stdout": "__quenchBenchResult: Richards: 210\n----\nScore: 210\n",
+        "stderr": "        2.02 real         2.01 user         0.00 sys\n            15089664  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1094  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  99  involuntary context switches\n         47564392255  instructions retired\n          8147237437  cycles elapsed\n             7029120  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "exact_stdout_equal": false,
+      "completion_signature_equal": true,
+      "score_delta_percent": 0.4784688995215225,
+      "rss_delta_percent": 0.0,
+      "rss_delta_bytes": 0,
+      "instructions_delta_percent": -0.5992225782437521
+    },
+    {
+      "pair": 8,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "baseline": {
+        "binary": "/tmp/quench-call-args-2026-10-08/quench",
+        "binary_sha256": "79d90ef3cc4587bd70b84b51276e7f682ea5ed7903050695ccc268aaa016bc07",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/quench",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 208.0,
+        "max_rss_bytes": 15073280,
+        "instructions_retired": 47851351520,
+        "wall_seconds": 2.035830834,
+        "stdout": "__quenchBenchResult: Richards: 208\n----\nScore: 208\n",
+        "stderr": "        2.03 real         2.02 user         0.00 sys\n            15073280  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1093  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  28  involuntary context switches\n         47851351520  instructions retired\n          8179095901  cycles elapsed\n             6996352  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "candidate": {
+        "binary": "/tmp/quench-call-args-2026-10-08/candidate",
+        "binary_sha256": "48b04834459e74147d2a25bc07b1081afba6a3cfe218527df3978643bf2e3670",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/candidate",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 210.0,
+        "max_rss_bytes": 14893056,
+        "instructions_retired": 47564393729,
+        "wall_seconds": 2.023273583,
+        "stdout": "__quenchBenchResult: Richards: 210\n----\nScore: 210\n",
+        "stderr": "        2.02 real         2.01 user         0.00 sys\n            14893056  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1082  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  37  involuntary context switches\n         47564393729  instructions retired\n          8148360530  cycles elapsed\n             6816128  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "exact_stdout_equal": false,
+      "completion_signature_equal": true,
+      "score_delta_percent": 0.9615384615384581,
+      "rss_delta_percent": -1.1956521739130421,
+      "rss_delta_bytes": -180224,
+      "instructions_delta_percent": -0.5996858644213288
+    },
+    {
+      "pair": 9,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "baseline": {
+        "binary": "/tmp/quench-call-args-2026-10-08/quench",
+        "binary_sha256": "79d90ef3cc4587bd70b84b51276e7f682ea5ed7903050695ccc268aaa016bc07",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/quench",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 209.0,
+        "max_rss_bytes": 15106048,
+        "instructions_retired": 47851954812,
+        "wall_seconds": 2.030758667,
+        "stdout": "__quenchBenchResult: Richards: 209\n----\nScore: 209\n",
+        "stderr": "        2.02 real         2.02 user         0.00 sys\n            15106048  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1095  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  34  involuntary context switches\n         47851954812  instructions retired\n          8183273912  cycles elapsed\n             7045504  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "candidate": {
+        "binary": "/tmp/quench-call-args-2026-10-08/candidate",
+        "binary_sha256": "48b04834459e74147d2a25bc07b1081afba6a3cfe218527df3978643bf2e3670",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/candidate",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 209.0,
+        "max_rss_bytes": 14893056,
+        "instructions_retired": 47562458660,
+        "wall_seconds": 2.0377485,
+        "stdout": "__quenchBenchResult: Richards: 209\n----\nScore: 209\n",
+        "stderr": "        2.03 real         2.03 user         0.00 sys\n            14893056  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1083  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  45  involuntary context switches\n         47562458660  instructions retired\n          8187406073  cycles elapsed\n             6832512  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "exact_stdout_equal": true,
+      "completion_signature_equal": true,
+      "score_delta_percent": 0.0,
+      "rss_delta_percent": -1.4099783080260275,
+      "rss_delta_bytes": -212992,
+      "instructions_delta_percent": -0.6049829168680132
+    },
+    {
+      "pair": 10,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "baseline": {
+        "binary": "/tmp/quench-call-args-2026-10-08/quench",
+        "binary_sha256": "79d90ef3cc4587bd70b84b51276e7f682ea5ed7903050695ccc268aaa016bc07",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/quench",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 206.0,
+        "max_rss_bytes": 15056896,
+        "instructions_retired": 47058817270,
+        "wall_seconds": 2.018000417,
+        "stdout": "__quenchBenchResult: Richards: 206\n----\nScore: 206\n",
+        "stderr": "        2.01 real         2.01 user         0.00 sys\n            15056896  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1092  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  64  involuntary context switches\n         47058817270  instructions retired\n          8123896772  cycles elapsed\n             6996352  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "candidate": {
+        "binary": "/tmp/quench-call-args-2026-10-08/candidate",
+        "binary_sha256": "48b04834459e74147d2a25bc07b1081afba6a3cfe218527df3978643bf2e3670",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/candidate",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 211.0,
+        "max_rss_bytes": 15122432,
+        "instructions_retired": 47563940250,
+        "wall_seconds": 2.014833042,
+        "stdout": "__quenchBenchResult: Richards: 211\n----\nScore: 211\n",
+        "stderr": "        2.01 real         2.00 user         0.00 sys\n            15122432  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1096  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  65  involuntary context switches\n         47563940250  instructions retired\n          8113094591  cycles elapsed\n             7061912  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "exact_stdout_equal": false,
+      "completion_signature_equal": true,
+      "score_delta_percent": 2.4271844660194164,
+      "rss_delta_percent": 0.43525571273121955,
+      "rss_delta_bytes": 65536,
+      "instructions_delta_percent": 1.0733864752738187
+    },
+    {
+      "pair": 11,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "baseline": {
+        "binary": "/tmp/quench-call-args-2026-10-08/quench",
+        "binary_sha256": "79d90ef3cc4587bd70b84b51276e7f682ea5ed7903050695ccc268aaa016bc07",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/quench",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 209.0,
+        "max_rss_bytes": 15073280,
+        "instructions_retired": 47852343366,
+        "wall_seconds": 2.035432166,
+        "stdout": "__quenchBenchResult: Richards: 209\n----\nScore: 209\n",
+        "stderr": "        2.03 real         2.02 user         0.00 sys\n            15073280  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1093  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  48  involuntary context switches\n         47852343366  instructions retired\n          8194507667  cycles elapsed\n             6996352  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "candidate": {
+        "binary": "/tmp/quench-call-args-2026-10-08/candidate",
+        "binary_sha256": "48b04834459e74147d2a25bc07b1081afba6a3cfe218527df3978643bf2e3670",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/candidate",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 203.0,
+        "max_rss_bytes": 15106048,
+        "instructions_retired": 45985443681,
+        "wall_seconds": 2.025221583,
+        "stdout": "__quenchBenchResult: Richards: 203\n----\nScore: 203\n",
+        "stderr": "        2.02 real         2.01 user         0.00 sys\n            15106048  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1095  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  29  involuntary context switches\n         45985443681  instructions retired\n          8153909486  cycles elapsed\n             7045504  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "exact_stdout_equal": false,
+      "completion_signature_equal": true,
+      "score_delta_percent": -2.8708133971291905,
+      "rss_delta_percent": 0.21739130434783593,
+      "rss_delta_bytes": 32768,
+      "instructions_delta_percent": -3.901375677092689
+    },
+    {
+      "pair": 12,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "baseline": {
+        "binary": "/tmp/quench-call-args-2026-10-08/quench",
+        "binary_sha256": "79d90ef3cc4587bd70b84b51276e7f682ea5ed7903050695ccc268aaa016bc07",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/quench",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 212.0,
+        "max_rss_bytes": 15089664,
+        "instructions_retired": 48645461499,
+        "wall_seconds": 2.028317583,
+        "stdout": "__quenchBenchResult: Richards: 212\n----\nScore: 212\n",
+        "stderr": "        2.02 real         2.02 user         0.00 sys\n            15089664  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1094  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  35  involuntary context switches\n         48645461499  instructions retired\n          8305054948  cycles elapsed\n             7012736  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "candidate": {
+        "binary": "/tmp/quench-call-args-2026-10-08/candidate",
+        "binary_sha256": "48b04834459e74147d2a25bc07b1081afba6a3cfe218527df3978643bf2e3670",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/candidate",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 213.0,
+        "max_rss_bytes": 15089664,
+        "instructions_retired": 48353005784,
+        "wall_seconds": 2.030787041,
+        "stdout": "__quenchBenchResult: Richards: 213\n----\nScore: 213\n",
+        "stderr": "        2.02 real         2.02 user         0.00 sys\n            15089664  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1094  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  38  involuntary context switches\n         48353005784  instructions retired\n          8315879912  cycles elapsed\n             7029120  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "exact_stdout_equal": false,
+      "completion_signature_equal": true,
+      "score_delta_percent": 0.4716981132075526,
+      "rss_delta_percent": 0.0,
+      "rss_delta_bytes": 0,
+      "instructions_delta_percent": -0.6011983564099044
+    },
+    {
+      "pair": 13,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "baseline": {
+        "binary": "/tmp/quench-call-args-2026-10-08/quench",
+        "binary_sha256": "79d90ef3cc4587bd70b84b51276e7f682ea5ed7903050695ccc268aaa016bc07",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/quench",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 210.0,
+        "max_rss_bytes": 15106048,
+        "instructions_retired": 47852996237,
+        "wall_seconds": 2.024300583,
+        "stdout": "__quenchBenchResult: Richards: 210\n----\nScore: 210\n",
+        "stderr": "        2.02 real         2.01 user         0.00 sys\n            15106048  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1095  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  40  involuntary context switches\n         47852996237  instructions retired\n          8255240528  cycles elapsed\n             7045528  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "candidate": {
+        "binary": "/tmp/quench-call-args-2026-10-08/candidate",
+        "binary_sha256": "48b04834459e74147d2a25bc07b1081afba6a3cfe218527df3978643bf2e3670",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/candidate",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 212.0,
+        "max_rss_bytes": 15106048,
+        "instructions_retired": 47566588575,
+        "wall_seconds": 2.012583167,
+        "stdout": "__quenchBenchResult: Richards: 212\n----\nScore: 212\n",
+        "stderr": "        2.01 real         2.00 user         0.00 sys\n            15106048  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1096  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  44  involuntary context switches\n         47566588575  instructions retired\n          8233980022  cycles elapsed\n             7045504  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "exact_stdout_equal": false,
+      "completion_signature_equal": true,
+      "score_delta_percent": 0.952380952380949,
+      "rss_delta_percent": 0.0,
+      "rss_delta_bytes": 0,
+      "instructions_delta_percent": -0.5985156302052985
+    },
+    {
+      "pair": 14,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "baseline": {
+        "binary": "/tmp/quench-call-args-2026-10-08/quench",
+        "binary_sha256": "79d90ef3cc4587bd70b84b51276e7f682ea5ed7903050695ccc268aaa016bc07",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/quench",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 212.0,
+        "max_rss_bytes": 15056896,
+        "instructions_retired": 48645555557,
+        "wall_seconds": 2.034189583,
+        "stdout": "__quenchBenchResult: Richards: 212\n----\nScore: 212\n",
+        "stderr": "        2.03 real         2.02 user         0.00 sys\n            15056896  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1092  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  55  involuntary context switches\n         48645555557  instructions retired\n          8315811593  cycles elapsed\n             6979968  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "candidate": {
+        "binary": "/tmp/quench-call-args-2026-10-08/candidate",
+        "binary_sha256": "48b04834459e74147d2a25bc07b1081afba6a3cfe218527df3978643bf2e3670",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/candidate",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 207.0,
+        "max_rss_bytes": 14958592,
+        "instructions_retired": 47164714736,
+        "wall_seconds": 2.022820542,
+        "stdout": "__quenchBenchResult: Richards: 207\n----\nScore: 207\n",
+        "stderr": "        2.02 real         2.01 user         0.00 sys\n            14958592  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1086  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  43  involuntary context switches\n         47164714736  instructions retired\n          8250477486  cycles elapsed\n             6881664  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "exact_stdout_equal": false,
+      "completion_signature_equal": true,
+      "score_delta_percent": -2.358490566037741,
+      "rss_delta_percent": -0.6528835690968404,
+      "rss_delta_bytes": -98304,
+      "instructions_delta_percent": -3.04414412384465
+    },
+    {
+      "pair": 15,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "baseline": {
+        "binary": "/tmp/quench-call-args-2026-10-08/quench",
+        "binary_sha256": "79d90ef3cc4587bd70b84b51276e7f682ea5ed7903050695ccc268aaa016bc07",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/quench",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 212.0,
+        "max_rss_bytes": 15056896,
+        "instructions_retired": 48243951461,
+        "wall_seconds": 2.025098292,
+        "stdout": "__quenchBenchResult: Richards: 212\n----\nScore: 212\n",
+        "stderr": "        2.02 real         2.01 user         0.00 sys\n            15056896  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1092  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  59  involuntary context switches\n         48243951461  instructions retired\n          8253281086  cycles elapsed\n             6979968  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "candidate": {
+        "binary": "/tmp/quench-call-args-2026-10-08/candidate",
+        "binary_sha256": "48b04834459e74147d2a25bc07b1081afba6a3cfe218527df3978643bf2e3670",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/candidate",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 213.0,
+        "max_rss_bytes": 15122432,
+        "instructions_retired": 48352662338,
+        "wall_seconds": 2.028981083,
+        "stdout": "__quenchBenchResult: Richards: 213\n----\nScore: 213\n",
+        "stderr": "        2.02 real         2.02 user         0.00 sys\n            15122432  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1096  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  27  involuntary context switches\n         48352662338  instructions retired\n          8278249284  cycles elapsed\n             7045504  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "exact_stdout_equal": false,
+      "completion_signature_equal": true,
+      "score_delta_percent": 0.4716981132075526,
+      "rss_delta_percent": 0.43525571273121955,
+      "rss_delta_bytes": 65536,
+      "instructions_delta_percent": 0.22533576481162942
+    },
+    {
+      "pair": 16,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "baseline": {
+        "binary": "/tmp/quench-call-args-2026-10-08/quench",
+        "binary_sha256": "79d90ef3cc4587bd70b84b51276e7f682ea5ed7903050695ccc268aaa016bc07",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/quench",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 211.0,
+        "max_rss_bytes": 15237120,
+        "instructions_retired": 47851812309,
+        "wall_seconds": 2.013173375,
+        "stdout": "__quenchBenchResult: Richards: 211\n----\nScore: 211\n",
+        "stderr": "        2.01 real         2.00 user         0.00 sys\n            15237120  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1103  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  40  involuntary context switches\n         47851812309  instructions retired\n          8181963132  cycles elapsed\n             7176576  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "candidate": {
+        "binary": "/tmp/quench-call-args-2026-10-08/candidate",
+        "binary_sha256": "48b04834459e74147d2a25bc07b1081afba6a3cfe218527df3978643bf2e3670",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/candidate",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 210.0,
+        "max_rss_bytes": 14909440,
+        "instructions_retired": 47953495014,
+        "wall_seconds": 2.027087041,
+        "stdout": "__quenchBenchResult: Richards: 210\n----\nScore: 210\n",
+        "stderr": "        2.02 real         2.01 user         0.00 sys\n            14909440  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1083  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  64  involuntary context switches\n         47953495014  instructions retired\n          8215651148  cycles elapsed\n             6848920  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "exact_stdout_equal": false,
+      "completion_signature_equal": true,
+      "score_delta_percent": -0.4739336492891044,
+      "rss_delta_percent": -2.1505376344086002,
+      "rss_delta_bytes": -327680,
+      "instructions_delta_percent": 0.21249499254780702
+    },
+    {
+      "pair": 17,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "baseline": {
+        "binary": "/tmp/quench-call-args-2026-10-08/quench",
+        "binary_sha256": "79d90ef3cc4587bd70b84b51276e7f682ea5ed7903050695ccc268aaa016bc07",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/quench",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 210.0,
+        "max_rss_bytes": 15122432,
+        "instructions_retired": 47851136007,
+        "wall_seconds": 2.016113416,
+        "stdout": "__quenchBenchResult: Richards: 210\n----\nScore: 210\n",
+        "stderr": "        2.01 real         2.00 user         0.00 sys\n            15122432  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1096  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  41  involuntary context switches\n         47851136007  instructions retired\n          8182063105  cycles elapsed\n             7045504  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "candidate": {
+        "binary": "/tmp/quench-call-args-2026-10-08/candidate",
+        "binary_sha256": "48b04834459e74147d2a25bc07b1081afba6a3cfe218527df3978643bf2e3670",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/candidate",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 211.0,
+        "max_rss_bytes": 14860288,
+        "instructions_retired": 47562977992,
+        "wall_seconds": 2.014375083,
+        "stdout": "__quenchBenchResult: Richards: 211\n----\nScore: 211\n",
+        "stderr": "        2.01 real         2.00 user         0.00 sys\n            14860288  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1081  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  39  involuntary context switches\n         47562977992  instructions retired\n          8179992544  cycles elapsed\n             6799744  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "exact_stdout_equal": false,
+      "completion_signature_equal": true,
+      "score_delta_percent": 0.4761904761904745,
+      "rss_delta_percent": -1.7334777898158182,
+      "rss_delta_bytes": -262144,
+      "instructions_delta_percent": -0.6021968108716247
+    },
+    {
+      "pair": 18,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "baseline": {
+        "binary": "/tmp/quench-call-args-2026-10-08/quench",
+        "binary_sha256": "79d90ef3cc4587bd70b84b51276e7f682ea5ed7903050695ccc268aaa016bc07",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/quench",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 210.0,
+        "max_rss_bytes": 15024128,
+        "instructions_retired": 47853065092,
+        "wall_seconds": 2.02614475,
+        "stdout": "__quenchBenchResult: Richards: 210\n----\nScore: 210\n",
+        "stderr": "        2.02 real         2.01 user         0.00 sys\n            15024128  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1090  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  37  involuntary context switches\n         47853065092  instructions retired\n          8213437121  cycles elapsed\n             6947200  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "candidate": {
+        "binary": "/tmp/quench-call-args-2026-10-08/candidate",
+        "binary_sha256": "48b04834459e74147d2a25bc07b1081afba6a3cfe218527df3978643bf2e3670",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/candidate",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 212.0,
+        "max_rss_bytes": 14958592,
+        "instructions_retired": 48353218645,
+        "wall_seconds": 2.038487125,
+        "stdout": "__quenchBenchResult: Richards: 212\n----\nScore: 212\n",
+        "stderr": "        2.03 real         2.03 user         0.00 sys\n            14958592  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1086  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  32  involuntary context switches\n         48353218645  instructions retired\n          8263745557  cycles elapsed\n             6898048  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "exact_stdout_equal": false,
+      "completion_signature_equal": true,
+      "score_delta_percent": 0.952380952380949,
+      "rss_delta_percent": -0.4362050163576936,
+      "rss_delta_bytes": -65536,
+      "instructions_delta_percent": 1.0451860336186058
+    },
+    {
+      "pair": 19,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "baseline": {
+        "binary": "/tmp/quench-call-args-2026-10-08/quench",
+        "binary_sha256": "79d90ef3cc4587bd70b84b51276e7f682ea5ed7903050695ccc268aaa016bc07",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/quench",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 210.0,
+        "max_rss_bytes": 15171584,
+        "instructions_retired": 48243016350,
+        "wall_seconds": 2.032374458,
+        "stdout": "__quenchBenchResult: Richards: 210\n----\nScore: 210\n",
+        "stderr": "        2.03 real         2.02 user         0.00 sys\n            15171584  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1099  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  43  involuntary context switches\n         48243016350  instructions retired\n          8240348814  cycles elapsed\n             7111040  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "candidate": {
+        "binary": "/tmp/quench-call-args-2026-10-08/candidate",
+        "binary_sha256": "48b04834459e74147d2a25bc07b1081afba6a3cfe218527df3978643bf2e3670",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/candidate",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 211.0,
+        "max_rss_bytes": 14893056,
+        "instructions_retired": 47953244350,
+        "wall_seconds": 2.027026875,
+        "stdout": "__quenchBenchResult: Richards: 211\n----\nScore: 211\n",
+        "stderr": "        2.02 real         2.01 user         0.00 sys\n            14893056  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1082  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  36  involuntary context switches\n         47953244350  instructions retired\n          8224376209  cycles elapsed\n             6848920  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "exact_stdout_equal": false,
+      "completion_signature_equal": true,
+      "score_delta_percent": 0.4761904761904745,
+      "rss_delta_percent": -1.8358531317494653,
+      "rss_delta_bytes": -278528,
+      "instructions_delta_percent": -0.6006506680629631
+    },
+    {
+      "pair": 20,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "baseline": {
+        "binary": "/tmp/quench-call-args-2026-10-08/quench",
+        "binary_sha256": "79d90ef3cc4587bd70b84b51276e7f682ea5ed7903050695ccc268aaa016bc07",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/quench",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 210.0,
+        "max_rss_bytes": 15056896,
+        "instructions_retired": 47851654446,
+        "wall_seconds": 2.01868675,
+        "stdout": "__quenchBenchResult: Richards: 210\n----\nScore: 210\n",
+        "stderr": "        2.01 real         2.01 user         0.00 sys\n            15056896  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1093  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  29  involuntary context switches\n         47851654446  instructions retired\n          8185301105  cycles elapsed\n             6996352  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "candidate": {
+        "binary": "/tmp/quench-call-args-2026-10-08/candidate",
+        "binary_sha256": "48b04834459e74147d2a25bc07b1081afba6a3cfe218527df3978643bf2e3670",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/candidate",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 211.0,
+        "max_rss_bytes": 14958592,
+        "instructions_retired": 47564922027,
+        "wall_seconds": 2.022366208,
+        "stdout": "__quenchBenchResult: Richards: 211\n----\nScore: 211\n",
+        "stderr": "        2.02 real         2.00 user         0.00 sys\n            14958592  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1087  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  98  involuntary context switches\n         47564922027  instructions retired\n          8167104011  cycles elapsed\n             6898048  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "exact_stdout_equal": false,
+      "completion_signature_equal": true,
+      "score_delta_percent": 0.4761904761904745,
+      "rss_delta_percent": -0.6528835690968404,
+      "rss_delta_bytes": -98304,
+      "instructions_delta_percent": -0.5992110875154277
+    },
+    {
+      "pair": 21,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "baseline": {
+        "binary": "/tmp/quench-call-args-2026-10-08/quench",
+        "binary_sha256": "79d90ef3cc4587bd70b84b51276e7f682ea5ed7903050695ccc268aaa016bc07",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/quench",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 209.0,
+        "max_rss_bytes": 15056896,
+        "instructions_retired": 47852634554,
+        "wall_seconds": 2.030857,
+        "stdout": "__quenchBenchResult: Richards: 209\n----\nScore: 209\n",
+        "stderr": "        2.02 real         2.02 user         0.00 sys\n            15056896  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1093  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  25  involuntary context switches\n         47852634554  instructions retired\n          8220558585  cycles elapsed\n             7012760  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "candidate": {
+        "binary": "/tmp/quench-call-args-2026-10-08/candidate",
+        "binary_sha256": "48b04834459e74147d2a25bc07b1081afba6a3cfe218527df3978643bf2e3670",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/candidate",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 210.0,
+        "max_rss_bytes": 14925824,
+        "instructions_retired": 47564062808,
+        "wall_seconds": 2.021358083,
+        "stdout": "__quenchBenchResult: Richards: 210\n----\nScore: 210\n",
+        "stderr": "        2.01 real         2.01 user         0.00 sys\n            14925824  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1084  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  42  involuntary context switches\n         47564062808  instructions retired\n          8192139080  cycles elapsed\n             6848896  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "exact_stdout_equal": false,
+      "completion_signature_equal": true,
+      "score_delta_percent": 0.4784688995215225,
+      "rss_delta_percent": -0.8705114254624613,
+      "rss_delta_bytes": -131072,
+      "instructions_delta_percent": -0.6030425465380795
+    },
+    {
+      "pair": 22,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "baseline": {
+        "binary": "/tmp/quench-call-args-2026-10-08/quench",
+        "binary_sha256": "79d90ef3cc4587bd70b84b51276e7f682ea5ed7903050695ccc268aaa016bc07",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/quench",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 206.0,
+        "max_rss_bytes": 15122432,
+        "instructions_retired": 47462307452,
+        "wall_seconds": 2.024256875,
+        "stdout": "__quenchBenchResult: Richards: 206\n----\nScore: 206\n",
+        "stderr": "        2.02 real         2.00 user         0.01 sys\n            15122432  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1096  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  40  involuntary context switches\n         47462307452  instructions retired\n          8148611604  cycles elapsed\n             7061912  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "candidate": {
+        "binary": "/tmp/quench-call-args-2026-10-08/candidate",
+        "binary_sha256": "48b04834459e74147d2a25bc07b1081afba6a3cfe218527df3978643bf2e3670",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/candidate",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 210.0,
+        "max_rss_bytes": 15187968,
+        "instructions_retired": 47566458517,
+        "wall_seconds": 2.024916541,
+        "stdout": "__quenchBenchResult: Richards: 210\n----\nScore: 210\n",
+        "stderr": "        2.02 real         2.01 user         0.00 sys\n            15187968  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1100  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  43  involuntary context switches\n         47566458517  instructions retired\n          8191519435  cycles elapsed\n             7111040  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "exact_stdout_equal": false,
+      "completion_signature_equal": true,
+      "score_delta_percent": 1.9417475728155331,
+      "rss_delta_percent": 0.43336944745395733,
+      "rss_delta_bytes": 65536,
+      "instructions_delta_percent": 0.21943953126453142
+    },
+    {
+      "pair": 23,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "baseline": {
+        "binary": "/tmp/quench-call-args-2026-10-08/quench",
+        "binary_sha256": "79d90ef3cc4587bd70b84b51276e7f682ea5ed7903050695ccc268aaa016bc07",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/quench",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 212.0,
+        "max_rss_bytes": 15138816,
+        "instructions_retired": 47851230923,
+        "wall_seconds": 2.016377792,
+        "stdout": "__quenchBenchResult: Richards: 212\n----\nScore: 212\n",
+        "stderr": "        2.01 real         2.00 user         0.00 sys\n            15138816  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1097  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  66  involuntary context switches\n         47851230923  instructions retired\n          8156344208  cycles elapsed\n             7061888  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "candidate": {
+        "binary": "/tmp/quench-call-args-2026-10-08/candidate",
+        "binary_sha256": "48b04834459e74147d2a25bc07b1081afba6a3cfe218527df3978643bf2e3670",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/candidate",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 212.0,
+        "max_rss_bytes": 14958592,
+        "instructions_retired": 47953666015,
+        "wall_seconds": 2.023728041,
+        "stdout": "__quenchBenchResult: Richards: 212\n----\nScore: 212\n",
+        "stderr": "        2.02 real         2.01 user         0.00 sys\n            14958592  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1086  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  33  involuntary context switches\n         47953666015  instructions retired\n          8192143063  cycles elapsed\n             6898048  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "exact_stdout_equal": true,
+      "completion_signature_equal": true,
+      "score_delta_percent": 0.0,
+      "rss_delta_percent": -1.1904761904761862,
+      "rss_delta_bytes": -180224,
+      "instructions_delta_percent": 0.2140699205101626
+    },
+    {
+      "pair": 24,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "baseline": {
+        "binary": "/tmp/quench-call-args-2026-10-08/quench",
+        "binary_sha256": "79d90ef3cc4587bd70b84b51276e7f682ea5ed7903050695ccc268aaa016bc07",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/quench",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 211.0,
+        "max_rss_bytes": 15056896,
+        "instructions_retired": 47853143380,
+        "wall_seconds": 2.019049459,
+        "stdout": "__quenchBenchResult: Richards: 211\n----\nScore: 211\n",
+        "stderr": "        2.01 real         2.01 user         0.00 sys\n            15056896  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1093  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  53  involuntary context switches\n         47853143380  instructions retired\n          8174866726  cycles elapsed\n             6996352  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "candidate": {
+        "binary": "/tmp/quench-call-args-2026-10-08/candidate",
+        "binary_sha256": "48b04834459e74147d2a25bc07b1081afba6a3cfe218527df3978643bf2e3670",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/candidate",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 211.0,
+        "max_rss_bytes": 14958592,
+        "instructions_retired": 47564138734,
+        "wall_seconds": 2.021633042,
+        "stdout": "__quenchBenchResult: Richards: 211\n----\nScore: 211\n",
+        "stderr": "        2.01 real         2.01 user         0.00 sys\n            14958592  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1086  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  27  involuntary context switches\n         47564138734  instructions retired\n          8172184756  cycles elapsed\n             6881664  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "exact_stdout_equal": true,
+      "completion_signature_equal": true,
+      "score_delta_percent": 0.0,
+      "rss_delta_percent": -0.6528835690968404,
+      "rss_delta_bytes": -98304,
+      "instructions_delta_percent": -0.6039407771084693
+    },
+    {
+      "pair": 25,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "baseline": {
+        "binary": "/tmp/quench-call-args-2026-10-08/quench",
+        "binary_sha256": "79d90ef3cc4587bd70b84b51276e7f682ea5ed7903050695ccc268aaa016bc07",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/quench",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 211.0,
+        "max_rss_bytes": 15106048,
+        "instructions_retired": 47851167562,
+        "wall_seconds": 2.021779958,
+        "stdout": "__quenchBenchResult: Richards: 211\n----\nScore: 211\n",
+        "stderr": "        2.01 real         2.01 user         0.00 sys\n            15106048  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1095  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  42  involuntary context switches\n         47851167562  instructions retired\n          8156910586  cycles elapsed\n             7061912  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "candidate": {
+        "binary": "/tmp/quench-call-args-2026-10-08/candidate",
+        "binary_sha256": "48b04834459e74147d2a25bc07b1081afba6a3cfe218527df3978643bf2e3670",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/candidate",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 211.0,
+        "max_rss_bytes": 15171584,
+        "instructions_retired": 47566903475,
+        "wall_seconds": 2.018583209,
+        "stdout": "__quenchBenchResult: Richards: 211\n----\nScore: 211\n",
+        "stderr": "        2.01 real         2.01 user         0.00 sys\n            15171584  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1099  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  41  involuntary context switches\n         47566903475  instructions retired\n          8161440177  cycles elapsed\n             7094656  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "exact_stdout_equal": true,
+      "completion_signature_equal": true,
+      "score_delta_percent": 0.0,
+      "rss_delta_percent": 0.433839479392617,
+      "rss_delta_bytes": 65536,
+      "instructions_delta_percent": -0.5940588317551176
+    },
+    {
+      "pair": 26,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "baseline": {
+        "binary": "/tmp/quench-call-args-2026-10-08/quench",
+        "binary_sha256": "79d90ef3cc4587bd70b84b51276e7f682ea5ed7903050695ccc268aaa016bc07",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/quench",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 209.0,
+        "max_rss_bytes": 15089664,
+        "instructions_retired": 47851134239,
+        "wall_seconds": 2.03758925,
+        "stdout": "__quenchBenchResult: Richards: 209\n----\nScore: 209\n",
+        "stderr": "        2.03 real         2.03 user         0.00 sys\n            15089664  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1095  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  25  involuntary context switches\n         47851134239  instructions retired\n          8231562690  cycles elapsed\n             7029120  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "candidate": {
+        "binary": "/tmp/quench-call-args-2026-10-08/candidate",
+        "binary_sha256": "48b04834459e74147d2a25bc07b1081afba6a3cfe218527df3978643bf2e3670",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/candidate",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 211.0,
+        "max_rss_bytes": 15122432,
+        "instructions_retired": 47563928292,
+        "wall_seconds": 2.013852084,
+        "stdout": "__quenchBenchResult: Richards: 211\n----\nScore: 211\n",
+        "stderr": "        2.01 real         2.00 user         0.00 sys\n            15122432  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1096  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  30  involuntary context switches\n         47563928292  instructions retired\n          8142637338  cycles elapsed\n             7078296  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "exact_stdout_equal": false,
+      "completion_signature_equal": true,
+      "score_delta_percent": 0.9569377990430672,
+      "rss_delta_percent": 0.21715526601520097,
+      "rss_delta_bytes": 32768,
+      "instructions_delta_percent": -0.6002071874942505
+    },
+    {
+      "pair": 27,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "baseline": {
+        "binary": "/tmp/quench-call-args-2026-10-08/quench",
+        "binary_sha256": "79d90ef3cc4587bd70b84b51276e7f682ea5ed7903050695ccc268aaa016bc07",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/quench",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 209.0,
+        "max_rss_bytes": 15056896,
+        "instructions_retired": 47853234971,
+        "wall_seconds": 2.022197917,
+        "stdout": "__quenchBenchResult: Richards: 209\n----\nScore: 209\n",
+        "stderr": "        2.02 real         2.01 user         0.00 sys\n            15056896  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1092  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  59  involuntary context switches\n         47853234971  instructions retired\n          8140867507  cycles elapsed\n             6979968  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "candidate": {
+        "binary": "/tmp/quench-call-args-2026-10-08/candidate",
+        "binary_sha256": "48b04834459e74147d2a25bc07b1081afba6a3cfe218527df3978643bf2e3670",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/candidate",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 210.0,
+        "max_rss_bytes": 15122432,
+        "instructions_retired": 47567004294,
+        "wall_seconds": 2.023729791,
+        "stdout": "__quenchBenchResult: Richards: 210\n----\nScore: 210\n",
+        "stderr": "        2.02 real         2.01 user         0.00 sys\n            15122432  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1097  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  53  involuntary context switches\n         47567004294  instructions retired\n          8181320775  cycles elapsed\n             7078296  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "exact_stdout_equal": false,
+      "completion_signature_equal": true,
+      "score_delta_percent": 0.4784688995215225,
+      "rss_delta_percent": 0.43525571273121955,
+      "rss_delta_bytes": 65536,
+      "instructions_delta_percent": -0.5981427946793128
+    },
+    {
+      "pair": 28,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "baseline": {
+        "binary": "/tmp/quench-call-args-2026-10-08/quench",
+        "binary_sha256": "79d90ef3cc4587bd70b84b51276e7f682ea5ed7903050695ccc268aaa016bc07",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/quench",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 132.0,
+        "max_rss_bytes": 17006592,
+        "instructions_retired": 39104728555,
+        "wall_seconds": 2.03797825,
+        "stdout": "__quenchBenchResult: Richards: 132\n----\nScore: 132\n",
+        "stderr": "        2.03 real         1.96 user         0.00 sys\n            17006592  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1212  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 429  involuntary context switches\n         39104728555  instructions retired\n          7315922841  cycles elapsed\n             8946048  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "candidate": {
+        "binary": "/tmp/quench-call-args-2026-10-08/candidate",
+        "binary_sha256": "48b04834459e74147d2a25bc07b1081afba6a3cfe218527df3978643bf2e3670",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/candidate",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 211.0,
+        "max_rss_bytes": 15122432,
+        "instructions_retired": 47563888218,
+        "wall_seconds": 2.021091792,
+        "stdout": "__quenchBenchResult: Richards: 211\n----\nScore: 211\n",
+        "stderr": "        2.01 real         2.00 user         0.00 sys\n            15122432  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1096  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  47  involuntary context switches\n         47563888218  instructions retired\n          8143490064  cycles elapsed\n             7045504  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "exact_stdout_equal": false,
+      "completion_signature_equal": true,
+      "score_delta_percent": 59.84848484848484,
+      "rss_delta_percent": -11.078998073217727,
+      "rss_delta_bytes": -1884160,
+      "instructions_delta_percent": 21.632063373365096
+    },
+    {
+      "pair": 29,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "baseline": {
+        "binary": "/tmp/quench-call-args-2026-10-08/quench",
+        "binary_sha256": "79d90ef3cc4587bd70b84b51276e7f682ea5ed7903050695ccc268aaa016bc07",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/quench",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 209.0,
+        "max_rss_bytes": 15155200,
+        "instructions_retired": 47851355182,
+        "wall_seconds": 2.031002833,
+        "stdout": "__quenchBenchResult: Richards: 209\n----\nScore: 209\n",
+        "stderr": "        2.02 real         2.02 user         0.00 sys\n            15155200  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1098  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  43  involuntary context switches\n         47851355182  instructions retired\n          8205645654  cycles elapsed\n             7078272  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "candidate": {
+        "binary": "/tmp/quench-call-args-2026-10-08/candidate",
+        "binary_sha256": "48b04834459e74147d2a25bc07b1081afba6a3cfe218527df3978643bf2e3670",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/candidate",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 210.0,
+        "max_rss_bytes": 15171584,
+        "instructions_retired": 47566577337,
+        "wall_seconds": 2.024804459,
+        "stdout": "__quenchBenchResult: Richards: 210\n----\nScore: 210\n",
+        "stderr": "        2.02 real         2.01 user         0.00 sys\n            15171584  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1100  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  38  involuntary context switches\n         47566577337  instructions retired\n          8177374970  cycles elapsed\n             7111040  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "exact_stdout_equal": false,
+      "completion_signature_equal": true,
+      "score_delta_percent": 0.4784688995215225,
+      "rss_delta_percent": 0.108108108108107,
+      "rss_delta_bytes": 16384,
+      "instructions_delta_percent": -0.5951301565376044
+    },
+    {
+      "pair": 30,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "baseline": {
+        "binary": "/tmp/quench-call-args-2026-10-08/quench",
+        "binary_sha256": "79d90ef3cc4587bd70b84b51276e7f682ea5ed7903050695ccc268aaa016bc07",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/quench",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 209.0,
+        "max_rss_bytes": 15204352,
+        "instructions_retired": 47447428721,
+        "wall_seconds": 2.02515675,
+        "stdout": "__quenchBenchResult: Richards: 209\n----\nScore: 209\n",
+        "stderr": "        2.02 real         2.01 user         0.00 sys\n            15204352  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1101  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  46  involuntary context switches\n         47447428721  instructions retired\n          8179775639  cycles elapsed\n             7143808  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "candidate": {
+        "binary": "/tmp/quench-call-args-2026-10-08/candidate",
+        "binary_sha256": "48b04834459e74147d2a25bc07b1081afba6a3cfe218527df3978643bf2e3670",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/candidate",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 210.0,
+        "max_rss_bytes": 14958592,
+        "instructions_retired": 47564270030,
+        "wall_seconds": 2.019441459,
+        "stdout": "__quenchBenchResult: Richards: 210\n----\nScore: 210\n",
+        "stderr": "        2.01 real         2.01 user         0.00 sys\n            14958592  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1086  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  38  involuntary context switches\n         47564270030  instructions retired\n          8143977810  cycles elapsed\n             6898048  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "exact_stdout_equal": false,
+      "completion_signature_equal": true,
+      "score_delta_percent": 0.4784688995215225,
+      "rss_delta_percent": -1.6163793103448287,
+      "rss_delta_bytes": -245760,
+      "instructions_delta_percent": 0.24625424843789379
+    },
+    {
+      "pair": 31,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "baseline": {
+        "binary": "/tmp/quench-call-args-2026-10-08/quench",
+        "binary_sha256": "79d90ef3cc4587bd70b84b51276e7f682ea5ed7903050695ccc268aaa016bc07",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/quench",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 209.0,
+        "max_rss_bytes": 15155200,
+        "instructions_retired": 47449119347,
+        "wall_seconds": 2.025147459,
+        "stdout": "__quenchBenchResult: Richards: 209\n----\nScore: 209\n",
+        "stderr": "        2.02 real         2.01 user         0.00 sys\n            15155200  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1099  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  89  involuntary context switches\n         47449119347  instructions retired\n          8166858727  cycles elapsed\n             7111064  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "candidate": {
+        "binary": "/tmp/quench-call-args-2026-10-08/candidate",
+        "binary_sha256": "48b04834459e74147d2a25bc07b1081afba6a3cfe218527df3978643bf2e3670",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/candidate",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 210.0,
+        "max_rss_bytes": 14876672,
+        "instructions_retired": 47562987361,
+        "wall_seconds": 2.02191275,
+        "stdout": "__quenchBenchResult: Richards: 210\n----\nScore: 210\n",
+        "stderr": "        2.01 real         2.01 user         0.00 sys\n            14876672  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1081  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  40  involuntary context switches\n         47562987361  instructions retired\n          8173114511  cycles elapsed\n             6799744  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "exact_stdout_equal": false,
+      "completion_signature_equal": true,
+      "score_delta_percent": 0.4784688995215225,
+      "rss_delta_percent": -1.8378378378378413,
+      "rss_delta_bytes": -278528,
+      "instructions_delta_percent": 0.23997919364375786
+    },
+    {
+      "pair": 32,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "baseline": {
+        "binary": "/tmp/quench-call-args-2026-10-08/quench",
+        "binary_sha256": "79d90ef3cc4587bd70b84b51276e7f682ea5ed7903050695ccc268aaa016bc07",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/quench",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 210.0,
+        "max_rss_bytes": 15220736,
+        "instructions_retired": 47850781345,
+        "wall_seconds": 2.027369084,
+        "stdout": "__quenchBenchResult: Richards: 210\n----\nScore: 210\n",
+        "stderr": "        2.02 real         2.02 user         0.00 sys\n            15220736  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1102  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  26  involuntary context switches\n         47850781345  instructions retired\n          8183208028  cycles elapsed\n             7143808  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "candidate": {
+        "binary": "/tmp/quench-call-args-2026-10-08/candidate",
+        "binary_sha256": "48b04834459e74147d2a25bc07b1081afba6a3cfe218527df3978643bf2e3670",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/candidate",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 209.0,
+        "max_rss_bytes": 15056896,
+        "instructions_retired": 47562935747,
+        "wall_seconds": 2.033722041,
+        "stdout": "__quenchBenchResult: Richards: 209\n----\nScore: 209\n",
+        "stderr": "        2.03 real         2.02 user         0.00 sys\n            15056896  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1093  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  49  involuntary context switches\n         47562935747  instructions retired\n          8205635019  cycles elapsed\n             6996352  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "exact_stdout_equal": false,
+      "completion_signature_equal": true,
+      "score_delta_percent": -0.4761904761904745,
+      "rss_delta_percent": -1.076426264800856,
+      "rss_delta_bytes": -163840,
+      "instructions_delta_percent": -0.6015483758241236
+    },
+    {
+      "pair": 33,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "baseline": {
+        "binary": "/tmp/quench-call-args-2026-10-08/quench",
+        "binary_sha256": "79d90ef3cc4587bd70b84b51276e7f682ea5ed7903050695ccc268aaa016bc07",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/quench",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 208.0,
+        "max_rss_bytes": 15089664,
+        "instructions_retired": 47449713037,
+        "wall_seconds": 2.02143525,
+        "stdout": "__quenchBenchResult: Richards: 208\n----\nScore: 208\n",
+        "stderr": "        2.01 real         2.01 user         0.00 sys\n            15089664  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1094  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  34  involuntary context switches\n         47449713037  instructions retired\n          8154781475  cycles elapsed\n             7012736  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "candidate": {
+        "binary": "/tmp/quench-call-args-2026-10-08/candidate",
+        "binary_sha256": "48b04834459e74147d2a25bc07b1081afba6a3cfe218527df3978643bf2e3670",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/candidate",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 209.0,
+        "max_rss_bytes": 15171584,
+        "instructions_retired": 47567613585,
+        "wall_seconds": 2.028155875,
+        "stdout": "__quenchBenchResult: Richards: 209\n----\nScore: 209\n",
+        "stderr": "        2.02 real         2.02 user         0.00 sys\n            15171584  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1099  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  44  involuntary context switches\n         47567613585  instructions retired\n          8181990234  cycles elapsed\n             7094656  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "exact_stdout_equal": false,
+      "completion_signature_equal": true,
+      "score_delta_percent": 0.48076923076922906,
+      "rss_delta_percent": 0.5428881650380024,
+      "rss_delta_bytes": 81920,
+      "instructions_delta_percent": 0.24847473346796267
+    },
+    {
+      "pair": 34,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "baseline": {
+        "binary": "/tmp/quench-call-args-2026-10-08/quench",
+        "binary_sha256": "79d90ef3cc4587bd70b84b51276e7f682ea5ed7903050695ccc268aaa016bc07",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/quench",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 210.0,
+        "max_rss_bytes": 15220736,
+        "instructions_retired": 47851814012,
+        "wall_seconds": 2.018375875,
+        "stdout": "__quenchBenchResult: Richards: 210\n----\nScore: 210\n",
+        "stderr": "        2.01 real         2.01 user         0.00 sys\n            15220736  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1102  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  74  involuntary context switches\n         47851814012  instructions retired\n          8149544225  cycles elapsed\n             7160192  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "candidate": {
+        "binary": "/tmp/quench-call-args-2026-10-08/candidate",
+        "binary_sha256": "48b04834459e74147d2a25bc07b1081afba6a3cfe218527df3978643bf2e3670",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/candidate",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 210.0,
+        "max_rss_bytes": 15073280,
+        "instructions_retired": 47564047057,
+        "wall_seconds": 2.030568334,
+        "stdout": "__quenchBenchResult: Richards: 210\n----\nScore: 210\n",
+        "stderr": "        2.02 real         2.02 user         0.00 sys\n            15073280  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1093  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  43  involuntary context switches\n         47564047057  instructions retired\n          8180675492  cycles elapsed\n             6996352  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "exact_stdout_equal": true,
+      "completion_signature_equal": true,
+      "score_delta_percent": 0.0,
+      "rss_delta_percent": -0.9687836383207804,
+      "rss_delta_bytes": -147456,
+      "instructions_delta_percent": -0.6013710471411526
+    },
+    {
+      "pair": 35,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "baseline": {
+        "binary": "/tmp/quench-call-args-2026-10-08/quench",
+        "binary_sha256": "79d90ef3cc4587bd70b84b51276e7f682ea5ed7903050695ccc268aaa016bc07",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/quench",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 211.0,
+        "max_rss_bytes": 15138816,
+        "instructions_retired": 47852006188,
+        "wall_seconds": 2.021367584,
+        "stdout": "__quenchBenchResult: Richards: 211\n----\nScore: 211\n",
+        "stderr": "        2.01 real         2.01 user         0.00 sys\n            15138816  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1098  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  49  involuntary context switches\n         47852006188  instructions retired\n          8140934345  cycles elapsed\n             7078272  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "candidate": {
+        "binary": "/tmp/quench-call-args-2026-10-08/candidate",
+        "binary_sha256": "48b04834459e74147d2a25bc07b1081afba6a3cfe218527df3978643bf2e3670",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/candidate",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 209.0,
+        "max_rss_bytes": 15155200,
+        "instructions_retired": 47568611654,
+        "wall_seconds": 2.034586041,
+        "stdout": "__quenchBenchResult: Richards: 209\n----\nScore: 209\n",
+        "stderr": "        2.03 real         2.02 user         0.00 sys\n            15155200  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1099  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 113  involuntary context switches\n         47568611654  instructions retired\n          8171353271  cycles elapsed\n             7094656  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "exact_stdout_equal": false,
+      "completion_signature_equal": true,
+      "score_delta_percent": -0.9478672985781977,
+      "rss_delta_percent": 0.10822510822510178,
+      "rss_delta_bytes": 16384,
+      "instructions_delta_percent": -0.5922312491697945
+    },
+    {
+      "pair": 36,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "baseline": {
+        "binary": "/tmp/quench-call-args-2026-10-08/quench",
+        "binary_sha256": "79d90ef3cc4587bd70b84b51276e7f682ea5ed7903050695ccc268aaa016bc07",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/quench",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 210.0,
+        "max_rss_bytes": 15073280,
+        "instructions_retired": 47852901078,
+        "wall_seconds": 2.027860167,
+        "stdout": "__quenchBenchResult: Richards: 210\n----\nScore: 210\n",
+        "stderr": "        2.02 real         2.02 user         0.00 sys\n            15073280  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1093  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  32  involuntary context switches\n         47852901078  instructions retired\n          8176413181  cycles elapsed\n             6996352  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "candidate": {
+        "binary": "/tmp/quench-call-args-2026-10-08/candidate",
+        "binary_sha256": "48b04834459e74147d2a25bc07b1081afba6a3cfe218527df3978643bf2e3670",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/candidate",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 210.0,
+        "max_rss_bytes": 14942208,
+        "instructions_retired": 47564258817,
+        "wall_seconds": 2.02476875,
+        "stdout": "__quenchBenchResult: Richards: 210\n----\nScore: 210\n",
+        "stderr": "        2.02 real         2.01 user         0.00 sys\n            14942208  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1086  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  40  involuntary context switches\n         47564258817  instructions retired\n          8153841384  cycles elapsed\n             6881664  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "exact_stdout_equal": true,
+      "completion_signature_equal": true,
+      "score_delta_percent": 0.0,
+      "rss_delta_percent": -0.8695652173912993,
+      "rss_delta_bytes": -131072,
+      "instructions_delta_percent": -0.6031865456380903
+    },
+    {
+      "pair": 37,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "baseline": {
+        "binary": "/tmp/quench-call-args-2026-10-08/quench",
+        "binary_sha256": "79d90ef3cc4587bd70b84b51276e7f682ea5ed7903050695ccc268aaa016bc07",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/quench",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 211.0,
+        "max_rss_bytes": 15073280,
+        "instructions_retired": 47851305261,
+        "wall_seconds": 2.014862541,
+        "stdout": "__quenchBenchResult: Richards: 211\n----\nScore: 211\n",
+        "stderr": "        2.01 real         2.00 user         0.00 sys\n            15073280  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1094  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  46  involuntary context switches\n         47851305261  instructions retired\n          8141930514  cycles elapsed\n             7012736  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "candidate": {
+        "binary": "/tmp/quench-call-args-2026-10-08/candidate",
+        "binary_sha256": "48b04834459e74147d2a25bc07b1081afba6a3cfe218527df3978643bf2e3670",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/candidate",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 211.0,
+        "max_rss_bytes": 14942208,
+        "instructions_retired": 47562959750,
+        "wall_seconds": 2.020102333,
+        "stdout": "__quenchBenchResult: Richards: 211\n----\nScore: 211\n",
+        "stderr": "        2.01 real         2.01 user         0.00 sys\n            14942208  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1086  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  47  involuntary context switches\n         47562959750  instructions retired\n          8142305484  cycles elapsed\n             6881664  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "exact_stdout_equal": true,
+      "completion_signature_equal": true,
+      "score_delta_percent": 0.0,
+      "rss_delta_percent": -0.8695652173912993,
+      "rss_delta_bytes": -131072,
+      "instructions_delta_percent": -0.6025865113339135
+    },
+    {
+      "pair": 38,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "baseline": {
+        "binary": "/tmp/quench-call-args-2026-10-08/quench",
+        "binary_sha256": "79d90ef3cc4587bd70b84b51276e7f682ea5ed7903050695ccc268aaa016bc07",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/quench",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 209.0,
+        "max_rss_bytes": 15089664,
+        "instructions_retired": 47851932778,
+        "wall_seconds": 2.030541459,
+        "stdout": "__quenchBenchResult: Richards: 209\n----\nScore: 209\n",
+        "stderr": "        2.02 real         2.02 user         0.00 sys\n            15089664  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1095  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  74  involuntary context switches\n         47851932778  instructions retired\n          8176228623  cycles elapsed\n             7045528  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "candidate": {
+        "binary": "/tmp/quench-call-args-2026-10-08/candidate",
+        "binary_sha256": "48b04834459e74147d2a25bc07b1081afba6a3cfe218527df3978643bf2e3670",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/candidate",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 209.0,
+        "max_rss_bytes": 14876672,
+        "instructions_retired": 47563973513,
+        "wall_seconds": 2.031262709,
+        "stdout": "__quenchBenchResult: Richards: 209\n----\nScore: 209\n",
+        "stderr": "        2.02 real         2.02 user         0.00 sys\n            14876672  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1082  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  39  involuntary context switches\n         47563973513  instructions retired\n          8183410100  cycles elapsed\n             6816128  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "exact_stdout_equal": true,
+      "completion_signature_equal": true,
+      "score_delta_percent": 0.0,
+      "rss_delta_percent": -1.4115092290988063,
+      "rss_delta_bytes": -212992,
+      "instructions_delta_percent": -0.6017714401128416
+    },
+    {
+      "pair": 39,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "baseline": {
+        "binary": "/tmp/quench-call-args-2026-10-08/quench",
+        "binary_sha256": "79d90ef3cc4587bd70b84b51276e7f682ea5ed7903050695ccc268aaa016bc07",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/quench",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 209.0,
+        "max_rss_bytes": 15073280,
+        "instructions_retired": 47851596770,
+        "wall_seconds": 2.022876292,
+        "stdout": "__quenchBenchResult: Richards: 209\n----\nScore: 209\n",
+        "stderr": "        2.02 real         2.01 user         0.00 sys\n            15073280  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1094  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  61  involuntary context switches\n         47851596770  instructions retired\n          8144743310  cycles elapsed\n             7012736  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "candidate": {
+        "binary": "/tmp/quench-call-args-2026-10-08/candidate",
+        "binary_sha256": "48b04834459e74147d2a25bc07b1081afba6a3cfe218527df3978643bf2e3670",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/candidate",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 211.0,
+        "max_rss_bytes": 14876672,
+        "instructions_retired": 47563030377,
+        "wall_seconds": 2.017529625,
+        "stdout": "__quenchBenchResult: Richards: 211\n----\nScore: 211\n",
+        "stderr": "        2.01 real         2.01 user         0.00 sys\n            14876672  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1081  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  48  involuntary context switches\n         47563030377  instructions retired\n          8136260911  cycles elapsed\n             6799744  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "exact_stdout_equal": false,
+      "completion_signature_equal": true,
+      "score_delta_percent": 0.9569377990430672,
+      "rss_delta_percent": -1.30434782608696,
+      "rss_delta_bytes": -196608,
+      "instructions_delta_percent": -0.6030444383852029
+    },
+    {
+      "pair": 40,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "baseline": {
+        "binary": "/tmp/quench-call-args-2026-10-08/quench",
+        "binary_sha256": "79d90ef3cc4587bd70b84b51276e7f682ea5ed7903050695ccc268aaa016bc07",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/quench",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 210.0,
+        "max_rss_bytes": 15122432,
+        "instructions_retired": 47851420842,
+        "wall_seconds": 2.029211333,
+        "stdout": "__quenchBenchResult: Richards: 210\n----\nScore: 210\n",
+        "stderr": "        2.02 real         2.02 user         0.00 sys\n            15122432  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1096  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  33  involuntary context switches\n         47851420842  instructions retired\n          8169450736  cycles elapsed\n             7045504  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "candidate": {
+        "binary": "/tmp/quench-call-args-2026-10-08/candidate",
+        "binary_sha256": "48b04834459e74147d2a25bc07b1081afba6a3cfe218527df3978643bf2e3670",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/candidate",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 211.0,
+        "max_rss_bytes": 14958592,
+        "instructions_retired": 47564569005,
+        "wall_seconds": 2.02028025,
+        "stdout": "__quenchBenchResult: Richards: 211\n----\nScore: 211\n",
+        "stderr": "        2.01 real         2.01 user         0.00 sys\n            14958592  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1086  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  56  involuntary context switches\n         47564569005  instructions retired\n          8153791910  cycles elapsed\n             6898072  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "exact_stdout_equal": false,
+      "completion_signature_equal": true,
+      "score_delta_percent": 0.4761904761904745,
+      "rss_delta_percent": -1.0834236186348822,
+      "rss_delta_bytes": -163840,
+      "instructions_delta_percent": -0.5994635727686215
+    },
+    {
+      "pair": 41,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "baseline": {
+        "binary": "/tmp/quench-call-args-2026-10-08/quench",
+        "binary_sha256": "79d90ef3cc4587bd70b84b51276e7f682ea5ed7903050695ccc268aaa016bc07",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/quench",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 204.0,
+        "max_rss_bytes": 15171584,
+        "instructions_retired": 46262177764,
+        "wall_seconds": 2.010008375,
+        "stdout": "__quenchBenchResult: Richards: 204\n----\nScore: 204\n",
+        "stderr": "        2.00 real         2.00 user         0.00 sys\n            15171584  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1099  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  33  involuntary context switches\n         46262177764  instructions retired\n          8110224718  cycles elapsed\n             7094656  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "candidate": {
+        "binary": "/tmp/quench-call-args-2026-10-08/candidate",
+        "binary_sha256": "48b04834459e74147d2a25bc07b1081afba6a3cfe218527df3978643bf2e3670",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/candidate",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 209.0,
+        "max_rss_bytes": 15073280,
+        "instructions_retired": 47565797121,
+        "wall_seconds": 2.035651959,
+        "stdout": "__quenchBenchResult: Richards: 209\n----\nScore: 209\n",
+        "stderr": "        2.03 real         2.02 user         0.00 sys\n            15073280  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1094  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  52  involuntary context switches\n         47565797121  instructions retired\n          8213596047  cycles elapsed\n             7012736  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "exact_stdout_equal": false,
+      "completion_signature_equal": true,
+      "score_delta_percent": 2.450980392156854,
+      "rss_delta_percent": -0.6479481641468721,
+      "rss_delta_bytes": -98304,
+      "instructions_delta_percent": 2.817894487480088
+    },
+    {
+      "pair": 42,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "baseline": {
+        "binary": "/tmp/quench-call-args-2026-10-08/quench",
+        "binary_sha256": "79d90ef3cc4587bd70b84b51276e7f682ea5ed7903050695ccc268aaa016bc07",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/quench",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 208.0,
+        "max_rss_bytes": 14974976,
+        "instructions_retired": 47449621063,
+        "wall_seconds": 2.019957125,
+        "stdout": "__quenchBenchResult: Richards: 208\n----\nScore: 208\n",
+        "stderr": "        2.01 real         2.01 user         0.00 sys\n            14974976  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1088  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  47  involuntary context switches\n         47449621063  instructions retired\n          8125133826  cycles elapsed\n             6914432  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "candidate": {
+        "binary": "/tmp/quench-call-args-2026-10-08/candidate",
+        "binary_sha256": "48b04834459e74147d2a25bc07b1081afba6a3cfe218527df3978643bf2e3670",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/candidate",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 211.0,
+        "max_rss_bytes": 15122432,
+        "instructions_retired": 47566674937,
+        "wall_seconds": 2.026462917,
+        "stdout": "__quenchBenchResult: Richards: 211\n----\nScore: 211\n",
+        "stderr": "        2.02 real         2.01 user         0.00 sys\n            15122432  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1097  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  57  involuntary context switches\n         47566674937  instructions retired\n          8168720911  cycles elapsed\n             7061888  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "exact_stdout_equal": false,
+      "completion_signature_equal": true,
+      "score_delta_percent": 1.4423076923076872,
+      "rss_delta_percent": 0.9846827133479286,
+      "rss_delta_bytes": 147456,
+      "instructions_delta_percent": 0.2466908510071919
+    },
+    {
+      "pair": 43,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "baseline": {
+        "binary": "/tmp/quench-call-args-2026-10-08/quench",
+        "binary_sha256": "79d90ef3cc4587bd70b84b51276e7f682ea5ed7903050695ccc268aaa016bc07",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/quench",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 209.0,
+        "max_rss_bytes": 15089664,
+        "instructions_retired": 47851496222,
+        "wall_seconds": 2.032055666,
+        "stdout": "__quenchBenchResult: Richards: 209\n----\nScore: 209\n",
+        "stderr": "        2.02 real         2.02 user         0.00 sys\n            15089664  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1095  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  44  involuntary context switches\n         47851496222  instructions retired\n          8188577739  cycles elapsed\n             7029120  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "candidate": {
+        "binary": "/tmp/quench-call-args-2026-10-08/candidate",
+        "binary_sha256": "48b04834459e74147d2a25bc07b1081afba6a3cfe218527df3978643bf2e3670",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/candidate",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 210.0,
+        "max_rss_bytes": 14876672,
+        "instructions_retired": 47562863959,
+        "wall_seconds": 2.029966541,
+        "stdout": "__quenchBenchResult: Richards: 210\n----\nScore: 210\n",
+        "stderr": "        2.02 real         2.02 user         0.00 sys\n            14876672  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1081  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  51  involuntary context switches\n         47562863959  instructions retired\n          8164076369  cycles elapsed\n             6816128  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "exact_stdout_equal": false,
+      "completion_signature_equal": true,
+      "score_delta_percent": 0.4784688995215225,
+      "rss_delta_percent": -1.4115092290988063,
+      "rss_delta_bytes": -212992,
+      "instructions_delta_percent": -0.6031833605806836
+    },
+    {
+      "pair": 44,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "baseline": {
+        "binary": "/tmp/quench-call-args-2026-10-08/quench",
+        "binary_sha256": "79d90ef3cc4587bd70b84b51276e7f682ea5ed7903050695ccc268aaa016bc07",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/quench",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 209.0,
+        "max_rss_bytes": 15138816,
+        "instructions_retired": 47449528068,
+        "wall_seconds": 2.022006334,
+        "stdout": "__quenchBenchResult: Richards: 209\n----\nScore: 209\n",
+        "stderr": "        2.01 real         2.01 user         0.00 sys\n            15138816  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1097  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  52  involuntary context switches\n         47449528068  instructions retired\n          8129914331  cycles elapsed\n             7061888  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "candidate": {
+        "binary": "/tmp/quench-call-args-2026-10-08/candidate",
+        "binary_sha256": "48b04834459e74147d2a25bc07b1081afba6a3cfe218527df3978643bf2e3670",
+        "argv": [
+          "/usr/bin/time",
+          "-l",
+          "/tmp/quench-call-args-2026-10-08/candidate",
+          "/tmp/quench-call-args-v8v7-2026-10-08/richards-materialized.js"
+        ],
+        "returncode": 0,
+        "score": 210.0,
+        "max_rss_bytes": 14876672,
+        "instructions_retired": 47562862965,
+        "wall_seconds": 2.03065675,
+        "stdout": "__quenchBenchResult: Richards: 210\n----\nScore: 210\n",
+        "stderr": "        2.02 real         2.02 user         0.00 sys\n            14876672  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1081  page reclaims\n                  10  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  30  involuntary context switches\n         47562862965  instructions retired\n          8180992162  cycles elapsed\n             6816128  peak memory footprint\n",
+        "normalized_completion_signature": [
+          "__quenchBenchResult: Richards: <metric>",
+          "<score-separator>",
+          "Score: <metric>"
+        ]
+      },
+      "exact_stdout_equal": false,
+      "completion_signature_equal": true,
+      "score_delta_percent": 0.4784688995215225,
+      "rss_delta_percent": -1.7316017316017285,
+      "rss_delta_bytes": -262144,
+      "instructions_delta_percent": 0.23885358108848287
+    }
+  ]
+}

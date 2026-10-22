@@ -1,0 +1,17 @@
+stage  76 batch   1/15  passed=100 failed=0 total=100
+stage  76 batch   2/15  passed=100 failed=0 total=100
+stage  76 batch   3/15  passed=100 failed=0 total=100
+stage  76 batch   4/15  passed=100 failed=0 total=100
+stage  76 batch   5/15  passed=100 failed=0 total=100
+stage  76 batch   6/15  passed=100 failed=0 total=100
+stage  76 batch   7/15  passed=100 failed=0 total=100
+stage  76 batch   8/15  passed=100 failed=0 total=100
+stage  76 batch   9/15  passed=100 failed=0 total=100
+stage  76 batch  10/15  passed=100 failed=0 total=100
+stage  76 batch  11/15  passed=100 failed=0 total=100
+stage  76 batch  12/15  passed=100 failed=0 total=100
+stage  76 batch  13/15  passed=100 failed=0 total=100
+stage  76 batch  14/15  passed=100 failed=0 total=100
+stage  76 batch  15/15  passed=46 failed=0 total=46
+stage  76: built-ins/TypedArray passed=1446 failed=0 total=1446
+stages=1 passed=1446 failed=0 total=1446

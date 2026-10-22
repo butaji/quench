@@ -1,0 +1,330 @@
+{
+  "scope": "Native stdin host-loop delivery, openStdin, CLI stdin source, and normalized async child stdio",
+  "source_parent": "809d1145e",
+  "branch": "v2-cloud-node",
+  "oracle": "v27.0.0-nightly20260819c79868f102-linux-x64",
+  "fixture_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+  "host": {
+    "platform": "Linux-x86_64",
+    "cpu_max": "400000 100000",
+    "memory_max_bytes": 17179869184
+  },
+  "oracle_checks": {
+    "pass": 33,
+    "fail": 0,
+    "log": "work/stdin-oracle-retained.log"
+  },
+  "framework_core": {
+    "pass": 43,
+    "fail": 0,
+    "log": "work/stdin-framework-core.log"
+  },
+  "framework_scenarios": [
+    {
+      "scenario": "express",
+      "observations": [
+        {
+          "engine": "node",
+          "exit_code": 0,
+          "stdout": "statuses 200,200,200,200,404\n",
+          "stderr": ""
+        },
+        {
+          "engine": "quench-node",
+          "exit_code": 0,
+          "stdout": "statuses 200,200,200,200,404\n",
+          "stderr": ""
+        }
+      ],
+      "matches": true
+    },
+    {
+      "scenario": "koa",
+      "observations": [
+        {
+          "engine": "node",
+          "exit_code": 0,
+          "stdout": "statuses 200,200,200,200,404\n",
+          "stderr": ""
+        },
+        {
+          "engine": "quench-node",
+          "exit_code": 0,
+          "stdout": "statuses 200,200,200,200,404\n",
+          "stderr": ""
+        }
+      ],
+      "matches": true
+    },
+    {
+      "scenario": "fastify",
+      "observations": [
+        {
+          "engine": "node",
+          "exit_code": 0,
+          "stdout": "statuses 200,200,200,200,404\n",
+          "stderr": ""
+        },
+        {
+          "engine": "quench-node",
+          "exit_code": 0,
+          "stdout": "statuses 200,200,200,200,404\n",
+          "stderr": ""
+        }
+      ],
+      "matches": true
+    }
+  ],
+  "upstream_groups": [
+    {
+      "results_file": "work/stdin-retained-group.json",
+      "counts": {
+        "pass": 11
+      },
+      "timeout_secs": 30,
+      "jobs": 2,
+      "previous_passes_lost": 0,
+      "fixtures": [
+        {
+          "name": "test-stdin-child-proc.js",
+          "status": "pass"
+        },
+        {
+          "name": "test-stdin-from-file-spawn.js",
+          "status": "pass"
+        },
+        {
+          "name": "test-stdin-from-file.js",
+          "status": "pass"
+        },
+        {
+          "name": "test-stdin-hang.js",
+          "status": "pass"
+        },
+        {
+          "name": "test-stdin-pause-resume-sync.js",
+          "status": "pass"
+        },
+        {
+          "name": "test-stdin-pause-resume.js",
+          "status": "pass"
+        },
+        {
+          "name": "test-stdin-pipe-large.js",
+          "status": "pass"
+        },
+        {
+          "name": "test-stdin-pipe-resume.js",
+          "status": "pass"
+        },
+        {
+          "name": "test-stdin-resume-pause.js",
+          "status": "pass"
+        },
+        {
+          "name": "test-stdin-script-child-option.js",
+          "status": "pass"
+        },
+        {
+          "name": "test-stdin-script-child.js",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "results_file": "work/stdin-retained-spawn.json",
+      "counts": {
+        "pass": 9
+      },
+      "timeout_secs": 30,
+      "jobs": 2,
+      "previous_passes_lost": 0,
+      "fixtures": [
+        {
+          "name": "test-child-process-spawn-args.mjs",
+          "status": "pass"
+        },
+        {
+          "name": "test-child-process-spawn-argv0.js",
+          "status": "pass"
+        },
+        {
+          "name": "test-child-process-spawn-controller.js",
+          "status": "pass"
+        },
+        {
+          "name": "test-child-process-spawn-error.js",
+          "status": "pass"
+        },
+        {
+          "name": "test-child-process-spawn-event.js",
+          "status": "pass"
+        },
+        {
+          "name": "test-child-process-spawn-shell.js",
+          "status": "pass"
+        },
+        {
+          "name": "test-child-process-spawn-timeout-kill-signal.js",
+          "status": "pass"
+        },
+        {
+          "name": "test-child-process-spawn-typeerror.js",
+          "status": "pass"
+        },
+        {
+          "name": "test-child-process-spawn-windows-batch-file.js",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "results_file": "work/stdin-retained-remove.json",
+      "counts": {
+        "pass": 1
+      },
+      "timeout_secs": 30,
+      "jobs": 1,
+      "previous_passes_lost": 0,
+      "fixtures": [
+        {
+          "name": "test-process-remove-all-signal-listeners.js",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "results_file": "work/stdin-stdio-group.json",
+      "counts": {
+        "fail": 18,
+        "pass": 6,
+        "timeout": 1,
+        "skip": 1
+      },
+      "timeout_secs": 10,
+      "jobs": 2,
+      "previous_passes_lost": 0,
+      "fixtures": [
+        {
+          "name": "test-child-process-bad-stdio.js",
+          "status": "fail"
+        },
+        {
+          "name": "test-child-process-flush-stdio.js",
+          "status": "pass"
+        },
+        {
+          "name": "test-child-process-fork-stdio-string-variant.js",
+          "status": "fail"
+        },
+        {
+          "name": "test-child-process-fork-stdio.js",
+          "status": "fail"
+        },
+        {
+          "name": "test-child-process-stdio-big-write-end.js",
+          "status": "timeout"
+        },
+        {
+          "name": "test-child-process-stdio-inherit.js",
+          "status": "fail"
+        },
+        {
+          "name": "test-child-process-stdio-merge-stdouts-into-cat.js",
+          "status": "fail"
+        },
+        {
+          "name": "test-child-process-stdio-overlapped.js",
+          "status": "skip"
+        },
+        {
+          "name": "test-child-process-stdio-reuse-readable-stdio.js",
+          "status": "fail"
+        },
+        {
+          "name": "test-child-process-stdio.js",
+          "status": "fail"
+        },
+        {
+          "name": "test-child-process-validate-stdio.js",
+          "status": "fail"
+        },
+        {
+          "name": "test-cluster-fork-stdio.js",
+          "status": "fail"
+        },
+        {
+          "name": "test-console-log-stdio-broken-dest.js",
+          "status": "pass"
+        },
+        {
+          "name": "test-console-stdio-setters.js",
+          "status": "pass"
+        },
+        {
+          "name": "test-dummy-stdio.js",
+          "status": "fail"
+        },
+        {
+          "name": "test-process-external-stdio-close-spawn.js",
+          "status": "fail"
+        },
+        {
+          "name": "test-process-external-stdio-close.js",
+          "status": "fail"
+        },
+        {
+          "name": "test-stdio-closed.js",
+          "status": "pass"
+        },
+        {
+          "name": "test-stdio-pipe-access.js",
+          "status": "pass"
+        },
+        {
+          "name": "test-stdio-pipe-redirect.js",
+          "status": "fail"
+        },
+        {
+          "name": "test-stdio-pipe-stderr.js",
+          "status": "pass"
+        },
+        {
+          "name": "test-stdio-undestroy.js",
+          "status": "fail"
+        },
+        {
+          "name": "test-worker-stdio-flush-inflight.js",
+          "status": "fail"
+        },
+        {
+          "name": "test-worker-stdio-flush.js",
+          "status": "fail"
+        },
+        {
+          "name": "test-worker-stdio-from-preload-module.js",
+          "status": "fail"
+        },
+        {
+          "name": "test-worker-stdio.js",
+          "status": "fail"
+        }
+      ]
+    }
+  ],
+  "memory_events": "low 0\nhigh 0\nmax 4538212\noom 176\noom_kill 46\noom_group_kill 0\n",
+  "retained": [
+    "Lazily create stdin as a shared Readable; poll its OS descriptor and deliver bounded bytes/EOF through rooted checkpoint callbacks. Read admission, pause, destruction and ref/unref keep host work explicit.",
+    "openStdin repeats public stdin lookup and preserves resume receiver, matching the Node oracle.",
+    "Read piped CLI source for implicit stdin and explicit dash; preserve guest arguments and CommonJS stdin filename/module projections.",
+    "Normalize child pipe/ignore/inherit/numeric-descriptor specifications once; derive OS setup and public stream/null projections from that same authority. Own duplicated Unix descriptors, leave guest originals open, and close children after all present output pipes settle."
+  ],
+  "qualifications": [
+    "The full 4,727-case goal remains incomplete; this is focused retention evidence.",
+    "Native stdin readiness polling and numeric descriptor duplication are qualified on Unix, specifically this Linux host; Windows stdin and numeric descriptor support remain open.",
+    "TTY input/REPL behavior, full stdin class identity and every descriptor error/lifecycle path remain unqualified.",
+    "Extra child descriptors and IPC channels beyond the standard three are not implemented by this normalization. The 26-case broad stdio diagnostic retains 18 failures and one timeout.",
+    "The existing spawnSync input/encoding behavior is incomplete; direct OS input supplied the stdin oracle checks.",
+    "No speed claim."
+  ]
+}

@@ -1,0 +1,15 @@
+diff --git a/crates/quench-runtime/src/value_vec.rs b/crates/quench-runtime/src/value_vec.rs
+index a1cc815e1..660ec708e 100644
+--- a/crates/quench-runtime/src/value_vec.rs
++++ b/crates/quench-runtime/src/value_vec.rs
+@@ -8,7 +8,9 @@ const DICTIONARY_STORAGE: u32 = 1 << 31;
+ const SHAPE_MASK: u32 = !DICTIONARY_STORAGE;
+ const EMPTY_START: u32 = START_MASK;
+ const MAX_ARENA_START: usize = EMPTY_START as usize;
+-const MIN_CAPACITY: usize = 4;
++// Two slots cover the common one- and two-property objects without reserving
++// space for four values in the property arena.
++const MIN_CAPACITY: usize = 2;
+ const BUCKETS: usize = 32;
+ const DENSE_ARENA_RESERVE_THRESHOLD: usize = 65_536;
+ const DENSE_ARENA_GROWTH_DIVISOR: usize = 3;

@@ -1,0 +1,25 @@
+{
+  "raw_paired_median_wall_change_pct": -13.713737341326226,
+  "bootstrap_95ci_pct": [
+    -18.31835390405735,
+    -9.977865288390753
+  ],
+  "wall_wins": 9,
+  "medians": {
+    "control": {
+      "wall_ns": 209350466,
+      "peak_rss_bytes": 43053056
+    },
+    "candidate": {
+      "wall_ns": 176446903,
+      "peak_rss_bytes": 39219200
+    }
+  },
+  "empty_callgrind_instructions": {
+    "control": 1150546244,
+    "candidate": 1001304086,
+    "change_pct": -12.971417600838297
+  },
+  "qualification": false,
+  "notes": "Repeat under idle host after first startup block was noisy; wait4 process metrics. Startup wall and instruction attribution are not stock Score."
+}

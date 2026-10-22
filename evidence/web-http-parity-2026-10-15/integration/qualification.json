@@ -1,0 +1,24 @@
+{
+  "source": "03ea582d2f4f8f2c2788c08d7d929c24861cb66c",
+  "binary": "work/quench-http-blockers-integrated",
+  "sha256": "700cb9c953c1ebbbefb0931d1cc48421d32f29399b7f9d13f0f59bd1f4b39352",
+  "api_first_run": {
+    "passed": 241,
+    "failed": 7,
+    "cpu_instrumentation_concurrent": true
+  },
+  "isolated_rechecks": {
+    "passed": 7,
+    "failed": 0,
+    "deadlines_unchanged": true
+  },
+  "real_cli": {
+    "node_pass": 10,
+    "quench_pass": 10
+  },
+  "web_correctness": {
+    "valid": 9,
+    "total": 9
+  },
+  "instruction_guard": "qualifies earlier frozen source 99dd33963; not retargeted to this integration"
+}

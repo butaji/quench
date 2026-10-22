@@ -1,0 +1,530 @@
+{
+  "scope": "Synchronous child output Buffer allocation, encoding/aliases/result shape and raw process output view bytes",
+  "source_commit": "8e137049d93a9d663ee572731f630db19063a7c0",
+  "oracle": "v27.0.0-nightly20260819c79868f102",
+  "fixture_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+  "build_profile": "iteration",
+  "checks": {
+    "node_oracles": 93,
+    "framework_core": 43,
+    "shared_runtime": "Unchanged since retained 550-pass checks"
+  },
+  "focus": {
+    "counts": {
+      "fail": 29,
+      "timeout": 3,
+      "pass": 78,
+      "skip": 2
+    },
+    "inventory_hash": "a3a03b5546a7e293",
+    "jobs": 4,
+    "timeout_secs": 30,
+    "results": [
+      {
+        "fixture": "test-child-process-advanced-serialization-host-objects.js",
+        "status": "fail"
+      },
+      {
+        "fixture": "test-child-process-advanced-serialization-largebuffer.js",
+        "status": "timeout"
+      },
+      {
+        "fixture": "test-child-process-advanced-serialization-splitted-length-field.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-advanced-serialization.js",
+        "status": "fail"
+      },
+      {
+        "fixture": "test-child-process-bad-stdio.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-can-write-to-stdout.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-constructor.js",
+        "status": "fail"
+      },
+      {
+        "fixture": "test-child-process-cwd.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-default-options.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-destroy.js",
+        "status": "fail"
+      },
+      {
+        "fixture": "test-child-process-detached.js",
+        "status": "timeout"
+      },
+      {
+        "fixture": "test-child-process-dgram-reuseport.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-disconnect.js",
+        "status": "timeout"
+      },
+      {
+        "fixture": "test-child-process-double-pipe.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-env.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-exec-abortcontroller-promisified.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-exec-any-shells-windows.js",
+        "status": "skip"
+      },
+      {
+        "fixture": "test-child-process-exec-cwd.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-exec-encoding.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-exec-env.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-exec-error.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-exec-kill-throws.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-exec-maxbuf.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-exec-std-encoding.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-exec-stdout-stderr-data-string.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-exec-timeout-expire.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-exec-timeout-kill.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-exec-timeout-not-expired.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-execFile-promisified-abortController.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-execfile-maxbuf.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-execfile.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-execfilesync-maxbuf.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-execsync-maxbuf.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-exit-code.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-flush-stdio.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-fork-abort-signal.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-fork-advanced-header-serialization.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-fork-and-spawn.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-fork-args.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-fork-close.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-fork-closed-channel-segfault.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-fork-detached.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-fork-dgram.js",
+        "status": "fail"
+      },
+      {
+        "fixture": "test-child-process-fork-exec-argv.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-fork-exec-path.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-fork-getconnections.js",
+        "status": "fail"
+      },
+      {
+        "fixture": "test-child-process-fork-net-server.js",
+        "status": "fail"
+      },
+      {
+        "fixture": "test-child-process-fork-net-socket.js",
+        "status": "fail"
+      },
+      {
+        "fixture": "test-child-process-fork-net.js",
+        "status": "fail"
+      },
+      {
+        "fixture": "test-child-process-fork-no-shell.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-fork-ref.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-fork-ref2.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-fork-stdio-string-variant.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-fork-stdio.js",
+        "status": "fail"
+      },
+      {
+        "fixture": "test-child-process-fork-timeout-kill-signal.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-fork-url.mjs",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-fork.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-fork3.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-http-socket-leak.js",
+        "status": "fail"
+      },
+      {
+        "fixture": "test-child-process-internal.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-ipc-next-tick.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-ipc.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-kill.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-net-reuseport.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-no-deprecation.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-pipe-dataflow.js",
+        "status": "fail"
+      },
+      {
+        "fixture": "test-child-process-promisified.js",
+        "status": "fail"
+      },
+      {
+        "fixture": "test-child-process-prototype-tampering.mjs",
+        "status": "fail"
+      },
+      {
+        "fixture": "test-child-process-recv-handle.js",
+        "status": "fail"
+      },
+      {
+        "fixture": "test-child-process-reject-null-bytes.js",
+        "status": "fail"
+      },
+      {
+        "fixture": "test-child-process-send-after-close.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-send-cb.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-send-keep-open.js",
+        "status": "fail"
+      },
+      {
+        "fixture": "test-child-process-send-returns-boolean.js",
+        "status": "fail"
+      },
+      {
+        "fixture": "test-child-process-send-type-error.js",
+        "status": "fail"
+      },
+      {
+        "fixture": "test-child-process-send-utf8.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-server-close.js",
+        "status": "fail"
+      },
+      {
+        "fixture": "test-child-process-set-blocking.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-silent.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-spawn-args.mjs",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-spawn-argv0.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-spawn-controller.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-spawn-error.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-spawn-event.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-spawn-shell.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-spawn-timeout-kill-signal.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-spawn-typeerror.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-spawn-windows-batch-file.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-spawnsync-args.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-spawnsync-env.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-spawnsync-input.js",
+        "status": "fail"
+      },
+      {
+        "fixture": "test-child-process-spawnsync-kill-signal.js",
+        "status": "fail"
+      },
+      {
+        "fixture": "test-child-process-spawnsync-maxbuf.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-spawnsync-non-string-args.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-spawnsync-shell.js",
+        "status": "fail"
+      },
+      {
+        "fixture": "test-child-process-spawnsync-timeout.js",
+        "status": "fail"
+      },
+      {
+        "fixture": "test-child-process-spawnsync-validation-errors.js",
+        "status": "fail"
+      },
+      {
+        "fixture": "test-child-process-spawnsync.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-stdin-ipc.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-stdin.js",
+        "status": "fail"
+      },
+      {
+        "fixture": "test-child-process-stdio-big-write-end.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-stdio-inherit.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-stdio-merge-stdouts-into-cat.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-stdio-overlapped.js",
+        "status": "skip"
+      },
+      {
+        "fixture": "test-child-process-stdio-reuse-readable-stdio.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-stdio.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-stdout-flush-exit.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-stdout-flush.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-stdout-ipc.js",
+        "status": "pass"
+      },
+      {
+        "fixture": "test-child-process-uid-gid.js",
+        "status": "fail"
+      },
+      {
+        "fixture": "test-child-process-validate-stdio.js",
+        "status": "fail"
+      },
+      {
+        "fixture": "test-child-process-windows-hide.js",
+        "status": "fail"
+      }
+    ],
+    "changes": [
+      {
+        "fixture": "test-child-process-spawnsync.js",
+        "before": "fail",
+        "after": "pass"
+      }
+    ]
+  },
+  "binary_sha256": {
+    "target/iteration/quench-node": "f41f3cc91549d7348e652a7ede7169549e340b310bc4426ed6d87014a6cc3d30",
+    "target/iteration/run-parallel": "cacd266d9ba9b3128d42693c6378c7611e96024d38bf2f71933887f46194a3bb"
+  },
+  "log_sha256": {
+    "work/child-sync-output-oracles.log": "181f308f7166ff59580a9e09c781e1fbaff8084c0ef131abbb98fc73618957d9",
+    "work/child-sync-output-framework.log": "b41881f94821125815bc87efbbbd7d26b13fd072686394014795864fa55f2ae8",
+    "work/child-sync-output-group.json": "514069195400d979b3df61d502d382ea3ea13be3cb5beac2f4d1e47e5656209c"
+  },
+  "richards_diagnostic": {
+    "suite": "stock V8-v7 Richards; exact base.js + richards.js + existing repository RUNNER",
+    "qualification": "One diagnostic round; iteration build, two engines only. No matched production or aggregate performance claim.",
+    "platform": "linux-x86_64",
+    "cpu_max": "400000 100000",
+    "memory_max": "17179869184",
+    "results": [
+      {
+        "engine": "quench-iteration",
+        "argv": [
+          "target/iteration/quench-node"
+        ],
+        "exit_code": 0,
+        "timed_out": false,
+        "elapsed_seconds": 2.4024010470020585,
+        "peak_rss_kib": 117636,
+        "stdout": "__quenchBenchResult: Richards: 148\n----\nScore: 148\n",
+        "stderr": ""
+      },
+      {
+        "engine": "node27-jitless",
+        "argv": [
+          "work/node-v27.0.0-nightly20260819c79868f102-linux-x64/bin/node",
+          "--jitless"
+        ],
+        "exit_code": 0,
+        "timed_out": false,
+        "elapsed_seconds": 2.2022693889994116,
+        "peak_rss_kib": 70312,
+        "stdout": "__quenchBenchResult: Richards: 1904\n----\nScore: 1904\n",
+        "stderr": ""
+      }
+    ]
+  },
+  "qualifications": [
+    "One child scope gain, no lost passes; complete inventory remains 1321/4727 passing until the next frozen full sweep.",
+    "Process stdout/stderr raw ArrayBufferView bytes and invalid chunk errors are checked against Node. The existing NodeOutputSink embedding API remains text-only/lossy, with no binary sink conformance claim.",
+    "Complete Writable callbacks, string-encoding options, backpressure/error lifecycle and poisoned Buffer/global constructor setup remain incomplete.",
+    "Synchronous stdin, stdio configuration and timeout/signal behavior remain separate work.",
+    "Single iteration Richards round with two engines; no matched production or aggregate performance claim."
+  ]
+}

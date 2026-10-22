@@ -1,0 +1,50 @@
+{
+  "method": "Unpaired revision comparison: independently resample the 11 rounds within each revision; compare medians of per-round Quench/peer score ratios and process peak RSS. This is descriptive cross-window evidence, not a temporally paired A/B test.",
+  "bootstrap_replicates": 100000,
+  "fixtures": {
+    "gcc-loops-wasm": {
+      "score_candidate_over_baseline_median_ratio": 0.9890542158371814,
+      "score_candidate_over_baseline_bootstrap_95_ci": [
+        0.8906783796974134,
+        1.0071403692093346
+      ],
+      "peak_rss_bytes_candidate_over_baseline_median_ratio": 0.9995984258292506,
+      "peak_rss_bytes_candidate_over_baseline_bootstrap_95_ci": [
+        0.9992773986350864,
+        1.0000803212851406
+      ],
+      "bun_paired_within_revision_score_ratio_candidate_over_baseline": 0.9726785103045672,
+      "bun_candidate_over_baseline_bootstrap_95_ci": [
+        0.8685019363004758,
+        1.0069024497099304
+      ],
+      "node_paired_within_revision_score_ratio_candidate_over_baseline": 0.946121850474594,
+      "node_candidate_over_baseline_bootstrap_95_ci": [
+        0.842372593514658,
+        0.9919608986500799
+      ]
+    },
+    "quicksort-wasm": {
+      "score_candidate_over_baseline_median_ratio": 1.4205259625358473,
+      "score_candidate_over_baseline_bootstrap_95_ci": [
+        1.2797383465259455,
+        1.5610236220472442
+      ],
+      "peak_rss_bytes_candidate_over_baseline_median_ratio": 0.999642250245953,
+      "peak_rss_bytes_candidate_over_baseline_bootstrap_95_ci": [
+        0.9957077707234194,
+        1.00564111747851
+      ],
+      "bun_paired_within_revision_score_ratio_candidate_over_baseline": 1.3440285537368395,
+      "bun_candidate_over_baseline_bootstrap_95_ci": [
+        1.2005820740187008,
+        1.5355342016323859
+      ],
+      "node_paired_within_revision_score_ratio_candidate_over_baseline": 1.332877405290046,
+      "node_candidate_over_baseline_bootstrap_95_ci": [
+        1.1266878001300449,
+        1.612628754179719
+      ]
+    }
+  }
+}

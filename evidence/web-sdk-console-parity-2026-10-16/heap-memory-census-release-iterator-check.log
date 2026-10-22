@@ -1,0 +1,59 @@
+    Checking serde v1.0.229
+    Checking zerofrom v0.1.8
+    Checking yoke v0.8.3
+    Checking zerovec v0.11.8
+    Checking smallvec v1.15.2
+    Checking oxc_span v0.153.0
+    Checking zerotrie v0.2.5
+    Checking phf v0.14.0
+    Checking tinystr v0.8.4
+    Checking potential_utf v0.1.6
+    Checking icu_locale_core v2.3.0
+    Checking oxc_diagnostics v0.153.0
+    Checking oxc_index v5.0.0
+    Checking quench-stack v0.1.0 (/workspace/quench/crates/quench-stack)
+    Checking oxc_regular_expression v0.153.0 (/workspace/quench/vendor/oxc-regular-expression)
+    Checking icu_provider v2.3.1
+    Checking oxc_syntax v0.153.0
+    Checking icu_collections v2.3.0
+    Checking oxc_ast v0.153.0
+    Checking indexmap v2.14.0
+    Checking icu_properties v2.3.0
+    Checking icu_locale_fallback v2.3.0
+    Checking gimli v0.33.0
+    Checking oxc_ecmascript v0.153.0
+    Checking regalloc2 v0.15.2
+    Checking regex-syntax v0.8.11
+    Checking icu_normalizer v2.3.0
+    Checking cranelift-codegen v0.134.3 (/workspace/quench/vendor/cranelift-codegen)
+    Checking oxc_parser v0.153.0 (/workspace/quench/vendor/oxc-parser)
+    Checking regex-automata v0.4.18
+    Checking fixed_decimal v0.7.2
+    Checking icu_calendar v2.3.0
+    Checking icu_plurals v2.3.0
+    Checking icu_casemap v2.3.0
+    Checking icu_collator v2.3.1
+    Checking regex v1.13.1
+    Checking oxc v0.153.0
+    Checking oxc_ast_visit v0.153.0
+    Checking quench-temporal v0.1.0 (/workspace/quench/crates/quench-temporal)
+    Checking oxc_semantic v0.153.0
+    Checking wasmparser v0.247.0
+    Checking cranelift-frontend v0.134.3
+    Checking cranelift-native v0.134.3
+    Checking quench-intl v0.1.0 (/workspace/quench/crates/quench-intl)
+    Checking quench-regexp v0.1.0 (/workspace/quench/crates/quench-regexp)
+    Checking quench-runtime v0.1.0 (/workspace/quench/crates/quench-runtime)
+error[E0599]: no method named `occupied` found for reference `&SlotArena` in the current scope
+   --> crates/quench-runtime/src/heap/slots.rs:244:14
+    |
+244 |         self.occupied().iter()
+    |              ^^^^^^^^
+    |
+help: there is a method `occupied_mut` with a similar name
+    |
+244 |         self.occupied_mut().iter()
+    |                      ++++
+
+For more information about this error, try `rustc --explain E0599`.
+error: could not compile `quench-runtime` (lib) due to 1 previous error

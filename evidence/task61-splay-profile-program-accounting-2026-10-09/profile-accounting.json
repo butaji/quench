@@ -1,0 +1,34 @@
+{
+  "kind": "task61-splay-profile-program-accounting",
+  "features": ["profile-aggregate", "profile-memory"],
+  "host": {
+    "platform": "macOS 26.5 (Darwin 25.5.0)",
+    "cpu": "Apple M4",
+    "architecture": "arm64",
+    "rustc": "1.99.0 (b940084d7 2026-09-28)"
+  },
+  "profile_binary_sha256": "ad582162a826e4be9c6e45f740c960514e65ec2178d7d6f4cf768ca957dc6efa",
+  "profile_binary_path": "target/pinned/ad582162a826e4be9c6e45f740c960514e65ec2178d7d6f4cf768ca957dc6efa/quench-node",
+  "fixed_work": {
+    "suite": "Splay",
+    "runs": 1,
+    "eval_result": 49,
+    "gc_collections": 13,
+    "main_physical_dispatches": 15300575,
+    "main_virtual_steps": 0,
+    "main_semantic_steps": 15300575,
+    "main_function_rows": 41,
+    "accounting_panic": false
+  },
+  "opcode_census": {
+    "program_scoped_dispatched_total": 15300575,
+    "program_scoped_site_total": 15300575,
+    "equal": true
+  },
+  "validation": {
+    "profile_tests": "4 passed",
+    "check_profile_memory": "passed",
+    "check_default_features": "passed"
+  },
+  "performance_claim": null
+}

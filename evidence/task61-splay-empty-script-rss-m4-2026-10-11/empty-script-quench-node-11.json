@@ -1,0 +1,215 @@
+{
+  "schema": 1,
+  "measured_at_utc": "2026-10-11T12:13:24.945464+00:00",
+  "measurement": "empty JavaScript script process RSS; excludes V8-v7 fixture parse, harness, and Setup",
+  "platform": {
+    "os": "macOS-26.5-arm64-arm-64bit",
+    "machine": "arm64",
+    "processor": "arm",
+    "model": "Mac16,10",
+    "chip": "Apple M4",
+    "logical_cpus": 10,
+    "memory_bytes": 17179869184
+  },
+  "binary": "/Users/admin/Code/GitHub/quench-v2/target/pinned/6e14719d1a33cb3d1c968f0bb8d92a4feb7a52a253545035bcec32d0f7ba5f31/quench-node",
+  "binary_sha256": "6e14719d1a33cb3d1c968f0bb8d92a4feb7a52a253545035bcec32d0f7ba5f31",
+  "argv": [
+    "/usr/bin/time",
+    "-l",
+    "/Users/admin/Code/GitHub/quench-v2/target/pinned/6e14719d1a33cb3d1c968f0bb8d92a4feb7a52a253545035bcec32d0f7ba5f31/quench-node",
+    "-e",
+    ""
+  ],
+  "rounds": [
+    {
+      "round": 1,
+      "started_unix_ns": 1791720803780825000,
+      "finished_unix_ns": 1791720803978706000,
+      "load_before": [
+        30.52734375,
+        21.76513671875,
+        17.236328125
+      ],
+      "load_after": [
+        30.52734375,
+        21.76513671875,
+        17.236328125
+      ],
+      "max_rss_bytes": 19136512,
+      "time_l_report": "        0.17 real         0.03 user         0.01 sys\n            19136512  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1355  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   3  voluntary context switches\n                 207  involuntary context switches\n           233835465  instructions retired\n           126662161  cycles elapsed\n             9552280  peak memory footprint\n"
+    },
+    {
+      "round": 2,
+      "started_unix_ns": 1791720803979122000,
+      "finished_unix_ns": 1791720804086984000,
+      "load_before": [
+        30.52734375,
+        21.76513671875,
+        17.236328125
+      ],
+      "load_after": [
+        30.52734375,
+        21.76513671875,
+        17.236328125
+      ],
+      "max_rss_bytes": 19087360,
+      "time_l_report": "        0.05 real         0.01 user         0.00 sys\n            19087360  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1352  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 155  involuntary context switches\n           219346305  instructions retired\n            85855957  cycles elapsed\n             9503128  peak memory footprint\n"
+    },
+    {
+      "round": 3,
+      "started_unix_ns": 1791720804087035000,
+      "finished_unix_ns": 1791720804205195000,
+      "load_before": [
+        30.52734375,
+        21.76513671875,
+        17.236328125
+      ],
+      "load_after": [
+        30.52734375,
+        21.76513671875,
+        17.236328125
+      ],
+      "max_rss_bytes": 18907136,
+      "time_l_report": "        0.10 real         0.02 user         0.00 sys\n            18907136  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1339  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 130  involuntary context switches\n           217223093  instructions retired\n            97082839  cycles elapsed\n             9306496  peak memory footprint\n"
+    },
+    {
+      "round": 4,
+      "started_unix_ns": 1791720804205271000,
+      "finished_unix_ns": 1791720804298698000,
+      "load_before": [
+        30.52734375,
+        21.76513671875,
+        17.236328125
+      ],
+      "load_after": [
+        30.52734375,
+        21.76513671875,
+        17.236328125
+      ],
+      "max_rss_bytes": 19202048,
+      "time_l_report": "        0.08 real         0.02 user         0.00 sys\n            19202048  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1357  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 103  involuntary context switches\n           216921943  instructions retired\n           100901482  cycles elapsed\n             9617816  peak memory footprint\n"
+    },
+    {
+      "round": 5,
+      "started_unix_ns": 1791720804299544000,
+      "finished_unix_ns": 1791720804408397000,
+      "load_before": [
+        30.52734375,
+        21.76513671875,
+        17.236328125
+      ],
+      "load_after": [
+        30.52734375,
+        21.76513671875,
+        17.236328125
+      ],
+      "max_rss_bytes": 18776064,
+      "time_l_report": "        0.09 real         0.02 user         0.00 sys\n            18776064  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1331  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  74  involuntary context switches\n           216477984  instructions retired\n            99027085  cycles elapsed\n             9175424  peak memory footprint\n"
+    },
+    {
+      "round": 6,
+      "started_unix_ns": 1791720804408480000,
+      "finished_unix_ns": 1791720804569392000,
+      "load_before": [
+        30.52734375,
+        21.76513671875,
+        17.236328125
+      ],
+      "load_after": [
+        30.52734375,
+        21.76513671875,
+        17.236328125
+      ],
+      "max_rss_bytes": 19038208,
+      "time_l_report": "        0.15 real         0.02 user         0.00 sys\n            19038208  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1347  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 174  involuntary context switches\n           219903903  instructions retired\n           105578615  cycles elapsed\n             9453976  peak memory footprint\n"
+    },
+    {
+      "round": 7,
+      "started_unix_ns": 1791720804570137000,
+      "finished_unix_ns": 1791720804717111000,
+      "load_before": [
+        30.52734375,
+        21.76513671875,
+        17.236328125
+      ],
+      "load_after": [
+        30.52734375,
+        21.76513671875,
+        17.236328125
+      ],
+      "max_rss_bytes": 18530304,
+      "time_l_report": "        0.13 real         0.03 user         0.00 sys\n            18530304  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1318  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 137  involuntary context switches\n           219178980  instructions retired\n           112932619  cycles elapsed\n             8946072  peak memory footprint\n"
+    },
+    {
+      "round": 8,
+      "started_unix_ns": 1791720804717291000,
+      "finished_unix_ns": 1791720804783958000,
+      "load_before": [
+        30.52734375,
+        21.76513671875,
+        17.236328125
+      ],
+      "load_after": [
+        30.52734375,
+        21.76513671875,
+        17.236328125
+      ],
+      "max_rss_bytes": 18628608,
+      "time_l_report": "        0.05 real         0.02 user         0.00 sys\n            18628608  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1324  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 106  involuntary context switches\n           218524215  instructions retired\n           107725475  cycles elapsed\n             9044376  peak memory footprint\n"
+    },
+    {
+      "round": 9,
+      "started_unix_ns": 1791720804784003000,
+      "finished_unix_ns": 1791720804832016000,
+      "load_before": [
+        30.52734375,
+        21.76513671875,
+        17.236328125
+      ],
+      "load_after": [
+        30.52734375,
+        21.76513671875,
+        17.236328125
+      ],
+      "max_rss_bytes": 18743296,
+      "time_l_report": "        0.03 real         0.02 user         0.00 sys\n            18743296  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1332  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 121  involuntary context switches\n           219589859  instructions retired\n            98242075  cycles elapsed\n             9159064  peak memory footprint\n"
+    },
+    {
+      "round": 10,
+      "started_unix_ns": 1791720804832055000,
+      "finished_unix_ns": 1791720804873079000,
+      "load_before": [
+        30.52734375,
+        21.76513671875,
+        17.236328125
+      ],
+      "load_after": [
+        30.52734375,
+        21.76513671875,
+        17.236328125
+      ],
+      "max_rss_bytes": 19169280,
+      "time_l_report": "        0.03 real         0.02 user         0.00 sys\n            19169280  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1358  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  67  involuntary context switches\n           215948995  instructions retired\n            80469735  cycles elapsed\n             9585048  peak memory footprint\n"
+    },
+    {
+      "round": 11,
+      "started_unix_ns": 1791720804873124000,
+      "finished_unix_ns": 1791720804945278000,
+      "load_before": [
+        30.52734375,
+        21.76513671875,
+        17.236328125
+      ],
+      "load_after": [
+        30.52734375,
+        21.76513671875,
+        17.236328125
+      ],
+      "max_rss_bytes": 19185664,
+      "time_l_report": "        0.06 real         0.02 user         0.00 sys\n            19185664  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1354  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   2  voluntary context switches\n                  80  involuntary context switches\n           218416887  instructions retired\n            94682418  cycles elapsed\n             9585048  peak memory footprint\n"
+    }
+  ],
+  "median_max_rss_bytes": 19038208,
+  "min_max_rss_bytes": 18530304,
+  "max_max_rss_bytes": 19202048
+}

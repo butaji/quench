@@ -1,0 +1,106 @@
+diff --git a/crates/quench-node-test/tests/child_entry.rs b/crates/quench-node-test/tests/child_entry.rs
+index 23f3cf8bf..2d1975301 100644
+--- a/crates/quench-node-test/tests/child_entry.rs
++++ b/crates/quench-node-test/tests/child_entry.rs
+@@ -9508,3 +9508,30 @@ fn callsite_eval_classification_follows_compilation_origin_and_survives_escaped_
+ fn eval_uses_parsed_program_completion_grammar_and_original_source_positions() {
+     compare_node_source_with_args(include_str!("../node-tests/test-compiled-eval-source.js"), &[]);
+ }
++
++#[test]
++fn fatal_source_excerpts_follow_javascript_line_terminators_and_original_file_lines() {
++    let directory = tempfile::tempdir().unwrap();
++    let path = directory.path().join("source-lines.cjs");
++    for separator in ["\n", "\r\n", "\r", "\u{2028}", "\u{2029}"] {
++        std::fs::write(&path, format!("void 0;{separator}  missing();")).unwrap();
++        let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
++            let mut command = Command::new(executable);
++            command.arg(&path);
++            if executable != "node" {
++                command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
++            }
++            quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap()
++        });
++        for observation in &observations {
++            assert!(!observation.timed_out);
++            assert_eq!(observation.exit_code, Some(1));
++            assert!(observation.stdout.is_empty());
++        }
++        let excerpts = observations.each_ref().map(|observation| {
++            String::from_utf8_lossy(&observation.stderr).lines().take(4).map(str::to_owned).collect::<Vec<_>>()
++        });
++        assert_eq!(excerpts[0][1], "  missing();");
++        assert_eq!(excerpts[0], excerpts[1]);
++    }
++}
+diff --git a/crates/quench-runtime/src/bytecode.rs b/crates/quench-runtime/src/bytecode.rs
+index edaab1f9b..4ff39dea3 100644
+--- a/crates/quench-runtime/src/bytecode.rs
++++ b/crates/quench-runtime/src/bytecode.rs
+@@ -2019,10 +2019,23 @@ pub(crate) struct ProgramSource {
+     pub(crate) column_offset: u32,
+ }
+ 
++/// Starts of JavaScript source lines, including an empty line after a final terminator.
++pub(crate) fn source_line_starts(text: &str) -> impl Iterator<Item = usize> + '_ {
++    std::iter::once(0).chain(text.char_indices().filter_map(|(index, character)| {
++        let crlf_prefix = character == '\r' && text.as_bytes().get(index + 1) == Some(&b'\n');
++        (matches!(character, '\n' | '\r' | '\u{2028}' | '\u{2029}') && !crlf_prefix)
++            .then_some(index + character.len_utf8())
++    }))
++}
++
+ impl ProgramSource {
+     pub(crate) fn source_line(&self, line: u32) -> Option<&str> {
+         let compiled_line = line.checked_add(self.line_offset)?.checked_sub(1)?;
+-        let text = self.text.lines().nth(compiled_line as usize)?;
++        let mut starts = source_line_starts(&self.text);
++        let start = starts.nth(compiled_line as usize)?;
++        let end = starts.next().unwrap_or(self.text.len());
++        let text = self.text.get(start..end)?
++            .trim_end_matches(['\r', '\n', '\u{2028}', '\u{2029}']);
+         if line != 1 {
+             return Some(text);
+         }
+diff --git a/crates/quench-runtime/src/bytecode/tests.rs b/crates/quench-runtime/src/bytecode/tests.rs
+index 05cefe319..93637f47a 100644
+--- a/crates/quench-runtime/src/bytecode/tests.rs
++++ b/crates/quench-runtime/src/bytecode/tests.rs
+@@ -473,3 +473,19 @@ fn fused_field_source_locations_survive_binary_round_trip_and_validate_coordinat
+         std::fs::remove_file(path).unwrap();
+     }
+ }
++
++#[test]
++fn source_lines_share_javascript_boundaries_and_preserve_wrapper_origins() {
++    let text = "a\r\nb\rc\nd\u{2028}e\u{2029}";
++    assert_eq!(super::source_line_starts(text).collect::<Vec<_>>(), [0, 3, 5, 7, 11, 15]);
++    let source = super::ProgramSource { text: text.into(), line_offset: 0, column_offset: 0 };
++    for (index, expected) in ["a", "b", "c", "d", "e", ""].into_iter().enumerate() {
++        assert_eq!(source.source_line(index as u32 + 1), Some(expected));
++    }
++    assert_eq!(source.source_line(7), None);
++    assert_eq!(source.source_line(0), None);
++    let wrapped = super::ProgramSource { text: "wrapper\r\n😀first\rsecond\u{2028}third".into(), line_offset: 1, column_offset: 2 };
++    assert_eq!(wrapped.source_line(1), Some("first"));
++    assert_eq!(wrapped.source_line(2), Some("second"));
++    assert_eq!(wrapped.source_line(3), Some("third"));
++}
+diff --git a/crates/quench-runtime/src/compile.rs b/crates/quench-runtime/src/compile.rs
+index dbb4122b4..15e2e04f3 100644
+--- a/crates/quench-runtime/src/compile.rs
++++ b/crates/quench-runtime/src/compile.rs
+@@ -1546,12 +1546,7 @@ impl<'a> Compiler<'a> {
+         private_name_ids: FxHashMap<(u32, u32), u32>,
+     ) -> Self {
+         let atoms = CompilerAtoms::new(atom_prefix);
+-        let mut source_line_starts = vec![0];
+-        source_line_starts.extend(text.char_indices().filter_map(|(index, character)| {
+-            let crlf_prefix = character == '\r' && text.as_bytes().get(index + 1) == Some(&b'\n');
+-            (matches!(character, '\n' | '\r' | '\u{2028}' | '\u{2029}') && !crlf_prefix)
+-                .then_some(index + character.len_utf8())
+-        }));
++        let source_line_starts = crate::bytecode::source_line_starts(text).collect();
+         let mut excess = 0;
+         let source_utf16_excess = text
+             .char_indices()

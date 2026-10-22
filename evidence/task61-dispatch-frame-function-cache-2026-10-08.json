@@ -1,0 +1,157 @@
+{
+  "schema": 1,
+  "task": "61",
+  "date": "2026-10-08",
+  "kind": "dispatch cached active-frame function index",
+  "decision": "reject",
+  "reason": "Both loops retired more instructions in all 11 candidate pairs (+1.43% local-store, +1.57% CJS call). RSS intervals include zero. The cache removes one frame field load but does not offset code/dispatch costs.",
+  "binding_time": {
+    "hypothesis": "Frame.function is invariant between frame transitions, so retain its index in a loop local.",
+    "refresh_edges": [
+      "PushFrame",
+      "Return to pending caller",
+      "TailCall",
+      "before exception handler lookup",
+      "after each pending frame pop during unwind"
+    ],
+    "exact_path": "generic indexed function lookup remains for p.functions[function]; no code/function pointer is cached."
+  },
+  "source": {
+    "base_revision": "4165fc19ef98738e99d3fcf352f8ce70f7e02dec",
+    "candidate_source_sha256": "5a6dd8584c31b7ba53b3b07b9e2cc42af746d267582343879a32ab0c5d088c70",
+    "baseline_binary_sha256": "6e5807544369d9dab11e4ae9a9979ede734f1b03e06e6ea0da3f219e44877187",
+    "candidate_binary_sha256": "0599eb4d70e475835a3d44a72fb6632e53da1297d8adc959272714dac255f120",
+    "profile": "production, feature-free"
+  },
+  "host": {
+    "cpu": "Apple M4 ARM64",
+    "os": "macOS 26.5",
+    "measurement_backend": "/usr/bin/time -l"
+  },
+  "measurement": {
+    "method": "11 alternating paired runs per CJS microloop; retired instructions primary, elapsed time and max RSS secondary",
+    "pair_runner": "task61-dispatch-executing-program-pairs.py",
+    "pair_runner_sha256": "c66de51db82ca46ca3762275ad3885c6d7176e7dc4722b90f64b22fb51a03a01",
+    "bootstrap": {
+      "method": "paired percentile bootstrap of per-pair deltas",
+      "replicates": 100000,
+      "seed": 610824
+    },
+    "fixtures": [
+      {
+        "path": "task61-dispatch-executing-program-local-store-10m-2026-10-08.cjs",
+        "sha256": "cbb15d2006c400cea5393e55234cdc5952998f9c194f74e830bc60b2c854366e"
+      },
+      {
+        "path": "task61-dispatch-executing-program-cjs-call-10m-2026-10-08.cjs",
+        "sha256": "9ca4e9511fa1cce15a96ed1acaedf9f9757a8613392e9d4d3f8c46195b553ee9"
+      }
+    ],
+    "raw_csv": {
+      "path": "task61-dispatch-frame-function-cache-pairs-2026-10-08.csv",
+      "sha256": "62f6e7489534c399686edd1eb1a525fde1af03483b650cc522dc7158383c23b9",
+      "rows": 22
+    },
+    "summary": [
+      {
+        "fixture": "cjs_call",
+        "pairs": 11,
+        "instructions": {
+          "baseline_median": 32505075484.0,
+          "candidate_median": 33015091398.0,
+          "median_paired_delta_percent": 1.5692649095416566,
+          "paired_bootstrap_95_percentile_interval": [
+            1.5648418214018411,
+            1.5707866410105353
+          ],
+          "candidate_lower_pairs": 0
+        },
+        "elapsed_seconds": {
+          "baseline_median": 1.09,
+          "candidate_median": 1.1,
+          "median_paired_delta_percent": 0.917431192660545,
+          "paired_bootstrap_95_percentile_interval": [
+            0.0,
+            1.7857142857142572
+          ],
+          "candidate_lower_pairs": 2
+        },
+        "user_seconds": {
+          "baseline_median": 1.09,
+          "candidate_median": 1.09,
+          "median_paired_delta_percent": 0.9090909090909038,
+          "paired_bootstrap_95_percentile_interval": [
+            0.0,
+            0.92592592592593
+          ],
+          "candidate_lower_pairs": 1
+        },
+        "maximum_rss_bytes": {
+          "baseline_median": 19808256,
+          "candidate_median": 19873792,
+          "median_paired_delta_bytes": 81920,
+          "paired_bootstrap_95_percentile_interval_bytes": [
+            -98304,
+            147456
+          ],
+          "candidate_lower_pairs": 4
+        }
+      },
+      {
+        "fixture": "local_store",
+        "pairs": 11,
+        "instructions": {
+          "baseline_median": 9772777615.0,
+          "candidate_median": 9912803967.0,
+          "median_paired_delta_percent": 1.4337149897656776,
+          "paired_bootstrap_95_percentile_interval": [
+            1.4285997270637063,
+            1.4380667105639677
+          ],
+          "candidate_lower_pairs": 0
+        },
+        "elapsed_seconds": {
+          "baseline_median": 0.27,
+          "candidate_median": 0.27,
+          "median_paired_delta_percent": 0.0,
+          "paired_bootstrap_95_percentile_interval": [
+            0.0,
+            3.8461538461538547
+          ],
+          "candidate_lower_pairs": 0
+        },
+        "user_seconds": {
+          "baseline_median": 0.26,
+          "candidate_median": 0.27,
+          "median_paired_delta_percent": 3.8461538461538547,
+          "paired_bootstrap_95_percentile_interval": [
+            3.4482758620689724,
+            3.8461538461538547
+          ],
+          "candidate_lower_pairs": 0
+        },
+        "maximum_rss_bytes": {
+          "baseline_median": 19841024,
+          "candidate_median": 19693568,
+          "median_paired_delta_bytes": -114688,
+          "paired_bootstrap_95_percentile_interval_bytes": [
+            -229376,
+            196608
+          ],
+          "candidate_lower_pairs": 7
+        }
+      }
+    ]
+  },
+  "correctness": {
+    "passed": [
+      "ordinary/captured call and caught-ReferenceError regression (1/1)",
+      "stack errors and foreign-realm errors after deep recursion (1/1)",
+      "iterator-close nested abrupt-unwind regression (1/1)",
+      "strict 20000-step tail-call loop (output 20000)"
+    ],
+    "limitations": [
+      "two broader call tests stopped in existing lowering assertions before dispatch; not attributable to the loop candidate"
+    ]
+  }
+}

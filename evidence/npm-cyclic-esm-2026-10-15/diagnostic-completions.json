@@ -1,0 +1,258 @@
+[
+  {
+    "side": "base",
+    "script": "crypto-0.js",
+    "exit_code": 0,
+    "stdout": "done crypto 0\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "base",
+    "script": "crypto-1.js",
+    "exit_code": 0,
+    "stdout": "done crypto 1\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "base",
+    "script": "deltablue-0.js",
+    "exit_code": 0,
+    "stdout": "done deltablue 0\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "base",
+    "script": "deltablue-10.js",
+    "exit_code": 0,
+    "stdout": "done deltablue 10\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "base",
+    "script": "earley-boyer-0.js",
+    "exit_code": 0,
+    "stdout": "done earley-boyer 0\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "base",
+    "script": "earley-boyer-1.js",
+    "exit_code": 0,
+    "stdout": "done earley-boyer 1\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "base",
+    "script": "navier-stokes-0.js",
+    "exit_code": 0,
+    "stdout": "done navier-stokes 0\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "base",
+    "script": "navier-stokes-1.js",
+    "exit_code": 0,
+    "stdout": "done navier-stokes 1\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "base",
+    "script": "raytrace-0.js",
+    "exit_code": 0,
+    "stdout": "done raytrace 0\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "base",
+    "script": "raytrace-3.js",
+    "exit_code": 0,
+    "stdout": "done raytrace 3\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "base",
+    "script": "regexp-0.js",
+    "exit_code": 0,
+    "stdout": "done regexp 0\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "base",
+    "script": "regexp-1.js",
+    "exit_code": 0,
+    "stdout": "done regexp 1\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "base",
+    "script": "richards-0.js",
+    "exit_code": 0,
+    "stdout": "done richards 0\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "base",
+    "script": "richards-25.js",
+    "exit_code": 0,
+    "stdout": "done richards 25\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "base",
+    "script": "splay-0.js",
+    "exit_code": 0,
+    "stdout": "done splay 0\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "base",
+    "script": "splay-75.js",
+    "exit_code": 0,
+    "stdout": "done splay 75\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "cand",
+    "script": "crypto-0.js",
+    "exit_code": 0,
+    "stdout": "done crypto 0\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "cand",
+    "script": "crypto-1.js",
+    "exit_code": 0,
+    "stdout": "done crypto 1\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "cand",
+    "script": "deltablue-0.js",
+    "exit_code": 0,
+    "stdout": "done deltablue 0\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "cand",
+    "script": "deltablue-10.js",
+    "exit_code": 0,
+    "stdout": "done deltablue 10\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "cand",
+    "script": "earley-boyer-0.js",
+    "exit_code": 0,
+    "stdout": "done earley-boyer 0\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "cand",
+    "script": "earley-boyer-1.js",
+    "exit_code": 0,
+    "stdout": "done earley-boyer 1\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "cand",
+    "script": "navier-stokes-0.js",
+    "exit_code": 0,
+    "stdout": "done navier-stokes 0\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "cand",
+    "script": "navier-stokes-1.js",
+    "exit_code": 0,
+    "stdout": "done navier-stokes 1\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "cand",
+    "script": "raytrace-0.js",
+    "exit_code": 0,
+    "stdout": "done raytrace 0\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "cand",
+    "script": "raytrace-3.js",
+    "exit_code": 0,
+    "stdout": "done raytrace 3\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "cand",
+    "script": "regexp-0.js",
+    "exit_code": 0,
+    "stdout": "done regexp 0\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "cand",
+    "script": "regexp-1.js",
+    "exit_code": 0,
+    "stdout": "done regexp 1\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "cand",
+    "script": "richards-0.js",
+    "exit_code": 0,
+    "stdout": "done richards 0\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "cand",
+    "script": "richards-25.js",
+    "exit_code": 0,
+    "stdout": "done richards 25\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "cand",
+    "script": "splay-0.js",
+    "exit_code": 0,
+    "stdout": "done splay 0\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "cand",
+    "script": "splay-75.js",
+    "exit_code": 0,
+    "stdout": "done splay 75\n",
+    "stderr": "",
+    "passed": true
+  }
+]

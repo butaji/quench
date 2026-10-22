@@ -1,0 +1,583 @@
+{
+  "schema": 1,
+  "task": "61",
+  "experiment": "V2 bounded dense array holes, isolated Linux NavierStokes production pairs",
+  "source": {
+    "baseline_revision": "665811c9273b0b734a5b1ec80f78434a11037423",
+    "candidate_base_revision": "665811c9273b0b734a5b1ec80f78434a11037423",
+    "candidate_dirty": true,
+    "candidate_patch_sha256": "cbdf81a3da058e201ab147dd03b4d40a80d8d6a8b5e82344d142c0e31c524db4"
+  },
+  "host": {
+    "uname": {
+      "system": "Linux",
+      "node": "1c7595109800",
+      "release": "6.18.44",
+      "version": "#1 SMP Sat Sep 26 20:02:31 UTC 2026",
+      "machine": "x86_64",
+      "processor": ""
+    },
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)\nbinary: rustc\ncommit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4\ncommit-date: 2026-09-28\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.0\nLLVM version: 23.1.1",
+    "cpu_quota": "400000 100000",
+    "memory_limit_bytes": 17179869184,
+    "rss_backend": "Linux wait4 ru_maxrss, KiB normalized to bytes"
+  },
+  "corpus_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+  "runner_sha256": "ffe0299ecd814bb7fd14f2f3347c4ea71fe6857e57d50355898a7bb52e8cd053",
+  "rounds_per_fixture": 11,
+  "bootstrap_resamples": 100000,
+  "binary_sha256": {
+    "baseline": "0d213301e93ce81273de2e687215537eec4709907be5140fb6ea4e8a5e675ed7",
+    "candidate": "13420569b20285cdb9833af1314527c1d83af7d9fdba8ecefc162be30bf348b6"
+  },
+  "commands": {
+    "baseline": [
+      "work/stageb-dense-holes-linux-2026-10-09/quench-node-baseline",
+      "<materialized-fixture>"
+    ],
+    "candidate": [
+      "work/stageb-dense-holes-linux-2026-10-09/quench-node-candidate",
+      "<materialized-fixture>"
+    ]
+  },
+  "measurement_environment": {
+    "HOME": "/home/agent",
+    "LANG": "C.UTF-8",
+    "LC_ALL": "C.UTF-8",
+    "PATH": "/workspace/quench/work/stageb-tools/cargo-home/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+  },
+  "fixtures": {
+    "navier-stokes.js": {
+      "source_sha256": "ce241465ffeee77b5c4f7119f522aa971fe1fe92c3aed76f7514ea43e07fec84",
+      "materialized_sha256": "290b7ad4204d4e9a6bb6ef6ff261e7c3a13f507de81381bca171e83256986dbe",
+      "materialized_path": "work/stageb-dense-holes-linux-2026-10-09/materialized/navier-stokes-materialized.js",
+      "valid": true,
+      "output_equal": true,
+      "rounds": [
+        {
+          "pair": 1,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "baseline": {
+              "command": [
+                "work/stageb-dense-holes-linux-2026-10-09/quench-node-baseline",
+                "/workspace/quench/work/stageb-dense-holes-linux-2026-10-09/materialized/navier-stokes-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 80.2,
+              "maximum_rss_bytes": 22523904,
+              "wall_ns": 61626411024,
+              "result_lines": [
+                "__quenchBenchResult: NavierStokes: 80.2"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: NavierStokes: 80.2\n----\nScore: 80.2\n",
+              "stderr": ""
+            },
+            "candidate": {
+              "command": [
+                "work/stageb-dense-holes-linux-2026-10-09/quench-node-candidate",
+                "/workspace/quench/work/stageb-dense-holes-linux-2026-10-09/materialized/navier-stokes-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 205.0,
+              "maximum_rss_bytes": 20594688,
+              "wall_ns": 24939519374,
+              "result_lines": [
+                "__quenchBenchResult: NavierStokes: 205"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: NavierStokes: 205\n----\nScore: 205\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "pair": 2,
+          "execution_order": [
+            "candidate",
+            "baseline"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "candidate": {
+              "command": [
+                "work/stageb-dense-holes-linux-2026-10-09/quench-node-candidate",
+                "/workspace/quench/work/stageb-dense-holes-linux-2026-10-09/materialized/navier-stokes-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 209.0,
+              "maximum_rss_bytes": 20389888,
+              "wall_ns": 24393966967,
+              "result_lines": [
+                "__quenchBenchResult: NavierStokes: 209"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: NavierStokes: 209\n----\nScore: 209\n",
+              "stderr": ""
+            },
+            "baseline": {
+              "command": [
+                "work/stageb-dense-holes-linux-2026-10-09/quench-node-baseline",
+                "/workspace/quench/work/stageb-dense-holes-linux-2026-10-09/materialized/navier-stokes-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 82.9,
+              "maximum_rss_bytes": 22675456,
+              "wall_ns": 59432862532,
+              "result_lines": [
+                "__quenchBenchResult: NavierStokes: 82.9"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: NavierStokes: 82.9\n----\nScore: 82.9\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "pair": 3,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "baseline": {
+              "command": [
+                "work/stageb-dense-holes-linux-2026-10-09/quench-node-baseline",
+                "/workspace/quench/work/stageb-dense-holes-linux-2026-10-09/materialized/navier-stokes-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 77.2,
+              "maximum_rss_bytes": 22663168,
+              "wall_ns": 63461831639,
+              "result_lines": [
+                "__quenchBenchResult: NavierStokes: 77.2"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: NavierStokes: 77.2\n----\nScore: 77.2\n",
+              "stderr": ""
+            },
+            "candidate": {
+              "command": [
+                "work/stageb-dense-holes-linux-2026-10-09/quench-node-candidate",
+                "/workspace/quench/work/stageb-dense-holes-linux-2026-10-09/materialized/navier-stokes-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 205.0,
+              "maximum_rss_bytes": 20533248,
+              "wall_ns": 24861355649,
+              "result_lines": [
+                "__quenchBenchResult: NavierStokes: 205"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: NavierStokes: 205\n----\nScore: 205\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "pair": 4,
+          "execution_order": [
+            "candidate",
+            "baseline"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "candidate": {
+              "command": [
+                "work/stageb-dense-holes-linux-2026-10-09/quench-node-candidate",
+                "/workspace/quench/work/stageb-dense-holes-linux-2026-10-09/materialized/navier-stokes-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 213.0,
+              "maximum_rss_bytes": 20660224,
+              "wall_ns": 24056720396,
+              "result_lines": [
+                "__quenchBenchResult: NavierStokes: 213"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: NavierStokes: 213\n----\nScore: 213\n",
+              "stderr": ""
+            },
+            "baseline": {
+              "command": [
+                "work/stageb-dense-holes-linux-2026-10-09/quench-node-baseline",
+                "/workspace/quench/work/stageb-dense-holes-linux-2026-10-09/materialized/navier-stokes-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 79.5,
+              "maximum_rss_bytes": 22470656,
+              "wall_ns": 61937573465,
+              "result_lines": [
+                "__quenchBenchResult: NavierStokes: 79.5"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: NavierStokes: 79.5\n----\nScore: 79.5\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "pair": 5,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "baseline": {
+              "command": [
+                "work/stageb-dense-holes-linux-2026-10-09/quench-node-baseline",
+                "/workspace/quench/work/stageb-dense-holes-linux-2026-10-09/materialized/navier-stokes-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 75.1,
+              "maximum_rss_bytes": 22663168,
+              "wall_ns": 65426967318,
+              "result_lines": [
+                "__quenchBenchResult: NavierStokes: 75.1"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: NavierStokes: 75.1\n----\nScore: 75.1\n",
+              "stderr": ""
+            },
+            "candidate": {
+              "command": [
+                "work/stageb-dense-holes-linux-2026-10-09/quench-node-candidate",
+                "/workspace/quench/work/stageb-dense-holes-linux-2026-10-09/materialized/navier-stokes-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 197.0,
+              "maximum_rss_bytes": 20426752,
+              "wall_ns": 25820994695,
+              "result_lines": [
+                "__quenchBenchResult: NavierStokes: 197"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: NavierStokes: 197\n----\nScore: 197\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "pair": 6,
+          "execution_order": [
+            "candidate",
+            "baseline"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "candidate": {
+              "command": [
+                "work/stageb-dense-holes-linux-2026-10-09/quench-node-candidate",
+                "/workspace/quench/work/stageb-dense-holes-linux-2026-10-09/materialized/navier-stokes-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 197.0,
+              "maximum_rss_bytes": 20533248,
+              "wall_ns": 25855853658,
+              "result_lines": [
+                "__quenchBenchResult: NavierStokes: 197"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: NavierStokes: 197\n----\nScore: 197\n",
+              "stderr": ""
+            },
+            "baseline": {
+              "command": [
+                "work/stageb-dense-holes-linux-2026-10-09/quench-node-baseline",
+                "/workspace/quench/work/stageb-dense-holes-linux-2026-10-09/materialized/navier-stokes-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 76.2,
+              "maximum_rss_bytes": 22577152,
+              "wall_ns": 64761110460,
+              "result_lines": [
+                "__quenchBenchResult: NavierStokes: 76.2"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: NavierStokes: 76.2\n----\nScore: 76.2\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "pair": 7,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "baseline": {
+              "command": [
+                "work/stageb-dense-holes-linux-2026-10-09/quench-node-baseline",
+                "/workspace/quench/work/stageb-dense-holes-linux-2026-10-09/materialized/navier-stokes-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 78.9,
+              "maximum_rss_bytes": 22577152,
+              "wall_ns": 62489904623,
+              "result_lines": [
+                "__quenchBenchResult: NavierStokes: 78.9"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: NavierStokes: 78.9\n----\nScore: 78.9\n",
+              "stderr": ""
+            },
+            "candidate": {
+              "command": [
+                "work/stageb-dense-holes-linux-2026-10-09/quench-node-candidate",
+                "/workspace/quench/work/stageb-dense-holes-linux-2026-10-09/materialized/navier-stokes-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 212.0,
+              "maximum_rss_bytes": 20365312,
+              "wall_ns": 24227783615,
+              "result_lines": [
+                "__quenchBenchResult: NavierStokes: 212"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: NavierStokes: 212\n----\nScore: 212\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "pair": 8,
+          "execution_order": [
+            "candidate",
+            "baseline"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "candidate": {
+              "command": [
+                "work/stageb-dense-holes-linux-2026-10-09/quench-node-candidate",
+                "/workspace/quench/work/stageb-dense-holes-linux-2026-10-09/materialized/navier-stokes-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 211.0,
+              "maximum_rss_bytes": 20459520,
+              "wall_ns": 24160794637,
+              "result_lines": [
+                "__quenchBenchResult: NavierStokes: 211"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: NavierStokes: 211\n----\nScore: 211\n",
+              "stderr": ""
+            },
+            "baseline": {
+              "command": [
+                "work/stageb-dense-holes-linux-2026-10-09/quench-node-baseline",
+                "/workspace/quench/work/stageb-dense-holes-linux-2026-10-09/materialized/navier-stokes-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 80.3,
+              "maximum_rss_bytes": 22679552,
+              "wall_ns": 61682843391,
+              "result_lines": [
+                "__quenchBenchResult: NavierStokes: 80.3"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: NavierStokes: 80.3\n----\nScore: 80.3\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "pair": 9,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "baseline": {
+              "command": [
+                "work/stageb-dense-holes-linux-2026-10-09/quench-node-baseline",
+                "/workspace/quench/work/stageb-dense-holes-linux-2026-10-09/materialized/navier-stokes-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 77.0,
+              "maximum_rss_bytes": 22233088,
+              "wall_ns": 64042614592,
+              "result_lines": [
+                "__quenchBenchResult: NavierStokes: 77.0"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: NavierStokes: 77.0\n----\nScore: 77.0\n",
+              "stderr": ""
+            },
+            "candidate": {
+              "command": [
+                "work/stageb-dense-holes-linux-2026-10-09/quench-node-candidate",
+                "/workspace/quench/work/stageb-dense-holes-linux-2026-10-09/materialized/navier-stokes-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 201.0,
+              "maximum_rss_bytes": 20504576,
+              "wall_ns": 25326484237,
+              "result_lines": [
+                "__quenchBenchResult: NavierStokes: 201"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: NavierStokes: 201\n----\nScore: 201\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "pair": 10,
+          "execution_order": [
+            "candidate",
+            "baseline"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "candidate": {
+              "command": [
+                "work/stageb-dense-holes-linux-2026-10-09/quench-node-candidate",
+                "/workspace/quench/work/stageb-dense-holes-linux-2026-10-09/materialized/navier-stokes-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 208.0,
+              "maximum_rss_bytes": 20398080,
+              "wall_ns": 24610387360,
+              "result_lines": [
+                "__quenchBenchResult: NavierStokes: 208"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: NavierStokes: 208\n----\nScore: 208\n",
+              "stderr": ""
+            },
+            "baseline": {
+              "command": [
+                "work/stageb-dense-holes-linux-2026-10-09/quench-node-baseline",
+                "/workspace/quench/work/stageb-dense-holes-linux-2026-10-09/materialized/navier-stokes-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 74.3,
+              "maximum_rss_bytes": 22573056,
+              "wall_ns": 66070409757,
+              "result_lines": [
+                "__quenchBenchResult: NavierStokes: 74.3"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: NavierStokes: 74.3\n----\nScore: 74.3\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "pair": 11,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "baseline": {
+              "command": [
+                "work/stageb-dense-holes-linux-2026-10-09/quench-node-baseline",
+                "/workspace/quench/work/stageb-dense-holes-linux-2026-10-09/materialized/navier-stokes-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 78.8,
+              "maximum_rss_bytes": 22429696,
+              "wall_ns": 62710678792,
+              "result_lines": [
+                "__quenchBenchResult: NavierStokes: 78.8"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: NavierStokes: 78.8\n----\nScore: 78.8\n",
+              "stderr": ""
+            },
+            "candidate": {
+              "command": [
+                "work/stageb-dense-holes-linux-2026-10-09/quench-node-candidate",
+                "/workspace/quench/work/stageb-dense-holes-linux-2026-10-09/materialized/navier-stokes-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 206.0,
+              "maximum_rss_bytes": 20443136,
+              "wall_ns": 24750906735,
+              "result_lines": [
+                "__quenchBenchResult: NavierStokes: 206"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: NavierStokes: 206\n----\nScore: 206\n",
+              "stderr": ""
+            }
+          }
+        }
+      ],
+      "summary": {
+        "baseline_median_score": 78.8,
+        "candidate_median_score": 206.0,
+        "score_delta": 127.2,
+        "score_delta_percent": 161.42131979695432,
+        "score_delta_95_percentile_interval": {
+          "lower_95": 124.0,
+          "upper_95": 132.1,
+          "resamples": 100000,
+          "method": "paired percentile bootstrap of difference in medians",
+          "seed": 20261009
+        },
+        "baseline_median_maximum_rss_bytes": 22577152,
+        "candidate_median_maximum_rss_bytes": 20459520,
+        "maximum_rss_delta_bytes": -2117632,
+        "maximum_rss_delta_95_percentile_interval": {
+          "lower_95": -2236416.0,
+          "upper_95": -1966080.0,
+          "resamples": 100000,
+          "method": "paired percentile bootstrap of difference in medians",
+          "seed": 20261009
+        },
+        "candidate_lower_score_pairs": 0,
+        "candidate_lower_rss_pairs": 11
+      }
+    }
+  },
+  "valid": true,
+  "qualification_ready": false,
+  "decision_rule": "Report paired Score and maximum-RSS intervals per affected fixture; output must match. This Quench-only screen does not establish Task 61 engine leadership."
+}

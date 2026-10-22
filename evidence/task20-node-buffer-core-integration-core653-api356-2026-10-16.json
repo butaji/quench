@@ -1,0 +1,192 @@
+{
+  "scope": "Normal integration of native Buffer pools with actual Core constructor identity, private boxed primitive data, generator cleanup and shape index",
+  "source_commit": "9b3d737acad34eb0158047d61d0fc900767e1428",
+  "incoming_commit": "f7fbfd14903cc55449658d32b0cd9625ca5578d3",
+  "latest_stable": "v26.12.0",
+  "checks": {
+    "core": 653,
+    "api": 356,
+    "subset": 15,
+    "framework": 43,
+    "shared": 7,
+    "workspace_all_targets": true,
+    "direct_buffer_differentials_equal": true
+  },
+  "family": {
+    "counts": {
+      "pass": 52,
+      "timeout": 1
+    },
+    "total": 53,
+    "inventory_hash": "647b9535ab7f6745"
+  },
+  "fixed_work": {
+    "valid": 8,
+    "clean": 0,
+    "speed_claim": false
+  },
+  "limitations": [
+    "Goal remains open. Latest complete totals stable1783/5015 and pinned1809/4727 are from older c4ad source.",
+    "Fresh full stable\u2192pinned audit running separately from frozen b673 source does not include this merge.",
+    "Compilation overlaps the independent full inventory, no speed claim or isolated timing attribution.",
+    "New aligned public allocUnsafe/allocUnsafeSlow and pooled concat are still only uncompiled work prototypes; not included in this source.",
+    "Single test-file append conflict kept both native Buffer tests and incoming boxed primitive test. Raw incoming evidence whitespace was preserved; production diff check clean."
+  ],
+  "raw": [
+    {
+      "path": "work/native-buffer-integration/activation-construction-review.diff",
+      "bytes": 19297,
+      "sha256": "fe4c0c7cce7822f6a6ccc41319933590f42ffaa05ea7129c70acecce17400986"
+    },
+    {
+      "path": "work/native-buffer-integration/all-api.log",
+      "bytes": 29221,
+      "sha256": "22bde17772b9bcd8e814c98946e05f1f7e70762bd7343a6aa06964360014083b"
+    },
+    {
+      "path": "work/native-buffer-integration/allocation.diff",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/native-buffer-integration/allocation.log",
+      "bytes": 538,
+      "sha256": "6ca98f0851b50df5c6c468ce2163b62734d1a62275cf985d092d11c29a9a3c18"
+    },
+    {
+      "path": "work/native-buffer-integration/core.log",
+      "bytes": 57429,
+      "sha256": "24d2de8214075adae0f9722a9c58cd90b61bfda0672bf98901ac0ff8b40aefad"
+    },
+    {
+      "path": "work/native-buffer-integration/extras.sh",
+      "bytes": 3125,
+      "sha256": "7f74d049868780f270675739b831622bc198bb03294c838ae7b22acc99785dd0"
+    },
+    {
+      "path": "work/native-buffer-integration/family.json",
+      "bytes": 129220,
+      "sha256": "d0d1e060b39b5ac38238c3296aafa603c5495ae1b5c8e232d2c194d93076770f"
+    },
+    {
+      "path": "work/native-buffer-integration/family.log",
+      "bytes": 5629,
+      "sha256": "3a4b64fb3d9dc3a61272c816b7c1f1c4c0eea872397d25ca81ab3f2f778d57a8"
+    },
+    {
+      "path": "work/native-buffer-integration/fixed-work.json",
+      "bytes": 154410,
+      "sha256": "34da0b01a44c55e4e54030809b4363a07ad2016e37a5af8873f3962cb75fd61c"
+    },
+    {
+      "path": "work/native-buffer-integration/fixed-work.log",
+      "bytes": 1134,
+      "sha256": "88ec806e55d7bc8a1779f1005b0579a3897cf2f9b1021af627458b9329c9b343"
+    },
+    {
+      "path": "work/native-buffer-integration/framework.log",
+      "bytes": 3798,
+      "sha256": "b41881f94821125815bc87efbbbd7d26b13fd072686394014795864fa55f2ae8"
+    },
+    {
+      "path": "work/native-buffer-integration/paired-build.log",
+      "bytes": 365,
+      "sha256": "3f495782ef63ae0e4b7e4e29e72291c784c2c77dc1827fa2eea15543ddc9a9df"
+    },
+    {
+      "path": "work/native-buffer-integration/pool.diff",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/native-buffer-integration/pool.log",
+      "bytes": 323,
+      "sha256": "8ca76fd2c3e915d4600b0731951e819be9064f326b5b87d8751856547ea12724"
+    },
+    {
+      "path": "work/native-buffer-integration/qualify.sh",
+      "bytes": 1010,
+      "sha256": "d6ea38e4d77130177aeacdf9ea096aad45c4852798305ec887257ee36e67b3d1"
+    },
+    {
+      "path": "work/native-buffer-integration/shared.log",
+      "bytes": 882,
+      "sha256": "0efca7e53bf1b786b69d62b87f02910799eef5344ec29c01a317ae4fb2b7e874"
+    },
+    {
+      "path": "work/native-buffer-integration/subset.log",
+      "bytes": 1348,
+      "sha256": "ac68299239a970c6618f5f25c1251d5493d6a37e8a9358e14572699e5b270c0b"
+    },
+    {
+      "path": "work/native-buffer-integration/workspace.log",
+      "bytes": 585,
+      "sha256": "e0798e94e759606cdac3637584d0573f221c6a88838ee3cefbb7b6651c99b7b8"
+    },
+    {
+      "path": "work/native-buffer-integrated-bin/source-sha256.json",
+      "bytes": 77215,
+      "sha256": "5129ab7bf2b9ca59466e8742c36c8b5bdecf193f2fbb4f43e803aab04af25439"
+    },
+    {
+      "path": "work/native-buffer-integrated-bin/source-commit.txt",
+      "bytes": 41,
+      "sha256": "eb2e31e21fdeac68f4320d8cae00ee73feaf669a542b463df93619455e892039"
+    },
+    {
+      "path": "work/native-buffer-integrated-bin/sha256.txt",
+      "bytes": 235,
+      "sha256": "9208eff3da7e59d2ca718c7ae81a8c138e298041b2b720b5d6af4215da01db60"
+    },
+    {
+      "path": "work/native-buffer-allocation/incoming-crates.diff",
+      "bytes": 122905,
+      "sha256": "e7097c82e49c33789500a44f29580f64f14c5a81380f2f772aea3c439f04a67c"
+    },
+    {
+      "path": "work/native-buffer-allocation/incoming-merge.log",
+      "bytes": 314,
+      "sha256": "8955b1ef755512a645c7ee001ef952a6470b103fed8c18830f846ef589de1f75"
+    },
+    {
+      "path": "work/native-buffer-allocation/incoming-merge-commit.log",
+      "bytes": 93,
+      "sha256": "c346b27673343509c33a373c9df64294fc215e3c536866066eb75be796eddf03"
+    },
+    {
+      "path": "work/native-buffer-allocation/incoming-production-paths.txt",
+      "bytes": 1986,
+      "sha256": "e6b06b3484db921f42b8743b68b8d0f262800d401546514a1d92d1bf932c282b"
+    },
+    {
+      "path": "work/native-buffer-allocation/core650-completed-cache-reclamation.json",
+      "bytes": 453,
+      "sha256": "f168e20c92d0fc68e28cb7f5915dbfae8f764d2d160b69b265c031a3555780bf"
+    },
+    {
+      "path": "work/latest-node-audit/native-fulls-shared-merge.log",
+      "bytes": 3605,
+      "sha256": "1930fa07bc73b6bb8bebe5ee48b2259d0550a315112ad600eaa91eddffe4310f"
+    },
+    {
+      "path": "work/latest-node-audit/native-fulls-shared-diff.log",
+      "bytes": 1648,
+      "sha256": "5521e97e56deb8d13db58006d849caec416d91c74c4c8647939bf826fae886f2"
+    },
+    {
+      "path": "work/latest-node-audit/native-fulls-shared-push.log",
+      "bytes": 512,
+      "sha256": "ec49ad1d5ae05fb03ae399b0fc190d4301ac024b98c20405483e05de4a7effe4"
+    },
+    {
+      "path": "work/latest-node-audit/native-fulls-shared-fetch.log",
+      "bytes": 91,
+      "sha256": "937f8b4b4df9bf012c7ea39149ee0b06d03b3121332b67138707c41c6fa13d6d"
+    },
+    {
+      "path": "work/latest-node-audit/native-fulls-shared-fetch-explicit.log",
+      "bytes": 94,
+      "sha256": "d25c318e96d8be9ea2a906dcee91d0463be0208153a9cb08f1a606493f8a7444"
+    }
+  ]
+}

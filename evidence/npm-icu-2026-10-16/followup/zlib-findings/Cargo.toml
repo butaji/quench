@@ -1,0 +1,23 @@
+[package]
+name = "npm-zlib-stream-probe"
+version = "0.0.0"
+edition = "2024"
+[[bin]]
+name = "npm-zlib-stream-probe"
+path = "main.rs"
+[dependencies]
+flate2 = { version = "1", features = ["zlib-rs"] }
+serde_json = "1"
+[profile.dev]
+debug = 0
+codegen-units = 16
+[[bin]]
+name = "npm-zlib-pinned-probe"
+path = "native-main.rs"
+
+[[bin]]
+name="npm-zlib-codec-probe"
+path="codec-main.rs"
+[[bin]]
+name="npm-zlib-oneshot-probe"
+path="oneshot-main.rs"

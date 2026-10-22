@@ -1,0 +1,181 @@
+{
+  "scope": "Native Console write error policy and owned stream error callbacks",
+  "branch": "v2-cloud-node",
+  "parent_commit": "111d1fc6899b1a929d1dc847b9122f3ae80bce98",
+  "oracle": "Node v27.0.0-nightly20260819c79868f102",
+  "fixture_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+  "validation": {
+    "node_oracle_tests": 56,
+    "oracle_log": "work/console-write-oracles.log",
+    "framework_summary": "parallel: pass=43 skip=0 fail=0 timeout=0 crash=0 unclassified=0 total=43",
+    "console": {
+      "counts": {
+        "pass": 11,
+        "fail": 11
+      },
+      "gained_passes": [],
+      "lost_passes": [],
+      "metadata": {
+        "inventory_hash": "9f5f81d4377785f7",
+        "jobs": 4,
+        "timeout_secs": 30,
+        "node_version": "v27.0.0-nightly20260819c79868f102",
+        "runtime_commit": "111d1fc6899b1a929d1dc847b9122f3ae80bce98",
+        "tests_node_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+        "platform": "linux-x86_64"
+      },
+      "results": [
+        {
+          "fixture": "test-console-assign-undefined.js",
+          "status": "pass",
+          "reason": ""
+        },
+        {
+          "fixture": "test-console-async-write-error.js",
+          "status": "pass",
+          "reason": ""
+        },
+        {
+          "fixture": "test-console-clear.js",
+          "status": "pass",
+          "reason": ""
+        },
+        {
+          "fixture": "test-console-count.js",
+          "status": "fail",
+          "reason": "/workspace/work/node-fixtures/test/parallel/test-console-count.js:13\nassert.strictEqual(buf, 'default: 1\\n');\n^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-console-count.js:13:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-console-diagnostics-channels.js",
+          "status": "fail",
+          "reason": "/workspace/work/node-fixtures/test/common/hijackstdio.js:14\n      process.nextTick(() => { throw e; });\n                               ^\n\nAssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-console-diagnostics-channels.js:69:5\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at /workspace/work/node-fixtures/test/common/hijackstdio.js:12:7\n    at log (node:console/Console.js:29:5)\n    at /workspace/work/node-fixtures/test/parallel/test-console-diagnostics-channels.js:75:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-console-formatTime.js",
+          "status": "pass",
+          "reason": ""
+        },
+        {
+          "fixture": "test-console-group.js",
+          "status": "fail",
+          "reason": "/workspace/work/node-fixtures/test/parallel/test-console-group.js:63\n  assert.strictEqual(stdout, expectedOut);\n  ^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-console-group.js:63:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-console-instance.js",
+          "status": "fail",
+          "reason": "/workspace/work/node-fixtures/test/parallel/test-console-instance.js:46\nassert.throws(\n^\n\nAssertionError [ERR_ASSERTION]: Missing expected exception.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-console-instance.js:46:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-console-issue-43095.js",
+          "status": "fail",
+          "reason": "node:console/Console.js:25\n    return typeof format === \"function\" ? format(...args) : args.join(\" \");\n                                                            ^\n\nTypeError: cannot access a revoked proxy\n    at _format (node:console/Console.js:25:61)\n    at log (node:console/Console.js:29:23)\n    at dir (node:console/Console.js:37:18)\n    at /workspace/work/node-fixtures/test/parallel/test-console-issue-43095.js:10:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-console-log-stdio-broken-dest.js",
+          "status": "pass",
+          "reason": ""
+        },
+        {
+          "fixture": "test-console-log-throw-primitive.js",
+          "status": "pass",
+          "reason": ""
+        },
+        {
+          "fixture": "test-console-methods.js",
+          "status": "fail",
+          "reason": "/workspace/work/node-fixtures/test/parallel/test-console-methods.js:56\nfor (const method of methods) {\n^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at assertEqualName (/workspace/work/node-fixtures/test/parallel/test-console-methods.js:47:5)\n    at /workspace/work/node-fixtures/test/parallel/test-console-methods.js:57:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-console-no-swallow-stack-overflow.js",
+          "status": "fail",
+          "reason": "/workspace/work/node-fixtures/test/parallel/test-console-no-swallow-stack-overflow.js:7\nfor (const method of ['dir', 'log', 'warn']) {\n^\n\nAssertionError [ERR_ASSERTION]: Missing expected exception.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-console-no-swallow-stack-overflow.js:8:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-console-not-call-toString.js",
+          "status": "pass",
+          "reason": ""
+        },
+        {
+          "fixture": "test-console-self-assign.js",
+          "status": "pass",
+          "reason": ""
+        },
+        {
+          "fixture": "test-console-stdio-setters.js",
+          "status": "pass",
+          "reason": ""
+        },
+        {
+          "fixture": "test-console-sync-write-error.js",
+          "status": "pass",
+          "reason": ""
+        },
+        {
+          "fixture": "test-console-table.js",
+          "status": "fail",
+          "reason": "/workspace/work/node-fixtures/test/parallel/test-console-table.js:26\nassert.throws(() => console.table([], false), {\n^\n\nAssertionError [ERR_ASSERTION]: Missing expected exception.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-console-table.js:26:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-console-tty-colors-per-stream.js",
+          "status": "fail",
+          "reason": "/workspace/work/node-fixtures/test/parallel/test-console-tty-colors-per-stream.js:22\nassert.strictEqual(stdout.read(), 'Hello \\x1B[33m42\\x1B[39m\\n');\n^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-console-tty-colors-per-stream.js:22:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-console-tty-colors.js",
+          "status": "fail",
+          "reason": "/workspace/work/node-fixtures/test/parallel/test-console-tty-colors.js:61\n    assert.throws(\n    ^\n\nAssertionError [ERR_ASSERTION]: Missing expected exception.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-console-tty-colors.js:61:5\n    at /workspace/work/node-fixtures/test/parallel/test-console-tty-colors.js:59:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-console-with-frozen-intrinsics.js",
+          "status": "pass",
+          "reason": ""
+        },
+        {
+          "fixture": "test-console.js",
+          "status": "fail",
+          "reason": "/workspace/work/node-fixtures/test/parallel/test-console.js:195\nassert.strictEqual(errStrings[errStrings.length - 1],\n^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-console.js:195:1\n\nNode.js v22.0.0"
+        }
+      ],
+      "raw_sha256": "7f773767a190aaec2c10d544dbd594553e78a4a3c21d2387faca326a430cd7fd"
+    },
+    "external_stdio": {
+      "counts": {
+        "pass": 2
+      },
+      "gained_passes": [
+        "test-process-external-stdio-close-spawn.js",
+        "test-process-external-stdio-close.js"
+      ],
+      "lost_passes": [],
+      "metadata": {
+        "inventory_hash": "da69281abbcc0f09",
+        "jobs": 2,
+        "timeout_secs": 30,
+        "node_version": "v27.0.0-nightly20260819c79868f102",
+        "runtime_commit": "111d1fc6899b1a929d1dc847b9122f3ae80bce98",
+        "tests_node_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+        "platform": "linux-x86_64"
+      },
+      "results": [
+        {
+          "fixture": "test-process-external-stdio-close-spawn.js",
+          "status": "pass",
+          "reason": ""
+        },
+        {
+          "fixture": "test-process-external-stdio-close.js",
+          "status": "pass",
+          "reason": ""
+        }
+      ],
+      "raw_sha256": "566ca80829015c466dbc2a77857e251ff352c8bf9c5f35d86d353d0d6ae0b08c"
+    }
+  },
+  "memory_events_after": "low 0\nhigh 0\nmax 4864178\noom 177\noom_kill 47\noom_group_kill 0\n",
+  "qualifications": [
+    "Console construction, formatting, bound methods, grouping, colors and table behavior remain incomplete.",
+    "Process stream writes still use text coercion; raw byte encoding, callback and general nonblocking stream errors remain open.",
+    "Latest complete full sweep predates this change:1278 pass/4727 total. No full sweep rerun yet."
+  ],
+  "contract": "crates/quench-node/README.md"
+}

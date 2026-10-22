@@ -1,0 +1,7 @@
+Existing helper: evidence/tod123-rss-linux-2026-10-14/maxrss.c
+Fixture: work/tokens-10.js (relative-path screen)
+baseline: 16412 KiB exit=0
+inline: 16480 KiB exit=0
+outlined: 16472 KiB exit=0
+scratch slots: 16536 KiB exit=0
+Use the 11-pair reports for the formal matched comparisons.

@@ -1,0 +1,1 @@
+const{internalBinding}=require('internal/test/binding');const get=internalBinding('util').getConstructorName;const u=require('util');const A=Function('this.x=1');const a=new A;const b=new A;Object.setPrototypeOf(b,null);console.log(JSON.stringify([get(a),get(b),u.inspect(a),u.inspect(b)]));

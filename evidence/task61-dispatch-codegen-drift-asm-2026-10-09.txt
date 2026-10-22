@@ -1,0 +1,53 @@
+Task 61 dispatch codegen comparison, 2026-10-09
+Host: Apple M4, macOS 26.5 ARM64
+Symbol: run_frame_general_until0B1c_
+Baseline binary: 341207b2f06f9176be6f22bc678d9088ae1e7636899bb3c32ec6e1c7c5a17ca4
+Candidate binary: a0a27a41624b0c52986bf0e0214bc710a2a377157b443c4105528a0cc13c6d83
+Candidate patch: 8cde7afd90e7518c6570a7fad051f45a1febe6bdeeb4404779928d63899e829b
+
+The CJS local-store control's `index++` reaches `Op::IncDec` (dispatch.rs:1427–1445).
+`atos -inlineFrames` attributes the following boolean-flag sequences to
+dispatch.rs:1429. The candidate adds one retired `nop` to this path.
+
+Baseline, 0x1001f01b8:
+00000001001f01b8 cmp w20, #0x1
+00000001001f01bc mov w8, #0x1
+00000001001f01c0 cinc w8, w8, ne
+00000001001f01c4 cmp w20, #0x0
+00000001001f01c8 csel w21, wzr, w8, eq
+00000001001f01cc cmp w21, #0x2
+00000001001f01d0 b.eq 0x1001f5964
+
+Candidate, 0x1001efc30:
+00000001001efc30 cmp w24, #0x1
+00000001001efc34 mov w8, #0x1
+00000001001efc38 cinc w8, w8, ne
+00000001001efc3c nop
+00000001001efc40 cmp w24, #0x0
+00000001001efc44 csel w21, wzr, w8, eq
+00000001001efc48 cmp w21, #0x2
+00000001001efc4c b.eq 0x1001f50a4
+
+Checked-sub overflow control-flow layout also differs:
+baseline 0x1001f1934: subs w8, w3, #0x1; b.vs 0x1001f2fc8
+candidate 0x1001f1294: subs w8, w3, #0x1; b 0x1001f2b18
+
+Sampled LoadLocalPlain body (baseline):
+00000001001edbd0 ldr x8, [x22]
+00000001001edbd4 mov w9, #0xd8
+00000001001edbd8 madd x8, x19, x9, x8
+00000001001edbdc ldr x9, [x8, #0x30]
+00000001001edbe0 ldr x9, [x9, w20, uxtw #3]
+00000001001edbe4 b 0x1001f2b3c
+
+Sampled LoadLocalPlain body (candidate):
+00000001001ed930 ldr x8, [x20]
+00000001001ed934 mov w9, #0xd8
+00000001001ed938 madd x8, x19, x9, x8
+00000001001ed93c ldr x9, [x8, #0x30]
+00000001001ed940 ldr x9, [x9, w24, uxtw #3]
+00000001001ed944 b 0x1001f148c
+
+The sampled LoadLocalPlain instruction count is unchanged; register choices and
+addresses differ. The candidate's extra nop is evidence of a changed hot path,
+not a complete explanation for the control's +1.2032% retired instructions.

@@ -1,0 +1,93 @@
+{
+  "schema": 1,
+  "created_unix_ns": 1791665951413245000,
+  "updated_unix_ns": 1791665951413245000,
+  "change_kind": "layout",
+  "minimum_clean_pairs": 7,
+  "top_up_rounds": 7,
+  "maximum_top_up_batches_per_fixture": 2,
+  "instruction_aa_band_percent": 0.14,
+  "maximum_rss_increase_percent": 0.5,
+  "measurement_runner": {
+    "path": "/Users/admin/Code/GitHub/quench-v2/target/candidate-b/production/quench-bench",
+    "sha256": "f8e02485d1724f130fb318fdf26089896dcdc540c03131173464d92301765bfa"
+  },
+  "baseline": {
+    "path": "/Users/admin/Code/GitHub/quench-v2/target/pinned/127b3fdc659ba5944bf03658d5f2e2f85b5971a4b91121e40a7e66dc00649543/quench-node",
+    "sha256": "127b3fdc659ba5944bf03658d5f2e2f85b5971a4b91121e40a7e66dc00649543"
+  },
+  "candidate": {
+    "path": "/Users/admin/Code/GitHub/quench-v2/target/pinned/37a34f48ed4787710af6b3ef72b54d01c9889cd05d677ec369c955478b752102/quench-node",
+    "sha256": "37a34f48ed4787710af6b3ef72b54d01c9889cd05d677ec369c955478b752102"
+  },
+  "timeout_ms": 300000,
+  "source_revision": "a03e0646ff216a192d85c6d1d22307855cdb21f2",
+  "source_dirty": true,
+  "corpus": {
+    "pinned_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+    "checkout_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+    "checkout_clean": true,
+    "fixture_set_matches": true
+  },
+  "suite_inputs": [
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/base.js",
+      "size_bytes": 9351,
+      "modified_unix_ns": 1791664230643841650,
+      "sha256": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/crypto.js",
+      "size_bytes": 48043,
+      "modified_unix_ns": 1791664230644146768,
+      "sha256": "5321d2ada9b61e01d5f281609513467cbaa7c0effb12c577ed08088d812453af"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/deltablue.js",
+      "size_bytes": 25653,
+      "modified_unix_ns": 1791664230644431134,
+      "sha256": "74b5a95f4877701073c6efef08e4ae306562747067e292925b69cbd629a511b9"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/earley-boyer.js",
+      "size_bytes": 195205,
+      "modified_unix_ns": 1791664230644789133,
+      "sha256": "dbf3aeb6b3d056e8ea35b5f19aa8c8a4fb1053e41d07f096c22483b2c1c6ee01"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/navier-stokes.js",
+      "size_bytes": 12690,
+      "modified_unix_ns": 1791664230645143882,
+      "sha256": "ce241465ffeee77b5c4f7119f522aa971fe1fe92c3aed76f7514ea43e07fec84"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/raytrace.js",
+      "size_bytes": 27996,
+      "modified_unix_ns": 1791664230645243227,
+      "sha256": "d52183ca324cdb88d9ee3e78326433fe2ca28d6436f0a6c3ec013ab67cb798eb"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/regexp.js",
+      "size_bytes": 111299,
+      "modified_unix_ns": 1791664230645483796,
+      "sha256": "5268b0d15931fda4e331de35fc58e5beded9a250b60764e1cc7cfc898ab53602"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/richards.js",
+      "size_bytes": 15776,
+      "modified_unix_ns": 1791664230645632813,
+      "sha256": "d86eac4108343a54ba6e10621a77b46f82f554c3b0a46e8fb4032d5cf65a2a11"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/splay.js",
+      "size_bytes": 10746,
+      "modified_unix_ns": 1791664230645834128,
+      "sha256": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d"
+    }
+  ],
+  "initial_report": {
+    "path": "/Users/admin/Code/GitHub/quench-v2/evidence/task61-splay-compact-object-profile-2026-10-10/all-eight-guarded-field-layout-11.json",
+    "sha256": "fc8574f47f75451cf2c8afc3ae1fdfd0f37a7521219235faf2a2a6d2676810c6"
+  },
+  "top_up_batches": []
+}

@@ -1,0 +1,1 @@
+[["set",true,true,true],["clear",false,false,false],["set",true,true,true],["clear",false,false,false],["set",true,true,true],["clear",false,false,false],["set",true,true,true],["clear",false,false,false],["forged",false],["capture",false,["captureFn","auxiliaryCallbacks","reportFlag"],true,"capture receiver"],["mutated",false]]

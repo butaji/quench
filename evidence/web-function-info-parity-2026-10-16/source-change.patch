@@ -1,0 +1,556 @@
+diff --git a/crates/quench-node-test/node-tests/test-function-constructor-debug-names.js b/crates/quench-node-test/node-tests/test-function-constructor-debug-names.js
+new file mode 100644
+index 000000000..6f5f5eaae
+--- /dev/null
++++ b/crates/quench-node-test/node-tests/test-function-constructor-debug-names.js
+@@ -0,0 +1,29 @@
++const {internalBinding}=require('internal/test/binding'),util=require('util');
++const nativeName=internalBinding('util').getConstructorName;
++Error.prepareStackTrace=(_,frames)=>frames;
++const Kinds=[Function,(async function(){}).constructor,(function*(){}).constructor,(async function*(){}).constructor];
++const mutations={
++ default(){},read(fn){void fn.name;Object.getOwnPropertyDescriptor(fn,'name')},
++ readonly(fn){fn.name='ignored'},changed(fn){Object.defineProperty(fn,'name',{value:'changed'})},
++ empty(fn){Object.defineProperty(fn,'name',{value:''})},nonstring(fn){Object.defineProperty(fn,'name',{value:7})},
++ getter(fn){Object.defineProperty(fn,'name',{get(){hooks++;throw new Error('name hook')}})},
++ deleted(fn){delete fn.name},frozen(fn){Object.freeze(fn)},sealed(fn){Object.seal(fn)},
++ prototype(fn){Object.setPrototypeOf({},fn)}
++};
++let hooks=0;const out=[],keepAlive=[];
++function inspect(value){try{return ['value',util.inspect(value)]}catch(error){return ['throw',error.name,error.message]}}
++async function invoke(fn){const value=fn();return typeof value?.next==='function'?(await value.next()).value:await value}
++(async()=>{
++ for(const Kind of Kinds)for(const [mode,mutate]of Object.entries(mutations)){
++  const fn=Kind('return [new Error().stack[0],require("util").getCallSites(1)[0]]');
++  mutate(fn);const [frame,site]=await invoke(fn);
++  out.push([Kind.name,mode,frame.getFunctionName(),site.functionName,hooks]);
++ }
++ for(const [mode,mutate]of Object.entries(mutations)){
++  const Maker=Function('this.x=1');keepAlive.push(Maker);mutate(Maker);const a=new Maker(),b=new Maker();Object.setPrototypeOf(b,null);
++  out.push([mode,nativeName(a),nativeName(b),inspect(a),inspect(b),hooks]);
++ }
++ const fn=Function('return new Error().stack[0]'),frame=fn();
++ Object.defineProperty(fn,'name',{value:'after-capture'});out.push(['retained',frame.getFunctionName()]);
++ console.log(JSON.stringify([out,keepAlive.length]));
++})();
+diff --git a/crates/quench-node-test/node-tests/test-function-prototype-info-lookups.js b/crates/quench-node-test/node-tests/test-function-prototype-info-lookups.js
+new file mode 100644
+index 000000000..1a3ca91bf
+--- /dev/null
++++ b/crates/quench-node-test/node-tests/test-function-prototype-info-lookups.js
+@@ -0,0 +1,10 @@
++const {internalBinding}=require('internal/test/binding');
++const name=internalBinding('util').getConstructorName;
++const reads={name:f=>f.name,length:f=>f.length,missing:f=>f.missing,own:f=>f.x,reflect:f=>Reflect.get(f,'name'),computed:(f,k)=>f[k],descriptor:f=>Object.getOwnPropertyDescriptor(f,'name'),inherited:(f,k,p)=>p.name};
++const mutations={none(){},nameData(f){Object.defineProperty(f,'name',{value:'anonymous'})},lengthData(f){Object.defineProperty(f,'length',{value:0})},lengthDescriptor(f){Object.defineProperty(f,'length',{configurable:false})},lengthGetter(f){Object.defineProperty(f,'length',{get(){return 0}})},deleteLength(f){delete f.length},restoreLength(f){delete f.length;Object.defineProperty(f,'length',{value:0,configurable:true})},readBefore(f){void f.name;void f.length}};
++const out=[];
++for(const [mutation,mutate]of Object.entries(mutations))for(const [read,observe]of Object.entries(reads)){
++ const F=Function('this.x=1');F.x=1;mutate(F);const p=Object.create(F),a=new F(),b=new F();Object.setPrototypeOf(b,null);
++ const before=[name(a),name(b)];observe(F,'name',p);out.push([mutation,read,before,[name(a),name(b)]]);
++}
++console.log(JSON.stringify(out));
+diff --git a/crates/quench-node-test/tests/child_entry.rs b/crates/quench-node-test/tests/child_entry.rs
+index 73ffdbf20..8595d8488 100644
+--- a/crates/quench-node-test/tests/child_entry.rs
++++ b/crates/quench-node-test/tests/child_entry.rs
+@@ -9589,5 +9589,14 @@ fn indirect_eval_script_identity_preserves_origins_fresh_values_templates_and_re
+ #[test]
+ fn fs_glob_uses_original_policy_and_real_dirent_types_across_all_three_apis() {
+     compare_node_source_with_args(include_str!("../node-tests/test-fs-original-glob-policy.js"), &[]);
++}
+ 
++#[test]
++fn function_constructor_default_debug_names_remain_distinct_from_public_names_and_descriptors() {
++    compare_node_source_with_args(include_str!("../node-tests/test-function-constructor-debug-names.js"), &["--expose-internals", "--no-warnings"]);
++}
++
++#[test]
++fn function_prototype_info_lookups_preserve_native_accessor_layout_and_descriptor_transitions() {
++    compare_node_source_with_args(include_str!("../node-tests/test-function-prototype-info-lookups.js"), &["--expose-internals", "--no-warnings"]);
+ }
+diff --git a/crates/quench-runtime/src/heap/cell.rs b/crates/quench-runtime/src/heap/cell.rs
+index 5902d1f9b..d0f0c715e 100644
+--- a/crates/quench-runtime/src/heap/cell.rs
++++ b/crates/quench-runtime/src/heap/cell.rs
+@@ -1252,9 +1252,19 @@ pub(crate) enum StackData {
+     CallSite(CallSiteRecord),
+ }
+ 
++/// A prototype starts in setup mode; named native-info lookup makes its
++/// accessor layout observable through getter-free diagnostic reads.
++#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
++enum PrototypeLookupState {
++    #[default]
++    Ordinary,
++    Setup,
++    Ready,
++}
++
+ #[derive(Clone, Debug, Default)]
+ struct ObjectExtras {
+-    used_as_prototype: bool,
++    prototype_lookup: PrototypeLookupState,
+     /// The object's inline property values, displaced from its payload by the extras pointer.
+     inline_properties: DisplacedInline,
+     /// An array's storage position, displaced from its first payload word.
+@@ -1641,11 +1651,19 @@ impl Object {
+     }
+ 
+     pub(crate) fn was_used_as_prototype(&self) -> bool {
+-        self.extras().is_some_and(|extras| extras.used_as_prototype)
++        self.extras().is_some_and(|extras| extras.prototype_lookup != PrototypeLookupState::Ordinary)
+     }
+ 
+     pub(crate) fn mark_as_prototype(&mut self) {
+-        if !self.was_used_as_prototype() { self.extras_mut().used_as_prototype = true; }
++        if !self.was_used_as_prototype() { self.extras_mut().prototype_lookup = PrototypeLookupState::Setup; }
++    }
++
++    pub(crate) fn prototype_lookup_ready(&self) -> bool {
++        self.extras().is_some_and(|extras| extras.prototype_lookup == PrototypeLookupState::Ready)
++    }
++
++    pub(crate) fn prepare_prototype_lookup(&mut self) {
++        if self.was_used_as_prototype() { self.extras_mut().prototype_lookup = PrototypeLookupState::Ready; }
+     }
+ 
+     pub(crate) fn shape(&self) -> u32 {
+diff --git a/crates/quench-runtime/src/vm.rs b/crates/quench-runtime/src/vm.rs
+index 4d3a2282d..1e4144bdf 100644
+--- a/crates/quench-runtime/src/vm.rs
++++ b/crates/quench-runtime/src/vm.rs
+@@ -709,6 +709,7 @@ enum ShapeTransition {
+     Root,
+     FunctionName { name: Atom },
+     FunctionNameReconfigured,
++    FunctionLengthReconfigured,
+     Constructed { constructor: Value, new_target_is_base: bool },
+     Add {
+         key: property_key::PropertyKey,
+@@ -732,6 +733,7 @@ enum ShapeTransition {
+ enum ShapeTransitionKey {
+     FunctionName(Atom),
+     FunctionNameReconfigured,
++    FunctionLengthReconfigured,
+     Constructed(Value, bool),
+     AddString(Atom, DataAttributes),
+     /// A descriptor without accessor functions (`ShapeAttributes::accessors` is
+@@ -841,7 +843,7 @@ impl ShapeTransition {
+         match self {
+             Self::Add { key, .. } => key.symbol_value().is_some(),
+             Self::Descriptor { attributes, .. } => attributes.accessors != NO_SHAPE_ACCESSORS,
+-            Self::Root | Self::FunctionName { .. } | Self::FunctionNameReconfigured | Self::Constructed { .. } | Self::Delete { .. } | Self::Vacant | Self::Dictionary { .. } => false,
++            Self::Root | Self::FunctionName { .. } | Self::FunctionNameReconfigured | Self::FunctionLengthReconfigured | Self::Constructed { .. } | Self::Delete { .. } | Self::Vacant | Self::Dictionary { .. } => false,
+         }
+     }
+ 
+@@ -849,6 +851,7 @@ impl ShapeTransition {
+         match self {
+             Self::FunctionName { name } => Some(ShapeTransitionKey::FunctionName(name)),
+             Self::FunctionNameReconfigured => Some(ShapeTransitionKey::FunctionNameReconfigured),
++            Self::FunctionLengthReconfigured => Some(ShapeTransitionKey::FunctionLengthReconfigured),
+             Self::Constructed { constructor, new_target_is_base } => Some(ShapeTransitionKey::Constructed(constructor, new_target_is_base)),
+             Self::Add {
+                 key: PropertyKey::String(atom),
+diff --git a/crates/quench-runtime/src/vm/construction.rs b/crates/quench-runtime/src/vm/construction.rs
+index b8dd092fe..6e6b7b881 100644
+--- a/crates/quench-runtime/src/vm/construction.rs
++++ b/crates/quench-runtime/src/vm/construction.rs
+@@ -86,7 +86,7 @@ impl<H: Host> Vm<H> {
+         self.set_function_name_text(function, name);
+     }
+ 
+-    fn set_function_name_text(&mut self, function: Value, text: String) {
++    pub(super) fn set_function_name_text(&mut self, function: Value, text: String) {
+         if !matches!(self.heap.get(function), Some(Cell::Function { .. })) {
+             return;
+         }
+diff --git a/crates/quench-runtime/src/vm/dispatch_fast.rs b/crates/quench-runtime/src/vm/dispatch_fast.rs
+index 1e0ceb9a3..e20bbe18a 100644
+--- a/crates/quench-runtime/src/vm/dispatch_fast.rs
++++ b/crates/quench-runtime/src/vm/dispatch_fast.rs
+@@ -1239,14 +1239,17 @@ unsafe fn lane_single_field_base<H: Host>(
+     cx: *mut LaneContext<H>,
+     r: Registers,
+     base: u16,
++    atom: Atom,
+ ) -> Option<Value> {
+     if base == crate::bytecode::FieldBase::NESTED {
+         return None;
+     }
+-    match crate::bytecode::FieldBase(base).register_index() {
++    let object = match crate::bytecode::FieldBase(base).register_index() {
+         Some(register) => Some(r.get(register)),
+         None => unsafe { lane_fixed_this(cx) },
+-    }
++    }?;
++    unsafe { vm(cx) }.prepare_named_function_info_lookup(object, atom);
++    Some(object)
+ }
+ 
+ /// `this` where the lane holds it or the frame fixed it; `None` for a lexical `this`, which
+@@ -1272,7 +1275,7 @@ lane_handler! {
+     fn lane_get_field_own<>(cx, r, ip, i, view) {
+         // SAFETY: the context's program outlives the lane run.
+         let code = unsafe { &*(*cx).code };
+-        let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b) })
++        let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b, i.imm()) })
+             .and_then(|object| (unsafe { vm(cx) }).primary_own_field_hit(code, object, i.c))
+         else {
+             sibling!(lane_get_field_miss::<H>, r, ip, Carried::SCRIPT)
+@@ -1289,7 +1292,7 @@ lane_handler! {
+     fn lane_get_field_polymorphic<>(cx, r, ip, i, view) {
+         // SAFETY: the context's program outlives the lane run.
+         let code = unsafe { &*(*cx).code };
+-        let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b) })
++        let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b, i.imm()) })
+             .and_then(|object| (unsafe { vm(cx) }).polymorphic_field_hit(code, object, i.c))
+         else {
+             sibling!(lane_get_field::<H>, r, ip, Carried::SCRIPT)
+@@ -1306,7 +1309,7 @@ lane_handler! {
+     fn lane_get_field_holder<>(cx, r, ip, i, view) {
+         // SAFETY: the context's program outlives the lane run.
+         let code = unsafe { &*(*cx).code };
+-        let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b) })
++        let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b, i.imm()) })
+             .and_then(|object| (unsafe { vm(cx) }).primary_holder_field_hit(code, object, i.c))
+         else {
+             sibling!(lane_get_field_miss::<H>, r, ip, Carried::SCRIPT)
+@@ -1323,7 +1326,7 @@ lane_handler! {
+     fn lane_get_field_inherited<>(cx, r, ip, i, view) {
+         // SAFETY: the context's program outlives the lane run.
+         let code = unsafe { &*(*cx).code };
+-        let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b) })
++        let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b, i.imm()) })
+             .and_then(|object| (unsafe { vm(cx) }).inherited_field_hit(code, object, i.c))
+         else {
+             sibling!(lane_get_field_miss::<H>, r, ip, Carried::SCRIPT)
+@@ -1423,6 +1426,7 @@ fn lane_cached_field<H: Host>(
+     site: u16,
+ ) -> Option<Value> {
+     let vm = unsafe { vm(cx) };
++    vm.prepare_named_function_info_lookup(object, atom);
+     match vm.cached_field_hit(code, object, site) {
+         super::object::FieldCacheProbe::Hit(value) => Some(value),
+         probe => lane_cached_field_miss(vm, code, object, atom, site, probe),
+diff --git a/crates/quench-runtime/src/vm/error.rs b/crates/quench-runtime/src/vm/error.rs
+index 431c4b01e..2e5fcda35 100644
+--- a/crates/quench-runtime/src/vm/error.rs
++++ b/crates/quench-runtime/src/vm/error.rs
+@@ -562,8 +562,7 @@ impl<H: Host> Vm<H> {
+             let Some((record, module)) = self.source_call_site_record(frame, false) else { return Ok(fallback()); };
+             let Some(program) = self.programs.get(frame.program) else { return Ok(fallback()); };
+             let Some(function) = program.functions.get(frame.function as usize) else { return Ok(fallback()); };
+-            let primary_constructor = self.programs.is_function_constructor(frame.program)
+-                && function.parent == Some(ROOT_FUNCTION_ID);
++            let primary_constructor = self.programs.is_function_constructor_body(frame.program, frame.function);
+             let name = function.name.or_else(|| (!primary_constructor)
+                 .then(|| frame.context.callable().and_then(|callee| self.original_function_name(callee)))
+                 .flatten()).map(|name| self.atom_value(name));
+@@ -1390,7 +1389,7 @@ impl<H: Host> Vm<H> {
+         })();
+         self.set_active_program(active_program);
+         let function = result?;
+-        self.set_builtin_function_name(function, "anonymous")?;
++        self.set_function_name_text(function, "anonymous".to_owned());
+         let function_source = match kind {
+             crate::compile::DynamicFunctionKind::Ordinary => {
+                 format!("function anonymous({parameters}\n) {{\n{source}\n}}")
+diff --git a/crates/quench-runtime/src/vm/gc.rs b/crates/quench-runtime/src/vm/gc.rs
+index d1ed89abf..1acc029f7 100644
+--- a/crates/quench-runtime/src/vm/gc.rs
++++ b/crates/quench-runtime/src/vm/gc.rs
+@@ -43,7 +43,7 @@ pub(super) fn active_shape_attributes(
+                 }
+             }
+             ShapeTransition::Vacant => entries.push(None),
+-            ShapeTransition::Root | ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured | ShapeTransition::Constructed { .. } | ShapeTransition::Dictionary { .. } => {}
++            ShapeTransition::Root | ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured | ShapeTransition::FunctionLengthReconfigured | ShapeTransition::Constructed { .. } | ShapeTransition::Dictionary { .. } => {}
+         }
+     }
+     entries
+@@ -187,6 +187,7 @@ fn rebuild_shape(
+     for transition in [
+         function_name.map(|name| ShapeTransition::FunctionName { name }),
+         name_reconfigured.then_some(ShapeTransition::FunctionNameReconfigured),
++        provenance::shape_function_length_reconfigured(old_shapes, old_shape).then_some(ShapeTransition::FunctionLengthReconfigured),
+         constructed_name.map(|(constructor, new_target_is_base)| ShapeTransition::Constructed { constructor, new_target_is_base }),
+     ].into_iter().flatten() {
+         parent = append_compacted_shape(shapes, transitions, parent, transition, 0);
+@@ -1005,7 +1006,9 @@ mod tests {
+             ShapeTransition::FunctionName { name: 7 }, 0);
+         let reconfigured = append_compacted_shape(&mut shapes, &mut transitions, named,
+             ShapeTransition::FunctionNameReconfigured, 0);
+-        let created = append_compacted_shape(&mut shapes, &mut transitions, reconfigured,
++        let length_reconfigured = append_compacted_shape(&mut shapes, &mut transitions, reconfigured,
++            ShapeTransition::FunctionLengthReconfigured, 0);
++        let created = append_compacted_shape(&mut shapes, &mut transitions, length_reconfigured,
+             ShapeTransition::Constructed { constructor: Value::heap(17), new_target_is_base: false }, 0);
+         let with_field = append_compacted_shape(&mut shapes, &mut transitions, created,
+             ShapeTransition::Add { key: PropertyKey::string(9), slot: 0, attributes: DEFAULT_DATA_ATTRIBUTES }, 1);
+@@ -1013,6 +1016,7 @@ mod tests {
+         let shape = rebuild_shape(&shapes, &[], with_field, &mut rebuilt,
+             &mut Vec::new(), &mut crate::vm::shape_transitions::ShapeTransitionIndex::default());
+         assert_eq!(provenance::shape_names(&rebuilt, shape), (Some(7), Some((Value::heap(17), false)), true));
++        assert!(provenance::shape_function_length_reconfigured(&rebuilt, shape));
+         assert_eq!(rebuilt[shape as usize].storage_len(), 1);
+         assert_eq!(super::active_shape_attributes(&rebuilt, shape).len(), 1);
+     }
+diff --git a/crates/quench-runtime/src/vm/inspection.rs b/crates/quench-runtime/src/vm/inspection.rs
+index 8fc8a68c2..3bb4867bb 100644
+--- a/crates/quench-runtime/src/vm/inspection.rs
++++ b/crates/quench-runtime/src/vm/inspection.rs
+@@ -46,8 +46,7 @@ impl<H: Host> Vm<H> {
+                         if matches!(self.heap.get(constructor), Some(Cell::Function { kind, .. }) if !matches!(kind, FunctionKind::Native(Native::FunctionBoundCall)))
+                         {
+                             if let Some(name) = self
+-                                .original_function_name(constructor)
+-                                .map(|name| self.atom_value(name))
++                                .original_debug_name(constructor)
+                             {
+                                 if constructor_name_is_specific(&name) {
+                                     return Some(name);
+diff --git a/crates/quench-runtime/src/vm/object.rs b/crates/quench-runtime/src/vm/object.rs
+index 33d9c80d0..70ca8e9b9 100644
+--- a/crates/quench-runtime/src/vm/object.rs
++++ b/crates/quench-runtime/src/vm/object.rs
+@@ -89,7 +89,7 @@ fn derive_shape_lookup_index(shapes: &[Shape], shape: u32) -> ShapeLookupIndex {
+                     attributes.insert(slot, value);
+                 }
+             }
+-            ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured
++            ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured | ShapeTransition::FunctionLengthReconfigured
+             | ShapeTransition::Constructed { .. }
+             | ShapeTransition::Root
+             | ShapeTransition::Vacant
+@@ -196,7 +196,7 @@ impl<H: Host> Vm<H> {
+                     ..
+                 } if candidate == key => break Some(slot as usize),
+                 ShapeTransition::Delete { key: candidate, .. } if candidate == key => break None,
+-                ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured
++                ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured | ShapeTransition::FunctionLengthReconfigured
+                 | ShapeTransition::Constructed { .. }
+                 | ShapeTransition::Root
+                 | ShapeTransition::Add { .. }
+@@ -268,7 +268,7 @@ impl<H: Host> Vm<H> {
+                 ShapeTransition::Delete {
+                     slot: candidate, ..
+                 } if candidate as usize == slot => return Some(DEFAULT_PROPERTY_ATTRIBUTES),
+-                ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured
++                ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured | ShapeTransition::FunctionLengthReconfigured
+                 | ShapeTransition::Constructed { .. }
+                 | ShapeTransition::Root
+                 | ShapeTransition::Add { .. }
+@@ -643,6 +643,7 @@ impl<H: Host> Vm<H> {
+         atom: Atom,
+         site: u16,
+     ) -> Result<Value, JsError> {
++        self.prepare_named_function_info_lookup(object, atom);
+         match self.cached_field_hit(p, object, site) {
+             FieldCacheProbe::Hit(value) => Ok(value),
+             FieldCacheProbe::OrdinaryMiss => match self.array_length_field(object, atom) {
+@@ -2384,7 +2385,7 @@ impl<H: Host> Vm<H> {
+                 .checked_add(1)
+                 .filter(|length| u32::try_from(*length).is_ok())
+                 .expect("object property storage exhausted"),
+-            ShapeTransition::Descriptor { .. } | ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured | ShapeTransition::Constructed { .. } => storage_len,
++            ShapeTransition::Descriptor { .. } | ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured | ShapeTransition::FunctionLengthReconfigured | ShapeTransition::Constructed { .. } => storage_len,
+             ShapeTransition::Root
+             | ShapeTransition::Delete { .. }
+             | ShapeTransition::Vacant
+diff --git a/crates/quench-runtime/src/vm/program_store.rs b/crates/quench-runtime/src/vm/program_store.rs
+index 06ec95801..7987476ed 100644
+--- a/crates/quench-runtime/src/vm/program_store.rs
++++ b/crates/quench-runtime/src/vm/program_store.rs
+@@ -190,8 +190,12 @@ impl ProgramStore {
+         }
+     }
+ 
+-    pub(super) fn is_function_constructor(&self, id: ProgramId) -> bool {
+-        self.entry(id).is_some_and(|entry| matches!(entry.origin, CompilationOrigin::FunctionConstructor { .. }))
++    pub(super) fn is_function_constructor_body(&self, id: ProgramId, function: u32) -> bool {
++        self.entry(id).is_some_and(|entry| {
++            matches!(entry.origin, CompilationOrigin::FunctionConstructor { .. })
++                && entry.residual.functions.get(function as usize)
++                    .is_some_and(|function| function.parent == Some(super::ROOT_FUNCTION_ID))
++        })
+     }
+ 
+     pub(crate) fn mark_global_scope(&mut self, id: ProgramId) {
+diff --git a/crates/quench-runtime/src/vm/provenance.rs b/crates/quench-runtime/src/vm/provenance.rs
+index 5c64c1b28..0eaea3d87 100644
+--- a/crates/quench-runtime/src/vm/provenance.rs
++++ b/crates/quench-runtime/src/vm/provenance.rs
+@@ -1,6 +1,9 @@
+ //! Immutable creation names share the shape's lifetime and property transitions.
+ use super::*;
+ 
++// V8 JSFunction::kNameDescriptorIndex: length precedes the native name accessor.
++const FUNCTION_NATIVE_NAME_DESCRIPTOR_INDEX: usize = 1;
++
+ pub(super) fn shape_names(shapes: &[Shape], shape: u32) -> (Option<Atom>, Option<(Value, bool)>, bool) {
+     let (mut function, mut constructed, mut reconfigured) = (None, None, false);
+     let mut current = Some(shape);
+@@ -20,6 +23,16 @@ pub(super) fn shape_names(shapes: &[Shape], shape: u32) -> (Option<Atom>, Option
+     (function, constructed, reconfigured)
+ }
+ 
++pub(super) fn shape_function_length_reconfigured(shapes: &[Shape], shape: u32) -> bool {
++    let mut current = Some(shape);
++    while let Some(id) = current {
++        let shape = &shapes[id as usize];
++        if matches!(shape.transition, ShapeTransition::FunctionLengthReconfigured) { return true; }
++        current = shape.parent();
++    }
++    false
++}
++
+ impl<H: Host> Vm<H> {
+     pub(super) fn capture_function_name(&mut self, function: Value, name: Value) {
+         let Some(Cell::String(name)) = self.heap.get(name) else {
+@@ -53,21 +66,71 @@ impl<H: Host> Vm<H> {
+         { return false; }
+         let Some(object) = self.object_data(function) else { return false; };
+         let (name, _, reconfigured) = shape_names(&self.shapes, object.shape());
+-        name.is_some() && !reconfigured && !object.was_used_as_prototype()
++        name.is_some() && !reconfigured
++            && self.shape_entries(object.shape()).get(FUNCTION_NATIVE_NAME_DESCRIPTOR_INDEX)
++                .is_some_and(|(candidate, _)| *candidate == key)
++            && (!object.was_used_as_prototype() || object.prototype_lookup_ready())
+     }
+ 
+     pub(super) fn reconfigure_function_name(&mut self, function: Value, key: PropertyKey) {
+-        if !self.default_function_name_info(function, key) { return; }
+-        let shape = self.object_data(function).expect("function object").shape();
+-        let shape = self.append_cached_shape_transition(shape, ShapeTransition::FunctionNameReconfigured);
++        if !matches!(self.heap.get(function), Some(Cell::Function { .. })) { return; }
++        let Some(object) = self.object_data(function) else { return; };
++        let (name, _, reconfigured) = shape_names(&self.shapes, object.shape());
++        if name.is_none() { return; }
++        let transition = match key {
++            PropertyKey::String(atom) if self.atom_units_equal_str(atom, "name") && !reconfigured => ShapeTransition::FunctionNameReconfigured,
++            PropertyKey::String(atom) if self.atom_units_equal_str(atom, "length")
++                && !shape_function_length_reconfigured(&self.shapes, object.shape()) => ShapeTransition::FunctionLengthReconfigured,
++            _ => return,
++        };
++        let shape = self.append_cached_shape_transition(object.shape(), transition);
+         self.object_data_mut(function).expect("function object").set_shape(shape);
+     }
+ 
++    /// V8's named native-info load enters prototype lookup mode, whereas
++    /// Reflect.get and computed-key reads retain the setup-mode accessor view.
++    pub(super) fn prepare_named_function_info_lookup(&mut self, mut object: Value, atom: Atom) {
++        let receiver = object;
++        let name = self.atom_units_equal_str(atom, "name");
++        if !name && !self.atom_units_equal_str(atom, "length") { return; }
++        while let Some(data) = self.object_data(object) {
++            if self.proxy_parts(object).is_some() { return; }
++            if self.own_property(object, atom).is_some() {
++                if matches!(self.heap.get(object), Some(Cell::Function { .. })) {
++                    let (original, _, reconfigured) = shape_names(&self.shapes, data.shape());
++                    let default = original.is_some() && if name { !reconfigured }
++                        else { !shape_function_length_reconfigured(&self.shapes, data.shape()) };
++                    if default {
++                        let mut current = receiver;
++                        while let Some(data) = self.object_data(current) {
++                            if self.proxy_parts(current).is_some() || data.prototype_lookup_ready() { break; }
++                            let next = data.proto();
++                            self.object_data_mut(current).expect("lookup object").prepare_prototype_lookup();
++                            current = next;
++                        }
++                    }
++                }
++                return;
++            }
++            if self.property_attributes(object, PropertyKey::string(atom)).is_some_and(|attributes| attributes.accessor) { return; }
++            object = data.proto();
++        }
++    }
++
+     pub(super) fn original_function_name(&self, function: Value) -> Option<Atom> {
+         let object = self.object_data(function)?;
+         shape_names(&self.shapes, object.shape()).0
+     }
+ 
++    /// The source/debug name can differ from the public creation name: dynamic
++    /// Function constructors expose "anonymous" while their source name is empty.
++    pub(super) fn original_debug_name(&self, function: Value) -> Option<JsString> {
++        if let Some(Cell::Function { kind: FunctionKind::User(program, id) | FunctionKind::NumericUser(program, id), .. }) = self.heap.get(function) {
++            if self.programs.is_function_constructor_body(*program, *id) { return None; }
++        }
++        self.original_function_name(function).map(|name| self.atom_value(name))
++    }
++
+     /// V8's debug name reads data properties but never invokes a name accessor.
+     pub(super) fn debug_function_name(&self, function: Value) -> Option<JsString> {
+         let name_key = self.find_atom(Self::atom_hash_str("name"), |atom| {
+@@ -81,8 +144,7 @@ impl<H: Host> Vm<H> {
+                 return Some(name.clone());
+             }
+         }
+-        self.original_function_name(function)
+-            .map(|name| self.atom_value(name))
++        self.original_debug_name(function)
+     }
+ 
+     fn constructed_shape(
+diff --git a/crates/quench-runtime/src/vm/tests.rs b/crates/quench-runtime/src/vm/tests.rs
+index 99f58a279..a0be85a8d 100644
+--- a/crates/quench-runtime/src/vm/tests.rs
++++ b/crates/quench-runtime/src/vm/tests.rs
+@@ -10140,3 +10140,22 @@ fn typed_array_base_methods_validate_backing_before_arguments_with_node_diagnost
+         Vm::new(SilentHost).execute(&program).unwrap();
+     }
+ }
++
++#[test]
++fn function_native_info_lookup_transitions_match_in_both_execution_modes() {
++    let source = r#"
++Error.prepareStackTrace=(_,frames)=>frames;
++const changes={name:f=>f.name,length:f=>f.length,reflect:f=>Reflect.get(f,'name'),computed:(f,k)=>f[k]};
++for(const [kind,read] of Object.entries(changes)) {
++ const fn=Function('return new Error().stack[0]');Object.setPrototypeOf({},fn);
++ if(fn().getFunctionName()!=='anonymous')throw Error('setup '+kind);
++ read(fn,'name');const expected=kind==='name'||kind==='length'?'eval':'anonymous';
++ if(fn().getFunctionName()!==expected)throw Error('lookup '+kind);
++}
++const fn=Function('return new Error().stack[0]');delete fn.length;Object.setPrototypeOf({},fn);void fn.name;
++if(fn().getFunctionName()!=='anonymous')throw Error('deleted length layout');
++"#;
++    for program in [Engine::compile(crate::ExecutionRequest { source, name: "function-info-lookup.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "function-info-lookup.js").unwrap()] {
++        Vm::new(SilentHost).execute(&program).unwrap();
++    }
++}
+diff --git a/docs/node-host-contracts.md b/docs/node-host-contracts.md
+index 46bb1110b..98ef692c9 100644
+--- a/docs/node-host-contracts.md
++++ b/docs/node-host-contracts.md
+@@ -33,8 +33,13 @@ Public function names and inferred debug names remain distinct. Variable
+ initializer inference follows result-producing sequence, conditional and logical
+ expressions without changing the public `.name`. A slotless shape transition
+ records when the native name-property state is reconfigured; reading the name
+-or inspecting its descriptor does not materialize it. Shape compaction preserves
+-both creation names and that transition. The added metadata opcode requires
++or inspecting its descriptor does not reconfigure it. Shape compaction preserves
++creation names and the name/length descriptor transitions. Prototype setup and
++named native-info lookup are separate lifecycle states. A named native name or
++length read prepares the prototype chain; computed reads and Reflect.get retain
++the setup view. Getter-free diagnostics derive native-name accessor visibility
++from that state and the actual ordered descriptor position, including deletion
++and restoration of length. The added metadata opcode requires
+ bytecode format 90; opcodes outside the dense fast table use general dispatch.
+ This covers those inference contexts, not every V8 debug-name inference rule.
+ 
+@@ -76,7 +81,11 @@ cache rules. Parser-owned syntax includes nested template sites. Entries use the
+ program store's existing reclamation lifecycle, validate the program identity
+ on lookup and disappear when their program is reclaimed or the store resets.
+ Complete V8 cache ageing, contextual direct-eval identity, sourceURL/source-map
+-metadata and Function-constructor default debug names/positions remain open.
++metadata, complete prototype-cache transitions and Function-constructor body
++positions remain open. Function-constructor public names are initialized as
++creation data: public anonymous is distinct from the empty default source/debug
++name. Stack names and native constructor display share this distinction across
++all four constructor kinds without invoking public name getters.
+ 
+ ## Parsed eval execution
+ 

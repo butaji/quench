@@ -1,0 +1,124 @@
+{
+  "splay_aa": {
+    "report": "splay-aa-schema5-11.json",
+    "measurement_runner_sha256": "bdc9d6c4afc537fe8ed30d4fccba9157cd4232e345ce75810465a0fff98db109",
+    "baseline_sha256": "8432da1159e301d021c236148a4f4a13e5f1b8de40fb87893fb54a2ebf5795dd",
+    "candidate_sha256": "8432da1159e301d021c236148a4f4a13e5f1b8de40fb87893fb54a2ebf5795dd",
+    "bootstrap": {
+      "statistic": "median of paired candidate-vs-baseline percent deltas",
+      "replicates": 20000,
+      "percentile_interval": 95,
+      "seed": "0x61f17ed520261010 XOR clean_pair_count"
+    },
+    "fixtures": {
+      "splay.js": {
+        "clean_pairs": 11,
+        "paired_marginal_wall_delta_median_percent": -0.027527085594636347,
+        "paired_marginal_wall_delta_interval_95_percent": [
+          -0.9825554864420938,
+          1.464281164588166
+        ]
+      }
+    }
+  },
+  "splay_ab": {
+    "report": "splay-ab-schema5-11.json",
+    "measurement_runner_sha256": "bdc9d6c4afc537fe8ed30d4fccba9157cd4232e345ce75810465a0fff98db109",
+    "baseline_sha256": "8432da1159e301d021c236148a4f4a13e5f1b8de40fb87893fb54a2ebf5795dd",
+    "candidate_sha256": "f8739affbfee468f88aad0546a6ea1de1aa4fb706024665c163db6c94d2ab180",
+    "bootstrap": {
+      "statistic": "median of paired candidate-vs-baseline percent deltas",
+      "replicates": 20000,
+      "percentile_interval": 95,
+      "seed": "0x61f17ed520261010 XOR clean_pair_count"
+    },
+    "fixtures": {
+      "splay.js": {
+        "clean_pairs": 11,
+        "paired_marginal_wall_delta_median_percent": 0.6796968872482267,
+        "paired_marginal_wall_delta_interval_95_percent": [
+          -0.05457825337147337,
+          3.191275136483407
+        ]
+      }
+    }
+  },
+  "all8_ab": {
+    "report": "all8-ab-schema5-11.json",
+    "measurement_runner_sha256": "bdc9d6c4afc537fe8ed30d4fccba9157cd4232e345ce75810465a0fff98db109",
+    "baseline_sha256": "8432da1159e301d021c236148a4f4a13e5f1b8de40fb87893fb54a2ebf5795dd",
+    "candidate_sha256": "f8739affbfee468f88aad0546a6ea1de1aa4fb706024665c163db6c94d2ab180",
+    "bootstrap": {
+      "statistic": "median of paired candidate-vs-baseline percent deltas",
+      "replicates": 20000,
+      "percentile_interval": 95,
+      "seed": "0x61f17ed520261010 XOR clean_pair_count"
+    },
+    "fixtures": {
+      "crypto.js": {
+        "clean_pairs": 11,
+        "paired_marginal_wall_delta_median_percent": 9.365123552536181,
+        "paired_marginal_wall_delta_interval_95_percent": [
+          8.914518673048622,
+          10.107812821346362
+        ]
+      },
+      "deltablue.js": {
+        "clean_pairs": 11,
+        "paired_marginal_wall_delta_median_percent": -5.566227650066935,
+        "paired_marginal_wall_delta_interval_95_percent": [
+          -7.027100920165974,
+          -4.964531588702448
+        ]
+      },
+      "earley-boyer.js": {
+        "clean_pairs": 10,
+        "paired_marginal_wall_delta_median_percent": 1.9496640264652365,
+        "paired_marginal_wall_delta_interval_95_percent": [
+          -1.4765435466260801,
+          2.7688031307328442
+        ]
+      },
+      "navier-stokes.js": {
+        "clean_pairs": 11,
+        "paired_marginal_wall_delta_median_percent": 5.840024343134043,
+        "paired_marginal_wall_delta_interval_95_percent": [
+          5.146496222701602,
+          7.278730356388197
+        ]
+      },
+      "raytrace.js": {
+        "clean_pairs": 11,
+        "paired_marginal_wall_delta_median_percent": 3.222022246646006,
+        "paired_marginal_wall_delta_interval_95_percent": [
+          2.713911274098435,
+          3.6181764293859775
+        ]
+      },
+      "regexp.js": {
+        "clean_pairs": 11,
+        "paired_marginal_wall_delta_median_percent": 1.5493146915710465,
+        "paired_marginal_wall_delta_interval_95_percent": [
+          -0.8536723589361306,
+          7.325351835298388
+        ]
+      },
+      "richards.js": {
+        "clean_pairs": 11,
+        "paired_marginal_wall_delta_median_percent": 3.202568008110873,
+        "paired_marginal_wall_delta_interval_95_percent": [
+          2.5438208259209283,
+          3.788046839321235
+        ]
+      },
+      "splay.js": {
+        "clean_pairs": 8,
+        "paired_marginal_wall_delta_median_percent": -0.3081249414580878,
+        "paired_marginal_wall_delta_interval_95_percent": [
+          -9.172125088830308,
+          1.307587947842248
+        ]
+      }
+    }
+  }
+}

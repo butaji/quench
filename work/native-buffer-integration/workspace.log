@@ -1,0 +1,8 @@
+    Checking quench-runtime v0.1.0 (/workspace/quench/crates/quench-runtime)
+    Checking quench-wasm v0.1.0 (/workspace/quench/crates/quench-wasm)
+    Checking quench-node v0.1.0 (/workspace/quench/crates/quench-node)
+    Checking quench-test262 v0.1.0 (/workspace/quench/crates/quench-test262)
+    Checking quench-wasm-test v0.1.0 (/workspace/quench/crates/quench-wasm-test)
+    Checking quench-node-test v0.1.0 (/workspace/quench/crates/quench-node-test)
+    Checking quench-bench v0.1.0 (/workspace/quench/quench-bench)
+    Finished `dev` profile [unoptimized] target(s) in 46.12s

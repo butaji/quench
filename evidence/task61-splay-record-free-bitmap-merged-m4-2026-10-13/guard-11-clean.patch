@@ -1,0 +1,13 @@
+diff --git a/quench-bench/src/bin/task61-fixed-work-guard.rs b/quench-bench/src/bin/task61-fixed-work-guard.rs
+index 427e42b20..f65fab51b 100644
+--- a/quench-bench/src/bin/task61-fixed-work-guard.rs
++++ b/quench-bench/src/bin/task61-fixed-work-guard.rs
+@@ -10,7 +10,7 @@ use std::{
+ 
+ const CHECKPOINT_SCHEMA: u32 = 2;
+ const FIXED_WORK_REPORT_SCHEMA: u64 = 5;
+-const MIN_CLEAN_PAIRS: usize = 7;
++const MIN_CLEAN_PAIRS: usize = 11;
+ const TOP_UP_ROUNDS: usize = 7;
+ const MAX_TOP_UP_BATCHES_PER_FIXTURE: usize = 2;
+ const MIN_INSTRUCTION_FALLBACK_PAIRS: usize = 11;

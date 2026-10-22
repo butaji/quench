@@ -1,0 +1,6 @@
+{
+  "all_node_cases": 750,
+  "supported_prototype_cases": 600,
+  "flush_block_unsupported": 150,
+  "production_integrated": false
+}

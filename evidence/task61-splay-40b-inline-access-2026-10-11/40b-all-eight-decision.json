@@ -1,0 +1,315 @@
+{
+  "schema": 1,
+  "checkpoint": {
+    "schema": 1,
+    "created_unix_ns": 1791694443674177000,
+    "updated_unix_ns": 1791694443674177000,
+    "change_kind": "layout",
+    "minimum_clean_pairs": 7,
+    "top_up_rounds": 7,
+    "maximum_top_up_batches_per_fixture": 2,
+    "instruction_aa_band_percent": 0.14,
+    "maximum_rss_increase_percent": 0.5,
+    "measurement_runner": {
+      "path": "/Users/admin/Code/GitHub/quench-v2/target/pinned/f8e02485d1724f130fb318fdf26089896dcdc540c03131173464d92301765bfa/quench-bench",
+      "sha256": "f8e02485d1724f130fb318fdf26089896dcdc540c03131173464d92301765bfa"
+    },
+    "baseline": {
+      "path": "/Users/admin/Code/GitHub/quench-v2/target/pinned/43de900ad8553ef12db8e372a061492f160c1bff7a9af25b166b1ba7a6620509/quench-node",
+      "sha256": "43de900ad8553ef12db8e372a061492f160c1bff7a9af25b166b1ba7a6620509"
+    },
+    "candidate": {
+      "path": "/Users/admin/Code/GitHub/quench-v2/target/pinned/8aa4e792e3ee228da9de17aa7614940b255bf474cc5f4f8282266c005c6aae1e/quench-node",
+      "sha256": "8aa4e792e3ee228da9de17aa7614940b255bf474cc5f4f8282266c005c6aae1e"
+    },
+    "timeout_ms": 300000,
+    "source_revision": "0bc3d8f790d81cefcad9fa03462d028dfa7adda4",
+    "source_dirty": false,
+    "corpus": {
+      "checkout_clean": true,
+      "checkout_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+      "fixture_set_matches": true,
+      "pinned_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b"
+    },
+    "suite_inputs": [
+      {
+        "modified_unix_ns": 1791693854863147696,
+        "path": "quench-bench/js-engine-benchmark/v8-v7/base.js",
+        "sha256": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51",
+        "size_bytes": 9351
+      },
+      {
+        "modified_unix_ns": 1791693854863516694,
+        "path": "quench-bench/js-engine-benchmark/v8-v7/crypto.js",
+        "sha256": "5321d2ada9b61e01d5f281609513467cbaa7c0effb12c577ed08088d812453af",
+        "size_bytes": 48043
+      },
+      {
+        "modified_unix_ns": 1791693854863646568,
+        "path": "quench-bench/js-engine-benchmark/v8-v7/deltablue.js",
+        "sha256": "74b5a95f4877701073c6efef08e4ae306562747067e292925b69cbd629a511b9",
+        "size_bytes": 25653
+      },
+      {
+        "modified_unix_ns": 1791693854864393399,
+        "path": "quench-bench/js-engine-benchmark/v8-v7/earley-boyer.js",
+        "sha256": "dbf3aeb6b3d056e8ea35b5f19aa8c8a4fb1053e41d07f096c22483b2c1c6ee01",
+        "size_bytes": 195205
+      },
+      {
+        "modified_unix_ns": 1791693854864498315,
+        "path": "quench-bench/js-engine-benchmark/v8-v7/navier-stokes.js",
+        "sha256": "ce241465ffeee77b5c4f7119f522aa971fe1fe92c3aed76f7514ea43e07fec84",
+        "size_bytes": 12690
+      },
+      {
+        "modified_unix_ns": 1791693854864760314,
+        "path": "quench-bench/js-engine-benchmark/v8-v7/raytrace.js",
+        "sha256": "d52183ca324cdb88d9ee3e78326433fe2ca28d6436f0a6c3ec013ab67cb798eb",
+        "size_bytes": 27996
+      },
+      {
+        "modified_unix_ns": 1791693854865654185,
+        "path": "quench-bench/js-engine-benchmark/v8-v7/regexp.js",
+        "sha256": "5268b0d15931fda4e331de35fc58e5beded9a250b60764e1cc7cfc898ab53602",
+        "size_bytes": 111299
+      },
+      {
+        "modified_unix_ns": 1791693854865752184,
+        "path": "quench-bench/js-engine-benchmark/v8-v7/richards.js",
+        "sha256": "d86eac4108343a54ba6e10621a77b46f82f554c3b0a46e8fb4032d5cf65a2a11",
+        "size_bytes": 15776
+      },
+      {
+        "modified_unix_ns": 1791693854865978600,
+        "path": "quench-bench/js-engine-benchmark/v8-v7/splay.js",
+        "sha256": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d",
+        "size_bytes": 10746
+      }
+    ],
+    "initial_report": {
+      "path": "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-splay-40b-stacked-2026-10-11.json",
+      "sha256": "e19568ed76e7e701f97a0a7ebc415999c64ed19dac241b91b83fdd1bbc83a506"
+    },
+    "top_up_batches": []
+  },
+  "reports": [
+    {
+      "path": "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-splay-40b-stacked-2026-10-11.json",
+      "sha256": "e19568ed76e7e701f97a0a7ebc415999c64ed19dac241b91b83fdd1bbc83a506"
+    }
+  ],
+  "fixtures": {
+    "crypto.js": {
+      "clean_pairs": 11,
+      "valid_pairs": 11,
+      "cycles": {
+        "median_percent": 2.178397861296255,
+        "interval_95_percent": [
+          -0.946382527392664,
+          2.570812343702955
+        ],
+        "samples": 11,
+        "status": "no_detected_regression"
+      },
+      "instructions": {
+        "median_percent": -0.032968180876924436,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "within_budget"
+      },
+      "max_rss": {
+        "median_percent": -0.07462686567164534,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "within_budget"
+      },
+      "classification": "cycles"
+    },
+    "deltablue.js": {
+      "clean_pairs": 10,
+      "valid_pairs": 11,
+      "cycles": {
+        "median_percent": 0.8977033343329777,
+        "interval_95_percent": [
+          0.4223849883773556,
+          1.3364301565465864
+        ],
+        "samples": 10,
+        "status": "regression"
+      },
+      "instructions": {
+        "median_percent": 0.9541582367530443,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "over_budget"
+      },
+      "max_rss": {
+        "median_percent": -2.028081123244929,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "within_budget"
+      },
+      "classification": "regression"
+    },
+    "earley-boyer.js": {
+      "clean_pairs": 11,
+      "valid_pairs": 11,
+      "cycles": {
+        "median_percent": -0.47280450130445795,
+        "interval_95_percent": [
+          -0.9566305612335735,
+          -0.08749825413952861
+        ],
+        "samples": 11,
+        "status": "no_detected_regression"
+      },
+      "instructions": {
+        "median_percent": 0.47012833653437003,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "over_budget"
+      },
+      "max_rss": {
+        "median_percent": -6.41025641025641,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "within_budget"
+      },
+      "classification": "cycles"
+    },
+    "navier-stokes.js": {
+      "clean_pairs": 9,
+      "valid_pairs": 11,
+      "cycles": {
+        "median_percent": 2.00883213656744,
+        "interval_95_percent": [
+          -2.3996145606170027,
+          4.188204510006011
+        ],
+        "samples": 9,
+        "status": "no_detected_regression"
+      },
+      "instructions": {
+        "median_percent": -0.029500533448634236,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "within_budget"
+      },
+      "max_rss": {
+        "median_percent": 0.07770007770007137,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "within_budget"
+      },
+      "classification": "cycles"
+    },
+    "raytrace.js": {
+      "clean_pairs": 11,
+      "valid_pairs": 11,
+      "cycles": {
+        "median_percent": 0.8700706837407868,
+        "interval_95_percent": [
+          0.39729611614340854,
+          1.5017094990630087
+        ],
+        "samples": 11,
+        "status": "regression"
+      },
+      "instructions": {
+        "median_percent": 0.5893478005385422,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "over_budget"
+      },
+      "max_rss": {
+        "median_percent": -1.6603773584905612,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "within_budget"
+      },
+      "classification": "regression"
+    },
+    "regexp.js": {
+      "clean_pairs": 11,
+      "valid_pairs": 11,
+      "cycles": {
+        "median_percent": 0.6274601106833755,
+        "interval_95_percent": [
+          -0.032860629983266776,
+          0.9474566701308973
+        ],
+        "samples": 11,
+        "status": "no_detected_regression"
+      },
+      "instructions": {
+        "median_percent": 0.5973997914297646,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "over_budget"
+      },
+      "max_rss": {
+        "median_percent": -3.6456125476897028,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "within_budget"
+      },
+      "classification": "cycles"
+    },
+    "richards.js": {
+      "clean_pairs": 11,
+      "valid_pairs": 11,
+      "cycles": {
+        "median_percent": 0.2923434211139053,
+        "interval_95_percent": [
+          -0.7059391471193166,
+          0.9940317540423793
+        ],
+        "samples": 11,
+        "status": "no_detected_regression"
+      },
+      "instructions": {
+        "median_percent": -0.09845631649607611,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "within_budget"
+      },
+      "max_rss": {
+        "median_percent": 0.08136696501219731,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "within_budget"
+      },
+      "classification": "cycles"
+    },
+    "splay.js": {
+      "clean_pairs": 10,
+      "valid_pairs": 11,
+      "cycles": {
+        "median_percent": -1.4962033216457615,
+        "interval_95_percent": [
+          -2.365973954009215,
+          -0.2566121574300473
+        ],
+        "samples": 10,
+        "status": "no_detected_regression"
+      },
+      "instructions": {
+        "median_percent": -0.13663104623036215,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "within_budget"
+      },
+      "max_rss": {
+        "median_percent": -20.560000000000002,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "within_budget"
+      },
+      "classification": "cycles"
+    }
+  },
+  "pending_fixtures": [],
+  "all_fixtures_classified": true,
+  "overall": "rejected"
+}

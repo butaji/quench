@@ -1,0 +1,7 @@
+descriptor ["ErrorPrepareStackTrace",2,true,true,false,true,true]
+default Error: inside 0
+local local 0
+deleted Error: deleted 0
+nonfunction Error: false 0
+nested true 0
+internal Error: separate

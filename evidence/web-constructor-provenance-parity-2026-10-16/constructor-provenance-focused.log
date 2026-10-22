@@ -1,0 +1,27 @@
+   Compiling quench-runtime v0.1.0 (/workspace/quench/crates/quench-runtime)
+   Compiling quench-wasm v0.1.0 (/workspace/quench/crates/quench-wasm)
+   Compiling quench-node v0.1.0 (/workspace/quench/crates/quench-node)
+   Compiling quench-node-test v0.1.0 (/workspace/quench/crates/quench-node-test)
+    Finished `iteration` profile [optimized] target(s) in 1m 41s
+     Running tests/child_entry.rs (work/host-build/iteration/deps/child_entry-7867450a38a5862c)
+
+running 1 test
+test native_constructor_names_preserve_creation_provenance_and_prototype_roles ... FAILED
+
+failures:
+
+---- native_constructor_names_preserve_creation_provenance_and_prototype_roles stdout ----
+
+thread 'native_constructor_names_preserve_creation_provenance_and_prototype_roles' (347831) panicked at crates/quench-node-test/tests/child_entry.rs:1507:5:
+assertion `left == right` failed
+  left: [91, 34, 67, 104, 97, 110, 103, 101, 100, 34, 44, 34, 67, 104, 97, 110, 103, 101, 100, 34, 44, 34, 91, 67, 104, 97, 110, 103, 101, 100, 58, 32, 110, 117, 108, 108, 32, 112, 114, 111, 116, 111, 116, 121, 112, 101, 93, 32, 123, 32, 120, 58, 32, 49, 32, 125, 34, 44, 34, 67, 104, 97, 110, 103, 101, 100, 34, 44, 34, 66, 101, 116, 97, 34, 44, 34, 79, 98, 106, 101, 99, 116, 34, 44, 34, 79, 98, 106, 101, 99, 116, 34, 44, 34, 67, 111, 109, 112, 117, 116, 101, 100, 34, 44, 34, 66, 97, 115, 101, 34, 44, 34, 80, 97, 114, 101, 110, 116, 34, 44, 34, 79, 98, 106, 101, 99, 116, 34, 44, 34, 79, 98, 106, 101, 99, 116, 34, 93, 10]
+ right: [91, 34, 65, 108, 112, 104, 97, 34, 44, 34, 65, 108, 112, 104, 97, 34, 44, 34, 91, 65, 108, 112, 104, 97, 58, 32, 110, 117, 108, 108, 32, 112, 114, 111, 116, 111, 116, 121, 112, 101, 93, 32, 123, 32, 120, 58, 32, 49, 32, 125, 34, 44, 34, 65, 108, 112, 104, 97, 34, 44, 34, 66, 101, 116, 97, 34, 44, 34, 79, 98, 106, 101, 99, 116, 34, 44, 34, 79, 98, 106, 101, 99, 116, 34, 44, 34, 67, 111, 109, 112, 117, 116, 101, 100, 34, 44, 34, 66, 97, 115, 101, 34, 44, 34, 80, 97, 114, 101, 110, 116, 34, 44, 34, 79, 98, 106, 101, 99, 116, 34, 44, 34, 79, 98, 106, 101, 99, 116, 34, 93, 10]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    native_constructor_names_preserve_creation_provenance_and_prototype_roles
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 321 filtered out; finished in 0.41s
+
+error: test failed, to rerun pass `-p quench-node-test --test child_entry`

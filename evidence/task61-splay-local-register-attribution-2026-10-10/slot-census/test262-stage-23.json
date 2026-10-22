@@ -1,0 +1,80 @@
+{
+  "engine": "quench",
+  "failed": 0,
+  "families": {},
+  "outcomes": [
+    {
+      "outcome": "pass",
+      "path": "language/rest-parameters/array-pattern.js",
+      "stage": "23"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/rest-parameters/arrow-function.js",
+      "stage": "23"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/rest-parameters/expected-argument-count.js",
+      "stage": "23"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/rest-parameters/no-alias-arguments.js",
+      "stage": "23"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/rest-parameters/object-pattern.js",
+      "stage": "23"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/rest-parameters/position-invalid.js",
+      "stage": "23"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/rest-parameters/rest-index.js",
+      "stage": "23"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/rest-parameters/rest-parameters-apply.js",
+      "stage": "23"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/rest-parameters/rest-parameters-call.js",
+      "stage": "23"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/rest-parameters/rest-parameters-produce-an-array.js",
+      "stage": "23"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/rest-parameters/with-new-target.js",
+      "stage": "23"
+    }
+  ],
+  "passed": 11,
+  "provenance": {
+    "binary": "/Users/admin/Code/GitHub/quench-v2/target/candidate-a/iteration/run-stages",
+    "host": "macos-aarch64",
+    "jobs": 4,
+    "source_dirty": true,
+    "source_revision": "7dfe2e1f1326706d2e5c2dff637cd66710ecff1a",
+    "timeout_ms": 900000
+  },
+  "schema": 1,
+  "stages": {
+    "23": {
+      "failed": 0,
+      "passed": 11,
+      "total": 11
+    }
+  },
+  "total": 11
+}

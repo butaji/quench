@@ -1,0 +1,94 @@
+{
+  "schema": 1,
+  "kind": "task61-splay-fixed-register-parameter-promotion-validation",
+  "isolated_source_revision": "7dfe2e1f1326706d2e5c2dff637cd66710ecff1a",
+  "isolated_source_note": "Selected promotion patch applied to a clean worktree at the recorded base revision, excluding unrelated dirty-tree changes. The one-line generator profiler API fix was applied in the test worktree and is now committed separately as 47c6e7026.",
+  "unit_tests": [
+    {
+      "command": "cargo test -p quench-runtime --lib fixed_register_parameter_promotion_excludes_mutation_and_dynamic_name_ops",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "command": "cargo test -p quench-runtime --lib promoted_immutable_parameters_preserve_order_and_survive_collection",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "command": "cargo test -p quench-runtime --lib validator_rejects_bytecode_that_overwrites_a_promoted_parameter",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "command": "cargo test -p quench-runtime --lib promoted_parameter_registers_survive_residual_round_trip",
+      "passed": 1,
+      "failed": 0
+    }
+  ],
+  "test262": [
+    {
+      "stage": "1",
+      "suite": "language/arguments-object",
+      "passed": 263,
+      "failed": 0
+    },
+    {
+      "stage": "8",
+      "suite": "language/eval-code",
+      "passed": 347,
+      "failed": 0
+    },
+    {
+      "stage": "10",
+      "suite": "language/expressions",
+      "passed": 11087,
+      "failed": 15,
+      "note": "15 previously recorded compound-assignment failures"
+    },
+    {
+      "stage": "11",
+      "suite": "language/function-code",
+      "passed": 217,
+      "failed": 0,
+      "report": "test262-stage-11.json"
+    },
+    {
+      "stage": "23",
+      "suite": "language/rest-parameters",
+      "passed": 11,
+      "failed": 0,
+      "report": "test262-stage-23.json"
+    }
+  ],
+  "node_oracle": {
+    "script": "promotion-node-oracle.js",
+    "script_sha256": "4d710e1778e7d43868553424b758d8ba79ff679688e86c3df663091c7d2074c9",
+    "stdout_sha256": "cbe82517e60ec168c11a121612c94dd9267befb3eb0dfd89aab767882ff3355c",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "exit_status": 0,
+    "matched_node_and_candidate": true
+  },
+  "performance": {
+    "raw_all_eight_report": "parameter-promotion-all-eight-11.json",
+    "raw_all_eight_report_sha256": "3a9606e61f6a81f6328a571a26d9b63a096d6002c25b513652705bde3a1b7517",
+    "decision": "parameter-promotion-guard.decision.json",
+    "decision_sha256": "aaae901e36482a206a19c7afc34e78cf315f92bc50ac1bc2a894e63573efba53",
+    "overall": "passed",
+    "splay_clean_pairs": 11,
+    "splay_instruction_change_percent": -8.197887911382296,
+    "splay_cycle_change_percent": -6.792251489078338,
+    "splay_cycle_interval_95_percent": [
+      -7.307623651055262,
+      -6.260961530306597
+    ],
+    "splay_max_rss_change_percent": -0.12645914396887115
+  },
+  "isolated_full_unit_suite": {
+    "command": "cargo test -p quench-runtime --lib",
+    "passed": 544,
+    "failed": 0,
+    "ignored": 0,
+    "result": "passed",
+    "source": "promotion patch plus profiler compatibility commit 47c6e7026"
+  }
+}

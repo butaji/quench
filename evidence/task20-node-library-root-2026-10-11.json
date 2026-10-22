@@ -1,0 +1,27 @@
+{
+  "scope": "Explicit immutable Node library installation root; recovered isolated checkout resolution.",
+  "tests_node_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+  "node_oracle": "v24.19.0",
+  "integration_checks": "All 5 child-entry and 3 case-process regressions pass. Configured relative installation root survives guest chdir and enclosing type:module package. Direct CLI internal/util.normalizeEncoding agrees with local Node.",
+  "internal_subset": {
+    "before": {
+      "pass": 0,
+      "fail": 29
+    },
+    "after": {
+      "pass": 14,
+      "fail": 15
+    },
+    "total": 29,
+    "timeout_secs": 10,
+    "jobs": 4,
+    "inventory_hash": "64a83bc3dd39b3df"
+  },
+  "previous_pass_regressions": {
+    "total": 55,
+    "pass": 55,
+    "per_case_timeout_secs": 30,
+    "scope": "Cases that passed the first sweep and failed the isolated sweep; all recover."
+  },
+  "performance_claim": false
+}

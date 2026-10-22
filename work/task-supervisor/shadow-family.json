@@ -1,0 +1,11 @@
+{
+  "cwd": "/workspace/quench",
+  "commands": [
+    [
+      "python3",
+      "/workspace/quench/work/shadow-stack-isolation/family.py"
+    ]
+  ],
+  "state": "/workspace/quench/work/task-supervisor/shadow-family-state.json",
+  "log": "/workspace/quench/work/task-supervisor/shadow-family.log"
+}

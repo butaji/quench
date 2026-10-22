@@ -1,0 +1,14 @@
+const fs=require('fs'),vm=require('vm');
+const {internalBinding}=require('internal/test/binding');
+const root='/workspace/work/node-stable-release/node-v26.12.0/lib/';
+const primordialsSource=fs.readFileSync(root+'internal/per_context/primordials.js','utf8');
+const errorsSource=fs.readFileSync(root+'internal/errors.js','utf8');
+const context=vm.createContext({});
+const seed={};const policyModule={exports:{}};
+const primordialsFactory=vm.runInContext('(function(primordials){'+primordialsSource+'\n})',context);
+primordialsFactory(seed);
+const errorsFactory=vm.runInContext('(function(exports,require,module,process,primordials,internalBinding){'+errorsSource+'\n})',context);
+errorsFactory(policyModule.exports,require,policyModule,process,seed,internalBinding);
+console.log('fresh',typeof policyModule.exports.prepareStackTraceCallback,typeof policyModule.exports.ErrorPrepareStackTrace,policyModule.exports.kIsNodeError!==require('internal/errors').kIsNodeError);
+context.prepare=policyModule.exports.ErrorPrepareStackTrace;
+console.log(vm.runInContext('Error.prepareStackTrace=prepare;let error=new Error("inside");error.stack.split("\\n")[0]',context));

@@ -1,0 +1,222 @@
+{
+  "schema": "quench.task61.object-literal-gate-summary.v1",
+  "raw_measurement": "gate.json",
+  "bootstrap": {
+    "replicates": 20000,
+    "seed": 6102026,
+    "statistic": "median paired relative change"
+  },
+  "decision_metric": "cycles_elapsed",
+  "rss_budget": "candidate median maximum RSS increase must be <=0.5%",
+  "cases": {
+    "local-store": {
+      "pairs": 11,
+      "cycles_elapsed": {
+        "median_relative_improvement": 0.01364907728446596,
+        "bootstrap_95_percent_interval": [
+          -0.06731957302157454,
+          0.07113117624363241
+        ],
+        "pair_improvements": [
+          -0.1411206867619863,
+          0.019170914808067097,
+          0.019304935787148092,
+          0.08711107387549466,
+          -0.010109018378451351,
+          0.08452406776915344,
+          -0.06731957302157454,
+          0.0024166920469022024,
+          0.01364907728446596,
+          0.07113117624363241,
+          -0.14912764444887427
+        ],
+        "improved_pairs": 7
+      },
+      "instructions_retired": {
+        "median_relative_improvement": 0.0008708259835199517,
+        "bootstrap_95_percent_interval": [
+          -0.0001569504949263667,
+          0.0014814210292225516
+        ],
+        "pair_improvements": [
+          -0.0006379802569416171,
+          0.0024737102248332254,
+          0.0016402529642041141,
+          0.0009499730445844401,
+          0.0012929724307799706,
+          0.0014814210292225516,
+          0.0008708259835199517,
+          0.00036492025221301905,
+          -0.0001569504949263667,
+          0.0008423953686174102,
+          -0.0016973135164495279
+        ],
+        "improved_pairs": 8
+      },
+      "maximum_rss": {
+        "median_relative_change": -0.009049773755656076,
+        "median_bytes_change": -163840,
+        "candidate_lower_pairs": 8,
+        "candidate_higher_pairs": 2,
+        "budget_relative_change": 0.005
+      }
+    },
+    "object-literal-2": {
+      "pairs": 11,
+      "cycles_elapsed": {
+        "median_relative_improvement": -0.05662336640231014,
+        "bootstrap_95_percent_interval": [
+          -0.11815684631253554,
+          0.07815317900365093
+        ],
+        "pair_improvements": [
+          0.07815317900365093,
+          -0.08393368919453637,
+          -0.05662336640231014,
+          -0.22048060545737336,
+          0.13585160930616968,
+          -0.08744487917140842,
+          0.3805732676662049,
+          0.057637471046852906,
+          0.06458331152847807,
+          -0.11815684631253554,
+          -0.13323909845931237
+        ],
+        "improved_pairs": 5
+      },
+      "instructions_retired": {
+        "median_relative_improvement": -0.0022395941946840026,
+        "bootstrap_95_percent_interval": [
+          -0.004141098326109427,
+          -0.0012915052284669937
+        ],
+        "pair_improvements": [
+          -0.0012915052284669937,
+          -0.002602183643597211,
+          -0.005723750590298726,
+          -0.002226569565116021,
+          -0.0022395941946840026,
+          -0.0032867972514230015,
+          -0.0013873584603976141,
+          -0.004141098326109427,
+          -0.004880601160071496,
+          -4.3847034270072527e-07,
+          0.002426239482883341
+        ],
+        "improved_pairs": 1
+      },
+      "maximum_rss": {
+        "median_relative_change": -0.004545454545454519,
+        "median_bytes_change": -81920,
+        "candidate_lower_pairs": 6,
+        "candidate_higher_pairs": 3,
+        "budget_relative_change": 0.005
+      }
+    },
+    "object-literal-3": {
+      "pairs": 11,
+      "cycles_elapsed": {
+        "median_relative_improvement": 0.8256311286408908,
+        "bootstrap_95_percent_interval": [
+          0.8191016880067226,
+          0.8325179650594521
+        ],
+        "pair_improvements": [
+          0.819694369183746,
+          0.8191016880067226,
+          0.8279946181374721,
+          0.8085921909705378,
+          0.7152180907468498,
+          0.8348534787587916,
+          0.8300156388139585,
+          0.8325179650594521,
+          0.8256311286408908,
+          0.8255365240276453,
+          0.8458167992891868
+        ],
+        "improved_pairs": 11
+      },
+      "instructions_retired": {
+        "median_relative_improvement": 0.7722322641845023,
+        "bootstrap_95_percent_interval": [
+          0.7720330427219517,
+          0.7723776918506693
+        ],
+        "pair_improvements": [
+          0.7674080768624116,
+          0.7723776918506693,
+          0.7721843648004326,
+          0.7722516795597586,
+          0.7708343924264713,
+          0.7725872012988573,
+          0.7722322641845023,
+          0.7725553799903432,
+          0.7722331007193836,
+          0.7720330427219517,
+          0.7721093403377748
+        ],
+        "improved_pairs": 11
+      },
+      "maximum_rss": {
+        "median_relative_change": 0.0036363636363636598,
+        "median_bytes_change": 65536,
+        "candidate_lower_pairs": 3,
+        "candidate_higher_pairs": 7,
+        "budget_relative_change": 0.005
+      }
+    },
+    "object-literal-nested-array": {
+      "pairs": 11,
+      "cycles_elapsed": {
+        "median_relative_improvement": -0.04417719998399372,
+        "bootstrap_95_percent_interval": [
+          -0.12541039965934386,
+          0.12217625664877163
+        ],
+        "pair_improvements": [
+          0.21560060546560844,
+          0.12217625664877163,
+          -0.12541039965934386,
+          -0.10728009553122875,
+          -0.2573387642845084,
+          -0.04417719998399372,
+          0.02072879481421197,
+          -0.13708624729942231,
+          -0.11357678531767013,
+          0.12905112468964186,
+          -0.01912916696175615
+        ],
+        "improved_pairs": 4
+      },
+      "instructions_retired": {
+        "median_relative_improvement": -0.0017662184129081382,
+        "bootstrap_95_percent_interval": [
+          -0.0043902804339222,
+          -0.0008284021500872818
+        ],
+        "pair_improvements": [
+          0.0003221916502001987,
+          -0.00133965237808642,
+          -0.0018319786731957333,
+          -0.0043902804339222,
+          -0.005255294158858614,
+          -0.0017662184129081382,
+          -0.0008284021500872818,
+          8.518218814290712e-05,
+          -0.001230578573430119,
+          -0.0028530218416140674,
+          -0.004406461885188229
+        ],
+        "improved_pairs": 2
+      },
+      "maximum_rss": {
+        "median_relative_change": -0.012623985572587926,
+        "median_bytes_change": -229376,
+        "candidate_lower_pairs": 8,
+        "candidate_higher_pairs": 3,
+        "budget_relative_change": 0.005
+      }
+    }
+  },
+  "control_interpretation": "local-store is the unrelated control; two-key and nested-array literals are unchanged literal-shape controls. Changes in cycles on controls estimate code-layout and process noise; instructions are attribution only."
+}

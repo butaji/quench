@@ -1,0 +1,4200 @@
+{
+  "schema": 5,
+  "created_unix_ns": 1791919877681247000,
+  "rounds_requested": 11,
+  "timeout_ms": 300000,
+  "source_revision": "71dc19f88a3e9f001723af1348e38971f19a8a04",
+  "source_dirty": false,
+  "corpus": {
+    "pinned_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+    "checkout_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+    "checkout_clean": true,
+    "fixture_set_matches": false
+  },
+  "host": {
+    "uname": "Darwin mini.local 25.5.0 Darwin Kernel Version 25.5.0: Mon Apr 27 20:41:26 PDT 2026; root:xnu-12377.121.6~2/RELEASE_ARM64_T8132 arm64",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)\nbinary: rustc\ncommit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4\ncommit-date: 2026-09-28\nhost: aarch64-apple-darwin\nrelease: 1.99.0\nLLVM version: 23.1.2",
+    "model": "Mac16,10",
+    "memory_bytes": 17179869184,
+    "memory_limit_bytes": null,
+    "cpu_quota": null,
+    "logical_cpus": 10,
+    "process_metrics_backend": "macOS /usr/bin/time -l"
+  },
+  "engines": [
+    {
+      "name": "quench",
+      "executable": "/private/tmp/quench-task61-splay-free-bitmap-m4/target/pinned/0600ef24633c8df6da83999a50a22e6a6554c49334eb9efb482059ea71bc48d7/quench-node",
+      "executable_sha256": "0600ef24633c8df6da83999a50a22e6a6554c49334eb9efb482059ea71bc48d7",
+      "version": "Quench shared-VM interpreter build; package 0.1.0",
+      "argv": [],
+      "environment": {
+        "HOME": "/Users/admin",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/Users/admin/.local/bin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/opt/homebrew/bin:/Users/admin/.codex/packages/standalone/releases/0.162.1-aarch64-apple-darwin/codex-path:/Users/admin/.codex/tmp/arg0/codex-arg0AdTZTd:/Users/admin/.codex/tmp/arg0/codex-arg063fvIr:/Users/admin/.codex/packages/standalone/releases/0.162.0-aarch64-apple-darwin/codex-path:/Users/admin/.codex/tmp/arg0/codex-arg0W8VGnz:/Users/admin/.local/bin"
+      },
+      "inherits_environment": false,
+      "jit_mode": "interpreter",
+      "jit_proof_command": [
+        "/private/tmp/quench-task61-splay-free-bitmap-m4/target/pinned/0600ef24633c8df6da83999a50a22e6a6554c49334eb9efb482059ea71bc48d7/quench-node"
+      ],
+      "jit_proof": "the measured shared VM executes interpreter bytecode; no guest JIT path is enabled"
+    },
+    {
+      "name": "quickjs",
+      "executable": "/opt/homebrew/Cellar/quickjs/2026-06-04/bin/qjs",
+      "executable_sha256": "4b0d0da1beae0a88d0724c7a0869797dee7a24c5bc1e74cfb5d2f69d17811c2b",
+      "version": "QuickJS version 2026-06-04",
+      "argv": [],
+      "environment": {
+        "HOME": "/Users/admin",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/Users/admin/.local/bin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/opt/homebrew/bin:/Users/admin/.codex/packages/standalone/releases/0.162.1-aarch64-apple-darwin/codex-path:/Users/admin/.codex/tmp/arg0/codex-arg0AdTZTd:/Users/admin/.codex/tmp/arg0/codex-arg063fvIr:/Users/admin/.codex/packages/standalone/releases/0.162.0-aarch64-apple-darwin/codex-path:/Users/admin/.codex/tmp/arg0/codex-arg0W8VGnz:/Users/admin/.local/bin"
+      },
+      "inherits_environment": false,
+      "jit_mode": "interpreter",
+      "jit_proof_command": [
+        "/opt/homebrew/Cellar/quickjs/2026-06-04/bin/qjs",
+        "--version"
+      ],
+      "jit_proof": "QuickJS qjs executes bytecode in its interpreter; binary version and SHA-256 are recorded"
+    },
+    {
+      "name": "bun",
+      "executable": "/opt/homebrew/Cellar/bun/1.4.2/bin/bun",
+      "executable_sha256": "b36d2e9d9bd50e3a3b6a8f2d481839417d6600d4c1753411b094ee0da3222cef",
+      "version": "1.4.2",
+      "argv": [],
+      "environment": {
+        "BUN_JSC_useJIT": "0",
+        "HOME": "/Users/admin",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/Users/admin/.local/bin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/opt/homebrew/bin:/Users/admin/.codex/packages/standalone/releases/0.162.1-aarch64-apple-darwin/codex-path:/Users/admin/.codex/tmp/arg0/codex-arg0AdTZTd:/Users/admin/.codex/tmp/arg0/codex-arg063fvIr:/Users/admin/.codex/packages/standalone/releases/0.162.0-aarch64-apple-darwin/codex-path:/Users/admin/.codex/tmp/arg0/codex-arg0W8VGnz:/Users/admin/.local/bin"
+      },
+      "inherits_environment": false,
+      "jit_mode": "disabled-and-probed",
+      "jit_proof_command": [
+        "BUN_JSC_useJIT=0",
+        "BUN_JSC_dumpOptions=1",
+        "/opt/homebrew/Cellar/bun/1.4.2/bin/bun",
+        "-e",
+        "console.log(Bun.version)"
+      ],
+      "jit_proof": "command succeeded and reported \"useJIT=false\": 1.4.2\n\nModified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)"
+    },
+    {
+      "name": "node",
+      "executable": "/opt/homebrew/Cellar/node/26.10.0_1/bin/node",
+      "executable_sha256": "4ca2a42d6d55a834b04d0892c5bc646a6869fcebec57f91c849dac0aa1031610",
+      "version": "v26.10.0",
+      "argv": [
+        "--jitless"
+      ],
+      "environment": {
+        "HOME": "/Users/admin",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/Users/admin/.local/bin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/opt/homebrew/bin:/Users/admin/.codex/packages/standalone/releases/0.162.1-aarch64-apple-darwin/codex-path:/Users/admin/.codex/tmp/arg0/codex-arg0AdTZTd:/Users/admin/.codex/tmp/arg0/codex-arg063fvIr:/Users/admin/.codex/packages/standalone/releases/0.162.0-aarch64-apple-darwin/codex-path:/Users/admin/.codex/tmp/arg0/codex-arg0W8VGnz:/Users/admin/.local/bin"
+      },
+      "inherits_environment": false,
+      "jit_mode": "disabled-and-probed",
+      "jit_proof_command": [
+        "/opt/homebrew/Cellar/node/26.10.0_1/bin/node",
+        "--jitless",
+        "-e",
+        "console.log(process.execArgv.includes('--jitless'))"
+      ],
+      "jit_proof": "command succeeded and reported \"true\": true"
+    }
+  ],
+  "suite_inputs": [
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/base.js",
+      "size_bytes": 9351,
+      "modified_unix_ns": 1791906743939485870,
+      "sha256": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/crypto.js",
+      "size_bytes": 48043,
+      "modified_unix_ns": 1791906743939603454,
+      "sha256": "5321d2ada9b61e01d5f281609513467cbaa7c0effb12c577ed08088d812453af"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/deltablue.js",
+      "size_bytes": 25653,
+      "modified_unix_ns": 1791906743939687496,
+      "sha256": "74b5a95f4877701073c6efef08e4ae306562747067e292925b69cbd629a511b9"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/earley-boyer.js",
+      "size_bytes": 195205,
+      "modified_unix_ns": 1791906743939910289,
+      "sha256": "dbf3aeb6b3d056e8ea35b5f19aa8c8a4fb1053e41d07f096c22483b2c1c6ee01"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/navier-stokes.js",
+      "size_bytes": 12690,
+      "modified_unix_ns": 1791906743940604418,
+      "sha256": "ce241465ffeee77b5c4f7119f522aa971fe1fe92c3aed76f7514ea43e07fec84"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/raytrace.js",
+      "size_bytes": 27996,
+      "modified_unix_ns": 1791906743940705502,
+      "sha256": "d52183ca324cdb88d9ee3e78326433fe2ca28d6436f0a6c3ec013ab67cb798eb"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/regexp.js",
+      "size_bytes": 111299,
+      "modified_unix_ns": 1791906743940889169,
+      "sha256": "5268b0d15931fda4e331de35fc58e5beded9a250b60764e1cc7cfc898ab53602"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/richards.js",
+      "size_bytes": 15776,
+      "modified_unix_ns": 1791906743940996211,
+      "sha256": "d86eac4108343a54ba6e10621a77b46f82f554c3b0a46e8fb4032d5cf65a2a11"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/splay.js",
+      "size_bytes": 10746,
+      "modified_unix_ns": 1791906743941164296,
+      "sha256": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d"
+    }
+  ],
+  "fixtures": {
+    "quench-bench/js-engine-benchmark/v8-v7/splay.js": {
+      "source": {
+        "path": "quench-bench/js-engine-benchmark/v8-v7/splay.js",
+        "size_bytes": 10746,
+        "modified_unix_ns": 1791906743941164296,
+        "sha256": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d"
+      },
+      "valid": true,
+      "output_equal": true,
+      "summaries": {
+        "bun": {
+          "median_score": 6234.0,
+          "median_max_rss_bytes": 66568192,
+          "valid_samples": 11
+        },
+        "node": {
+          "median_score": 9582.0,
+          "median_max_rss_bytes": 402161664,
+          "valid_samples": 11
+        },
+        "quench": {
+          "median_score": 5554.0,
+          "median_max_rss_bytes": 103153664,
+          "valid_samples": 11
+        },
+        "quickjs": {
+          "median_score": 5471.0,
+          "median_max_rss_bytes": 151060480,
+          "valid_samples": 11
+        }
+      },
+      "rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            "quench",
+            "quickjs",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2087528000,
+              "peak_rss_bytes": 65929216,
+              "score": 9877.0,
+              "instructions": 64789739215,
+              "cycles": 17323030765,
+              "page_faults": 41,
+              "page_reclaims": 4160,
+              "involuntary_context_switches": 59836,
+              "host_before": {
+                "captured_unix_ns": 1791919882291298000,
+                "load_average": {
+                  "one_minute": 2.67,
+                  "five_minutes": 4.43,
+                  "fifteen_minutes": 4.83
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 166,
+                    "cpu_percent": 12.5,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 206,
+                    "cpu_percent": 2.3,
+                    "command": "/usr/libexec/airportd"
+                  },
+                  {
+                    "pid": 13055,
+                    "cpu_percent": 1.6,
+                    "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+                  },
+                  {
+                    "pid": 188,
+                    "cpu_percent": 1.2,
+                    "command": "/usr/sbin/mDNSResponder"
+                  },
+                  {
+                    "pid": 32672,
+                    "cpu_percent": 1.1,
+                    "command": "/Users/admin/.codex/packages/standalone/releases/0.162.1-aarch64-apple-darwin/bin/codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791919884385416000,
+                "load_average": {
+                  "one_minute": 3.1,
+                  "five_minutes": 4.49,
+                  "fifteen_minutes": 4.85
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 166,
+                    "cpu_percent": 11.6,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 1.3,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 50467,
+                    "cpu_percent": 1.0,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1198,
+                    "cpu_percent": 0.9,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 32672,
+                    "cpu_percent": 0.4,
+                    "command": "/Users/admin/.codex/packages/standalone/releases/0.162.1-aarch64-apple-darwin/bin/codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 9877\n----\nScore: 9877\n",
+              "stderr": "        2.08 real         4.47 user         0.30 sys\n            65929216  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                4160  page reclaims\n                  41  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n               59836  involuntary context switches\n         64789739215  instructions retired\n         17323030765  cycles elapsed\n            53477952  peak memory footprint\n"
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2100322000,
+              "peak_rss_bytes": 407060480,
+              "score": 14956.0,
+              "instructions": 58586327307,
+              "cycles": 15451786682,
+              "page_faults": 87,
+              "page_reclaims": 25463,
+              "involuntary_context_switches": 4735,
+              "host_before": {
+                "captured_unix_ns": 1791919884391371000,
+                "load_average": {
+                  "one_minute": 3.1,
+                  "five_minutes": 4.49,
+                  "fifteen_minutes": 4.85
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 166,
+                    "cpu_percent": 11.6,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 1.3,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 50467,
+                    "cpu_percent": 1.0,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1198,
+                    "cpu_percent": 0.9,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 32672,
+                    "cpu_percent": 0.4,
+                    "command": "/Users/admin/.codex/packages/standalone/releases/0.162.1-aarch64-apple-darwin/bin/codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791919886498510000,
+                "load_average": {
+                  "one_minute": 3.1,
+                  "five_minutes": 4.49,
+                  "fifteen_minutes": 4.85
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 166,
+                    "cpu_percent": 13.0,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 32672,
+                    "cpu_percent": 2.3,
+                    "command": "/Users/admin/.codex/packages/standalone/releases/0.162.1-aarch64-apple-darwin/bin/codex"
+                  },
+                  {
+                    "pid": 50467,
+                    "cpu_percent": 1.3,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 1.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1198,
+                    "cpu_percent": 1.0,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 14956\n----\nScore: 14956\n",
+              "stderr": "        2.09 real         3.95 user         0.06 sys\n           407060480  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               25463  page reclaims\n                  87  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                4735  involuntary context switches\n         58586327307  instructions retired\n         15451786682  cycles elapsed\n           410847512  peak memory footprint\n"
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2162773625,
+              "peak_rss_bytes": 100401152,
+              "score": 8483.0,
+              "instructions": 47070834369,
+              "cycles": 8704190943,
+              "page_faults": 21,
+              "page_reclaims": 6306,
+              "involuntary_context_switches": 25,
+              "host_before": {
+                "captured_unix_ns": 1791919877914052000,
+                "load_average": {
+                  "one_minute": 2.67,
+                  "five_minutes": 4.43,
+                  "fifteen_minutes": 4.83
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 166,
+                    "cpu_percent": 9.7,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 32672,
+                    "cpu_percent": 8.2,
+                    "command": "/Users/admin/.codex/packages/standalone/releases/0.162.1-aarch64-apple-darwin/bin/codex"
+                  },
+                  {
+                    "pid": 50467,
+                    "cpu_percent": 3.0,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 1.5,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1198,
+                    "cpu_percent": 1.4,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791919880083692000,
+                "load_average": {
+                  "one_minute": 2.67,
+                  "five_minutes": 4.43,
+                  "fifteen_minutes": 4.83
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 166,
+                    "cpu_percent": 10.6,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 32672,
+                    "cpu_percent": 6.3,
+                    "command": "/Users/admin/.codex/packages/standalone/releases/0.162.1-aarch64-apple-darwin/bin/codex"
+                  },
+                  {
+                    "pid": 6667,
+                    "cpu_percent": 2.5,
+                    "command": "/usr/libexec/trustd"
+                  },
+                  {
+                    "pid": 1198,
+                    "cpu_percent": 0.9,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 0.7,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 8483\n----\nScore: 8483\n",
+              "stderr": "        2.15 real         2.14 user         0.00 sys\n           100401152  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                6306  page reclaims\n                  21  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                  25  involuntary context switches\n         47070834369  instructions retired\n          8704190943  cycles elapsed\n            87671312  peak memory footprint\n"
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2189343875,
+              "peak_rss_bytes": 151044096,
+              "score": 8451.0,
+              "instructions": 39315480785,
+              "cycles": 8807651311,
+              "page_faults": 2,
+              "page_reclaims": 9377,
+              "involuntary_context_switches": 90,
+              "host_before": {
+                "captured_unix_ns": 1791919880089636000,
+                "load_average": {
+                  "one_minute": 2.67,
+                  "five_minutes": 4.43,
+                  "fifteen_minutes": 4.83
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 166,
+                    "cpu_percent": 11.3,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 32672,
+                    "cpu_percent": 5.2,
+                    "command": "/Users/admin/.codex/packages/standalone/releases/0.162.1-aarch64-apple-darwin/bin/codex"
+                  },
+                  {
+                    "pid": 6667,
+                    "cpu_percent": 1.9,
+                    "command": "/usr/libexec/trustd"
+                  },
+                  {
+                    "pid": 50467,
+                    "cpu_percent": 0.8,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 0.7,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791919882285577000,
+                "load_average": {
+                  "one_minute": 2.67,
+                  "five_minutes": 4.43,
+                  "fifteen_minutes": 4.83
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 166,
+                    "cpu_percent": 12.5,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 206,
+                    "cpu_percent": 2.3,
+                    "command": "/usr/libexec/airportd"
+                  },
+                  {
+                    "pid": 13055,
+                    "cpu_percent": 1.6,
+                    "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+                  },
+                  {
+                    "pid": 188,
+                    "cpu_percent": 1.2,
+                    "command": "/usr/sbin/mDNSResponder"
+                  },
+                  {
+                    "pid": 32672,
+                    "cpu_percent": 1.1,
+                    "command": "/Users/admin/.codex/packages/standalone/releases/0.162.1-aarch64-apple-darwin/bin/codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 8451\n----\nScore: 8451\n",
+              "stderr": "        2.18 real         2.16 user         0.01 sys\n           151044096  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                9377  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  90  involuntary context switches\n         39315480785  instructions retired\n          8807651311  cycles elapsed\n           150045128  peak memory footprint\n"
+            }
+          }
+        },
+        {
+          "round": 1,
+          "execution_order": [
+            "quickjs",
+            "bun",
+            "node",
+            "quench"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2087761333,
+              "peak_rss_bytes": 66027520,
+              "score": 9917.0,
+              "instructions": 65178491179,
+              "cycles": 17334036529,
+              "page_faults": 41,
+              "page_reclaims": 4166,
+              "involuntary_context_switches": 61627,
+              "host_before": {
+                "captured_unix_ns": 1791919888706085000,
+                "load_average": {
+                  "one_minute": 2.93,
+                  "five_minutes": 4.43,
+                  "fifteen_minutes": 4.83
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 166,
+                    "cpu_percent": 8.6,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 32672,
+                    "cpu_percent": 6.3,
+                    "command": "/Users/admin/.codex/packages/standalone/releases/0.162.1-aarch64-apple-darwin/bin/codex"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 1.0,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 6667,
+                    "cpu_percent": 1.0,
+                    "command": "/usr/libexec/trustd"
+                  },
+                  {
+                    "pid": 1198,
+                    "cpu_percent": 0.9,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791919890800740000,
+                "load_average": {
+                  "one_minute": 2.93,
+                  "five_minutes": 4.43,
+                  "fifteen_minutes": 4.83
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 166,
+                    "cpu_percent": 7.3,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 32672,
+                    "cpu_percent": 1.1,
+                    "command": "/Users/admin/.codex/packages/standalone/releases/0.162.1-aarch64-apple-darwin/bin/codex"
+                  },
+                  {
+                    "pid": 50467,
+                    "cpu_percent": 1.0,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1198,
+                    "cpu_percent": 0.9,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 0.8,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 9917\n----\nScore: 9917\n",
+              "stderr": "        2.08 real         4.47 user         0.31 sys\n            66027520  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                4166  page reclaims\n                  41  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n               61627  involuntary context switches\n         65178491179  instructions retired\n         17334036529  cycles elapsed\n            53576256  peak memory footprint\n"
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2119933583,
+              "peak_rss_bytes": 416956416,
+              "score": 13560.0,
+              "instructions": 53361312143,
+              "cycles": 15292986887,
+              "page_faults": 87,
+              "page_reclaims": 26081,
+              "involuntary_context_switches": 6009,
+              "host_before": {
+                "captured_unix_ns": 1791919890807020000,
+                "load_average": {
+                  "one_minute": 2.93,
+                  "five_minutes": 4.43,
+                  "fifteen_minutes": 4.83
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 166,
+                    "cpu_percent": 7.3,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 32672,
+                    "cpu_percent": 1.1,
+                    "command": "/Users/admin/.codex/packages/standalone/releases/0.162.1-aarch64-apple-darwin/bin/codex"
+                  },
+                  {
+                    "pid": 50467,
+                    "cpu_percent": 1.0,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1198,
+                    "cpu_percent": 0.9,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 0.8,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791919892934316000,
+                "load_average": {
+                  "one_minute": 3.02,
+                  "five_minutes": 4.42,
+                  "fifteen_minutes": 4.83
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13413,
+                    "cpu_percent": 167.6,
+                    "command": "/opt/homebrew/Cellar/deno/2.9.7/bin/deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 8.7,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 32672,
+                    "cpu_percent": 2.1,
+                    "command": "/Users/admin/.codex/packages/standalone/releases/0.162.1-aarch64-apple-darwin/bin/codex"
+                  },
+                  {
+                    "pid": 1198,
+                    "cpu_percent": 1.8,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 1.5,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 13560\n----\nScore: 13560\n",
+              "stderr": "        2.11 real         4.14 user         0.08 sys\n           416956416  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               26081  page reclaims\n                  87  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                6009  involuntary context switches\n         53361312143  instructions retired\n         15292986887  cycles elapsed\n           421498216  peak memory footprint\n"
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2178489625,
+              "peak_rss_bytes": 100614144,
+              "score": 6281.0,
+              "instructions": 40016151255,
+              "cycles": 8100377822,
+              "page_faults": 21,
+              "page_reclaims": 6319,
+              "involuntary_context_switches": 278,
+              "host_before": {
+                "captured_unix_ns": 1791919892940997000,
+                "load_average": {
+                  "one_minute": 3.02,
+                  "five_minutes": 4.42,
+                  "fifteen_minutes": 4.83
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13413,
+                    "cpu_percent": 167.6,
+                    "command": "/opt/homebrew/Cellar/deno/2.9.7/bin/deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 8.7,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 32672,
+                    "cpu_percent": 2.1,
+                    "command": "/Users/admin/.codex/packages/standalone/releases/0.162.1-aarch64-apple-darwin/bin/codex"
+                  },
+                  {
+                    "pid": 1198,
+                    "cpu_percent": 1.8,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 1.5,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791919895131973000,
+                "load_average": {
+                  "one_minute": 3.02,
+                  "five_minutes": 4.42,
+                  "fifteen_minutes": 4.83
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13451,
+                    "cpu_percent": 297.9,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 13413,
+                    "cpu_percent": 211.8,
+                    "command": "/opt/homebrew/Cellar/deno/2.9.7/bin/deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 9.3,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 1198,
+                    "cpu_percent": 2.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 1.9,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 6281\n----\nScore: 6281\n",
+              "stderr": "        2.17 real         2.14 user         0.01 sys\n           100614144  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                6319  page reclaims\n                  21  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 278  involuntary context switches\n         40016151255  instructions retired\n          8100377822  cycles elapsed\n            87884304  peak memory footprint\n"
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2189167292,
+              "peak_rss_bytes": 151060480,
+              "score": 8622.0,
+              "instructions": 39535044705,
+              "cycles": 8787992467,
+              "page_faults": 2,
+              "page_reclaims": 9378,
+              "involuntary_context_switches": 15,
+              "host_before": {
+                "captured_unix_ns": 1791919886504511000,
+                "load_average": {
+                  "one_minute": 3.1,
+                  "five_minutes": 4.49,
+                  "fifteen_minutes": 4.85
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 166,
+                    "cpu_percent": 13.0,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 32672,
+                    "cpu_percent": 2.3,
+                    "command": "/Users/admin/.codex/packages/standalone/releases/0.162.1-aarch64-apple-darwin/bin/codex"
+                  },
+                  {
+                    "pid": 50467,
+                    "cpu_percent": 1.3,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 1.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1198,
+                    "cpu_percent": 1.0,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791919888700185000,
+                "load_average": {
+                  "one_minute": 2.93,
+                  "five_minutes": 4.43,
+                  "fifteen_minutes": 4.83
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 166,
+                    "cpu_percent": 8.6,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 32672,
+                    "cpu_percent": 6.3,
+                    "command": "/Users/admin/.codex/packages/standalone/releases/0.162.1-aarch64-apple-darwin/bin/codex"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 1.0,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 6667,
+                    "cpu_percent": 1.0,
+                    "command": "/usr/libexec/trustd"
+                  },
+                  {
+                    "pid": 1198,
+                    "cpu_percent": 0.9,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 8622\n----\nScore: 8622\n",
+              "stderr": "        2.18 real         2.17 user         0.01 sys\n           151060480  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                9378  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  15  involuntary context switches\n         39535044705  instructions retired\n          8787992467  cycles elapsed\n           150061512  peak memory footprint\n"
+            }
+          }
+        },
+        {
+          "round": 2,
+          "execution_order": [
+            "bun",
+            "node",
+            "quench",
+            "quickjs"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2143493458,
+              "peak_rss_bytes": 65994752,
+              "score": 8711.0,
+              "instructions": 53239132721,
+              "cycles": 15233639250,
+              "page_faults": 41,
+              "page_reclaims": 4163,
+              "involuntary_context_switches": 51385,
+              "host_before": {
+                "captured_unix_ns": 1791919895144395000,
+                "load_average": {
+                  "one_minute": 3.02,
+                  "five_minutes": 4.42,
+                  "fifteen_minutes": 4.83
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13451,
+                    "cpu_percent": 297.9,
+                    "command": "bun"
+                  },
+                  {
+                    "pid": 13413,
+                    "cpu_percent": 211.8,
+                    "command": "/opt/homebrew/Cellar/deno/2.9.7/bin/deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 9.3,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 1198,
+                    "cpu_percent": 2.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 1.9,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791919897295780000,
+                "load_average": {
+                  "one_minute": 3.02,
+                  "five_minutes": 4.42,
+                  "fifteen_minutes": 4.83
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13478,
+                    "cpu_percent": 65.5,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 11.5,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 32672,
+                    "cpu_percent": 2.3,
+                    "command": "/Users/admin/.codex/packages/standalone/releases/0.162.1-aarch64-apple-darwin/bin/codex"
+                  },
+                  {
+                    "pid": 296,
+                    "cpu_percent": 1.3,
+                    "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 1.2,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 8711\n----\nScore: 8711\n",
+              "stderr": "        2.12 real         4.59 user         0.29 sys\n            65994752  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                4163  page reclaims\n                  41  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n               51385  involuntary context switches\n         53239132721  instructions retired\n         15233639250  cycles elapsed\n            53445184  peak memory footprint\n"
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2121002708,
+              "peak_rss_bytes": 414089216,
+              "score": 14530.0,
+              "instructions": 56436487729,
+              "cycles": 15287393920,
+              "page_faults": 177,
+              "page_reclaims": 25830,
+              "involuntary_context_switches": 5043,
+              "host_before": {
+                "captured_unix_ns": 1791919897302880000,
+                "load_average": {
+                  "one_minute": 3.02,
+                  "five_minutes": 4.42,
+                  "fifteen_minutes": 4.83
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13478,
+                    "cpu_percent": 65.5,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 11.5,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 32672,
+                    "cpu_percent": 2.3,
+                    "command": "/Users/admin/.codex/packages/standalone/releases/0.162.1-aarch64-apple-darwin/bin/codex"
+                  },
+                  {
+                    "pid": 296,
+                    "cpu_percent": 1.3,
+                    "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 1.2,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791919899431506000,
+                "load_average": {
+                  "one_minute": 2.94,
+                  "five_minutes": 4.38,
+                  "fifteen_minutes": 4.81
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13478,
+                    "cpu_percent": 51.3,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 12.1,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 1198,
+                    "cpu_percent": 1.7,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 50467,
+                    "cpu_percent": 1.5,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 296,
+                    "cpu_percent": 1.3,
+                    "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 14530\n----\nScore: 14530\n",
+              "stderr": "        2.11 real         4.05 user         0.06 sys\n           414089216  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               25830  page reclaims\n                 177  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  11  voluntary context switches\n                5043  involuntary context switches\n         56436487729  instructions retired\n         15287393920  cycles elapsed\n           418778640  peak memory footprint\n"
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2172751667,
+              "peak_rss_bytes": 103153664,
+              "score": 6700.0,
+              "instructions": 40733877725,
+              "cycles": 8013268962,
+              "page_faults": 21,
+              "page_reclaims": 6474,
+              "involuntary_context_switches": 369,
+              "host_before": {
+                "captured_unix_ns": 1791919899438494000,
+                "load_average": {
+                  "one_minute": 2.94,
+                  "five_minutes": 4.38,
+                  "fifteen_minutes": 4.81
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13478,
+                    "cpu_percent": 51.3,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 12.1,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 1198,
+                    "cpu_percent": 1.7,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 50467,
+                    "cpu_percent": 1.5,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 296,
+                    "cpu_percent": 1.3,
+                    "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791919901624110000,
+                "load_average": {
+                  "one_minute": 2.94,
+                  "five_minutes": 4.38,
+                  "fifteen_minutes": 4.81
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13536,
+                    "cpu_percent": 205.6,
+                    "command": "/opt/homebrew/Cellar/bun/1.4.2/bin/bun"
+                  },
+                  {
+                    "pid": 13535,
+                    "cpu_percent": 146.9,
+                    "command": "/opt/homebrew/Cellar/bun/1.4.2/bin/bun"
+                  },
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 52.0,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 23.6,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 10.7,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 6700\n----\nScore: 6700\n",
+              "stderr": "        2.16 real         2.13 user         0.01 sys\n           103153664  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                6474  page reclaims\n                  21  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 369  involuntary context switches\n         40733877725  instructions retired\n          8013268962  cycles elapsed\n            90423824  peak memory footprint\n"
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2265632500,
+              "peak_rss_bytes": 151060480,
+              "score": 6022.0,
+              "instructions": 28568513453,
+              "cycles": 6967147188,
+              "page_faults": 2,
+              "page_reclaims": 9378,
+              "involuntary_context_switches": 715,
+              "host_before": {
+                "captured_unix_ns": 1791919901634524000,
+                "load_average": {
+                  "one_minute": 2.94,
+                  "five_minutes": 4.38,
+                  "fifteen_minutes": 4.81
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13536,
+                    "cpu_percent": 205.6,
+                    "command": "/opt/homebrew/Cellar/bun/1.4.2/bin/bun"
+                  },
+                  {
+                    "pid": 13535,
+                    "cpu_percent": 146.9,
+                    "command": "/opt/homebrew/Cellar/bun/1.4.2/bin/bun"
+                  },
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 52.0,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 23.6,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 7.6,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791919903909752000,
+                "load_average": {
+                  "one_minute": 4.38,
+                  "five_minutes": 4.66,
+                  "fifteen_minutes": 4.9
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13567,
+                    "cpu_percent": 187.7,
+                    "command": "/opt/homebrew/Cellar/bun/1.4.2/bin/bun"
+                  },
+                  {
+                    "pid": 13535,
+                    "cpu_percent": 186.9,
+                    "command": "/opt/homebrew/Cellar/bun/1.4.2/bin/bun"
+                  },
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 52.3,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 29.6,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13532,
+                    "cpu_percent": 12.9,
+                    "command": "deno"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 6022\n----\nScore: 6022\n",
+              "stderr": "        2.26 real         2.20 user         0.02 sys\n           151060480  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                9378  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 715  involuntary context switches\n         28568513453  instructions retired\n          6967147188  cycles elapsed\n           150061512  peak memory footprint\n"
+            }
+          }
+        },
+        {
+          "round": 3,
+          "execution_order": [
+            "node",
+            "quench",
+            "quickjs",
+            "bun"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2127372625,
+              "peak_rss_bytes": 66502656,
+              "score": 6234.0,
+              "instructions": 43183135674,
+              "cycles": 13038496921,
+              "page_faults": 41,
+              "page_reclaims": 4195,
+              "involuntary_context_switches": 35239,
+              "host_before": {
+                "captured_unix_ns": 1791919910656580000,
+                "load_average": {
+                  "one_minute": 4.51,
+                  "five_minutes": 4.68,
+                  "fifteen_minutes": 4.91
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13656,
+                    "cpu_percent": 313.7,
+                    "command": "/opt/homebrew/Cellar/bun/1.4.2/bin/bun"
+                  },
+                  {
+                    "pid": 13535,
+                    "cpu_percent": 131.1,
+                    "command": "/opt/homebrew/Cellar/bun/1.4.2/bin/bun"
+                  },
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 71.2,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13532,
+                    "cpu_percent": 15.6,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 15.5,
+                    "command": "deno"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791919912795925000,
+                "load_average": {
+                  "one_minute": 5.11,
+                  "five_minutes": 4.8,
+                  "fifteen_minutes": 4.95
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13532,
+                    "cpu_percent": 141.8,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13535,
+                    "cpu_percent": 127.3,
+                    "command": "/opt/homebrew/Cellar/bun/1.4.2/bin/bun"
+                  },
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 57.8,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 38.1,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 206,
+                    "cpu_percent": 11.1,
+                    "command": "/usr/libexec/airportd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 6234\n----\nScore: 6234\n",
+              "stderr": "        2.12 real         4.33 user         0.23 sys\n            66502656  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                4195  page reclaims\n                  41  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n               35239  involuntary context switches\n         43183135674  instructions retired\n         13038496921  cycles elapsed\n            54034984  peak memory footprint\n"
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2145702375,
+              "peak_rss_bytes": 401457152,
+              "score": 9388.0,
+              "instructions": 37546991869,
+              "cycles": 11777341501,
+              "page_faults": 87,
+              "page_reclaims": 25152,
+              "involuntary_context_switches": 3406,
+              "host_before": {
+                "captured_unix_ns": 1791919903919302000,
+                "load_average": {
+                  "one_minute": 4.38,
+                  "five_minutes": 4.66,
+                  "fifteen_minutes": 4.9
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13567,
+                    "cpu_percent": 187.7,
+                    "command": "/opt/homebrew/Cellar/bun/1.4.2/bin/bun"
+                  },
+                  {
+                    "pid": 13535,
+                    "cpu_percent": 186.9,
+                    "command": "/opt/homebrew/Cellar/bun/1.4.2/bin/bun"
+                  },
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 52.3,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 29.6,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13532,
+                    "cpu_percent": 12.9,
+                    "command": "deno"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791919906075203000,
+                "load_average": {
+                  "one_minute": 4.38,
+                  "five_minutes": 4.66,
+                  "fifteen_minutes": 4.9
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13593,
+                    "cpu_percent": 292.1,
+                    "command": "/opt/homebrew/Cellar/bun/1.4.2/bin/bun"
+                  },
+                  {
+                    "pid": 13535,
+                    "cpu_percent": 174.3,
+                    "command": "/opt/homebrew/Cellar/bun/1.4.2/bin/bun"
+                  },
+                  {
+                    "pid": 13532,
+                    "cpu_percent": 43.2,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 42.9,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 9.8,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 9388\n----\nScore: 9388\n",
+              "stderr": "        2.14 real         3.95 user         0.09 sys\n           401457152  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               25152  page reclaims\n                  87  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                3406  involuntary context switches\n         37546991869  instructions retired\n         11777341501  cycles elapsed\n           405161424  peak memory footprint\n"
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2252926416,
+              "peak_rss_bytes": 103137280,
+              "score": 5538.0,
+              "instructions": 31947450501,
+              "cycles": 6494389225,
+              "page_faults": 21,
+              "page_reclaims": 6473,
+              "involuntary_context_switches": 335,
+              "host_before": {
+                "captured_unix_ns": 1791919906085674000,
+                "load_average": {
+                  "one_minute": 4.38,
+                  "five_minutes": 4.66,
+                  "fifteen_minutes": 4.9
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13593,
+                    "cpu_percent": 292.1,
+                    "command": "/opt/homebrew/Cellar/bun/1.4.2/bin/bun"
+                  },
+                  {
+                    "pid": 13535,
+                    "cpu_percent": 174.3,
+                    "command": "/opt/homebrew/Cellar/bun/1.4.2/bin/bun"
+                  },
+                  {
+                    "pid": 13532,
+                    "cpu_percent": 43.2,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 42.9,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 9.8,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791919908348398000,
+                "load_average": {
+                  "one_minute": 4.51,
+                  "five_minutes": 4.68,
+                  "fifteen_minutes": 4.91
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13535,
+                    "cpu_percent": 129.2,
+                    "command": "/opt/homebrew/Cellar/bun/1.4.2/bin/bun"
+                  },
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 58.6,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 21.4,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13532,
+                    "cpu_percent": 15.3,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 10.2,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 5538\n----\nScore: 5538\n",
+              "stderr": "        2.24 real         2.21 user         0.01 sys\n           103137280  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                6473  page reclaims\n                  21  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 335  involuntary context switches\n         31947450501  instructions retired\n          6494389225  cycles elapsed\n            90423848  peak memory footprint\n"
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2274960333,
+              "peak_rss_bytes": 151060480,
+              "score": 5851.0,
+              "instructions": 27734169009,
+              "cycles": 6654911271,
+              "page_faults": 2,
+              "page_reclaims": 9378,
+              "involuntary_context_switches": 391,
+              "host_before": {
+                "captured_unix_ns": 1791919908358958000,
+                "load_average": {
+                  "one_minute": 4.51,
+                  "five_minutes": 4.68,
+                  "fifteen_minutes": 4.91
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13535,
+                    "cpu_percent": 129.2,
+                    "command": "/opt/homebrew/Cellar/bun/1.4.2/bin/bun"
+                  },
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 58.6,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 21.4,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13532,
+                    "cpu_percent": 15.3,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 10.2,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791919910645889000,
+                "load_average": {
+                  "one_minute": 4.51,
+                  "five_minutes": 4.68,
+                  "fifteen_minutes": 4.91
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13656,
+                    "cpu_percent": 313.7,
+                    "command": "/opt/homebrew/Cellar/bun/1.4.2/bin/bun"
+                  },
+                  {
+                    "pid": 13535,
+                    "cpu_percent": 131.1,
+                    "command": "/opt/homebrew/Cellar/bun/1.4.2/bin/bun"
+                  },
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 71.2,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13532,
+                    "cpu_percent": 15.6,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 15.5,
+                    "command": "deno"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 5851\n----\nScore: 5851\n",
+              "stderr": "        2.27 real         2.23 user         0.01 sys\n           151060480  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                9378  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 391  involuntary context switches\n         27734169009  instructions retired\n          6654911271  cycles elapsed\n           150061512  peak memory footprint\n"
+            }
+          }
+        },
+        {
+          "round": 4,
+          "execution_order": [
+            "quench",
+            "quickjs",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2189897208,
+              "peak_rss_bytes": 66568192,
+              "score": 4849.0,
+              "instructions": 31112887171,
+              "cycles": 10353709908,
+              "page_faults": 82,
+              "page_reclaims": 4159,
+              "involuntary_context_switches": 21033,
+              "host_before": {
+                "captured_unix_ns": 1791919917469682000,
+                "load_average": {
+                  "one_minute": 5.11,
+                  "five_minutes": 4.8,
+                  "fifteen_minutes": 4.95
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 293.6,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13532,
+                    "cpu_percent": 214.8,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13535,
+                    "cpu_percent": 138.9,
+                    "command": "/opt/homebrew/Cellar/bun/1.4.2/bin/bun"
+                  },
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 133.5,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 11.6,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791919919675954000,
+                "load_average": {
+                  "one_minute": 5.9,
+                  "five_minutes": 4.97,
+                  "fifteen_minutes": 5.01
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13532,
+                    "cpu_percent": 222.8,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 215.1,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 177.5,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 7.7,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 2.6,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 4849\n----\nScore: 4849\n",
+              "stderr": "        2.18 real         3.55 user         0.15 sys\n            66568192  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                4159  page reclaims\n                  82  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n               21033  involuntary context switches\n         31112887171  instructions retired\n         10353709908  cycles elapsed\n            54100544  peak memory footprint\n"
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2219042458,
+              "peak_rss_bytes": 384729088,
+              "score": 7522.0,
+              "instructions": 30507907375,
+              "cycles": 10333718281,
+              "page_faults": 191,
+              "page_reclaims": 24013,
+              "involuntary_context_switches": 3414,
+              "host_before": {
+                "captured_unix_ns": 1791919919688899000,
+                "load_average": {
+                  "one_minute": 5.9,
+                  "five_minutes": 4.97,
+                  "fifteen_minutes": 5.01
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13532,
+                    "cpu_percent": 222.8,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 215.1,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 177.5,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 7.7,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 2.6,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791919921924132000,
+                "load_average": {
+                  "one_minute": 5.9,
+                  "five_minutes": 4.97,
+                  "fifteen_minutes": 5.01
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 262.1,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13532,
+                    "cpu_percent": 223.9,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 178.1,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 22.4,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 312,
+                    "cpu_percent": 6.0,
+                    "command": "/System/Library/Frameworks/Security.framework/Versions/A/MachServices/SecurityAgent.bundle/Contents/MacOS/SecurityAgent"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 7522\n----\nScore: 7522\n",
+              "stderr": "        2.21 real         3.59 user         0.11 sys\n           384729088  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               24013  page reclaims\n                 191  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   7  voluntary context switches\n                3414  involuntary context switches\n         30507907375  instructions retired\n         10333718281  cycles elapsed\n           387350408  peak memory footprint\n"
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2246016583,
+              "peak_rss_bytes": 104890368,
+              "score": 3963.0,
+              "instructions": 26163867918,
+              "cycles": 6154596628,
+              "page_faults": 21,
+              "page_reclaims": 6580,
+              "involuntary_context_switches": 977,
+              "host_before": {
+                "captured_unix_ns": 1791919912806084000,
+                "load_average": {
+                  "one_minute": 5.11,
+                  "five_minutes": 4.8,
+                  "fifteen_minutes": 4.95
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13532,
+                    "cpu_percent": 141.8,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13535,
+                    "cpu_percent": 127.3,
+                    "command": "/opt/homebrew/Cellar/bun/1.4.2/bin/bun"
+                  },
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 57.8,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 38.1,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 206,
+                    "cpu_percent": 11.1,
+                    "command": "/usr/libexec/airportd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791919915070463000,
+                "load_average": {
+                  "one_minute": 5.11,
+                  "five_minutes": 4.8,
+                  "fifteen_minutes": 4.95
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13532,
+                    "cpu_percent": 211.9,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 203.3,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 184.5,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13535,
+                    "cpu_percent": 112.8,
+                    "command": "/opt/homebrew/Cellar/bun/1.4.2/bin/bun"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 10.4,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 3963\n----\nScore: 3963\n",
+              "stderr": "        2.24 real         2.12 user         0.01 sys\n           104890368  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                6580  page reclaims\n                  21  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 977  involuntary context switches\n         26163867918  instructions retired\n          6154596628  cycles elapsed\n            92160528  peak memory footprint\n"
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2346272459,
+              "peak_rss_bytes": 151060480,
+              "score": 4042.0,
+              "instructions": 21288992598,
+              "cycles": 6159491948,
+              "page_faults": 4,
+              "page_reclaims": 9378,
+              "involuntary_context_switches": 1108,
+              "host_before": {
+                "captured_unix_ns": 1791919915088305000,
+                "load_average": {
+                  "one_minute": 5.11,
+                  "five_minutes": 4.8,
+                  "fifteen_minutes": 4.95
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13532,
+                    "cpu_percent": 211.9,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 203.3,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 184.5,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13535,
+                    "cpu_percent": 112.8,
+                    "command": "/opt/homebrew/Cellar/bun/1.4.2/bin/bun"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 10.4,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791919917451139000,
+                "load_average": {
+                  "one_minute": 5.11,
+                  "five_minutes": 4.8,
+                  "fifteen_minutes": 4.95
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 293.6,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13532,
+                    "cpu_percent": 214.8,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13535,
+                    "cpu_percent": 138.9,
+                    "command": "/opt/homebrew/Cellar/bun/1.4.2/bin/bun"
+                  },
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 133.5,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 11.6,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 4042\n----\nScore: 4042\n",
+              "stderr": "        2.33 real         2.16 user         0.03 sys\n           151060480  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                9378  page reclaims\n                   4  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   2  voluntary context switches\n                1108  involuntary context switches\n         21288992598  instructions retired\n          6159491948  cycles elapsed\n           150061512  peak memory footprint\n"
+            }
+          }
+        },
+        {
+          "round": 5,
+          "execution_order": [
+            "quickjs",
+            "bun",
+            "node",
+            "quench"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2150154292,
+              "peak_rss_bytes": 66535424,
+              "score": 5170.0,
+              "instructions": 35626073533,
+              "cycles": 11496020396,
+              "page_faults": 41,
+              "page_reclaims": 4200,
+              "involuntary_context_switches": 27971,
+              "host_before": {
+                "captured_unix_ns": 1791919924303032000,
+                "load_average": {
+                  "one_minute": 5.83,
+                  "five_minutes": 4.97,
+                  "fifteen_minutes": 5.01
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 272.9,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13532,
+                    "cpu_percent": 212.5,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 135.5,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 10.9,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 32672,
+                    "cpu_percent": 4.1,
+                    "command": "/Users/admin/.codex/packages/standalone/releases/0.162.1-aarch64-apple-darwin/bin/codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791919926465372000,
+                "load_average": {
+                  "one_minute": 5.83,
+                  "five_minutes": 4.97,
+                  "fifteen_minutes": 5.01
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 248.2,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 208.7,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13532,
+                    "cpu_percent": 159.8,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 11.1,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 2.5,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 5170\n----\nScore: 5170\n",
+              "stderr": "        2.14 real         3.92 user         0.18 sys\n            66535424  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                4200  page reclaims\n                  41  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n               27971  involuntary context switches\n         35626073533  instructions retired\n         11496020396  cycles elapsed\n            54035008  peak memory footprint\n"
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2190457416,
+              "peak_rss_bytes": 403046400,
+              "score": 9582.0,
+              "instructions": 36513197595,
+              "cycles": 11761712546,
+              "page_faults": 85,
+              "page_reclaims": 25243,
+              "involuntary_context_switches": 2920,
+              "host_before": {
+                "captured_unix_ns": 1791919926477505000,
+                "load_average": {
+                  "one_minute": 5.83,
+                  "five_minutes": 4.97,
+                  "fifteen_minutes": 5.01
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 248.2,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 208.7,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13532,
+                    "cpu_percent": 159.8,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 11.1,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 2.5,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791919928681608000,
+                "load_average": {
+                  "one_minute": 5.84,
+                  "five_minutes": 4.99,
+                  "fifteen_minutes": 5.01
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 271.1,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 152.4,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 6.9,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 6050,
+                    "cpu_percent": 4.8,
+                    "command": "/System/Library/Frameworks/Virtualization.framework/Versions/A/XPCServices/com.apple.Virtualization.VirtualMachine.xpc/Contents/MacOS/com.apple.Virtualization.VirtualMachine"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 3.9,
+                    "command": "/sbin/launchd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 9582\n----\nScore: 9582\n",
+              "stderr": "        2.18 real         4.01 user         0.11 sys\n           403046400  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               25243  page reclaims\n                  85  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                2920  involuntary context switches\n         36513197595  instructions retired\n         11761712546  cycles elapsed\n           406783416  peak memory footprint\n"
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2307079541,
+              "peak_rss_bytes": 104448000,
+              "score": 5629.0,
+              "instructions": 31274828126,
+              "cycles": 6511078875,
+              "page_faults": 41,
+              "page_reclaims": 6534,
+              "involuntary_context_switches": 347,
+              "host_before": {
+                "captured_unix_ns": 1791919928701631000,
+                "load_average": {
+                  "one_minute": 5.84,
+                  "five_minutes": 4.99,
+                  "fifteen_minutes": 5.01
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 271.1,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 152.4,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 6.9,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 6050,
+                    "cpu_percent": 4.8,
+                    "command": "/System/Library/Frameworks/Virtualization.framework/Versions/A/XPCServices/com.apple.Virtualization.VirtualMachine.xpc/Contents/MacOS/com.apple.Virtualization.VirtualMachine"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 3.9,
+                    "command": "/sbin/launchd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791919931020851000,
+                "load_average": {
+                  "one_minute": 5.84,
+                  "five_minutes": 4.99,
+                  "fifteen_minutes": 5.01
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 266.0,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 127.0,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 8.3,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 6050,
+                    "cpu_percent": 2.4,
+                    "command": "/System/Library/Frameworks/Virtualization.framework/Versions/A/XPCServices/com.apple.Virtualization.VirtualMachine.xpc/Contents/MacOS/com.apple.Virtualization.VirtualMachine"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 2.0,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 5629\n----\nScore: 5629\n",
+              "stderr": "        2.29 real         2.26 user         0.01 sys\n           104448000  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                6534  page reclaims\n                  41  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 347  involuntary context switches\n         31274828126  instructions retired\n          6511078875  cycles elapsed\n            91718160  peak memory footprint\n"
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2341568292,
+              "peak_rss_bytes": 151060480,
+              "score": 4531.0,
+              "instructions": 22404227463,
+              "cycles": 6339042765,
+              "page_faults": 2,
+              "page_reclaims": 9380,
+              "involuntary_context_switches": 724,
+              "host_before": {
+                "captured_unix_ns": 1791919921938900000,
+                "load_average": {
+                  "one_minute": 5.9,
+                  "five_minutes": 4.97,
+                  "fifteen_minutes": 5.01
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 262.1,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13532,
+                    "cpu_percent": 223.9,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 178.1,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 22.4,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 312,
+                    "cpu_percent": 6.0,
+                    "command": "/System/Library/Frameworks/Security.framework/Versions/A/MachServices/SecurityAgent.bundle/Contents/MacOS/SecurityAgent"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791919924290568000,
+                "load_average": {
+                  "one_minute": 5.83,
+                  "five_minutes": 4.97,
+                  "fifteen_minutes": 5.01
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 272.9,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13532,
+                    "cpu_percent": 212.5,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 135.5,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 10.9,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 32672,
+                    "cpu_percent": 4.1,
+                    "command": "/Users/admin/.codex/packages/standalone/releases/0.162.1-aarch64-apple-darwin/bin/codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 4531\n----\nScore: 4531\n",
+              "stderr": "        2.33 real         2.23 user         0.02 sys\n           151060480  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                9380  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 724  involuntary context switches\n         22404227463  instructions retired\n          6339042765  cycles elapsed\n           150061512  peak memory footprint\n"
+            }
+          }
+        },
+        {
+          "round": 6,
+          "execution_order": [
+            "bun",
+            "node",
+            "quench",
+            "quickjs"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2147454792,
+              "peak_rss_bytes": 66764800,
+              "score": 6609.0,
+              "instructions": 41793610871,
+              "cycles": 12792540098,
+              "page_faults": 41,
+              "page_reclaims": 4210,
+              "involuntary_context_switches": 36533,
+              "host_before": {
+                "captured_unix_ns": 1791919931035633000,
+                "load_average": {
+                  "one_minute": 5.84,
+                  "five_minutes": 4.99,
+                  "fifteen_minutes": 5.01
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 266.0,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 127.0,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 8.3,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 6050,
+                    "cpu_percent": 2.4,
+                    "command": "/System/Library/Frameworks/Virtualization.framework/Versions/A/XPCServices/com.apple.Virtualization.VirtualMachine.xpc/Contents/MacOS/com.apple.Virtualization.VirtualMachine"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 2.0,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791919933195624000,
+                "load_average": {
+                  "one_minute": 6.02,
+                  "five_minutes": 5.04,
+                  "fifteen_minutes": 5.03
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 252.7,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 170.2,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 9.6,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 50467,
+                    "cpu_percent": 4.6,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 2.5,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 6609\n----\nScore: 6609\n",
+              "stderr": "        2.14 real         4.29 user         0.23 sys\n            66764800  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                4210  page reclaims\n                  41  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n               36533  involuntary context switches\n         41793610871  instructions retired\n         12792540098  cycles elapsed\n            54051392  peak memory footprint\n"
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2236866500,
+              "peak_rss_bytes": 401555456,
+              "score": 9623.0,
+              "instructions": 37330703869,
+              "cycles": 11779243015,
+              "page_faults": 85,
+              "page_reclaims": 25153,
+              "involuntary_context_switches": 2950,
+              "host_before": {
+                "captured_unix_ns": 1791919933208752000,
+                "load_average": {
+                  "one_minute": 6.02,
+                  "five_minutes": 5.04,
+                  "fifteen_minutes": 5.03
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 252.7,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 170.2,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 9.6,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 50467,
+                    "cpu_percent": 4.6,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 2.5,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791919935457695000,
+                "load_average": {
+                  "one_minute": 6.02,
+                  "five_minutes": 5.04,
+                  "fifteen_minutes": 5.03
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 230.9,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 193.9,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 12.1,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 2.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 50467,
+                    "cpu_percent": 2.1,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 9623\n----\nScore: 9623\n",
+              "stderr": "        2.21 real         4.03 user         0.11 sys\n           401555456  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               25153  page reclaims\n                  85  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                2950  involuntary context switches\n         37330703869  instructions retired\n         11779243015  cycles elapsed\n           405423736  peak memory footprint\n"
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2271946250,
+              "peak_rss_bytes": 105857024,
+              "score": 5044.0,
+              "instructions": 29111497672,
+              "cycles": 6342789926,
+              "page_faults": 21,
+              "page_reclaims": 6642,
+              "involuntary_context_switches": 489,
+              "host_before": {
+                "captured_unix_ns": 1791919935468464000,
+                "load_average": {
+                  "one_minute": 6.02,
+                  "five_minutes": 5.04,
+                  "fifteen_minutes": 5.03
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 230.9,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 193.9,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 12.1,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 2.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 50467,
+                    "cpu_percent": 2.1,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791919937749922000,
+                "load_average": {
+                  "one_minute": 6.02,
+                  "five_minutes": 5.04,
+                  "fifteen_minutes": 5.03
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 347.1,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 239.6,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 206,
+                    "cpu_percent": 21.0,
+                    "command": "/usr/libexec/airportd"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 6.7,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 13451,
+                    "cpu_percent": 3.3,
+                    "command": "bun"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 5044\n----\nScore: 5044\n",
+              "stderr": "        2.26 real         2.20 user         0.02 sys\n           105857024  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                6642  page reclaims\n                  21  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 489  involuntary context switches\n         29111497672  instructions retired\n          6342789926  cycles elapsed\n            93127184  peak memory footprint\n"
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2297747333,
+              "peak_rss_bytes": 151044096,
+              "score": 5471.0,
+              "instructions": 26311991262,
+              "cycles": 6515452128,
+              "page_faults": 2,
+              "page_reclaims": 9379,
+              "involuntary_context_switches": 388,
+              "host_before": {
+                "captured_unix_ns": 1791919937759348000,
+                "load_average": {
+                  "one_minute": 6.02,
+                  "five_minutes": 5.04,
+                  "fifteen_minutes": 5.03
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 347.1,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 239.6,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 206,
+                    "cpu_percent": 21.0,
+                    "command": "/usr/libexec/airportd"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 6.7,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 13451,
+                    "cpu_percent": 3.3,
+                    "command": "bun"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791919940069682000,
+                "load_average": {
+                  "one_minute": 5.93,
+                  "five_minutes": 5.04,
+                  "fifteen_minutes": 5.03
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 280.7,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 230.0,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 9.4,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 2.3,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1198,
+                    "cpu_percent": 2.3,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 5471\n----\nScore: 5471\n",
+              "stderr": "        2.29 real         2.25 user         0.02 sys\n           151044096  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                9379  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 388  involuntary context switches\n         26311991262  instructions retired\n          6515452128  cycles elapsed\n           150028720  peak memory footprint\n"
+            }
+          }
+        },
+        {
+          "round": 7,
+          "execution_order": [
+            "node",
+            "quench",
+            "quickjs",
+            "bun"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2147650583,
+              "peak_rss_bytes": 67059712,
+              "score": 6128.0,
+              "instructions": 41740838833,
+              "cycles": 12727715356,
+              "page_faults": 41,
+              "page_reclaims": 4230,
+              "involuntary_context_switches": 34303,
+              "host_before": {
+                "captured_unix_ns": 1791919946899022000,
+                "load_average": {
+                  "one_minute": 5.7,
+                  "five_minutes": 5.0,
+                  "fifteen_minutes": 5.02
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 322.2,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 228.3,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 7.8,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 2.5,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1198,
+                    "cpu_percent": 2.3,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791919949056805000,
+                "load_average": {
+                  "one_minute": 5.72,
+                  "five_minutes": 5.02,
+                  "fifteen_minutes": 5.02
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 243.0,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 238.3,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 9.4,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 1198,
+                    "cpu_percent": 3.6,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 2.8,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 6128\n----\nScore: 6128\n",
+              "stderr": "        2.13 real         4.28 user         0.22 sys\n            67059712  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                4230  page reclaims\n                  41  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n               34303  involuntary context switches\n         41740838833  instructions retired\n         12727715356  cycles elapsed\n            54592040  peak memory footprint\n"
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2165245417,
+              "peak_rss_bytes": 402161664,
+              "score": 8980.0,
+              "instructions": 36692768956,
+              "cycles": 11840848795,
+              "page_faults": 85,
+              "page_reclaims": 25190,
+              "involuntary_context_switches": 2793,
+              "host_before": {
+                "captured_unix_ns": 1791919940083431000,
+                "load_average": {
+                  "one_minute": 5.93,
+                  "five_minutes": 5.04,
+                  "fifteen_minutes": 5.03
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 280.7,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 230.0,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 9.4,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 2.3,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1198,
+                    "cpu_percent": 2.3,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791919942258577000,
+                "load_average": {
+                  "one_minute": 5.93,
+                  "five_minutes": 5.04,
+                  "fifteen_minutes": 5.03
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 262.3,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 166.0,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 9.9,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 3.4,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1198,
+                    "cpu_percent": 2.2,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 8980\n----\nScore: 8980\n",
+              "stderr": "        2.15 real         4.06 user         0.10 sys\n           402161664  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               25190  page reclaims\n                  85  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                2793  involuntary context switches\n         36692768956  instructions retired\n         11840848795  cycles elapsed\n           406276064  peak memory footprint\n"
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2268543625,
+              "peak_rss_bytes": 102514688,
+              "score": 5356.0,
+              "instructions": 31940651994,
+              "cycles": 6474587321,
+              "page_faults": 21,
+              "page_reclaims": 6436,
+              "involuntary_context_switches": 242,
+              "host_before": {
+                "captured_unix_ns": 1791919942269163000,
+                "load_average": {
+                  "one_minute": 5.93,
+                  "five_minutes": 5.04,
+                  "fifteen_minutes": 5.03
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 262.3,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 166.0,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 9.9,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 3.4,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1198,
+                    "cpu_percent": 2.2,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791919944550042000,
+                "load_average": {
+                  "one_minute": 5.7,
+                  "five_minutes": 5.0,
+                  "fifteen_minutes": 5.02
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 251.9,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 211.8,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 10.7,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 2.4,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1198,
+                    "cpu_percent": 2.3,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 5356\n----\nScore: 5356\n",
+              "stderr": "        2.26 real         2.23 user         0.01 sys\n           102514688  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                6436  page reclaims\n                  21  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 242  involuntary context switches\n         31940651994  instructions retired\n          6474587321  cycles elapsed\n            89801256  peak memory footprint\n"
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2300667250,
+              "peak_rss_bytes": 151060480,
+              "score": 5395.0,
+              "instructions": 25850031193,
+              "cycles": 6536579624,
+              "page_faults": 2,
+              "page_reclaims": 9382,
+              "involuntary_context_switches": 436,
+              "host_before": {
+                "captured_unix_ns": 1791919944561850000,
+                "load_average": {
+                  "one_minute": 5.7,
+                  "five_minutes": 5.0,
+                  "fifteen_minutes": 5.02
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 251.9,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 211.8,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 10.7,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 2.4,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1198,
+                    "cpu_percent": 2.3,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791919946878295000,
+                "load_average": {
+                  "one_minute": 5.7,
+                  "five_minutes": 5.0,
+                  "fifteen_minutes": 5.02
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 322.2,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 228.3,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 7.8,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 2.5,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1198,
+                    "cpu_percent": 2.3,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 5395\n----\nScore: 5395\n",
+              "stderr": "        2.29 real         2.25 user         0.02 sys\n           151060480  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                9382  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 436  involuntary context switches\n         25850031193  instructions retired\n          6536579624  cycles elapsed\n           150061512  peak memory footprint\n"
+            }
+          }
+        },
+        {
+          "round": 8,
+          "execution_order": [
+            "quench",
+            "quickjs",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2138321750,
+              "peak_rss_bytes": 67043328,
+              "score": 5943.0,
+              "instructions": 40479822054,
+              "cycles": 12588366908,
+              "page_faults": 41,
+              "page_reclaims": 4231,
+              "involuntary_context_switches": 36035,
+              "host_before": {
+                "captured_unix_ns": 1791919953681386000,
+                "load_average": {
+                  "one_minute": 5.66,
+                  "five_minutes": 5.02,
+                  "fifteen_minutes": 5.02
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 371.7,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 222.2,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 9.0,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 2.4,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1198,
+                    "cpu_percent": 2.1,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791919955830487000,
+                "load_average": {
+                  "one_minute": 5.66,
+                  "five_minutes": 5.02,
+                  "fifteen_minutes": 5.02
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 278.0,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 215.0,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 7.9,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 2.5,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1198,
+                    "cpu_percent": 2.1,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 5943\n----\nScore: 5943\n",
+              "stderr": "        2.13 real         4.22 user         0.22 sys\n            67043328  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                4231  page reclaims\n                  41  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n               36035  involuntary context switches\n         40479822054  instructions retired\n         12588366908  cycles elapsed\n            54460992  peak memory footprint\n"
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2155754542,
+              "peak_rss_bytes": 387317760,
+              "score": 8760.0,
+              "instructions": 35734734366,
+              "cycles": 11565733827,
+              "page_faults": 85,
+              "page_reclaims": 24295,
+              "involuntary_context_switches": 3275,
+              "host_before": {
+                "captured_unix_ns": 1791919955839922000,
+                "load_average": {
+                  "one_minute": 5.66,
+                  "five_minutes": 5.02,
+                  "fifteen_minutes": 5.02
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 253.1,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 221.4,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 7.9,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 1198,
+                    "cpu_percent": 2.3,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 2.1,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791919958005844000,
+                "load_average": {
+                  "one_minute": 5.61,
+                  "five_minutes": 5.02,
+                  "fifteen_minutes": 5.02
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 259.2,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 231.3,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 9.4,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 2.6,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1198,
+                    "cpu_percent": 2.1,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 8760\n----\nScore: 8760\n",
+              "stderr": "        2.15 real         3.96 user         0.09 sys\n           387317760  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               24295  page reclaims\n                  85  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                3275  involuntary context switches\n         35734734366  instructions retired\n         11565733827  cycles elapsed\n           390300008  peak memory footprint\n"
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2290241041,
+              "peak_rss_bytes": 104579072,
+              "score": 4774.0,
+              "instructions": 30026271200,
+              "cycles": 6483190610,
+              "page_faults": 21,
+              "page_reclaims": 6562,
+              "involuntary_context_switches": 414,
+              "host_before": {
+                "captured_unix_ns": 1791919949066422000,
+                "load_average": {
+                  "one_minute": 5.72,
+                  "five_minutes": 5.02,
+                  "fifteen_minutes": 5.02
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 243.0,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 238.3,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 9.4,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 1198,
+                    "cpu_percent": 3.6,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 2.8,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791919951367662000,
+                "load_average": {
+                  "one_minute": 5.72,
+                  "five_minutes": 5.02,
+                  "fifteen_minutes": 5.02
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 356.0,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 268.6,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 10.4,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 1198,
+                    "cpu_percent": 2.5,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 2.3,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 4774\n----\nScore: 4774\n",
+              "stderr": "        2.28 real         2.24 user         0.02 sys\n           104579072  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                6562  page reclaims\n                  21  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 414  involuntary context switches\n         30026271200  instructions retired\n          6483190610  cycles elapsed\n            91849232  peak memory footprint\n"
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2281247125,
+              "peak_rss_bytes": 151076864,
+              "score": 5235.0,
+              "instructions": 26037743379,
+              "cycles": 6464439413,
+              "page_faults": 2,
+              "page_reclaims": 9383,
+              "involuntary_context_switches": 326,
+              "host_before": {
+                "captured_unix_ns": 1791919951377679000,
+                "load_average": {
+                  "one_minute": 5.72,
+                  "five_minutes": 5.02,
+                  "fifteen_minutes": 5.02
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 356.0,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 268.6,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 10.4,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 1198,
+                    "cpu_percent": 2.5,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 2.3,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791919953670320000,
+                "load_average": {
+                  "one_minute": 5.66,
+                  "five_minutes": 5.02,
+                  "fifteen_minutes": 5.02
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 371.7,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 222.2,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 9.0,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 2.4,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1198,
+                    "cpu_percent": 2.1,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 5235\n----\nScore: 5235\n",
+              "stderr": "        2.27 real         2.23 user         0.02 sys\n           151076864  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                9383  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 326  involuntary context switches\n         26037743379  instructions retired\n          6464439413  cycles elapsed\n           150077896  peak memory footprint\n"
+            }
+          }
+        },
+        {
+          "round": 9,
+          "execution_order": [
+            "quickjs",
+            "bun",
+            "node",
+            "quench"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2130219625,
+              "peak_rss_bytes": 66650112,
+              "score": 6022.0,
+              "instructions": 39798663688,
+              "cycles": 12343841610,
+              "page_faults": 41,
+              "page_reclaims": 4204,
+              "involuntary_context_switches": 33261,
+              "host_before": {
+                "captured_unix_ns": 1791919960315784000,
+                "load_average": {
+                  "one_minute": 5.61,
+                  "five_minutes": 5.02,
+                  "fifteen_minutes": 5.02
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 247.6,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 245.4,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 10.0,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 2.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 50467,
+                    "cpu_percent": 2.1,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791919962456763000,
+                "load_average": {
+                  "one_minute": 5.61,
+                  "five_minutes": 5.02,
+                  "fifteen_minutes": 5.02
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 248.8,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 227.1,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 206,
+                    "cpu_percent": 48.8,
+                    "command": "/usr/libexec/airportd"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 11.0,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 141,
+                    "cpu_percent": 3.5,
+                    "command": "/usr/libexec/locationd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 6022\n----\nScore: 6022\n",
+              "stderr": "        2.12 real         4.14 user         0.21 sys\n            66650112  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                4204  page reclaims\n                  41  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n               33261  involuntary context switches\n         39798663688  instructions retired\n         12343841610  cycles elapsed\n            54182464  peak memory footprint\n"
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2157654166,
+              "peak_rss_bytes": 397246464,
+              "score": 9551.0,
+              "instructions": 37311795851,
+              "cycles": 11694147734,
+              "page_faults": 85,
+              "page_reclaims": 24880,
+              "involuntary_context_switches": 3065,
+              "host_before": {
+                "captured_unix_ns": 1791919962470160000,
+                "load_average": {
+                  "one_minute": 5.61,
+                  "five_minutes": 5.02,
+                  "fifteen_minutes": 5.02
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 248.8,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 227.1,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 206,
+                    "cpu_percent": 30.2,
+                    "command": "/usr/libexec/airportd"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 10.8,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 2.5,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791919964637489000,
+                "load_average": {
+                  "one_minute": 6.12,
+                  "five_minutes": 5.13,
+                  "fifteen_minutes": 5.06
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 237.4,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 167.8,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 8.4,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 2.3,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 50467,
+                    "cpu_percent": 2.0,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 9551\n----\nScore: 9551\n",
+              "stderr": "        2.15 real         4.00 user         0.09 sys\n           397246464  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               24880  page reclaims\n                  85  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                3065  involuntary context switches\n         37311795851  instructions retired\n         11694147734  cycles elapsed\n           400573280  peak memory footprint\n"
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2233330833,
+              "peak_rss_bytes": 102580224,
+              "score": 5670.0,
+              "instructions": 30515303104,
+              "cycles": 6454600769,
+              "page_faults": 21,
+              "page_reclaims": 6440,
+              "involuntary_context_switches": 350,
+              "host_before": {
+                "captured_unix_ns": 1791919964646458000,
+                "load_average": {
+                  "one_minute": 6.12,
+                  "five_minutes": 5.13,
+                  "fifteen_minutes": 5.06
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 237.4,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 167.8,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 8.4,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 2.3,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 50467,
+                    "cpu_percent": 2.0,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791919966890086000,
+                "load_average": {
+                  "one_minute": 6.12,
+                  "five_minutes": 5.13,
+                  "fifteen_minutes": 5.06
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 176.0,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 173.5,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 7.9,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 2.0,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1198,
+                    "cpu_percent": 2.0,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 5670\n----\nScore: 5670\n",
+              "stderr": "        2.22 real         2.19 user         0.01 sys\n           102580224  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                6440  page reclaims\n                  21  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 350  involuntary context switches\n         30515303104  instructions retired\n          6454600769  cycles elapsed\n            89866792  peak memory footprint\n"
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2279876667,
+              "peak_rss_bytes": 151044096,
+              "score": 5460.0,
+              "instructions": 26101129220,
+              "cycles": 6528619575,
+              "page_faults": 2,
+              "page_reclaims": 9377,
+              "involuntary_context_switches": 346,
+              "host_before": {
+                "captured_unix_ns": 1791919958015905000,
+                "load_average": {
+                  "one_minute": 5.61,
+                  "five_minutes": 5.02,
+                  "fifteen_minutes": 5.02
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 259.2,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 231.3,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 9.4,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 2.6,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1198,
+                    "cpu_percent": 2.1,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791919960306190000,
+                "load_average": {
+                  "one_minute": 5.61,
+                  "five_minutes": 5.02,
+                  "fifteen_minutes": 5.02
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 247.6,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 245.4,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 10.0,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 2.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 50467,
+                    "cpu_percent": 2.1,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 5460\n----\nScore: 5460\n",
+              "stderr": "        2.27 real         2.22 user         0.02 sys\n           151044096  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                9377  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 346  involuntary context switches\n         26101129220  instructions retired\n          6528619575  cycles elapsed\n           150028720  peak memory footprint\n"
+            }
+          }
+        },
+        {
+          "round": 10,
+          "execution_order": [
+            "bun",
+            "node",
+            "quench",
+            "quickjs"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2134650667,
+              "peak_rss_bytes": 67551232,
+              "score": 6667.0,
+              "instructions": 40608282108,
+              "cycles": 12499944922,
+              "page_faults": 41,
+              "page_reclaims": 4261,
+              "involuntary_context_switches": 32284,
+              "host_before": {
+                "captured_unix_ns": 1791919966903058000,
+                "load_average": {
+                  "one_minute": 6.12,
+                  "five_minutes": 5.13,
+                  "fifteen_minutes": 5.06
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 176.0,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 173.5,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 7.9,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 2.0,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1198,
+                    "cpu_percent": 2.0,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791919969047947000,
+                "load_average": {
+                  "one_minute": 6.35,
+                  "five_minutes": 5.2,
+                  "fifteen_minutes": 5.09
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 211.7,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 164.4,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 9.5,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 32672,
+                    "cpu_percent": 2.5,
+                    "command": "/Users/admin/.codex/packages/standalone/releases/0.162.1-aarch64-apple-darwin/bin/codex"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 2.2,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 6667\n----\nScore: 6667\n",
+              "stderr": "        2.12 real         4.20 user         0.20 sys\n            67551232  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                4261  page reclaims\n                  41  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n               32284  involuntary context switches\n         40608282108  instructions retired\n         12499944922  cycles elapsed\n            54739520  peak memory footprint\n"
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2167709875,
+              "peak_rss_bytes": 404504576,
+              "score": 9917.0,
+              "instructions": 37018291416,
+              "cycles": 11788681092,
+              "page_faults": 86,
+              "page_reclaims": 25338,
+              "involuntary_context_switches": 2721,
+              "host_before": {
+                "captured_unix_ns": 1791919969057537000,
+                "load_average": {
+                  "one_minute": 6.35,
+                  "five_minutes": 5.2,
+                  "fifteen_minutes": 5.09
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 211.7,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 164.4,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 9.5,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 32672,
+                    "cpu_percent": 2.5,
+                    "command": "/Users/admin/.codex/packages/standalone/releases/0.162.1-aarch64-apple-darwin/bin/codex"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 2.2,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791919971236551000,
+                "load_average": {
+                  "one_minute": 6.35,
+                  "five_minutes": 5.2,
+                  "fifteen_minutes": 5.09
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 214.5,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 157.2,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 11.4,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 1198,
+                    "cpu_percent": 2.6,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 1.9,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 9917\n----\nScore: 9917\n",
+              "stderr": "        2.16 real         3.99 user         0.10 sys\n           404504576  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               25338  page reclaims\n                  86  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                2721  involuntary context switches\n         37018291416  instructions retired\n         11788681092  cycles elapsed\n           408422128  peak memory footprint\n"
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2263587875,
+              "peak_rss_bytes": 103333888,
+              "score": 5554.0,
+              "instructions": 30385381447,
+              "cycles": 6504824148,
+              "page_faults": 21,
+              "page_reclaims": 6486,
+              "involuntary_context_switches": 528,
+              "host_before": {
+                "captured_unix_ns": 1791919971251385000,
+                "load_average": {
+                  "one_minute": 6.35,
+                  "five_minutes": 5.2,
+                  "fifteen_minutes": 5.09
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 227.6,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 186.0,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 11.4,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 1198,
+                    "cpu_percent": 2.6,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 1.9,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791919973527078000,
+                "load_average": {
+                  "one_minute": 6.16,
+                  "five_minutes": 5.18,
+                  "fifteen_minutes": 5.08
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 258.9,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 229.5,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 14444,
+                    "cpu_percent": 13.5,
+                    "command": "doctl"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 10.9,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 32672,
+                    "cpu_percent": 6.2,
+                    "command": "/Users/admin/.codex/packages/standalone/releases/0.162.1-aarch64-apple-darwin/bin/codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 5554\n----\nScore: 5554\n",
+              "stderr": "        2.25 real         2.22 user         0.01 sys\n           103333888  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                6486  page reclaims\n                  21  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 528  involuntary context switches\n         30385381447  instructions retired\n          6504824148  cycles elapsed\n            90604048  peak memory footprint\n"
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2345896834,
+              "peak_rss_bytes": 151076864,
+              "score": 5647.0,
+              "instructions": 26604987280,
+              "cycles": 6768111260,
+              "page_faults": 2,
+              "page_reclaims": 9381,
+              "involuntary_context_switches": 416,
+              "host_before": {
+                "captured_unix_ns": 1791919973538804000,
+                "load_average": {
+                  "one_minute": 6.16,
+                  "five_minutes": 5.18,
+                  "fifteen_minutes": 5.08
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 258.9,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 229.5,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 14444,
+                    "cpu_percent": 13.5,
+                    "command": "doctl"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 10.9,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 32672,
+                    "cpu_percent": 6.2,
+                    "command": "/Users/admin/.codex/packages/standalone/releases/0.162.1-aarch64-apple-darwin/bin/codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791919975914990000,
+                "load_average": {
+                  "one_minute": 6.16,
+                  "five_minutes": 5.18,
+                  "fifteen_minutes": 5.08
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 13533,
+                    "cpu_percent": 362.2,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 13534,
+                    "cpu_percent": 253.7,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 166,
+                    "cpu_percent": 8.3,
+                    "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                  },
+                  {
+                    "pid": 509,
+                    "cpu_percent": 2.5,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 50467,
+                    "cpu_percent": 2.3,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Splay: 5647\n----\nScore: 5647\n",
+              "stderr": "        2.33 real         2.29 user         0.02 sys\n           151076864  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                9381  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 416  involuntary context switches\n         26604987280  instructions retired\n          6768111260  cycles elapsed\n           150061488  peak memory footprint\n"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "complete": true,
+  "qualification_ready": false
+}

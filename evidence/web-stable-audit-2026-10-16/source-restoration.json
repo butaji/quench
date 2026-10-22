@@ -1,0 +1,9 @@
+{
+  "restored_paths": [
+    "test/fixtures/permission/deny/protected-file.md"
+  ],
+  "all_original_files_match_initial_manifest": true,
+  "mismatches": [],
+  "initial_run_mutations_retained": true,
+  "input_identity_during_run_not_claimed": true
+}

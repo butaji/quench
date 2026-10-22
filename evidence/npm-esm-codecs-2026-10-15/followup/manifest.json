@@ -1,0 +1,293 @@
+{
+  "production_source": "faa120035a332d3b5eb232eaadcad1399f306d7d",
+  "quench_sha256": "d6482c1dbf34b2d0045f033404c6e469c916e893b7ceb8c205a610a7ce0681ff",
+  "node_sha256": "caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943",
+  "rust_libm_version": "0.2.16",
+  "files": [
+    {
+      "file": "npm-class-function-length-node.json",
+      "raw_sha256": "0fd686a8a1bbfe82eb4c437b43cf5dce3734bcbbd74a77f5c497e2958ac49928",
+      "raw_bytes": 1523
+    },
+    {
+      "file": "npm-class-function-length-quench.json",
+      "raw_sha256": "c5e62fd92bb85c8d444b0820ac5add52370ffe63e68ccd281270b45061600886",
+      "raw_bytes": 1523
+    },
+    {
+      "file": "npm-class-function-length.cjs",
+      "raw_sha256": "e71453b632aa6ba1d4ba59572bdddab2e5def88aaa62a79453c7b519edf42d20",
+      "raw_bytes": 905
+    },
+    {
+      "file": "npm-color-convert-math-differences.json",
+      "raw_sha256": "8e2ab3031fc959a4a9704344a012a0cb7fdf28f9a1e2407a5908086f5926419c",
+      "raw_bytes": 18316
+    },
+    {
+      "file": "npm-color-convert-math-trace-node.json.gz",
+      "raw_sha256": "72b3876859d3386818bde3dcf591b40eb3540a942f99c0954d82fb9044fdce3b",
+      "raw_bytes": 164951
+    },
+    {
+      "file": "npm-color-convert-math-trace-quench.json.gz",
+      "raw_sha256": "22c21ee6861782f31a916a3d85a4e74ee98e9e35990fa48544416815f61f513a",
+      "raw_bytes": 164962
+    },
+    {
+      "file": "npm-color-convert-math-trace.mjs",
+      "raw_sha256": "15da10de8b6b5557c145ee741b3b328bce9c113172a075f0c58e368244269520",
+      "raw_bytes": 1446
+    },
+    {
+      "file": "npm-color-convert-matrix-finding.json",
+      "raw_sha256": "c41e0fbd6ba81317ff49e3232dafc9acb1a91f6d0e53647074ea274aac99b25c",
+      "raw_bytes": 5208
+    },
+    {
+      "file": "npm-color-convert-matrix-node.json.gz",
+      "raw_sha256": "c8b58fd08cb4fd3f4bc28102f0719d9a88edc8bdc3cadc1a46afc2c63d205c0b",
+      "raw_bytes": 85666
+    },
+    {
+      "file": "npm-color-convert-matrix-node.stderr",
+      "raw_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "raw_bytes": 0
+    },
+    {
+      "file": "npm-color-convert-matrix-quench.json.gz",
+      "raw_sha256": "836d8e32176095d23e0863cfb5452b4388746c8fedf5b19ee885d07a9c991a81",
+      "raw_bytes": 85671
+    },
+    {
+      "file": "npm-color-convert-matrix-quench.stderr",
+      "raw_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "raw_bytes": 0
+    },
+    {
+      "file": "npm-color-convert-matrix.mjs",
+      "raw_sha256": "6df758eb86f52844d0332eabd53767244cd8ba576e8d21fc634bb6a7c85dbf3e",
+      "raw_bytes": 1132
+    },
+    {
+      "file": "npm-decoder-streaming-finding.json",
+      "raw_sha256": "688cc123273f63ed5d4031290897a7f4d36854183cfcecb07d34a39a83564d62",
+      "raw_bytes": 2957
+    },
+    {
+      "file": "npm-decoder-streaming-node.json",
+      "raw_sha256": "a577ec578e82f205a801b312240f065ae2d06c7bef23dee229a31fccc5ff36d6",
+      "raw_bytes": 9899
+    },
+    {
+      "file": "npm-decoder-streaming-quench.json",
+      "raw_sha256": "4f3a46fa99303c16f4f9dd30bb3e0aed08a24109077be1dabb6471d66f7cb545",
+      "raw_bytes": 16384
+    },
+    {
+      "file": "npm-decoder-streaming.cjs",
+      "raw_sha256": "4d89e2c438ca2342dd157b4a2240a096a58bc57a8297e86c645ea4a9f66b79b5",
+      "raw_bytes": 941
+    },
+    {
+      "file": "npm-import-attributes-isolated-node.json",
+      "raw_sha256": "2d716edde52c99c851550e99604d1a2449dc26471a55c9d03c288e17d4df590f",
+      "raw_bytes": 6153
+    },
+    {
+      "file": "npm-import-attributes-isolated-quench.json",
+      "raw_sha256": "f3aa26dc830a8c837da009fadfbd4432ff2fea9125955b985b8024f869c08aa9",
+      "raw_bytes": 3591
+    },
+    {
+      "file": "npm-import-attributes-node.json",
+      "raw_sha256": "73474a1fe81b3e858054f51711355ad343640c6ff3361efe3619a0ae879f7fa0",
+      "raw_bytes": 7309
+    },
+    {
+      "file": "npm-import-attributes-quench.json",
+      "raw_sha256": "fc7c2315b4630e119a58ea3da33f2245538c64e7f9682d927229c4813593d25b",
+      "raw_bytes": 5434
+    },
+    {
+      "file": "npm-libm-oracle-probe.rs",
+      "raw_sha256": "4091bc07d5678d081d84b51a6fb54d2cef47043bf59a8052426b0d8114721f60",
+      "raw_bytes": 413
+    },
+    {
+      "file": "npm-libm-oracle-results.json",
+      "raw_sha256": "47878a3ae9e5857cf94c1d0a6ee1374344b8caedda133afb4196508b971f648c",
+      "raw_bytes": 10837
+    },
+    {
+      "file": "npm-native-math-probe.rs",
+      "raw_sha256": "d77bc8ae9c7495b951bbf0b053e54280222e93baafac8107b5ea0876e25e5de4",
+      "raw_bytes": 419
+    },
+    {
+      "file": "npm-next-contracts-branches-node.ndjson",
+      "raw_sha256": "7454f7b21629f185a94cb4caefbbf52934392d18c6608ccfba041e44d059b013",
+      "raw_bytes": 8312
+    },
+    {
+      "file": "npm-next-contracts-branches-node.stderr",
+      "raw_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "raw_bytes": 0
+    },
+    {
+      "file": "npm-next-contracts-branches-quench.ndjson",
+      "raw_sha256": "7454f7b21629f185a94cb4caefbbf52934392d18c6608ccfba041e44d059b013",
+      "raw_bytes": 8312
+    },
+    {
+      "file": "npm-next-contracts-branches-quench.stderr",
+      "raw_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "raw_bytes": 0
+    },
+    {
+      "file": "npm-next-contracts-initial-oracle-finding.json",
+      "raw_sha256": "991b20d25a4832180556f435d32f1ac5c0a78407d7ac827943a163bd51e1e331",
+      "raw_bytes": 292
+    },
+    {
+      "file": "npm-next-contracts-node.ndjson",
+      "raw_sha256": "c52a747c4b39f9423a8a20d2737a89dc21834325c35a7608ab5eb3c3b64ba79e",
+      "raw_bytes": 2850
+    },
+    {
+      "file": "npm-next-contracts-node.stderr",
+      "raw_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "raw_bytes": 0
+    },
+    {
+      "file": "npm-next-contracts-quench.ndjson",
+      "raw_sha256": "c52a747c4b39f9423a8a20d2737a89dc21834325c35a7608ab5eb3c3b64ba79e",
+      "raw_bytes": 2850
+    },
+    {
+      "file": "npm-next-contracts-quench.stderr",
+      "raw_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "raw_bytes": 0
+    },
+    {
+      "file": "npm-next-contracts-statuses-draft-oracle-error.stderr",
+      "raw_sha256": "afe8d671fe8f6b5acdac228c27e33fb7ca954e81345b81e695e44c5429a8026f",
+      "raw_bytes": 454
+    },
+    {
+      "file": "npm-node-math-bit-corpus-with-atan.cjs",
+      "raw_sha256": "f618660ced2fc89fb6a863cf55412a80a07d207f82a141efe1f1c2304eb1274a",
+      "raw_bytes": 996
+    },
+    {
+      "file": "npm-node-math-bit-corpus-with-atan.json.gz",
+      "raw_sha256": "63a1b1026993c13e7381a435e2f7bc51b414c812e3916e5680f6d5fce2c579be",
+      "raw_bytes": 2365485
+    },
+    {
+      "file": "npm-node-math-bit-corpus.cjs",
+      "raw_sha256": "9071ec2d4c94397b38130783f40b21e12bf8eddb997c5e9ca6be23d9b160e60b",
+      "raw_bytes": 975
+    },
+    {
+      "file": "npm-node-math-bit-corpus.json.gz",
+      "raw_sha256": "bba2a84f713c28d2b92d820898add00b950571fa3ea45c8e7ff3ba0adb76c751",
+      "raw_bytes": 1645485
+    },
+    {
+      "file": "npm-node-math-bit-dense-native-results.json.gz",
+      "raw_sha256": "88ca17db3b7b9dd65fa78f05e0c1cd03dcb9501fe7b03c8196285f956b88c328",
+      "raw_bytes": 351566
+    },
+    {
+      "file": "npm-node-math-bit-dense-prototype-results.json",
+      "raw_sha256": "a353aebe349c3215746b49f5c90f72a9b3ea08e05f33f23deb9a0969d4ce529f",
+      "raw_bytes": 116
+    },
+    {
+      "file": "npm-node-math-bit-dense-quench-finding.json",
+      "raw_sha256": "b46898a7ca7de019e64bb22c1877b48336834a39ac5196cbed8f66aa7435f3b3",
+      "raw_bytes": 3310
+    },
+    {
+      "file": "npm-node-math-bit-dense-quench.json.gz",
+      "raw_sha256": "77a27feea359566196a64334a298d97381d1c25ffc5777297fbcf1500ec1755b",
+      "raw_bytes": 2837721
+    },
+    {
+      "file": "npm-node-math-bit-dense-quench.stderr",
+      "raw_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "raw_bytes": 0
+    },
+    {
+      "file": "npm-node-math-bit-dense.cjs",
+      "raw_sha256": "4961930356ec3f0ce02b46e57959436987efe4323c4119d9d15f21e6d60732d5",
+      "raw_bytes": 1099
+    },
+    {
+      "file": "npm-node-math-bit-dense.json.gz",
+      "raw_sha256": "80c4f7a1e7df4fceb1e58d999656a18aef8c8bcdaaec4844899ee989c6824467",
+      "raw_bytes": 2837721
+    },
+    {
+      "file": "npm-node-math-bit-prototype-results.json",
+      "raw_sha256": "bf8ad0d1139fc8b9f9849ff6adeb62a1db9337417a969d959953273a79f71fba",
+      "raw_bytes": 2018
+    },
+    {
+      "file": "npm-node-math-bit-prototype-v2-results.json",
+      "raw_sha256": "c4ed8091a03e9a653e57753d07e6f08e912a294cff5f7daf2efbba2f39a08f42",
+      "raw_bytes": 96
+    },
+    {
+      "file": "npm-node-math-bit-with-atan-opt1-results.json",
+      "raw_sha256": "80e7cdfb0766a839c5da715185af641e0a5a81aa0f9b8f2e4e76054bee8da006",
+      "raw_bytes": 115
+    },
+    {
+      "file": "npm-node-math-bit-with-atan-results.json",
+      "raw_sha256": "8ee454e9b34b45e88b829ff8531198e9d83578b190ca0c06b23b7c893f462ae3",
+      "raw_bytes": 96
+    },
+    {
+      "file": "npm-node-math-probe.rs",
+      "raw_sha256": "24a9d3012eee8087a11f366e2e3219b23d92c2f46b4b606e4b0c5a3b8ad450eb",
+      "raw_bytes": 477
+    },
+    {
+      "file": "npm-node-math-prototype-results.json",
+      "raw_sha256": "49f7d1a59b2b75c7130b4ea906c2f37309ac268048e2fc57e91e7413280aa2e4",
+      "raw_bytes": 10804
+    },
+    {
+      "file": "npm-node-math-with-atan-probe.rs",
+      "raw_sha256": "07a4466963e589135612d7cc446060e756a85598eee2d3a1518d295f41abd525",
+      "raw_bytes": 499
+    },
+    {
+      "file": "npm-nojit-preflight.json",
+      "raw_sha256": "6f0b1155a58904a76c06a6e91b0ce4bbc4e6e341de53513f4fdd2a4892c35f2e",
+      "raw_bytes": 1237
+    },
+    {
+      "file": "npm-whatwg-url-expanded-driver.mjs",
+      "raw_sha256": "4d60c550b1ff2c143255db7c8afff0e82cddcc214b377c11e27d3a7dfb1eb9d9",
+      "raw_bytes": 210
+    },
+    {
+      "file": "npm-whatwg-url-expanded-node.json",
+      "raw_sha256": "9b86b0fb49250ac478d1f0620000b2bb58f9e27ff7a55da039c1100201383628",
+      "raw_bytes": 1825
+    },
+    {
+      "file": "npm-whatwg-url-expanded-quench.json",
+      "raw_sha256": "9b86b0fb49250ac478d1f0620000b2bb58f9e27ff7a55da039c1100201383628",
+      "raw_bytes": 1825
+    },
+    {
+      "file": "npm-whatwg-url-expanded.mjs",
+      "raw_sha256": "33b2171ae3b69d9006fddcb6b6b36e43a639397b92a2ff6b3d69e6d45e310fd9",
+      "raw_bytes": 10070
+    }
+  ]
+}

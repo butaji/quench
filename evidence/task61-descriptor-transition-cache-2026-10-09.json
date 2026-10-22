@@ -1,0 +1,160 @@
+{
+  "task": 61,
+  "experiment": "Memoize value-free property descriptor transitions by parent shape, slot and attributes.",
+  "diagnostic_only": true,
+  "source_revision": "1d042a255dcd3980c7ed1d29f06405b8192b6e65",
+  "source_diff_sha256": "01cb1814d800a46d9b170a0f1e1e2c08d262c3cc066bbb5fe7ab19d2de64f460",
+  "host": {
+    "platform": "macOS 26.5 / Darwin 25.5 arm64",
+    "model": "Mac16,10",
+    "processor": "Apple M4",
+    "memory_bytes": 17179869184,
+    "resource_limits": "No container memory or CPU quota reported",
+    "measurement_backend": "/usr/bin/time -l"
+  },
+  "representation": {
+    "transition_identity": "(parent shape, slot, writable, enumerable, configurable, accessor)",
+    "accessor_values": "Getter/setter values are excluded from cache keys; transitions with either value present remain uncached so the long-lived transition map cannot root them.",
+    "shape_reuse_invariant": "After one closure from a function site is created, 31 further closures from the same site reuse its final shape and add zero shapes.",
+    "focused_tests": [
+      "equivalent_data_descriptor_transitions_share_one_shape",
+      "repeated_normal_closures_reuse_function_descriptor_shapes",
+      "accessor_descriptor_transitions_do_not_root_values_in_the_cache"
+    ]
+  },
+  "input": {
+    "path": "tasks/evidence/task61-normal-closure-10m-2026-10-09.cjs",
+    "sha256": "08ef4a8476b48cfbc784a53d205769adf3374e8836ad302d36d251b8bad8d109",
+    "iterations": 10000000,
+    "shape": "CJS IIFE repeatedly creates and discards the same anonymous normal-function closure"
+  },
+  "binaries": {
+    "baseline": {
+      "path": "target/iteration/task61-code-cursor-candidate-20261009/production/quench-node",
+      "sha256": "9175e3ac9ef03874f5a9d046963645ced1f427a0c8bd21de6b10632090e54783"
+    },
+    "candidate": {
+      "path": "target/iteration/task61-descriptor-transition-20261009/production/quench-node",
+      "sha256": "eabe4cb354506920ef9ef217bcc935403ec49b2d61748b8ff476b0efde334d28",
+      "build_command": "CARGO_TARGET_DIR=target/iteration/task61-descriptor-transition-20261009 CARGO_INCREMENTAL=0 CARGO_PROFILE_PRODUCTION_STRIP=symbols cargo build --locked --offline --profile production -p quench-node --bin quench-node"
+    }
+  },
+  "measurement": {
+    "method": "11 alternating production pairs, candidate first on odd pairs, using /usr/bin/time -l; all runs exited 0 and stdout SHA-256 matched.",
+    "runner": {
+      "path": "tasks/evidence/task61-descriptor-transition-pairs-2026-10-09.py",
+      "sha256": "f45678bab5fdd8791435e53d33c555aa2f4dc22e3387e4a2ab47653aff04b6c4"
+    },
+    "raw_pairs": {
+      "path": "tasks/evidence/task61-descriptor-transition-pairs-2026-10-09.csv",
+      "sha256": "fd4e900a946d1a2deedc128a7b8d126bf43ee5a21d9216171d18a930e8fd235d"
+    },
+    "instructions_retired": {
+      "baseline_median": 323246462565,
+      "candidate_median": 282829840499,
+      "paired_median_change_percent": -12.496408713244197,
+      "candidate_better_pairs": 11,
+      "pairs": 11
+    },
+    "elapsed_seconds": {
+      "baseline_median": 13.27,
+      "candidate_median": 11.26,
+      "paired_median_change_percent": -15.390505359877485,
+      "candidate_better_pairs": 11,
+      "pairs": 11
+    },
+    "maximum_rss_bytes": {
+      "baseline_median": 23986176,
+      "candidate_median": 18006016,
+      "paired_median_change_percent": -24.608043626448534,
+      "candidate_lower_pairs": 11,
+      "pairs": 11
+    },
+    "interpretation": "The candidate reduced closure-loop instructions, elapsed time and maximum RSS in every pair. This microbenchmark does not establish a V8-v7 fixture score gain."
+  },
+  "correctness": {
+    "runtime_library": {
+      "passed": 533,
+      "failed": 0,
+      "command": "CARGO_TARGET_DIR=target/iteration/task61-descriptor-transition-gate-20261009 CARGO_INCREMENTAL=0 cargo test --locked --offline -p quench-runtime --lib -- --quiet"
+    },
+    "test262": {
+      "stages": [1, 10, 11, 31, 48, 49, 50, 60, 62, 63],
+      "passed": 19115,
+      "failed": 16,
+      "total": 19131,
+      "new_failures": 0,
+      "known_baseline_failures": {
+        "stage_10": {
+          "count": 15,
+          "baseline_candidate_failure_sets_equal": true,
+          "comparison_path": "target/iteration/task61-closure-gate-baseline-stage10-20261009/comparison.json",
+          "comparison_sha256": "e8a0af0a021bb60083c43d48ead525df5fa2b9adee429bf121ee676a5b971641"
+        },
+        "stage_48": {
+          "count": 1,
+          "path": "built-ins/Function/call-bind-this-realm-value.js",
+          "baseline_result": "The exact clean baseline also fails with the same foreign-realm string-constructor identity mismatch."
+        }
+      },
+      "reports": "target/iteration/task61-descriptor-transition-gate-20261009/final-source/test262/",
+      "validation_manifest": "target/iteration/task61-descriptor-transition-gate-20261009/final-source/descriptor-transition-validation.json",
+      "validation_manifest_sha256": "e85e7f6152a0ac410830112072bc857bfb6bb022596c3cfb0bcbbdccd4b75878"
+    },
+    "node_oracle": {
+      "version": "v26.10.0",
+      "script": "target/iteration/task61-descriptor-transition-gate-20261009/final-source/descriptor-oracle.cjs",
+      "script_sha256": "f4d49d581c75d27999275ecab313e635b3da337abcb246ff20e6e568399f24f7",
+      "output_byte_identical": true,
+      "node_and_quench_exit": 0
+    }
+  },
+  "earley_boyer_diagnostic": {
+    "fixture": "target/iteration/task61-argument-shapes-profile-20261009/materialized-earley-boyer.js",
+    "fixture_sha256": "aa379c1d54f5d13de32ebf2b50729d0cbc64bb23de5e524256c7b2270213cc0b",
+    "sample_binary_sha256": "d1dd0ab93686c884468eca8d870c61b745c84612cc143c6ae9475d17442f1b35",
+    "sample_report": "target/iteration/task61-descriptor-transition-earley-sample-20261009/sample.txt",
+    "sample_report_sha256": "4b2d43f4b399f736c6de0beb11379877f4b1db6bbf33095bde6276677541269d",
+    "top_workload_symbols": {
+      "UTF-16 encoding in Vec::from_iter": 433,
+      "run_frame_general_until": 232,
+      "collect_slow": 107,
+      "outer_environment_binding": 58,
+      "root_local_var_binding": 47,
+      "compiler source_position": 47,
+      "name_binding": 46,
+      "active_shape_attributes": 41,
+      "Cell::object": 34,
+      "quicksort": 33,
+      "own_property": 31,
+      "atom_units_equal_str": 29,
+      "intern_atom": 27
+    },
+    "closure_source_path": "vm/construction.rs closure_in_realm -> set_function_source -> JsString::from_str in vm/wtf16.rs",
+    "interpretation": "The leading sampled cost is creating and UTF-16-encoding the same source text for each closure from a function site. This is a new candidate, not yet measured as a change."
+  },
+  "earley_boyer_paired_fixture_screen": {
+    "manifest": "tasks/evidence/task61-earley-descriptor-transition-pairs-2026-10-09.json",
+    "manifest_sha256": "01d66bc7216d7316ae7ee906362f548c0de8b63d922429ce7a2030e0b6af9326",
+    "raw_pairs": "tasks/evidence/task61-earley-descriptor-transition-pairs-2026-10-09.csv",
+    "raw_pairs_sha256": "0502e245a4676793235ee67c17fe73363d681e7c80940722bdb4b7d561993a89",
+    "score_median_baseline": 623,
+    "score_median_candidate": 629,
+    "instructions_median_baseline": 353589197283,
+    "instructions_median_candidate": 352920833933,
+    "instructions_paired_change_percent": 0.1323,
+    "instructions_candidate_lower_pairs": 5,
+    "elapsed_median_baseline_seconds": 14.31,
+    "elapsed_median_candidate_seconds": 14.31,
+    "elapsed_paired_change_percent": -0.3509,
+    "elapsed_candidate_faster_pairs": 9,
+    "max_rss_median_baseline_bytes": 62996480,
+    "max_rss_median_candidate_bytes": 56393728,
+    "max_rss_paired_change_percent": -10.5304,
+    "max_rss_candidate_lower_pairs": 11,
+    "pairs": 11,
+    "normalized_output_matches": true,
+    "interpretation": "No clear EarleyBoyer speed change; maximum RSS was lower in all 11 pairs, with a 10.53% paired median reduction. This is focused fixture evidence, not Task 61 qualification."
+  },
+  "next": "Prototype a lazily cached immutable function-source string per program/function site, then measure closure creation and EarleyBoyer separately."
+}

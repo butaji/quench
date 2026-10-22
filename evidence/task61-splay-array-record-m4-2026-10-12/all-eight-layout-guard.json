@@ -1,0 +1,166 @@
+{
+  "schema": 2,
+  "created_unix_ns": 1791795135085352000,
+  "updated_unix_ns": 1791795223104053000,
+  "change_kind": "layout",
+  "minimum_clean_pairs": 7,
+  "top_up_rounds": 7,
+  "maximum_top_up_batches_per_fixture": 2,
+  "instruction_aa_band_percent": 0.14,
+  "maximum_rss_increase_percent": 0.5,
+  "measurement_runner": {
+    "path": "/Users/admin/Code/GitHub/quench-v2/target/pinned/bdc9d6c4afc537fe8ed30d4fccba9157cd4232e345ce75810465a0fff98db109/quench-bench",
+    "sha256": "bdc9d6c4afc537fe8ed30d4fccba9157cd4232e345ce75810465a0fff98db109"
+  },
+  "baseline": {
+    "path": "/Users/admin/Code/GitHub/quench-v2/target/pinned/8432da1159e301d021c236148a4f4a13e5f1b8de40fb87893fb54a2ebf5795dd/quench-node",
+    "sha256": "8432da1159e301d021c236148a4f4a13e5f1b8de40fb87893fb54a2ebf5795dd"
+  },
+  "candidate": {
+    "path": "/private/tmp/quench-task61-array-record-next/target/pinned/61373063e8d1ed13b1aafdc959e3b831b331db33fabb056a89129630eab8879a/quench-node",
+    "sha256": "61373063e8d1ed13b1aafdc959e3b831b331db33fabb056a89129630eab8879a"
+  },
+  "timeout_ms": 300000,
+  "source_revision": "597dd55d41a79584e73d8965a16d5243a784349b",
+  "source_dirty": true,
+  "corpus": {
+    "checkout_clean": true,
+    "checkout_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+    "fixture_set_matches": true,
+    "pinned_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b"
+  },
+  "suite_inputs": [
+    {
+      "modified_unix_ns": 1791399842589165942,
+      "path": "quench-bench/js-engine-benchmark/v8-v7/base.js",
+      "sha256": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51",
+      "size_bytes": 9351
+    },
+    {
+      "modified_unix_ns": 1791399842589772400,
+      "path": "quench-bench/js-engine-benchmark/v8-v7/crypto.js",
+      "sha256": "5321d2ada9b61e01d5f281609513467cbaa7c0effb12c577ed08088d812453af",
+      "size_bytes": 48043
+    },
+    {
+      "modified_unix_ns": 1791399842589978359,
+      "path": "quench-bench/js-engine-benchmark/v8-v7/deltablue.js",
+      "sha256": "74b5a95f4877701073c6efef08e4ae306562747067e292925b69cbd629a511b9",
+      "size_bytes": 25653
+    },
+    {
+      "modified_unix_ns": 1791399842590910109,
+      "path": "quench-bench/js-engine-benchmark/v8-v7/earley-boyer.js",
+      "sha256": "dbf3aeb6b3d056e8ea35b5f19aa8c8a4fb1053e41d07f096c22483b2c1c6ee01",
+      "size_bytes": 195205
+    },
+    {
+      "modified_unix_ns": 1791399842591090359,
+      "path": "quench-bench/js-engine-benchmark/v8-v7/navier-stokes.js",
+      "sha256": "ce241465ffeee77b5c4f7119f522aa971fe1fe92c3aed76f7514ea43e07fec84",
+      "size_bytes": 12690
+    },
+    {
+      "modified_unix_ns": 1791399842591280317,
+      "path": "quench-bench/js-engine-benchmark/v8-v7/raytrace.js",
+      "sha256": "d52183ca324cdb88d9ee3e78326433fe2ca28d6436f0a6c3ec013ab67cb798eb",
+      "size_bytes": 27996
+    },
+    {
+      "modified_unix_ns": 1791399842592027317,
+      "path": "quench-bench/js-engine-benchmark/v8-v7/regexp.js",
+      "sha256": "5268b0d15931fda4e331de35fc58e5beded9a250b60764e1cc7cfc898ab53602",
+      "size_bytes": 111299
+    },
+    {
+      "modified_unix_ns": 1791399842592243692,
+      "path": "quench-bench/js-engine-benchmark/v8-v7/richards.js",
+      "sha256": "d86eac4108343a54ba6e10621a77b46f82f554c3b0a46e8fb4032d5cf65a2a11",
+      "size_bytes": 15776
+    },
+    {
+      "modified_unix_ns": 1791399842592552609,
+      "path": "quench-bench/js-engine-benchmark/v8-v7/splay.js",
+      "sha256": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d",
+      "size_bytes": 10746
+    }
+  ],
+  "initial_report": {
+    "path": "/private/tmp/quench-task61-array-record-next/evidence/task61-splay-array-record-m4-2026-10-12/all-eight-pilot-3.json",
+    "sha256": "a6499bdfe7a8211500762b3c8d68eb03a702273762de9a72fcc35e24d78e3e87"
+  },
+  "top_up_batches": [
+    {
+      "fixture": "crypto.js",
+      "ordinal": 1,
+      "rounds": 7,
+      "report": "/private/tmp/quench-task61-array-record-next/evidence/task61-splay-array-record-m4-2026-10-12/all-eight-layout-guard-topups/crypto.js-batch-1.json",
+      "state": "complete",
+      "report_sha256": "4b65c99af7ca332ca1415173e7c7a7a20ff13c52a5d6f7c2ec88c17e480acbfc",
+      "runner_exit_code": 0
+    },
+    {
+      "fixture": "deltablue.js",
+      "ordinal": 1,
+      "rounds": 7,
+      "report": "/private/tmp/quench-task61-array-record-next/evidence/task61-splay-array-record-m4-2026-10-12/all-eight-layout-guard-topups/deltablue.js-batch-1.json",
+      "state": "complete",
+      "report_sha256": "67ae7bd5248cbcb8806611def45f5e55f981a688172207ecd549e1f87027af3b",
+      "runner_exit_code": 0
+    },
+    {
+      "fixture": "earley-boyer.js",
+      "ordinal": 1,
+      "rounds": 7,
+      "report": "/private/tmp/quench-task61-array-record-next/evidence/task61-splay-array-record-m4-2026-10-12/all-eight-layout-guard-topups/earley-boyer.js-batch-1.json",
+      "state": "complete",
+      "report_sha256": "7d80d7e288f1673e2d67b1927413bedb8cb88455fa7c0651bee2a5f966094542",
+      "runner_exit_code": 0
+    },
+    {
+      "fixture": "navier-stokes.js",
+      "ordinal": 1,
+      "rounds": 7,
+      "report": "/private/tmp/quench-task61-array-record-next/evidence/task61-splay-array-record-m4-2026-10-12/all-eight-layout-guard-topups/navier-stokes.js-batch-1.json",
+      "state": "complete",
+      "report_sha256": "e581db402745542dc8505c6668d7032bd695953d1ac779d5bda42b5b212f2ee3",
+      "runner_exit_code": 0
+    },
+    {
+      "fixture": "raytrace.js",
+      "ordinal": 1,
+      "rounds": 7,
+      "report": "/private/tmp/quench-task61-array-record-next/evidence/task61-splay-array-record-m4-2026-10-12/all-eight-layout-guard-topups/raytrace.js-batch-1.json",
+      "state": "complete",
+      "report_sha256": "23482b2d01c1ffe5a430d0ada42b1a04d3d6c9be42630726da62dfcba9d61db9",
+      "runner_exit_code": 0
+    },
+    {
+      "fixture": "regexp.js",
+      "ordinal": 1,
+      "rounds": 7,
+      "report": "/private/tmp/quench-task61-array-record-next/evidence/task61-splay-array-record-m4-2026-10-12/all-eight-layout-guard-topups/regexp.js-batch-1.json",
+      "state": "complete",
+      "report_sha256": "dcafbc73ab5cbe1c5f77dddb9b0628db83bfcd9f5ddd8e13e3c8914d4a2f4490",
+      "runner_exit_code": 0
+    },
+    {
+      "fixture": "richards.js",
+      "ordinal": 1,
+      "rounds": 7,
+      "report": "/private/tmp/quench-task61-array-record-next/evidence/task61-splay-array-record-m4-2026-10-12/all-eight-layout-guard-topups/richards.js-batch-1.json",
+      "state": "complete",
+      "report_sha256": "40e1056e74a0622c157d84676016a5a661e34912829ab1cb36bbd13bb564b41a",
+      "runner_exit_code": 0
+    },
+    {
+      "fixture": "splay.js",
+      "ordinal": 1,
+      "rounds": 7,
+      "report": "/private/tmp/quench-task61-array-record-next/evidence/task61-splay-array-record-m4-2026-10-12/all-eight-layout-guard-topups/splay.js-batch-1.json",
+      "state": "complete",
+      "report_sha256": "7626ca0c8c0aff5effe13b17e03337e808c5f82082b623414fa6bfebb3b45426",
+      "runner_exit_code": 0
+    }
+  ]
+}

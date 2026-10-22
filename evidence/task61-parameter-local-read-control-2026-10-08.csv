@@ -1,0 +1,12 @@
+fixture,pair,order,baseline_instructions,baseline_max_rss_bytes,baseline_elapsed_seconds,baseline_user_seconds,candidate_instructions,candidate_max_rss_bytes,candidate_elapsed_seconds,candidate_user_seconds
+local_read_control,1,candidate>baseline,10946690246,19595264,0.31,0.31,9780794404,19742720,0.27,0.26
+local_read_control,2,baseline>candidate,10948124687,19955712,0.31,0.31,9780665232,19759104,0.27,0.26
+local_read_control,3,candidate>baseline,10946787114,19775488,0.31,0.31,9781005004,19775488,0.27,0.26
+local_read_control,4,baseline>candidate,10948374130,19824640,0.31,0.31,9780735449,19726336,0.27,0.26
+local_read_control,5,candidate>baseline,10948718271,19955712,0.31,0.31,9780472430,19808256,0.27,0.27
+local_read_control,6,baseline>candidate,10948484077,19955712,0.32,0.31,9780548007,19709952,0.26,0.26
+local_read_control,7,candidate>baseline,10948399792,19955712,0.31,0.31,9780870064,19742720,0.27,0.26
+local_read_control,8,baseline>candidate,10947025854,19742720,0.31,0.31,9780931944,19775488,0.27,0.26
+local_read_control,9,candidate>baseline,10946610713,19709952,0.31,0.31,9780748782,19726336,0.27,0.26
+local_read_control,10,baseline>candidate,10946649044,19742720,0.32,0.31,9780260306,19742720,0.27,0.26
+local_read_control,11,candidate>baseline,10948007623,19922944,0.31,0.31,9780471181,19677184,0.27,0.26

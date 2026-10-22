@@ -1,0 +1,48 @@
+{
+  "kind": "task61-splay-stock-candidate-diagnostic",
+  "platform": "Apple M4 arm64 macOS",
+  "source_revision": "f76795545b4f2f8cc7cf423da49e758215525b9f",
+  "candidate_patch_sha256": "afe4cc04130ef409bc840fb8ee68e7cf4ce4954815f16e8f5e760adb8d06c690",
+  "candidate_binary_sha256": "d71b870433be8173470951e76872e2cddb71fd0723cbb6c2d7695ffbaf345ebe",
+  "parent_binary_sha256": "c6e60e98592418ca595b1bb15aff2005e5388a321a757fbafae9723155d7e1ca",
+  "runner_sha256": "bdc9d6c4afc537fe8ed30d4fccba9157cd4232e345ce75810465a0fff98db109",
+  "stock_report": "splay-stock-11.json",
+  "stock_report_sha256": "9f43c2784b7a9a194c6f2978c38e789e808bcb29d36acb89fbcf482b28d546bb",
+  "complete": true,
+  "fixture_valid": true,
+  "outputs_equal": true,
+  "qualification_ready": false,
+  "rounds_per_engine": 11,
+  "medians": {
+    "bun": {
+      "valid_samples": 11,
+      "median_score": 9901.0,
+      "median_max_rss_bytes": 65601536
+    },
+    "node": {
+      "valid_samples": 11,
+      "median_score": 14766.0,
+      "median_max_rss_bytes": 406323200
+    },
+    "quench": {
+      "valid_samples": 11,
+      "median_score": 9124.0,
+      "median_max_rss_bytes": 117735424
+    },
+    "quickjs": {
+      "valid_samples": 11,
+      "median_score": 8557.0,
+      "median_max_rss_bytes": 151044096
+    }
+  },
+  "best_stock_score_engine": "node --jitless",
+  "score_distance_reference_over_quench": 1.618369136343709,
+  "lowest_stock_rss_engine": "bun no-JIT",
+  "rss_distance_quench_over_reference": 1.7947052947052946,
+  "host_snapshots": 88,
+  "maximum_one_minute_load": 3.99,
+  "logical_cpus": 10,
+  "maximum_load_per_logical_cpu": 0.399,
+  "contending_process_patterns_seen": [],
+  "decision": "candidate diagnostic only; neither bar won; official trunk scoreboard unchanged"
+}

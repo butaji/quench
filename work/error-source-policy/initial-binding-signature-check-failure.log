@@ -1,0 +1,135 @@
+    Checking quench-runtime v0.1.0 (/workspace/quench/crates/quench-runtime)
+    Checking quench-wasm v0.1.0 (/workspace/quench/crates/quench-wasm)
+    Checking quench-node v0.1.0 (/workspace/quench/crates/quench-node)
+error[E0061]: this function takes 5 arguments but 4 arguments were supplied
+   --> crates/quench-node/src/modules/node_errors_shared_vm.rs:474:5
+    |
+474 |     super::event_constructor_shared_vm::set(context, result, "sourceLine", source_line)?;
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^--------------------------------------------
+    |                                            |                 |
+    |                                            |                 expected `RootId`, found `&str`
+    |                                            argument #5 of type `RootId` is missing
+    |
+note: function defined here
+   --> crates/quench-node/src/modules/event_constructor_shared_vm.rs:14:15
+    |
+ 14 | pub(super) fn set(
+    |               ^^^
+...
+ 17 |     object: RootId,
+    |     --------------
+ 18 |     key: RootId,
+ 19 |     value: RootId,
+    |     -------------
+help: provide the argument
+    |
+474 -     super::event_constructor_shared_vm::set(context, result, "sourceLine", source_line)?;
+474 +     super::event_constructor_shared_vm::set(context, result, /* RootId */, source_line, /* RootId */)?;
+    |
+
+error[E0061]: this function takes 5 arguments but 4 arguments were supplied
+   --> crates/quench-node/src/modules/node_errors_shared_vm.rs:479:5
+    |
+479 |     super::event_constructor_shared_vm::set(context, result, "scriptResourceName", resource)?;
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^-------------------------------------------------
+    |                                            |                 |
+    |                                            |                 expected `RootId`, found `&str`
+    |                                            argument #5 of type `RootId` is missing
+    |
+note: function defined here
+   --> crates/quench-node/src/modules/event_constructor_shared_vm.rs:14:15
+    |
+ 14 | pub(super) fn set(
+    |               ^^^
+...
+ 17 |     object: RootId,
+    |     --------------
+ 18 |     key: RootId,
+ 19 |     value: RootId,
+    |     -------------
+help: provide the argument
+    |
+479 -     super::event_constructor_shared_vm::set(context, result, "scriptResourceName", resource)?;
+479 +     super::event_constructor_shared_vm::set(context, result, /* RootId */, resource, /* RootId */)?;
+    |
+
+error[E0061]: this function takes 5 arguments but 4 arguments were supplied
+   --> crates/quench-node/src/modules/node_errors_shared_vm.rs:481:5
+    |
+481 |     super::event_constructor_shared_vm::set(context, result, "lineNumber", line)?;
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^-------------------------------------
+    |                                            |                 |
+    |                                            |                 expected `RootId`, found `&str`
+    |                                            argument #5 of type `RootId` is missing
+    |
+note: function defined here
+   --> crates/quench-node/src/modules/event_constructor_shared_vm.rs:14:15
+    |
+ 14 | pub(super) fn set(
+    |               ^^^
+...
+ 17 |     object: RootId,
+    |     --------------
+ 18 |     key: RootId,
+ 19 |     value: RootId,
+    |     -------------
+help: provide the argument
+    |
+481 -     super::event_constructor_shared_vm::set(context, result, "lineNumber", line)?;
+481 +     super::event_constructor_shared_vm::set(context, result, /* RootId */, line, /* RootId */)?;
+    |
+
+error[E0061]: this function takes 5 arguments but 4 arguments were supplied
+   --> crates/quench-node/src/modules/node_errors_shared_vm.rs:483:5
+    |
+483 |     super::event_constructor_shared_vm::set(context, result, "startColumn", column)?;
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^----------------------------------------
+    |                                            |                 |
+    |                                            |                 expected `RootId`, found `&str`
+    |                                            argument #5 of type `RootId` is missing
+    |
+note: function defined here
+   --> crates/quench-node/src/modules/event_constructor_shared_vm.rs:14:15
+    |
+ 14 | pub(super) fn set(
+    |               ^^^
+...
+ 17 |     object: RootId,
+    |     --------------
+ 18 |     key: RootId,
+ 19 |     value: RootId,
+    |     -------------
+help: provide the argument
+    |
+483 -     super::event_constructor_shared_vm::set(context, result, "startColumn", column)?;
+483 +     super::event_constructor_shared_vm::set(context, result, /* RootId */, column, /* RootId */)?;
+    |
+
+error[E0061]: this function takes 5 arguments but 4 arguments were supplied
+   --> crates/quench-node/src/modules/node_errors_shared_vm.rs:496:5
+    |
+496 |     super::event_constructor_shared_vm::set(context, binding, "getErrorSourcePositions", function)?;
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^-------------------------------------------------------
+    |                                            |                  |
+    |                                            |                  expected `RootId`, found `&str`
+    |                                            argument #5 of type `RootId` is missing
+    |
+note: function defined here
+   --> crates/quench-node/src/modules/event_constructor_shared_vm.rs:14:15
+    |
+ 14 | pub(super) fn set(
+    |               ^^^
+...
+ 17 |     object: RootId,
+    |     --------------
+ 18 |     key: RootId,
+ 19 |     value: RootId,
+    |     -------------
+help: provide the argument
+    |
+496 -     super::event_constructor_shared_vm::set(context, binding, "getErrorSourcePositions", function)?;
+496 +     super::event_constructor_shared_vm::set(context, binding, /* RootId */, function, /* RootId */)?;
+    |
+
+For more information about this error, try `rustc --explain E0061`.
+error: could not compile `quench-node` (lib) due to 5 previous errors

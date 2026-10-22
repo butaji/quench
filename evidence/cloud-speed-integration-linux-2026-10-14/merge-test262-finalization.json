@@ -1,0 +1,260 @@
+{
+  "schema": 1,
+  "engine": "quench",
+  "provenance": {
+    "source_revision": "e216b411e250809da017437bd1044464163428c6",
+    "source_dirty": true,
+    "binary": "/workspace/quench/target/production/run-stages",
+    "host": "linux-x86_64",
+    "timeout_ms": 30000,
+    "jobs": 4
+  },
+  "total": 47,
+  "passed": 47,
+  "failed": 0,
+  "stages": {
+    "47": {
+      "passed": 47,
+      "total": 47,
+      "failed": 0
+    }
+  },
+  "families": {},
+  "outcomes": [
+    {
+      "path": "built-ins/FinalizationRegistry/constructor.js",
+      "stage": "47",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/FinalizationRegistry/instance-extensible.js",
+      "stage": "47",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/FinalizationRegistry/is-a-constructor.js",
+      "stage": "47",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/FinalizationRegistry/length.js",
+      "stage": "47",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/FinalizationRegistry/name.js",
+      "stage": "47",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/FinalizationRegistry/newtarget-prototype-is-not-object.js",
+      "stage": "47",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/FinalizationRegistry/prop-desc.js",
+      "stage": "47",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/FinalizationRegistry/proto-from-ctor-realm.js",
+      "stage": "47",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/FinalizationRegistry/proto.js",
+      "stage": "47",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/FinalizationRegistry/prototype/Symbol.toStringTag.js",
+      "stage": "47",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/FinalizationRegistry/prototype/constructor.js",
+      "stage": "47",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/FinalizationRegistry/prototype/prop-desc.js",
+      "stage": "47",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/FinalizationRegistry/prototype/proto.js",
+      "stage": "47",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/FinalizationRegistry/prototype/register/custom-this.js",
+      "stage": "47",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/FinalizationRegistry/prototype/register/heldValue-same-as-target.js",
+      "stage": "47",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/FinalizationRegistry/prototype/register/holdings-any-value-type.js",
+      "stage": "47",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/FinalizationRegistry/prototype/register/length.js",
+      "stage": "47",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/FinalizationRegistry/prototype/register/name.js",
+      "stage": "47",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/FinalizationRegistry/prototype/register/not-a-constructor.js",
+      "stage": "47",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/FinalizationRegistry/prototype/register/prop-desc.js",
+      "stage": "47",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/FinalizationRegistry/prototype/register/return-undefined-register-itself.js",
+      "stage": "47",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/FinalizationRegistry/prototype/register/return-undefined-register-object.js",
+      "stage": "47",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/FinalizationRegistry/prototype/register/return-undefined-register-symbol.js",
+      "stage": "47",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/FinalizationRegistry/prototype/register/this-does-not-have-internal-target-throws.js",
+      "stage": "47",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/FinalizationRegistry/prototype/register/this-not-object-throws.js",
+      "stage": "47",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/FinalizationRegistry/prototype/register/throws-when-target-cannot-be-held-weakly.js",
+      "stage": "47",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/FinalizationRegistry/prototype/register/throws-when-unregisterToken-not-undefined-and-cannot-be-held-weakly.js",
+      "stage": "47",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/FinalizationRegistry/prototype/register/unregisterToken-same-as-holdings-and-target.js",
+      "stage": "47",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/FinalizationRegistry/prototype/register/unregisterToken-same-as-holdings.js",
+      "stage": "47",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/FinalizationRegistry/prototype/register/unregisterToken-same-as-target.js",
+      "stage": "47",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/FinalizationRegistry/prototype/unregister/custom-this.js",
+      "stage": "47",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/FinalizationRegistry/prototype/unregister/length.js",
+      "stage": "47",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/FinalizationRegistry/prototype/unregister/name.js",
+      "stage": "47",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/FinalizationRegistry/prototype/unregister/not-a-constructor.js",
+      "stage": "47",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/FinalizationRegistry/prototype/unregister/prop-desc.js",
+      "stage": "47",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/FinalizationRegistry/prototype/unregister/this-does-not-have-internal-cells-throws.js",
+      "stage": "47",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/FinalizationRegistry/prototype/unregister/this-not-object-throws.js",
+      "stage": "47",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/FinalizationRegistry/prototype/unregister/throws-when-unregisterToken-cannot-be-held-weakly.js",
+      "stage": "47",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/FinalizationRegistry/prototype/unregister/unregister-object-token.js",
+      "stage": "47",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/FinalizationRegistry/prototype/unregister/unregister-symbol-token.js",
+      "stage": "47",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/FinalizationRegistry/prototype-from-newtarget-abrupt.js",
+      "stage": "47",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/FinalizationRegistry/prototype-from-newtarget-custom.js",
+      "stage": "47",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/FinalizationRegistry/prototype-from-newtarget.js",
+      "stage": "47",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/FinalizationRegistry/returns-new-object-from-constructor.js",
+      "stage": "47",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/FinalizationRegistry/target-not-callable-throws.js",
+      "stage": "47",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/FinalizationRegistry/undefined-newtarget-throws.js",
+      "stage": "47",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/FinalizationRegistry/unnaffected-by-poisoned-cleanupCallback.js",
+      "stage": "47",
+      "outcome": "pass"
+    }
+  ]
+}

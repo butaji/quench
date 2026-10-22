@@ -1,0 +1,188 @@
+{
+  "schema": 1,
+  "task": "61",
+  "date": "2026-10-08",
+  "kind": "Apple-M4 empty-process startup RSS and memory census diagnostic",
+  "qualification_ready": false,
+  "decision": "The Quench startup floor is reproducibly high. The Node host adds substantial live allocations, while the runtime-only process also has a large allocator/RSS floor. Attribute phase owners before selecting laziness or allocator changes.",
+  "host": {
+    "cpu": "Apple M4",
+    "os": "macOS 26.5 build 25F71 ARM64",
+    "kernel": "Darwin 25.5.0",
+    "measurement_tool": "/usr/bin/time -l; vmmap --summary"
+  },
+  "source_revision": "04cdc2e398f7c95c69a999c84749da848e0fd423",
+  "production_rss": {
+    "metric": "maximum resident set size from /usr/bin/time -l; five fresh processes per row",
+    "empty_eval": {
+      "quench": {
+        "command": "target/production/quench-node -e \"\"",
+        "binary_sha256": "1420a5d1e9e68e83b50c1a4b4def32de90a9b2cee1ff0b7a175ff0f132d1d16c",
+        "samples_bytes": [
+          19464192,
+          19726336,
+          19709952,
+          19464192,
+          19775488
+        ],
+        "median_bytes": 19709952
+      },
+      "quickjs": {
+        "version": "QuickJS version 2026-06-04",
+        "executable_sha256": "4b0d0da1beae0a88d0724c7a0869797dee7a24c5bc1e74cfb5d2f69d17811c2b",
+        "command": "qjs -e \"\"",
+        "samples_bytes": [
+          2048000,
+          2048000,
+          2048000,
+          2048000,
+          2048000
+        ],
+        "median_bytes": 2048000
+      },
+      "bun_jit_disabled": {
+        "version": "Bun 1.4.2",
+        "executable_sha256": "b36d2e9d9bd50e3a3b6a8f2d481839417d6600d4c1753411b094ee0da3222cef",
+        "command": "BUN_JSC_useJIT=0 bun -e \"\"",
+        "samples_bytes": [
+          2539520,
+          2539520,
+          2539520,
+          2539520,
+          2506752
+        ],
+        "median_bytes": 2539520,
+        "note": "Empty eval exits before exercising the same console/runtime paths as the console row; see that row for initialized-runtime comparison."
+      },
+      "node_jitless": {
+        "version": "Node v26.10.0",
+        "executable_sha256": "4ca2a42d6d55a834b04d0892c5bc646a6869fcebec57f91c849dac0aa1031610",
+        "command": "node --jitless -e \"\"",
+        "samples_bytes": [
+          39616512,
+          39600128,
+          39600128,
+          39616512,
+          39583744
+        ],
+        "median_bytes": 39600128
+      }
+    },
+    "console_eval": {
+      "quench": {
+        "command": "target/production/quench-node -e \"console.log(1)\"",
+        "samples_bytes": [
+          20660224,
+          20512768,
+          20545536,
+          20594688,
+          20267008
+        ],
+        "median_bytes": 20545536
+      },
+      "quickjs": {
+        "command": "qjs -e \"print(1)\"",
+        "samples_bytes": [
+          2146304,
+          2146304,
+          2146304,
+          2146304,
+          2146304
+        ],
+        "median_bytes": 2146304
+      },
+      "bun_jit_disabled": {
+        "command": "BUN_JSC_useJIT=0 bun -e \"console.log(1)\"",
+        "samples_bytes": [
+          16203776,
+          16203776,
+          16203776,
+          16203776,
+          16203776
+        ],
+        "median_bytes": 16203776,
+        "jit_proof": "BUN_JSC_useJIT=0 BUN_JSC_dumpOptions=1 bun -e console.log(Bun.version) reported useJIT=false; Bun version 1.4.2."
+      },
+      "node_jitless": {
+        "command": "node --jitless -e \"console.log(1)\"",
+        "samples_bytes": [
+          42156032,
+          42254336,
+          42303488,
+          42188800,
+          42270720
+        ],
+        "median_bytes": 42254336
+      }
+    }
+  },
+  "vmmap": {
+    "command": "Start production quench-node with -e \"for (;;) {}\"; after 0.3s run vmmap --summary PID.",
+    "binary_sha256": "1420a5d1e9e68e83b50c1a4b4def32de90a9b2cee1ff0b7a175ff0f132d1d16c",
+    "physical_footprint": "9.9 MB",
+    "malloc_small_resident_bytes": 8699904,
+    "malloc_small_allocated_bytes": 4932608,
+    "malloc_small_fragmentation_bytes": 4258816,
+    "malloc_small_fragmentation_percent": 47,
+    "malloc_metadata_dirty_bytes": 311296,
+    "data_dirty_bytes": 352256,
+    "raw_report": {
+      "path": "tasks/evidence/task61-startup-rss-vmmap-2026-10-08.txt",
+      "sha256": "6299de5d5a6de8acb07f5579d61f74dad3c0003c52031183681036e2782b1d6b"
+    }
+  },
+  "profile_memory": {
+    "build": "CARGO_INCREMENTAL=0 cargo build --profile production -p quench-node --features quench-runtime/profile-memory --bin quench-node; QUENCH_MEMORY=1 target/production/quench-node -e \"\"",
+    "node_binary_sha256": "d8697211ae1e812ee24b1079250faada843b405ccb79d3e0e76cb85e395dab8b",
+    "node_at_initialized": {
+      "heap_slots": 6411,
+      "slot_bytes": 786432,
+      "cell_bytes": 795575,
+      "property_values": 9668,
+      "property_capacity": 16384,
+      "shapes": 7868,
+      "shape_bytes": 655360,
+      "transitions": 3643,
+      "transition_bytes": 229376,
+      "frame_bytes": 632,
+      "field_cache_bytes": 43392,
+      "allocator_size_in_use_bytes": 5081568,
+      "allocator_size_allocated_bytes": 29360128,
+      "allocator_resident_bytes": 20332544
+    },
+    "runtime_only_build": "CARGO_INCREMENTAL=0 cargo build --profile production -p quench-runtime --features profile-memory --bin quench; QUENCH_MEMORY=1 target/production/quench -e \"\"",
+    "runtime_binary_sha256": "45007e3ed5af1ce5a34e0f198117f97d81488b5d3e971278e1f04f84d5c85ed6",
+    "runtime_at_initialized": {
+      "heap_slots": 3189,
+      "slot_bytes": 393216,
+      "cell_bytes": 194387,
+      "property_values": 6516,
+      "property_capacity": 8192,
+      "shapes": 6250,
+      "shape_bytes": 655360,
+      "transitions": 2835,
+      "transition_bytes": 114688,
+      "frame_bytes": 0,
+      "field_cache_bytes": 0,
+      "allocator_size_in_use_bytes": 1901744,
+      "allocator_size_allocated_bytes": 16777216,
+      "allocator_resident_bytes": 10977280
+    },
+    "raw_node_report": {
+      "path": "tasks/evidence/task61-startup-rss-node-profile-2026-10-08.stderr",
+      "sha256": "e6258e8ac9a1a71fb3d31026ed991463b5f1619e27926aac68ce87c772250e67"
+    },
+    "raw_runtime_report": {
+      "path": "tasks/evidence/task61-startup-rss-runtime-profile-2026-10-08.stderr",
+      "sha256": "5a8ad422489f6c8fc20dddcfe84a21bbf7dedc1681a993a6c595cde6402f38ec"
+    },
+    "interpretation": "Node bootstrap adds 3,180,000 bytes of allocator size-in-use relative to the SystemHost runtime-only initialization and substantially increases resident allocation accounting. The runtime-only binary still reports about 11 MB allocator-resident, so both guest live data and allocator/runtime overhead need phase attribution."
+  },
+  "next_measurement": "Add profile-memory snapshots around materialize_program_constants, install_builtins, and initialize_host; compare runtime-only and quench-node before modifying eager builtin or host initialization.",
+  "limitations": [
+    "One M4 only; no Linux result.",
+    "Startup RSS comparison is a diagnostic, not a task 61 gate.",
+    "The profile-memory binaries include counters and are used only for attribution; production max-RSS values come from feature-free binaries.",
+    "No source has yet been changed to defer builtins, polyfills, ICU/Temporal, or modules."
+  ]
+}

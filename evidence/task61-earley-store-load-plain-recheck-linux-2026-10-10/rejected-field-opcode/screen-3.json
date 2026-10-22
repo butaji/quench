@@ -1,0 +1,77 @@
+{
+  "schema": 1,
+  "experiment": "fuse GetField -> StoreLocalPlain on EarleyBoyer",
+  "source_revision": "eddd121bcb39955e26a726871fb788012b3896f1",
+  "baseline_sha256": "88e7706b6e85bc036dfe5fe7a020e86e86ae3e9d8789fb506b2aea6c3fa6590a",
+  "candidate_sha256": "655a69b2278e32d0f517a20450f9ecc2605ea5c8bd0065eb987d0ac5d9ec7514",
+  "fixture_sha256": "aa379c1d54f5d13de32ebf2b50729d0cbc64bb23de5e524256c7b2270213cc0b",
+  "node_oracle_sha256": "f9d9da80af7797cf80d4a57006bdcc6d6a4282dca65d503114ea50e5daae0dbc",
+  "rounds": 3,
+  "baseline_score_median": 406.0,
+  "candidate_score_median": 403.0,
+  "score_delta_median": -3.0,
+  "baseline_maximum_rss_median_bytes": 42827776,
+  "candidate_maximum_rss_median_bytes": 42242048,
+  "maximum_rss_delta_median_bytes": -585728,
+  "valid": true,
+  "output_equal": true,
+  "pairs": [
+    {
+      "pair": 1,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "baseline_score": 395.0,
+      "candidate_score": 405.0,
+      "score_delta": 10.0,
+      "baseline_rss_bytes": 42827776,
+      "candidate_rss_bytes": 42242048,
+      "rss_delta_bytes": -585728,
+      "baseline_wall_ns": 23124016690,
+      "candidate_wall_ns": 23028401872,
+      "baseline_output": [],
+      "candidate_output": []
+    },
+    {
+      "pair": 2,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "baseline_score": 406.0,
+      "candidate_score": 403.0,
+      "score_delta": -3.0,
+      "baseline_rss_bytes": 42860544,
+      "candidate_rss_bytes": 42110976,
+      "rss_delta_bytes": -749568,
+      "baseline_wall_ns": 23110298206,
+      "candidate_wall_ns": 22976479699,
+      "baseline_output": [],
+      "candidate_output": []
+    },
+    {
+      "pair": 3,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "baseline_score": 406.0,
+      "candidate_score": 400.0,
+      "score_delta": -6.0,
+      "baseline_rss_bytes": 42627072,
+      "candidate_rss_bytes": 42307584,
+      "rss_delta_bytes": -319488,
+      "baseline_wall_ns": 22859168097,
+      "candidate_wall_ns": 23341806782,
+      "baseline_output": [],
+      "candidate_output": []
+    }
+  ]
+}

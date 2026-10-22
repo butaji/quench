@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  File "/workspace/scratch/npm-integrity-final-suites.py", line 96, in <module>
+    main()
+  File "/workspace/scratch/npm-integrity-final-suites.py", line 54, in main
+    raise RuntimeError('two-byte corpus completion missing')
+RuntimeError: two-byte corpus completion missing

@@ -1,0 +1,379 @@
+{
+  "schema": 1,
+  "task": "61",
+  "experiment": "owned environment-slot direct-read optimization on EarleyBoyer",
+  "baseline_sha256": "f3940bcc9cff03f9bf3c6888864e3d96586d4991f4c56df4cc1e87d829e9fe00",
+  "candidate_sha256": "4f82a11eec505125e40f93e9bebf4ac04c198583040f924bd1b155f86232cded",
+  "fixture_sha256": "aa379c1d54f5d13de32ebf2b50729d0cbc64bb23de5e524256c7b2270213cc0b",
+  "corpus_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+  "rounds": 11,
+  "bootstrap_replicates": 100000,
+  "baseline_score_median": 380.0,
+  "candidate_score_median": 385.0,
+  "score_delta_median": 6.0,
+  "score_delta_95_ci": [
+    0.0,
+    15.0
+  ],
+  "baseline_maximum_rss_median_bytes": 42770432,
+  "candidate_maximum_rss_median_bytes": 42790912,
+  "maximum_rss_delta_median_bytes": 77824,
+  "maximum_rss_delta_95_ci_bytes": [
+    -4096,
+    126976
+  ],
+  "candidate_score_worse_pairs": 2,
+  "candidate_rss_lower_pairs": 4,
+  "valid": true,
+  "output_equal": true,
+  "pairs": [
+    {
+      "pair": 1,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "baseline_score": 380.0,
+      "candidate_score": 395.0,
+      "score_delta": 15.0,
+      "baseline_rss_bytes": 42852352,
+      "candidate_rss_bytes": 42577920,
+      "rss_delta_bytes": -274432,
+      "baseline_wall_ns": 25362683958,
+      "candidate_wall_ns": 24240219556
+    },
+    {
+      "pair": 2,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "baseline_score": 383.0,
+      "candidate_score": 389.0,
+      "score_delta": 6.0,
+      "baseline_rss_bytes": 42770432,
+      "candidate_rss_bytes": 42766336,
+      "rss_delta_bytes": -4096,
+      "baseline_wall_ns": 24769870611,
+      "candidate_wall_ns": 24271509682
+    },
+    {
+      "pair": 3,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "baseline_score": 382.0,
+      "candidate_score": 376.0,
+      "score_delta": -6.0,
+      "baseline_rss_bytes": 42737664,
+      "candidate_rss_bytes": 42823680,
+      "rss_delta_bytes": 86016,
+      "baseline_wall_ns": 24173274764,
+      "candidate_wall_ns": 25096424434
+    },
+    {
+      "pair": 4,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "baseline_score": 386.0,
+      "candidate_score": 381.0,
+      "score_delta": -5.0,
+      "baseline_rss_bytes": 42504192,
+      "candidate_rss_bytes": 42582016,
+      "rss_delta_bytes": 77824,
+      "baseline_wall_ns": 24495202709,
+      "candidate_wall_ns": 24160863964,
+      "results": {
+        "candidate": {
+          "exit_code": 0,
+          "score": 381.0,
+          "maximum_rss_bytes": 42582016,
+          "wall_ns": 24160863964,
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: EarleyBoyer: 381\n----\nScore: 381\n",
+          "stderr": ""
+        },
+        "baseline": {
+          "exit_code": 0,
+          "score": 386.0,
+          "maximum_rss_bytes": 42504192,
+          "wall_ns": 24495202709,
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: EarleyBoyer: 386\n----\nScore: 386\n",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "pair": 5,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "baseline_score": 364.0,
+      "candidate_score": 390.0,
+      "score_delta": 26.0,
+      "baseline_rss_bytes": 42774528,
+      "candidate_rss_bytes": 42799104,
+      "rss_delta_bytes": 24576,
+      "baseline_wall_ns": 24559712522,
+      "candidate_wall_ns": 24061640276,
+      "results": {
+        "baseline": {
+          "exit_code": 0,
+          "score": 364.0,
+          "maximum_rss_bytes": 42774528,
+          "wall_ns": 24559712522,
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: EarleyBoyer: 364\n----\nScore: 364\n",
+          "stderr": ""
+        },
+        "candidate": {
+          "exit_code": 0,
+          "score": 390.0,
+          "maximum_rss_bytes": 42799104,
+          "wall_ns": 24061640276,
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: EarleyBoyer: 390\n----\nScore: 390\n",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "pair": 6,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "baseline_score": 389.0,
+      "candidate_score": 389.0,
+      "score_delta": 0.0,
+      "baseline_rss_bytes": 42512384,
+      "candidate_rss_bytes": 42639360,
+      "rss_delta_bytes": 126976,
+      "baseline_wall_ns": 24122441442,
+      "candidate_wall_ns": 24204302176,
+      "results": {
+        "candidate": {
+          "exit_code": 0,
+          "score": 389.0,
+          "maximum_rss_bytes": 42639360,
+          "wall_ns": 24204302176,
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: EarleyBoyer: 389\n----\nScore: 389\n",
+          "stderr": ""
+        },
+        "baseline": {
+          "exit_code": 0,
+          "score": 389.0,
+          "maximum_rss_bytes": 42512384,
+          "wall_ns": 24122441442,
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: EarleyBoyer: 389\n----\nScore: 389\n",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "pair": 7,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "baseline_score": 377.0,
+      "candidate_score": 387.0,
+      "score_delta": 10.0,
+      "baseline_rss_bytes": 42795008,
+      "candidate_rss_bytes": 42790912,
+      "rss_delta_bytes": -4096,
+      "baseline_wall_ns": 24710882034,
+      "candidate_wall_ns": 24170563072,
+      "results": {
+        "baseline": {
+          "exit_code": 0,
+          "score": 377.0,
+          "maximum_rss_bytes": 42795008,
+          "wall_ns": 24710882034,
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: EarleyBoyer: 377\n----\nScore: 377\n",
+          "stderr": ""
+        },
+        "candidate": {
+          "exit_code": 0,
+          "score": 387.0,
+          "maximum_rss_bytes": 42790912,
+          "wall_ns": 24170563072,
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: EarleyBoyer: 387\n----\nScore: 387\n",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "pair": 8,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "baseline_score": 377.0,
+      "candidate_score": 384.0,
+      "score_delta": 7.0,
+      "baseline_rss_bytes": 42508288,
+      "candidate_rss_bytes": 42901504,
+      "rss_delta_bytes": 393216,
+      "baseline_wall_ns": 24842819779,
+      "candidate_wall_ns": 24992161747,
+      "results": {
+        "candidate": {
+          "exit_code": 0,
+          "score": 384.0,
+          "maximum_rss_bytes": 42901504,
+          "wall_ns": 24992161747,
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: EarleyBoyer: 384\n----\nScore: 384\n",
+          "stderr": ""
+        },
+        "baseline": {
+          "exit_code": 0,
+          "score": 377.0,
+          "maximum_rss_bytes": 42508288,
+          "wall_ns": 24842819779,
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: EarleyBoyer: 377\n----\nScore: 377\n",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "pair": 9,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "baseline_score": 373.0,
+      "candidate_score": 378.0,
+      "score_delta": 5.0,
+      "baseline_rss_bytes": 42835968,
+      "candidate_rss_bytes": 42737664,
+      "rss_delta_bytes": -98304,
+      "baseline_wall_ns": 25003129395,
+      "candidate_wall_ns": 23989393504,
+      "results": {
+        "baseline": {
+          "exit_code": 0,
+          "score": 373.0,
+          "maximum_rss_bytes": 42835968,
+          "wall_ns": 25003129395,
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: EarleyBoyer: 373\n----\nScore: 373\n",
+          "stderr": ""
+        },
+        "candidate": {
+          "exit_code": 0,
+          "score": 378.0,
+          "maximum_rss_bytes": 42737664,
+          "wall_ns": 23989393504,
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: EarleyBoyer: 378\n----\nScore: 378\n",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "pair": 10,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "baseline_score": 384.0,
+      "candidate_score": 385.0,
+      "score_delta": 1.0,
+      "baseline_rss_bytes": 42557440,
+      "candidate_rss_bytes": 42893312,
+      "rss_delta_bytes": 335872,
+      "baseline_wall_ns": 24778408139,
+      "candidate_wall_ns": 24109070911,
+      "results": {
+        "candidate": {
+          "exit_code": 0,
+          "score": 385.0,
+          "maximum_rss_bytes": 42893312,
+          "wall_ns": 24109070911,
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: EarleyBoyer: 385\n----\nScore: 385\n",
+          "stderr": ""
+        },
+        "baseline": {
+          "exit_code": 0,
+          "score": 384.0,
+          "maximum_rss_bytes": 42557440,
+          "wall_ns": 24778408139,
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: EarleyBoyer: 384\n----\nScore: 384\n",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "pair": 11,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "baseline_score": 366.0,
+      "candidate_score": 385.0,
+      "score_delta": 19.0,
+      "baseline_rss_bytes": 42835968,
+      "candidate_rss_bytes": 42950656,
+      "rss_delta_bytes": 114688,
+      "baseline_wall_ns": 25303680816,
+      "candidate_wall_ns": 24009971043,
+      "results": {
+        "baseline": {
+          "exit_code": 0,
+          "score": 366.0,
+          "maximum_rss_bytes": 42835968,
+          "wall_ns": 25303680816,
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: EarleyBoyer: 366\n----\nScore: 366\n",
+          "stderr": ""
+        },
+        "candidate": {
+          "exit_code": 0,
+          "score": 385.0,
+          "maximum_rss_bytes": 42950656,
+          "wall_ns": 24009971043,
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: EarleyBoyer: 385\n----\nScore: 385\n",
+          "stderr": ""
+        }
+      }
+    }
+  ],
+  "qualification_ready": false
+}

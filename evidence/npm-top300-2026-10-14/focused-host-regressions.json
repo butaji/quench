@@ -1,0 +1,50 @@
+[
+  {
+    "test": "commonjs_namespace_follows_static_require_reexports_and_cycles",
+    "status": 0,
+    "stdout": "\nrunning 1 test\ntest commonjs_namespace_follows_static_require_reexports_and_cycles ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 189 filtered out; finished in 0.62s\n\n",
+    "stderr": ""
+  },
+  {
+    "test": "global_crypto_is_lazy_and_random_values_preserve_views",
+    "status": 0,
+    "stdout": "\nrunning 1 test\ntest global_crypto_is_lazy_and_random_values_preserve_views ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 189 filtered out; finished in 0.62s\n\n",
+    "stderr": ""
+  },
+  {
+    "test": "buffer_alloc_supports_construction_and_ordinary_calls",
+    "status": 0,
+    "stdout": "\nrunning 1 test\ntest buffer_alloc_supports_construction_and_ordinary_calls ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 189 filtered out; finished in 0.31s\n\n",
+    "stderr": ""
+  },
+  {
+    "test": "http_agent_pool_names_preserve_property_reads_and_coercion",
+    "status": 0,
+    "stdout": "\nrunning 1 test\ntest http_agent_pool_names_preserve_property_reads_and_coercion ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 189 filtered out; finished in 0.49s\n\n",
+    "stderr": ""
+  },
+  {
+    "test": "extensionless_entries_use_the_package_module_scope",
+    "status": 0,
+    "stdout": "\nrunning 1 test\ntest extensionless_entries_use_the_package_module_scope ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 189 filtered out; finished in 0.30s\n\n",
+    "stderr": ""
+  },
+  {
+    "test": "json_import_attributes_parse_the_original_payload",
+    "status": 0,
+    "stdout": "\nrunning 1 test\ntest json_import_attributes_parse_the_original_payload ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 189 filtered out; finished in 0.65s\n\n",
+    "stderr": ""
+  },
+  {
+    "test": "module_resolve_filename_uses_the_parent_base_without_loading",
+    "status": 0,
+    "stdout": "\nrunning 1 test\ntest module_resolve_filename_uses_the_parent_base_without_loading ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 189 filtered out; finished in 0.53s\n\n",
+    "stderr": ""
+  },
+  {
+    "test": "really_exit_coerces_int32_and_skips_guest_exit_handlers",
+    "status": 0,
+    "stdout": "\nrunning 1 test\ntest really_exit_coerces_int32_and_skips_guest_exit_handlers ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 189 filtered out; finished in 2.23s\n\n",
+    "stderr": ""
+  }
+]

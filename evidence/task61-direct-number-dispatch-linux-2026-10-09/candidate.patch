@@ -1,0 +1,147 @@
+diff --git a/crates/quench-runtime/src/vm/dispatch_numeric.rs b/crates/quench-runtime/src/vm/dispatch_numeric.rs
+index 5768c362b..1592aa3f6 100644
+--- a/crates/quench-runtime/src/vm/dispatch_numeric.rs
++++ b/crates/quench-runtime/src/vm/dispatch_numeric.rs
+@@ -24,8 +24,17 @@ macro_rules! numeric_integer_binary {
+ impl<H: Host> Vm<H> {
+     #[inline(always)]
+     pub(super) fn numeric_binary(&self, op: u32, left: Value, right: Value) -> Option<Value> {
+-        let (a, b) = Value::int_pair(left, right)?;
+-        numeric_integer_binary!(op, a, b)
++        if let Some((a, b)) = Value::int_pair(left, right)
++        {
++            if op == 10 && (a == 0 && b < 0 || b == 0 && a < 0) {
++                return Some(Value::number(-0.0));
++            }
++            if let Some(value) = numeric_integer_binary!(op, a, b) {
++                return Some(value);
++            }
++        }
++        let (a, b) = (left.as_number()?, right.as_number()?);
++        Self::direct_number_binary(op, a, b)
+     }
+ }
+ 
+diff --git a/crates/quench-runtime/src/vm/operations.rs b/crates/quench-runtime/src/vm/operations.rs
+index 01445b4f1..e9c9cf5aa 100644
+--- a/crates/quench-runtime/src/vm/operations.rs
++++ b/crates/quench-runtime/src/vm/operations.rs
+@@ -997,8 +997,10 @@ impl<H: Host> Vm<H> {
+         let numeric =
+             (BinaryOperator::Subtraction as u32..=BinaryOperator::BitwiseAnd as u32).contains(&op);
+         if numeric {
+-            if left.as_number().is_some() && right.as_number().is_some() {
+-                return self.binary_slow(p, op, left, right);
++            if let (Some(a), Some(b)) = (left.as_number(), right.as_number())
++                && let Some(value) = Self::direct_number_binary(op, a, b)
++            {
++                return Ok(value);
+             }
+             return self.with_coerced_operands(
+                 p,
+@@ -1156,6 +1158,35 @@ impl<H: Host> Vm<H> {
+             }
+         }
+     }
++
++    #[inline(always)]
++    pub(super) fn direct_number_binary(op: u32, a: f64, b: f64) -> Option<Value> {
++        if op > LAST_NUMERIC_BINARY_OPERATOR {
++            return None;
++        }
++        let boolean = |value| if value { Value::TRUE } else { Value::FALSE };
++        Some(match op {
++            0 | 2 => boolean(a == b),
++            1 | 3 => boolean(a != b),
++            4 => boolean(a < b),
++            5 => boolean(a <= b),
++            6 => boolean(a > b),
++            7 => boolean(a >= b),
++            8 => Value::number(a + b),
++            9 => Value::number(a - b),
++            10 => Value::number(a * b),
++            11 => Value::number(a / b),
++            12 => Value::number(a % b),
++            13 => Value::number(exponentiate(a, b)),
++            14 => Value::number(((number_to_u32(a) as i32) << (number_to_u32(b) & 31)) as f64),
++            15 => Value::number(((number_to_u32(a) as i32) >> (number_to_u32(b) & 31)) as f64),
++            16 => Value::number((number_to_u32(a) >> (number_to_u32(b) & 31)) as f64),
++            17 => Value::number(((number_to_u32(a) as i32) | (number_to_u32(b) as i32)) as f64),
++            18 => Value::number(((number_to_u32(a) as i32) ^ (number_to_u32(b) as i32)) as f64),
++            19 => Value::number(((number_to_u32(a) as i32) & (number_to_u32(b) as i32)) as f64),
++            _ => return None,
++        })
++    }
+     #[cold]
+     #[inline(never)]
+     pub(super) fn binary_slow(
+@@ -1165,66 +1196,10 @@ impl<H: Host> Vm<H> {
+         left: Value,
+         right: Value,
+     ) -> Result<Value, JsError> {
+-        if op <= LAST_NUMERIC_BINARY_OPERATOR
+-            && let (Some(a), Some(b)) = (left.as_number(), right.as_number())
++        if let (Some(a), Some(b)) = (left.as_number(), right.as_number())
++            && let Some(value) = Self::direct_number_binary(op, a, b)
+         {
+-            return Ok(match op {
+-                0 | 2 => {
+-                    if a == b {
+-                        Value::TRUE
+-                    } else {
+-                        Value::FALSE
+-                    }
+-                }
+-                1 | 3 => {
+-                    if a != b {
+-                        Value::TRUE
+-                    } else {
+-                        Value::FALSE
+-                    }
+-                }
+-                4 => {
+-                    if a < b {
+-                        Value::TRUE
+-                    } else {
+-                        Value::FALSE
+-                    }
+-                }
+-                5 => {
+-                    if a <= b {
+-                        Value::TRUE
+-                    } else {
+-                        Value::FALSE
+-                    }
+-                }
+-                6 => {
+-                    if a > b {
+-                        Value::TRUE
+-                    } else {
+-                        Value::FALSE
+-                    }
+-                }
+-                7 => {
+-                    if a >= b {
+-                        Value::TRUE
+-                    } else {
+-                        Value::FALSE
+-                    }
+-                }
+-                8 => Value::number(a + b),
+-                9 => Value::number(a - b),
+-                10 => Value::number(a * b),
+-                11 => Value::number(a / b),
+-                12 => Value::number(a % b),
+-                13 => Value::number(exponentiate(a, b)),
+-                14 => Value::number(((number_to_u32(a) as i32) << (number_to_u32(b) & 31)) as f64),
+-                15 => Value::number(((number_to_u32(a) as i32) >> (number_to_u32(b) & 31)) as f64),
+-                16 => Value::number((number_to_u32(a) >> (number_to_u32(b) & 31)) as f64),
+-                17 => Value::number(((number_to_u32(a) as i32) | (number_to_u32(b) as i32)) as f64),
+-                18 => Value::number(((number_to_u32(a) as i32) ^ (number_to_u32(b) as i32)) as f64),
+-                19 => Value::number(((number_to_u32(a) as i32) & (number_to_u32(b) as i32)) as f64),
+-                _ => return Err(JsError(format!("unsupported binary operator {op}").into())),
+-            });
++            return Ok(value);
+         }
+         if op == 8 && (self.is_string(left) || self.is_string(right)) {
+             if let Some(value) = self.intern_dynamic_concat(left, right) {

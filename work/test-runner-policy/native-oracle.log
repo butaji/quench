@@ -1,0 +1,26 @@
+{
+  kNoFailure: 0,
+  kGenericUserError: 1,
+  kInternalJSParseError: 3,
+  kInternalJSEvaluationFailure: 4,
+  kV8FatalError: 5,
+  kInvalidFatalExceptionMonkeyPatching: 6,
+  kExceptionInFatalExceptionHandler: 7,
+  kInvalidCommandLineArgument: 9,
+  kBootstrapFailure: 10,
+  kInvalidCommandLineArgument2: 12,
+  kUnsettledTopLevelAwait: 13,
+  kStartupSnapshotFailure: 14,
+  kProcessTimeout: 124,
+  kAbort: 134
+}
+caller [ 219, 10, 'node:internal/vm' ]
+{
+  length: { value: 0, writable: false, enumerable: false, configurable: true },
+  name: {
+    value: 'getCallerLocation',
+    writable: false,
+    enumerable: false,
+    configurable: true
+  }
+}

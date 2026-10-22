@@ -1,0 +1,15 @@
+   Compiling zmij v1.0.23
+   Compiling crc32fast v1.5.2
+   Compiling serde_core v1.0.229
+   Compiling simd-adler32 v0.3.10
+   Compiling adler2 v2.0.1
+   Compiling serde_json v1.0.151
+   Compiling cfg-if v1.0.4
+   Compiling miniz_oxide v0.9.1
+   Compiling zlib-rs v0.6.8
+   Compiling memchr v2.8.3
+   Compiling itoa v1.0.18
+   Compiling flate2 v1.1.10
+   Compiling npm-zlib-stream-probe v0.0.0 (/workspace/scratch/npm-zlib-draft)
+    Finished `dev` profile [unoptimized] target(s) in 4.43s
+     Running `quench/target/npm-zlib-native-probe/debug/npm-zlib-pinned-probe`

@@ -1,0 +1,49 @@
+# Production type sizes (selected from rustc -Zprint-type-sizes)
+# Command: RUSTC_BOOTSTRAP=1 cargo rustc -p quench-runtime --profile production --lib -- -Zprint-type-sizes
+# rustc 1.99.0 (b940084d7 2026-09-28); branch v2-cloud; base revision 97f90b95655d9716a27183121e34965445b1c1e1
+print-type-size type: `heap::Slot`: 80 bytes, alignment: 16 bytes
+print-type-size     field `.cell`: 80 bytes
+print-type-size type: `heap::cell::Cell`: 80 bytes, alignment: 16 bytes
+print-type-size     variant `Environment`: 77 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.program`: 8 bytes, alignment: 4 bytes
+print-type-size         field `.binding_site_pc`: 8 bytes
+print-type-size         field `.slots`: 16 bytes
+print-type-size         field `.dynamic_bindings`: 8 bytes
+print-type-size         field `.with_objects`: 16 bytes
+print-type-size         field `.parent`: 8 bytes
+print-type-size         field `.function`: 4 bytes
+print-type-size         field `.root_eval_scope`: 1 bytes
+print-type-size     variant `Iterator`: 76 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.object`: 24 bytes, alignment: 8 bytes
+print-type-size         field `.source`: 8 bytes
+print-type-size         field `.next_method`: 8 bytes
+print-type-size         field `.helper`: 8 bytes
+print-type-size         field `.index`: 8 bytes
+print-type-size         field `.generator`: 8 bytes
+print-type-size         field `.kind`: 1 bytes
+print-type-size         field `.helper_running`: 1 bytes
+print-type-size         field `.helper_started`: 1 bytes
+print-type-size         field `.done`: 1 bytes
+print-type-size     variant `RegExp`: 72 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.legacy_constructor`: 16 bytes, alignment: 8 bytes
+print-type-size         field `.flags`: 24 bytes
+print-type-size         field `.object`: 8 bytes
+print-type-size         field `.source`: 8 bytes
+print-type-size         field `.matcher`: 8 bytes
+print-type-size     variant `TemporalZonedDateTime`: 72 bytes
+print-type-size         padding: 16 bytes
+print-type-size         field `.epoch_nanoseconds`: 16 bytes, alignment: 16 bytes
+print-type-size         field `.calendar`: 24 bytes
+print-type-size         field `.object`: 8 bytes
+print-type-size         field `.time_zone`: 8 bytes
+print-type-size     variant `WeakMap`: 40 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.entries`: 8 bytes, alignment: 8 bytes
+print-type-size         field `.object`: 24 bytes
+print-type-size     variant `TemporalDuration`: 24 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.object`: 8 bytes, alignment: 8 bytes
+print-type-size         field `.fields`: 8 bytes

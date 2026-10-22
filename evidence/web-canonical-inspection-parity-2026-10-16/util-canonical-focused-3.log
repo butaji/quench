@@ -1,0 +1,18 @@
+   Compiling quench-node-test v0.1.0 (/workspace/quench/crates/quench-node-test)
+    Finished `iteration` profile [optimized] target(s) in 0.68s
+     Running tests/child_entry.rs (work/host-build/iteration/deps/child_entry-0c4d472d0248eb46)
+
+running 10 tests
+test native_util_extend_preserves_reverse_copy_effects_metadata_errors_and_deprecation ... ok
+test native_util_string_format_preserves_primitives_builtin_objects_and_original_hooks ... ok
+test util_custom_inspection_preserves_depth_receiver_and_hook_order ... ok
+test util_parse_args_default_argv_matches_eval_print_and_file_entry_forms ... ok
+test util_parse_args_preserves_defaults_getter_order_tokens_and_strict_writes ... ok
+test util_parse_args_uses_captured_intrinsics_after_nonconfigurable_guest_replacement ... ok
+test util_styles_match_node_ansi_aliases_cache_and_iterator_protocol ... ok
+test util_text_codec_aliases_capture_initialized_global_constructors ... ok
+test util_text_operations_match_node_without_utf16_loss ... ok
+test util_type_predicates_match_node_internal_brands ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 287 filtered out; finished in 5.47s
+

@@ -1,0 +1,395 @@
+{
+  "date": "2026-10-09",
+  "status": "rejected for integration; Stage B remains open",
+  "candidate": "dedicated LoadLocalPlainIncDec opcode fusing LoadLocalPlain \u2192 ToNumeric \u2192 IncDec \u2192 StoreLocalPlain",
+  "source_revision": "c5eefcc75739b3d479ca5c0f097a6e436b1dedfc",
+  "candidate_source_patch_sha256": "4550af527530e8d407a8caa999474d0cbc7b18a50803c79ba14aebf5b9fb9b5f",
+  "candidate_binary_sha256": "19c8b651bc3270e1d7ae9f95deae731c5d82d8ed0ae43d34a8a6dc4f1959ea63",
+  "three_pair_quench_screen": {
+    "report_sha256": "e31fac5a8aa21a3bc546abee9275a202c4d8ea54a2086e7f4e91257528f99f6c",
+    "fixtures": {
+      "crypto": {
+        "baseline_score_median": 158.0,
+        "candidate_score_median": 156.0,
+        "score_delta": {
+          "median": -1.0,
+          "95_ci": [
+            -4.0,
+            5.0
+          ]
+        },
+        "baseline_rss_median_bytes": 21458944,
+        "candidate_rss_median_bytes": 21598208,
+        "rss_delta_bytes": {
+          "median": 36864,
+          "95_ci": [
+            -294912,
+            270336
+          ]
+        },
+        "all_outputs_equal": true
+      },
+      "deltablue": {
+        "baseline_score_median": 97.1,
+        "candidate_score_median": 94.2,
+        "score_delta": {
+          "median": -0.29999999999999716,
+          "95_ci": [
+            -5.8999999999999915,
+            2.9000000000000057
+          ]
+        },
+        "baseline_rss_median_bytes": 21913600,
+        "candidate_rss_median_bytes": 21483520,
+        "rss_delta_bytes": {
+          "median": -430080,
+          "95_ci": [
+            -892928,
+            -40960
+          ]
+        },
+        "all_outputs_equal": true
+      },
+      "earley-boyer": {
+        "baseline_score_median": 188.0,
+        "candidate_score_median": 183.0,
+        "score_delta": {
+          "median": -6.0,
+          "95_ci": [
+            -7.0,
+            0.0
+          ]
+        },
+        "baseline_rss_median_bytes": 54095872,
+        "candidate_rss_median_bytes": 55119872,
+        "rss_delta_bytes": {
+          "median": 1024000,
+          "95_ci": [
+            -905216,
+            1695744
+          ]
+        },
+        "all_outputs_equal": true
+      },
+      "navier-stokes": {
+        "baseline_score_median": 88.2,
+        "candidate_score_median": 93.4,
+        "score_delta": {
+          "median": 5.299999999999997,
+          "95_ci": [
+            3.299999999999997,
+            5.800000000000011
+          ]
+        },
+        "baseline_rss_median_bytes": 24014848,
+        "candidate_rss_median_bytes": 24014848,
+        "rss_delta_bytes": {
+          "median": 0,
+          "95_ci": [
+            0,
+            0
+          ]
+        },
+        "all_outputs_equal": true
+      },
+      "raytrace": {
+        "baseline_score_median": 158.0,
+        "candidate_score_median": 165.0,
+        "score_delta": {
+          "median": 7.0,
+          "95_ci": [
+            -5.0,
+            10.0
+          ]
+        },
+        "baseline_rss_median_bytes": 24014848,
+        "candidate_rss_median_bytes": 24014848,
+        "rss_delta_bytes": {
+          "median": 0,
+          "95_ci": [
+            0,
+            0
+          ]
+        },
+        "all_outputs_equal": true
+      },
+      "regexp": {
+        "baseline_score_median": 30.3,
+        "candidate_score_median": 31.7,
+        "score_delta": {
+          "median": 1.3000000000000007,
+          "95_ci": [
+            1.1000000000000014,
+            1.9000000000000021
+          ]
+        },
+        "baseline_rss_median_bytes": 41201664,
+        "candidate_rss_median_bytes": 41254912,
+        "rss_delta_bytes": {
+          "median": 139264,
+          "95_ci": [
+            -94208,
+            188416
+          ]
+        },
+        "all_outputs_equal": true
+      },
+      "richards": {
+        "baseline_score_median": 139.0,
+        "candidate_score_median": 143.0,
+        "score_delta": {
+          "median": 4.0,
+          "95_ci": [
+            -4.0,
+            5.0
+          ]
+        },
+        "baseline_rss_median_bytes": 24023040,
+        "candidate_rss_median_bytes": 24023040,
+        "rss_delta_bytes": {
+          "median": 0,
+          "95_ci": [
+            0,
+            0
+          ]
+        },
+        "all_outputs_equal": true
+      },
+      "splay": {
+        "baseline_score_median": 894.0,
+        "candidate_score_median": 933.0,
+        "score_delta": {
+          "median": 39.0,
+          "95_ci": [
+            -343.0,
+            265.0
+          ]
+        },
+        "baseline_rss_median_bytes": 202219520,
+        "candidate_rss_median_bytes": 202485760,
+        "rss_delta_bytes": {
+          "median": 282624,
+          "95_ci": [
+            139264,
+            405504
+          ]
+        },
+        "all_outputs_equal": true
+      }
+    },
+    "outputs_equal_all_fixtures": true,
+    "assessment": "NavierStokes improved with a paired interval excluding tie; other fixture score intervals were mixed or included ties, and Splay maximum RSS increased with an interval excluding tie."
+  },
+  "four_engine_one_round_diagnostic": {
+    "report_sha256": "26c7e28dd5baace56085cb56fa909e819b8c72c92ca9d2b82e236b5ec57d094b",
+    "report_path_in_ignored_target": "target/iteration/task61-candidate3-four-engine-one-round-2026-10-09.json",
+    "requested_rounds": 1,
+    "fixtures": [
+      {
+        "fixture": "crypto",
+        "engines": {
+          "bun": {
+            "score": 1814.0,
+            "max_rss_bytes": 27500544
+          },
+          "node": {
+            "score": 1518.0,
+            "max_rss_bytes": 26460160
+          },
+          "quench": {
+            "score": 149.0,
+            "max_rss_bytes": 22261760
+          },
+          "quickjs": {
+            "score": 1054.0,
+            "max_rss_bytes": 2387968
+          }
+        }
+      },
+      {
+        "fixture": "deltablue",
+        "engines": {
+          "bun": {
+            "score": 1145.0,
+            "max_rss_bytes": 28532736
+          },
+          "node": {
+            "score": 1834.0,
+            "max_rss_bytes": 28430336
+          },
+          "quench": {
+            "score": 90.8,
+            "max_rss_bytes": 22011904
+          },
+          "quickjs": {
+            "score": 934.0,
+            "max_rss_bytes": 2572288
+          }
+        }
+      },
+      {
+        "fixture": "earley-boyer",
+        "engines": {
+          "bun": {
+            "score": 5332.0,
+            "max_rss_bytes": 36405248
+          },
+          "node": {
+            "score": 7471.0,
+            "max_rss_bytes": 161509376
+          },
+          "quench": {
+            "score": 147.0,
+            "max_rss_bytes": 54587392
+          },
+          "quickjs": {
+            "score": 2423.0,
+            "max_rss_bytes": 16302080
+          }
+        }
+      },
+      {
+        "fixture": "navier-stokes",
+        "engines": {
+          "bun": {
+            "score": 2959.0,
+            "max_rss_bytes": 19955712
+          },
+          "node": {
+            "score": 2107.0,
+            "max_rss_bytes": 31043584
+          },
+          "quench": {
+            "score": 86.9,
+            "max_rss_bytes": 23302144
+          },
+          "quickjs": {
+            "score": 2391.0,
+            "max_rss_bytes": 4255744
+          }
+        }
+      },
+      {
+        "fixture": "raytrace",
+        "engines": {
+          "bun": {
+            "score": 3050.0,
+            "max_rss_bytes": 28069888
+          },
+          "node": {
+            "score": 4772.0,
+            "max_rss_bytes": 33275904
+          },
+          "quench": {
+            "score": 180.0,
+            "max_rss_bytes": 21340160
+          },
+          "quickjs": {
+            "score": 2046.0,
+            "max_rss_bytes": 2228224
+          }
+        }
+      },
+      {
+        "fixture": "regexp",
+        "engines": {
+          "bun": {
+            "score": 949.0,
+            "max_rss_bytes": 33374208
+          },
+          "node": {
+            "score": 3647.0,
+            "max_rss_bytes": 36810752
+          },
+          "quench": {
+            "score": 30.5,
+            "max_rss_bytes": 42225664
+          },
+          "quickjs": {
+            "score": 580.0,
+            "max_rss_bytes": 5636096
+          }
+        }
+      },
+      {
+        "fixture": "richards",
+        "engines": {
+          "bun": {
+            "score": 1758.0,
+            "max_rss_bytes": 19333120
+          },
+          "node": {
+            "score": 1885.0,
+            "max_rss_bytes": 26329088
+          },
+          "quench": {
+            "score": 136.0,
+            "max_rss_bytes": 19292160
+          },
+          "quickjs": {
+            "score": 1092.0,
+            "max_rss_bytes": 2215936
+          }
+        }
+      },
+      {
+        "fixture": "splay",
+        "engines": {
+          "bun": {
+            "score": 5161.0,
+            "max_rss_bytes": 59772928
+          },
+          "node": {
+            "score": 6935.0,
+            "max_rss_bytes": 469876736
+          },
+          "quench": {
+            "score": 803.0,
+            "max_rss_bytes": 202600448
+          },
+          "quickjs": {
+            "score": 2966.0,
+            "max_rss_bytes": 149549056
+          }
+        }
+      }
+    ],
+    "outputs_equal_all_engines": true,
+    "assessment": "Quench ranked fourth in Score on every fixture and was lowest in RSS on none. One round is diagnostic only.",
+    "provenance_caveat": "Runner JSON records the main revision as clean, but the Quench executable came from the dirty detached candidate worktree. Treat source_dirty=false as inaccurate for this binary."
+  },
+  "correctness": {
+    "node_oracle": {
+      "path": "target/iteration/numeric-local-update-node-candidate3.json",
+      "sha256": "6315ce22a7c9c0b25d772aa7831aa7d4524bab7a233c1735eea7e350612646cf"
+    },
+    "quench_oracle": {
+      "path": "target/iteration/numeric-local-update-quench-candidate3.json",
+      "sha256": "6315ce22a7c9c0b25d772aa7831aa7d4524bab7a233c1735eea7e350612646cf"
+    },
+    "stage10": {
+      "passed": 11087,
+      "total": 11102,
+      "failed": 15,
+      "baseline_regressions": 0,
+      "report_sha256": "4ab983bde4cfe5e268fa1bc8b603916f01d9c240d71eb1173295475e6c158cc7"
+    },
+    "scope_note": "Stage 10 had the same 15 baseline failures; affected-scope checks do not replace final Stage A qualification."
+  },
+  "splay_profile_memory": {
+    "binary_sha256": "778b2dfb26c2fa20a0b8399f7d65e1121bb13f4faa255b0040a064a1f8aba624",
+    "stderr_sha256": "8bbe0a8cf90c7802ac65a762fb3dd67320a768fd4fa86089776640a6d2df4006",
+    "complete_phase": {
+      "heap_slots": 1562186,
+      "slot_bytes": 125009920,
+      "property_values": 2059640,
+      "property_capacity": 4904060,
+      "live_property_values": 1047452,
+      "live_property_capacity": 2059640,
+      "array_elements": 2563560,
+      "array_capacity": 2563577
+    },
+    "compaction_trace": "Two late compactions reduced arena length from 3,089,144 to 2,057,096 and then from 4,129,280 to 2,057,100 while capacity stayed 3,678,045 then 4,904,060 Value slots. This motivates a growth-headroom experiment; final capacity does not establish a peak-RSS benefit."
+  },
+  "qualification_ready": false
+}

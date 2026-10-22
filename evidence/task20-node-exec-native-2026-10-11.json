@@ -1,0 +1,27 @@
+{
+  "scope": "Native exec normalization delegates to execFile; shared Rust inspect string quoting",
+  "oracle": "v27.0.0-nightly20260819c79868f102",
+  "validation": {
+    "child_entry": {
+      "pass": 15,
+      "fail": 0,
+      "log": "work/native-exec-integration3.log"
+    },
+    "execution_subset": {
+      "counts": {
+        "fail": 5,
+        "skip": 1,
+        "pass": 10,
+        "timeout": 2
+      },
+      "total": 18,
+      "inventory_hash": "33b0084ac9056ec4",
+      "raw_results": "work/exec-native-subset.json",
+      "timeout_secs": 10,
+      "jobs": 2
+    }
+  },
+  "gain": "Execution subset improves from 3 to 10 passes without losing prior passes.",
+  "remaining": "Custom promisified behavior, kill overrides, sync limits, timeout fixture completion and complete parallel inventory remain open.",
+  "performance_claim": false
+}

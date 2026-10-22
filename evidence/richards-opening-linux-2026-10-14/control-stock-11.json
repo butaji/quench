@@ -1,0 +1,4200 @@
+{
+  "schema": 5,
+  "created_unix_ns": 1791937521531145618,
+  "rounds_requested": 11,
+  "timeout_ms": 300000,
+  "source_revision": "fdc8430339774ad88081ceec29c3a175b674768b",
+  "source_dirty": false,
+  "corpus": {
+    "pinned_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+    "checkout_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+    "checkout_clean": true,
+    "fixture_set_matches": false
+  },
+  "host": {
+    "uname": "Linux 8daeb45b5007 6.18.44 #1 SMP Sat Sep 26 20:02:31 UTC 2026 x86_64 GNU/Linux",
+    "rustc": "",
+    "model": null,
+    "memory_bytes": 18882699264,
+    "memory_limit_bytes": 17179869184,
+    "cpu_quota": "400000 100000",
+    "logical_cpus": 4,
+    "process_metrics_backend": "Linux wait4 rusage"
+  },
+  "engines": [
+    {
+      "name": "quench",
+      "executable": "/workspace/quench/work/pinned/richards-control/quench-node",
+      "executable_sha256": "196bc8c43cab926c8d0f220a00c0361aa64a28d1a6064fc6bdc312677900e4f9",
+      "version": "Quench shared-VM interpreter build; package 0.1.0",
+      "argv": [],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "interpreter",
+      "jit_proof_command": [
+        "/workspace/quench/work/pinned/richards-control/quench-node"
+      ],
+      "jit_proof": "the measured shared VM executes interpreter bytecode; no guest JIT path is enabled"
+    },
+    {
+      "name": "quickjs",
+      "executable": "/workspace/quench/work/engines/quickjs-2026-06-04/qjs",
+      "executable_sha256": "44f4021cc931a9f63f3c4a583bfd3c7e47d39d29bbbcdce07613fe142161cfd0",
+      "version": "QuickJS version 2026-06-04",
+      "argv": [],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "interpreter",
+      "jit_proof_command": [
+        "/workspace/quench/work/engines/quickjs-2026-06-04/qjs",
+        "--version"
+      ],
+      "jit_proof": "QuickJS qjs executes bytecode in its interpreter; binary version and SHA-256 are recorded"
+    },
+    {
+      "name": "bun",
+      "executable": "/workspace/quench/work/engines/bun-linux-x64-baseline/bun",
+      "executable_sha256": "a83d263767d839e4d2649ca8e35d07159c7afc99afdc96d731ced29e056dda0c",
+      "version": "1.4.2",
+      "argv": [],
+      "environment": {
+        "BUN_JSC_useJIT": "0",
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "disabled-and-probed",
+      "jit_proof_command": [
+        "BUN_JSC_useJIT=0",
+        "BUN_JSC_dumpOptions=1",
+        "/workspace/quench/work/engines/bun-linux-x64-baseline/bun",
+        "-e",
+        "console.log(Bun.version)"
+      ],
+      "jit_proof": "command succeeded and reported \"useJIT=false\": 1.4.2\n\nModified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)"
+    },
+    {
+      "name": "node",
+      "executable": "/workspace/quench/work/engines/node-v26.10.0-linux-x64/bin/node",
+      "executable_sha256": "ab9c8eecf9f82d6693cdc3accced17034065c8d96213b0aa76a7e803d20ae1da",
+      "version": "v26.10.0",
+      "argv": [
+        "--jitless"
+      ],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "disabled-and-probed",
+      "jit_proof_command": [
+        "/workspace/quench/work/engines/node-v26.10.0-linux-x64/bin/node",
+        "--jitless",
+        "-e",
+        "console.log(process.execArgv.includes('--jitless'))"
+      ],
+      "jit_proof": "command succeeded and reported \"true\": true"
+    }
+  ],
+  "suite_inputs": [
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/base.js",
+      "size_bytes": 9351,
+      "modified_unix_ns": 1791934178826086635,
+      "sha256": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/crypto.js",
+      "size_bytes": 48043,
+      "modified_unix_ns": 1791934178826439108,
+      "sha256": "5321d2ada9b61e01d5f281609513467cbaa7c0effb12c577ed08088d812453af"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/deltablue.js",
+      "size_bytes": 25653,
+      "modified_unix_ns": 1791934178826439108,
+      "sha256": "74b5a95f4877701073c6efef08e4ae306562747067e292925b69cbd629a511b9"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/earley-boyer.js",
+      "size_bytes": 195205,
+      "modified_unix_ns": 1791934178826439108,
+      "sha256": "dbf3aeb6b3d056e8ea35b5f19aa8c8a4fb1053e41d07f096c22483b2c1c6ee01"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/navier-stokes.js",
+      "size_bytes": 12690,
+      "modified_unix_ns": 1791934178826439108,
+      "sha256": "ce241465ffeee77b5c4f7119f522aa971fe1fe92c3aed76f7514ea43e07fec84"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/raytrace.js",
+      "size_bytes": 27996,
+      "modified_unix_ns": 1791934178826439108,
+      "sha256": "d52183ca324cdb88d9ee3e78326433fe2ca28d6436f0a6c3ec013ab67cb798eb"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/regexp.js",
+      "size_bytes": 111299,
+      "modified_unix_ns": 1791934178826439108,
+      "sha256": "5268b0d15931fda4e331de35fc58e5beded9a250b60764e1cc7cfc898ab53602"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/richards.js",
+      "size_bytes": 15776,
+      "modified_unix_ns": 1791934178826439108,
+      "sha256": "d86eac4108343a54ba6e10621a77b46f82f554c3b0a46e8fb4032d5cf65a2a11"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/splay.js",
+      "size_bytes": 10746,
+      "modified_unix_ns": 1791934178826439108,
+      "sha256": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d"
+    }
+  ],
+  "fixtures": {
+    "quench-bench/js-engine-benchmark/v8-v7/richards.js": {
+      "source": {
+        "path": "quench-bench/js-engine-benchmark/v8-v7/richards.js",
+        "size_bytes": 15776,
+        "modified_unix_ns": 1791934178826439108,
+        "sha256": "d86eac4108343a54ba6e10621a77b46f82f554c3b0a46e8fb4032d5cf65a2a11"
+      },
+      "valid": true,
+      "output_equal": true,
+      "summaries": {
+        "bun": {
+          "median_score": 1504.0,
+          "median_max_rss_bytes": 17866752,
+          "valid_samples": 11
+        },
+        "node": {
+          "median_score": 1454.0,
+          "median_max_rss_bytes": 46153728,
+          "valid_samples": 11
+        },
+        "quench": {
+          "median_score": 417.0,
+          "median_max_rss_bytes": 44572672,
+          "valid_samples": 11
+        },
+        "quickjs": {
+          "median_score": 871.0,
+          "median_max_rss_bytes": 2179072,
+          "valid_samples": 11
+        }
+      },
+      "rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            "quench",
+            "quickjs",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2019236118,
+              "peak_rss_bytes": 17866752,
+              "score": 1467.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 1326,
+              "page_reclaims": 1326,
+              "involuntary_context_switches": 5,
+              "host_before": {
+                "captured_unix_ns": 1791937526375265835,
+                "load_average": {
+                  "one_minute": 0.37,
+                  "five_minutes": 1.15,
+                  "fifteen_minutes": 2.16
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 59.5,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 0.7,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937528402470349,
+                "load_average": {
+                  "one_minute": 0.43,
+                  "five_minutes": 1.15,
+                  "fifteen_minutes": 2.16
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 59.5,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 0.7,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Richards: 1467\n----\nScore: 1467\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2073814922,
+              "peak_rss_bytes": 46157824,
+              "score": 1460.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 3824,
+              "page_reclaims": 3824,
+              "involuntary_context_switches": 8,
+              "host_before": {
+                "captured_unix_ns": 1791937528408668499,
+                "load_average": {
+                  "one_minute": 0.43,
+                  "five_minutes": 1.15,
+                  "fifteen_minutes": 2.16
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 59.5,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 0.7,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937530488530734,
+                "load_average": {
+                  "one_minute": 0.43,
+                  "five_minutes": 1.15,
+                  "fifteen_minutes": 2.16
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 59.4,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 0.9,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Richards: 1460\n----\nScore: 1460\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2454054740,
+              "peak_rss_bytes": 44343296,
+              "score": 371.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 8539,
+              "page_reclaims": 8539,
+              "involuntary_context_switches": 9,
+              "host_before": {
+                "captured_unix_ns": 1791937521876497019,
+                "load_average": {
+                  "one_minute": 0.32,
+                  "five_minutes": 1.16,
+                  "fifteen_minutes": 2.17
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 59.6,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 68924,
+                    "cpu_percent": 0.2,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937524339417295,
+                "load_average": {
+                  "one_minute": 0.37,
+                  "five_minutes": 1.15,
+                  "fifteen_minutes": 2.16
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 59.6,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 0.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Richards: 371\n----\nScore: 371\n",
+              "stderr": ""
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2012392006,
+              "peak_rss_bytes": 2187264,
+              "score": 871.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 379,
+              "page_reclaims": 379,
+              "involuntary_context_switches": 5,
+              "host_before": {
+                "captured_unix_ns": 1791937524348826460,
+                "load_average": {
+                  "one_minute": 0.37,
+                  "five_minutes": 1.15,
+                  "fifteen_minutes": 2.16
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 59.6,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 0.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937526370304527,
+                "load_average": {
+                  "one_minute": 0.37,
+                  "five_minutes": 1.15,
+                  "fifteen_minutes": 2.16
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 59.5,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 0.7,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Richards: 871\n----\nScore: 871\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 1,
+          "execution_order": [
+            "quickjs",
+            "bun",
+            "node",
+            "quench"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2014068228,
+              "peak_rss_bytes": 17866752,
+              "score": 1418.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 1316,
+              "page_reclaims": 1316,
+              "involuntary_context_switches": 10,
+              "host_before": {
+                "captured_unix_ns": 1791937532513238577,
+                "load_average": {
+                  "one_minute": 0.43,
+                  "five_minutes": 1.15,
+                  "fifteen_minutes": 2.16
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 59.4,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 0.9,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937534535554337,
+                "load_average": {
+                  "one_minute": 0.47,
+                  "five_minutes": 1.15,
+                  "fifteen_minutes": 2.15
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 59.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.0,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Richards: 1418\n----\nScore: 1418\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2150720088,
+              "peak_rss_bytes": 46415872,
+              "score": 1343.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 3829,
+              "page_reclaims": 3829,
+              "involuntary_context_switches": 8,
+              "host_before": {
+                "captured_unix_ns": 1791937534544276507,
+                "load_average": {
+                  "one_minute": 0.47,
+                  "five_minutes": 1.15,
+                  "fifteen_minutes": 2.15
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 59.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.0,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937536700938758,
+                "load_average": {
+                  "one_minute": 0.47,
+                  "five_minutes": 1.15,
+                  "fifteen_minutes": 2.15
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 59.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Richards: 1343\n----\nScore: 1343\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2308635648,
+              "peak_rss_bytes": 44572672,
+              "score": 424.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 8589,
+              "page_reclaims": 8589,
+              "involuntary_context_switches": 4,
+              "host_before": {
+                "captured_unix_ns": 1791937536705026954,
+                "load_average": {
+                  "one_minute": 0.47,
+                  "five_minutes": 1.15,
+                  "fifteen_minutes": 2.15
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 59.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937539018557094,
+                "load_average": {
+                  "one_minute": 0.51,
+                  "five_minutes": 1.15,
+                  "fifteen_minutes": 2.14
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 59.2,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Richards: 424\n----\nScore: 424\n",
+              "stderr": ""
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2009895504,
+              "peak_rss_bytes": 2179072,
+              "score": 848.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 377,
+              "page_reclaims": 377,
+              "involuntary_context_switches": 6,
+              "host_before": {
+                "captured_unix_ns": 1791937530493564502,
+                "load_average": {
+                  "one_minute": 0.43,
+                  "five_minutes": 1.15,
+                  "fifteen_minutes": 2.16
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 59.4,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 0.9,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937532508913270,
+                "load_average": {
+                  "one_minute": 0.43,
+                  "five_minutes": 1.15,
+                  "fifteen_minutes": 2.16
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 59.4,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 0.9,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Richards: 848\n----\nScore: 848\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 2,
+          "execution_order": [
+            "bun",
+            "node",
+            "quench",
+            "quickjs"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2016345902,
+              "peak_rss_bytes": 17866752,
+              "score": 1504.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 1343,
+              "page_reclaims": 1343,
+              "involuntary_context_switches": 5,
+              "host_before": {
+                "captured_unix_ns": 1791937539022999640,
+                "load_average": {
+                  "one_minute": 0.51,
+                  "five_minutes": 1.15,
+                  "fifteen_minutes": 2.14
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 59.2,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937541046897316,
+                "load_average": {
+                  "one_minute": 0.51,
+                  "five_minutes": 1.15,
+                  "fifteen_minutes": 2.14
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 59.2,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Richards: 1504\n----\nScore: 1504\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2062975895,
+              "peak_rss_bytes": 46153728,
+              "score": 1449.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 3819,
+              "page_reclaims": 3819,
+              "involuntary_context_switches": 10,
+              "host_before": {
+                "captured_unix_ns": 1791937541051995404,
+                "load_average": {
+                  "one_minute": 0.51,
+                  "five_minutes": 1.15,
+                  "fifteen_minutes": 2.14
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 59.2,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937543119273557,
+                "load_average": {
+                  "one_minute": 0.55,
+                  "five_minutes": 1.14,
+                  "fifteen_minutes": 2.14
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 59.1,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Richards: 1449\n----\nScore: 1449\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2242411946,
+              "peak_rss_bytes": 44572672,
+              "score": 413.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 8588,
+              "page_reclaims": 8588,
+              "involuntary_context_switches": 11,
+              "host_before": {
+                "captured_unix_ns": 1791937543123082766,
+                "load_average": {
+                  "one_minute": 0.55,
+                  "five_minutes": 1.14,
+                  "fifteen_minutes": 2.14
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 59.1,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937545371128382,
+                "load_average": {
+                  "one_minute": 0.55,
+                  "five_minutes": 1.14,
+                  "fifteen_minutes": 2.14
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 59.0,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Richards: 413\n----\nScore: 413\n",
+              "stderr": ""
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2013665963,
+              "peak_rss_bytes": 2162688,
+              "score": 901.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 377,
+              "page_reclaims": 377,
+              "involuntary_context_switches": 14,
+              "host_before": {
+                "captured_unix_ns": 1791937545374959536,
+                "load_average": {
+                  "one_minute": 0.55,
+                  "five_minutes": 1.14,
+                  "fifteen_minutes": 2.14
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 59.0,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937547396453161,
+                "load_average": {
+                  "one_minute": 0.55,
+                  "five_minutes": 1.14,
+                  "fifteen_minutes": 2.14
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 59.0,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Richards: 901\n----\nScore: 901\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 3,
+          "execution_order": [
+            "node",
+            "quench",
+            "quickjs",
+            "bun"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2012604066,
+              "peak_rss_bytes": 17866752,
+              "score": 1527.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 1343,
+              "page_reclaims": 1343,
+              "involuntary_context_switches": 2,
+              "host_before": {
+                "captured_unix_ns": 1791937553780282001,
+                "load_average": {
+                  "one_minute": 0.62,
+                  "five_minutes": 1.14,
+                  "fifteen_minutes": 2.12
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 58.8,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937555797451030,
+                "load_average": {
+                  "one_minute": 0.62,
+                  "five_minutes": 1.14,
+                  "fifteen_minutes": 2.12
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 58.8,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Richards: 1527\n----\nScore: 1527\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2075388561,
+              "peak_rss_bytes": 46026752,
+              "score": 1380.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 3820,
+              "page_reclaims": 3820,
+              "involuntary_context_switches": 3,
+              "host_before": {
+                "captured_unix_ns": 1791937547402772576,
+                "load_average": {
+                  "one_minute": 0.55,
+                  "five_minutes": 1.14,
+                  "fifteen_minutes": 2.14
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 59.0,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937549485288906,
+                "load_average": {
+                  "one_minute": 0.59,
+                  "five_minutes": 1.14,
+                  "fifteen_minutes": 2.13
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 58.9,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Richards: 1380\n----\nScore: 1380\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2264885692,
+              "peak_rss_bytes": 44572672,
+              "score": 431.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 8588,
+              "page_reclaims": 8588,
+              "involuntary_context_switches": 6,
+              "host_before": {
+                "captured_unix_ns": 1791937549490774083,
+                "load_average": {
+                  "one_minute": 0.59,
+                  "five_minutes": 1.14,
+                  "fifteen_minutes": 2.13
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 58.9,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937551761459606,
+                "load_average": {
+                  "one_minute": 0.59,
+                  "five_minutes": 1.14,
+                  "fifteen_minutes": 2.13
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 58.9,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Richards: 431\n----\nScore: 431\n",
+              "stderr": ""
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2006886779,
+              "peak_rss_bytes": 2084864,
+              "score": 868.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 378,
+              "page_reclaims": 378,
+              "involuntary_context_switches": 5,
+              "host_before": {
+                "captured_unix_ns": 1791937551765149686,
+                "load_average": {
+                  "one_minute": 0.59,
+                  "five_minutes": 1.14,
+                  "fifteen_minutes": 2.13
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 58.9,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937553776563571,
+                "load_average": {
+                  "one_minute": 0.62,
+                  "five_minutes": 1.14,
+                  "fifteen_minutes": 2.12
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 58.8,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Richards: 868\n----\nScore: 868\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 4,
+          "execution_order": [
+            "quench",
+            "quickjs",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2015647267,
+              "peak_rss_bytes": 17735680,
+              "score": 1469.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 1313,
+              "page_reclaims": 1313,
+              "involuntary_context_switches": 9,
+              "host_before": {
+                "captured_unix_ns": 1791937560085446194,
+                "load_average": {
+                  "one_minute": 0.65,
+                  "five_minutes": 1.14,
+                  "fifteen_minutes": 2.12
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 58.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937562105337831,
+                "load_average": {
+                  "one_minute": 0.65,
+                  "five_minutes": 1.14,
+                  "fifteen_minutes": 2.12
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 58.6,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Richards: 1469\n----\nScore: 1469\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2077235245,
+              "peak_rss_bytes": 46284800,
+              "score": 1418.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 3817,
+              "page_reclaims": 3817,
+              "involuntary_context_switches": 18,
+              "host_before": {
+                "captured_unix_ns": 1791937562110048007,
+                "load_average": {
+                  "one_minute": 0.65,
+                  "five_minutes": 1.14,
+                  "fifteen_minutes": 2.12
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 58.6,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937564193198652,
+                "load_average": {
+                  "one_minute": 0.76,
+                  "five_minutes": 1.15,
+                  "fifteen_minutes": 2.12
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 58.6,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Richards: 1418\n----\nScore: 1418\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2246285363,
+              "peak_rss_bytes": 44572672,
+              "score": 417.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 8588,
+              "page_reclaims": 8588,
+              "involuntary_context_switches": 5,
+              "host_before": {
+                "captured_unix_ns": 1791937555801446404,
+                "load_average": {
+                  "one_minute": 0.62,
+                  "five_minutes": 1.14,
+                  "fifteen_minutes": 2.12
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 58.8,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937558056265292,
+                "load_average": {
+                  "one_minute": 0.65,
+                  "five_minutes": 1.14,
+                  "fifteen_minutes": 2.12
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 58.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Richards: 417\n----\nScore: 417\n",
+              "stderr": ""
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2012660922,
+              "peak_rss_bytes": 2191360,
+              "score": 881.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 381,
+              "page_reclaims": 381,
+              "involuntary_context_switches": 5,
+              "host_before": {
+                "captured_unix_ns": 1791937558060624531,
+                "load_average": {
+                  "one_minute": 0.65,
+                  "five_minutes": 1.14,
+                  "fifteen_minutes": 2.12
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 58.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937560080584175,
+                "load_average": {
+                  "one_minute": 0.65,
+                  "five_minutes": 1.14,
+                  "fifteen_minutes": 2.12
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 58.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Richards: 881\n----\nScore: 881\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 5,
+          "execution_order": [
+            "quickjs",
+            "bun",
+            "node",
+            "quench"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2009360660,
+              "peak_rss_bytes": 17997824,
+              "score": 1550.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 1349,
+              "page_reclaims": 1349,
+              "involuntary_context_switches": 12,
+              "host_before": {
+                "captured_unix_ns": 1791937566216280621,
+                "load_average": {
+                  "one_minute": 0.76,
+                  "five_minutes": 1.15,
+                  "fifteen_minutes": 2.12
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 58.5,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937568230293791,
+                "load_average": {
+                  "one_minute": 0.78,
+                  "five_minutes": 1.15,
+                  "fifteen_minutes": 2.11
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 58.5,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Richards: 1550\n----\nScore: 1550\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2066819205,
+              "peak_rss_bytes": 46153728,
+              "score": 1483.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 3811,
+              "page_reclaims": 3811,
+              "involuntary_context_switches": 6,
+              "host_before": {
+                "captured_unix_ns": 1791937568233832382,
+                "load_average": {
+                  "one_minute": 0.78,
+                  "five_minutes": 1.15,
+                  "fifteen_minutes": 2.11
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 58.5,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937570305087869,
+                "load_average": {
+                  "one_minute": 0.78,
+                  "five_minutes": 1.15,
+                  "fifteen_minutes": 2.11
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 58.4,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Richards: 1483\n----\nScore: 1483\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2264320903,
+              "peak_rss_bytes": 44539904,
+              "score": 439.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 8588,
+              "page_reclaims": 8588,
+              "involuntary_context_switches": 16,
+              "host_before": {
+                "captured_unix_ns": 1791937570308941125,
+                "load_average": {
+                  "one_minute": 0.78,
+                  "five_minutes": 1.15,
+                  "fifteen_minutes": 2.11
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 58.4,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937572577718847,
+                "load_average": {
+                  "one_minute": 0.78,
+                  "five_minutes": 1.15,
+                  "fifteen_minutes": 2.11
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 58.4,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Richards: 439\n----\nScore: 439\n",
+              "stderr": ""
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2009462342,
+              "peak_rss_bytes": 2154496,
+              "score": 884.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 377,
+              "page_reclaims": 377,
+              "involuntary_context_switches": 11,
+              "host_before": {
+                "captured_unix_ns": 1791937564198266693,
+                "load_average": {
+                  "one_minute": 0.76,
+                  "five_minutes": 1.15,
+                  "fifteen_minutes": 2.12
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 58.6,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937566212451477,
+                "load_average": {
+                  "one_minute": 0.76,
+                  "five_minutes": 1.15,
+                  "fifteen_minutes": 2.12
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 58.5,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Richards: 884\n----\nScore: 884\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 6,
+          "execution_order": [
+            "bun",
+            "node",
+            "quench",
+            "quickjs"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2011130523,
+              "peak_rss_bytes": 17997824,
+              "score": 1548.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 1349,
+              "page_reclaims": 1349,
+              "involuntary_context_switches": 4,
+              "host_before": {
+                "captured_unix_ns": 1791937572581345015,
+                "load_average": {
+                  "one_minute": 0.78,
+                  "five_minutes": 1.15,
+                  "fifteen_minutes": 2.11
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 58.4,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937574596838950,
+                "load_average": {
+                  "one_minute": 0.8,
+                  "five_minutes": 1.14,
+                  "fifteen_minutes": 2.1
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 58.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Richards: 1548\n----\nScore: 1548\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2056776948,
+              "peak_rss_bytes": 46153728,
+              "score": 1483.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 3819,
+              "page_reclaims": 3819,
+              "involuntary_context_switches": 7,
+              "host_before": {
+                "captured_unix_ns": 1791937574600612213,
+                "load_average": {
+                  "one_minute": 0.8,
+                  "five_minutes": 1.14,
+                  "fifteen_minutes": 2.1
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 58.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937576662687539,
+                "load_average": {
+                  "one_minute": 0.8,
+                  "five_minutes": 1.14,
+                  "fifteen_minutes": 2.1
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 58.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Richards: 1483\n----\nScore: 1483\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2242293959,
+              "peak_rss_bytes": 44572672,
+              "score": 410.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 8588,
+              "page_reclaims": 8588,
+              "involuntary_context_switches": 37,
+              "host_before": {
+                "captured_unix_ns": 1791937576667026588,
+                "load_average": {
+                  "one_minute": 0.8,
+                  "five_minutes": 1.14,
+                  "fifteen_minutes": 2.1
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 58.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937578913472243,
+                "load_average": {
+                  "one_minute": 0.81,
+                  "five_minutes": 1.14,
+                  "fifteen_minutes": 2.1
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 58.2,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Richards: 410\n----\nScore: 410\n",
+              "stderr": ""
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2009410695,
+              "peak_rss_bytes": 2179072,
+              "score": 890.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 378,
+              "page_reclaims": 378,
+              "involuntary_context_switches": 4,
+              "host_before": {
+                "captured_unix_ns": 1791937578917036491,
+                "load_average": {
+                  "one_minute": 0.81,
+                  "five_minutes": 1.14,
+                  "fifteen_minutes": 2.1
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 58.2,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937580931126643,
+                "load_average": {
+                  "one_minute": 0.81,
+                  "five_minutes": 1.14,
+                  "fifteen_minutes": 2.1
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 58.2,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Richards: 890\n----\nScore: 890\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 7,
+          "execution_order": [
+            "node",
+            "quench",
+            "quickjs",
+            "bun"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2013980430,
+              "peak_rss_bytes": 17997824,
+              "score": 1550.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 1349,
+              "page_reclaims": 1349,
+              "involuntary_context_switches": 3,
+              "host_before": {
+                "captured_unix_ns": 1791937587255003722,
+                "load_average": {
+                  "one_minute": 0.83,
+                  "five_minutes": 1.14,
+                  "fifteen_minutes": 2.09
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 58.0,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937589273014412,
+                "load_average": {
+                  "one_minute": 0.84,
+                  "five_minutes": 1.14,
+                  "fifteen_minutes": 2.08
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 58.0,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Richards: 1550\n----\nScore: 1550\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2053262490,
+              "peak_rss_bytes": 46153728,
+              "score": 1485.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 3816,
+              "page_reclaims": 3816,
+              "involuntary_context_switches": 5,
+              "host_before": {
+                "captured_unix_ns": 1791937580935508901,
+                "load_average": {
+                  "one_minute": 0.81,
+                  "five_minutes": 1.14,
+                  "fifteen_minutes": 2.1
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 58.2,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937582992814663,
+                "load_average": {
+                  "one_minute": 0.81,
+                  "five_minutes": 1.14,
+                  "fifteen_minutes": 2.1
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 58.1,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Richards: 1485\n----\nScore: 1485\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2237223141,
+              "peak_rss_bytes": 44572672,
+              "score": 420.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 8589,
+              "page_reclaims": 8589,
+              "involuntary_context_switches": 2080,
+              "host_before": {
+                "captured_unix_ns": 1791937582996384580,
+                "load_average": {
+                  "one_minute": 0.81,
+                  "five_minutes": 1.14,
+                  "fifteen_minutes": 2.1
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 58.1,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937585237653514,
+                "load_average": {
+                  "one_minute": 0.83,
+                  "five_minutes": 1.14,
+                  "fifteen_minutes": 2.09
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 58.1,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Richards: 420\n----\nScore: 420\n",
+              "stderr": ""
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2006219281,
+              "peak_rss_bytes": 2203648,
+              "score": 863.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 378,
+              "page_reclaims": 378,
+              "involuntary_context_switches": 25,
+              "host_before": {
+                "captured_unix_ns": 1791937585241382278,
+                "load_average": {
+                  "one_minute": 0.83,
+                  "five_minutes": 1.14,
+                  "fifteen_minutes": 2.09
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 58.1,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937587251598010,
+                "load_average": {
+                  "one_minute": 0.83,
+                  "five_minutes": 1.14,
+                  "fifteen_minutes": 2.09
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 58.0,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Richards: 863\n----\nScore: 863\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 8,
+          "execution_order": [
+            "quench",
+            "quickjs",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2008935398,
+              "peak_rss_bytes": 17866752,
+              "score": 1462.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 1327,
+              "page_reclaims": 1327,
+              "involuntary_context_switches": 44,
+              "host_before": {
+                "captured_unix_ns": 1791937593532616186,
+                "load_average": {
+                  "one_minute": 0.86,
+                  "five_minutes": 1.14,
+                  "fifteen_minutes": 2.08
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 57.9,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937595545771795,
+                "load_average": {
+                  "one_minute": 0.86,
+                  "five_minutes": 1.14,
+                  "fifteen_minutes": 2.08
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 57.9,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Richards: 1462\n----\nScore: 1462\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2110555417,
+              "peak_rss_bytes": 46157824,
+              "score": 1472.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 3824,
+              "page_reclaims": 3824,
+              "involuntary_context_switches": 10,
+              "host_before": {
+                "captured_unix_ns": 1791937595549910790,
+                "load_average": {
+                  "one_minute": 0.86,
+                  "five_minutes": 1.14,
+                  "fifteen_minutes": 2.08
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 57.9,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937597668034756,
+                "load_average": {
+                  "one_minute": 0.86,
+                  "five_minutes": 1.14,
+                  "fifteen_minutes": 2.08
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 57.8,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Richards: 1472\n----\nScore: 1472\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2226205453,
+              "peak_rss_bytes": 44572672,
+              "score": 412.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 8588,
+              "page_reclaims": 8588,
+              "involuntary_context_switches": 5,
+              "host_before": {
+                "captured_unix_ns": 1791937589276474690,
+                "load_average": {
+                  "one_minute": 0.84,
+                  "five_minutes": 1.14,
+                  "fifteen_minutes": 2.08
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 58.0,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937591506752043,
+                "load_average": {
+                  "one_minute": 0.84,
+                  "five_minutes": 1.14,
+                  "fifteen_minutes": 2.08
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 57.9,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Richards: 412\n----\nScore: 412\n",
+              "stderr": ""
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2008796933,
+              "peak_rss_bytes": 2187264,
+              "score": 863.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 378,
+              "page_reclaims": 378,
+              "involuntary_context_switches": 15,
+              "host_before": {
+                "captured_unix_ns": 1791937591510335165,
+                "load_average": {
+                  "one_minute": 0.84,
+                  "five_minutes": 1.14,
+                  "fifteen_minutes": 2.08
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 57.9,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937593525839952,
+                "load_average": {
+                  "one_minute": 0.86,
+                  "five_minutes": 1.14,
+                  "fifteen_minutes": 2.08
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 57.9,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Richards: 863\n----\nScore: 863\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 9,
+          "execution_order": [
+            "quickjs",
+            "bun",
+            "node",
+            "quench"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2014933900,
+              "peak_rss_bytes": 17670144,
+              "score": 1372.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 1314,
+              "page_reclaims": 1314,
+              "involuntary_context_switches": 142,
+              "host_before": {
+                "captured_unix_ns": 1791937599698863821,
+                "load_average": {
+                  "one_minute": 0.87,
+                  "five_minutes": 1.13,
+                  "fifteen_minutes": 2.07
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 57.8,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937601718115325,
+                "load_average": {
+                  "one_minute": 0.87,
+                  "five_minutes": 1.13,
+                  "fifteen_minutes": 2.07
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 57.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Richards: 1372\n----\nScore: 1372\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2060663094,
+              "peak_rss_bytes": 46157824,
+              "score": 1454.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 3824,
+              "page_reclaims": 3824,
+              "involuntary_context_switches": 4,
+              "host_before": {
+                "captured_unix_ns": 1791937601721692155,
+                "load_average": {
+                  "one_minute": 0.87,
+                  "five_minutes": 1.13,
+                  "fifteen_minutes": 2.07
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 57.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937603786265758,
+                "load_average": {
+                  "one_minute": 0.88,
+                  "five_minutes": 1.13,
+                  "fifteen_minutes": 2.07
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 57.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Richards: 1454\n----\nScore: 1454\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2287624295,
+              "peak_rss_bytes": 44572672,
+              "score": 412.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 8589,
+              "page_reclaims": 8589,
+              "involuntary_context_switches": 27,
+              "host_before": {
+                "captured_unix_ns": 1791937603790399844,
+                "load_average": {
+                  "one_minute": 0.88,
+                  "five_minutes": 1.13,
+                  "fifteen_minutes": 2.07
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 57.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937606081884021,
+                "load_average": {
+                  "one_minute": 0.88,
+                  "five_minutes": 1.13,
+                  "fifteen_minutes": 2.07
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 57.6,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Richards: 412\n----\nScore: 412\n",
+              "stderr": ""
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2011166822,
+              "peak_rss_bytes": 2150400,
+              "score": 901.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 377,
+              "page_reclaims": 377,
+              "involuntary_context_switches": 5,
+              "host_before": {
+                "captured_unix_ns": 1791937597674328574,
+                "load_average": {
+                  "one_minute": 0.86,
+                  "five_minutes": 1.14,
+                  "fifteen_minutes": 2.08
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 57.8,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937599692272534,
+                "load_average": {
+                  "one_minute": 0.87,
+                  "five_minutes": 1.13,
+                  "fifteen_minutes": 2.07
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 57.8,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Richards: 901\n----\nScore: 901\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 10,
+          "execution_order": [
+            "bun",
+            "node",
+            "quench",
+            "quickjs"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2010571027,
+              "peak_rss_bytes": 17997824,
+              "score": 1547.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 1349,
+              "page_reclaims": 1349,
+              "involuntary_context_switches": 29,
+              "host_before": {
+                "captured_unix_ns": 1791937606085525662,
+                "load_average": {
+                  "one_minute": 0.88,
+                  "five_minutes": 1.13,
+                  "fifteen_minutes": 2.07
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 57.6,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937608100122819,
+                "load_average": {
+                  "one_minute": 0.89,
+                  "five_minutes": 1.13,
+                  "fifteen_minutes": 2.06
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 57.6,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Richards: 1547\n----\nScore: 1547\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2043692994,
+              "peak_rss_bytes": 46153728,
+              "score": 1405.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 3809,
+              "page_reclaims": 3809,
+              "involuntary_context_switches": 10,
+              "host_before": {
+                "captured_unix_ns": 1791937608103963843,
+                "load_average": {
+                  "one_minute": 0.89,
+                  "five_minutes": 1.13,
+                  "fifteen_minutes": 2.06
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 57.6,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937610151674757,
+                "load_average": {
+                  "one_minute": 0.89,
+                  "five_minutes": 1.13,
+                  "fifteen_minutes": 2.06
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 57.5,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Richards: 1405\n----\nScore: 1405\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2226055158,
+              "peak_rss_bytes": 44576768,
+              "score": 442.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 8588,
+              "page_reclaims": 8588,
+              "involuntary_context_switches": 190,
+              "host_before": {
+                "captured_unix_ns": 1791937610155184569,
+                "load_average": {
+                  "one_minute": 0.89,
+                  "five_minutes": 1.13,
+                  "fifteen_minutes": 2.06
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 57.5,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937612385622329,
+                "load_average": {
+                  "one_minute": 0.89,
+                  "five_minutes": 1.13,
+                  "fifteen_minutes": 2.06
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 57.5,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Richards: 442\n----\nScore: 442\n",
+              "stderr": ""
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2006987725,
+              "peak_rss_bytes": 2150400,
+              "score": 775.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 377,
+              "page_reclaims": 377,
+              "involuntary_context_switches": 8,
+              "host_before": {
+                "captured_unix_ns": 1791937612389198309,
+                "load_average": {
+                  "one_minute": 0.89,
+                  "five_minutes": 1.13,
+                  "fifteen_minutes": 2.06
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 57.5,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937614400228454,
+                "load_average": {
+                  "one_minute": 0.9,
+                  "five_minutes": 1.13,
+                  "fifteen_minutes": 2.06
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17308,
+                    "cpu_percent": 57.4,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 13257,
+                    "cpu_percent": 1.7,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 77591,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 14677,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  },
+                  {
+                    "pid": 14682,
+                    "cpu_percent": 0.3,
+                    "command": "rustc"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: Richards: 775\n----\nScore: 775\n",
+              "stderr": ""
+            }
+          }
+        }
+      ]
+    }
+  },
+  "complete": true,
+  "qualification_ready": false
+}

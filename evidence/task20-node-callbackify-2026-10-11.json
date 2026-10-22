@@ -1,0 +1,23 @@
+{
+  "scope": "Native util.callbackify lifecycle and function descriptor preservation",
+  "oracle": "v27.0.0-nightly20260819c79868f102",
+  "validation": "All 8 child-entry tests pass; callbackify oracle covers original/callback receivers, ordinary function prototype/constructible wrapper, copied data/accessor/Symbol descriptors, modified name/length metadata, invalid arguments, falsy rejection identity and fields, and nextTick vs Promise ordering.",
+  "utility_subset": {
+    "before": {
+      "pass": 11,
+      "skip": 1,
+      "fail": 19
+    },
+    "after": {
+      "pass": 11,
+      "skip": 1,
+      "fail": 19
+    },
+    "total": 31,
+    "inventory_hash": "9db1c1006acbd125",
+    "timeout_secs": 10,
+    "jobs": 2
+  },
+  "remaining": "Upstream callbackify fixture advances beyond missing API and fails with string-input TypeError from a missing stack frame; async child/stack behavior still requires work.",
+  "performance_claim": false
+}

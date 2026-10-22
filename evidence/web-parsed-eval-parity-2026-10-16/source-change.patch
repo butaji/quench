@@ -1,0 +1,1484 @@
+diff --git a/crates/quench-node-test/node-tests/test-compiled-eval-source.js b/crates/quench-node-test/node-tests/test-compiled-eval-source.js
+new file mode 100644
+index 000000000..811484276
+--- /dev/null
++++ b/crates/quench-node-test/node-tests/test-compiled-eval-source.js
+@@ -0,0 +1,19 @@
++const vm=require('vm');
++Error.prepareStackTrace=(_,frames)=>frames;
++const inputs=['"for(;false;)"','#!/usr/bin/env node\nMath.max(2,3)','1; 2; 3','local','arguments[1]','new.target','"use strict"; local+=2; local','if(true){4}else{5}','try{6}finally{7}','with({local:8})local','"use strict"; 9','let x=10; x+1','return 12','/* unterminated'];
++function evaluate(source,direct){let local=13;return direct?eval(source):(0,eval)(source)}
++const out=[];
++for(const direct of [false,true])for(const source of inputs){
++ try{const value=evaluate(source,direct);out.push([direct,typeof value,String(value)])}catch(error){out.push([direct,error.name])}
++}
++for(const source of ['new Error().stack','1;\n\nnew Error().stack','/*leading*/\r\nnew Error().stack','"use strict"; new Error().stack','(()=>new Error().stack)()']){
++ for(const direct of [false,true]){
++  const frame=evaluate(source,direct)[0];out.push([direct,frame.getLineNumber(),frame.getColumnNumber(),frame.isEval()]);
++ }
++}
++const host=vm.runInThisContext('new Error().stack',{filename:'host-eval-expr.js'})[0];
++out.push(['host',host.getFileName(),host.getLineNumber(),host.getColumnNumber(),host.isEval()]);
++for(const source of ['/x/g','(/x/g)',`/\ud800/`,`(/\ud800/)`]){
++ const regexp=evaluate(source,true);out.push([regexp.source.charCodeAt(0),regexp.flags]);
++}
++console.log(JSON.stringify(out));
+diff --git a/crates/quench-node-test/tests/child_entry.rs b/crates/quench-node-test/tests/child_entry.rs
+index bc55d316c..23f3cf8bf 100644
+--- a/crates/quench-node-test/tests/child_entry.rs
++++ b/crates/quench-node-test/tests/child_entry.rs
+@@ -9503,3 +9503,8 @@ fn fused_field_reads_preserve_each_getter_operation_source() {
+ fn callsite_eval_classification_follows_compilation_origin_and_survives_escaped_closures() {
+     compare_node_source_with_args(include_str!("../node-tests/test-callsite-eval-origin.js"), &["--expose-gc"]);
+ }
++
++#[test]
++fn eval_uses_parsed_program_completion_grammar_and_original_source_positions() {
++    compare_node_source_with_args(include_str!("../node-tests/test-compiled-eval-source.js"), &[]);
++}
+diff --git a/crates/quench-runtime/src/compile.rs b/crates/quench-runtime/src/compile.rs
+index 73282d34e..dbb4122b4 100644
+--- a/crates/quench-runtime/src/compile.rs
++++ b/crates/quench-runtime/src/compile.rs
+@@ -156,12 +156,6 @@ pub(crate) enum DynamicFunctionKind {
+     AsyncGenerator,
+ }
+ 
+-pub(crate) enum EvalExpressionKind {
+-    Identifier(String),
+-    Import,
+-    Other,
+-}
+-
+ #[derive(Clone, Copy, Default)]
+ pub(crate) struct EvalContext {
+     pub in_function: bool,
+@@ -177,11 +171,6 @@ enum ParsedProgramShape {
+     Eval(EvalContext),
+ }
+ 
+-#[derive(Clone, Copy)]
+-enum DynamicFunctionValidation {
+-    None,
+-    ParameterBoundary,
+-}
+ pub(crate) struct EvalRegExpLiteral {
+     pub(crate) span: Range<usize>,
+     pub(crate) flags: String,
+@@ -200,39 +189,7 @@ pub(crate) struct StaticModulePlan {
+     pub(crate) has_top_level_await: bool,
+ }
+ pub(crate) use crate::bytecode::ModuleReexport as StaticModuleReexport;
+-fn eval_expression_span(body: &[Statement<'_>], directives: &[Directive<'_>]) -> Option<Span> {
+-    match body {
+-        [Statement::ExpressionStatement(statement)] if directives.is_empty() => {
+-            Some(statement.expression.span())
+-        }
+-        [] if directives.len() == 1 => Some(directives[0].expression.span()),
+-        _ => None,
+-    }
+-}
+-
+ impl Engine {
+-    pub(crate) fn eval_single_string_constant(source: &str) -> Option<Constant> {
+-        let allocator = Allocator::with_capacity(source.len());
+-        let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
+-        if stack::validate_parsed(&parsed).is_err() || !parsed.diagnostics.is_empty() {
+-            return None;
+-        }
+-        let literal = match (
+-            parsed.program.body.as_slice(),
+-            parsed.program.directives.as_slice(),
+-        ) {
+-            ([], [directive]) => &directive.expression,
+-            ([Statement::ExpressionStatement(statement)], []) => {
+-                let Expression::StringLiteral(literal) = &statement.expression else {
+-                    return None;
+-                };
+-                literal
+-            }
+-            _ => return None,
+-        };
+-        Some(string::constant(literal))
+-    }
+-
+     pub(crate) fn eval_single_regexp_literal(source: &str) -> Option<EvalRegExpLiteral> {
+         let allocator = Allocator::with_capacity(source.len());
+         let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
+@@ -245,7 +202,7 @@ impl Engine {
+         let Statement::ExpressionStatement(statement) = &parsed.program.body[0] else {
+             return None;
+         };
+-        let Expression::RegExpLiteral(literal) = &statement.expression else {
++        let Expression::RegExpLiteral(literal) = statement.expression.without_parentheses() else {
+             return None;
+         };
+         let flags = [
+@@ -267,19 +224,6 @@ impl Engine {
+         })
+     }
+ 
+-    pub(crate) fn strict_octal_numeric_early_error(source: &str) -> Option<String> {
+-        let allocator = Allocator::with_capacity(source.len());
+-        let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
+-        if stack::validate_parsed(&parsed).is_err() {
+-            return None;
+-        }
+-        parsed
+-            .diagnostics
+-            .is_empty()
+-            .then(|| early::strict_octal_numeric_early_error(&parsed.program))
+-            .flatten()
+-    }
+-
+     pub(crate) fn field_eval_references_arguments(source: &str) -> bool {
+         let context = eval_context_source(source, &[], true);
+         let allocator = Allocator::with_capacity(context.len());
+@@ -291,150 +235,6 @@ impl Engine {
+             .is_some_and(|body| early::field_eval_references_arguments(&body.statements))
+     }
+ 
+-    pub(crate) fn eval_has_use_strict_directive(source: &str) -> bool {
+-        let allocator = Allocator::with_capacity(source.len());
+-        let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
+-        if stack::validate_parsed(&parsed).is_err() || !parsed.diagnostics.is_empty() {
+-            return false;
+-        }
+-        parsed
+-            .program
+-            .directives
+-            .iter()
+-            .any(|directive| directive.directive == "use strict")
+-    }
+-
+-    pub(crate) fn eval_expression_kind(source: &str) -> EvalExpressionKind {
+-        let allocator = Allocator::with_capacity(source.len());
+-        let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
+-        if stack::validate_parsed(&parsed).is_err() || !parsed.diagnostics.is_empty() {
+-            return EvalExpressionKind::Other;
+-        }
+-        match parsed.program.body.as_slice() {
+-            [Statement::ExpressionStatement(statement)] => {
+-                match statement.expression.without_parentheses() {
+-                    Expression::Identifier(identifier) => {
+-                        EvalExpressionKind::Identifier(identifier.name.to_string())
+-                    }
+-                    Expression::ImportExpression(_) => EvalExpressionKind::Import,
+-                    _ => EvalExpressionKind::Other,
+-                }
+-            }
+-            _ => EvalExpressionKind::Other,
+-        }
+-    }
+-
+-    pub(crate) fn eval_single_expression(source: &str) -> Option<&str> {
+-        let allocator = Allocator::with_capacity(source.len());
+-        let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
+-        if stack::validate_parsed(&parsed).is_err() {
+-            return None;
+-        }
+-        if !parsed.diagnostics.is_empty() {
+-            return None;
+-        }
+-        let span = eval_expression_span(&parsed.program.body, &parsed.program.directives)?;
+-        source.get(span.start as usize..span.end as usize)
+-    }
+-
+-    /// Classify the body of the synthetic eval method in its private-name
+-    /// grammar context instead of reparsing that body as a standalone Script.
+-    pub(crate) fn eval_method_expression(source: &str) -> Option<&str> {
+-        let allocator = Allocator::with_capacity(source.len());
+-        let mut parsed = Parser::new(&allocator, source, SourceType::script()).parse();
+-        if stack::validate_parsed(&parsed).is_err() || !parsed.diagnostics.is_empty() {
+-            return None;
+-        }
+-        let body = eval_method_body(&mut parsed.program)?;
+-        // The synthetic class method is already strict. Literal directives
+-        // have no effects before its sole expression.
+-        let span = eval_expression_span(&body.statements, &[])?;
+-        source.get(span.start as usize..span.end as usize)
+-    }
+-
+-    pub(crate) fn eval_statement_slices(source: &str) -> Option<Vec<&str>> {
+-        let allocator = Allocator::with_capacity(source.len());
+-        let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
+-        if stack::validate_parsed(&parsed).is_err() {
+-            return None;
+-        }
+-        if !parsed.diagnostics.is_empty() {
+-            return None;
+-        }
+-        let mut statements =
+-            Vec::with_capacity(parsed.program.directives.len() + parsed.program.body.len());
+-        for directive in &parsed.program.directives {
+-            let span = directive.expression.span();
+-            statements.push(source.get(span.start as usize..span.end as usize)?);
+-        }
+-        for statement in &parsed.program.body {
+-            if matches!(statement, Statement::EmptyStatement(_)) {
+-                continue;
+-            }
+-            let span = match statement {
+-                Statement::ExpressionStatement(expression) => expression.expression.span(),
+-                _ => statement.span(),
+-            };
+-            let text = source.get(span.start as usize..span.end as usize)?;
+-            statements.push(if matches!(statement, Statement::VariableDeclaration(_)) {
+-                text.strip_suffix(';').unwrap_or(text)
+-            } else {
+-                text
+-            });
+-        }
+-        Some(statements)
+-    }
+-
+-    pub(crate) fn eval_requires_compiled_program(source: &str) -> bool {
+-        use oxc_ast_visit::Visit;
+-
+-        struct ResidualSyntax(bool);
+-        impl<'a> Visit<'a> for ResidualSyntax {
+-            fn visit_reg_exp_literal(&mut self, _: &RegExpLiteral<'a>) {
+-                self.0 = true;
+-            }
+-            fn visit_assignment_expression(&mut self, _: &AssignmentExpression<'a>) {
+-                self.0 = true;
+-            }
+-            fn visit_update_expression(&mut self, _: &UpdateExpression<'a>) {
+-                self.0 = true;
+-            }
+-        }
+-
+-        let allocator = Allocator::with_capacity(source.len());
+-        let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
+-        if stack::validate_parsed(&parsed).is_err() {
+-            return true;
+-        }
+-        // OXC lowering owns reference writes and RegExp token contents.
+-        let mut residual = ResidualSyntax(false);
+-        residual.visit_program(&parsed.program);
+-        !parsed.diagnostics.is_empty()
+-            || !parsed.program.comments.is_empty()
+-            || residual.0
+-            || parsed.program.body.iter().any(|statement| {
+-                matches!(
+-                    statement,
+-                    Statement::VariableDeclaration(_)
+-                        | Statement::ClassDeclaration(_)
+-                        | Statement::FunctionDeclaration(_)
+-                        | Statement::BlockStatement(_)
+-                        | Statement::DoWhileStatement(_)
+-                        | Statement::ForStatement(_)
+-                        | Statement::ForInStatement(_)
+-                        | Statement::ForOfStatement(_)
+-                        | Statement::WhileStatement(_)
+-                        | Statement::SwitchStatement(_)
+-                        | Statement::IfStatement(_)
+-                        | Statement::TryStatement(_)
+-                        | Statement::LabeledStatement(_)
+-                        | Statement::WithStatement(_)
+-                ) || matches!(statement, Statement::ExpressionStatement(statement)
+-                        if matches!(statement.expression.without_parentheses(), Expression::UnaryExpression(unary)
+-                            if unary.operator == oxc_syntax::operator::UnaryOperator::Delete))
+-            })
+-    }
+-
+     pub(crate) fn static_module_has_early_error(source: &str) -> bool {
+         let normalized = early::normalize_hashbang(source);
+         let allocator = Allocator::with_capacity(normalized.len().saturating_mul(6));
+@@ -783,59 +583,12 @@ impl Engine {
+     }
+     /// Compile already-coerced Function-constructor parameter and body strings
+     /// through the same OXC script pipeline used by ordinary source.
+-    pub(crate) fn specialize_dynamic_function(
+-        parameters: &str,
+-        body: &str,
+-        name: &str,
+-        atom_prefix: &dyn AtomPrefix,
+-    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
+-        Self::specialize_dynamic_function_with_kind(
+-            parameters,
+-            body,
+-            name,
+-            atom_prefix,
+-            DynamicFunctionKind::Ordinary,
+-        )
+-    }
+-    pub(crate) fn specialize_dynamic_function_with_kind(
+-        parameters: &str,
+-        body: &str,
+-        name: &str,
+-        atom_prefix: &dyn AtomPrefix,
+-        kind: DynamicFunctionKind,
+-    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
+-        Self::specialize_dynamic_function_source(
+-            parameters,
+-            body,
+-            name,
+-            atom_prefix,
+-            kind,
+-            DynamicFunctionValidation::None,
+-        )
+-    }
+     pub(crate) fn specialize_function_constructor(
+         parameters: &str,
+         body: &str,
+         name: &str,
+         atom_prefix: &dyn AtomPrefix,
+         kind: DynamicFunctionKind,
+-    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
+-        Self::specialize_dynamic_function_source(
+-            parameters,
+-            body,
+-            name,
+-            atom_prefix,
+-            kind,
+-            DynamicFunctionValidation::ParameterBoundary,
+-        )
+-    }
+-    fn specialize_dynamic_function_source(
+-        parameters: &str,
+-        body: &str,
+-        name: &str,
+-        atom_prefix: &dyn AtomPrefix,
+-        kind: DynamicFunctionKind,
+-        validation: DynamicFunctionValidation,
+     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
+         let body = early::normalize_dynamic_function_body(body);
+         let parameters = early::normalize_dynamic_function_parameters(parameters);
+@@ -850,12 +603,7 @@ impl Engine {
+         let parameter_list_end =
+             expression_wrapper.len() + function_prefix.len() + parameters.len() + ")".len();
+         let source = format!("{expression_wrapper}{function_prefix}{parameters}) {{{body}\n}})");
+-        let expected_shape = match validation {
+-            DynamicFunctionValidation::None => ParsedProgramShape::Any,
+-            DynamicFunctionValidation::ParameterBoundary => {
+-                ParsedProgramShape::DynamicFunction { parameter_list_end }
+-            }
+-        };
++        let expected_shape = ParsedProgramShape::DynamicFunction { parameter_list_end };
+         Self::specialize_with_program_shape(
+             &source,
+             name,
+@@ -868,29 +616,6 @@ impl Engine {
+             expected_shape,
+         )
+     }
+-    pub(crate) fn specialize_dynamic_function_with_private_names(
+-        parameters: &str,
+-        body: &str,
+-        name: &str,
+-        atom_prefix: &dyn AtomPrefix,
+-        private_names: &[(String, String)],
+-    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
+-        let body = early::normalize_dynamic_function_body(body);
+-        let source = format!("(function({parameters}) {{{body}\n}})");
+-        Self::specialize_with_mode_and_private_names(
+-            &source,
+-            name,
+-            SpecializationMode::of(atom_prefix),
+-            atom_prefix,
+-            SourceType::script(),
+-            false,
+-            false,
+-            false,
+-            private_names,
+-            &[],
+-            ParsedProgramShape::Any,
+-        )
+-    }
+     fn specialize_module_with_mode(
+         source: &str,
+         name: &str,
+@@ -1155,18 +880,6 @@ impl Engine {
+         program
+     }
+ 
+-    pub(crate) fn eval_parameter_early_error(source: &str, strict: bool) -> Option<String> {
+-        let allocator = Allocator::with_capacity(source.len().saturating_mul(2));
+-        let parsed = Parser::new(&allocator, source, SourceType::unambiguous()).parse();
+-        if stack::validate_parsed(&parsed).is_err() {
+-            return None;
+-        }
+-        if !parsed.diagnostics.is_empty() {
+-            return Some(format!("SyntaxError: {}", parsed.diagnostics[0]));
+-        }
+-        early::parameter_early_error(&parsed.program, strict)
+-    }
+-
+     pub(crate) fn strict_eval_syntax_error(source: &str, in_function: bool) -> Option<String> {
+         let strict_source = format!("'use strict';\n{source}");
+         let source = strict_source.as_str();
+diff --git a/crates/quench-runtime/src/vm/error.rs b/crates/quench-runtime/src/vm/error.rs
+index 2e0675fd0..d05715ec7 100644
+--- a/crates/quench-runtime/src/vm/error.rs
++++ b/crates/quench-runtime/src/vm/error.rs
+@@ -90,7 +90,7 @@ struct ErrorSourceLocation {
+ enum ErrorDescription {
+     Text {
+         message: String,
+-        eval_parser_diagnostic: bool,
++
+     },
+     DataClone(String),
+     WasmTrap(crate::WasmTrap),
+@@ -110,7 +110,7 @@ impl From<String> for ErrorMessage {
+             payload: Box::new(ErrorPayload {
+                 description: ErrorDescription::Text {
+                     message,
+-                    eval_parser_diagnostic: false,
++
+                 },
+                 thrown: None,
+                 source_location: None,
+@@ -138,7 +138,7 @@ impl JsError {
+             payload: Box::new(ErrorPayload {
+                 description: ErrorDescription::Text {
+                     message,
+-                    eval_parser_diagnostic: false,
++
+                 },
+                 thrown: Some(value),
+                 source_location: None,
+@@ -205,27 +205,6 @@ impl JsError {
+         self.0.payload.thrown = Some(value);
+     }
+ 
+-    pub(crate) fn is_eval_parser_diagnostic(&self) -> bool {
+-        matches!(
+-            self.0.payload.description,
+-            ErrorDescription::Text {
+-                eval_parser_diagnostic: true,
+-                ..
+-            }
+-        )
+-    }
+-
+-    pub(crate) fn mark_eval_parser_diagnostic(mut self) -> Self {
+-        if let ErrorDescription::Text {
+-            eval_parser_diagnostic,
+-            ..
+-        } = &mut self.0.payload.description
+-        {
+-            *eval_parser_diagnostic = true;
+-        }
+-        self
+-    }
+-
+     /// Inspect a thrown Wasm exception independently of guest traps and JS throws.
+     pub fn wasm_exception(&self) -> Option<Value> {
+         matches!(self.0.payload.description, ErrorDescription::WasmException)
+diff --git a/crates/quench-runtime/src/vm/eval.rs b/crates/quench-runtime/src/vm/eval.rs
+index 77566b0d7..159e78a02 100644
+--- a/crates/quench-runtime/src/vm/eval.rs
++++ b/crates/quench-runtime/src/vm/eval.rs
+@@ -1,6 +1,5 @@
+ use super::object_descriptors::PropertyDescriptorRecord;
+ use super::*;
+-use super::program_store::CompilationOrigin;
+ 
+ use crate::compile::eval_context_source;
+ 
+@@ -40,9 +39,6 @@ impl<H: Host> Vm<H> {
+         source: &str,
+         source_name: &str,
+     ) -> Result<Value, JsError> {
+-        if let Some(expression) = crate::Engine::eval_single_expression(source) {
+-            return self.eval_compiled_expression_named(p, expression, false, source_name, CompilationOrigin::Source);
+-        }
+         let residual =
+             match crate::Engine::specialize_script_with_atom_prefix(source, source_name, &*self) {
+                 Ok(residual) => residual,
+@@ -101,9 +97,14 @@ impl<H: Host> Vm<H> {
+     ) -> Result<Value, JsError> {
+         let source = args.first().copied().unwrap_or(Value::UNDEFINED);
+         if let Some(Cell::String(source_text)) = self.heap.get(source).cloned()
+-            && let Some((pattern_units, flag_units)) =
+-                eval_regexp_literal_units(&source_text.units().wide())
++            && let Some(literal) = crate::Engine::eval_single_regexp_literal(source_text.host_string())
+         {
++            let text = source_text.host_string();
++            let start = text[..literal.span.start].encode_utf16().count() + 1;
++            let end = text[..literal.span.end].encode_utf16().count() - literal.flags.len() - 1;
++            let units = source_text.units().wide();
++            let pattern_units = &units[start..end];
++            let flag_units = literal.flags.encode_utf16().collect::<Vec<_>>();
+             if let (Ok(pattern), Ok(flags)) = (
+                 String::from_utf16(&pattern_units),
+                 String::from_utf16(&flag_units),
+@@ -117,81 +118,20 @@ impl<H: Host> Vm<H> {
+                 .alloc(Cell::String(JsString::from_units(pattern_units)));
+             let flags = self
+                 .heap
+-                .alloc(Cell::String(JsString::from_units(flag_units)));
++                .alloc(Cell::String(JsString::from_units(&flag_units)));
+             return self.construct_regexp_native(p, &[pattern, flags], None);
+         }
+-        if matches!(self.heap.get(source), Some(Cell::String(value)) if eval_source_has_no_tokens(&value.units().wide()))
+-        {
+-            return Ok(Value::UNDEFINED);
+-        }
+         let text = match self.heap.get(source) {
+             Some(Cell::String(value)) => value.host_string().to_owned(),
+             _ => return Ok(source),
+         };
+-        let trimmed = text.trim();
+-        if let Some(rest) = trimmed.strip_prefix("#!") {
+-            let rest = rest
+-                .find(['\n', '\r', '\u{2028}', '\u{2029}'])
+-                .map(|index| &rest[index + 1..])
+-                .unwrap_or_default()
+-                .trim();
+-            return if rest.is_empty() {
+-                Ok(Value::UNDEFINED)
+-            } else if let Ok(number) = rest.parse::<f64>() {
+-                Ok(Value::number(number))
+-            } else {
+-                Ok(Value::UNDEFINED)
+-            };
+-        }
+         let inherited_strict = self.direct_eval
+             && (self.in_class_field_initializer(p)
+-                || self
+-                    .frames
+-                    .last()
++                || self.frames.last()
+                     .and_then(|frame| p.functions.get(frame.function as usize))
+                     .is_some_and(|function| function.strict));
+-        if inherited_strict
+-            && let Some(error) = crate::Engine::strict_octal_numeric_early_error(trimmed)
+-        {
+-            return self
+-                .syntax_error_result(p, error.strip_prefix("SyntaxError: ").unwrap_or(&error));
+-        }
+         self.validate_eval_arguments_context(p, &text)?;
+-        if self.direct_eval
+-            && (self.in_class_field_initializer(p) || self.eval_super_context(p).is_some())
+-        {
+-            return self.eval_global_script(p, &text, inherited_strict);
+-        }
+-        // Private names the eval can reference are those of its enclosing classes; without
+-        // any, a `#` is in a string, comment or an undeclared name the ordinary paths reject.
+-        let private_names = if self.direct_eval && text.contains('#') {
+-            self.direct_eval_private_names(p)
+-                .map_or_else(Vec::new, |(_, names)| names)
+-        } else {
+-            Vec::new()
+-        };
+-        if !private_names.is_empty() {
+-            let context_source = eval_context_source(&text, &private_names, false);
+-            if let Some(expression) = crate::Engine::eval_method_expression(&context_source) {
+-                return self.eval_compiled_expression(p, expression, inherited_strict);
+-            }
+-            let body = private_eval_method_body(&text, &private_names, false);
+-            crate::Engine::specialize_dynamic_function_with_private_names(
+-                "",
+-                &body,
+-                "<private-eval-validation>",
+-                &*self,
+-                &private_names,
+-            )
+-            .map_err(|diagnostics| self.mark_eval_syntax_error(p, diagnostics))?;
+-        }
+-        let result = self.eval_source_simple(p, trimmed, inherited_strict);
+-        match result {
+-            Err(error) if error.is_eval_parser_diagnostic() => {
+-                self.eval_global_script(p, &text, inherited_strict)
+-            }
+-            result => result,
+-        }
++        self.eval_global_script(p, &text, inherited_strict)
+     }
+ 
+     pub(super) fn eval_global_script(
+@@ -214,11 +154,6 @@ impl<H: Host> Vm<H> {
+         if strict {
+             self.validate_strict_eval(p, source)?;
+         }
+-        if !self.direct_eval
+-            && let Some(expression) = crate::Engine::eval_single_expression(source)
+-        {
+-            return self.eval_compiled_expression_named(p, expression, strict, source_name, CompilationOrigin::Eval);
+-        }
+         let context = self.direct_eval_context(p).unwrap_or_default();
+         let private_names = if context.home_atom.is_some() {
+             self.direct_eval_private_names(p)
+@@ -265,7 +200,6 @@ impl<H: Host> Vm<H> {
+                 .map_or("invalid eval source".to_owned(), ToString::to_string);
+             self.syntax_error_result(p, &message)
+                 .expect_err("dynamic eval syntax errors must throw")
+-                .mark_eval_parser_diagnostic()
+         })?;
+         let Some(program_id) = self.store_dynamic_program(residual) else {
+             return Err(self.type_error(p, "dynamic program store is full".into()));
+@@ -583,98 +517,6 @@ impl<H: Host> Vm<H> {
+         Ok(())
+     }
+ 
+-    pub(super) fn eval_source_simple(
+-        &mut self,
+-        p: &ResidualProgram,
+-        source: &str,
+-        inherited_strict: bool,
+-    ) -> Result<Value, JsError> {
+-        if source.trim().is_empty() {
+-            return Ok(Value::UNDEFINED);
+-        }
+-        self.validate_eval_arguments_context(p, source)?;
+-        // OXC owns comments and grammar; compiled paths retain the original source.
+-        if crate::Engine::eval_requires_compiled_program(source) {
+-            return self.eval_global_script(p, source, inherited_strict);
+-        }
+-        if let Some(rest) = source.trim().strip_prefix("with ({}) {}") {
+-            if inherited_strict {
+-                return self.syntax_error_result(p, "with statement is not valid in strict code");
+-            }
+-            return self.eval_source_simple(p, rest, inherited_strict);
+-        }
+-        if source.trim_start().starts_with("import ") || source.trim_start().starts_with("export ")
+-        {
+-            return self.syntax_error_result(p, "import/export is not valid in eval code");
+-        }
+-        if source.contains("super(") {
+-            return Err(
+-                self.mark_eval_parser_error(p, "super call requires syntactic eval validation")
+-            );
+-        }
+-        if (source.contains("super.") || source.contains("super[")) && !self.direct_eval {
+-            return Err(
+-                self.mark_eval_parser_error(p, "super property requires syntactic eval validation")
+-            );
+-        }
+-        if source.contains("\n++")
+-            || source.contains("for(;false;)")
+-            || source.trim_start().starts_with("return")
+-            || source.trim_start().starts_with("break")
+-            || source.trim_start().starts_with("continue")
+-        {
+-            return self.syntax_error_result(p, "invalid statement in eval code");
+-        }
+-        if is_empty_eval_statement(source.trim()) {
+-            return Ok(Value::UNDEFINED);
+-        }
+-        let statements = if self.direct_eval {
+-            crate::Engine::eval_statement_slices(source).unwrap_or_else(|| split_statements(source))
+-        } else {
+-            split_statements(source)
+-        };
+-        let source_strict =
+-            inherited_strict || crate::Engine::eval_has_use_strict_directive(source);
+-        if source_strict {
+-            self.validate_strict_eval(p, source)?;
+-        }
+-        if source.contains("function")
+-            && !source.contains("super")
+-            && let Some(error) = crate::Engine::eval_parameter_early_error(source, source_strict)
+-        {
+-            let message = error.strip_prefix("SyntaxError: ").unwrap_or(&error);
+-            return self.syntax_error_result(p, message);
+-        }
+-        let strict = source_strict;
+-        let mut result = Value::UNDEFINED;
+-        for statement in statements {
+-            let statement = statement.trim();
+-            if statement.is_empty() {
+-                continue;
+-            }
+-            if is_empty_eval_statement(statement) {
+-                continue;
+-            }
+-            if let Some(inner) = statement.strip_prefix("eval(")
+-                && let Some(inner) = inner.strip_suffix(')')
+-            {
+-                let value = self.eval_simple_expression(p, inner, strict)?;
+-                let source = match self.heap.get(value) {
+-                    Some(Cell::String(string)) => string.host_string().to_owned(),
+-                    _ => return Ok(value),
+-                };
+-                result = self.eval_source_simple(p, &source, strict)?;
+-                continue;
+-            }
+-            if let Some(expression) = statement.strip_prefix("throw ") {
+-                let value = self.eval_simple_expression(p, expression, strict)?;
+-                return Err(JsError::thrown(value, "eval throw".into()));
+-            }
+-            result = self.eval_simple_expression(p, statement, strict)?;
+-        }
+-        Ok(result)
+-    }
+-
+     fn in_class_field_initializer(&mut self, p: &ResidualProgram) -> bool {
+         self.frames
+             .last()
+@@ -724,283 +566,6 @@ impl<H: Host> Vm<H> {
+         Ok(())
+     }
+ 
+-    pub(super) fn eval_simple_expression(
+-        &mut self,
+-        p: &ResidualProgram,
+-        expression: &str,
+-        strict: bool,
+-    ) -> Result<Value, JsError> {
+-        let expression = expression.trim();
+-        if let Some(literal) = crate::Engine::eval_single_regexp_literal(expression) {
+-            let start = expression[..literal.span.start].encode_utf16().count();
+-            let end = expression[..literal.span.end].encode_utf16().count();
+-            let units = expression.encode_utf16().collect::<Vec<_>>();
+-            if let Some((pattern, _)) = eval_regexp_literal_units(&units[start..end]) {
+-                let pattern = self.heap.alloc(Cell::String(JsString::from_units(pattern)));
+-                let flags = self.heap.alloc(Cell::String(literal.flags.into()));
+-                return self.construct_regexp_native(p, &[pattern, flags], None);
+-            }
+-        }
+-        if expression.starts_with('(') && !self.direct_eval {
+-            return self.eval_compiled_expression(p, expression, strict);
+-        }
+-        if expression == "new.target" {
+-            if self.direct_eval && self.in_class_field_initializer(p) {
+-                return Ok(Value::UNDEFINED);
+-            }
+-            let atom = self.runtime_atoms.new_target;
+-            return Ok(self
+-                .frames
+-                .len()
+-                .checked_sub(1)
+-                .and_then(|frame| self.dynamic_binding(frame, atom))
+-                .unwrap_or(Value::UNDEFINED));
+-        }
+-        if expression.starts_with("new ") {
+-            return self.eval_compiled_expression(p, expression, strict);
+-        }
+-        if let Some((name, arguments)) = eval_new_expression(expression) {
+-            let atom = self.intern_atom(name);
+-            let callee = self.load_eval_name(p, atom)?;
+-            let arguments = arguments
+-                .map(|source| self.eval_simple_expression(p, source, strict))
+-                .transpose()?
+-                .into_iter()
+-                .collect::<Vec<_>>();
+-            return self.construct_value(p, callee, &arguments);
+-        }
+-        if expression.starts_with("function") {
+-            return self.eval_compiled_expression(p, expression, strict);
+-        }
+-        if let Some((left, operator, right)) = find_unquoted_operator(expression) {
+-            let left = self.eval_simple_expression(p, left, strict)?;
+-            if operator == "&&" {
+-                return if self.truthy(left) {
+-                    self.eval_simple_expression(p, right, strict)
+-                } else {
+-                    Ok(left)
+-                };
+-            }
+-            if operator == "||" {
+-                return if self.truthy(left) {
+-                    Ok(left)
+-                } else {
+-                    self.eval_simple_expression(p, right, strict)
+-                };
+-            }
+-            let right = self.eval_simple_expression(p, right, strict)?;
+-            if let Some(op) = arithmetic_operator(operator) {
+-                return self.binary(p, op, left, right);
+-            }
+-            let equal = if operator == "==" || operator == "!=" {
+-                self.equal(p, left, right)?
+-            } else {
+-                self.strict_equal(left, right)
+-            };
+-            return Ok(if operator == "!==" || operator == "!=" {
+-                if equal { Value::FALSE } else { Value::TRUE }
+-            } else if equal {
+-                Value::TRUE
+-            } else {
+-                Value::FALSE
+-            });
+-        }
+-        if let Some((head, _)) = expression.split_once("//")
+-            && let Ok(number) = head.trim().parse::<f64>()
+-        {
+-            return Ok(Value::number(number));
+-        }
+-        if let Ok(number) = expression.parse::<f64>() {
+-            return Ok(Value::number(number));
+-        }
+-        if expression == "undefined" {
+-            return Ok(Value::UNDEFINED);
+-        }
+-        if expression == "null" {
+-            return Ok(Value::NULL);
+-        }
+-        if expression == "true" {
+-            return Ok(Value::TRUE);
+-        }
+-        if expression == "false" {
+-            return Ok(Value::FALSE);
+-        }
+-        if expression == "this" {
+-            return Ok(if self.direct_eval {
+-                self.frames
+-                    .last()
+-                    .map_or(self.realm.globals, |frame| frame.this)
+-            } else {
+-                self.realm.globals
+-            });
+-        }
+-        if expression.starts_with("typeof") {
+-            return self.eval_compiled_expression(p, expression, strict);
+-        }
+-        if expression.len() >= 2
+-            && matches!(expression.as_bytes().first(), Some(b'\'' | b'"'))
+-            && expression.as_bytes().last() == expression.as_bytes().first()
+-        {
+-            return match crate::Engine::eval_single_string_constant(expression) {
+-                Some(constant) => Ok(self.materialize_constant(&constant)),
+-                None => self.eval_compiled_expression(p, expression, strict),
+-            };
+-        }
+-        match crate::Engine::eval_expression_kind(expression) {
+-            crate::compile::EvalExpressionKind::Identifier(name) => {
+-                let atom = self.intern_atom(&name);
+-                self.load_eval_name(p, atom)
+-            }
+-            crate::compile::EvalExpressionKind::Import => {
+-                self.eval_compiled_expression_named(p, expression, strict, &p.source_name, CompilationOrigin::Eval)
+-            }
+-            crate::compile::EvalExpressionKind::Other if self.direct_eval => {
+-                self.eval_global_script(p, expression, strict)
+-            }
+-            crate::compile::EvalExpressionKind::Other => {
+-                self.eval_compiled_expression(p, expression, strict)
+-            }
+-        }
+-    }
+-
+-    fn eval_compiled_expression(
+-        &mut self,
+-        p: &ResidualProgram,
+-        expression: &str,
+-        strict: bool,
+-    ) -> Result<Value, JsError> {
+-        let source_name = format!("<Eval:{}>", self.programs.len());
+-        self.eval_compiled_expression_named(p, expression, strict, &source_name, CompilationOrigin::Eval)
+-    }
+-
+-    fn eval_compiled_expression_named(
+-        &mut self,
+-        p: &ResidualProgram,
+-        expression: &str,
+-        strict: bool,
+-        source_name: &str,
+-        origin: CompilationOrigin,
+-    ) -> Result<Value, JsError> {
+-        let body = if strict {
+-            format!("'use strict'; return ({expression});")
+-        } else {
+-            format!("return ({expression});")
+-        };
+-        let mut private_eval_context = None;
+-        let residual =
+-            match crate::Engine::specialize_dynamic_function("", &body, source_name, &*self) {
+-                Ok(residual) => residual,
+-                Err(diagnostics)
+-                    if diagnostics
+-                        .iter()
+-                        .any(crate::compile::Diagnostic::is_stack_exhausted) =>
+-                {
+-                    return Err(self.stack_exhaustion_error());
+-                }
+-                Err(diagnostics) if self.direct_eval => {
+-                    let Some((home, private_names)) = self.direct_eval_private_names(p) else {
+-                        return Err(self.mark_eval_syntax_error(p, diagnostics));
+-                    };
+-                    private_eval_context = Some((home, private_names.clone()));
+-                    let body = private_eval_method_body(expression, &private_names, true);
+-                    crate::Engine::specialize_dynamic_function_with_private_names(
+-                        "",
+-                        &body,
+-                        source_name,
+-                        &*self,
+-                        &private_names,
+-                    )
+-                    .map_err(|diagnostics| self.mark_eval_syntax_error(p, diagnostics))?
+-                }
+-                Err(diagnostics) => return Err(self.mark_eval_syntax_error(p, diagnostics)),
+-            };
+-        let Some(program_id) = self.store_dynamic_program(residual) else {
+-            return Err(self.type_error(p, "dynamic program store is full".into()));
+-        };
+-        self.programs.set_origin(program_id, origin);
+-        if self.direct_eval {
+-            self.programs.mark_caller_scope(program_id);
+-        }
+-        let residual = self
+-            .programs
+-            .get(program_id)
+-            .ok_or_else(|| self.type_error(p, "dynamic program is unavailable".into()))?;
+-        let function = residual
+-            .functions
+-            .iter()
+-            .enumerate()
+-            .find(|(_, function)| function.parent == Some(super::ROOT_FUNCTION_ID))
+-            .map(|(id, _)| id as u32)
+-            .ok_or_else(|| self.type_error(p, "dynamic eval body is unavailable".into()))?;
+-        // Only direct eval inherits its caller's `this`; indirect eval and
+-        // Scripts evaluate with the realm's global object.
+-        let this = match self.frames.last() {
+-            Some(frame) if self.direct_eval => frame.this,
+-            _ => self.realm.globals,
+-        };
+-        let mut parent_environment = if self.direct_eval {
+-            let root_scope = self
+-                .frames
+-                .last()
+-                .is_some_and(|frame| frame.function == super::ROOT_FUNCTION_ID);
+-            let parent = match self.frames.len().checked_sub(1) {
+-                Some(frame) => self.capture_binding_environment(frame)?,
+-                None => Value::NULL,
+-            };
+-            if root_scope {
+-                self.heap.alloc(Cell::Environment {
+-                    parent,
+-                    function: u32::MAX,
+-                    slots: Vec::<Value>::new().into_boxed_slice().into(),
+-                    scope: Box::new(crate::heap::EnvironmentScope {
+-                        program: None,
+-                        root_eval_scope: true,
+-                        binding_site_pc: None,
+-                        dynamic_bindings: Vec::new().into(),
+-                        with_objects: Box::default(),
+-                    }),
+-                })
+-            } else {
+-                parent
+-            }
+-        } else {
+-            Value::NULL
+-        };
+-        if let Some((home, names)) = private_eval_context {
+-            let bindings: Vec<_> = names
+-                .iter()
+-                .map(|(_, identity)| {
+-                    let private_atom = self.intern_atom(identity);
+-                    let binding = self.private_home_binding_atom(private_atom);
+-                    (binding, home)
+-                })
+-                .collect();
+-            parent_environment = self.heap.alloc(Cell::Environment {
+-                parent: parent_environment,
+-                function: u32::MAX,
+-                slots: Vec::<Value>::new().into_boxed_slice().into(),
+-                scope: Box::new(crate::heap::EnvironmentScope {
+-                    program: None,
+-                    root_eval_scope: false,
+-                    binding_site_pc: None,
+-                    dynamic_bindings: bindings.into(),
+-                    with_objects: Box::default(),
+-                }),
+-            });
+-        }
+-        let active_program = self.replace_active_program(program_id);
+-        let direct_eval = std::mem::replace(&mut self.direct_eval, false);
+-        let parameter_eval = std::mem::replace(&mut self.parameter_eval, false);
+-        let result = (|| {
+-            let callee = self.closure(&residual, function, parent_environment)?;
+-            self.call_eval_closure(&residual, callee, this, direct_eval)
+-        })();
+-        self.set_active_program(active_program);
+-        self.direct_eval = direct_eval;
+-        self.parameter_eval = parameter_eval;
+-        result
+-    }
+-
+     fn call_eval_closure(
+         &mut self,
+         program: &ResidualProgram,
+@@ -1033,29 +598,6 @@ impl<H: Host> Vm<H> {
+         self.intern_atom(&format!("\0quench:private-home:{private}"))
+     }
+ 
+-    fn mark_eval_syntax_error(
+-        &mut self,
+-        p: &ResidualProgram,
+-        diagnostics: Vec<crate::compile::Diagnostic>,
+-    ) -> JsError {
+-        if diagnostics
+-            .iter()
+-            .any(crate::compile::Diagnostic::is_stack_exhausted)
+-        {
+-            return self.stack_exhaustion_error();
+-        }
+-        let message = diagnostics
+-            .first()
+-            .map_or("invalid eval expression".to_owned(), ToString::to_string);
+-        self.mark_eval_parser_error(p, &message)
+-    }
+-
+-    fn mark_eval_parser_error(&mut self, p: &ResidualProgram, message: &str) -> JsError {
+-        self.syntax_error_result(p, message)
+-            .expect_err("dynamic eval syntax errors must throw")
+-            .mark_eval_parser_diagnostic()
+-    }
+-
+     fn validate_strict_eval(&mut self, p: &ResidualProgram, source: &str) -> Result<(), JsError> {
+         let private_names = if self.direct_eval {
+             self.direct_eval_private_names(p)
+@@ -1149,47 +691,6 @@ impl<H: Host> Vm<H> {
+         self.load_name(p, home_atom, None).ok()
+     }
+ 
+-    fn eval_super_context(&mut self, p: &ResidualProgram) -> Option<(Value, Value)> {
+-        let receiver = self.frames.last()?.this;
+-        Some((self.eval_home_binding(p)?, receiver))
+-    }
+-
+-    fn load_eval_name(&mut self, p: &ResidualProgram, atom: Atom) -> Result<Value, JsError> {
+-        if self.direct_eval {
+-            return self.load_name(p, atom, None);
+-        }
+-        if let Some(frame) = self.frames.iter().find(|frame| frame.function == 0)
+-            && let Some(function) = p.functions.first()
+-            && function.global_lexical_atoms.contains(&atom)
+-            && let Some(slot) = function
+-                .local_atoms
+-                .iter()
+-                .position(|candidate| *candidate == atom)
+-        {
+-            let value = if frame.captured {
+-                self.heap
+-                    .environment_slot(frame.env, slot)
+-                    .unwrap_or(Value::UNDEFINED)
+-            } else {
+-                frame.locals[slot]
+-            };
+-            if value.is_deleted() {
+-                return Err(self.reference_error(
+-                    p,
+-                    format!(
+-                        "Cannot access '{}' before initialization",
+-                        self.atom_name(atom)
+-                    ),
+-                ));
+-            }
+-            return Ok(value);
+-        }
+-        if !self.has_global_object_binding(p, atom)? {
+-            return Err(self.reference_error(p, format!("{} is not defined", self.atom_name(atom))));
+-        }
+-        self.get_property(p, self.realm.globals, atom)
+-    }
+-
+     fn direct_eval_binding(&self, atom: Atom) -> Option<crate::bytecode::EvalBinding> {
+         self.name_binding(self.frames.len().checked_sub(1)?, atom)
+     }
+@@ -1250,354 +751,3 @@ fn private_identity_label(identity: &str) -> Option<String> {
+     let (_, label) = identity.rsplit_once(':')?;
+     (!label.is_empty()).then(|| label.to_owned())
+ }
+-
+-fn private_eval_method_body(
+-    source: &str,
+-    private_names: &[(String, String)],
+-    expression: bool,
+-) -> String {
+-    let statements = if expression {
+-        format!("return ({source});")
+-    } else {
+-        source.to_owned()
+-    };
+-    format!(
+-        "return {}.prototype.__eval.call(this);",
+-        eval_context_source(&statements, private_names, false),
+-    )
+-}
+-
+-fn eval_regexp_literal_units(source: &[u16]) -> Option<(&[u16], &[u16])> {
+-    let slash = u16::from(b'/');
+-    let backslash = u16::from(b'\\');
+-    let left_bracket = u16::from(b'[');
+-    let right_bracket = u16::from(b']');
+-    if source.first().copied() != Some(slash)
+-        || matches!(source.get(1), Some(unit) if *unit == slash || *unit == u16::from(b'*'))
+-    {
+-        return None;
+-    }
+-
+-    let mut escaped = false;
+-    let mut in_character_class = false;
+-    for (index, unit) in source.iter().copied().enumerate().skip(1) {
+-        if is_line_terminator_code_unit(unit) {
+-            return None;
+-        }
+-        if escaped {
+-            escaped = false;
+-            continue;
+-        }
+-        match unit {
+-            unit if unit == backslash => escaped = true,
+-            unit if unit == left_bracket => in_character_class = true,
+-            unit if unit == right_bracket => in_character_class = false,
+-            unit if unit == slash && !in_character_class => {
+-                let flags = &source[index + 1..];
+-                return flags
+-                    .iter()
+-                    .all(|unit| {
+-                        char::from_u32(u32::from(*unit)).is_some_and(|character| {
+-                            character.is_ascii_alphanumeric() || matches!(character, '_' | '$')
+-                        })
+-                    })
+-                    .then_some((&source[1..index], flags));
+-            }
+-            _ => {}
+-        }
+-    }
+-    None
+-}
+-
+-fn is_line_terminator_code_unit(unit: u16) -> bool {
+-    matches!(
+-        char::from_u32(u32::from(unit)),
+-        Some('\n' | '\r' | '\u{2028}' | '\u{2029}')
+-    )
+-}
+-
+-fn eval_new_expression(expression: &str) -> Option<(&str, Option<&str>)> {
+-    let rest = expression.strip_prefix("new")?;
+-    if !rest.chars().next()?.is_whitespace() {
+-        return None;
+-    }
+-    let rest = rest.trim_start();
+-    let name_end = rest
+-        .char_indices()
+-        .take_while(|(_, character)| {
+-            character.is_ascii_alphanumeric() || matches!(character, '_' | '$')
+-        })
+-        .map(|(index, character)| index + character.len_utf8())
+-        .last()?;
+-    let name = &rest[..name_end];
+-    let tail = rest[name_end..].trim();
+-    if tail.is_empty() {
+-        return Some((name, None));
+-    }
+-    let arguments = tail.strip_prefix('(')?.strip_suffix(')')?.trim();
+-    Some((name, (!arguments.is_empty()).then_some(arguments)))
+-}
+-
+-fn eval_source_has_no_tokens(source: &[u16]) -> bool {
+-    let mut offset = 0;
+-    while let Some(&unit) = source.get(offset) {
+-        if char::from_u32(u32::from(unit)).is_some_and(is_ecmascript_whitespace) {
+-            offset += 1;
+-            continue;
+-        }
+-        if unit != u16::from(b'/') {
+-            return false;
+-        }
+-        offset += 1;
+-        match source.get(offset).copied() {
+-            Some(unit) if unit == u16::from(b'/') => {
+-                offset += 1;
+-                for &unit in &source[offset..] {
+-                    offset += 1;
+-                    if is_line_terminator_code_unit(unit) {
+-                        break;
+-                    }
+-                }
+-            }
+-            Some(unit) if unit == u16::from(b'*') => {
+-                offset += 1;
+-                let mut closed = false;
+-                let mut previous_is_star = false;
+-                for &unit in &source[offset..] {
+-                    offset += 1;
+-                    if previous_is_star && unit == u16::from(b'/') {
+-                        closed = true;
+-                        break;
+-                    }
+-                    previous_is_star = unit == u16::from(b'*');
+-                }
+-                if !closed {
+-                    return false;
+-                }
+-            }
+-            _ => return false,
+-        }
+-    }
+-    true
+-}
+-
+-fn is_ecmascript_whitespace(character: char) -> bool {
+-    matches!(
+-        character,
+-        '\u{0009}'
+-            | '\u{000b}'
+-            | '\u{000c}'
+-            | '\u{0020}'
+-            | '\u{00a0}'
+-            | '\u{feff}'
+-            | '\u{1680}'
+-            | '\u{2000}'
+-            ..='\u{200a}' | '\u{2028}' | '\u{2029}' | '\u{202f}' | '\u{205f}' | '\u{3000}'
+-    )
+-}
+-
+-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+-enum EvalOperatorPrecedence {
+-    LogicalOr,
+-    LogicalAnd,
+-    BitwiseOr,
+-    BitwiseXor,
+-    BitwiseAnd,
+-    Equality,
+-    Additive,
+-    Multiplicative,
+-    Exponentiation,
+-}
+-
+-fn find_unquoted_operator(expression: &str) -> Option<(&str, &str, &str)> {
+-    let mut quote = None;
+-    let mut escaped = false;
+-    let mut nesting = 0usize;
+-    let mut consumed_until = 0usize;
+-    let mut best: Option<(usize, &'static str, EvalOperatorPrecedence)> = None;
+-    for (index, character) in expression.char_indices() {
+-        if index < consumed_until {
+-            continue;
+-        }
+-        if escaped {
+-            escaped = false;
+-            continue;
+-        }
+-        if quote.is_some() && character == '\\' {
+-            escaped = true;
+-            continue;
+-        }
+-        if let Some(current) = quote {
+-            if current == character {
+-                quote = None;
+-            }
+-            continue;
+-        }
+-        match character {
+-            '\'' | '"' | '`' => quote = Some(character),
+-            '(' | '[' | '{' => nesting = nesting.saturating_add(1),
+-            ')' | ']' | '}' => nesting = nesting.saturating_sub(1),
+-            // Conditional, coalescing, comma and arrow forms bind more loosely
+-            // than every binary operator split here; such an expression is not
+-            // a binary expression at its top level.
+-            '?' | ',' | '=' if nesting == 0 && binds_below_binary_operators(expression, index) => {
+-                return None;
+-            }
+-            _ if nesting == 0 => {
+-                let Some((operator, precedence)) = eval_operator_at(expression, index, character)
+-                else {
+-                    continue;
+-                };
+-                consumed_until = index + operator.len();
+-                if matches!(operator, "+" | "-")
+-                    && expression[..index]
+-                        .chars()
+-                        .rev()
+-                        .find(|previous| !is_ecmascript_whitespace(*previous))
+-                        .is_none_or(|previous| "([{:,+-*/%&|^!<>=?".contains(previous))
+-                {
+-                    continue;
+-                }
+-                let right_associative = precedence == EvalOperatorPrecedence::Exponentiation;
+-                let replace = best.is_none_or(|(_, _, best_precedence)| {
+-                    precedence < best_precedence
+-                        || (precedence == best_precedence && !right_associative)
+-                });
+-                if replace {
+-                    best = Some((index, operator, precedence));
+-                }
+-            }
+-            _ => {}
+-        }
+-    }
+-    let (index, operator, _) = best?;
+-    Some((
+-        &expression[..index],
+-        operator,
+-        &expression[index + operator.len()..],
+-    ))
+-}
+-
+-/// Whether the top-level token at `index` is `?` (conditional or `??`, not an
+-/// optional chain `?.`), `,`, or an arrow `=>`.
+-fn binds_below_binary_operators(expression: &str, index: usize) -> bool {
+-    let suffix = &expression[index..];
+-    match suffix.as_bytes()[0] {
+-        b'?' => {
+-            !suffix.starts_with("?.")
+-                || suffix
+-                    .as_bytes()
+-                    .get(2)
+-                    .is_some_and(|next| next.is_ascii_digit())
+-        }
+-        b',' => true,
+-        b'=' => suffix.starts_with("=>"),
+-        _ => false,
+-    }
+-}
+-
+-fn eval_operator_at(
+-    expression: &str,
+-    index: usize,
+-    character: char,
+-) -> Option<(&'static str, EvalOperatorPrecedence)> {
+-    let suffix = &expression[index..];
+-    Some(match character {
+-        '=' if suffix.starts_with("===") => ("===", EvalOperatorPrecedence::Equality),
+-        '=' if suffix.starts_with("==") => ("==", EvalOperatorPrecedence::Equality),
+-        '!' if suffix.starts_with("!==") => ("!==", EvalOperatorPrecedence::Equality),
+-        '!' if suffix.starts_with("!=") => ("!=", EvalOperatorPrecedence::Equality),
+-        '&' if suffix.starts_with("&&") => ("&&", EvalOperatorPrecedence::LogicalAnd),
+-        '|' if suffix.starts_with("||") => ("||", EvalOperatorPrecedence::LogicalOr),
+-        '*' if suffix.starts_with("**") => ("**", EvalOperatorPrecedence::Exponentiation),
+-        '+' if !suffix.starts_with("++") && !suffix.starts_with("+=") => {
+-            ("+", EvalOperatorPrecedence::Additive)
+-        }
+-        '-' if !suffix.starts_with("--") && !suffix.starts_with("-=") => {
+-            ("-", EvalOperatorPrecedence::Additive)
+-        }
+-        '*' if !suffix.starts_with("*=") => ("*", EvalOperatorPrecedence::Multiplicative),
+-        '/' if !suffix.starts_with("/=") => ("/", EvalOperatorPrecedence::Multiplicative),
+-        '%' if !suffix.starts_with("%=") => ("%", EvalOperatorPrecedence::Multiplicative),
+-        '&' if !suffix.starts_with("&=") => ("&", EvalOperatorPrecedence::BitwiseAnd),
+-        '|' if !suffix.starts_with("|=") => ("|", EvalOperatorPrecedence::BitwiseOr),
+-        '^' if !suffix.starts_with("^=") => ("^", EvalOperatorPrecedence::BitwiseXor),
+-        _ => return None,
+-    })
+-}
+-
+-fn arithmetic_operator(operator: &str) -> Option<u32> {
+-    Some(match operator {
+-        "+" => 8,
+-        "-" => 9,
+-        "*" => 10,
+-        "/" => 11,
+-        "%" => 12,
+-        "**" => 13,
+-        "<<" => 14,
+-        ">>" => 15,
+-        ">>>" => 16,
+-        "|" => 17,
+-        "^" => 18,
+-        "&" => 19,
+-        _ => return None,
+-    })
+-}
+-
+-fn is_empty_eval_statement(statement: &str) -> bool {
+-    let compact: String = statement
+-        .chars()
+-        .filter(|character| !character.is_whitespace())
+-        .collect();
+-    matches!(
+-        compact.as_str(),
+-        "{}" | "do;while(false)"
+-            | "for(false;false;false);"
+-            | "if(false);"
+-            | "switch(1){}"
+-            | "while(false);"
+-            | "with({}){}"
+-            | "{functionf(){}}"
+-    )
+-}
+-
+-fn split_statements(source: &str) -> Vec<&str> {
+-    let mut result = Vec::new();
+-    let mut start = 0;
+-    let mut quote = None;
+-    let mut escaped = false;
+-    let mut braces = 0usize;
+-    for (index, character) in source.char_indices() {
+-        if escaped {
+-            escaped = false;
+-            continue;
+-        }
+-        if quote.is_some() && character == '\\' {
+-            escaped = true;
+-            continue;
+-        }
+-        match (quote, character) {
+-            (None, '\'' | '"') => quote = Some(character),
+-            (Some(current), character) if current == character => quote = None,
+-            (None, '{') => braces = braces.saturating_add(1),
+-            (None, '}') => {
+-                braces = braces.saturating_sub(1);
+-                if braces == 0
+-                    && source[index + character.len_utf8()..]
+-                        .trim_start()
+-                        .starts_with("function ")
+-                {
+-                    result.push(source[start..=index].trim());
+-                    start = index + character.len_utf8();
+-                }
+-            }
+-            (None, ';') if braces == 0 => {
+-                result.push(source[start..index].trim());
+-                start = index + 1;
+-            }
+-            _ => {}
+-        }
+-    }
+-    result.push(source[start..].trim());
+-    result
+-}
+diff --git a/crates/quench-runtime/src/vm/program_store.rs b/crates/quench-runtime/src/vm/program_store.rs
+index c1c36981a..eb42d75f3 100644
+--- a/crates/quench-runtime/src/vm/program_store.rs
++++ b/crates/quench-runtime/src/vm/program_store.rs
+@@ -42,9 +42,6 @@ enum ProgramScope {
+     /// An eval program evaluated in the global environment (indirect eval or a
+     /// host script), whose names resolve as script code's do.
+     Global,
+-    /// A body compiled as Script code but evaluated in a direct eval caller's
+-    /// environment, whose bindings its names may denote.
+-    Caller,
+ }
+ 
+ #[derive(Clone, Copy)]
+@@ -168,10 +165,6 @@ impl ProgramStore {
+         self.set_scope(id, ProgramScope::Global);
+     }
+ 
+-    pub(crate) fn mark_caller_scope(&mut self, id: ProgramId) {
+-        self.set_scope(id, ProgramScope::Caller);
+-    }
+-
+     fn set_scope(&mut self, id: ProgramId, scope: ProgramScope) {
+         if let Some(entry) = self.entry_mut(id) {
+             entry.scope = scope;
+@@ -183,7 +176,6 @@ impl ProgramStore {
+         self.entry(id).is_some_and(|entry| match entry.scope {
+             ProgramScope::Own => entry.residual.kind == crate::bytecode::ProgramKind::Script,
+             ProgramScope::Global => true,
+-            ProgramScope::Caller => false,
+         })
+     }
+ 
+diff --git a/docs/node-host-contracts.md b/docs/node-host-contracts.md
+index f657d4465..96450acbe 100644
+--- a/docs/node-host-contracts.md
++++ b/docs/node-host-contracts.md
+@@ -63,6 +63,18 @@ later attempt. Native coded errors share the library's private Node error symbol
+ UDP buffer-size errors construct the original `ERR_SOCKET_BUFFER_SIZE` class,
+ which owns its context getters and custom inspection behavior.
+ 
++## Parsed eval execution
++
++Direct and indirect eval execute the existing OXC-compiled Eval goal, retaining
++the original source and statement completion values. Host Script evaluation
++uses the Script goal, including single expressions. Neither path interprets
++source substrings or inserts an expression-return wrapper. Binding scopes,
++strictness, early errors and captured environments share the compiler and VM
++operations used by other code. A lone regexp expression uses OXC's literal span
++and flags with the original UTF-16 pattern units, preserving lone surrogates.
++Eval-origin descriptions, synthetic filenames and Function-constructor wrapper
++positions still need separate conformance work.
++
+ ## Detailed source stack capture
+ 
+ The public `util.getCallSites` function comes from the unmodified configured

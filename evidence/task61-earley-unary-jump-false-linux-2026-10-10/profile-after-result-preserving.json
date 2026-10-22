@@ -1,0 +1,120 @@
+{
+  "schema": 1,
+  "fixture": "V8-v7 EarleyBoyer",
+  "source_commit_baseline": "6808b05f2",
+  "profile_binary_sha256": "6cc5b3e9c6c509755af819f359418cf93c36a4f4a8418fd2343f6f67209b0499",
+  "profile_features": [
+    "profile-aggregate",
+    "profile-memory"
+  ],
+  "dispatch_total": 747367287,
+  "opcode_counts": {
+    "Unary": 17211982,
+    "JumpFalse": 62965867,
+    "JumpUnaryFalse": 850
+  },
+  "unary_to_jump_false_pairs": 15934989,
+  "top_pairs": [
+    [
+      "StoreLocalPlain",
+      "LoadLocalPlain",
+      54861028
+    ],
+    [
+      "LoadLocalPlain",
+      "GetField",
+      53987833
+    ],
+    [
+      "LoadLocalPlain",
+      "StoreLocalPlain",
+      46418358
+    ],
+    [
+      "Binary",
+      "JumpFalse",
+      34267593
+    ],
+    [
+      "GetField",
+      "StoreLocalPlain",
+      23588682
+    ],
+    [
+      "Move",
+      "Move",
+      23056566
+    ],
+    [
+      "LoadLocalPlain",
+      "Binary",
+      22742878
+    ],
+    [
+      "LoadCapture",
+      "LoadLocalPlain",
+      21568755
+    ],
+    [
+      "LoadLocalPlain",
+      "LoadCapture",
+      18303942
+    ],
+    [
+      "LoadLocalPlain",
+      "SetThisFieldStrict",
+      18288463
+    ],
+    [
+      "JumpFalse",
+      "LoadLocalPlain",
+      18160972
+    ],
+    [
+      "LoadConst",
+      "LoadCapture",
+      17776373
+    ],
+    [
+      "Move",
+      "Call",
+      17567962
+    ],
+    [
+      "LoadCapture",
+      "Binary",
+      17085876
+    ],
+    [
+      "LoadConst",
+      "Return",
+      16935107
+    ],
+    [
+      "Unary",
+      "JumpFalse",
+      15934989
+    ],
+    [
+      "Binary",
+      "Unary",
+      15934984
+    ],
+    [
+      "StoreLocalPlain",
+      "LoadConst",
+      11774243
+    ],
+    [
+      "GetField",
+      "Move",
+      10500279
+    ],
+    [
+      "LoadConst",
+      "JumpFalse",
+      10260550
+    ]
+  ],
+  "finding": "The result-preserving prototype still emitted only 850 JumpUnaryFalse dispatches. Preserving the unary result did not expand coverage of the 15.9M Unary -> JumpFalse dynamic pairs; the existing protected-entry / liveness-analysis eligibility gates remain."
+}

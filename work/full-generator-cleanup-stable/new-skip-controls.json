@@ -1,0 +1,614 @@
+[
+  {
+    "fixture": "test-quic-cc-algorithm.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-datagram-multiple.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-diagnostics-channel-stream.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-endpoint-close-destroy.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-flow-control-blob.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-flow-control-block-resume.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-flow-control-params.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-h3-maxstreamdata-external-buffer-failure.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-h3-stream-idle-timeout.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-key-update-peer.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-key-update.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-max-payload-size.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-max-window.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-maxstreamdata-external-buffer-failure.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-perf-hooks.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-session-application-options.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-session-close-graceful.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-session-initial-rtt.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-session-stats-detailed.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-session-stats.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-session-transport-params.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-shared-endpoint-stream-close.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-stateless-reset.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-stream-bidi-server-initiated.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-stream-body-async-iterable.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-stream-body-pooled-buffer.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-stream-body-promise-reject.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-stream-body-promise.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-stream-body-readable-stream.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-stream-body-sources.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-stream-body-string.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-stream-body-sync-iterable.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-stream-closed-promise.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-stream-idle-timeout.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-stream-iteration-double.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-stream-iteration-pull.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-stream-iteration.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-stream-limits-pending.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-stream-many-rapid.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-stream-onblocked.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-stream-pending.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-stream-recv-coalescing.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-stream-slow-consumer.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-stream-stats.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-stream-write-partial-view.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-stream-writer-api.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-stream-zero-length.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-writer-async-dispose-ended.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-writer-backpressure.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-writer-write-rejects.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-zero-rtt.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  }
+]

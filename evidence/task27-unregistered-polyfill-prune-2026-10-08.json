@@ -1,0 +1,118 @@
+{
+  "schema": 1,
+  "task": "27",
+  "kind": "unregistered_polyfill_prune",
+  "recorded_on": "2026-10-08",
+  "source": {
+    "revision": "e3d3e40a93033cb7d2f16b0bd8c9823d3827d079",
+    "worktree_dirty": true,
+    "platform": "Darwin arm64",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+    "cargo": "cargo 1.99.0 (5f94df478 2026-08-27) (Homebrew)",
+    "changed_source_sha256": {
+      "crates/quench-node/src/host.rs": "2cd05f541d036322a52dd6ac99fb0185449020fc2a15243aeeb2f838401df9c5",
+      "crates/quench-node/src/host/shared_vm.rs": "37b9706f4d52fbaccb09cd29014189313df6d42467b033afb4afceaaba6ba25d",
+      "crates/quench-node/src/host/shared_vm/commonjs.rs": "8f862bc2a3c37d0f0983baed0d6097323ed5cc384354e6333a756736036e820a",
+      "crates/quench-node/src/modules/async_hooks.rs": "b07ac703918045b64446ba48647f625fc55a801eeb5edec6c81d4fe61fc4f144",
+      "crates/quench-node/src/modules/async_hooks/shared_vm.rs": "8db90a552f5dc3adea2e696712676693fc9781887f31211eb262e86f36977a36",
+      "crates/quench-node/src/modules/net/mod.rs": "ecf59712643a40e3456821601660a19cee7e23c2901ea3263bfac1d485d52279",
+      "crates/quench-node/src/modules/net/shared_vm.rs": "b0e45e40fbc8828f4c7a6771d3814d17a6eeabb12408b908f208521023cc7e32",
+      "crates/quench-node/src/modules/process/shared_vm.rs": "d19d51a2a8d23a048a379a58e3ad8173dafde0f4619e3abaf3dbd5d533134edc",
+      "crates/quench-node/src/shared_run.rs": "03d8c59d69541a056db5ff327de3d0f846f9eba881d1ced6500d7ee02cd73586",
+      "crates/quench-node/src/polyfills/bootstrap.rs": "cd77d86dadb06dd3b650481390c62f19867530c1f69a9d34f2a0ab8947102af7"
+    }
+  },
+  "suite_inputs_sha256": {
+    "crates/quench-node-test/node-tests/parallel.txt": "0209917422a2f0f3fa241d941ec4bc88c9917d5322b69014ab1a662a52e9dfca",
+    "tests/frameworks/README.md": "ba3f2534e996f6be061caf6fca6b8b2db6d1d0ba1880ad2c2a5ba7b77242bdcb",
+    "tests/frameworks/package.json": "5f82b6f9cf2dd1e2ad385afebeda3627ac952366004c76350e4f87b0bac170d5",
+    "tests/frameworks/package-lock.json": "fb752f9a87781cc8132c88ced58a8c17ebaacc1789d244b8b7c4a6c9888d5759",
+    "tests/frameworks/driver.cjs": "e8dd245f9bbfcdcd3a430ff7ed663c3310fdf32fae23cfc5c24d24cbeda96bfb",
+    "tests/frameworks/scenarios/express.cjs": "85eebbbc5c9cfaa01f2f16b6c7e181a4c4bc2e308bd1bb179f49c5d9700f8158",
+    "tests/frameworks/scenarios/koa.cjs": "962e4c326df72b30eed4306494e2218475456c7c816220a6e46a898b040185f9",
+    "tests/frameworks/scenarios/fastify.cjs": "1ff4fc87e2a4c792761c286bc0f255d0ab9be27e810dbf98938a1ac717d1ba6a",
+    "tests/frameworks/scenarios/asset.txt": "d74d6fb7af1951d71bc36de5b5f9f50c09c6adb8ab00b82e2041415715b213ce"
+  },
+  "prune": {
+    "unregistered_unreferenced_fragments": {
+      "bootstrap": 136,
+      "post_bootstrap": 75,
+      "total": 211,
+      "removed_lines": 27168
+    },
+    "additional_fragments": [
+      "crates/quench-node/src/polyfills/bootstrap/buffer_validation.rs",
+      "crates/quench-node/src/polyfills/bootstrap/cluster.rs",
+      "crates/quench-node/src/polyfills/bootstrap/iterators.rs"
+    ],
+    "removed_lines_including_registry_declarations": 29589,
+    "retained_unregistered_fragments_with_provenance_or_inventory_references": 25,
+    "bootstrap_ability_count_before_and_after": 18,
+    "post_bootstrap_ability_count_before_and_after": 1,
+    "inventory_membership_changed": false,
+    "runtime_ability_table_changed": false,
+    "scope_note": "cluster and iterators were explicit Rust modules but had no in-repository consumers and were not registered abilities. Their internal Rust module exports were removed."
+  },
+  "validation": {
+    "commands": [
+      "cargo check -p quench-node",
+      "cargo build --profile production -p quench-node",
+      "cargo build --profile iteration -p quench-node --bin quench-node",
+      "cargo run --profile iteration -p quench-node-test --bin run-parallel -- --profile framework-core"
+    ],
+    "cargo_check": "pass",
+    "production_build": {
+      "result": "pass",
+      "binary_sha256": "907dc1d0b1abd494683a53ac53e85f4cbdecd380d02754e27a96c5b1e0e0e67a"
+    },
+    "iteration_build": {
+      "result": "pass",
+      "binary_sha256": "07a753f6e6e87b472dddd90b9a5224ad97eb1a31112fdb97491a88c5a03ff80f"
+    },
+    "framework_core": {
+      "result": "pass",
+      "passed": 43,
+      "skipped": 0,
+      "failed": 0,
+      "timed_out": 0,
+      "crashed": 0,
+      "unclassified": 0
+    },
+    "framework_scenarios": {
+      "node_version": "v26.10.0",
+      "cases": {
+        "express": {
+          "node_exit": 0,
+          "quench_exit": 0,
+          "node_stdout": "statuses 200,200,200,200,404\n",
+          "quench_stdout": "statuses 200,200,200,200,404\n",
+          "node_stderr_bytes": 0,
+          "quench_stderr_bytes": 0
+        },
+        "koa": {
+          "node_exit": 0,
+          "quench_exit": 0,
+          "node_stdout": "statuses 200,200,200,200,404\n",
+          "quench_stdout": "statuses 200,200,200,200,404\n",
+          "node_stderr_bytes": 0,
+          "quench_stderr_bytes": 0
+        },
+        "fastify": {
+          "node_exit": 0,
+          "quench_exit": 0,
+          "node_stdout": "statuses 200,200,200,200,404\n",
+          "quench_stdout": "statuses 200,200,200,200,404\n",
+          "node_stderr_bytes": 0,
+          "quench_stderr_bytes": 0
+        }
+      }
+    },
+    "unit_tests": "not run by instruction"
+  },
+  "remaining_cutover": {
+    "quench_node_normal_dependency_on_quench_runtime": true,
+    "legacy_node_dispatch_consumers_remain": true,
+    "task27_complete": false,
+    "task86_complete": false
+  }
+}

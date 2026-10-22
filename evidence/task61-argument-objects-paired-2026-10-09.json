@@ -1,0 +1,1541 @@
+{
+  "task": 61,
+  "experiment": "arguments-object template fast path",
+  "host": {
+    "platform": "macOS-26.5-arm64-arm-64bit",
+    "machine": "arm64",
+    "processor": "arm",
+    "python": "3.9.6"
+  },
+  "rounds_per_case": 11,
+  "iterations_per_case": 250000,
+  "binary_sha256": {
+    "baseline": "790acdad8d00bdf4fc6f1db03450914dead2a43119eba3ac99e9ba246c517a4a",
+    "candidate": "b2602ed749e836b199a42f3477f0725e01a0dd9e6162f12d79bdca0a663547c2"
+  },
+  "input_sha256": {
+    "plain": "a4a3f8ebf05c2b14ea64319ab2348791cee475b29d8e5fabd324a14289e4e780",
+    "mapped": "9d3c1c152fdceeff3024f912f9123585707df39cba4ee5504c8f8abbbbc8afd1",
+    "unmapped": "38d5edae7134c28e21f262b850cb5ac20af85ebb798893d910171cfef5d91c1f"
+  },
+  "records": [
+    {
+      "case": "plain",
+      "pair": 1,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-plain-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251125000\n",
+      "stderr": "        0.05 real         0.05 user         0.00 sys\n            19464192  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1371  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   6  involuntary context switches\n          1354559658  instructions retired\n           212639958  cycles elapsed\n            10027416  peak memory footprint\n",
+      "wall_seconds": 0.056839209,
+      "instructions_retired": 1354559658,
+      "cycles_elapsed": 212639958,
+      "maximum_rss_bytes": 19464192,
+      "elapsed_seconds": 0.05
+    },
+    {
+      "case": "plain",
+      "pair": 1,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-plain-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251125000\n",
+      "stderr": "        0.05 real         0.05 user         0.00 sys\n            18694144  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1322  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  10  involuntary context switches\n          1354820735  instructions retired\n           216141902  cycles elapsed\n             9208216  peak memory footprint\n",
+      "wall_seconds": 0.05543254199999999,
+      "instructions_retired": 1354820735,
+      "cycles_elapsed": 216141902,
+      "maximum_rss_bytes": 18694144,
+      "elapsed_seconds": 0.05
+    },
+    {
+      "case": "plain",
+      "pair": 2,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-plain-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251125000\n",
+      "stderr": "        0.05 real         0.05 user         0.00 sys\n            18694144  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1322  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   5  involuntary context switches\n          1354593634  instructions retired\n           213307980  cycles elapsed\n             9224600  peak memory footprint\n",
+      "wall_seconds": 0.05474516600000001,
+      "instructions_retired": 1354593634,
+      "cycles_elapsed": 213307980,
+      "maximum_rss_bytes": 18694144,
+      "elapsed_seconds": 0.05
+    },
+    {
+      "case": "plain",
+      "pair": 2,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-plain-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251125000\n",
+      "stderr": "        0.05 real         0.04 user         0.00 sys\n            19513344  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1372  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   8  involuntary context switches\n          1355155569  instructions retired\n           212533009  cycles elapsed\n            10060184  peak memory footprint\n",
+      "wall_seconds": 0.054492708,
+      "instructions_retired": 1355155569,
+      "cycles_elapsed": 212533009,
+      "maximum_rss_bytes": 19513344,
+      "elapsed_seconds": 0.05
+    },
+    {
+      "case": "plain",
+      "pair": 3,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-plain-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251125000\n",
+      "stderr": "        0.05 real         0.05 user         0.00 sys\n            19447808  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1369  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  14  involuntary context switches\n          1355020592  instructions retired\n           216011993  cycles elapsed\n             9994648  peak memory footprint\n",
+      "wall_seconds": 0.05581070799999999,
+      "instructions_retired": 1355020592,
+      "cycles_elapsed": 216011993,
+      "maximum_rss_bytes": 19447808,
+      "elapsed_seconds": 0.05
+    },
+    {
+      "case": "plain",
+      "pair": 3,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-plain-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251125000\n",
+      "stderr": "        0.05 real         0.05 user         0.00 sys\n            18694144  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1323  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  10  involuntary context switches\n          1354692561  instructions retired\n           215342609  cycles elapsed\n             9224600  peak memory footprint\n",
+      "wall_seconds": 0.054753417000000026,
+      "instructions_retired": 1354692561,
+      "cycles_elapsed": 215342609,
+      "maximum_rss_bytes": 18694144,
+      "elapsed_seconds": 0.05
+    },
+    {
+      "case": "plain",
+      "pair": 4,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-plain-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251125000\n",
+      "stderr": "        0.05 real         0.04 user         0.00 sys\n            18628608  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1318  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  13  involuntary context switches\n          1354213175  instructions retired\n           212662948  cycles elapsed\n             9142680  peak memory footprint\n",
+      "wall_seconds": 0.054402041999999984,
+      "instructions_retired": 1354213175,
+      "cycles_elapsed": 212662948,
+      "maximum_rss_bytes": 18628608,
+      "elapsed_seconds": 0.05
+    },
+    {
+      "case": "plain",
+      "pair": 4,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-plain-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251125000\n",
+      "stderr": "        0.05 real         0.05 user         0.00 sys\n            19464192  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1369  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   5  involuntary context switches\n          1354990178  instructions retired\n           211697284  cycles elapsed\n            10011032  peak memory footprint\n",
+      "wall_seconds": 0.05428475000000005,
+      "instructions_retired": 1354990178,
+      "cycles_elapsed": 211697284,
+      "maximum_rss_bytes": 19464192,
+      "elapsed_seconds": 0.05
+    },
+    {
+      "case": "plain",
+      "pair": 5,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-plain-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251125000\n",
+      "stderr": "        0.05 real         0.05 user         0.00 sys\n            19480576  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1370  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   5  involuntary context switches\n          1355153720  instructions retired\n           215829489  cycles elapsed\n            10011032  peak memory footprint\n",
+      "wall_seconds": 0.05556716699999997,
+      "instructions_retired": 1355153720,
+      "cycles_elapsed": 215829489,
+      "maximum_rss_bytes": 19480576,
+      "elapsed_seconds": 0.05
+    },
+    {
+      "case": "plain",
+      "pair": 5,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-plain-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251125000\n",
+      "stderr": "        0.05 real         0.05 user         0.00 sys\n            18726912  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1324  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   7  involuntary context switches\n          1354437887  instructions retired\n           211980878  cycles elapsed\n             9240960  peak memory footprint\n",
+      "wall_seconds": 0.05442079100000008,
+      "instructions_retired": 1354437887,
+      "cycles_elapsed": 211980878,
+      "maximum_rss_bytes": 18726912,
+      "elapsed_seconds": 0.05
+    },
+    {
+      "case": "plain",
+      "pair": 6,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-plain-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251125000\n",
+      "stderr": "        0.05 real         0.05 user         0.00 sys\n            18841600  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1331  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  10  involuntary context switches\n          1354801743  instructions retired\n           212677094  cycles elapsed\n             9372056  peak memory footprint\n",
+      "wall_seconds": 0.05460904199999994,
+      "instructions_retired": 1354801743,
+      "cycles_elapsed": 212677094,
+      "maximum_rss_bytes": 18841600,
+      "elapsed_seconds": 0.05
+    },
+    {
+      "case": "plain",
+      "pair": 6,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-plain-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251125000\n",
+      "stderr": "        0.05 real         0.05 user         0.00 sys\n            19431424  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1367  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   5  involuntary context switches\n          1354077610  instructions retired\n           212664742  cycles elapsed\n             9961856  peak memory footprint\n",
+      "wall_seconds": 0.05485979199999991,
+      "instructions_retired": 1354077610,
+      "cycles_elapsed": 212664742,
+      "maximum_rss_bytes": 19431424,
+      "elapsed_seconds": 0.05
+    },
+    {
+      "case": "plain",
+      "pair": 7,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-plain-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251125000\n",
+      "stderr": "        0.05 real         0.05 user         0.00 sys\n            19529728  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1373  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   5  involuntary context switches\n          1355026798  instructions retired\n           213091281  cycles elapsed\n            10076568  peak memory footprint\n",
+      "wall_seconds": 0.055216708,
+      "instructions_retired": 1355026798,
+      "cycles_elapsed": 213091281,
+      "maximum_rss_bytes": 19529728,
+      "elapsed_seconds": 0.05
+    },
+    {
+      "case": "plain",
+      "pair": 7,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-plain-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251125000\n",
+      "stderr": "        0.05 real         0.05 user         0.00 sys\n            18694144  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1322  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   5  involuntary context switches\n          1354679917  instructions retired\n           214641758  cycles elapsed\n             9224600  peak memory footprint\n",
+      "wall_seconds": 0.05502145800000002,
+      "instructions_retired": 1354679917,
+      "cycles_elapsed": 214641758,
+      "maximum_rss_bytes": 18694144,
+      "elapsed_seconds": 0.05
+    },
+    {
+      "case": "plain",
+      "pair": 8,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-plain-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251125000\n",
+      "stderr": "        0.05 real         0.05 user         0.00 sys\n            18759680  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1326  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   8  involuntary context switches\n          1354396632  instructions retired\n           213727499  cycles elapsed\n             9273752  peak memory footprint\n",
+      "wall_seconds": 0.054594083000000015,
+      "instructions_retired": 1354396632,
+      "cycles_elapsed": 213727499,
+      "maximum_rss_bytes": 18759680,
+      "elapsed_seconds": 0.05
+    },
+    {
+      "case": "plain",
+      "pair": 8,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-plain-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251125000\n",
+      "stderr": "        0.05 real         0.05 user         0.00 sys\n            19480576  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1370  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   5  involuntary context switches\n          1355075839  instructions retired\n           214082159  cycles elapsed\n            10027416  peak memory footprint\n",
+      "wall_seconds": 0.05542870799999999,
+      "instructions_retired": 1355075839,
+      "cycles_elapsed": 214082159,
+      "maximum_rss_bytes": 19480576,
+      "elapsed_seconds": 0.05
+    },
+    {
+      "case": "plain",
+      "pair": 9,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-plain-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251125000\n",
+      "stderr": "        0.05 real         0.05 user         0.00 sys\n            19398656  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1366  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  10  involuntary context switches\n          1355285972  instructions retired\n           215619869  cycles elapsed\n             9945496  peak memory footprint\n",
+      "wall_seconds": 0.05497629199999998,
+      "instructions_retired": 1355285972,
+      "cycles_elapsed": 215619869,
+      "maximum_rss_bytes": 19398656,
+      "elapsed_seconds": 0.05
+    },
+    {
+      "case": "plain",
+      "pair": 9,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-plain-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251125000\n",
+      "stderr": "        0.05 real         0.04 user         0.00 sys\n            18628608  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1318  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   5  involuntary context switches\n          1353737000  instructions retired\n           211377994  cycles elapsed\n             9159064  peak memory footprint\n",
+      "wall_seconds": 0.05427666700000011,
+      "instructions_retired": 1353737000,
+      "cycles_elapsed": 211377994,
+      "maximum_rss_bytes": 18628608,
+      "elapsed_seconds": 0.05
+    },
+    {
+      "case": "plain",
+      "pair": 10,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-plain-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251125000\n",
+      "stderr": "        0.05 real         0.05 user         0.00 sys\n            18759680  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1326  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   8  involuntary context switches\n          1353206701  instructions retired\n           212823889  cycles elapsed\n             9273752  peak memory footprint\n",
+      "wall_seconds": 0.054550625000000075,
+      "instructions_retired": 1353206701,
+      "cycles_elapsed": 212823889,
+      "maximum_rss_bytes": 18759680,
+      "elapsed_seconds": 0.05
+    },
+    {
+      "case": "plain",
+      "pair": 10,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-plain-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251125000\n",
+      "stderr": "        0.05 real         0.05 user         0.00 sys\n            19529728  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1374  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   7  involuntary context switches\n          1353872442  instructions retired\n           213189609  cycles elapsed\n            10076568  peak memory footprint\n",
+      "wall_seconds": 0.05455366699999997,
+      "instructions_retired": 1353872442,
+      "cycles_elapsed": 213189609,
+      "maximum_rss_bytes": 19529728,
+      "elapsed_seconds": 0.05
+    },
+    {
+      "case": "plain",
+      "pair": 11,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-plain-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251125000\n",
+      "stderr": "        0.05 real         0.05 user         0.00 sys\n            19529728  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1373  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   7  involuntary context switches\n          1353653358  instructions retired\n           214903210  cycles elapsed\n            10076568  peak memory footprint\n",
+      "wall_seconds": 0.05573045799999998,
+      "instructions_retired": 1353653358,
+      "cycles_elapsed": 214903210,
+      "maximum_rss_bytes": 19529728,
+      "elapsed_seconds": 0.05
+    },
+    {
+      "case": "plain",
+      "pair": 11,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-plain-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251125000\n",
+      "stderr": "        0.05 real         0.05 user         0.00 sys\n            18726912  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1324  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  11  involuntary context switches\n          1353221954  instructions retired\n           211748270  cycles elapsed\n             9224576  peak memory footprint\n",
+      "wall_seconds": 0.05434145899999998,
+      "instructions_retired": 1353221954,
+      "cycles_elapsed": 211748270,
+      "maximum_rss_bytes": 18726912,
+      "elapsed_seconds": 0.05
+    },
+    {
+      "case": "mapped",
+      "pair": 1,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-mapped-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251875000\n",
+      "stderr": "        0.23 real         0.23 user         0.00 sys\n            24002560  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1648  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  65  involuntary context switches\n          5935001483  instructions retired\n           937614681  cycles elapsed\n            14565784  peak memory footprint\n",
+      "wall_seconds": 0.240183209,
+      "instructions_retired": 5935001483,
+      "cycles_elapsed": 937614681,
+      "maximum_rss_bytes": 24002560,
+      "elapsed_seconds": 0.23
+    },
+    {
+      "case": "mapped",
+      "pair": 1,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-mapped-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251875000\n",
+      "stderr": "        0.17 real         0.17 user         0.00 sys\n            19742720  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1387  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   3  voluntary context switches\n                  25  involuntary context switches\n          4385273326  instructions retired\n           688683723  cycles elapsed\n            10256768  peak memory footprint\n",
+      "wall_seconds": 0.1827350000000001,
+      "instructions_retired": 4385273326,
+      "cycles_elapsed": 688683723,
+      "maximum_rss_bytes": 19742720,
+      "elapsed_seconds": 0.17
+    },
+    {
+      "case": "mapped",
+      "pair": 2,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-mapped-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251875000\n",
+      "stderr": "        0.18 real         0.17 user         0.00 sys\n            19726336  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1386  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  36  involuntary context switches\n          4387836510  instructions retired\n           701498346  cycles elapsed\n            10256792  peak memory footprint\n",
+      "wall_seconds": 0.1827124579999999,
+      "instructions_retired": 4387836510,
+      "cycles_elapsed": 701498346,
+      "maximum_rss_bytes": 19726336,
+      "elapsed_seconds": 0.18
+    },
+    {
+      "case": "mapped",
+      "pair": 2,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-mapped-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251875000\n",
+      "stderr": "        0.25 real         0.25 user         0.00 sys\n            26247168  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1787  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  83  involuntary context switches\n          5933191646  instructions retired\n           981735612  cycles elapsed\n            16843208  peak memory footprint\n",
+      "wall_seconds": 0.261617416,
+      "instructions_retired": 5933191646,
+      "cycles_elapsed": 981735612,
+      "maximum_rss_bytes": 26247168,
+      "elapsed_seconds": 0.25
+    },
+    {
+      "case": "mapped",
+      "pair": 3,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-mapped-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251875000\n",
+      "stderr": "        0.25 real         0.24 user         0.00 sys\n            25952256  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1767  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  48  involuntary context switches\n          5932562220  instructions retired\n           980172540  cycles elapsed\n            16548296  peak memory footprint\n",
+      "wall_seconds": 0.2563304999999998,
+      "instructions_retired": 5932562220,
+      "cycles_elapsed": 980172540,
+      "maximum_rss_bytes": 25952256,
+      "elapsed_seconds": 0.25
+    },
+    {
+      "case": "mapped",
+      "pair": 3,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-mapped-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251875000\n",
+      "stderr": "        0.17 real         0.17 user         0.00 sys\n            19841024  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1393  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  24  involuntary context switches\n          4388626709  instructions retired\n           696650798  cycles elapsed\n            10371480  peak memory footprint\n",
+      "wall_seconds": 0.18147499999999983,
+      "instructions_retired": 4388626709,
+      "cycles_elapsed": 696650798,
+      "maximum_rss_bytes": 19841024,
+      "elapsed_seconds": 0.17
+    },
+    {
+      "case": "mapped",
+      "pair": 4,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-mapped-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251875000\n",
+      "stderr": "        0.17 real         0.17 user         0.00 sys\n            19775488  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1389  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  19  involuntary context switches\n          4389228374  instructions retired\n           676546237  cycles elapsed\n            10305944  peak memory footprint\n",
+      "wall_seconds": 0.17773745800000018,
+      "instructions_retired": 4389228374,
+      "cycles_elapsed": 676546237,
+      "maximum_rss_bytes": 19775488,
+      "elapsed_seconds": 0.17
+    },
+    {
+      "case": "mapped",
+      "pair": 4,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-mapped-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251875000\n",
+      "stderr": "        0.24 real         0.24 user         0.00 sys\n            24002560  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1647  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  24  involuntary context switches\n          5933831628  instructions retired\n           958855237  cycles elapsed\n            14565808  peak memory footprint\n",
+      "wall_seconds": 0.24768995900000013,
+      "instructions_retired": 5933831628,
+      "cycles_elapsed": 958855237,
+      "maximum_rss_bytes": 24002560,
+      "elapsed_seconds": 0.24
+    },
+    {
+      "case": "mapped",
+      "pair": 5,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-mapped-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251875000\n",
+      "stderr": "        0.23 real         0.23 user         0.00 sys\n            23986176  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1647  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  20  involuntary context switches\n          5935000365  instructions retired\n           940486451  cycles elapsed\n            14565808  peak memory footprint\n",
+      "wall_seconds": 0.2418629590000001,
+      "instructions_retired": 5935000365,
+      "cycles_elapsed": 940486451,
+      "maximum_rss_bytes": 23986176,
+      "elapsed_seconds": 0.23
+    },
+    {
+      "case": "mapped",
+      "pair": 5,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-mapped-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251875000\n",
+      "stderr": "        0.18 real         0.17 user         0.00 sys\n            19628032  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1380  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  32  involuntary context switches\n          4387984021  instructions retired\n           720206213  cycles elapsed\n            10158488  peak memory footprint\n",
+      "wall_seconds": 0.18517841699999993,
+      "instructions_retired": 4387984021,
+      "cycles_elapsed": 720206213,
+      "maximum_rss_bytes": 19628032,
+      "elapsed_seconds": 0.18
+    },
+    {
+      "case": "mapped",
+      "pair": 6,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-mapped-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251875000\n",
+      "stderr": "        0.17 real         0.17 user         0.00 sys\n            19857408  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1394  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  35  involuntary context switches\n          4387490050  instructions retired\n           699625237  cycles elapsed\n            10387864  peak memory footprint\n",
+      "wall_seconds": 0.18207791699999998,
+      "instructions_retired": 4387490050,
+      "cycles_elapsed": 699625237,
+      "maximum_rss_bytes": 19857408,
+      "elapsed_seconds": 0.17
+    },
+    {
+      "case": "mapped",
+      "pair": 6,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-mapped-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251875000\n",
+      "stderr": "        0.26 real         0.25 user         0.00 sys\n            26034176  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1771  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 145  involuntary context switches\n          5935095530  instructions retired\n          1000930283  cycles elapsed\n            16597424  peak memory footprint\n",
+      "wall_seconds": 0.2656795839999999,
+      "instructions_retired": 5935095530,
+      "cycles_elapsed": 1000930283,
+      "maximum_rss_bytes": 26034176,
+      "elapsed_seconds": 0.26
+    },
+    {
+      "case": "mapped",
+      "pair": 7,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-mapped-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251875000\n",
+      "stderr": "        0.42 real         0.32 user         0.00 sys\n            26492928  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1800  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                1748  involuntary context switches\n          5949010682  instructions retired\n          1143207569  cycles elapsed\n            17088968  peak memory footprint\n",
+      "wall_seconds": 0.4240785419999997,
+      "instructions_retired": 5949010682,
+      "cycles_elapsed": 1143207569,
+      "maximum_rss_bytes": 26492928,
+      "elapsed_seconds": 0.42
+    },
+    {
+      "case": "mapped",
+      "pair": 7,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-mapped-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251875000\n",
+      "stderr": "        0.43 real         0.27 user         0.00 sys\n            20119552  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1412  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 737  involuntary context switches\n          4396224362  instructions retired\n           932132736  cycles elapsed\n            10650008  peak memory footprint\n",
+      "wall_seconds": 0.4422138330000003,
+      "instructions_retired": 4396224362,
+      "cycles_elapsed": 932132736,
+      "maximum_rss_bytes": 20119552,
+      "elapsed_seconds": 0.43
+    },
+    {
+      "case": "mapped",
+      "pair": 8,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-mapped-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251875000\n",
+      "stderr": "        0.42 real         0.25 user         0.00 sys\n            19857408  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1393  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                1089  involuntary context switches\n          4399816169  instructions retired\n           891806345  cycles elapsed\n            10387864  peak memory footprint\n",
+      "wall_seconds": 0.4318327919999998,
+      "instructions_retired": 4399816169,
+      "cycles_elapsed": 891806345,
+      "maximum_rss_bytes": 19857408,
+      "elapsed_seconds": 0.42
+    },
+    {
+      "case": "mapped",
+      "pair": 8,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-mapped-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251875000\n",
+      "stderr": "        0.42 real         0.28 user         0.01 sys\n            26361856  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1794  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                2660  involuntary context switches\n          5953769208  instructions retired\n          1098418245  cycles elapsed\n            16957896  peak memory footprint\n",
+      "wall_seconds": 0.43474654200000007,
+      "instructions_retired": 5953769208,
+      "cycles_elapsed": 1098418245,
+      "maximum_rss_bytes": 26361856,
+      "elapsed_seconds": 0.42
+    },
+    {
+      "case": "mapped",
+      "pair": 9,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-mapped-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251875000\n",
+      "stderr": "        0.28 real         0.27 user         0.00 sys\n            27394048  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1854  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 431  involuntary context switches\n          5939309986  instructions retired\n          1045534296  cycles elapsed\n            17973704  peak memory footprint\n",
+      "wall_seconds": 0.2894745830000005,
+      "instructions_retired": 5939309986,
+      "cycles_elapsed": 1045534296,
+      "maximum_rss_bytes": 27394048,
+      "elapsed_seconds": 0.28
+    },
+    {
+      "case": "mapped",
+      "pair": 9,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-mapped-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251875000\n",
+      "stderr": "        0.19 real         0.18 user         0.00 sys\n            19775488  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1389  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 100  involuntary context switches\n          4391346949  instructions retired\n           722603873  cycles elapsed\n            10305944  peak memory footprint\n",
+      "wall_seconds": 0.1950684589999998,
+      "instructions_retired": 4391346949,
+      "cycles_elapsed": 722603873,
+      "maximum_rss_bytes": 19775488,
+      "elapsed_seconds": 0.19
+    },
+    {
+      "case": "mapped",
+      "pair": 10,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-mapped-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251875000\n",
+      "stderr": "        0.25 real         0.23 user         0.00 sys\n            20283392  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1419  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 309  involuntary context switches\n          4391501843  instructions retired\n           838350426  cycles elapsed\n            10797464  peak memory footprint\n",
+      "wall_seconds": 0.2604030420000001,
+      "instructions_retired": 4391501843,
+      "cycles_elapsed": 838350426,
+      "maximum_rss_bytes": 20283392,
+      "elapsed_seconds": 0.25
+    },
+    {
+      "case": "mapped",
+      "pair": 10,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-mapped-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251875000\n",
+      "stderr": "        0.35 real         0.31 user         0.00 sys\n            26542080  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1803  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 534  involuntary context switches\n          5941319923  instructions retired\n          1133572885  cycles elapsed\n            17138120  peak memory footprint\n",
+      "wall_seconds": 0.36185774999999953,
+      "instructions_retired": 5941319923,
+      "cycles_elapsed": 1133572885,
+      "maximum_rss_bytes": 26542080,
+      "elapsed_seconds": 0.35
+    },
+    {
+      "case": "mapped",
+      "pair": 11,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-mapped-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251875000\n",
+      "stderr": "        0.29 real         0.28 user         0.00 sys\n            25608192  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1746  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 339  involuntary context switches\n          5925407605  instructions retired\n          1062885830  cycles elapsed\n            16204232  peak memory footprint\n",
+      "wall_seconds": 0.3031607910000007,
+      "instructions_retired": 5925407605,
+      "cycles_elapsed": 1062885830,
+      "maximum_rss_bytes": 25608192,
+      "elapsed_seconds": 0.29
+    },
+    {
+      "case": "mapped",
+      "pair": 11,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-mapped-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251875000\n",
+      "stderr": "        0.20 real         0.18 user         0.00 sys\n            19955712  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1402  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 376  involuntary context switches\n          4395541978  instructions retired\n           743196644  cycles elapsed\n            10486168  peak memory footprint\n",
+      "wall_seconds": 0.21135320799999935,
+      "instructions_retired": 4395541978,
+      "cycles_elapsed": 743196644,
+      "maximum_rss_bytes": 19955712,
+      "elapsed_seconds": 0.2
+    },
+    {
+      "case": "unmapped",
+      "pair": 1,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-unmapped-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251875000\n",
+      "stderr": "        0.53 real         0.44 user         0.01 sys\n            25559040  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1745  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                2072  involuntary context switches\n          6474091166  instructions retired\n          1667106094  cycles elapsed\n            16155080  peak memory footprint\n",
+      "wall_seconds": 0.5392428329999994,
+      "instructions_retired": 6474091166,
+      "cycles_elapsed": 1667106094,
+      "maximum_rss_bytes": 25559040,
+      "elapsed_seconds": 0.53
+    },
+    {
+      "case": "unmapped",
+      "pair": 1,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-unmapped-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251875000\n",
+      "stderr": "        0.18 real         0.15 user         0.00 sys\n            19890176  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1394  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 386  involuntary context switches\n          3221510719  instructions retired\n           586674128  cycles elapsed\n            10420632  peak memory footprint\n",
+      "wall_seconds": 0.188524417,
+      "instructions_retired": 3221510719,
+      "cycles_elapsed": 586674128,
+      "maximum_rss_bytes": 19890176,
+      "elapsed_seconds": 0.18
+    },
+    {
+      "case": "unmapped",
+      "pair": 2,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-unmapped-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251875000\n",
+      "stderr": "        0.14 real         0.13 user         0.00 sys\n            19775488  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1391  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  93  involuntary context switches\n          3215947777  instructions retired\n           534808279  cycles elapsed\n            10305944  peak memory footprint\n",
+      "wall_seconds": 0.14436933299999932,
+      "instructions_retired": 3215947777,
+      "cycles_elapsed": 534808279,
+      "maximum_rss_bytes": 19775488,
+      "elapsed_seconds": 0.14
+    },
+    {
+      "case": "unmapped",
+      "pair": 2,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-unmapped-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251875000\n",
+      "stderr": "        0.37 real         0.36 user         0.00 sys\n            24018944  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1649  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 141  involuntary context switches\n          6463857065  instructions retired\n          1447423758  cycles elapsed\n            14582168  peak memory footprint\n",
+      "wall_seconds": 0.3757951249999998,
+      "instructions_retired": 6463857065,
+      "cycles_elapsed": 1447423758,
+      "maximum_rss_bytes": 24018944,
+      "elapsed_seconds": 0.37
+    },
+    {
+      "case": "unmapped",
+      "pair": 3,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-unmapped-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251875000\n",
+      "stderr": "        0.37 real         0.37 user         0.00 sys\n            26001408  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1770  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 169  involuntary context switches\n          6463025001  instructions retired\n          1446216111  cycles elapsed\n            16597448  peak memory footprint\n",
+      "wall_seconds": 0.3809957920000002,
+      "instructions_retired": 6463025001,
+      "cycles_elapsed": 1446216111,
+      "maximum_rss_bytes": 26001408,
+      "elapsed_seconds": 0.37
+    },
+    {
+      "case": "unmapped",
+      "pair": 3,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-unmapped-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251875000\n",
+      "stderr": "        0.13 real         0.13 user         0.00 sys\n            19873792  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1397  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  32  involuntary context switches\n          3216980919  instructions retired\n           526100702  cycles elapsed\n            10404248  peak memory footprint\n",
+      "wall_seconds": 0.14199529199999894,
+      "instructions_retired": 3216980919,
+      "cycles_elapsed": 526100702,
+      "maximum_rss_bytes": 19873792,
+      "elapsed_seconds": 0.13
+    },
+    {
+      "case": "unmapped",
+      "pair": 4,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-unmapped-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251875000\n",
+      "stderr": "        0.13 real         0.12 user         0.00 sys\n            19709952  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1384  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  29  involuntary context switches\n          3215155797  instructions retired\n           516244988  cycles elapsed\n            10224024  peak memory footprint\n",
+      "wall_seconds": 0.13473162500000058,
+      "instructions_retired": 3215155797,
+      "cycles_elapsed": 516244988,
+      "maximum_rss_bytes": 19709952,
+      "elapsed_seconds": 0.13
+    },
+    {
+      "case": "unmapped",
+      "pair": 4,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-unmapped-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251875000\n",
+      "stderr": "        0.37 real         0.36 user         0.00 sys\n            24035328  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1648  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  54  involuntary context switches\n          6461387582  instructions retired\n          1468914598  cycles elapsed\n            14598576  peak memory footprint\n",
+      "wall_seconds": 0.3735547920000002,
+      "instructions_retired": 6461387582,
+      "cycles_elapsed": 1468914598,
+      "maximum_rss_bytes": 24035328,
+      "elapsed_seconds": 0.37
+    },
+    {
+      "case": "unmapped",
+      "pair": 5,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-unmapped-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251875000\n",
+      "stderr": "        0.33 real         0.33 user         0.00 sys\n            23937024  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1643  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  29  involuntary context switches\n          6461224740  instructions retired\n          1343829046  cycles elapsed\n            14500272  peak memory footprint\n",
+      "wall_seconds": 0.34115545899999944,
+      "instructions_retired": 6461224740,
+      "cycles_elapsed": 1343829046,
+      "maximum_rss_bytes": 23937024,
+      "elapsed_seconds": 0.33
+    },
+    {
+      "case": "unmapped",
+      "pair": 5,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-unmapped-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251875000\n",
+      "stderr": "        0.13 real         0.12 user         0.00 sys\n            19742720  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1387  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  15  involuntary context switches\n          3216131860  instructions retired\n           512827134  cycles elapsed\n            10273176  peak memory footprint\n",
+      "wall_seconds": 0.1325868339999996,
+      "instructions_retired": 3216131860,
+      "cycles_elapsed": 512827134,
+      "maximum_rss_bytes": 19742720,
+      "elapsed_seconds": 0.13
+    },
+    {
+      "case": "unmapped",
+      "pair": 6,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-unmapped-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251875000\n",
+      "stderr": "        0.12 real         0.12 user         0.00 sys\n            19693568  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1383  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  12  involuntary context switches\n          3216495038  instructions retired\n           507386322  cycles elapsed\n            10207640  peak memory footprint\n",
+      "wall_seconds": 0.131381042000001,
+      "instructions_retired": 3216495038,
+      "cycles_elapsed": 507386322,
+      "maximum_rss_bytes": 19693568,
+      "elapsed_seconds": 0.12
+    },
+    {
+      "case": "unmapped",
+      "pair": 6,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-unmapped-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251875000\n",
+      "stderr": "        0.33 real         0.33 user         0.00 sys\n            24084480  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1652  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  35  involuntary context switches\n          6462942176  instructions retired\n          1339646202  cycles elapsed\n            14647728  peak memory footprint\n",
+      "wall_seconds": 0.3408812089999991,
+      "instructions_retired": 6462942176,
+      "cycles_elapsed": 1339646202,
+      "maximum_rss_bytes": 24084480,
+      "elapsed_seconds": 0.33
+    },
+    {
+      "case": "unmapped",
+      "pair": 7,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-unmapped-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251875000\n",
+      "stderr": "        0.34 real         0.34 user         0.00 sys\n            23986176  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1647  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  68  involuntary context switches\n          6461547389  instructions retired\n          1372790803  cycles elapsed\n            14565808  peak memory footprint\n",
+      "wall_seconds": 0.3523694580000001,
+      "instructions_retired": 6461547389,
+      "cycles_elapsed": 1372790803,
+      "maximum_rss_bytes": 23986176,
+      "elapsed_seconds": 0.34
+    },
+    {
+      "case": "unmapped",
+      "pair": 7,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-unmapped-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251875000\n",
+      "stderr": "        0.13 real         0.12 user         0.00 sys\n            19693568  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1384  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  33  involuntary context switches\n          3214249774  instructions retired\n           516703137  cycles elapsed\n            10224024  peak memory footprint\n",
+      "wall_seconds": 0.13489633399999867,
+      "instructions_retired": 3214249774,
+      "cycles_elapsed": 516703137,
+      "maximum_rss_bytes": 19693568,
+      "elapsed_seconds": 0.13
+    },
+    {
+      "case": "unmapped",
+      "pair": 8,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-unmapped-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251875000\n",
+      "stderr": "        0.13 real         0.13 user         0.00 sys\n            19775488  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1388  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  46  involuntary context switches\n          3216601058  instructions retired\n           525309089  cycles elapsed\n            10273152  peak memory footprint\n",
+      "wall_seconds": 0.13732829099999933,
+      "instructions_retired": 3216601058,
+      "cycles_elapsed": 525309089,
+      "maximum_rss_bytes": 19775488,
+      "elapsed_seconds": 0.13
+    },
+    {
+      "case": "unmapped",
+      "pair": 8,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-unmapped-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251875000\n",
+      "stderr": "        0.34 real         0.34 user         0.00 sys\n            24002560  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1648  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  48  involuntary context switches\n          6462107283  instructions retired\n          1365905120  cycles elapsed\n            14582192  peak memory footprint\n",
+      "wall_seconds": 0.3479032920000016,
+      "instructions_retired": 6462107283,
+      "cycles_elapsed": 1365905120,
+      "maximum_rss_bytes": 24002560,
+      "elapsed_seconds": 0.34
+    },
+    {
+      "case": "unmapped",
+      "pair": 9,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-unmapped-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251875000\n",
+      "stderr": "        0.34 real         0.33 user         0.00 sys\n            24018944  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1648  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  34  involuntary context switches\n          6462868164  instructions retired\n          1341964631  cycles elapsed\n            14582192  peak memory footprint\n",
+      "wall_seconds": 0.3423142499999994,
+      "instructions_retired": 6462868164,
+      "cycles_elapsed": 1341964631,
+      "maximum_rss_bytes": 24018944,
+      "elapsed_seconds": 0.34
+    },
+    {
+      "case": "unmapped",
+      "pair": 9,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-unmapped-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251875000\n",
+      "stderr": "        0.13 real         0.12 user         0.00 sys\n            19677184  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1382  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  21  involuntary context switches\n          3217290675  instructions retired\n           513850999  cycles elapsed\n            10174848  peak memory footprint\n",
+      "wall_seconds": 0.13374412499999977,
+      "instructions_retired": 3217290675,
+      "cycles_elapsed": 513850999,
+      "maximum_rss_bytes": 19677184,
+      "elapsed_seconds": 0.13
+    },
+    {
+      "case": "unmapped",
+      "pair": 10,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-unmapped-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251875000\n",
+      "stderr": "        0.13 real         0.12 user         0.00 sys\n            19906560  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1396  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  40  involuntary context switches\n          3216272199  instructions retired\n           511564744  cycles elapsed\n            10404224  peak memory footprint\n",
+      "wall_seconds": 0.13348495800000038,
+      "instructions_retired": 3216272199,
+      "cycles_elapsed": 511564744,
+      "maximum_rss_bytes": 19906560,
+      "elapsed_seconds": 0.13
+    },
+    {
+      "case": "unmapped",
+      "pair": 10,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-unmapped-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251875000\n",
+      "stderr": "        0.36 real         0.35 user         0.00 sys\n            25296896  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1726  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 288  involuntary context switches\n          6467219579  instructions retired\n          1409819326  cycles elapsed\n            15876552  peak memory footprint\n",
+      "wall_seconds": 0.362704625000001,
+      "instructions_retired": 6467219579,
+      "cycles_elapsed": 1409819326,
+      "maximum_rss_bytes": 25296896,
+      "elapsed_seconds": 0.36
+    },
+    {
+      "case": "unmapped",
+      "pair": 11,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-unmapped-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251875000\n",
+      "stderr": "        0.33 real         0.32 user         0.00 sys\n            23953408  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1644  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  26  involuntary context switches\n          6462464875  instructions retired\n          1325062047  cycles elapsed\n            14516656  peak memory footprint\n",
+      "wall_seconds": 0.333642042000001,
+      "instructions_retired": 6462464875,
+      "cycles_elapsed": 1325062047,
+      "maximum_rss_bytes": 23953408,
+      "elapsed_seconds": 0.33
+    },
+    {
+      "case": "unmapped",
+      "pair": 11,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-argument-objects-unmapped-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "31251875000\n",
+      "stderr": "        0.12 real         0.12 user         0.00 sys\n            19709952  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1385  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   9  involuntary context switches\n          3215536113  instructions retired\n           507154418  cycles elapsed\n            10240408  peak memory footprint\n",
+      "wall_seconds": 0.12899299999999947,
+      "instructions_retired": 3215536113,
+      "cycles_elapsed": 507154418,
+      "maximum_rss_bytes": 19709952,
+      "elapsed_seconds": 0.12
+    }
+  ]
+}

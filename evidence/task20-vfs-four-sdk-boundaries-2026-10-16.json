@@ -1,0 +1,157 @@
+{
+  "schema_version": 1,
+  "task": "TOD-20",
+  "goal_complete": false,
+  "recorded_utc": "2026-10-16T23:25:44.152982+00:00",
+  "baseline_source_commit": "66e8ad1c2a023f49038097e05bb824cda2d54626",
+  "review": {
+    "patch_sha256": "cbb609b1fdfae3d7c98bdf3a57cd204b3e8239a1f5b461ee932763ed4ec5291d",
+    "production_source_files": {
+      "crates/quench-node/src/modules/fs_shared_vm.rs": "c28254def9633b3b9b95b8ca36c3c9424aafde337661326a947a025bcdece9a8",
+      "crates/quench-node/src/modules/fs_shared_vm/metadata_public.rs": "31a820049fa313f1e685050a62339c447645d9d3ae129326bc3105436191d328"
+    },
+    "original_sdk": "tests/node/lib/fs.js functions accessSync renameSync linkSync copyFileSync",
+    "review": "Raw unvalidated args forwarded exactly (2/2/2/3); only non-undefined VFS result suppresses fallback; successful void result returns undefined; unchanged original native fallback; installed before callback/promise captures; function name/length use existing boundary owner. No handwritten JS.",
+    "original_fixture_rows": 12,
+    "node26_pass": 4,
+    "baseline66_fail": 4,
+    "candidate_pass": 4,
+    "results": "stable-original4-v2-results.json",
+    "candidate_sha256": "c42796cdecd597e674282df0e28dfed00623351271961f71912653cd84b69b1a"
+  },
+  "unchanged_original_controls": [
+    {
+      "fixture": "test-vfs-fs-accessSync.js",
+      "engine": "node26",
+      "exit": 0,
+      "stdout": "",
+      "stderr": "(node:3994893) ExperimentalWarning: VirtualFileSystem is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n",
+      "seconds": 0.07612529001198709,
+      "original_fixture_sha256": "8181e61e7c629600286ca8921d67607ac4b6b7d5ed99dc3aa1c94751bcd4c4aa"
+    },
+    {
+      "fixture": "test-vfs-fs-accessSync.js",
+      "engine": "baseline66",
+      "exit": 1,
+      "stdout": "",
+      "stderr": "node:fs/shared-exists.js:118\n    return accessHost(normalizePath(path), mode);\n           ^\n\nError: ENOTDIR: not a directory, access '/dev/null/vfs/1/src/hello.txt'\n    at accessSync (eval at <anonymous>, <anonymous>:118:12)\n    at /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-vfs-fs-accessSync.js:18:4\n\nNode.js v26.12.0\n",
+      "seconds": 1.0868320100125857,
+      "original_fixture_sha256": "8181e61e7c629600286ca8921d67607ac4b6b7d5ed99dc3aa1c94751bcd4c4aa"
+    },
+    {
+      "fixture": "test-vfs-fs-accessSync.js",
+      "engine": "candidate",
+      "exit": 0,
+      "stdout": "",
+      "stderr": "(node:3994912) ExperimentalWarning: VirtualFileSystem is an experimental feature and might change at any time\n(Use `quench-node --trace-warnings ...` to show where the warning was created)\n",
+      "seconds": 1.141698517021723,
+      "original_fixture_sha256": "8181e61e7c629600286ca8921d67607ac4b6b7d5ed99dc3aa1c94751bcd4c4aa"
+    },
+    {
+      "fixture": "test-vfs-fs-renameSync.js",
+      "engine": "node26",
+      "exit": 0,
+      "stdout": "",
+      "stderr": "(node:3994926) ExperimentalWarning: VirtualFileSystem is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n",
+      "seconds": 0.07554002798860893,
+      "original_fixture_sha256": "2c163856fcdc0c56afd734ad65e509a56302010fee099f3f15e2e95e21ad10f6"
+    },
+    {
+      "fixture": "test-vfs-fs-renameSync.js",
+      "engine": "baseline66",
+      "exit": 1,
+      "stdout": "",
+      "stderr": "node:fs/shared-sync.js:209\n      return renameSync(normalizePath(oldPath), normalizePath(newPath));\n             ^\n\nError: ENOTDIR: not a directory, rename '/dev/null/vfs/1/src/hello.txt'\n    at renameSync (eval at <anonymous>, <anonymous>:209:14)\n    at /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-vfs-fs-renameSync.js:17:4\n\nNode.js v26.12.0\n",
+      "seconds": 0.8883624009904452,
+      "original_fixture_sha256": "2c163856fcdc0c56afd734ad65e509a56302010fee099f3f15e2e95e21ad10f6"
+    },
+    {
+      "fixture": "test-vfs-fs-renameSync.js",
+      "engine": "candidate",
+      "exit": 0,
+      "stdout": "",
+      "stderr": "(node:3994952) ExperimentalWarning: VirtualFileSystem is an experimental feature and might change at any time\n(Use `quench-node --trace-warnings ...` to show where the warning was created)\n",
+      "seconds": 0.9212410670006648,
+      "original_fixture_sha256": "2c163856fcdc0c56afd734ad65e509a56302010fee099f3f15e2e95e21ad10f6"
+    },
+    {
+      "fixture": "test-vfs-fs-linkSync.js",
+      "engine": "node26",
+      "exit": 0,
+      "stdout": "",
+      "stderr": "(node:3994969) ExperimentalWarning: VirtualFileSystem is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n",
+      "seconds": 0.08454139501554891,
+      "original_fixture_sha256": "bb80aad607ce28d49eeff6b3e44b89ce189b0aed5bfb025154b872d42eebf0a9"
+    },
+    {
+      "fixture": "test-vfs-fs-linkSync.js",
+      "engine": "baseline66",
+      "exit": 1,
+      "stdout": "",
+      "stderr": "node:fs/shared-sync.js:204\n      return linkSync(normalizePath(existingPath), normalizePath(newPath));\n             ^\n\nError: ENOTDIR: not a directory, link '/dev/null/vfs/1/src/hello-link.txt'\n    at linkSync (eval at <anonymous>, <anonymous>:204:14)\n    at /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-vfs-fs-linkSync.js:17:4\n\nNode.js v26.12.0\n",
+      "seconds": 0.9046080879634246,
+      "original_fixture_sha256": "bb80aad607ce28d49eeff6b3e44b89ce189b0aed5bfb025154b872d42eebf0a9"
+    },
+    {
+      "fixture": "test-vfs-fs-linkSync.js",
+      "engine": "candidate",
+      "exit": 0,
+      "stdout": "",
+      "stderr": "(node:3994993) ExperimentalWarning: VirtualFileSystem is an experimental feature and might change at any time\n(Use `quench-node --trace-warnings ...` to show where the warning was created)\n",
+      "seconds": 0.9515989529900253,
+      "original_fixture_sha256": "bb80aad607ce28d49eeff6b3e44b89ce189b0aed5bfb025154b872d42eebf0a9"
+    },
+    {
+      "fixture": "test-vfs-fs-copyFileSync.js",
+      "engine": "node26",
+      "exit": 0,
+      "stdout": "",
+      "stderr": "(node:3995010) ExperimentalWarning: VirtualFileSystem is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n",
+      "seconds": 0.055419629032257944,
+      "original_fixture_sha256": "65ce9ae3e09e2ec7234d701fb8847b34049000e8893cf1026db623a4b73c7765"
+    },
+    {
+      "fixture": "test-vfs-fs-copyFileSync.js",
+      "engine": "baseline66",
+      "exit": 1,
+      "stdout": "",
+      "stderr": "node:fs/shared-sync.js:193\n      return copyFileSync(normalizePath(source), normalizePath(destination), mode);\n             ^\n\nError: ENOTDIR: not a directory, copyfile '/dev/null/vfs/1/src/copy.txt'\n    at copyFileSync (eval at <anonymous>, <anonymous>:193:14)\n    at /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-vfs-fs-copyFileSync.js:17:4\n\nNode.js v26.12.0\n",
+      "seconds": 0.9186641700216569,
+      "original_fixture_sha256": "65ce9ae3e09e2ec7234d701fb8847b34049000e8893cf1026db623a4b73c7765"
+    },
+    {
+      "fixture": "test-vfs-fs-copyFileSync.js",
+      "engine": "candidate",
+      "exit": 0,
+      "stdout": "",
+      "stderr": "(node:3995041) ExperimentalWarning: VirtualFileSystem is an experimental feature and might change at any time\n(Use `quench-node --trace-warnings ...` to show where the warning was created)\n",
+      "seconds": 1.0524659720249474,
+      "original_fixture_sha256": "65ce9ae3e09e2ec7234d701fb8847b34049000e8893cf1026db623a4b73c7765"
+    }
+  ],
+  "full_api_gate": {
+    "result": "471/471 PASS with unchanged original deadlines",
+    "receipt": {
+      "source_commit": "66efb8ca236bc0bd4338a5b4a1cc6a523ffb62e8",
+      "test_count": 471,
+      "exit": 0,
+      "seconds": 293.0367695490131,
+      "binaries_before": {
+        "quench-node": "c42796cdecd597e674282df0e28dfed00623351271961f71912653cd84b69b1a",
+        "run-parallel": "7959ad84bc7009ab3aedc2b8886bc8497a0cc254317b6400439bd316bbdb498c",
+        "child-entry-api": "3a3155401e15999f969ec189233e6bcd8bffe9dac57e379cd9e92cf8260a06e2",
+        "libquench_node_workers.rlib": "cd20d0bcda7086a61ca2455bc045e3c8afbdd4e518a1813e208fd7b5b9b6717a"
+      },
+      "binaries_after": {
+        "quench-node": "c42796cdecd597e674282df0e28dfed00623351271961f71912653cd84b69b1a",
+        "run-parallel": "7959ad84bc7009ab3aedc2b8886bc8497a0cc254317b6400439bd316bbdb498c",
+        "child-entry-api": "3a3155401e15999f969ec189233e6bcd8bffe9dac57e379cd9e92cf8260a06e2",
+        "libquench_node_workers.rlib": "cd20d0bcda7086a61ca2455bc045e3c8afbdd4e518a1813e208fd7b5b9b6717a"
+      },
+      "memory_before": "low 0\nhigh 0\nmax 1269299\noom 2\noom_kill 1\noom_group_kill 0\n",
+      "memory_after": "low 0\nhigh 0\nmax 1269299\noom 2\noom_kill 1\noom_group_kill 0\n",
+      "finished_utc": "2026-10-16T23:24:38.132333+00:00"
+    }
+  },
+  "full_parallel_counts": "earlier e5 stable1938/5015; no count extrapolation"
+}

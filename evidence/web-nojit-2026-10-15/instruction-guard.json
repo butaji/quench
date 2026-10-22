@@ -1,0 +1,42 @@
+{
+  "binary_unchanged": true,
+  "binary_sha256": "caf38f7b9b37fb3aea09d442a921dfb32ba1b17a02340613eabf812b41fdcc24",
+  "baseline_and_candidate": "same unchanged runtime binary; harness/docs-only change",
+  "valgrind": "3.24.0",
+  "script": "evidence/tod123-rss-linux-2026-10-14/callgrind-guard.sh",
+  "all_eight_below_one_percent": true,
+  "fixtures": [
+    {
+      "fixture": "crypto",
+      "delta_percent": 5.4284624357475444e-08
+    },
+    {
+      "fixture": "deltablue",
+      "delta_percent": -6.820918314425035e-07
+    },
+    {
+      "fixture": "earley-boyer",
+      "delta_percent": -1.7797763926228083e-06
+    },
+    {
+      "fixture": "navier-stokes",
+      "delta_percent": -3.308731629877323e-07
+    },
+    {
+      "fixture": "raytrace",
+      "delta_percent": 1.2491043968547785e-06
+    },
+    {
+      "fixture": "regexp",
+      "delta_percent": -7.740566924278481e-05
+    },
+    {
+      "fixture": "richards",
+      "delta_percent": -1.1394278807979766e-06
+    },
+    {
+      "fixture": "splay",
+      "delta_percent": 0.0
+    }
+  ]
+}

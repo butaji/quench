@@ -1,0 +1,6 @@
+PASS  /workspace/quench/tests/node/test/parallel/test-http-res-write-after-end.js
+PASS  /workspace/quench/tests/node/test/parallel/test-http-request-arguments.js
+PASS  /workspace/quench/tests/node/test/parallel/test-http-server-de-chunked-trailer.js
+PASS  /workspace/quench/tests/node/test/parallel/test-http-request-method-delete-payload.js
+PASS  /workspace/quench/tests/node/test/parallel/test-http-transfer-encoding-repeated-chunked.js
+parallel: pass=5 skip=0 fail=0 timeout=0 crash=0 unclassified=0 total=5

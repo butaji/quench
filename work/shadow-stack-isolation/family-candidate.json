@@ -1,0 +1,162 @@
+{
+  "schema_version": 2,
+  "inventory_hash": "a18dc5317b43584f",
+  "timeout_secs": 30,
+  "jobs": 4,
+  "node_version": "v26.12.0",
+  "runtime_commit": "14ec6856263b7331d4c7348d87c829e76acdef09",
+  "tests_node_commit": "unknown",
+  "platform": "linux-x86_64",
+  "results": [
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-shadow-realm-allowed-builtin-modules.js",
+      "status": "fail",
+      "observation": {
+        "Ok": {
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "fail",
+            "reason": "AssertionError [ERR_ASSERTION]: Missing expected rejection.\n\nNode.js v26.12.0"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-shadow-realm-custom-loaders.js",
+      "status": "fail",
+      "observation": {
+        "Ok": {
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "fail",
+            "reason": "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n+ actual - expected\n\n+ \"Cannot find module '/workspace/work/node-stable-release/node-v26.12.0/file:/workspace/work/node-stable-release/node-v26.12.0/test/fixtures/es-module-loaders/loader-resolve-shortcircuit.mjs'\\n\"\n- ''\n\n    at main (/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-shadow-realm-custom-loaders.js:22:10)\n\nNode.js v26.12.0"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-shadow-realm-gc-module.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-shadow-realm-gc.js",
+      "status": "fail",
+      "observation": {
+        "Ok": {
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "fail",
+            "reason": "node:worker_threads.js:1\n(function() {return (({ isMainThread: true, MessageChannel: globalThis.MessageChannel, MessagePort: globalThis.MessagePort, Worker: class Worker { constructor() { throw Object.assign(new Error('Worker threads are unavailable in this runtime'), { code: 'ERR_WORKER_UNSUPPORTED_OPERATION' }); } } }));\n                                                                                                                                                                   ^\n\nError: Worker threads are unavailable in this runtime\n    at new Worker (node:worker_threads.js:1:184)\n    at /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-shadow-realm-gc.js:20:18\n\nNode.js v26.12.0"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-shadow-realm-globals.js",
+      "status": "fail",
+      "observation": {
+        "Ok": {
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "fail",
+            "reason": "/workspace/work/node-stable-release/node-v26.12.0/lib/internal/assert/utils.js:146\n  throw error;\n  ^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:\n+ actual - expected\n\n+ [\n+   'TypedArray',\n+   'AsyncFunction',\n+   'GeneratorFunction',\n+   'AsyncGeneratorFunction'\n+ ]\n- []\n\n    at /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-shadow-realm-globals.js:27:8\n\nNode.js v26.12.0"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-shadow-realm-import-value-resolve.js",
+      "status": "fail",
+      "observation": {
+        "Ok": {
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "fail",
+            "reason": "TypeError: ShadowRealm import failed\n\nNode.js v26.12.0"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-shadow-realm-module.js",
+      "status": "fail",
+      "observation": {
+        "Ok": {
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "fail",
+            "reason": "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n\n3 !== 0\n\n    at main (/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-shadow-realm-module.js:22:10)\n\nNode.js v26.12.0"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-shadow-realm-preload-module.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-shadow-realm-prepare-stack-trace.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+
+running 1 test
+test child_process_reference_state_and_public_handle_hooks_match_node_liveness ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 271 filtered out; finished in 1.49s
+

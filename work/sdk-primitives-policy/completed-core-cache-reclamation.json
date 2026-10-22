@@ -1,0 +1,6 @@
+{
+  "path": "target/debug/deps/quench_runtime-faba0c2c63dca90b",
+  "bytes": 562123912,
+  "sha256": "c1572408eb40d7bd5bbc34799e60b34d81dd96727b464b2f80789cce454b5736",
+  "reason": "Completed failed Core660 attempt (659 pass/1 fail), original log retained; rebuild corrected new test plus combined caller metadata."
+}

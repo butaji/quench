@@ -1,0 +1,106 @@
+[
+  {
+    "fixture": "test-os-checked-function.js",
+    "command": [
+      "/workspace/quench/work/node-v26.12.0-linux-x64/bin/node",
+      "--jitless",
+      "--expose-internals",
+      "--no-warnings",
+      "--allow-natives-syntax",
+      "/workspace/quench/work/node_modules/node-stable-conformance/test/parallel/test-os-checked-function.js"
+    ],
+    "exit_code": 0,
+    "timed_out": false
+  },
+  {
+    "fixture": "test-os-constants-signals.js",
+    "command": [
+      "/workspace/quench/work/node-v26.12.0-linux-x64/bin/node",
+      "--jitless",
+      "--expose-internals",
+      "--no-warnings",
+      "--allow-natives-syntax",
+      "/workspace/quench/work/node_modules/node-stable-conformance/test/parallel/test-os-constants-signals.js"
+    ],
+    "exit_code": 0,
+    "timed_out": false
+  },
+  {
+    "fixture": "test-os-eol.js",
+    "command": [
+      "/workspace/quench/work/node-v26.12.0-linux-x64/bin/node",
+      "--jitless",
+      "--expose-internals",
+      "--no-warnings",
+      "--allow-natives-syntax",
+      "/workspace/quench/work/node_modules/node-stable-conformance/test/parallel/test-os-eol.js"
+    ],
+    "exit_code": 0,
+    "timed_out": false
+  },
+  {
+    "fixture": "test-os-fast.js",
+    "command": [
+      "/workspace/quench/work/node-v26.12.0-linux-x64/bin/node",
+      "--jitless",
+      "--expose-internals",
+      "--no-warnings",
+      "--allow-natives-syntax",
+      "/workspace/quench/work/node_modules/node-stable-conformance/test/parallel/test-os-fast.js"
+    ],
+    "exit_code": 0,
+    "timed_out": false
+  },
+  {
+    "fixture": "test-os-homedir-no-envvar.js",
+    "command": [
+      "/workspace/quench/work/node-v26.12.0-linux-x64/bin/node",
+      "--jitless",
+      "--expose-internals",
+      "--no-warnings",
+      "--allow-natives-syntax",
+      "/workspace/quench/work/node_modules/node-stable-conformance/test/parallel/test-os-homedir-no-envvar.js"
+    ],
+    "exit_code": 0,
+    "timed_out": false
+  },
+  {
+    "fixture": "test-os-process-priority.js",
+    "command": [
+      "/workspace/quench/work/node-v26.12.0-linux-x64/bin/node",
+      "--jitless",
+      "--expose-internals",
+      "--no-warnings",
+      "--allow-natives-syntax",
+      "/workspace/quench/work/node_modules/node-stable-conformance/test/parallel/test-os-process-priority.js"
+    ],
+    "exit_code": 0,
+    "timed_out": false
+  },
+  {
+    "fixture": "test-os-userinfo-handles-getter-errors.js",
+    "command": [
+      "/workspace/quench/work/node-v26.12.0-linux-x64/bin/node",
+      "--jitless",
+      "--expose-internals",
+      "--no-warnings",
+      "--allow-natives-syntax",
+      "/workspace/quench/work/node_modules/node-stable-conformance/test/parallel/test-os-userinfo-handles-getter-errors.js"
+    ],
+    "exit_code": 0,
+    "timed_out": false
+  },
+  {
+    "fixture": "test-os.js",
+    "command": [
+      "/workspace/quench/work/node-v26.12.0-linux-x64/bin/node",
+      "--jitless",
+      "--expose-internals",
+      "--no-warnings",
+      "--allow-natives-syntax",
+      "/workspace/quench/work/node_modules/node-stable-conformance/test/parallel/test-os.js"
+    ],
+    "exit_code": 0,
+    "timed_out": false
+  }
+]

@@ -1,0 +1,23 @@
+   Compiling quench-runtime v0.1.0 (/workspace/quench/crates/quench-runtime)
+    Finished `iteration` profile [optimized] target(s) in 2m 54s
+     Running tests/subset.rs (target/iteration/deps/subset-c49dd27ede7fb34c)
+
+running 15 tests
+test deterministic_hash_random_preserves_es5_bitwise_semantics ... ok
+test direct_eval_binary_split_respects_looser_operators ... ok
+test direct_eval_expressions_resolve_caller_bindings ... ok
+test case_mapping_preserves_lone_surrogates ... ok
+test generator_return_inside_loop_head_pattern_closes_pattern_iterator ... ok
+test nested_class_in_computed_key_keeps_outer_private_names ... ok
+test native_stack_scopes_are_ordered_truthful_and_unwind_safe ... ok
+test global_function_calls_remain_generic_without_a_static_binding_proof ... ok
+test nested_super_initialization_preserves_caller_receivers ... ok
+test returned_superinstruction_object_preserves_value ... ok
+test numeric_method_arguments_flow_directly_from_caller_registers ... ok
+test residual_binary_round_trip_preserves_execution ... ok
+test with_body_names_reach_enclosing_function_vars ... ok
+test throw_preserves_identity_without_hooks_and_retains_source_through_binary ... ok
+test numeric_dispatch_class_is_data_derived_and_semantics_neutral ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+

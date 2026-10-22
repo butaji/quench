@@ -1,89 +1,249 @@
-//! Node API modules. Observable host behavior and state machines are Rust
-//! objects installed through the runtime's host contract. A few modules still
-//! use explicit bridge fragments to assemble object/prototype shape; those
-//! fragments delegate to Rust capabilities and do not implement a VM.
+//! Node API adapters and runtime-neutral host facts.
+//!
+//! Shared-runtime adapters own guest-visible behavior. Neutral modules own
+//! data and host state that those adapters consume.
 
-pub mod assert;
-pub mod assert_validate;
-pub mod async_hooks;
-pub mod buffer;
-pub mod buffer_enc;
-pub mod buffer_from;
-pub mod buffer_methods;
-pub mod buffer_proto;
-pub mod buffer_rw;
-pub mod buffer_write;
-pub mod child_process;
-pub mod clone;
+pub(crate) mod assert_shared_vm;
+pub(crate) mod napi;
+pub(crate) mod worker_shared_vm;
+pub(crate) mod async_hook_registry_shared_vm;
+pub(crate) mod async_hooks_shared_vm;
+pub(crate) mod async_hooks_state;
+pub(crate) mod blob_binding_shared_vm;
+pub(crate) mod buffer_binding_shared_vm;
+pub(crate) mod buffer_codec;
+pub(crate) mod buffer_shared_vm;
+pub(crate) mod primordials_shared_vm;
+pub(crate) mod cares_binding;
+#[cfg(quench_node_cares)] pub(crate) mod cares_channel_shared_vm;
+pub(crate) mod child_process_env_shared_vm;
+pub(crate) mod child_process_exec_shared_vm;
+pub(crate) mod child_process_fork_shared_vm;
+pub(crate) mod child_process_input_shared_vm;
+pub(crate) mod child_process_ipc_shared_vm;
+pub(crate) mod child_process_options_shared_vm;
+#[cfg(unix)]
+pub(crate) mod child_process_output_shared_vm;
+pub(crate) mod child_process_shared_vm;
+pub(crate) mod child_process_stdio_shared_vm;
+#[cfg(unix)]
+pub(crate) mod child_process_sync;
 pub(crate) mod clone_shared_vm;
+pub(crate) mod console_shared_vm;
+pub(crate) mod contextify_shared_vm;
+#[cfg(quench_openssl_provider)]
+pub(crate) mod crypto_digest;
+#[cfg(quench_openssl_provider)]
+pub(crate) mod crypto_digest_error;
+pub(crate) mod crypto_engine_shared_vm;
+pub(crate) mod crypto_error_shared_vm;
+#[cfg(not(quench_openssl_provider))]
+pub(crate) mod crypto_sha1;
+pub(crate) mod crypto_shared_vm;
+pub(crate) mod crypto_strings;
+pub(crate) mod diagnostics_channel_shared_vm;
+#[cfg(not(quench_node_cares))]
+pub(crate) mod dns_shared_vm;
+pub(crate) mod domain_shared_vm;
+pub(crate) mod domain_source;
+pub(crate) mod domain_trampoline;
+pub(crate) mod emitter_async_resource_shared_vm;
+pub(crate) mod eval_globals_shared_vm;
+pub(crate) mod event_constructor_shared_vm;
+pub(crate) mod event_emitter_shared_vm;
+pub(crate) mod event_limits_shared_vm;
+pub(crate) mod events_abort_shared_vm;
+pub(crate) mod events_shared_vm;
 pub(crate) mod fetch_shared_vm;
-pub mod cluster;
-pub mod compat_extra;
-pub mod console;
-pub mod crypto;
-pub mod crypto_cipher;
-pub mod crypto_dh;
-pub mod deep_equal;
-pub mod diagnostics_channel;
-pub mod dns;
-pub mod domain;
-pub mod emitter;
-pub mod event_loop;
-pub mod event_target;
-pub mod events;
-pub mod fs;
-pub mod fs_async;
-pub mod fs_error;
-pub mod fs_promises;
-pub mod fs_stats;
-pub mod fs_sync;
-pub mod http;
-mod http2_asserts;
-mod http2_facts;
-pub mod http2_util;
-pub mod http_client;
-pub mod http_res;
-pub mod inspector;
-pub mod net;
-pub mod npm;
-pub mod os;
-pub mod path;
-pub mod path_glob;
-pub mod path_parts;
-pub mod path_posix;
-pub mod path_win32;
-pub mod path_win32_extra;
-pub mod path_win32_normalize;
-pub mod process;
-pub mod pump;
-pub mod querystring;
-pub mod querystring_parse;
-pub mod querystring_stringify;
-pub mod readline;
-pub mod repl;
-pub mod require;
-pub mod stream;
-pub mod stream_consumers;
-pub mod string_decoder;
-pub mod test;
-pub mod text_decoder;
-pub mod text_encoder;
-pub mod timers;
-pub mod timers_promises;
-pub mod tls;
-pub mod trace_events;
-pub mod tty;
-pub mod url;
-pub mod url_file;
-pub mod url_whatwg;
-pub mod util;
-pub mod util_inherits;
+pub(crate) mod fs_directory_shared_vm;
+pub(crate) mod fs_error_codes;
+pub(crate) mod fs_error_details;
+pub(crate) mod fs_ops;
+pub(crate) mod fs_path;
+pub(crate) mod fs_policy_shared_vm;
+pub(crate) mod fs_read_file_shared_vm;
+pub(crate) mod fs_shared_vm;
+pub(crate) mod fs_stat_watch_shared_vm;
+pub(crate) mod fs_state;
+pub(crate) mod fs_watch_shared_vm;
+pub(crate) mod fs_write_shared_vm;
+pub(crate) mod http_protocol;
+pub(crate) mod http_shared_vm;
+pub(crate) mod http_status_shared_vm;
+#[cfg(quench_icu)]
+pub(crate) mod icu_binding_shared_vm;
+pub(crate) mod memory_facts;
+pub(crate) mod module_shared_vm;
+pub(crate) mod native_task_pool;
+pub(crate) mod net_config;
+pub(crate) mod net_connect_error;
+pub(crate) mod net_endpoint_shared_vm;
+pub(crate) mod net_lookup_shared_vm;
+pub(crate) mod net_options_shared_vm;
+pub(crate) mod net_reference_shared_vm;
+pub(crate) mod net_server_admission;
+pub(crate) mod net_server_listen;
+pub(crate) mod net_shared_vm;
+pub(crate) mod net_socket_address;
+pub(crate) mod net_socket_options;
+pub(crate) mod net_socket_read;
+pub(crate) mod node_errors_shared_vm;
+pub(crate) mod node_protocol_constants;
+pub(crate) mod os_facts;
+pub(crate) mod os_shared_vm;
+pub(crate) mod path_algorithms;
+pub(crate) mod path_shared_vm;
+pub(crate) mod perf_hooks;
+pub(crate) mod performance_binding_shared_vm;
+pub(crate) mod perf_timeline_query;
+pub(crate) mod process_binding_shared_vm;
+#[cfg(unix)]
+pub(crate) mod process_execve_shared_vm;
+pub(crate) mod process_memory_shared_vm;
+#[cfg(target_os = "linux")]
+pub(crate) mod process_metrics_shared_vm;
+pub(crate) mod process_shared_vm;
+pub(crate) mod process_warning_shared_vm;
+mod process_exception_route;
+pub(crate) mod process_fatal_exception_route;
+pub(crate) mod process_signals_state;
+pub(crate) mod process_state;
+pub(crate) mod process_stdin_shared_vm;
+pub(crate) mod readline_shared_vm;
+pub(crate) mod shared_event_loop;
+pub(crate) mod string_decoder_codec;
+pub(crate) mod string_decoder_shared_vm;
+pub(crate) mod test_shared_vm;
+pub(crate) mod text_decoder_codec;
+#[cfg(quench_icu)]
+pub(crate) mod text_decoder_icu;
+pub(crate) mod text_decoder_shared_vm;
+pub(crate) mod timers_shared_vm;
+pub(crate) mod tls_shared_vm;
+pub(crate) mod tty_shared_vm;
+pub(crate) mod tty_state;
+pub(crate) mod url_binding_shared_vm;
+pub(crate) mod url_shared_vm;
+pub(crate) mod util_callbackify_shared_vm;
+pub(crate) mod util_env;
+pub(crate) mod util_parse_args_shared_vm;
+pub(crate) mod util_shared_vm;
 pub mod util_strip;
-pub mod util_style_text;
-pub mod v8;
-pub mod vm_api;
-pub mod wasi;
-pub mod web_locks;
-pub mod webcrypto;
-pub mod worker_threads;
-pub mod zlib;
+pub(crate) mod util_style_shared_vm;
+pub(crate) mod util_system_error_shared_vm;
+pub(crate) mod ipc_serdes_shared_vm;
+pub(crate) mod serdes_shared_vm;
+pub(crate) mod v8_shared_vm;
+pub(crate) mod vm_shared_vm;
+pub(crate) mod web_stream_consumers_shared_vm;
+pub(crate) mod zlib_constants;
+
+pub(crate) mod trace_shared_vm;
+pub(crate) mod trace_state;
+
+
+
+
+pub(crate) mod encoding_binding_shared_vm;
+
+pub(crate) mod crypto_key_shared_vm;
+
+#[cfg(target_os = "linux")]
+pub(crate) mod os_binding_shared_vm;
+
+pub(crate) mod cli_options;
+pub(crate) mod cli_options_shared_vm;
+
+pub(crate) mod zlib_native_codec;
+pub(crate) mod zlib_native_shared_vm;
+
+pub(crate) mod native_work;
+
+pub(crate) mod report_configuration_shared_vm;
+
+pub(crate) mod crypto_secret_job_shared_vm;
+
+pub(crate) mod tcp_binding;
+pub(crate) mod tcp_owned;
+
+#[cfg(quench_openssl_provider)]
+pub(crate) mod crypto_provider_shared_vm;
+
+pub(crate) mod stream_binding;
+
+#[cfg(quench_openssl_provider)]
+pub(crate) mod dom_exception_shared_vm;
+
+pub(crate) mod events_weak_shared_vm;
+pub(crate) mod util_aborted_source_shared_vm;
+
+#[cfg(quench_openssl_provider)]
+pub(crate) mod crypto_digest_cache;
+
+#[cfg(quench_openssl_provider)]
+pub(crate) mod crypto_hash_shared_vm;
+#[cfg(quench_openssl_provider)]
+pub(crate) mod crypto_hash_source_shared_vm;
+#[cfg(quench_openssl_provider)]
+pub(crate) mod crypto_hash_source;
+#[cfg(quench_openssl_provider)]
+pub(crate) mod crypto_digest_state;
+
+pub(crate) mod abort_dependencies_shared_vm;
+
+pub(crate) mod abort_timeout_shared_vm;
+
+pub(crate) mod crypto_secret_material;
+#[cfg(quench_openssl_provider)]
+pub(crate) mod crypto_hkdf;
+
+pub(crate) mod udp_transport;
+pub(crate) mod udp_binding;
+
+pub(crate) mod fd_handle_type;
+pub(crate) mod native_number;
+
+pub(crate) mod native_async_wrap;
+
+#[cfg(quench_openssl_provider)]
+mod crypto_kdf;
+#[cfg(quench_openssl_provider)]
+mod crypto_pbkdf2;
+
+// `v2-cloud-node`'s Worker, unrouted since `worker_threads` is `worker_shared_vm` (decision 31);
+// the Node lane ports its additions onto that module or removes this one.
+#[allow(dead_code)]
+pub(crate) mod worker_threads_shared_vm;
+pub(crate) mod worker_owned_clone;
+pub(crate) mod worker_error_packet;
+
+pub(crate) mod unix_rights;
+pub(crate) mod ipc_pipe;
+pub(crate) mod pipe_binding;
+
+
+pub(crate) mod crypto_constants;
+pub(crate) mod crypto_key_layout;
+pub(crate) mod crypto_key_material_shared_vm;
+#[cfg(quench_openssl_provider)]
+pub(crate) use crypto_provider_shared_vm::native as crypto_provider_facts;
+#[cfg(quench_openssl_provider)]
+pub(crate) mod crypto_asymmetric;
+#[cfg(quench_openssl_provider)]
+pub(crate) mod crypto_asymmetric_generate;
+#[cfg(quench_openssl_provider)]
+pub(crate) mod crypto_asymmetric_operations;
+#[cfg(quench_openssl_provider)]
+pub(crate) mod crypto_asymmetric_shared_vm;
+#[cfg(quench_openssl_provider)]
+pub(crate) mod crypto_keypair_request;
+#[cfg(quench_openssl_provider)]
+pub(crate) mod crypto_keypair_config;
+#[cfg(quench_openssl_provider)]
+pub(crate) mod crypto_signature_state;
+#[cfg(quench_openssl_provider)]
+pub(crate) mod crypto_signature_request;
+#[cfg(quench_openssl_provider)]
+pub(crate) mod crypto_signature_shared_vm;
+#[cfg(quench_openssl_provider)]
+pub(crate) mod crypto_rsa_shared_vm;

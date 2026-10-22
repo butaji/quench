@@ -1,0 +1,4793 @@
+{
+  "captured_at": "2026-10-14T12:20:27.476468+00:00",
+  "metric": "npm registry search weekly downloads",
+  "seed_sources": [
+    "https://www.npmleaderboard.org/api/packages?sortBy=downloads&dependsOn=&keywords=",
+    "https://getcommit.dev/rankings/"
+  ],
+  "counts_source": "https://registry.npmjs.org/-/v1/search?text={seed}&size=20",
+  "seed_queries": 273,
+  "candidate_count": 4665,
+  "scope": "Top 300 by current registry weekly downloads among 4665 packages discovered through 273 popular-package seed queries. Primary npm counts, not an exhaustive registry census. Seed-query exceptions are retained in ranking-source-current.json.",
+  "oracle": "Node v26.11.1",
+  "packages": [
+    {
+      "name": "semver",
+      "downloads": 877320600,
+      "updated": "2026-10-13T21:36:26.998Z",
+      "version": "7.8.5",
+      "tarball": "https://registry.npmjs.org/semver/-/semver-7.8.5.tgz",
+      "integrity": "sha512-Y7/KDsb8LjooZpwaqGyulO6DQlksgCncchHGk+sZIY4SBvUocMBEFH5Ur1fI4dV+Jvl0w6cjvucaIi40puRioA==",
+      "repository": {
+        "url": "git+https://github.com/npm/node-semver.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 1
+    },
+    {
+      "name": "minimatch",
+      "downloads": 722432451,
+      "updated": "2026-10-13T21:43:22.168Z",
+      "version": "10.2.6",
+      "tarball": "https://registry.npmjs.org/minimatch/-/minimatch-10.2.6.tgz",
+      "integrity": "sha512-vpLQEs+VLCr1nU0BXS07maYoFwlDAH0gngQuuttxIwutDFEMHq2blX+8vpgxDdK3J1PwjCJiep77OitTZ4Ll1A==",
+      "repository": {
+        "url": "git+ssh://git@github.com/isaacs/minimatch.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 2
+    },
+    {
+      "name": "debug",
+      "downloads": 720404610,
+      "updated": "2026-10-13T21:38:31.387Z",
+      "version": "4.4.3",
+      "tarball": "https://registry.npmjs.org/debug/-/debug-4.4.3.tgz",
+      "integrity": "sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA==",
+      "repository": {
+        "url": "git://github.com/debug-js/debug.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 3
+    },
+    {
+      "name": "ansi-styles",
+      "downloads": 698599600,
+      "updated": "2026-10-13T21:35:57.797Z",
+      "version": "7.0.0",
+      "tarball": "https://registry.npmjs.org/ansi-styles/-/ansi-styles-7.0.0.tgz",
+      "integrity": "sha512-kKvt3m4uwzqL0wlkPd09CmljPJGOZZ4D0fP65sqFSvPkMRKhNi+74MgIJ5QxE6SxqB4t4KyUFGg8+n5zjo6hew==",
+      "repository": {
+        "url": "git+https://github.com/chalk/ansi-styles.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 4
+    },
+    {
+      "name": "brace-expansion",
+      "downloads": 626859918,
+      "updated": "2026-10-13T21:43:25.104Z",
+      "version": "5.0.12",
+      "tarball": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.12.tgz",
+      "integrity": "sha512-YovQ3rzhaLMIrDjNDMkNS01tea93qhEhG5xy8f6+R0l+dw3Ki+5sCoIoI942iuLZTHWogWktgwVDhU09iNEimQ==",
+      "repository": {
+        "url": "git+https://github.com/juliangruber/brace-expansion.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 5
+    },
+    {
+      "name": "lru-cache",
+      "downloads": 592021316,
+      "updated": "2026-10-13T21:42:13.829Z",
+      "version": "11.5.3",
+      "tarball": "https://registry.npmjs.org/lru-cache/-/lru-cache-11.5.3.tgz",
+      "integrity": "sha512-U4N8FgzmWxc8k1VH8Kr6lQg18U7Fjvby6wXHVRX/ZZ7IwWbRMgrRbP0Wrb5q5NVinryp4SQampHKdvtecItxUg==",
+      "repository": {
+        "url": "git+ssh://git@github.com/isaacs/node-lru-cache.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 6
+    },
+    {
+      "name": "ms",
+      "downloads": 557566709,
+      "updated": "2026-10-13T21:43:19.178Z",
+      "version": "2.1.3",
+      "tarball": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz",
+      "integrity": "sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==",
+      "repository": {
+        "url": "git+https://github.com/vercel/ms.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 7
+    },
+    {
+      "name": "commander",
+      "downloads": 539555362,
+      "updated": "2026-10-13T21:37:45.965Z",
+      "version": "15.0.0",
+      "tarball": "https://registry.npmjs.org/commander/-/commander-15.0.0.tgz",
+      "integrity": "sha512-z67u4ZhzCL/Tydu1lJARtEZYWbWaN7oYLHbsuzocr6y4N6WZAagG3RQ4FW61V1/0+jImpj293XfrcYnd1qxtPg==",
+      "repository": {
+        "url": "git+https://github.com/tj/commander.js.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 8
+    },
+    {
+      "name": "strip-ansi",
+      "downloads": 529687085,
+      "updated": "2026-10-13T21:44:12.009Z",
+      "version": "7.2.0",
+      "tarball": "https://registry.npmjs.org/strip-ansi/-/strip-ansi-7.2.0.tgz",
+      "integrity": "sha512-yDPMNjp4WyfYBkHnjIRLfca1i6KMyGCtsVgoKe/z1+6vukgaENdgGBZt+ZmKPc4gavvEZ5OgHfHdrazhgNyG7w==",
+      "repository": {
+        "url": "git+https://github.com/chalk/strip-ansi.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 9
+    },
+    {
+      "name": "string-width",
+      "downloads": 529656733,
+      "updated": "2026-10-13T21:36:58.070Z",
+      "version": "8.3.0",
+      "tarball": "https://registry.npmjs.org/string-width/-/string-width-8.3.0.tgz",
+      "integrity": "sha512-ZbmZM0JCihQN91dWnxoipT2KOEyHqEyfRXUyjuRhW8b/xnqPDoq4gWEVApTVa9db2wN8mmoikgFBbjh71+cGeQ==",
+      "repository": {
+        "url": "git+https://github.com/sindresorhus/string-width.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 10
+    },
+    {
+      "name": "picomatch",
+      "downloads": 521428976,
+      "updated": "2026-10-13T21:43:55.547Z",
+      "version": "4.0.7",
+      "tarball": "https://registry.npmjs.org/picomatch/-/picomatch-4.0.7.tgz",
+      "integrity": "sha512-qcJu88Q2IWqJsDD529JKMdwGm/dvInW4HvQnRwiH9JtihJvzGOscDtHE3x1pBKeUOTysQ8kVmLnJ2kJu7yhcGA==",
+      "repository": {
+        "url": "git+https://github.com/micromatch/picomatch.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 11
+    },
+    {
+      "name": "ansi-regex",
+      "downloads": 512823363,
+      "updated": "2026-10-13T21:44:02.342Z",
+      "version": "6.4.0",
+      "tarball": "https://registry.npmjs.org/ansi-regex/-/ansi-regex-6.4.0.tgz",
+      "integrity": "sha512-KzTVk2tCWAHtYrvvvaP8bJKJq2pVinhLcGEQdtLIYPbmNGNyYe8QwNaTUYQp2J7/vIsUKt5QCqAfUkYyG9DkOw==",
+      "repository": {
+        "url": "git+https://github.com/chalk/ansi-regex.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 12
+    },
+    {
+      "name": "supports-color",
+      "downloads": 503400859,
+      "updated": "2026-10-13T21:38:28.712Z",
+      "version": "11.0.0",
+      "tarball": "https://registry.npmjs.org/supports-color/-/supports-color-11.0.0.tgz",
+      "integrity": "sha512-/zyImLdxhdygBIaVX0xTlQhKaCDLCrm665aqHk8xqK/Pa6k61fL6gwQGQq1k31yNyz6x55PppQgF2DMyPQa5xw==",
+      "repository": {
+        "url": "git+https://github.com/chalk/supports-color.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 13
+    },
+    {
+      "name": "chalk",
+      "downloads": 496310399,
+      "updated": "2026-10-13T21:43:48.590Z",
+      "version": "6.0.1",
+      "tarball": "https://registry.npmjs.org/chalk/-/chalk-6.0.1.tgz",
+      "integrity": "sha512-/Ce6KNm3vIbWdMlNna6RVIZ/ICQxnJxCicet5LBKK9ZffBkqzDw0xh9EiKSljdRtiIQ1S1z4YgcscUUGzNCWrA==",
+      "repository": {
+        "url": "git+https://github.com/chalk/chalk.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 14
+    },
+    {
+      "name": "@types/node",
+      "downloads": 463947968,
+      "updated": "2026-10-13T21:35:59.648Z",
+      "version": "26.6.5",
+      "tarball": "https://registry.npmjs.org/@types/node/-/node-26.6.5.tgz",
+      "integrity": "sha512-uMzsv9stDdofIZBx4UGh4Z9ZgXnGC9seRDscilBcTHAeOFk67MZg/k9bWVfO+bk4qZmG+l52hRnLwUiH2LnJTg==",
+      "repository": {
+        "url": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+        "type": "git",
+        "directory": "types/node"
+      },
+      "types_only": true,
+      "native_only": false,
+      "rank": 15
+    },
+    {
+      "name": "wrap-ansi",
+      "downloads": 448358376,
+      "updated": "2026-10-13T21:42:32.072Z",
+      "version": "10.0.2",
+      "tarball": "https://registry.npmjs.org/wrap-ansi/-/wrap-ansi-10.0.2.tgz",
+      "integrity": "sha512-6OLRNZqRntVGBm26ghZ5eZhCuWWyOkRCSn8XsOIuq5stpCE/tjLbdozd93naILZig0lmD8ANfRwnhn0DLeXGlg==",
+      "repository": {
+        "url": "git+https://github.com/chalk/wrap-ansi.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 16
+    },
+    {
+      "name": "emoji-regex",
+      "downloads": 443455899,
+      "updated": "2026-10-13T21:35:59.378Z",
+      "version": "11.0.0",
+      "tarball": "https://registry.npmjs.org/emoji-regex/-/emoji-regex-11.0.0.tgz",
+      "integrity": "sha512-2qQtc7syPcJmvF7BfKxBvwgvhzDth6u3q23+Jr4JOQUcmMGgmj7B4/ePZ2DmOhrrb77S8kMNHq2kilVASysfqA==",
+      "repository": {
+        "url": "git+https://github.com/mathiasbynens/emoji-regex.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 17
+    },
+    {
+      "name": "tslib",
+      "downloads": 435402908,
+      "updated": "2026-10-13T21:42:25.003Z",
+      "version": "2.8.1",
+      "tarball": "https://registry.npmjs.org/tslib/-/tslib-2.8.1.tgz",
+      "integrity": "sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w==",
+      "repository": {
+        "url": "git+https://github.com/Microsoft/tslib.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 18
+    },
+    {
+      "name": "balanced-match",
+      "downloads": 421760156,
+      "updated": "2026-10-13T21:36:51.135Z",
+      "version": "4.0.4",
+      "tarball": "https://registry.npmjs.org/balanced-match/-/balanced-match-4.0.4.tgz",
+      "integrity": "sha512-BLrgEcRTwX2o6gGxGOCNyMvGSp35YofuYzw9h1IMTRmKqttAZZVU67bdb9Pr2vUHA8+j3i2tJfjO6C6+4myGTA==",
+      "repository": {
+        "url": "git://github.com/juliangruber/balanced-match.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 19
+    },
+    {
+      "name": "glob",
+      "downloads": 403492769,
+      "updated": "2026-10-13T21:34:54.009Z",
+      "version": "13.0.6",
+      "tarball": "https://registry.npmjs.org/glob/-/glob-13.0.6.tgz",
+      "integrity": "sha512-Wjlyrolmm8uDpm/ogGyXZXb1Z+Ca2B8NbJwqBVg0axK9GbBeoS7yGV6vjXnYdGm6X53iehEuxxbyiKp8QmN4Vw==",
+      "repository": {
+        "url": "git+ssh://git@github.com/isaacs/node-glob.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 20
+    },
+    {
+      "name": "eslint-visitor-keys",
+      "downloads": 396675855,
+      "updated": "2026-10-13T21:39:12.859Z",
+      "version": "5.0.1",
+      "tarball": "https://registry.npmjs.org/eslint-visitor-keys/-/eslint-visitor-keys-5.0.1.tgz",
+      "integrity": "sha512-tD40eHxA35h0PEIZNeIjkHoDR4YjjJp34biM0mDvplBe//mB+IHCqHDGV7pxF+7MklTvighcCPPZC7ynWyjdTA==",
+      "repository": {
+        "url": "git+https://github.com/eslint/js.git",
+        "type": "git",
+        "directory": "packages/eslint-visitor-keys"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 21
+    },
+    {
+      "name": "type-fest",
+      "downloads": 395150778,
+      "updated": "2026-10-13T21:42:53.634Z",
+      "version": "5.10.0",
+      "tarball": "https://registry.npmjs.org/type-fest/-/type-fest-5.10.0.tgz",
+      "integrity": "sha512-NoSdpq/WEiAg5sjmBkmV/hfxv6HJH4NqPNrqjtSO5CwRmpsDfaf4begxW34KdJykH/l1yHtwBWQkCRdoXO8mPA==",
+      "repository": {
+        "url": "git+https://github.com/sindresorhus/type-fest.git",
+        "type": "git"
+      },
+      "types_only": true,
+      "native_only": false,
+      "rank": 22
+    },
+    {
+      "name": "ajv",
+      "downloads": 394285027,
+      "updated": "2026-10-13T21:34:49.563Z",
+      "version": "8.20.0",
+      "tarball": "https://registry.npmjs.org/ajv/-/ajv-8.20.0.tgz",
+      "integrity": "sha512-Thbli+OlOj+iMPYFBVBfJ3OmCAnaSyNn4M1vz9T6Gka5Jt9ba/HIR56joy65tY6kx/FCF5VXNB819Y7/GUrBGA==",
+      "repository": {
+        "url": "git+https://github.com/ajv-validator/ajv.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 23
+    },
+    {
+      "name": "source-map",
+      "downloads": 372369712,
+      "updated": "2026-10-13T21:42:21.064Z",
+      "version": "0.8.0",
+      "tarball": "https://registry.npmjs.org/source-map/-/source-map-0.8.0.tgz",
+      "integrity": "sha512-d8EqvL+k/SOXCreS/SUzg2ciyHqBBLcN/yuRjFsbvVhHTE2pgei7oAhmPM7kWFbkX6OSMQfUq4KbkF3au9lhYQ==",
+      "repository": {
+        "url": "git+ssh://git@github.com/mozilla/source-map.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 24
+    },
+    {
+      "name": "which",
+      "downloads": 371266363,
+      "updated": "2026-10-13T21:36:07.418Z",
+      "version": "7.0.0",
+      "tarball": "https://registry.npmjs.org/which/-/which-7.0.0.tgz",
+      "integrity": "sha512-RancgH2dmbLdHl6LRhEqvklWMgl/Hdnun0Y90KhBOLkMefg8Qa7/Zel8Sm+8HEcP6DEjzsWzpkuBQEZok58isA==",
+      "repository": {
+        "url": "git+https://github.com/npm/node-which.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 25
+    },
+    {
+      "name": "react-is",
+      "downloads": 367779049,
+      "updated": "2026-10-13T21:40:07.944Z",
+      "version": "19.3.0",
+      "tarball": "https://registry.npmjs.org/react-is/-/react-is-19.3.0.tgz",
+      "integrity": "sha512-UpMYezM4v5/18F28aC66AEsjXIgE02kyEMH6yLdgLXu/UTfa1Ntwck/nNLrbqJsEXW7gPb0coNO9FQse9WTovA==",
+      "repository": {
+        "url": "git+https://github.com/react/react.git",
+        "type": "git",
+        "directory": "packages/react-is"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 26
+    },
+    {
+      "name": "escape-string-regexp",
+      "downloads": 365786282,
+      "updated": "2026-10-13T21:43:26.250Z",
+      "version": "5.0.0",
+      "tarball": "https://registry.npmjs.org/escape-string-regexp/-/escape-string-regexp-5.0.0.tgz",
+      "integrity": "sha512-/veY75JbMK4j1yjvuUxuVsiS/hr/4iHs9FTT6cgTexxdE0Ly/glccBAkloH/DofkjRbZU3bnoj38mOmhkZ0lHw==",
+      "repository": {
+        "url": "git+https://github.com/sindresorhus/escape-string-regexp.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 27
+    },
+    {
+      "name": "readable-stream",
+      "downloads": 362544088,
+      "updated": "2026-10-13T21:42:12.699Z",
+      "version": "4.8.0",
+      "tarball": "https://registry.npmjs.org/readable-stream/-/readable-stream-4.8.0.tgz",
+      "integrity": "sha512-2jhTTU3Eilp/2DMT71gbcoqC35eQHasMJH0RHkYxwlxIv3+FR6Y5xAFZIwEGLxKkjZYEFlsiMNIdwUqjK2lLHQ==",
+      "repository": {
+        "url": "git+https://github.com/nodejs/readable-stream.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 28
+    },
+    {
+      "name": "undici-types",
+      "downloads": 351450911,
+      "updated": "2026-10-14T11:30:25.313Z",
+      "version": "8.12.1",
+      "tarball": "https://registry.npmjs.org/undici-types/-/undici-types-8.12.1.tgz",
+      "integrity": "sha512-nCiEcIx87oMw9u3Yzj2DuRBzv6p0e7akhy4HUPtpBiVWmAY3o6Phznst8QhmY1oLMttLgJ2tlAvsKuzCgBSoAw==",
+      "repository": {
+        "url": "git+https://github.com/nodejs/undici.git",
+        "type": "git"
+      },
+      "types_only": true,
+      "native_only": false,
+      "rank": 29
+    },
+    {
+      "name": "color-name",
+      "downloads": 348829591,
+      "updated": "2026-10-13T21:40:08.796Z",
+      "version": "2.1.1",
+      "tarball": "https://registry.npmjs.org/color-name/-/color-name-2.1.1.tgz",
+      "integrity": "sha512-p2FdgwVx1a9yWBHP2wI0VgShkDpgN4kZISkxdNipGBJWpa5G6b04OINlVWCyJj0JmfvcPrgqt95E9k8yvaOJFg==",
+      "repository": {
+        "url": "git+https://github.com/colorjs/color-name.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 30
+    },
+    {
+      "name": "zod",
+      "downloads": 346095287,
+      "updated": "2026-10-13T21:37:27.108Z",
+      "version": "4.6.7",
+      "tarball": "https://registry.npmjs.org/zod/-/zod-4.6.7.tgz",
+      "integrity": "sha512-g8W2D2kU6a8untc053fX1uVBKzM7yqAxW/3zwk83+6RyF2+SKOuV+c0wBDhUwzV1PaGapmZH+rmcUzPf+3CGwg==",
+      "repository": {
+        "url": "git+https://github.com/colinhacks/zod.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 31
+    },
+    {
+      "name": "json-schema-traverse",
+      "downloads": 342956107,
+      "updated": "2026-10-13T21:37:07.982Z",
+      "version": "1.0.0",
+      "tarball": "https://registry.npmjs.org/json-schema-traverse/-/json-schema-traverse-1.0.0.tgz",
+      "integrity": "sha512-NM8/P9n3XjXhIZn1lLhkFaACTOURQXjWhV4BA/RnOv8xvgqtqpAX9IO4mRQxSx1Rlo4tqzeqb0sOlruaOy3dug==",
+      "repository": {
+        "url": "git+https://github.com/epoberezkin/json-schema-traverse.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 32
+    },
+    {
+      "name": "p-limit",
+      "downloads": 340791685,
+      "updated": "2026-10-13T21:38:27.339Z",
+      "version": "7.3.3",
+      "tarball": "https://registry.npmjs.org/p-limit/-/p-limit-7.3.3.tgz",
+      "integrity": "sha512-SKgVvDU5TNIxQ4r30U75BNLC6a+6GOEjngrk/ysM5+Zu3oJuk1SC5ApzIzY/7PjCEjoVPMWJ0zho/4QUiEB7TQ==",
+      "repository": {
+        "url": "git+https://github.com/sindresorhus/p-limit.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 33
+    },
+    {
+      "name": "color-convert",
+      "downloads": 340516214,
+      "updated": "2026-10-13T21:42:57.354Z",
+      "version": "3.1.3",
+      "tarball": "https://registry.npmjs.org/color-convert/-/color-convert-3.1.3.tgz",
+      "integrity": "sha512-fasDH2ont2GqF5HpyO4w0+BcewlhHEZOFn9c1ckZdHpJ56Qb7MHhH/IcJZbBGgvdtwdwNbLvxiBEdg336iA9Sg==",
+      "repository": {
+        "url": "git+https://github.com/Qix-/color-convert.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 34
+    },
+    {
+      "name": "find-up",
+      "downloads": 327607833,
+      "updated": "2026-10-13T21:44:55.814Z",
+      "version": "8.0.0",
+      "tarball": "https://registry.npmjs.org/find-up/-/find-up-8.0.0.tgz",
+      "integrity": "sha512-JGG8pvDi2C+JxidYdIwQDyS/CgcrIdh18cvgxcBge3wSHRQOrooMD3GlFBcmMJAN9M42SAZjDp5zv1dglJjwww==",
+      "repository": {
+        "url": "git+https://github.com/sindresorhus/find-up.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 35
+    },
+    {
+      "name": "entities",
+      "downloads": 327273410,
+      "updated": "2026-10-13T21:42:07.451Z",
+      "version": "8.1.0",
+      "tarball": "https://registry.npmjs.org/entities/-/entities-8.1.0.tgz",
+      "integrity": "sha512-kxL7msIffSuh9aaFAMD7rxAIuTRMAHMeBtgHW2yUdWw732ZNh4MehkF2gdjvtdmikkaIP9bFDDJOPlsvm7avrA==",
+      "repository": {
+        "url": "git+https://github.com/fb55/entities.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 36
+    },
+    {
+      "name": "glob-parent",
+      "downloads": 326128480,
+      "updated": "2026-10-13T21:39:24.281Z",
+      "version": "6.0.2",
+      "tarball": "https://registry.npmjs.org/glob-parent/-/glob-parent-6.0.2.tgz",
+      "integrity": "sha512-XxwI8EOhVQgWp6iDL+3b0r86f4d6AX6zSU55HfB4ydCEuXLXc5FcYeOu+nnGftS4TEju/11rt4KJPTMgbfmv4A==",
+      "repository": {
+        "url": "git+https://github.com/gulpjs/glob-parent.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 37
+    },
+    {
+      "name": "ignore",
+      "downloads": 325628270,
+      "updated": "2026-10-13T21:40:43.353Z",
+      "version": "7.0.12",
+      "tarball": "https://registry.npmjs.org/ignore/-/ignore-7.0.12.tgz",
+      "integrity": "sha512-/8UvqAPU9DGTI9k4mxtf49U37Isfwr8Uts96+SBHIkFxPJnHS0Ew4f00sM4Scd8V8EjM0jUNtVDdv1kPdt35lg==",
+      "repository": {
+        "url": "git+https://github.com/kaelzhang/node-ignore.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 38
+    },
+    {
+      "name": "safe-buffer",
+      "downloads": 324395968,
+      "updated": "2026-10-13T21:43:47.516Z",
+      "version": "5.2.1",
+      "tarball": "https://registry.npmjs.org/safe-buffer/-/safe-buffer-5.2.1.tgz",
+      "integrity": "sha512-rp3So07KcdmmKbGvgaNxQSJr7bGVSVk5S9Eq1F+ppbRo70+YeaDxkw5Dd8NPN+GD6bjnYm2VuPuCXmpuYvmCXQ==",
+      "repository": {
+        "url": "git://github.com/feross/safe-buffer.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 39
+    },
+    {
+      "name": "yallist",
+      "downloads": 322163119,
+      "updated": "2026-10-13T21:38:50.771Z",
+      "version": "5.0.0",
+      "tarball": "https://registry.npmjs.org/yallist/-/yallist-5.0.0.tgz",
+      "integrity": "sha512-YgvUTfwqyc7UXVMrB+SImsVYSmTS8X/tSrtdNZMImM+n7+QTriRXyXim0mBrTXNeqzVF0KWGgHPeiyViFFrNDw==",
+      "repository": {
+        "url": "git+https://github.com/isaacs/yallist.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 40
+    },
+    {
+      "name": "p-locate",
+      "downloads": 321131530,
+      "updated": "2026-10-13T21:36:05.095Z",
+      "version": "7.0.0",
+      "tarball": "https://registry.npmjs.org/p-locate/-/p-locate-7.0.0.tgz",
+      "integrity": "sha512-FRPW2lT1b/B8/CNkCOZ/Xl4mz52CWzwb+/dLa0GcCrH7u7djFf36VftuRJ5w/eCr1YXtbTGPuGoEDVSk14EwNQ==",
+      "repository": {
+        "url": "git+https://github.com/sindresorhus/p-locate.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 41
+    },
+    {
+      "name": "locate-path",
+      "downloads": 320208798,
+      "updated": "2026-10-13T21:43:35.820Z",
+      "version": "8.0.0",
+      "tarball": "https://registry.npmjs.org/locate-path/-/locate-path-8.0.0.tgz",
+      "integrity": "sha512-XT9ewWAC43tiAV7xDAPflMkG0qOPn2QjHqlgX8FOqmWa/rxnyYDulF9T0F7tRy1u+TVTmK/M//6VIOye+2zDXg==",
+      "repository": {
+        "url": "git+https://github.com/sindresorhus/locate-path.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 42
+    },
+    {
+      "name": "isexe",
+      "downloads": 319787865,
+      "updated": "2026-10-13T21:44:16.831Z",
+      "version": "4.0.0",
+      "tarball": "https://registry.npmjs.org/isexe/-/isexe-4.0.0.tgz",
+      "integrity": "sha512-FFUtZMpoZ8RqHS3XeXEmHWLA4thH+ZxCv2lOiPIn1Xc7CxrqhWzNSDzD+/chS/zbYezmiwWLdQC09JdQKmthOw==",
+      "repository": {
+        "url": "git+https://github.com/isaacs/isexe.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 43
+    },
+    {
+      "name": "path-key",
+      "downloads": 318999452,
+      "updated": "2026-10-13T21:45:10.636Z",
+      "version": "4.0.0",
+      "tarball": "https://registry.npmjs.org/path-key/-/path-key-4.0.0.tgz",
+      "integrity": "sha512-haREypq7xkM7ErfgIyA0z+Bj4AGKlMSdlQE2jvJo6huWD1EdkKYV+G/T4nq0YEF2vgTT8kqMFKo1uHn950r4SQ==",
+      "repository": {
+        "url": "git+https://github.com/sindresorhus/path-key.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 44
+    },
+    {
+      "name": "uuid",
+      "downloads": 318321357,
+      "updated": "2026-10-13T21:39:09.615Z",
+      "version": "14.0.3",
+      "tarball": "https://registry.npmjs.org/uuid/-/uuid-14.0.3.tgz",
+      "integrity": "sha512-Sc5u1VVln93y1Xnz4R+CunOZc7R9LUcTmhj7Rc7Eg3HVcf7rVn2FOoa812fe0W8p3jD7xeoGSYbfqCGGH2B6xw==",
+      "repository": {
+        "url": "git+https://github.com/uuidjs/uuid.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 45
+    },
+    {
+      "name": "has-flag",
+      "downloads": 316901139,
+      "updated": "2026-10-13T21:37:07.026Z",
+      "version": "5.0.1",
+      "tarball": "https://registry.npmjs.org/has-flag/-/has-flag-5.0.1.tgz",
+      "integrity": "sha512-CsNUt5x9LUdx6hnk/E2SZLsDyvfqANZSUq4+D3D8RzDJ2M+HDTIkF60ibS1vHaK55vzgiZw1bEPFG9yH7l33wA==",
+      "repository": {
+        "url": "git+https://github.com/sindresorhus/has-flag.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 46
+    },
+    {
+      "name": "iconv-lite",
+      "downloads": 309972959,
+      "updated": "2026-10-13T21:41:08.004Z",
+      "version": "0.7.3",
+      "tarball": "https://registry.npmjs.org/iconv-lite/-/iconv-lite-0.7.3.tgz",
+      "integrity": "sha512-IKXpvIzjnC9XTAUbVBcMfGS0EPaIXtW6v+zr+RRp+hqULEpo0owZax6wyRwPOJbWbzjYspQwusTsfVr0ifh4uQ==",
+      "repository": {
+        "url": "git+https://github.com/pillarjs/iconv-lite.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 47
+    },
+    {
+      "name": "postcss",
+      "downloads": 308191800,
+      "updated": "2026-10-13T21:40:44.028Z",
+      "version": "8.5.30",
+      "tarball": "https://registry.npmjs.org/postcss/-/postcss-8.5.30.tgz",
+      "integrity": "sha512-zkd+e9S1AQHhmaBKye9zlFHWjOwVgqXl1q3ECYy8561K7qxR2cREf/STLskulBFd78k6AOFeA+ff1TtEzk9bAA==",
+      "repository": {
+        "url": "git+https://github.com/postcss/postcss.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 48
+    },
+    {
+      "name": "typescript",
+      "downloads": 307015402,
+      "updated": "2026-10-14T08:20:21.328Z",
+      "version": "7.0.2",
+      "tarball": "https://registry.npmjs.org/typescript/-/typescript-7.0.2.tgz",
+      "integrity": "sha512-8FYau96o3NKOhbjKi/qNvG/W5jhzxkbdm5sj9AbZ/5T5sWqn3hJgLfGx27sRKZWTvyzCP8dLRBTf5tBTSRVUNA==",
+      "repository": {
+        "url": "git+https://github.com/microsoft/TypeScript.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 49,
+      "installation": "typescript-under-test"
+    },
+    {
+      "name": "esbuild",
+      "downloads": 303541978,
+      "updated": "2026-10-13T21:41:47.393Z",
+      "version": "0.28.2",
+      "tarball": "https://registry.npmjs.org/esbuild/-/esbuild-0.28.2.tgz",
+      "integrity": "sha512-HKVLS8dvII+xoKW9kmqxbRKrnWEXfJJr/FZhhJmiqIB0e053QNYFqOBouTMO/k5sID4MvCiUCvv8b9M4h32wIA==",
+      "repository": {
+        "url": "git+https://github.com/evanw/esbuild.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 50
+    },
+    {
+      "name": "signal-exit",
+      "downloads": 302874381,
+      "updated": "2026-10-13T21:36:27.543Z",
+      "version": "4.1.0",
+      "tarball": "https://registry.npmjs.org/signal-exit/-/signal-exit-4.1.0.tgz",
+      "integrity": "sha512-bzyZ1e88w9O1iNJbKnOlvYTrWPDl46O1bG0D3XInv+9tkPrxrN8jUUTiFlDkkmKWgn1M6CfIA13SuGqOa9Korw==",
+      "repository": {
+        "url": "git+https://github.com/tapjs/signal-exit.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 51
+    },
+    {
+      "name": "js-yaml",
+      "downloads": 300072557,
+      "updated": "2026-10-13T21:43:29.242Z",
+      "version": "5.4.3",
+      "tarball": "https://registry.npmjs.org/js-yaml/-/js-yaml-5.4.3.tgz",
+      "integrity": "sha512-yzzNtgczwgoVHNigCyKTXcQJU4Y8t/ikU4UxXW0BvrLfHTGWZhsNcOT2s/a7vn81/4KqVnNmHjaUEPlvWnNwVw==",
+      "repository": {
+        "url": "git+https://github.com/nodeca/js-yaml.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 52
+    },
+    {
+      "name": "mime-types",
+      "downloads": 288701511,
+      "updated": "2026-10-13T21:36:29.738Z",
+      "version": "3.0.2",
+      "tarball": "https://registry.npmjs.org/mime-types/-/mime-types-3.0.2.tgz",
+      "integrity": "sha512-Lbgzdk0h4juoQ9fCKXW4by0UJqj+nOOrI9MJ1sSj4nI8aI2eo1qmvQEie4VD1glsS250n15LsWsYtCugiStS5A==",
+      "repository": {
+        "url": "git+https://github.com/jshttp/mime-types.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 53
+    },
+    {
+      "name": "ws",
+      "downloads": 287742977,
+      "updated": "2026-10-13T21:43:25.800Z",
+      "version": "8.22.0",
+      "tarball": "https://registry.npmjs.org/ws/-/ws-8.22.0.tgz",
+      "integrity": "sha512-Ydggc987+RO0AnWtZ/7Wq9FtNvcrL1b/RO0ud9mWjUPgDrsAAwQSF51sm2hm1XofbU/4jkpGEsLFsZZxU+1DOg==",
+      "repository": {
+        "url": "git+https://github.com/websockets/ws.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 54
+    },
+    {
+      "name": "agent-base",
+      "downloads": 287383775,
+      "updated": "2026-10-13T21:42:31.593Z",
+      "version": "9.0.0",
+      "tarball": "https://registry.npmjs.org/agent-base/-/agent-base-9.0.0.tgz",
+      "integrity": "sha512-TQf59BsZnytt8GdJKLPfUZ54g/iaUL2OWDSFCCvMOhsHduDQxO8xC4PNeyIkVcA5KwL2phPSv0douC0fgWzmnA==",
+      "repository": {
+        "url": "git+https://github.com/TooTallNate/proxy-agents.git",
+        "type": "git",
+        "directory": "packages/agent-base"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 55
+    },
+    {
+      "name": "cross-spawn",
+      "downloads": 276602800,
+      "updated": "2026-10-13T21:38:12.471Z",
+      "version": "7.0.6",
+      "tarball": "https://registry.npmjs.org/cross-spawn/-/cross-spawn-7.0.6.tgz",
+      "integrity": "sha512-uV2QOWP2nWzsy2aMp8aRibhi9dlzF5Hgh5SHaB9OiTGEyDTiJJyx0uy51QXdyWbtAHNua4XJzUKca3OzKUd3vA==",
+      "repository": {
+        "url": "git+ssh://git@github.com/moxystudio/node-cross-spawn.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 56
+    },
+    {
+      "name": "https-proxy-agent",
+      "downloads": 275346626,
+      "updated": "2026-10-13T21:34:47.783Z",
+      "version": "9.1.0",
+      "tarball": "https://registry.npmjs.org/https-proxy-agent/-/https-proxy-agent-9.1.0.tgz",
+      "integrity": "sha512-ag87y7cJJ9/3+GxFr8Oy4O5faDsGRGnBGsJj/YjOSsSx/5eadKLYTMPlzuR6obgoCDDm0abAAZitXXQkMOPSpA==",
+      "repository": {
+        "url": "git+https://github.com/TooTallNate/proxy-agents.git",
+        "type": "git",
+        "directory": "packages/https-proxy-agent"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 57
+    },
+    {
+      "name": "nanoid",
+      "downloads": 274331678,
+      "updated": "2026-10-13T21:36:09.024Z",
+      "version": "6.0.2",
+      "tarball": "https://registry.npmjs.org/nanoid/-/nanoid-6.0.2.tgz",
+      "integrity": "sha512-hIvVOb9Qr1p/9CNNLOe0OlWvgx/ziTsVwKN/GDSsuArN2K0wDiafP3s0SWmsm7o2BdnyS8Z9Z64NFBUbn6ziBg==",
+      "repository": {
+        "url": "git+https://github.com/ai/nanoid.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 58
+    },
+    {
+      "name": "yargs-parser",
+      "downloads": 274051430,
+      "updated": "2026-10-13T21:42:22.745Z",
+      "version": "22.0.0",
+      "tarball": "https://registry.npmjs.org/yargs-parser/-/yargs-parser-22.0.0.tgz",
+      "integrity": "sha512-rwu/ClNdSMpkSrUb+d6BRsSkLUq1fmfsY6TOpYzTwvwkg1/NRG85KBy3kq++A8LKQwX6lsu+aWad+2khvuXrqw==",
+      "repository": {
+        "url": "git+https://github.com/yargs/yargs-parser.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 59
+    },
+    {
+      "name": "yargs",
+      "downloads": 273522268,
+      "updated": "2026-10-13T21:43:14.034Z",
+      "version": "18.2.0",
+      "tarball": "https://registry.npmjs.org/yargs/-/yargs-18.2.0.tgz",
+      "integrity": "sha512-9OpKOLeaoNFecEp7P6iYbzze/5CqWoH7N3SMs/6y1XF4nMvFMspEGZzJ6uFi9MmQwXhyzqYoSEKO3tvA3Z/o2w==",
+      "repository": {
+        "url": "git+https://github.com/yargs/yargs.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 60
+    },
+    {
+      "name": "@esbuild/linux-x64",
+      "downloads": 273436630,
+      "updated": "2026-10-13T21:43:17.854Z",
+      "version": "0.28.2",
+      "tarball": "https://registry.npmjs.org/@esbuild/linux-x64/-/linux-x64-0.28.2.tgz",
+      "integrity": "sha512-4xTZr1FUmSoQW4XIWmit3tzQrUTZM+N3P0XV8xROKYF50XfI7xeO90+1bZvNwxIufQ9hDQVRJH5YhgPVF8A/HQ==",
+      "repository": {
+        "url": "git+https://github.com/evanw/esbuild.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": true,
+      "rank": 61
+    },
+    {
+      "name": "@jridgewell/trace-mapping",
+      "downloads": 270520105,
+      "updated": "2026-10-13T21:39:20.204Z",
+      "version": "0.3.31",
+      "tarball": "https://registry.npmjs.org/@jridgewell/trace-mapping/-/trace-mapping-0.3.31.tgz",
+      "integrity": "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==",
+      "repository": {
+        "url": "git+https://github.com/jridgewell/sourcemaps.git",
+        "type": "git",
+        "directory": "packages/trace-mapping"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 62
+    },
+    {
+      "name": "is-fullwidth-code-point",
+      "downloads": 269055446,
+      "updated": "2026-10-13T21:45:24.592Z",
+      "version": "5.1.0",
+      "tarball": "https://registry.npmjs.org/is-fullwidth-code-point/-/is-fullwidth-code-point-5.1.0.tgz",
+      "integrity": "sha512-5XHYaSyiqADb4RnZ1Bdad6cPp8Toise4TzEjcOYDHZkTCbKgiUl7WTUCpNWHuxmDt91wnsZBc9xinNzopv3JMQ==",
+      "repository": {
+        "url": "git+https://github.com/sindresorhus/is-fullwidth-code-point.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 63
+    },
+    {
+      "name": "js-tokens",
+      "downloads": 267587136,
+      "updated": "2026-10-13T21:43:18.627Z",
+      "version": "10.0.0",
+      "tarball": "https://registry.npmjs.org/js-tokens/-/js-tokens-10.0.0.tgz",
+      "integrity": "sha512-lM/UBzQmfJRo9ABXbPWemivdCW8V2G8FHaHdypQaIy523snUjog0W71ayWXTjiR+ixeMyVHN2XcpnTd/liPg/Q==",
+      "repository": {
+        "url": "git+https://github.com/lydell/js-tokens.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 64
+    },
+    {
+      "name": "argparse",
+      "downloads": 267318126,
+      "updated": "2026-10-13T21:39:18.561Z",
+      "version": "3.0.2",
+      "tarball": "https://registry.npmjs.org/argparse/-/argparse-3.0.2.tgz",
+      "integrity": "sha512-mFdDM6WqWKraGLsVb+C9CahPnzTXOefAOLq3jYcca2YZ8bEWpr++Tzj+zSaKW9+X9L5uSxcm1AZ3Y6aZJ09OhQ==",
+      "repository": {
+        "url": "git+https://github.com/nodeca/argparse.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 65
+    },
+    {
+      "name": "string_decoder",
+      "downloads": 266541375,
+      "updated": "2026-10-13T21:42:12.971Z",
+      "version": "1.3.0",
+      "tarball": "https://registry.npmjs.org/string_decoder/-/string_decoder-1.3.0.tgz",
+      "integrity": "sha512-hkRX8U1WjJFd8LsDJ2yQ/wWWxaopEsABU1XfkM8A+j0+85JAGppt16cr1Whg6KIbb4okU6Mql6BOj+uup/wKeA==",
+      "repository": {
+        "url": "git://github.com/nodejs/string_decoder.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 66
+    },
+    {
+      "name": "shebang-command",
+      "downloads": 264082744,
+      "updated": "2026-10-13T21:45:14.085Z",
+      "version": "2.0.0",
+      "tarball": "https://registry.npmjs.org/shebang-command/-/shebang-command-2.0.0.tgz",
+      "integrity": "sha512-kHxr2zZpYtdmrN1qDjrrX/Z1rR1kG8Dx+gkpK1G4eXmvXswmcE1hTWBWYUzlraYw1/yZp6YuDY77YtvbN0dmDA==",
+      "repository": {
+        "url": "git+https://github.com/kevva/shebang-command.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 67
+    },
+    {
+      "name": "shebang-regex",
+      "downloads": 263509679,
+      "updated": "2026-10-13T21:45:20.279Z",
+      "version": "4.0.0",
+      "tarball": "https://registry.npmjs.org/shebang-regex/-/shebang-regex-4.0.0.tgz",
+      "integrity": "sha512-YSKeSljCliLkWidW84GWL1HCguI0iEqhnBOLhrVXw/fN9he9ngekCy8zqJ1jXTPYmJ3Xkf3gLuNDVHQWdRqinw==",
+      "repository": {
+        "url": "git+https://github.com/sindresorhus/shebang-regex.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 68
+    },
+    {
+      "name": "globals",
+      "downloads": 261461524,
+      "updated": "2026-10-13T21:34:55.087Z",
+      "version": "17.13.0",
+      "tarball": "https://registry.npmjs.org/globals/-/globals-17.13.0.tgz",
+      "integrity": "sha512-RwMTC61u7hrG3ZJMkZQOK4JLJrKS8QtoTii63EmWvFXHqycY9FObBJQCbsLxSO8kjKhWE5kV1GC+Vb1g3RI0Zg==",
+      "repository": {
+        "url": "git+https://github.com/sindresorhus/globals.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 69
+    },
+    {
+      "name": "@babel/types",
+      "downloads": 261423550,
+      "updated": "2026-10-13T21:38:07.932Z",
+      "version": "8.0.6",
+      "tarball": "https://registry.npmjs.org/@babel/types/-/types-8.0.6.tgz",
+      "integrity": "sha512-c+xgSWboV2pdwXP67BUWDVRHi2BO5Q3KwxyFVs7taVTY+fsK47/L51ZXQoV9rozHJDNHvJ4v4WEsI/IlxV2l2A==",
+      "repository": {
+        "url": "https://github.com/babel/babel.git",
+        "type": "git",
+        "directory": "packages/babel-types"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 70
+    },
+    {
+      "name": "isarray",
+      "downloads": 260684253,
+      "updated": "2026-10-13T21:44:56.203Z",
+      "version": "2.0.5",
+      "tarball": "https://registry.npmjs.org/isarray/-/isarray-2.0.5.tgz",
+      "integrity": "sha512-xHjhDr3cNBK0BzdUJSPXZntQUx/mwMS5Rw4A7lPJ90XGAO6ISP/ePDNuo0vhqOZU+UD5JoodwCAAoZQd3FeAKw==",
+      "repository": {
+        "url": "git://github.com/juliangruber/isarray.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 71
+    },
+    {
+      "name": "@babel/parser",
+      "downloads": 259883414,
+      "updated": "2026-10-13T21:38:30.262Z",
+      "version": "8.0.7",
+      "tarball": "https://registry.npmjs.org/@babel/parser/-/parser-8.0.7.tgz",
+      "integrity": "sha512-UkDwEbPO1px2JQSrdh4qIgaH1JgG7GO/pFeJkpxhDxIETkT/QvGpnigXIw75ViHYPtIgKITmVUJqLjiO+JuWjA==",
+      "repository": {
+        "url": "https://github.com/babel/babel.git",
+        "type": "git",
+        "directory": "packages/babel-parser"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 72
+    },
+    {
+      "name": "cliui",
+      "downloads": 254275956,
+      "updated": "2026-10-13T21:39:14.558Z",
+      "version": "9.0.1",
+      "tarball": "https://registry.npmjs.org/cliui/-/cliui-9.0.1.tgz",
+      "integrity": "sha512-k7ndgKhwoQveBL+/1tqGJYNz097I7WOvwbmmU2AR5+magtbjPWQTS1C5vzGkBC8Ym8UWRzfKUzUUqFLypY4Q+w==",
+      "repository": {
+        "url": "git+https://github.com/yargs/cliui.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 73
+    },
+    {
+      "name": "whatwg-url",
+      "downloads": 250889719,
+      "updated": "2026-10-14T03:17:58.067Z",
+      "version": "17.3.0",
+      "tarball": "https://registry.npmjs.org/whatwg-url/-/whatwg-url-17.3.0.tgz",
+      "integrity": "sha512-KwOAJrpf+GTgBvcBQJcP38sMF0DsQKdwtG+TxM2pW44P6E5k0hDbWrDmyuJDIF0Uef0aQq0ZoJs+5oI+k8ddhg==",
+      "repository": {
+        "url": "git+https://github.com/jsdom/whatwg-url.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 74
+    },
+    {
+      "name": "@babel/helper-validator-identifier",
+      "downloads": 250022728,
+      "updated": "2026-10-13T21:36:25.375Z",
+      "version": "8.0.6",
+      "tarball": "https://registry.npmjs.org/@babel/helper-validator-identifier/-/helper-validator-identifier-8.0.6.tgz",
+      "integrity": "sha512-HYx0YmuchRxRSpnjvcNffnPS8DCauKNmnumIuHG3jnQAVewRA7kfJGwF13ayEpSZs7s4R/oBH4eppuXcAQd5JQ==",
+      "repository": {
+        "url": "https://github.com/babel/babel.git",
+        "type": "git",
+        "directory": "packages/babel-helper-validator-identifier"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 75
+    },
+    {
+      "name": "yaml",
+      "downloads": 242774096,
+      "updated": "2026-10-13T21:38:26.977Z",
+      "version": "2.9.1",
+      "tarball": "https://registry.npmjs.org/yaml/-/yaml-2.9.1.tgz",
+      "integrity": "sha512-3NxN8+78OdzbT7C/WjGsyfPAtJaN3FNDsWxv7Y7mcDsT/oOmgW8BpyQQFFBnvZE3j9Y2Sdz1ULFLezL7Eb2yFw==",
+      "repository": {
+        "url": "git+https://github.com/eemeli/yaml.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 76
+    },
+    {
+      "name": "resolve-from",
+      "downloads": 242427171,
+      "updated": "2026-10-13T21:38:56.930Z",
+      "version": "5.0.0",
+      "tarball": "https://registry.npmjs.org/resolve-from/-/resolve-from-5.0.0.tgz",
+      "integrity": "sha512-qYg9KP24dD5qka9J47d0aVky0N+b4fTU89LN9iDnjB5waksiC49rvMB0PrUJQGoTmH50XPiqOvAjDfaijGxYZw==",
+      "repository": {
+        "url": "git+https://github.com/sindresorhus/resolve-from.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 77
+    },
+    {
+      "name": "json5",
+      "downloads": 240449637,
+      "updated": "2026-10-13T21:38:49.561Z",
+      "version": "2.2.3",
+      "tarball": "https://registry.npmjs.org/json5/-/json5-2.2.3.tgz",
+      "integrity": "sha512-XmOWe7eyHYH14cLdVPoyg+GOH3rYX++KpzrylJwSW98t3Nk+U8XOl8FWKOgwtzdb8lXGf6zYwDUzeHMWfxasyg==",
+      "repository": {
+        "url": "git+https://github.com/json5/json5.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 78
+    },
+    {
+      "name": "webidl-conversions",
+      "downloads": 240235461,
+      "updated": "2026-10-13T21:43:31.675Z",
+      "version": "8.0.1",
+      "tarball": "https://registry.npmjs.org/webidl-conversions/-/webidl-conversions-8.0.1.tgz",
+      "integrity": "sha512-BMhLD/Sw+GbJC21C/UgyaZX41nPt8bUTg+jWyDeg7e7YN4xOM05YPSIXceACnXVtqyEw/LMClUQMtMZ+PGGpqQ==",
+      "repository": {
+        "url": "git+https://github.com/jsdom/webidl-conversions.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 79
+    },
+    {
+      "name": "path-to-regexp",
+      "downloads": 236886498,
+      "updated": "2026-10-13T21:36:18.525Z",
+      "version": "8.4.2",
+      "tarball": "https://registry.npmjs.org/path-to-regexp/-/path-to-regexp-8.4.2.tgz",
+      "integrity": "sha512-qRcuIdP69NPm4qbACK+aDogI5CBDMi1jKe0ry5rSQJz8JVLsC7jV8XpiJjGRLLol3N+R5ihGYcrPLTno6pAdBA==",
+      "repository": {
+        "url": "git+https://github.com/pillarjs/path-to-regexp.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 80
+    },
+    {
+      "name": "resolve",
+      "downloads": 236565998,
+      "updated": "2026-10-13T21:38:36.872Z",
+      "version": "1.22.13",
+      "tarball": "https://registry.npmjs.org/resolve/-/resolve-1.22.13.tgz",
+      "integrity": "sha512-Dj/cW9zBV2aRj6XzCxuGIs3ESZKv02jixne3q6jFZYZ3/Tg09gHHviSMDL4kObh9pqSahdRHEnDoaP2gn8YLhA==",
+      "repository": {
+        "url": "git+ssh://git@github.com/browserify/resolve.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 81
+    },
+    {
+      "name": "path-exists",
+      "downloads": 235578159,
+      "updated": "2026-10-13T21:42:25.552Z",
+      "version": "5.0.0",
+      "tarball": "https://registry.npmjs.org/path-exists/-/path-exists-5.0.0.tgz",
+      "integrity": "sha512-RjhtfwJOxzcFmNOi6ltcbcu4Iu+FL3zEj83dk4kAS+fVpTxXLO1b38RvJgT/0QwvV/L3aY9TAnyv0EOqW4GoMQ==",
+      "repository": {
+        "url": "git+https://github.com/sindresorhus/path-exists.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 82
+    },
+    {
+      "name": "tr46",
+      "downloads": 235013085,
+      "updated": "2026-10-13T21:43:49.248Z",
+      "version": "7.0.0",
+      "tarball": "https://registry.npmjs.org/tr46/-/tr46-7.0.0.tgz",
+      "integrity": "sha512-BcDSDW+SIGWVOns1Zm6Yg91q9AEj7eaID0QDY9oIqJD1A8dscNwMcl9Sms2DeuWCNov1X0/oXanHGYQBSLwZsg==",
+      "repository": {
+        "url": "git+https://github.com/jsdom/tr46.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 83
+    },
+    {
+      "name": "cookie",
+      "downloads": 231377240,
+      "updated": "2026-10-13T21:43:16.898Z",
+      "version": "2.0.1",
+      "tarball": "https://registry.npmjs.org/cookie/-/cookie-2.0.1.tgz",
+      "integrity": "sha512-yuToqVvRrj6pfDXREyQAAv8SkAEk/8GS3jQRTiUMm66TVtBYmqQeoEjL2Lmq8Rpo6271vH76InTChTitEAm65w==",
+      "repository": {
+        "url": "git+https://github.com/jshttp/cookie.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 84
+    },
+    {
+      "name": "estraverse",
+      "downloads": 229985495,
+      "updated": "2026-10-13T21:36:07.920Z",
+      "version": "5.3.0",
+      "tarball": "https://registry.npmjs.org/estraverse/-/estraverse-5.3.0.tgz",
+      "integrity": "sha512-MMdARuVEQziNTeJD8DgMqmhwR11BRQ/cBP+pLtYdSTnf3MIO8fFeiINEbX36ZdNlfU/7A9f3gUw49B3oQsvwBA==",
+      "repository": {
+        "url": "git+ssh://git@github.com/estools/estraverse.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 85
+    },
+    {
+      "name": "fs-extra",
+      "downloads": 229712029,
+      "updated": "2026-10-13T21:43:48.591Z",
+      "version": "11.4.1",
+      "tarball": "https://registry.npmjs.org/fs-extra/-/fs-extra-11.4.1.tgz",
+      "integrity": "sha512-KYAb4c9BJQI6QqGKthV68OHe0badztdXJWKo0WtBA9IuCFPTKvE5ZdUBglP833aMjhaSPNO4A5j/EkzZtGlKjA==",
+      "repository": {
+        "url": "git+https://github.com/jprichardson/node-fs-extra.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 86
+    },
+    {
+      "name": "convert-source-map",
+      "downloads": 224195475,
+      "updated": "2026-10-13T21:43:41.635Z",
+      "version": "2.0.0",
+      "tarball": "https://registry.npmjs.org/convert-source-map/-/convert-source-map-2.0.0.tgz",
+      "integrity": "sha512-Kvp459HrV2FEJ1CAsi1Ku+MY3kasH19TFykTz2xWmMeq6bk2NU3XXvfJ+Q61m0xktWwt+1HSYf3JZsTms3aRJg==",
+      "repository": {
+        "url": "git://github.com/thlorenz/convert-source-map.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 87
+    },
+    {
+      "name": "punycode",
+      "downloads": 222340632,
+      "updated": "2026-10-13T21:36:08.839Z",
+      "version": "2.3.1",
+      "tarball": "https://registry.npmjs.org/punycode/-/punycode-2.3.1.tgz",
+      "integrity": "sha512-vYt7UD1U9Wg6138shLtLOvdAu+8DsC/ilFtEVHcH+wydcSpNE20AfSOduf6MkRFahL5FY7X1oU7nKVZFtfq8Fg==",
+      "repository": {
+        "url": "git+https://github.com/mathiasbynens/punycode.js.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 88
+    },
+    {
+      "name": "@babel/generator",
+      "downloads": 218013947,
+      "updated": "2026-10-13T21:41:56.239Z",
+      "version": "8.0.6",
+      "tarball": "https://registry.npmjs.org/@babel/generator/-/generator-8.0.6.tgz",
+      "integrity": "sha512-/pcanjdRsonCexCuxgGD8fKnBLLzk2i9uM4kmcmGyyev2R5YDs+rafMYZ89RvaGY1mW8T7C5au0TyYaEeHBGng==",
+      "repository": {
+        "url": "https://github.com/babel/babel.git",
+        "type": "git",
+        "directory": "packages/babel-generator"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 89
+    },
+    {
+      "name": "undici",
+      "downloads": 217522083,
+      "updated": "2026-10-14T11:30:26.380Z",
+      "version": "8.12.1",
+      "tarball": "https://registry.npmjs.org/undici/-/undici-8.12.1.tgz",
+      "integrity": "sha512-usz3OVQBeh1LxNn0DzU0voLXMgn5CU/WUdpBsY6Ti5afNao+vTkmn4H/NxoXolc10cOqe2+YIG0Hspq2rsl64w==",
+      "repository": {
+        "url": "git+https://github.com/nodejs/undici.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 90
+    },
+    {
+      "name": "fast-deep-equal",
+      "downloads": 217213211,
+      "updated": "2026-10-13T21:38:34.414Z",
+      "version": "3.1.3",
+      "tarball": "https://registry.npmjs.org/fast-deep-equal/-/fast-deep-equal-3.1.3.tgz",
+      "integrity": "sha512-f3qQ9oQy9j2AhBe/H9VC91wLmKBCCU/gDOnKNAYG5hswO7BLKj09Hc5HYNz9cGI++xlpDCIgDaitVs03ATR84Q==",
+      "repository": {
+        "url": "git+https://github.com/epoberezkin/fast-deep-equal.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 91
+    },
+    {
+      "name": "@babel/helper-string-parser",
+      "downloads": 216766021,
+      "updated": "2026-10-13T21:41:07.373Z",
+      "version": "8.0.6",
+      "tarball": "https://registry.npmjs.org/@babel/helper-string-parser/-/helper-string-parser-8.0.6.tgz",
+      "integrity": "sha512-+6HYEBnsDRZHJtUTAEfMQd0zMDqdFHS7C+5vAsEZqBUr3vEMWOWlHJ0Jz1gS8jJIlCvLsuA6ivmeoqzH936YcA==",
+      "repository": {
+        "url": "https://github.com/babel/babel.git",
+        "type": "git",
+        "directory": "packages/babel-helper-string-parser"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 92
+    },
+    {
+      "name": "tinyglobby",
+      "downloads": 215235150,
+      "updated": "2026-10-13T21:38:54.875Z",
+      "version": "0.2.17",
+      "tarball": "https://registry.npmjs.org/tinyglobby/-/tinyglobby-0.2.17.tgz",
+      "integrity": "sha512-wXR/dYpcqKmfWpEdZjiKJOwCNFndD0DMnrW/cYjVGttEkBfVgcLFHoNrlj47mjOVic9yyNu65alsgF4NQyTa2g==",
+      "repository": {
+        "url": "git+https://github.com/SuperchupuDev/tinyglobby.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 93
+    },
+    {
+      "name": "chokidar",
+      "downloads": 214589901,
+      "updated": "2026-10-13T21:38:35.288Z",
+      "version": "5.0.0",
+      "tarball": "https://registry.npmjs.org/chokidar/-/chokidar-5.0.0.tgz",
+      "integrity": "sha512-TQMmc3w+5AxjpL8iIiwebF73dRDF4fBIieAqGn9RGCWaEVwQ6Fb2cGe31Yns0RRIzii5goJ1Y7xbMwo1TxMplw==",
+      "repository": {
+        "url": "git+https://github.com/paulmillr/chokidar.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 94
+    },
+    {
+      "name": "get-stream",
+      "downloads": 213365121,
+      "updated": "2026-10-13T21:36:06.427Z",
+      "version": "9.0.1",
+      "tarball": "https://registry.npmjs.org/get-stream/-/get-stream-9.0.1.tgz",
+      "integrity": "sha512-kVCxPF3vQM/N0B1PmoqVUqgHP+EeVjmZSQn+1oCRPxd2P21P2F19lIgbR3HBosbB1PUhOAoctJnfEn2GbN2eZA==",
+      "repository": {
+        "url": "git+https://github.com/sindresorhus/get-stream.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 95
+    },
+    {
+      "name": "@babel/traverse",
+      "downloads": 212883245,
+      "updated": "2026-10-13T21:42:09.017Z",
+      "version": "8.0.7",
+      "tarball": "https://registry.npmjs.org/@babel/traverse/-/traverse-8.0.7.tgz",
+      "integrity": "sha512-bVV0brinsTWgc6ptSIoQo3GbITtl0VZAqEUJbHHcyfDPEu+q/fEvlYEa+6H85HoK8IdksKBFtKJbJFZ6Kff+zg==",
+      "repository": {
+        "url": "https://github.com/babel/babel.git",
+        "type": "git",
+        "directory": "packages/babel-traverse"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 96
+    },
+    {
+      "name": "graceful-fs",
+      "downloads": 212183379,
+      "updated": "2026-10-13T21:42:09.452Z",
+      "version": "4.2.11",
+      "tarball": "https://registry.npmjs.org/graceful-fs/-/graceful-fs-4.2.11.tgz",
+      "integrity": "sha512-RbJ5/jmFcNNCcDV5o9eTnBLJ/HszWV0P73bc+Ff4nS/rJj+YaS6IGyiOL0VoBYX+l1Wrl3k63h/KrH+nhJ0XvQ==",
+      "repository": {
+        "url": "git+https://github.com/isaacs/node-graceful-fs.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 97
+    },
+    {
+      "name": "inherits",
+      "downloads": 212041400,
+      "updated": "2026-10-13T21:40:03.189Z",
+      "version": "2.0.4",
+      "tarball": "https://registry.npmjs.org/inherits/-/inherits-2.0.4.tgz",
+      "integrity": "sha512-k/vGaX4/Yla3WzyMCvTQOXYeIHvqOKtnqBduzTHpzpQZzAskKMhZ2K+EnBiSM9zGSoIFeMpXKxa4dYeZIQqewQ==",
+      "repository": {
+        "url": "git://github.com/isaacs/inherits.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 98
+    },
+    {
+      "name": "@jridgewell/resolve-uri",
+      "downloads": 209808546,
+      "updated": "2026-10-13T21:37:47.046Z",
+      "version": "3.1.2",
+      "tarball": "https://registry.npmjs.org/@jridgewell/resolve-uri/-/resolve-uri-3.1.2.tgz",
+      "integrity": "sha512-bRISgCIjP20/tbWSPWMEi54QVPRZExkuD9lJL+UIxUKtwVJA8wW1Trb1jMs1RFXo1CBTNZ/5hpC9QvmKWdopKw==",
+      "repository": {
+        "url": "git+https://github.com/jridgewell/resolve-uri.git",
+        "type": "git"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 99
+    },
+    {
+      "name": "eslint-scope",
+      "downloads": 209681239,
+      "updated": "2026-10-13T21:36:46.971Z",
+      "version": "9.1.2",
+      "tarball": "https://registry.npmjs.org/eslint-scope/-/eslint-scope-9.1.2.tgz",
+      "integrity": "sha512-xS90H51cKw0jltxmvmHy2Iai1LIqrfbw57b79w/J7MfvDfkIkFZ+kj6zC3BjtUwh150HsSSdxXZcsuv72miDFQ==",
+      "repository": {
+        "url": "git+https://github.com/eslint/js.git",
+        "type": "git",
+        "directory": "packages/eslint-scope"
+      },
+      "types_only": false,
+      "native_only": false,
+      "rank": 100
+    },
+    {
+      "name": "readdirp",
+      "downloads": 208951989,
+      "updated": "2026-10-13T21:42:56.790Z",
+      "version": "5.1.1",
+      "tarball": "https://registry.npmjs.org/readdirp/-/readdirp-5.1.1.tgz",
+      "integrity": "sha512-Kko+Y5XQ6fM+Ce3dq3m9YGxnacYZYl9cA1wZjaF3Vbry2L3i1qVg8+CAgNPsXRArPMUMCaOR7oa9Nqntc43JKA==",
+      "repository": {
+        "url": "git+https://github.com/paulmillr/readdirp.git",
+        "type": "git"
+      },
+      "git_head": "5dba3694a1de891ea6edb0301240326f8f8c81f1",
+      "types_only": false,
+      "native_only": false,
+      "rank": 101
+    },
+    {
+      "name": "node-fetch",
+      "downloads": 208732058,
+      "updated": "2026-10-13T21:41:03.692Z",
+      "version": "3.3.2",
+      "tarball": "https://registry.npmjs.org/node-fetch/-/node-fetch-3.3.2.tgz",
+      "integrity": "sha512-dRB78srN/l6gqWulah9SrxeYnxeddIG30+GOqK/9OlLVyLg3HPnr6SqOWTWOXKRwC2eGYCkZ59NNuSgvSrpgOA==",
+      "repository": {
+        "url": "git+https://github.com/node-fetch/node-fetch.git",
+        "type": "git"
+      },
+      "git_head": "8b3320d2a7c07bce4afc6b2bf6c3bbddda85b01f",
+      "types_only": false,
+      "native_only": false,
+      "rank": 102
+    },
+    {
+      "name": "estree-walker",
+      "downloads": 208041204,
+      "updated": "2026-10-13T21:37:56.589Z",
+      "version": "3.0.3",
+      "tarball": "https://registry.npmjs.org/estree-walker/-/estree-walker-3.0.3.tgz",
+      "integrity": "sha512-7RUKfXgSMMkzt6ZuXmqapOurLGPPfgj6l9uRZ7lRGolvk0y2yocc35LdcxKC5PQZdn2DMqioAQ2NoWcrTKmm6g==",
+      "repository": {
+        "url": "git+https://github.com/Rich-Harris/estree-walker.git",
+        "type": "git"
+      },
+      "git_head": "baab849875bee41211bd60493eaad88cfaee1620",
+      "types_only": false,
+      "native_only": false,
+      "rank": 103
+    },
+    {
+      "name": "is-stream",
+      "downloads": 206878023,
+      "updated": "2026-10-13T21:42:12.624Z",
+      "version": "4.0.1",
+      "tarball": "https://registry.npmjs.org/is-stream/-/is-stream-4.0.1.tgz",
+      "integrity": "sha512-Dnz92NInDqYckGEUJv689RbRiTSEHCQ7wOVeALbkOz999YpqT46yMRIGtSNl2iCL1waAZSx40+h59NV/EwzV/A==",
+      "repository": {
+        "url": "git+https://github.com/sindresorhus/is-stream.git",
+        "type": "git"
+      },
+      "git_head": "0868e196b222faa5e4b58c86c5bc6c480a94a966",
+      "types_only": false,
+      "native_only": false,
+      "rank": 104
+    },
+    {
+      "name": "escalade",
+      "downloads": 205993689,
+      "updated": "2026-10-13T21:44:28.834Z",
+      "version": "3.2.0",
+      "tarball": "https://registry.npmjs.org/escalade/-/escalade-3.2.0.tgz",
+      "integrity": "sha512-WUj2qlxaQtO4g6Pq5c29GTcWGDyd8itL8zTlipgECz3JesAiiOKotd8JU6otB3PACgG6xkJUyVhboMS+bje/jA==",
+      "repository": {
+        "url": "git+https://github.com/lukeed/escalade.git",
+        "type": "git"
+      },
+      "git_head": "fa5be167391581849cff04dbc75dc2978744b642",
+      "types_only": false,
+      "native_only": false,
+      "rank": 105
+    },
+    {
+      "name": "get-intrinsic",
+      "downloads": 205199367,
+      "updated": "2026-10-13T21:43:16.991Z",
+      "version": "1.3.0",
+      "tarball": "https://registry.npmjs.org/get-intrinsic/-/get-intrinsic-1.3.0.tgz",
+      "integrity": "sha512-9fSjSaos/fRIVIp+xSJlE6lfwhES7LNtKaCBIamHsjr2na1BiABJPo0mOjjz8GJDURarmCPGqaiVg5mfjb98CQ==",
+      "repository": {
+        "url": "git+https://github.com/ljharb/get-intrinsic.git",
+        "type": "git"
+      },
+      "git_head": "9d747e0540e5e03421e7411b7946c23f4b010fd5",
+      "types_only": false,
+      "native_only": false,
+      "rank": 106
+    },
+    {
+      "name": "fdir",
+      "downloads": 203666628,
+      "updated": "2026-10-13T21:42:48.245Z",
+      "version": "6.5.0",
+      "tarball": "https://registry.npmjs.org/fdir/-/fdir-6.5.0.tgz",
+      "integrity": "sha512-tIbYtZbucOs0BRGqPJkshJUYdL+SDH7dVM8gjy+ERp3WAUjLEFJE+02kanyHtwjWOnwrKYBiwAmM0p4kLJAnXg==",
+      "repository": {
+        "url": "git+https://github.com/thecodrr/fdir.git",
+        "type": "git"
+      },
+      "git_head": "14c678e70e714f32e511cdf24c8d2392ac25ba0f",
+      "types_only": false,
+      "native_only": false,
+      "rank": 107
+    },
+    {
+      "name": "minipass",
+      "downloads": 201789502,
+      "updated": "2026-10-13T21:37:55.082Z",
+      "version": "7.1.3",
+      "tarball": "https://registry.npmjs.org/minipass/-/minipass-7.1.3.tgz",
+      "integrity": "sha512-tEBHqDnIoM/1rXME1zgka9g6Q2lcoCkxHLuc7ODJ5BxbP5d4c2Z5cGgtXAku59200Cx7diuHTOYfSBD8n6mm8A==",
+      "repository": {
+        "url": "git+https://github.com/isaacs/minipass.git",
+        "type": "git"
+      },
+      "git_head": "ab4b3b05d0d557ac6bb178f38501b11d0c96454e",
+      "types_only": false,
+      "native_only": false,
+      "rank": 108
+    },
+    {
+      "name": "@babel/runtime",
+      "downloads": 200033329,
+      "updated": "2026-10-13T21:35:44.784Z",
+      "version": "8.0.7",
+      "tarball": "https://registry.npmjs.org/@babel/runtime/-/runtime-8.0.7.tgz",
+      "integrity": "sha512-k0hagDDq/6w4v+0Sp4wFvIz/yswH5O7Va6aRTnD7N62Tnborp4X+YB+H3XUcWVSR4aE47WPEXiIIZchBs0GmYg==",
+      "repository": {
+        "url": "https://github.com/babel/babel.git",
+        "type": "git",
+        "directory": "packages/babel-runtime"
+      },
+      "git_head": null,
+      "types_only": false,
+      "native_only": false,
+      "rank": 109
+    },
+    {
+      "name": "@babel/template",
+      "downloads": 199925692,
+      "updated": "2026-10-13T21:36:10.742Z",
+      "version": "8.0.0",
+      "tarball": "https://registry.npmjs.org/@babel/template/-/template-8.0.0.tgz",
+      "integrity": "sha512-eAD0QW/AlbamBbw0FeGiwasbCVPq5ncW0HNVyLP3B9czqLyh4gvw+5JTSNt6le9+ziAU7mqDZsKTHf3jTb4chQ==",
+      "repository": {
+        "url": "https://github.com/babel/babel.git",
+        "type": "git",
+        "directory": "packages/babel-template"
+      },
+      "git_head": null,
+      "types_only": false,
+      "native_only": false,
+      "rank": 110
+    },
+    {
+      "name": "yocto-queue",
+      "downloads": 199817762,
+      "updated": "2026-10-13T21:43:17.815Z",
+      "version": "1.2.2",
+      "tarball": "https://registry.npmjs.org/yocto-queue/-/yocto-queue-1.2.2.tgz",
+      "integrity": "sha512-4LCcse/U2MHZ63HAJVE+v71o7yOdIe4cZ70Wpf8D/IyjDKYQLV5GD46B+hSTjJsvV5PztjvHoU580EftxjDZFQ==",
+      "repository": {
+        "url": "git+https://github.com/sindresorhus/yocto-queue.git",
+        "type": "git"
+      },
+      "git_head": "b07eac099753833b29d06c614149904445739776",
+      "types_only": false,
+      "native_only": false,
+      "rank": 111
+    },
+    {
+      "name": "statuses",
+      "downloads": 199647678,
+      "updated": "2026-10-13T21:42:36.033Z",
+      "version": "2.0.2",
+      "tarball": "https://registry.npmjs.org/statuses/-/statuses-2.0.2.tgz",
+      "integrity": "sha512-DvEy55V3DB7uknRo+4iOGT5fP1slR8wQohVdknigZPMpMstaKJQWhwiYBACJE3Ul2pTnATihhBYnRhZQHGBiRw==",
+      "repository": {
+        "url": "git+https://github.com/jshttp/statuses.git",
+        "type": "git"
+      },
+      "git_head": "33ec007ae094c35edb35d9edd293b9524b3adcb9",
+      "types_only": false,
+      "native_only": false,
+      "rank": 112
+    },
+    {
+      "name": "browserslist",
+      "downloads": 197432181,
+      "updated": "2026-10-13T21:38:32.647Z",
+      "version": "4.29.3",
+      "tarball": "https://registry.npmjs.org/browserslist/-/browserslist-4.29.3.tgz",
+      "integrity": "sha512-1R4kiYKXGViqEN0CnoDrXc1StD9niAwu+j2dukWzrD4bJgsD4lDmEp0CRbc6E/vYJIfTHwPmwyaKtVSudICdPA==",
+      "repository": {
+        "url": "git+https://github.com/browserslist/browserslist.git",
+        "type": "git"
+      },
+      "git_head": "b4809dd2a2a11fbff492258f968130e9b470067f",
+      "types_only": false,
+      "native_only": false,
+      "rank": 113
+    },
+    {
+      "name": "electron-to-chromium",
+      "downloads": 196758962,
+      "updated": "2026-10-14T06:04:12.316Z",
+      "version": "1.5.456",
+      "tarball": "https://registry.npmjs.org/electron-to-chromium/-/electron-to-chromium-1.5.456.tgz",
+      "integrity": "sha512-8hboqI6xesozteFb8aa7OGknvxUtTeRJLz0FoePysUEh/oWbddykIGdgpEJRbPRg/nIMfBf2DFos+H2MtvJl2A==",
+      "repository": {
+        "url": "git+https://github.com/Kilian/electron-to-chromium.git",
+        "type": "git"
+      },
+      "git_head": "9de580164afc6b2905dc668223f7ebf3edd5f4c3",
+      "types_only": false,
+      "native_only": false,
+      "rank": 114
+    },
+    {
+      "name": "vite",
+      "downloads": 195261248,
+      "updated": "2026-10-13T21:41:40.249Z",
+      "version": "8.3.4",
+      "tarball": "https://registry.npmjs.org/vite/-/vite-8.3.4.tgz",
+      "integrity": "sha512-IftLE8phJhdNRIGNEV4JCCvfNScoZQVfcXaN8TQropWGJtOHcu+iAB9pHcuGvmEb/kddw0LBe/jS8ztdC6xdiQ==",
+      "repository": {
+        "url": "git+https://github.com/vitejs/vite.git",
+        "type": "git",
+        "directory": "packages/vite"
+      },
+      "git_head": null,
+      "types_only": false,
+      "native_only": false,
+      "rank": 115
+    },
+    {
+      "name": "is-glob",
+      "downloads": 194615085,
+      "updated": "2026-10-13T21:42:39.558Z",
+      "version": "4.0.3",
+      "tarball": "https://registry.npmjs.org/is-glob/-/is-glob-4.0.3.tgz",
+      "integrity": "sha512-xelSayHH36ZgE7ZWhli7pW34hNbNl8Ojv5KVmkJD4hBdD3th8Tfk9vYasLM+mXWOZhFkgZfxhLSnrwRr4elSSg==",
+      "repository": {
+        "url": "git+https://github.com/micromatch/is-glob.git",
+        "type": "git"
+      },
+      "git_head": "627ca7e552c69e8d62d620b4715a2658267b3d17",
+      "types_only": false,
+      "native_only": false,
+      "rank": 116
+    },
+    {
+      "name": "onetime",
+      "downloads": 193750490,
+      "updated": "2026-10-13T21:39:08.602Z",
+      "version": "8.0.0",
+      "tarball": "https://registry.npmjs.org/onetime/-/onetime-8.0.0.tgz",
+      "integrity": "sha512-ODz2CnF+9043eG3exS38Efor4ekggmKvIydHaXWr1n9mXA5Afn8BdSsvVpa5AhBWricxhdBMfyeG3Yo3SB+VWA==",
+      "repository": {
+        "url": "git+https://github.com/sindresorhus/onetime.git",
+        "type": "git"
+      },
+      "git_head": "481ec583f8303e98c4d1d16bb316ef8e6b04d72c",
+      "types_only": false,
+      "native_only": false,
+      "rank": 117
+    },
+    {
+      "name": "y18n",
+      "downloads": 193675878,
+      "updated": "2026-10-13T21:36:31.736Z",
+      "version": "5.0.8",
+      "tarball": "https://registry.npmjs.org/y18n/-/y18n-5.0.8.tgz",
+      "integrity": "sha512-0pfFzegeDWJHJIAmTLRP2DwHjdF5s7jo9tuztdQxAhINCdvS+3nGINqPd00AphqJR/0LhANUS6/+7SCb98YOfA==",
+      "repository": {
+        "url": "git+https://github.com/yargs/y18n.git",
+        "type": "git"
+      },
+      "git_head": "e2900d1cdf313663bba012f20737385a42c66b87",
+      "types_only": false,
+      "native_only": false,
+      "rank": 118
+    },
+    {
+      "name": "jiti",
+      "downloads": 192880262,
+      "updated": "2026-10-13T21:42:14.833Z",
+      "version": "2.7.0",
+      "tarball": "https://registry.npmjs.org/jiti/-/jiti-2.7.0.tgz",
+      "integrity": "sha512-AC/7JofJvZGrrneWNaEnJeOLUx+JlGt7tNa0wZiRPT4MY1wmfKjt2+6O2p2uz2+skll8OZZmJMNqeke7kKbNgQ==",
+      "repository": {
+        "url": "git+https://github.com/unjs/jiti.git",
+        "type": "git"
+      },
+      "git_head": "fd3bb289b75ed207edfb686d671ed50144f7e90f",
+      "types_only": false,
+      "native_only": false,
+      "rank": 119
+    },
+    {
+      "name": "node-releases",
+      "downloads": 192338676,
+      "updated": "2026-10-13T21:42:13.407Z",
+      "version": "2.0.58",
+      "tarball": "https://registry.npmjs.org/node-releases/-/node-releases-2.0.58.tgz",
+      "integrity": "sha512-BdiKAgbfRlvfMq/XzO/AF9NPmaA8a+YpLAyAFTVFBj3gARrAIfWvNq7Q7NE4se3KgFu0KkrvQMxTS0XVnsGzHg==",
+      "repository": {
+        "url": "git+https://github.com/chicoxyzzy/node-releases.git",
+        "type": "git"
+      },
+      "git_head": "3d467be294812f5257b2944fac6b70e56c83225d",
+      "types_only": false,
+      "native_only": false,
+      "rank": 120
+    },
+    {
+      "name": "dotenv",
+      "downloads": 192245925,
+      "updated": "2026-10-13T21:41:42.122Z",
+      "version": "18.0.7",
+      "tarball": "https://registry.npmjs.org/dotenv/-/dotenv-18.0.7.tgz",
+      "integrity": "sha512-QEvMEF8ca3GNZJJnAbOgxpj5ULhBvnMcURp+XKrtvqFNPgjBvYoswQ0Jl2cO7JzCjxZjJhr9ZuIEhlrRxMft/Q==",
+      "repository": {
+        "url": "git://github.com/motdotla/dotenv.git",
+        "type": "git"
+      },
+      "git_head": "295320751866efa323236c719cdc1b5306fa3de7",
+      "types_only": false,
+      "native_only": false,
+      "rank": 121
+    },
+    {
+      "name": "path-scurry",
+      "downloads": 191781337,
+      "updated": "2026-10-13T21:36:24.908Z",
+      "version": "2.0.2",
+      "tarball": "https://registry.npmjs.org/path-scurry/-/path-scurry-2.0.2.tgz",
+      "integrity": "sha512-3O/iVVsJAPsOnpwWIeD+d6z/7PmqApyQePUtCndjatj/9I5LylHvt5qluFaBT3I5h3r1ejfR056c+FCv+NnNXg==",
+      "repository": {
+        "url": "git+https://github.com/isaacs/path-scurry.git",
+        "type": "git"
+      },
+      "git_head": "1372560386e080834cfb0943e1aaaf5b2ec9b70b",
+      "types_only": false,
+      "native_only": false,
+      "rank": 122
+    },
+    {
+      "name": "call-bind-apply-helpers",
+      "downloads": 191431455,
+      "updated": "2026-10-13T21:37:04.138Z",
+      "version": "1.0.2",
+      "tarball": "https://registry.npmjs.org/call-bind-apply-helpers/-/call-bind-apply-helpers-1.0.2.tgz",
+      "integrity": "sha512-Sp1ablJ0ivDkSzjcaJdxEunN5/XvksFJ2sMBFfq6x0ryhQV/2b/KwFe21cMpmHtPOSij8K99/wSfoEuTObmuMQ==",
+      "repository": {
+        "url": "git+https://github.com/ljharb/call-bind-apply-helpers.git",
+        "type": "git"
+      },
+      "git_head": "7068296a67b98424d5299606599d2f8117ded880",
+      "types_only": false,
+      "native_only": false,
+      "rank": 123
+    },
+    {
+      "name": "qs",
+      "downloads": 189447544,
+      "updated": "2026-10-13T21:43:17.559Z",
+      "version": "6.16.0",
+      "tarball": "https://registry.npmjs.org/qs/-/qs-6.16.0.tgz",
+      "integrity": "sha512-h6fhOIaRrID2CbEY2fqs+7t+UXZo+MLAnU5gRIq85uFtdiUPCdsApMlHhXogKVM4HM2DVbIjGNTTYH2OcmP1vA==",
+      "repository": {
+        "url": "git+https://github.com/ljharb/qs.git",
+        "type": "git"
+      },
+      "git_head": "bb9379e01fad04c601478acd6152143cb20c984b",
+      "types_only": false,
+      "native_only": false,
+      "rank": 124
+    },
+    {
+      "name": "@babel/core",
+      "downloads": 188588197,
+      "updated": "2026-10-13T21:42:44.087Z",
+      "version": "8.0.7",
+      "tarball": "https://registry.npmjs.org/@babel/core/-/core-8.0.7.tgz",
+      "integrity": "sha512-ZIsZWBG6Y1oa+8fkQVp0xeCdjCHBkXFCCIWrmg9SvejVvfcVQgKKRmGrBDWfM7rilhvnRoEuaqa5dkK7KB3pHA==",
+      "repository": {
+        "url": "https://github.com/babel/babel.git",
+        "type": "git",
+        "directory": "packages/babel-core"
+      },
+      "git_head": null,
+      "types_only": false,
+      "native_only": false,
+      "rank": 125
+    },
+    {
+      "name": "react",
+      "downloads": 188481362,
+      "updated": "2026-10-13T21:37:27.691Z",
+      "version": "19.3.0",
+      "tarball": "https://registry.npmjs.org/react/-/react-19.3.0.tgz",
+      "integrity": "sha512-E8LUcbtBWt20bbl2YoHfx4ZDBdxVTfOKtCZn9cDSJ4l6/nuoApcpIBcj47t2wZoVX8g2ZHuMHbiShgCR1T5Sog==",
+      "repository": {
+        "url": "git+https://github.com/react/react.git",
+        "type": "git",
+        "directory": "packages/react"
+      },
+      "git_head": "1d34f91dfde6bba84d08b683aaba164c7194dacb",
+      "types_only": false,
+      "native_only": false,
+      "rank": 126
+    },
+    {
+      "name": "camelcase",
+      "downloads": 185656933,
+      "updated": "2026-10-13T21:43:31.474Z",
+      "version": "10.0.0",
+      "tarball": "https://registry.npmjs.org/camelcase/-/camelcase-10.0.0.tgz",
+      "integrity": "sha512-p1wew5BGDCONz/5R+xHF6ByqXQM2V+5r4e+FdlFUeROawuMPimdDOFLw5k2QSqp1rm5h2QAglToqJyvnsl3ArQ==",
+      "repository": {
+        "url": "git+https://github.com/sindresorhus/camelcase.git",
+        "type": "git"
+      },
+      "git_head": "328428291b2f5c0e41dd4a2d0e5a942eb9de3b70",
+      "types_only": false,
+      "native_only": false,
+      "rank": 127
+    },
+    {
+      "name": "update-browserslist-db",
+      "downloads": 184320221,
+      "updated": "2026-10-13T21:38:31.597Z",
+      "version": "1.3.4",
+      "tarball": "https://registry.npmjs.org/update-browserslist-db/-/update-browserslist-db-1.3.4.tgz",
+      "integrity": "sha512-t8wonIOdQyOjtPd2VktlBu6QjTVTks6v8bSi7kd0r2Vll8TK1JYDZtRRdbmCHOAMphkZgrzK+L+vXK4pyZ8t4A==",
+      "repository": {
+        "url": "git+https://github.com/browserslist/update-db.git",
+        "type": "git"
+      },
+      "git_head": "3c3c543d2da5353271287d0a0f88d74cc8ff763b",
+      "types_only": false,
+      "native_only": false,
+      "rank": 128
+    },
+    {
+      "name": "@radix-ui/react-slot",
+      "downloads": 181478916,
+      "updated": "2026-10-13T21:41:23.466Z",
+      "version": "1.5.0",
+      "tarball": "https://registry.npmjs.org/@radix-ui/react-slot/-/react-slot-1.5.0.tgz",
+      "integrity": "sha512-tyYd9ddPXAysAbdbD9eYxgwpCSv6f3PncqVSNKQFSR5lcJVLz3cb/pANDoYrLiHBpXv7skortyUgGUWsYuPPFQ==",
+      "repository": {
+        "url": "git+https://github.com/radix-ui/primitives.git",
+        "type": "git",
+        "directory": "packages/react/slot"
+      },
+      "git_head": null,
+      "types_only": false,
+      "native_only": false,
+      "rank": 129
+    },
+    {
+      "name": "@typescript-eslint/types",
+      "downloads": 180558177,
+      "updated": "2026-10-13T21:41:43.581Z",
+      "version": "8.71.2",
+      "tarball": "https://registry.npmjs.org/@typescript-eslint/types/-/types-8.71.2.tgz",
+      "integrity": "sha512-y5Ukl3oVp7e/VGxqIoEXoeb/Roj71PAJ4WG/N/RGj+eeDvKRLM15kGr9MijLbN0i03S52zxu31Z98E5gWChJKw==",
+      "repository": {
+        "url": "https://github.com/typescript-eslint/typescript-eslint.git",
+        "type": "git",
+        "directory": "packages/types"
+      },
+      "git_head": null,
+      "types_only": false,
+      "native_only": false,
+      "rank": 130
+    },
+    {
+      "name": "baseline-browser-mapping",
+      "downloads": 180134678,
+      "updated": "2026-10-13T21:43:01.388Z",
+      "version": "2.11.28",
+      "tarball": "https://registry.npmjs.org/baseline-browser-mapping/-/baseline-browser-mapping-2.11.28.tgz",
+      "integrity": "sha512-br0LOmjJqr6Rt4AEkadbcNf67Zpo7EPwKsWbjnRrJIa1QYFHQBqM4C7F2WTbV8ahTEcg1Eo+Y0aWjjORInYFyA==",
+      "repository": {
+        "url": "git+https://github.com/web-platform-dx/baseline-browser-mapping.git",
+        "type": "git"
+      },
+      "git_head": "17963c0e2a1c5e923c241e4254cabaa484488145",
+      "types_only": false,
+      "native_only": false,
+      "rank": 131
+    },
+    {
+      "name": "@babel/helper-compilation-targets",
+      "downloads": 179892373,
+      "updated": "2026-10-13T21:36:01.993Z",
+      "version": "8.0.7",
+      "tarball": "https://registry.npmjs.org/@babel/helper-compilation-targets/-/helper-compilation-targets-8.0.7.tgz",
+      "integrity": "sha512-ilAZCdOOlOVA7dQbaFNw2f/59p6GW33NxTopc3DvEE3efp3ZXTrGX/yZScaKw8/vd9bq31Ag0EcXiLw32bAgJg==",
+      "repository": {
+        "url": "https://github.com/babel/babel.git",
+        "type": "git",
+        "directory": "packages/babel-helper-compilation-targets"
+      },
+      "git_head": null,
+      "types_only": false,
+      "native_only": false,
+      "rank": 132
+    },
+    {
+      "name": "@babel/helpers",
+      "downloads": 179786305,
+      "updated": "2026-10-13T21:38:28.702Z",
+      "version": "8.0.7",
+      "tarball": "https://registry.npmjs.org/@babel/helpers/-/helpers-8.0.7.tgz",
+      "integrity": "sha512-5dMj5kFwS2AY7Dt4PZp4px3c5ThMbbEa7tZfuHTncCGSFYq8uoA1ufDE1IS/lYpQedE+3+GQ3cPZUiplIu195w==",
+      "repository": {
+        "url": "https://github.com/babel/babel.git",
+        "type": "git",
+        "directory": "packages/babel-helpers"
+      },
+      "git_head": null,
+      "types_only": false,
+      "native_only": false,
+      "rank": 133
+    },
+    {
+      "name": "@babel/compat-data",
+      "downloads": 179376312,
+      "updated": "2026-10-13T21:42:16.881Z",
+      "version": "8.0.5",
+      "tarball": "https://registry.npmjs.org/@babel/compat-data/-/compat-data-8.0.5.tgz",
+      "integrity": "sha512-YLsYoQMvL8l8WrGpN3Zj7O1wK5LEBN+cQtux7BcuHyxIXve724XG+zuJ1n3U1cUweRtTzQOA4IHbuQw3N34SZw==",
+      "repository": {
+        "url": "https://github.com/babel/babel.git",
+        "type": "git",
+        "directory": "packages/babel-compat-data"
+      },
+      "git_head": null,
+      "types_only": false,
+      "native_only": false,
+      "rank": 134
+    },
+    {
+      "name": "form-data",
+      "downloads": 177141874,
+      "updated": "2026-10-13T21:42:22.936Z",
+      "version": "4.0.6",
+      "tarball": "https://registry.npmjs.org/form-data/-/form-data-4.0.6.tgz",
+      "integrity": "sha512-vKatAh4SlVfgbv+YtmhiRjhEMJsYpsG1Y2rMQtR+SVSbytsSD1YGzDIcrAJmdFec88u/+VoGmxnl+80gL1tRCQ==",
+      "repository": {
+        "url": "git://github.com/form-data/form-data.git",
+        "type": "git"
+      },
+      "git_head": "64190db548c0179e37206858e39f27cf513e9435",
+      "types_only": false,
+      "native_only": false,
+      "rank": 135
+    },
+    {
+      "name": "react-dom",
+      "downloads": 176748870,
+      "updated": "2026-10-13T21:41:41.752Z",
+      "version": "19.3.0",
+      "tarball": "https://registry.npmjs.org/react-dom/-/react-dom-19.3.0.tgz",
+      "integrity": "sha512-JDk8dgif51OjFoDE70+OT9ICyYr+69HlmihNwp1+Nsfbna3t5sIiCa9ZJktDmQ4/1b/rn26hIAR2uYXDMr5r0Q==",
+      "repository": {
+        "url": "git+https://github.com/react/react.git",
+        "type": "git",
+        "directory": "packages/react-dom"
+      },
+      "git_head": "1d34f91dfde6bba84d08b683aaba164c7194dacb",
+      "types_only": false,
+      "native_only": false,
+      "rank": 136
+    },
+    {
+      "name": "is-number",
+      "downloads": 176574180,
+      "updated": "2026-10-13T21:39:27.064Z",
+      "version": "7.0.0",
+      "tarball": "https://registry.npmjs.org/is-number/-/is-number-7.0.0.tgz",
+      "integrity": "sha512-41Cifkg6e8TylSpdtTpeLVMqvSBEVzTttHvERD741+pnZ8ANv0004MRL43QKPDlK9cGvNp6NZWZUBlbGXYxxng==",
+      "repository": {
+        "url": "git+https://github.com/jonschlinkert/is-number.git",
+        "type": "git"
+      },
+      "git_head": "98e8ff1da1a89f93d1397a24d7413ed15421c139",
+      "types_only": false,
+      "native_only": false,
+      "rank": 137
+    },
+    {
+      "name": "buffer",
+      "downloads": 175798125,
+      "updated": "2026-10-13T21:36:04.513Z",
+      "version": "6.0.3",
+      "tarball": "https://registry.npmjs.org/buffer/-/buffer-6.0.3.tgz",
+      "integrity": "sha512-FTiCpNxtwiZZHEZbcbTIcZjERVICn9yq/pDFkTl95/AxzD1naBctN7YO68riM/gLSDY7sdrMby8hofADYuuqOA==",
+      "repository": {
+        "url": "git://github.com/feross/buffer.git",
+        "type": "git"
+      },
+      "git_head": "f52dffd9df0445b93c0c9065c2f8f0f46b2c729a",
+      "types_only": false,
+      "native_only": false,
+      "rank": 138
+    },
+    {
+      "name": "@babel/helper-module-transforms",
+      "downloads": 175708522,
+      "updated": "2026-10-13T21:41:02.246Z",
+      "version": "8.0.6",
+      "tarball": "https://registry.npmjs.org/@babel/helper-module-transforms/-/helper-module-transforms-8.0.6.tgz",
+      "integrity": "sha512-YUi+3X0cb0v97xKhuqkLdrwQtP6XXv1eVbhLRCFyMwG481UskbMQk4mjH7K/Jg3oJ1KLskvFwwq4kF/QnABkWQ==",
+      "repository": {
+        "url": "https://github.com/babel/babel.git",
+        "type": "git",
+        "directory": "packages/babel-helper-module-transforms"
+      },
+      "git_head": null,
+      "types_only": false,
+      "native_only": false,
+      "rank": 139
+    },
+    {
+      "name": "execa",
+      "downloads": 175667763,
+      "updated": "2026-10-13T21:43:26.641Z",
+      "version": "10.1.1",
+      "tarball": "https://registry.npmjs.org/execa/-/execa-10.1.1.tgz",
+      "integrity": "sha512-yJAC9ulsE6fU0K6wzJBIH+wI+KAtMeu6Ck8rs23OVzvEhqXjGADdI6K+YNIDAjcQQ6AwXTD96cKExJo6xFJXyg==",
+      "repository": {
+        "url": "git+https://github.com/sindresorhus/execa.git",
+        "type": "git"
+      },
+      "git_head": "cc7bcab5650cb3c95ccb3e5d484159cc748a0133",
+      "types_only": false,
+      "native_only": false,
+      "rank": 140
+    },
+    {
+      "name": "safer-buffer",
+      "downloads": 174660877,
+      "updated": "2026-10-13T21:36:38.524Z",
+      "version": "2.1.2",
+      "tarball": "https://registry.npmjs.org/safer-buffer/-/safer-buffer-2.1.2.tgz",
+      "integrity": "sha512-YZo3K82SD7Riyi0E1EQPojLz7kpepnSQI9IyPbHHg1XXXevb5dJI7tpyN2ADxGcQbHG7vcyRHk0cbwqcQriUtg==",
+      "repository": {
+        "url": "git+https://github.com/ChALkeR/safer-buffer.git",
+        "type": "git"
+      },
+      "git_head": "e8ac214944eda30e1e6c6b7d7e7f6a21cf7dce7c",
+      "types_only": false,
+      "native_only": false,
+      "rank": 141
+    },
+    {
+      "name": "@typescript-eslint/visitor-keys",
+      "downloads": 174332886,
+      "updated": "2026-10-13T21:34:50.857Z",
+      "version": "8.71.2",
+      "tarball": "https://registry.npmjs.org/@typescript-eslint/visitor-keys/-/visitor-keys-8.71.2.tgz",
+      "integrity": "sha512-zozlN0UA32bSG2zkKAgQyRYSbEISVoyU6vvkKYo2aSny74D8Jh4e+POkJ6Lk0dlezZi5x7TtD+88Xb06IB8nhg==",
+      "repository": {
+        "url": "https://github.com/typescript-eslint/typescript-eslint.git",
+        "type": "git",
+        "directory": "packages/visitor-keys"
+      },
+      "git_head": null,
+      "types_only": false,
+      "native_only": false,
+      "rank": 142
+    },
+    {
+      "name": "@typescript-eslint/typescript-estree",
+      "downloads": 172465863,
+      "updated": "2026-10-13T21:41:20.571Z",
+      "version": "8.71.2",
+      "tarball": "https://registry.npmjs.org/@typescript-eslint/typescript-estree/-/typescript-estree-8.71.2.tgz",
+      "integrity": "sha512-DgNOEsl4pdYzwSL+N/Cl33tX1Hlw3FvId73LnKXfq7jnrF2viOEn7X+P7RBkkSWCVm92gnWd28GIC5vJuLREeA==",
+      "repository": {
+        "url": "https://github.com/typescript-eslint/typescript-eslint.git",
+        "type": "git",
+        "directory": "packages/typescript-estree"
+      },
+      "git_head": null,
+      "types_only": false,
+      "native_only": false,
+      "rank": 143
+    },
+    {
+      "name": "@types/react",
+      "downloads": 170660191,
+      "updated": "2026-10-13T21:40:44.464Z",
+      "version": "19.3.0",
+      "tarball": "https://registry.npmjs.org/@types/react/-/react-19.3.0.tgz",
+      "integrity": "sha512-N0rFCuH9YoxG9/m61l9MfpJKfmLOVU0em7ipIz6TRgSSkvReLB9vL85GB+yr8Bs5leqpvg96JSwF4ZS1s4viQg==",
+      "repository": {
+        "url": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+        "type": "git",
+        "directory": "types/react"
+      },
+      "git_head": null,
+      "types_only": true,
+      "native_only": false,
+      "rank": 144
+    },
+    {
+      "name": "minimist",
+      "downloads": 170597085,
+      "updated": "2026-10-13T21:38:36.135Z",
+      "version": "1.2.8",
+      "tarball": "https://registry.npmjs.org/minimist/-/minimist-1.2.8.tgz",
+      "integrity": "sha512-2yyAR8qBkN3YuheJanUpWC5U3bb5osDywNB8RzDVlDwDHbocAJveqqj1u8+SVD7jkWT4yvsHCpWqqWqAxb0zCA==",
+      "repository": {
+        "url": "git://github.com/minimistjs/minimist.git",
+        "type": "git"
+      },
+      "git_head": "6901ee286bc4c16da6830b48b46ce1574703cea1",
+      "types_only": false,
+      "native_only": false,
+      "rank": 145
+    },
+    {
+      "name": "universalify",
+      "downloads": 170454774,
+      "updated": "2026-10-13T21:39:48.268Z",
+      "version": "2.0.1",
+      "tarball": "https://registry.npmjs.org/universalify/-/universalify-2.0.1.tgz",
+      "integrity": "sha512-gptHNQghINnc/vTGIk0SOFGFNXw7JVrlRUtConJRlvaw6DuX0wO5Jeko9sWrMBhh+PsYAZ7oXAiOnf/UKogyiw==",
+      "repository": {
+        "url": "git+https://github.com/RyanZim/universalify.git",
+        "type": "git"
+      },
+      "git_head": "dc17e0e00fb39c8d52e97ce77e494cdadfa8d19c",
+      "types_only": false,
+      "native_only": false,
+      "rank": 146
+    },
+    {
+      "name": "@babel/helper-globals",
+      "downloads": 170412383,
+      "updated": "2026-10-13T21:39:23.252Z",
+      "version": "8.0.6",
+      "tarball": "https://registry.npmjs.org/@babel/helper-globals/-/helper-globals-8.0.6.tgz",
+      "integrity": "sha512-OdnA/N52LhzFpeUuVz5YGuSWjc7TPHiFmVYZbPlSgExocO2GwbxVpSni9MVs5wwW+wZ4kPuwBEBN9pIPDYz1mA==",
+      "repository": {
+        "url": "https://github.com/babel/babel.git",
+        "type": "git",
+        "directory": "packages/babel-helper-globals"
+      },
+      "git_head": null,
+      "types_only": false,
+      "native_only": false,
+      "rank": 147
+    },
+    {
+      "name": "keyv",
+      "downloads": 169327791,
+      "updated": "2026-10-13T21:38:01.997Z",
+      "version": "6.1.0",
+      "tarball": "https://registry.npmjs.org/keyv/-/keyv-6.1.0.tgz",
+      "integrity": "sha512-0OO64DxKOITdyQljNCcO+vc+iyaPmm3OV5eKOWRxWCp3V0QnXenpqcKfjGjycNILUJNV+erm1ose6Hsgr1fNFA==",
+      "repository": {
+        "url": "git+https://github.com/jaredwray/keyv.git",
+        "type": "git"
+      },
+      "git_head": null,
+      "types_only": false,
+      "native_only": false,
+      "rank": 148
+    },
+    {
+      "name": "braces",
+      "downloads": 169139316,
+      "updated": "2026-10-13T21:41:07.894Z",
+      "version": "3.0.3",
+      "tarball": "https://registry.npmjs.org/braces/-/braces-3.0.3.tgz",
+      "integrity": "sha512-yQbXgO/OSZVD2IsiLlro+7Hf6Q18EJrKSEsdoMzKePKXct3gvD8oLcOQdIzGupr5Fj+EDe8gO/lxc1BzfMpxvA==",
+      "repository": {
+        "url": "git+https://github.com/micromatch/braces.git",
+        "type": "git"
+      },
+      "git_head": "74b2db2938fad48a2ea54a9c8bf27a37a62c350d",
+      "types_only": false,
+      "native_only": false,
+      "rank": 149
+    },
+    {
+      "name": "fill-range",
+      "downloads": 169026153,
+      "updated": "2026-10-13T21:36:14.543Z",
+      "version": "7.1.1",
+      "tarball": "https://registry.npmjs.org/fill-range/-/fill-range-7.1.1.tgz",
+      "integrity": "sha512-YsGpe3WHLK8ZYi4tWDg2Jy3ebRz2rXowDxnld4bkQB00cc/1Zw9AWnC0i9ztDJitivtQvaI9KaLyKrc+hBW0yg==",
+      "repository": {
+        "url": "git+https://github.com/jonschlinkert/fill-range.git",
+        "type": "git"
+      },
+      "git_head": "95349d0841497279f2f4dbfef62bd551d6648449",
+      "types_only": false,
+      "native_only": false,
+      "rank": 150
+    },
+    {
+      "name": "@radix-ui/react-primitive",
+      "downloads": 168242568,
+      "updated": "2026-10-13T21:40:52.141Z",
+      "version": "2.2.0",
+      "tarball": "https://registry.npmjs.org/@radix-ui/react-primitive/-/react-primitive-2.2.0.tgz",
+      "integrity": "sha512-HCTSPMNqv55Qk0IX4geJbpyXazmqulcimwuyjxTkKi29v+QZbG2Zho9BnbBq4YS2PF+KlNb2CXoLz66uUmblkg==",
+      "repository": {
+        "url": "git+https://github.com/radix-ui/primitives.git",
+        "type": "git",
+        "directory": "packages/react/primitive"
+      },
+      "git_head": null,
+      "types_only": false,
+      "native_only": false,
+      "rank": 151
+    },
+    {
+      "name": "once",
+      "downloads": 166816217,
+      "updated": "2026-10-13T21:36:58.268Z",
+      "version": "1.4.0",
+      "tarball": "https://registry.npmjs.org/once/-/once-1.4.0.tgz",
+      "integrity": "sha512-lNaJgI+2Q5URQBkccEKHTQOPaXdUxnZZElQTZY0MFUAuaEqe1E+Nyvgdz/aIyNi6Z9MzO5dv1H8n58/GELp3+w==",
+      "repository": {
+        "url": "git://github.com/isaacs/once.git",
+        "type": "git"
+      },
+      "git_head": "0e614d9f5a7e6f0305c625f6b581f6d80b33b8a6",
+      "types_only": false,
+      "native_only": false,
+      "rank": 152
+    },
+    {
+      "name": "@rolldown/pluginutils",
+      "downloads": 166261979,
+      "updated": "2026-10-13T21:38:27.743Z",
+      "version": "1.0.1",
+      "tarball": "https://registry.npmjs.org/@rolldown/pluginutils/-/pluginutils-1.0.1.tgz",
+      "integrity": "sha512-2j9bGt5Jh8hj+vPtgzPtl72j0yRxHAyumoo6TNfAjsLB04UtpSvPbPcDcBMxz7n+9CYB0c1GxQFxYRg2jimqGw==",
+      "repository": {
+        "url": "git+https://github.com/rolldown/plugins.git",
+        "type": "git",
+        "directory": "packages/pluginutils"
+      },
+      "git_head": null,
+      "types_only": false,
+      "native_only": false,
+      "rank": 153
+    },
+    {
+      "name": "@typescript-eslint/scope-manager",
+      "downloads": 165999715,
+      "updated": "2026-10-13T21:43:07.489Z",
+      "version": "8.71.2",
+      "tarball": "https://registry.npmjs.org/@typescript-eslint/scope-manager/-/scope-manager-8.71.2.tgz",
+      "integrity": "sha512-YF4wgg5iUX5Obywoac27B56FhozMNFhdJSbh11H5GBAwmBtfyRhmgTQqW9tRNNmHDvsZ2CX6UGzoz+YfYn2Leg==",
+      "repository": {
+        "url": "https://github.com/typescript-eslint/typescript-eslint.git",
+        "type": "git",
+        "directory": "packages/scope-manager"
+      },
+      "git_head": null,
+      "types_only": false,
+      "native_only": false,
+      "rank": 154
+    },
+    {
+      "name": "to-regex-range",
+      "downloads": 163407757,
+      "updated": "2026-10-13T21:36:22.650Z",
+      "version": "5.0.1",
+      "tarball": "https://registry.npmjs.org/to-regex-range/-/to-regex-range-5.0.1.tgz",
+      "integrity": "sha512-65P7iz6X5yEr1cwcgvQxbbIw7Uk3gOy5dIdtZ4rDveLqhrdJP+Li/Hx6tyK0NEb+2GCyneCMJiGqrADCSNk8sQ==",
+      "repository": {
+        "url": "git+https://github.com/micromatch/to-regex-range.git",
+        "type": "git"
+      },
+      "git_head": "c05ef9ec07e7703d146467934098ecbde9d0bd95",
+      "types_only": false,
+      "native_only": false,
+      "rank": 155
+    },
+    {
+      "name": "call-bound",
+      "downloads": 163210298,
+      "updated": "2026-10-13T21:43:50.401Z",
+      "version": "1.0.4",
+      "tarball": "https://registry.npmjs.org/call-bound/-/call-bound-1.0.4.tgz",
+      "integrity": "sha512-+ys997U96po4Kx/ABpBCqhA9EuxJaQWDQg7295H4hBphv3IZg0boBKuwYpt4YXp6MZ5AmZQnU/tyMTlRpaSejg==",
+      "repository": {
+        "url": "git+https://github.com/ljharb/call-bound.git",
+        "type": "git"
+      },
+      "git_head": "75d922c1f92a3de1ff9ab94453f45b5f64b50041",
+      "types_only": false,
+      "native_only": false,
+      "rank": 156
+    },
+    {
+      "name": "tinyexec",
+      "downloads": 163113728,
+      "updated": "2026-10-13T21:43:24.796Z",
+      "version": "1.3.1",
+      "tarball": "https://registry.npmjs.org/tinyexec/-/tinyexec-1.3.1.tgz",
+      "integrity": "sha512-GCvB3aoys96IuDFBMcTB46JOR6mdMtAToqwiW8JlWhsoh1mhHi/xn9ss/Dg7N555GiJyEt2qzoG/NHCwM6h1EA==",
+      "repository": {
+        "url": "git+https://github.com/tinylibs/tinyexec.git",
+        "type": "git"
+      },
+      "git_head": "57073a32480379dfe3cb50e4ea589e6f714f0eeb",
+      "types_only": false,
+      "native_only": false,
+      "rank": 157
+    },
+    {
+      "name": "rimraf",
+      "downloads": 162777700,
+      "updated": "2026-10-13T21:43:17.692Z",
+      "version": "6.1.3",
+      "tarball": "https://registry.npmjs.org/rimraf/-/rimraf-6.1.3.tgz",
+      "integrity": "sha512-LKg+Cr2ZF61fkcaK1UdkH2yEBBKnYjTyWzTJT6KNPcSPaiT7HSdhtMXQuN5wkTX0Xu72KQ1l8S42rlmexS2hSA==",
+      "repository": {
+        "url": "git+ssh://git@github.com/isaacs/rimraf.git",
+        "type": "git"
+      },
+      "git_head": "f738c781d14fa7bc06f8e39e062d78f701fde3f1",
+      "types_only": false,
+      "native_only": false,
+      "rank": 158
+    },
+    {
+      "name": "micromatch",
+      "downloads": 162477684,
+      "updated": "2026-10-13T21:43:18.218Z",
+      "version": "4.0.8",
+      "tarball": "https://registry.npmjs.org/micromatch/-/micromatch-4.0.8.tgz",
+      "integrity": "sha512-PXwfBhYu0hBCPw8Dn0E+WDYb7af3dSLVWKi3HGv84IdF4TyFoC0ysxFd0Goxw7nSv4T/PzEJQxsYsEiFCKo2BA==",
+      "repository": {
+        "url": "git+https://github.com/micromatch/micromatch.git",
+        "type": "git"
+      },
+      "git_head": "8bd704ec0d9894693d35da425d827819916be920",
+      "types_only": false,
+      "native_only": false,
+      "rank": 159
+    },
+    {
+      "name": "lodash",
+      "downloads": 162267012,
+      "updated": "2026-10-14T00:53:26.841Z",
+      "version": "4.18.1",
+      "tarball": "https://registry.npmjs.org/lodash/-/lodash-4.18.1.tgz",
+      "integrity": "sha512-dMInicTPVE8d1e5otfwmmjlxkZoUpiVLwyeTdUsi/Caj/gfzzblBcCE5sRHV/AsjuCmxWrte2TNGSYuCeCq+0Q==",
+      "repository": {
+        "url": "git+https://github.com/lodash/lodash.git",
+        "type": "git"
+      },
+      "git_head": "4f0b76e2eca13de1c1fe8b4305abc1f7d63f4b86",
+      "types_only": false,
+      "native_only": false,
+      "rank": 160
+    },
+    {
+      "name": "esutils",
+      "downloads": 161180821,
+      "updated": "2026-10-13T21:38:39.191Z",
+      "version": "2.0.3",
+      "tarball": "https://registry.npmjs.org/esutils/-/esutils-2.0.3.tgz",
+      "integrity": "sha512-kVscqXk4OCp68SZ0dkgEKVi6/8ij300KBWTJq32P/dYeWTSwK41WyTxalN1eRmA5Z9UU/LX9D7FWSmV9SAYx6g==",
+      "repository": {
+        "url": "git+ssh://git@github.com/estools/esutils.git",
+        "type": "git"
+      },
+      "git_head": "8c2741c0154723fb92da137a0c97845b03b0943a",
+      "types_only": false,
+      "native_only": false,
+      "rank": 161
+    },
+    {
+      "name": "fast-json-stable-stringify",
+      "downloads": 159165460,
+      "updated": "2026-10-13T21:45:06.710Z",
+      "version": "2.1.0",
+      "tarball": "https://registry.npmjs.org/fast-json-stable-stringify/-/fast-json-stable-stringify-2.1.0.tgz",
+      "integrity": "sha512-lhd/wF+Lk98HZoTCtlVraHtfh5XYijIjalXck7saUtuanSDyLMxnHhSXEDJqHxD7msR8D0uCmqlkwjCV8xvwHw==",
+      "repository": {
+        "url": "git://github.com/epoberezkin/fast-json-stable-stringify.git",
+        "type": "git"
+      },
+      "git_head": "b3ab8bdfb91cb182c93475c2c3518d6224672bb4",
+      "types_only": false,
+      "native_only": false,
+      "rank": 162
+    },
+    {
+      "name": "eslint",
+      "downloads": 158743826,
+      "updated": "2026-10-13T21:43:16.686Z",
+      "version": "10.12.0",
+      "tarball": "https://registry.npmjs.org/eslint/-/eslint-10.12.0.tgz",
+      "integrity": "sha512-npHjrHb2o4ehH3mE+YuxABR+0gyb0aVWCIolgJDArwCiHEIsonBm3ZKjel5b0U5+a+MbEvIyRCGCzD3eKKK2NA==",
+      "repository": {
+        "url": "git+https://github.com/eslint/eslint.git",
+        "type": "git"
+      },
+      "git_head": "a438ec39512c3381f4785a1f3058982ce9845970",
+      "types_only": false,
+      "native_only": false,
+      "rank": 163
+    },
+    {
+      "name": "strip-bom",
+      "downloads": 158512316,
+      "updated": "2026-10-13T21:39:49.213Z",
+      "version": "5.0.0",
+      "tarball": "https://registry.npmjs.org/strip-bom/-/strip-bom-5.0.0.tgz",
+      "integrity": "sha512-p+byADHF7SzEcVnLvc/r3uognM1hUhObuHXxJcgLCfD194XAkaLbjq3Wzb0N5G2tgIjH0dgT708Z51QxMeu60A==",
+      "repository": {
+        "url": "git+https://github.com/sindresorhus/strip-bom.git",
+        "type": "git"
+      },
+      "git_head": "b80d7bc94e79b4744d92a2dc6328c91d9afe9775",
+      "types_only": false,
+      "native_only": false,
+      "rank": 164
+    },
+    {
+      "name": "@typescript-eslint/utils",
+      "downloads": 158381632,
+      "updated": "2026-10-13T21:35:28.120Z",
+      "version": "8.71.2",
+      "tarball": "https://registry.npmjs.org/@typescript-eslint/utils/-/utils-8.71.2.tgz",
+      "integrity": "sha512-RyKa1G1M9rKHDhrk+HJtiF1MvLD5Ux2JW3TSkzw+02pRALdpJb+QzG1Y5em+LvCgzGwgg8H7mBRFKljNz7ImPw==",
+      "repository": {
+        "url": "https://github.com/typescript-eslint/typescript-eslint.git",
+        "type": "git",
+        "directory": "packages/utils"
+      },
+      "git_head": null,
+      "types_only": false,
+      "native_only": false,
+      "rank": 165
+    },
+    {
+      "name": "fast-glob",
+      "downloads": 157172889,
+      "updated": "2026-10-13T21:42:13.261Z",
+      "version": "3.3.3",
+      "tarball": "https://registry.npmjs.org/fast-glob/-/fast-glob-3.3.3.tgz",
+      "integrity": "sha512-7MptL8U0cqcFdzIzwOTHoilX9x5BrNqye7Z/LuC7kCMRio1EMSyqRK3BEAUD7sXRq4iT4AzTVuZdhgQ2TCvYLg==",
+      "repository": {
+        "url": "git+https://github.com/mrmlnc/fast-glob.git",
+        "type": "git"
+      },
+      "git_head": "48687898dd26d4e935a0e5ecf6720e7c5aeac15d",
+      "types_only": false,
+      "native_only": false,
+      "rank": 166
+    },
+    {
+      "name": "flatted",
+      "downloads": 156132908,
+      "updated": "2026-10-13T21:42:08.153Z",
+      "version": "3.4.4",
+      "tarball": "https://registry.npmjs.org/flatted/-/flatted-3.4.4.tgz",
+      "integrity": "sha512-5+ybhBZANEJxaH3X5evAFatUxLfEHSr7n6kYJ+1Qd0mUqr4eu9gIf6GDbWHf8RJijHrjjO8G+la14SlL2SeS1Q==",
+      "repository": {
+        "url": "git+https://github.com/WebReflection/flatted.git",
+        "type": "git"
+      },
+      "git_head": "e6f5ca700c4ca8104a6a83472c8219e267bd5e84",
+      "types_only": false,
+      "native_only": false,
+      "rank": 167
+    },
+    {
+      "name": "raw-body",
+      "downloads": 155827378,
+      "updated": "2026-10-13T21:38:03.367Z",
+      "version": "4.0.0",
+      "tarball": "https://registry.npmjs.org/raw-body/-/raw-body-4.0.0.tgz",
+      "integrity": "sha512-TMHtwexrgOt9VJ2E5JF9RO8mRXGNgC5wXvKkc5AVSJUt1L5gxvjg7eiCQl96EqUEpCWrnNEkCnbAplYtyuq1IA==",
+      "repository": {
+        "url": "git+https://github.com/stream-utils/raw-body.git",
+        "type": "git"
+      },
+      "git_head": "c3949f885af40733c680eb410b7d1f5aeddc2877",
+      "types_only": false,
+      "native_only": false,
+      "rank": 168
+    },
+    {
+      "name": "jose",
+      "downloads": 154665736,
+      "updated": "2026-10-13T21:38:22.687Z",
+      "version": "6.2.12",
+      "tarball": "https://registry.npmjs.org/jose/-/jose-6.2.12.tgz",
+      "integrity": "sha512-9NiFmJEex0sy2Dk58j2UGBSHgUs2ypF9eZSu4L6vjOX3Dp96Sw1F3uL+H+D1sx02jZZdzUT0HgvCy59CuvXcWw==",
+      "repository": {
+        "url": "git+https://github.com/panva/jose.git",
+        "type": "git"
+      },
+      "git_head": null,
+      "types_only": false,
+      "native_only": false,
+      "rank": 169
+    },
+    {
+      "name": "@eslint-community/eslint-utils",
+      "downloads": 154289574,
+      "updated": "2026-10-13T21:43:27.007Z",
+      "version": "4.10.1",
+      "tarball": "https://registry.npmjs.org/@eslint-community/eslint-utils/-/eslint-utils-4.10.1.tgz",
+      "integrity": "sha512-cuadcxVFE8sDK6iWJbs8Sn0av2Nrh2QSGQhVlBW9AaAHqHwjWsZHT8LJ4hFGPh7ASBV2deFdM7H/DPjulmh8rg==",
+      "repository": {
+        "url": "git+https://github.com/eslint-community/eslint-utils.git",
+        "type": "git"
+      },
+      "git_head": "f16575f3ab9dbfa60854c2706bf71621aa02d56f",
+      "types_only": false,
+      "native_only": false,
+      "rank": 170
+    },
+    {
+      "name": "require-from-string",
+      "downloads": 153421170,
+      "updated": "2026-10-13T21:39:48.345Z",
+      "version": "2.0.2",
+      "tarball": "https://registry.npmjs.org/require-from-string/-/require-from-string-2.0.2.tgz",
+      "integrity": "sha512-Xf0nWe6RseziFMu+Ap9biiUbmplq6S9/p+7w7YXP/JBHhrUDDUhwa+vANyubuqfZWTveU//DYVGsDG7RKL/vEw==",
+      "repository": {
+        "url": "git+https://github.com/floatdrop/require-from-string.git",
+        "type": "git"
+      },
+      "git_head": "d1575a49065eb7a49b86b4de963f04f1a14dfd60",
+      "types_only": false,
+      "native_only": false,
+      "rank": 171
+    },
+    {
+      "name": "@types/json-schema",
+      "downloads": 151931321,
+      "updated": "2026-10-13T21:43:29.238Z",
+      "version": "7.0.15",
+      "tarball": "https://registry.npmjs.org/@types/json-schema/-/json-schema-7.0.15.tgz",
+      "integrity": "sha512-5+fP8P8MFNC+AyZCDxrB2pkZFPGzqQWUzpSeuuVLvm8VMcorNYavBqoFcxK8bQz4Qsbn4oUEEem4wDLfcysGHA==",
+      "repository": {
+        "url": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+        "type": "git",
+        "directory": "types/json-schema"
+      },
+      "git_head": null,
+      "types_only": true,
+      "native_only": false,
+      "rank": 172
+    },
+    {
+      "name": "http-proxy-agent",
+      "downloads": 151720847,
+      "updated": "2026-10-13T21:44:30.480Z",
+      "version": "9.1.0",
+      "tarball": "https://registry.npmjs.org/http-proxy-agent/-/http-proxy-agent-9.1.0.tgz",
+      "integrity": "sha512-2NxoveTT58mjYT4n3RPTEfCZGLMbidoO8XEieXfpSYxu+PQJ1qpx4ypwH6N+uF9twBPIvRRgvkvW5HUTYWENig==",
+      "repository": {
+        "url": "git+https://github.com/TooTallNate/proxy-agents.git",
+        "type": "git",
+        "directory": "packages/http-proxy-agent"
+      },
+      "git_head": null,
+      "types_only": false,
+      "native_only": false,
+      "rank": 173
+    },
+    {
+      "name": "serve-static",
+      "downloads": 150783325,
+      "updated": "2026-10-13T21:34:46.905Z",
+      "version": "2.2.1",
+      "tarball": "https://registry.npmjs.org/serve-static/-/serve-static-2.2.1.tgz",
+      "integrity": "sha512-xRXBn0pPqQTVQiC8wyQrKs2MOlX24zQ0POGaj0kultvoOCstBQM5yvOhAVSUwOMjQtTvsPWoNCHfPGwaaQJhTw==",
+      "repository": {
+        "url": "git+https://github.com/expressjs/serve-static.git",
+        "type": "git"
+      },
+      "git_head": "76312e12c2754c226a685201ff43d785455d0590",
+      "types_only": false,
+      "native_only": false,
+      "rank": 174
+    },
+    {
+      "name": "body-parser",
+      "downloads": 149412038,
+      "updated": "2026-10-13T21:36:02.475Z",
+      "version": "2.3.0",
+      "tarball": "https://registry.npmjs.org/body-parser/-/body-parser-2.3.0.tgz",
+      "integrity": "sha512-2cGmJupaNgg+QUwVLAucDuWuoMZ6EX9iHDRswZ5lsNYEmwPaRknMPCLZz07yTzVq/83p4o/wzbDZbBrTvGGTIw==",
+      "repository": {
+        "url": "git+https://github.com/expressjs/body-parser.git",
+        "type": "git"
+      },
+      "git_head": "d0f2ace6c74769da7d19b8661b9a01c01bdb0bf7",
+      "types_only": false,
+      "native_only": false,
+      "rank": 175
+    },
+    {
+      "name": "@types/react-dom",
+      "downloads": 146837238,
+      "updated": "2026-10-13T21:35:28.389Z",
+      "version": "19.3.0",
+      "tarball": "https://registry.npmjs.org/@types/react-dom/-/react-dom-19.3.0.tgz",
+      "integrity": "sha512-ZI7bU42mZXXKHn/qNLEw2IrbiINU7X5+vfgdixBHkCNpYWXjKgfQ/P+uyGb5CjOLB9UcnTeg3rylQtV2hym44Q==",
+      "repository": {
+        "url": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+        "type": "git",
+        "directory": "types/react-dom"
+      },
+      "git_head": null,
+      "types_only": true,
+      "native_only": false,
+      "rank": 176
+    },
+    {
+      "name": "whatwg-mimetype",
+      "downloads": 145728886,
+      "updated": "2026-10-13T21:39:40.966Z",
+      "version": "5.0.0",
+      "tarball": "https://registry.npmjs.org/whatwg-mimetype/-/whatwg-mimetype-5.0.0.tgz",
+      "integrity": "sha512-sXcNcHOC51uPGF0P/D4NVtrkjSU2fNsm9iog4ZvZJsL3rjoDAzXZhkm2MWt1y+PUdggKAYVoMAIYcs78wJ51Cw==",
+      "repository": {
+        "url": "git+https://github.com/jsdom/whatwg-mimetype.git",
+        "type": "git"
+      },
+      "git_head": "7614048e8bc775796bdaf623cdfe28c4b97fdab9",
+      "types_only": false,
+      "native_only": false,
+      "rank": 177
+    },
+    {
+      "name": "express",
+      "downloads": 145199376,
+      "updated": "2026-10-13T21:42:11.429Z",
+      "version": "5.3.0",
+      "tarball": "https://registry.npmjs.org/express/-/express-5.3.0.tgz",
+      "integrity": "sha512-qCqy1xSoaugxOD4IVHb1ZWdkvCF2W3aE2okKouWj8VwJ+ztskSiXoBnCSJqfKT+cVPJhuJqe9YLbY425+Zh00g==",
+      "repository": {
+        "url": "git+https://github.com/expressjs/express.git",
+        "type": "git"
+      },
+      "git_head": "cf6722bf89a86905281d9160b6482e08166b5ef0",
+      "types_only": false,
+      "native_only": false,
+      "rank": 178
+    },
+    {
+      "name": "deep-is",
+      "downloads": 144353926,
+      "updated": "2026-10-13T21:36:36.061Z",
+      "version": "0.1.4",
+      "tarball": "https://registry.npmjs.org/deep-is/-/deep-is-0.1.4.tgz",
+      "integrity": "sha512-oIPzksmTg4/MriiaYGO+okXDT7ztn/w3Eptv/+gSIdMdKsJo0u4CfYNFJPy+4SKMuCqGw2wxnA+URMg3t8a/bQ==",
+      "repository": {
+        "url": "git+ssh://git@github.com/thlorenz/deep-is.git",
+        "type": "git"
+      },
+      "git_head": "2f94b606a8be7df8c5c1c536cce4e32f5eeef1e1",
+      "types_only": false,
+      "native_only": false,
+      "rank": 179
+    },
+    {
+      "name": "ajv-formats",
+      "downloads": 143531074,
+      "updated": "2026-10-13T21:43:43.182Z",
+      "version": "3.0.1",
+      "tarball": "https://registry.npmjs.org/ajv-formats/-/ajv-formats-3.0.1.tgz",
+      "integrity": "sha512-8iUql50EUR+uUcdRQ3HDqa6EVyo3docL8g5WJ3FNcWmu62IbkGUue/pEyLBW8VGKKucTPgqeks4fIU1DA4yowQ==",
+      "repository": {
+        "url": "git+https://github.com/ajv-validator/ajv-formats.git",
+        "type": "git"
+      },
+      "git_head": "1fb3fa7d967f919ff924bb34aef73a2f39ab0de3",
+      "types_only": false,
+      "native_only": false,
+      "rank": 180
+    },
+    {
+      "name": "path-parse",
+      "downloads": 143107632,
+      "updated": "2026-10-13T21:35:02.679Z",
+      "version": "1.0.7",
+      "tarball": "https://registry.npmjs.org/path-parse/-/path-parse-1.0.7.tgz",
+      "integrity": "sha512-LDJzPVEEEPR+y48z93A0Ed0yXb8pAByGWo/k5YYdYgpY2/2EsOsksJrq7lOHxryrVOn1ejG6oAp8ahvOIQD8sw==",
+      "repository": {
+        "url": "git+https://github.com/jbgutierrez/path-parse.git",
+        "type": "git"
+      },
+      "git_head": "9f1db2802ffbc572e6b447f66126697e33b0055e",
+      "types_only": false,
+      "native_only": false,
+      "rank": 181
+    },
+    {
+      "name": "@typescript-eslint/parser",
+      "downloads": 142830012,
+      "updated": "2026-10-13T21:37:31.134Z",
+      "version": "8.71.2",
+      "tarball": "https://registry.npmjs.org/@typescript-eslint/parser/-/parser-8.71.2.tgz",
+      "integrity": "sha512-aTtmZjp/x3gsGHkDs04/1I8kNogBJkpQaeGaN0PfiG43NzDEmW2n+OP5im9wfsvyX0yP1UZWBrAGtDBfH9jEVw==",
+      "repository": {
+        "url": "https://github.com/typescript-eslint/typescript-eslint.git",
+        "type": "git",
+        "directory": "packages/parser"
+      },
+      "git_head": null,
+      "types_only": false,
+      "native_only": false,
+      "rank": 182
+    },
+    {
+      "name": "chai",
+      "downloads": 142276845,
+      "updated": "2026-10-13T21:43:51.089Z",
+      "version": "6.3.0",
+      "tarball": "https://registry.npmjs.org/chai/-/chai-6.3.0.tgz",
+      "integrity": "sha512-XWAtwJ6OHO+tj0EKCs0Y2UamnyOxseZWltU4x2U2wh8g4AigdjwvtUjvLP2tqkA/avxHEtzxNaqGq/YGNwckKg==",
+      "repository": {
+        "url": "git+https://github.com/chaijs/chai.git",
+        "type": "git"
+      },
+      "git_head": "d86de2a9519bdd0d89aa64c9fbcc0e880513b153",
+      "types_only": false,
+      "native_only": false,
+      "rank": 183
+    },
+    {
+      "name": "bytes",
+      "downloads": 141573620,
+      "updated": "2026-10-13T21:42:22.685Z",
+      "version": "3.1.2",
+      "tarball": "https://registry.npmjs.org/bytes/-/bytes-3.1.2.tgz",
+      "integrity": "sha512-/Nf7TyzTx6S3yRJObOAV7956r8cr2+Oj8AC5dt8wSP3BQAoeX58NoHyCU8P8zGkNXStjTSi6fzO6F0pBdcYbEg==",
+      "repository": {
+        "url": "git+https://github.com/visionmedia/bytes.js.git",
+        "type": "git"
+      },
+      "git_head": "9ddc13b6c66e0cb293616fba246e05db4b6cef4d",
+      "types_only": false,
+      "native_only": false,
+      "rank": 184
+    },
+    {
+      "name": "tough-cookie",
+      "downloads": 141206417,
+      "updated": "2026-10-13T21:42:22.189Z",
+      "version": "6.0.2",
+      "tarball": "https://registry.npmjs.org/tough-cookie/-/tough-cookie-6.0.2.tgz",
+      "integrity": "sha512-exgYmnmL/sJpR3upZfXG5PoatXQii55xAiXGXzY+sROLZ/Y+SLcp9PgJNI9Vz37HpQ74WvDcLT8eqm+kV3FzrA==",
+      "repository": {
+        "url": "git://github.com/salesforce/tough-cookie.git",
+        "type": "git"
+      },
+      "git_head": "40708dd809cfb1dd658270dc85597bf9f68a6ccc",
+      "types_only": false,
+      "native_only": false,
+      "rank": 185
+    },
+    {
+      "name": "parent-module",
+      "downloads": 140749037,
+      "updated": "2026-10-13T21:39:16.149Z",
+      "version": "3.2.0",
+      "tarball": "https://registry.npmjs.org/parent-module/-/parent-module-3.2.0.tgz",
+      "integrity": "sha512-2Ik9vslIJdx+teObUMPbYd5ONHrTh0EH6o88qNQqU2o+JKPR13V5cmoWmCBn3G7V5pyomexaZixyQoHfzl5E4g==",
+      "repository": {
+        "url": "git+https://github.com/sindresorhus/parent-module.git",
+        "type": "git"
+      },
+      "git_head": "3e3193aa846d410e79b1f98dc08fa2801b15147e",
+      "types_only": false,
+      "native_only": false,
+      "rank": 186
+    },
+    {
+      "name": "normalize-path",
+      "downloads": 140678194,
+      "updated": "2026-10-13T21:42:38.274Z",
+      "version": "3.0.0",
+      "tarball": "https://registry.npmjs.org/normalize-path/-/normalize-path-3.0.0.tgz",
+      "integrity": "sha512-6eZs5Ls3WtCisHWp9S2GUy8dqkpGi4BVSz3GaqiE6ezub0512ESztXUwUB6C6IKbQkY2Pnb/mD4WYojCRwcwLA==",
+      "repository": {
+        "url": "git+https://github.com/jonschlinkert/normalize-path.git",
+        "type": "git"
+      },
+      "git_head": "0979eb807a1725d83d5a996347d41067cf773d1f",
+      "types_only": false,
+      "native_only": false,
+      "rank": 187
+    },
+    {
+      "name": "make-dir",
+      "downloads": 139511247,
+      "updated": "2026-10-13T21:35:57.822Z",
+      "version": "5.1.0",
+      "tarball": "https://registry.npmjs.org/make-dir/-/make-dir-5.1.0.tgz",
+      "integrity": "sha512-IfpFq6UM39dUNiphpA6uDezNx/AvWyhwfICWPR3t1VspkgkMZrL+Rk1RbN1bx+aeNYwOrqGJgEgV3yotk+ZUVw==",
+      "repository": {
+        "url": "git+https://github.com/sindresorhus/make-dir.git",
+        "type": "git"
+      },
+      "git_head": "5e4210dea885f2d45a8af8839e836a14aacdbf06",
+      "types_only": false,
+      "native_only": false,
+      "rank": 188
+    },
+    {
+      "name": "@eslint/js",
+      "downloads": 139276251,
+      "updated": "2026-10-13T21:38:49.429Z",
+      "version": "10.0.1",
+      "tarball": "https://registry.npmjs.org/@eslint/js/-/js-10.0.1.tgz",
+      "integrity": "sha512-zeR9k5pd4gxjZ0abRoIaxdc7I3nDktoXZk2qOv9gCNWx3mVwEn32VRhyLaRsDiJjTs0xq/T8mfPtyuXu7GWBcA==",
+      "repository": {
+        "url": "git+https://github.com/eslint/eslint.git",
+        "type": "git",
+        "directory": "packages/js"
+      },
+      "git_head": "84fb885d49ac810e79a9491276b4828b53d913e5",
+      "types_only": false,
+      "native_only": false,
+      "rank": 189
+    },
+    {
+      "name": "prettier",
+      "downloads": 139055087,
+      "updated": "2026-10-13T21:41:54.243Z",
+      "version": "3.9.10",
+      "tarball": "https://registry.npmjs.org/prettier/-/prettier-3.9.10.tgz",
+      "integrity": "sha512-skGHTH1Yb9QvaTC4hWnRTzEYtCpApF0UMBPz+t/0ZPzP8ihefo/btKd+QA7pUE0fEwA1SbS/NmhyEcstdXOIdA==",
+      "repository": {
+        "url": "git+https://github.com/prettier/prettier.git",
+        "type": "git"
+      },
+      "git_head": "bd676aae6a3805672a21d02198e5d17c9cb1a97b",
+      "types_only": false,
+      "native_only": false,
+      "rank": 190
+    },
+    {
+      "name": "range-parser",
+      "downloads": 138676744,
+      "updated": "2026-10-13T21:36:52.013Z",
+      "version": "1.3.0",
+      "tarball": "https://registry.npmjs.org/range-parser/-/range-parser-1.3.0.tgz",
+      "integrity": "sha512-hek2mFQpPuI4E1BBKrSto+BU3e3x4xuarsbiwr3+lf7p44juvFMV0XFWQAP3xUyqXA4RrXLIoaSUGbSt056ZMw==",
+      "repository": {
+        "url": "git+https://github.com/jshttp/range-parser.git",
+        "type": "git"
+      },
+      "git_head": "855f5b1fa37340263fe009137d74346088f81c85",
+      "types_only": false,
+      "native_only": false,
+      "rank": 191
+    },
+    {
+      "name": "supports-preserve-symlinks-flag",
+      "downloads": 138654100,
+      "updated": "2026-10-13T21:45:25.703Z",
+      "version": "1.0.0",
+      "tarball": "https://registry.npmjs.org/supports-preserve-symlinks-flag/-/supports-preserve-symlinks-flag-1.0.0.tgz",
+      "integrity": "sha512-ot0WnXS9fgdkgIcePe6RHNk1WA8+muPa6cSjeR3V8K27q9BB1rTE3R1p7Hv0z1ZyAc8s6Vvv8DIyWf681MAt0w==",
+      "repository": {
+        "url": "git+https://github.com/inspect-js/node-supports-preserve-symlinks-flag.git",
+        "type": "git"
+      },
+      "git_head": "1f7cac19c0c298cf40b3f2f3c735477ad579ac61",
+      "types_only": false,
+      "native_only": false,
+      "rank": 192
+    },
+    {
+      "name": "json-stable-stringify-without-jsonify",
+      "downloads": 138222760,
+      "updated": "2026-10-13T21:44:42.016Z",
+      "version": "1.0.1",
+      "tarball": "https://registry.npmjs.org/json-stable-stringify-without-jsonify/-/json-stable-stringify-without-jsonify-1.0.1.tgz",
+      "integrity": "sha512-Bdboy+l7tA3OGW6FjyFHWkP5LuByj1Tk33Ljyq0axyzdk9//JSi2u3fP1QSmd1KNwq6VOKYGlAu87CisVir6Pw==",
+      "repository": {
+        "url": "git://github.com/samn/json-stable-stringify.git",
+        "type": "git"
+      },
+      "git_head": "c0b3c36d976c54e31a814c492cd1c2557a4d3758",
+      "types_only": false,
+      "native_only": false,
+      "rank": 193
+    },
+    {
+      "name": "@typescript-eslint/eslint-plugin",
+      "downloads": 137729204,
+      "updated": "2026-10-13T21:34:48.320Z",
+      "version": "8.71.2",
+      "tarball": "https://registry.npmjs.org/@typescript-eslint/eslint-plugin/-/eslint-plugin-8.71.2.tgz",
+      "integrity": "sha512-K72/pvT7qpm8q3k8G5u93NCSN1RcLxX5h7Gw0bQpbMXviBHeY6Nx1WEwmk9wP+eKTSQ8ecxvcgt/ZX/rB938xQ==",
+      "repository": {
+        "url": "https://github.com/typescript-eslint/typescript-eslint.git",
+        "type": "git",
+        "directory": "packages/eslint-plugin"
+      },
+      "git_head": null,
+      "types_only": false,
+      "native_only": false,
+      "rank": 194
+    },
+    {
+      "name": "tailwindcss",
+      "downloads": 137297577,
+      "updated": "2026-10-13T21:34:53.846Z",
+      "version": "4.3.3",
+      "tarball": "https://registry.npmjs.org/tailwindcss/-/tailwindcss-4.3.3.tgz",
+      "integrity": "sha512-gOhV3P7ufE62QDGg1zVaTgCR+EtPv92k2nIhVcVKcLmxT1sUBsQGhnZj175j+MqRt4zLF7ic+sCYjfhxMxj7YQ==",
+      "repository": {
+        "url": "https://github.com/tailwindlabs/tailwindcss.git",
+        "type": "git",
+        "directory": "packages/tailwindcss"
+      },
+      "git_head": null,
+      "types_only": false,
+      "native_only": false,
+      "rank": 195
+    },
+    {
+      "name": "@typescript-eslint/type-utils",
+      "downloads": 137209557,
+      "updated": "2026-10-13T21:37:35.272Z",
+      "version": "8.71.2",
+      "tarball": "https://registry.npmjs.org/@typescript-eslint/type-utils/-/type-utils-8.71.2.tgz",
+      "integrity": "sha512-cC8UaalCViJkb3rH/xLIvidEwoFRtMZMUqDjjJMGEKaTFwYRHYBcoczlEGHuvkHEO8svRDrgZ0yQgOArFmwang==",
+      "repository": {
+        "url": "https://github.com/typescript-eslint/typescript-eslint.git",
+        "type": "git",
+        "directory": "packages/type-utils"
+      },
+      "git_head": null,
+      "types_only": false,
+      "native_only": false,
+      "rank": 196
+    },
+    {
+      "name": "@vitest/utils",
+      "downloads": 135741422,
+      "updated": "2026-10-13T21:41:37.912Z",
+      "version": "5.0.4",
+      "tarball": "https://registry.npmjs.org/@vitest/utils/-/utils-5.0.4.tgz",
+      "integrity": "sha512-hgpnyMuMqCz2PARmk3v62FxUr8jHIkY13ygvUeh8s+dmQxfnvkB/sgtoZFzG4lMitnEdnrg/lCvDbtVzuAsGWQ==",
+      "repository": {
+        "url": "git+https://github.com/vitest-dev/vitest.git",
+        "type": "git",
+        "directory": "packages/utils"
+      },
+      "git_head": null,
+      "types_only": false,
+      "native_only": false,
+      "rank": 197
+    },
+    {
+      "name": "cosmiconfig",
+      "downloads": 133127470,
+      "updated": "2026-10-13T21:36:26.839Z",
+      "version": "10.0.1",
+      "tarball": "https://registry.npmjs.org/cosmiconfig/-/cosmiconfig-10.0.1.tgz",
+      "integrity": "sha512-/zvGoYn0y27QTBmK+0B+oPdEPC4fKGUmJsMTQbDjqph00TrkqfVFW/M+C6ya54sYCgHC6QCwK/mI6djt8cEGHQ==",
+      "repository": {
+        "url": "git+https://github.com/cosmiconfig/cosmiconfig.git",
+        "type": "git"
+      },
+      "git_head": "219805f445a26a6190d3a46ad43c8b5c3f0a172e",
+      "types_only": false,
+      "native_only": false,
+      "rank": 198
+    },
+    {
+      "name": "mkdirp",
+      "downloads": 132485409,
+      "updated": "2026-10-13T21:39:19.817Z",
+      "version": "3.0.1",
+      "tarball": "https://registry.npmjs.org/mkdirp/-/mkdirp-3.0.1.tgz",
+      "integrity": "sha512-+NsyUUAZDmo6YVHzL/stxSu3t9YS1iljliy3BSDrXJ/dkn1KYdmtZODGGjLcc9XLgVVpH4KshHB8XmZgMhaBXg==",
+      "repository": {
+        "url": "git+https://github.com/isaacs/node-mkdirp.git",
+        "type": "git"
+      },
+      "git_head": "6fc29774a008f41d96b34523d6aae543ecb46cd1",
+      "types_only": false,
+      "native_only": false,
+      "rank": 199
+    },
+    {
+      "name": "@typescript-eslint/project-service",
+      "downloads": 131630730,
+      "updated": "2026-10-13T21:37:29.919Z",
+      "version": "8.71.2",
+      "tarball": "https://registry.npmjs.org/@typescript-eslint/project-service/-/project-service-8.71.2.tgz",
+      "integrity": "sha512-Pd68GsLVh5ZXlcEccFPdhSOvtHZ/2WU0XsA8zmXOS3F158lVlcTLhfQ6qvtL1RzbMie0Kp8xtbVwAg4nejKPHw==",
+      "repository": {
+        "url": "https://github.com/typescript-eslint/typescript-eslint.git",
+        "type": "git",
+        "directory": "packages/project-service"
+      },
+      "git_head": null,
+      "types_only": false,
+      "native_only": false,
+      "rank": 200
+    },
+    {
+      "name": "@typescript-eslint/tsconfig-utils",
+      "downloads": 130900093,
+      "updated": "2026-10-13T21:41:45.229Z",
+      "version": "8.71.2",
+      "tarball": "https://registry.npmjs.org/@typescript-eslint/tsconfig-utils/-/tsconfig-utils-8.71.2.tgz",
+      "integrity": "sha512-jz49TAWokm/7yWD9/o837nYax9DyALxIPOImdImvVzo6canBCZYzin8zJyqNR5k1j9K1DE0bVvr0XYB+99uAdg==",
+      "repository": {
+        "url": "https://github.com/typescript-eslint/typescript-eslint.git",
+        "type": "git",
+        "directory": "packages/tsconfig-utils"
+      },
+      "git_head": null,
+      "types_only": false,
+      "native_only": false,
+      "rank": 201
+    },
+    {
+      "name": "ansi-escapes",
+      "downloads": 130304493,
+      "updated": "2026-10-13T21:44:31.422Z",
+      "version": "7.3.0",
+      "tarball": "https://registry.npmjs.org/ansi-escapes/-/ansi-escapes-7.3.0.tgz",
+      "integrity": "sha512-BvU8nYgGQBxcmMuEeUEmNTvrMVjJNSH7RgW24vXexN4Ven6qCvy4TntnvlnwnMLTVlcRQQdbRY8NKnaIoeWDNg==",
+      "repository": {
+        "url": "git+https://github.com/sindresorhus/ansi-escapes.git",
+        "type": "git"
+      },
+      "git_head": "73e652efe7a353bdf25f456e592c858e4648db3d",
+      "types_only": false,
+      "native_only": false,
+      "rank": 202
+    },
+    {
+      "name": "json-buffer",
+      "downloads": 130149999,
+      "updated": "2026-10-13T21:44:17.531Z",
+      "version": "3.0.1",
+      "tarball": "https://registry.npmjs.org/json-buffer/-/json-buffer-3.0.1.tgz",
+      "integrity": "sha512-4bV5BfR2mqfQTJm+V5tPPdf+ZpuhiIvTuAB5g8kcrXOZpTT/QwwVRWBywX1ozr6lEuPdbHxwaJlm9G6mI2sfSQ==",
+      "repository": {
+        "url": "git://github.com/dominictarr/json-buffer.git",
+        "type": "git"
+      },
+      "git_head": "39146e89172469d5700f06e6b569574827d77fed",
+      "types_only": false,
+      "native_only": false,
+      "rank": 203
+    },
+    {
+      "name": "escape-html",
+      "downloads": 127586322,
+      "updated": "2026-10-13T21:36:25.420Z",
+      "version": "1.0.3",
+      "tarball": "https://registry.npmjs.org/escape-html/-/escape-html-1.0.3.tgz",
+      "integrity": "sha512-NiSupZ4OeuGwr68lGIeym/ksIZMJodUGOSCZ/FSnTxcrekbvqrgdUxlJOMpijaKZVjAJrWrGs/6Jy8OMuyj9ow==",
+      "repository": {
+        "url": "https://github.com/component/escape-html",
+        "type": "git"
+      },
+      "git_head": "7ac2ea3977fcac3d4c5be8d2a037812820c65f28",
+      "types_only": false,
+      "native_only": false,
+      "rank": 204
+    },
+    {
+      "name": "cli-cursor",
+      "downloads": 127578714,
+      "updated": "2026-10-13T21:42:27.609Z",
+      "version": "5.0.0",
+      "tarball": "https://registry.npmjs.org/cli-cursor/-/cli-cursor-5.0.0.tgz",
+      "integrity": "sha512-aCj4O5wKyszjMmDT4tZj93kxyydN/K5zPWSCe6/0AV/AA1pqe5ZBIw0a2ZfPQV7lL5/yb5HsUreJ6UFAF1tEQw==",
+      "repository": {
+        "url": "git+https://github.com/sindresorhus/cli-cursor.git",
+        "type": "git"
+      },
+      "git_head": "b97e13ef5de9b735fe7cb84eb5550a47f2296664",
+      "types_only": false,
+      "native_only": false,
+      "rank": 205
+    },
+    {
+      "name": "@aws-sdk/types",
+      "downloads": 126571397,
+      "updated": "2026-10-13T21:37:44.640Z",
+      "version": "3.974.6",
+      "tarball": "https://registry.npmjs.org/@aws-sdk/types/-/types-3.974.6.tgz",
+      "integrity": "sha512-v/clNZzZnDxGyvpHMOGpJKVXFAExJzUNAAjaWGdcx8QAcXLGwTaOkw33p5SHAi0YAioK32xB3hWwOekRVfmfKg==",
+      "repository": {
+        "url": "git+https://github.com/aws/aws-sdk-js-v3.git",
+        "type": "git",
+        "directory": "packages-internal/types"
+      },
+      "git_head": null,
+      "types_only": false,
+      "native_only": false,
+      "rank": 206
+    },
+    {
+      "name": "proxy-from-env",
+      "downloads": 125867942,
+      "updated": "2026-10-13T21:44:54.239Z",
+      "version": "2.1.0",
+      "tarball": "https://registry.npmjs.org/proxy-from-env/-/proxy-from-env-2.1.0.tgz",
+      "integrity": "sha512-cJ+oHTW1VAEa8cJslgmUZrc+sjRKgAKl3Zyse6+PV38hZe/V6Z14TbCuXcan9F9ghlz4QrFr2c92TNF82UkYHA==",
+      "repository": {
+        "url": "git+https://github.com/Rob--W/proxy-from-env.git",
+        "type": "git"
+      },
+      "git_head": "570ce3a4279d83af3ff13e7600a347d01c453394",
+      "types_only": false,
+      "native_only": false,
+      "rank": 207
+    },
+    {
+      "name": "vitest",
+      "downloads": 125766874,
+      "updated": "2026-10-13T21:37:40.971Z",
+      "version": "5.0.4",
+      "tarball": "https://registry.npmjs.org/vitest/-/vitest-5.0.4.tgz",
+      "integrity": "sha512-z0WxZRV2Sg48wF0FSgMq3TFG8JS38/Qr96vZVZdX6+Em9raQTvnXQvdTFJe2m3rfyJnEHeHQ/snceIdi8D1pVg==",
+      "repository": {
+        "url": "git+https://github.com/vitest-dev/vitest.git",
+        "type": "git",
+        "directory": "packages/vitest"
+      },
+      "git_head": null,
+      "types_only": false,
+      "native_only": false,
+      "rank": 208
+    },
+    {
+      "name": "@eslint/core",
+      "downloads": 125739741,
+      "updated": "2026-10-13T21:42:01.305Z",
+      "version": "1.2.1",
+      "tarball": "https://registry.npmjs.org/@eslint/core/-/core-1.2.1.tgz",
+      "integrity": "sha512-MwcE1P+AZ4C6DWlpin/OmOA54mmIZ/+xZuJiQd4SyB29oAJjN30UW9wkKNptW2ctp4cEsvhlLY/CsQ1uoHDloQ==",
+      "repository": {
+        "url": "git+https://github.com/eslint/rewrite.git",
+        "type": "git",
+        "directory": "packages/core"
+      },
+      "git_head": "d2dbf7b73d01505da89a69b7465e486d8a88aa8f",
+      "types_only": true,
+      "native_only": false,
+      "rank": 209
+    },
+    {
+      "name": "queue-microtask",
+      "downloads": 125559550,
+      "updated": "2026-10-13T21:38:55.280Z",
+      "version": "1.2.3",
+      "tarball": "https://registry.npmjs.org/queue-microtask/-/queue-microtask-1.2.3.tgz",
+      "integrity": "sha512-NuaNSa6flKT5JaSYQzJok04JzTL1CA6aGhv5rfLW3PgqA+M2ChpZQnAC8h8i4ZFkBS8X5RqkDBHA7r4hej3K9A==",
+      "repository": {
+        "url": "git://github.com/feross/queue-microtask.git",
+        "type": "git"
+      },
+      "git_head": "3e7bb1dc08450d8cd6870ed7e060b7be4eb3a5ac",
+      "types_only": false,
+      "native_only": false,
+      "rank": 210
+    },
+    {
+      "name": "loose-envify",
+      "downloads": 124887944,
+      "updated": "2026-10-13T21:37:09.060Z",
+      "version": "1.4.0",
+      "tarball": "https://registry.npmjs.org/loose-envify/-/loose-envify-1.4.0.tgz",
+      "integrity": "sha512-lyuxPGr/Wfhrlem2CL/UcnUc1zcqKAImBDzukY7Y5F/yQiNdko6+fRLevlw1HgMySw7f611UIY408EtxRSoK3Q==",
+      "repository": {
+        "url": "git://github.com/zertosh/loose-envify.git",
+        "type": "git"
+      },
+      "git_head": "a8fdd02e3a435195f526053882d64537d627b3e6",
+      "types_only": false,
+      "native_only": false,
+      "rank": 211
+    },
+    {
+      "name": "@eslint/eslintrc",
+      "downloads": 123160251,
+      "updated": "2026-10-13T21:38:36.675Z",
+      "version": "3.3.7",
+      "tarball": "https://registry.npmjs.org/@eslint/eslintrc/-/eslintrc-3.3.7.tgz",
+      "integrity": "sha512-F42g89Qd5oAWtp0k0nnSrjziAKza7w8SVT4mStc18LZMaRb4J1HQAHLCalEtDCxrTuksx7NU9qsmeLwpOfPqWw==",
+      "repository": {
+        "url": "git+https://github.com/eslint/eslintrc.git",
+        "type": "git"
+      },
+      "git_head": "7943fa6dd55b236a539f658b88c763a4f9fbb38d",
+      "types_only": false,
+      "native_only": false,
+      "rank": 212
+    },
+    {
+      "name": "@vitest/mocker",
+      "downloads": 123045228,
+      "updated": "2026-10-13T21:42:29.536Z",
+      "version": "5.0.4",
+      "tarball": "https://registry.npmjs.org/@vitest/mocker/-/mocker-5.0.4.tgz",
+      "integrity": "sha512-tqAlrYWce4iUxhr3ncNohejtCTOcHeE8XWrSNZY3OhPoDn01yeGv+gnaBy64ATp7o6pb03eIbBAjzmibpc9vIQ==",
+      "repository": {
+        "url": "git+https://github.com/vitest-dev/vitest.git",
+        "type": "git",
+        "directory": "packages/mocker"
+      },
+      "git_head": null,
+      "types_only": false,
+      "native_only": false,
+      "rank": 213
+    },
+    {
+      "name": "is-unicode-supported",
+      "downloads": 122487164,
+      "updated": "2026-10-13T21:45:18.975Z",
+      "version": "2.1.0",
+      "tarball": "https://registry.npmjs.org/is-unicode-supported/-/is-unicode-supported-2.1.0.tgz",
+      "integrity": "sha512-mE00Gnza5EEB3Ds0HfMyllZzbBrmLOX3vfWoj9A9PEnTfratQ/BcaJOuMhnkhjXvb2+FkY3VuHqtAGpTPmglFQ==",
+      "repository": {
+        "url": "git+https://github.com/sindresorhus/is-unicode-supported.git",
+        "type": "git"
+      },
+      "git_head": "e0373335038856c63034c8eef6ac43ee3827a601",
+      "types_only": false,
+      "native_only": false,
+      "rank": 214
+    },
+    {
+      "name": "@vitest/expect",
+      "downloads": 121581437,
+      "updated": "2026-10-13T21:35:59.588Z",
+      "version": "5.0.4",
+      "tarball": "https://registry.npmjs.org/@vitest/expect/-/expect-5.0.4.tgz",
+      "integrity": "sha512-1Cko3Uav9doH3l+dmIBntzy9kcLM6c0Q7B9qMUgFqhDNgeJiYW57CUn1EIlWZlZ97Uaqj7SYSfu2ezwvDhE3og==",
+      "repository": {
+        "url": "git+https://github.com/vitest-dev/vitest.git",
+        "type": "git",
+        "directory": "packages/expect"
+      },
+      "git_head": null,
+      "types_only": false,
+      "native_only": false,
+      "rank": 215
+    },
+    {
+      "name": "lodash.merge",
+      "downloads": 120935189,
+      "updated": "2026-10-13T21:40:36.648Z",
+      "version": "4.6.2",
+      "tarball": "https://registry.npmjs.org/lodash.merge/-/lodash.merge-4.6.2.tgz",
+      "integrity": "sha512-0KpjqXRVvrYyCsX1swR/XTK0va6VQkQM6MNo7PqW77ByjAhoARA8EfrP1N4+KlKj8YS0ZUCtRT/YUuhyYDujIQ==",
+      "repository": {
+        "url": "git+https://github.com/lodash/lodash.git",
+        "type": "git"
+      },
+      "git_head": null,
+      "types_only": false,
+      "native_only": false,
+      "rank": 216
+    },
+    {
+      "name": "ieee754",
+      "downloads": 119516920,
+      "updated": "2026-10-13T21:38:48.576Z",
+      "version": "1.2.1",
+      "tarball": "https://registry.npmjs.org/ieee754/-/ieee754-1.2.1.tgz",
+      "integrity": "sha512-dcyqhDvX1C46lXZcVqCpK+FtMRQVdIMN6/Df5js2zouUsqG7I6sFxitIC+7KYK29KdXOLHdu9zL4sFnoVQnqaA==",
+      "repository": {
+        "url": "git://github.com/feross/ieee754.git",
+        "type": "git"
+      },
+      "git_head": "b60d148be9cad718f9ff007c211c2427cdc180a4",
+      "types_only": false,
+      "native_only": false,
+      "rank": 217
+    },
+    {
+      "name": "axios",
+      "downloads": 119117073,
+      "updated": "2026-10-13T21:43:18.595Z",
+      "version": "1.20.0",
+      "tarball": "https://registry.npmjs.org/axios/-/axios-1.20.0.tgz",
+      "integrity": "sha512-r8aOh8j9cGKpgQAqpzrUHnSIc6a59Y3Xf/cv8sy1DrHCkZHzQGEuoq1tARk6qSyDdtQGSDgpb9kFlruzPvrgwg==",
+      "repository": {
+        "url": "git+https://github.com/axios/axios.git",
+        "type": "git"
+      },
+      "git_head": "84a9f3b9a4f3244b8c8e818f557d64c7b964fb25",
+      "types_only": false,
+      "native_only": false,
+      "rank": 218
+    },
+    {
+      "name": "@eslint/plugin-kit",
+      "downloads": 118056362,
+      "updated": "2026-10-13T21:42:35.962Z",
+      "version": "0.7.3",
+      "tarball": "https://registry.npmjs.org/@eslint/plugin-kit/-/plugin-kit-0.7.3.tgz",
+      "integrity": "sha512-IkO+/KEUvwbVpiURZg+P7zF74z5Jxe0UgJxVni+RtoHQ6IZieXaO02kmadomap/q+l6bc/jdPGGqTjhuZnuz1Q==",
+      "repository": {
+        "url": "git+https://github.com/eslint/rewrite.git",
+        "type": "git",
+        "directory": "packages/plugin-kit"
+      },
+      "git_head": "a4466ca3f8dc7d6817c4dd91c10a989b83ecb30d",
+      "types_only": false,
+      "native_only": false,
+      "rank": 219
+    },
+    {
+      "name": "proxy-addr",
+      "downloads": 117056392,
+      "updated": "2026-10-13T21:36:30.070Z",
+      "version": "2.0.8",
+      "tarball": "https://registry.npmjs.org/proxy-addr/-/proxy-addr-2.0.8.tgz",
+      "integrity": "sha512-5nnx0yGyVUcY6t9RnWcARWtwT9F1D8O9rt08htPvnd49W1IgZtmLkhu9WfMzQj1cFxjHIO6connUNVW5k7AVyQ==",
+      "repository": {
+        "url": "git+https://github.com/jshttp/proxy-addr.git",
+        "type": "git"
+      },
+      "git_head": "a11ad82545698af5c33e59f3ed0b52eab79bf610",
+      "types_only": false,
+      "native_only": false,
+      "rank": 220
+    },
+    {
+      "name": "schema-utils",
+      "downloads": 117055530,
+      "updated": "2026-10-13T21:38:49.664Z",
+      "version": "4.5.0",
+      "tarball": "https://registry.npmjs.org/schema-utils/-/schema-utils-4.5.0.tgz",
+      "integrity": "sha512-zJlMCZ0cAR5p/Y4oVpRoqioDMJcGxaXRrQ/4rP4WyR84vc5z/DolXdbvXeDpTwbtocDFr2rhPqHPErDCUtz2kA==",
+      "repository": {
+        "url": "git+https://github.com/webpack/schema-utils.git",
+        "type": "git"
+      },
+      "git_head": "1cb9c8d72028e89ba80706c3f2d81ab5a93c858c",
+      "types_only": false,
+      "native_only": false,
+      "rank": 221
+    },
+    {
+      "name": "sharp",
+      "downloads": 116559164,
+      "updated": "2026-10-13T21:35:51.449Z",
+      "version": "0.35.5",
+      "tarball": "https://registry.npmjs.org/sharp/-/sharp-0.35.5.tgz",
+      "integrity": "sha512-Ywn4OnzGukp7CDMrp08RQ50YKmuwG47brZgIVPTvBaaAfQlRlygrRqSrxdCiL9M+LlzLBiJ68IR1QqvzHyjC7g==",
+      "repository": {
+        "url": "git+https://github.com/lovell/sharp.git",
+        "type": "git"
+      },
+      "git_head": "51a990faa26ade5586a4934ac9673c98d8893326",
+      "types_only": false,
+      "native_only": false,
+      "rank": 222
+    },
+    {
+      "name": "slice-ansi",
+      "downloads": 116539619,
+      "updated": "2026-10-13T21:39:01.937Z",
+      "version": "9.0.1",
+      "tarball": "https://registry.npmjs.org/slice-ansi/-/slice-ansi-9.0.1.tgz",
+      "integrity": "sha512-aBY19bn/XA+hKOKX0qL7Z0UfdBsbQvc9hn993U8ALUjzxCvDcuZqLoRXjGJrUARWAlwMnsRVD9sw2AFNOYvalA==",
+      "repository": {
+        "url": "git+https://github.com/chalk/slice-ansi.git",
+        "type": "git"
+      },
+      "git_head": "1196f5f5f8dab9727dcfc3f32c1be9d0ec83c6ac",
+      "types_only": false,
+      "native_only": false,
+      "rank": 223
+    },
+    {
+      "name": "buffer-from",
+      "downloads": 115388631,
+      "updated": "2026-10-13T21:42:31.649Z",
+      "version": "1.1.2",
+      "tarball": "https://registry.npmjs.org/buffer-from/-/buffer-from-1.1.2.tgz",
+      "integrity": "sha512-E+XQCRwSbaaiChtv6k6Dwgc+bx+Bs6vuKJHHl5kox/BaKbhiXzqQOwK4cO22yElGp2OCmjwVhT3HmxgyPGnJfQ==",
+      "repository": {
+        "url": "git+https://github.com/LinusU/buffer-from.git",
+        "type": "git"
+      },
+      "git_head": "fa0c9264a1b7eddf8c1aa1bbd78ce0ac256c485f",
+      "types_only": false,
+      "native_only": false,
+      "rank": 224
+    },
+    {
+      "name": "@opentelemetry/semantic-conventions",
+      "downloads": 114953107,
+      "updated": "2026-10-13T21:35:10.127Z",
+      "version": "1.43.0",
+      "tarball": "https://registry.npmjs.org/@opentelemetry/semantic-conventions/-/semantic-conventions-1.43.0.tgz",
+      "integrity": "sha512-eSYWTm620tTk45EKSedaUL8MFYI8hW164hIXsgIHyxu3VobUB3fFCu5t0hQby6OoWRPsG1KkKUG2M5UadiLiVg==",
+      "repository": {
+        "url": "git+https://github.com/open-telemetry/opentelemetry-js.git",
+        "type": "git"
+      },
+      "git_head": "9b05f668ee7ab884a44b04b504e0baaff6c6d2b2",
+      "types_only": false,
+      "native_only": false,
+      "rank": 225
+    },
+    {
+      "name": "jsdom",
+      "downloads": 114686955,
+      "updated": "2026-10-13T21:35:31.888Z",
+      "version": "30.1.2",
+      "tarball": "https://registry.npmjs.org/jsdom/-/jsdom-30.1.2.tgz",
+      "integrity": "sha512-0FFE/jE1rppmVfUrJUgxqXjcwolZYIGtAgj1pTussMhNZxIxi7W/PvfWaMNroGi2B36X1IKHbexpZ9DhkoOPiQ==",
+      "repository": {
+        "url": "git+https://github.com/jsdom/jsdom.git",
+        "type": "git"
+      },
+      "git_head": "a23bfb72b5a3fc776db51ae1bccabf46af8a9e38",
+      "types_only": false,
+      "native_only": false,
+      "rank": 226
+    },
+    {
+      "name": "@eslint/config-helpers",
+      "downloads": 114202551,
+      "updated": "2026-10-13T21:43:18.058Z",
+      "version": "0.7.0",
+      "tarball": "https://registry.npmjs.org/@eslint/config-helpers/-/config-helpers-0.7.0.tgz",
+      "integrity": "sha512-DObd/KKUsU+FaFv4PLxSRenpXfQWmPXXP3pPZ6/K1PCrMu2vQpMDMuQe/BqYeoLcz8ro0bVDF1RxOJgfVEdhUw==",
+      "repository": {
+        "url": "git+https://github.com/eslint/rewrite.git",
+        "type": "git",
+        "directory": "packages/config-helpers"
+      },
+      "git_head": "e427207b50d8d846e50fabf7a9747f66ec4b86c1",
+      "types_only": false,
+      "native_only": false,
+      "rank": 227
+    },
+    {
+      "name": "jackspeak",
+      "downloads": 114132293,
+      "updated": "2026-10-13T21:42:49.903Z",
+      "version": "4.2.3",
+      "tarball": "https://registry.npmjs.org/jackspeak/-/jackspeak-4.2.3.tgz",
+      "integrity": "sha512-ykkVRwrYvFm1nb2AJfKKYPr0emF6IiXDYUaFx4Zn9ZuIH7MrzEZ3sD5RlqGXNRpHtvUHJyOnCEFxOlNDtGo7wg==",
+      "repository": {
+        "url": "git+https://github.com/isaacs/jackspeak.git",
+        "type": "git"
+      },
+      "git_head": "a58b42f39e2fb04b28b8169005a5ddbc3302730e",
+      "types_only": false,
+      "native_only": false,
+      "rank": 228
+    },
+    {
+      "name": "playwright",
+      "downloads": 113562399,
+      "updated": "2026-10-14T11:55:30.485Z",
+      "version": "1.64.1",
+      "tarball": "https://registry.npmjs.org/playwright/-/playwright-1.64.1.tgz",
+      "integrity": "sha512-HCrVhHr5QQuwYoswEUGTb7gGp522yflbv/ST8nF4sFWGuLjQCt17Q/EubpGGSNKYn1tsTCPZxqHhHCfVURu7UA==",
+      "repository": {
+        "url": "git+https://github.com/microsoft/playwright.git",
+        "type": "git"
+      },
+      "git_head": "cfe490d941f992655948eee8fd4fd94e1c4234bf",
+      "types_only": false,
+      "native_only": false,
+      "rank": 229
+    },
+    {
+      "name": "anymatch",
+      "downloads": 113163842,
+      "updated": "2026-10-13T21:38:53.531Z",
+      "version": "3.1.3",
+      "tarball": "https://registry.npmjs.org/anymatch/-/anymatch-3.1.3.tgz",
+      "integrity": "sha512-KMReFUr0B4t+D+OBkjR3KYqvocp2XaSzO55UcB6mgQMd3KbcE+mWTyvVV7D/zsdEbNnV6acZUutkiHQXvTr1Rw==",
+      "repository": {
+        "url": "git+https://github.com/micromatch/anymatch.git",
+        "type": "git"
+      },
+      "git_head": "cbd278e43710eaf325d2061fa11aefd127c509be",
+      "types_only": false,
+      "native_only": false,
+      "rank": 230
+    },
+    {
+      "name": "which-typed-array",
+      "downloads": 111078454,
+      "updated": "2026-10-13T21:38:13.198Z",
+      "version": "1.1.24",
+      "tarball": "https://registry.npmjs.org/which-typed-array/-/which-typed-array-1.1.24.tgz",
+      "integrity": "sha512-wk4Mf4pR5mRP7eYuuTBCIQ9d0ud2Fv2jRLQpfgnRjbOxAFHmjKFValgTpitVKzJJS8ajnYQV2Du1SZ8j6b/EUQ==",
+      "repository": {
+        "url": "git://github.com/inspect-js/which-typed-array.git",
+        "type": "git"
+      },
+      "git_head": "1e359f025d1b38f37f993fcb772d6fe266399002",
+      "types_only": false,
+      "native_only": false,
+      "rank": 231
+    },
+    {
+      "name": "foreground-child",
+      "downloads": 110262642,
+      "updated": "2026-10-13T21:36:20.884Z",
+      "version": "4.0.3",
+      "tarball": "https://registry.npmjs.org/foreground-child/-/foreground-child-4.0.3.tgz",
+      "integrity": "sha512-yeXZaNbCBGaT9giTpLPBdtedzjwhlJBUoL/R4BVQU5mn0TQXOHwVIl1Q2DMuBIdNno4ktA1abZ7dQFVxD6uHxw==",
+      "repository": {
+        "url": "git+https://github.com/tapjs/foreground-child.git",
+        "type": "git"
+      },
+      "git_head": "de12a3009f838474c389f9ff26db0f1804fd3c01",
+      "types_only": false,
+      "native_only": false,
+      "rank": 232
+    },
+    {
+      "name": "tar-stream",
+      "downloads": 109847424,
+      "updated": "2026-10-13T21:34:47.546Z",
+      "version": "3.2.2",
+      "tarball": "https://registry.npmjs.org/tar-stream/-/tar-stream-3.2.2.tgz",
+      "integrity": "sha512-+8NeqHRjQWH9nYlwo2gamAMImZCVzI4UoEgDpWorBt9OEfppiZn+uSkskzQKPWIZyji/C8fpWO7u69G0DX0tbg==",
+      "repository": {
+        "url": "git+https://github.com/mafintosh/tar-stream.git",
+        "type": "git"
+      },
+      "git_head": "d49f05b495b432d57042d461bd91036b58439c6a",
+      "types_only": false,
+      "native_only": false,
+      "rank": 233
+    },
+    {
+      "name": "@opentelemetry/instrumentation",
+      "downloads": 108794291,
+      "updated": "2026-10-13T21:43:47.740Z",
+      "version": "0.223.0",
+      "tarball": "https://registry.npmjs.org/@opentelemetry/instrumentation/-/instrumentation-0.223.0.tgz",
+      "integrity": "sha512-tttBo88TbwK1zpsH6VeJoxLQopxOjW3cnrP50fsQJRZftkSKDDwjolXXBvow2jy0LKXlNRkDQh0NT6yI/q+BEQ==",
+      "repository": {
+        "url": "git+https://github.com/open-telemetry/opentelemetry-js.git",
+        "type": "git"
+      },
+      "git_head": "92b844e8aa7d9655e4b3560154e912c4c1ced64d",
+      "types_only": false,
+      "native_only": false,
+      "rank": 234
+    },
+    {
+      "name": "lucide-react",
+      "downloads": 108605339,
+      "updated": "2026-10-14T06:12:15.609Z",
+      "version": "1.57.0",
+      "tarball": "https://registry.npmjs.org/lucide-react/-/lucide-react-1.57.0.tgz",
+      "integrity": "sha512-bXFZEucYhAzLD62Jse76AbTR6LiSLTn3Tqir2f1n8rZrWAdLodYy7jnRZSPIT89dRLk/IseMOUWG82wJtTyTTw==",
+      "repository": {
+        "url": "https://github.com/lucide-icons/lucide.git",
+        "type": "git",
+        "directory": "packages/lucide-react"
+      },
+      "git_head": null,
+      "types_only": false,
+      "native_only": false,
+      "rank": 235
+    },
+    {
+      "name": "@types/chai",
+      "downloads": 108458991,
+      "updated": "2026-10-13T21:38:28.074Z",
+      "version": "5.2.3",
+      "tarball": "https://registry.npmjs.org/@types/chai/-/chai-5.2.3.tgz",
+      "integrity": "sha512-Mw558oeA9fFbv65/y4mHtXDs9bPnFMZAL/jxdPFUpOHHIXX91mcgEHbS5Lahr+pwZFR8A7GQleRWeI6cGFC2UA==",
+      "repository": {
+        "url": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+        "type": "git",
+        "directory": "types/chai"
+      },
+      "git_head": null,
+      "types_only": true,
+      "native_only": false,
+      "rank": 236
+    },
+    {
+      "name": "is-regex",
+      "downloads": 107462727,
+      "updated": "2026-10-13T21:42:31.695Z",
+      "version": "1.2.1",
+      "tarball": "https://registry.npmjs.org/is-regex/-/is-regex-1.2.1.tgz",
+      "integrity": "sha512-MjYsKHO5O7mCsmRGxWcLWheFqN9DJ/2TmngvjKXihe6efViPqc274+Fx/4fYj/r03+ESvBdTXK0V6tA3rgez1g==",
+      "repository": {
+        "url": "git://github.com/inspect-js/is-regex.git",
+        "type": "git"
+      },
+      "git_head": "7c5a8cf9456d3cfe5e905bc620acb0e1bad61812",
+      "types_only": false,
+      "native_only": false,
+      "rank": 237
+    },
+    {
+      "name": "define-properties",
+      "downloads": 107142104,
+      "updated": "2026-10-13T21:39:17.710Z",
+      "version": "1.2.1",
+      "tarball": "https://registry.npmjs.org/define-properties/-/define-properties-1.2.1.tgz",
+      "integrity": "sha512-8QmQKqEASLd5nx0U1B1okLElbUuuttJ/AnYmRXbbbGDWh6uS208EjD4Xqq/I9wK7u0v6O08XhTWnt5XtEbR6Dg==",
+      "repository": {
+        "url": "git://github.com/ljharb/define-properties.git",
+        "type": "git"
+      },
+      "git_head": "d7a4db30214eb06d3997dc3e662c11dfe95b25bd",
+      "types_only": false,
+      "native_only": false,
+      "rank": 238
+    },
+    {
+      "name": "async",
+      "downloads": 106984658,
+      "updated": "2026-10-13T21:43:24.583Z",
+      "version": "3.2.6",
+      "tarball": "https://registry.npmjs.org/async/-/async-3.2.6.tgz",
+      "integrity": "sha512-htCUDlxyyCLMgaM3xXg0C0LW2xqfuQ6p05pCEIsXuyQ+a1koYKTuBMzRNwmybfLgvJDMd0r1LTn4+E0Ti6C2AA==",
+      "repository": {
+        "url": "git+https://github.com/caolan/async.git",
+        "type": "git"
+      },
+      "git_head": "85fb18f3d319d14d893ec24648929ff0eb908768",
+      "types_only": false,
+      "native_only": false,
+      "rank": 239
+    },
+    {
+      "name": "rxjs",
+      "downloads": 105759084,
+      "updated": "2026-10-13T21:41:34.481Z",
+      "version": "7.8.2",
+      "tarball": "https://registry.npmjs.org/rxjs/-/rxjs-7.8.2.tgz",
+      "integrity": "sha512-dhKf903U/PQZY6boNNtAGdWbG85WAbjT/1xYoZIC7FAY0yWapOBQVsVrDl58W86//e1VpMNBtRV4MaXfdMySFA==",
+      "repository": {
+        "url": "git+https://github.com/reactivex/rxjs.git",
+        "type": "git"
+      },
+      "git_head": "e5351d02e225e275ac0e497c7b66eaa5f0c88791",
+      "types_only": false,
+      "native_only": false,
+      "rank": 240
+    },
+    {
+      "name": "@rollup/rollup-linux-x64-gnu",
+      "downloads": 104007163,
+      "updated": "2026-10-13T21:41:08.463Z",
+      "version": "4.64.6",
+      "tarball": "https://registry.npmjs.org/@rollup/rollup-linux-x64-gnu/-/rollup-linux-x64-gnu-4.64.6.tgz",
+      "integrity": "sha512-05v6wFKDKJPZs9xlytVrrRu6IbRuoSvlH9xNwEOafXsKyjBFZPvAcZz2VIAB/M+lblYeKa9iOYC4RDVdfcAAaw==",
+      "repository": {
+        "url": "git+https://github.com/rollup/rollup.git",
+        "type": "git"
+      },
+      "git_head": "3ba51901a0f41d8e6d4152c407cba036fb599feb",
+      "types_only": false,
+      "native_only": false,
+      "rank": 241
+    },
+    {
+      "name": "domelementtype",
+      "downloads": 102928656,
+      "updated": "2026-10-13T21:42:22.526Z",
+      "version": "3.0.0",
+      "tarball": "https://registry.npmjs.org/domelementtype/-/domelementtype-3.0.0.tgz",
+      "integrity": "sha512-umCQid3jKbDmVjx8jGaW7uUykm4DEUeyV21hPxNMo2nV955DhUThwqyOIDtreepP31hl84X7G5U9ZfsWvIB3Pg==",
+      "repository": {
+        "url": "git://github.com/fb55/domelementtype.git",
+        "type": "git"
+      },
+      "git_head": "24f412faa78cc6abe547caa0cc39e9fe6387d65e",
+      "types_only": false,
+      "native_only": false,
+      "rank": 242
+    },
+    {
+      "name": "rollup",
+      "downloads": 102705702,
+      "updated": "2026-10-13T21:37:24.707Z",
+      "version": "4.64.6",
+      "tarball": "https://registry.npmjs.org/rollup/-/rollup-4.64.6.tgz",
+      "integrity": "sha512-fX1Vy+UNKdXn+xKDnu/HBXbHVr1AY8cSdQj9BU4kLv5aFCMqGpvrVbyUMmjN3DdzWhSAuTbcX8PCNEVaumthYA==",
+      "repository": {
+        "url": "git+https://github.com/rollup/rollup.git",
+        "type": "git"
+      },
+      "git_head": "3ba51901a0f41d8e6d4152c407cba036fb599feb",
+      "types_only": false,
+      "native_only": false,
+      "rank": 243
+    },
+    {
+      "name": "@types/babel__traverse",
+      "downloads": 102294958,
+      "updated": "2026-10-13T21:44:20.690Z",
+      "version": "7.28.0",
+      "tarball": "https://registry.npmjs.org/@types/babel__traverse/-/babel__traverse-7.28.0.tgz",
+      "integrity": "sha512-8PvcXf70gTDZBgt9ptxJ8elBeBjcLOAcOtoO/mPJjtji1+CdGbHgm77om1GrsPxsiE+uXIpNSK64UYaIwQXd4Q==",
+      "repository": {
+        "url": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+        "type": "git",
+        "directory": "types/babel__traverse"
+      },
+      "git_head": null,
+      "types_only": true,
+      "native_only": false,
+      "rank": 244
+    },
+    {
+      "name": "@img/sharp-linux-x64",
+      "downloads": 101783058,
+      "updated": "2026-10-13T21:41:32.148Z",
+      "version": "0.35.5",
+      "tarball": "https://registry.npmjs.org/@img/sharp-linux-x64/-/sharp-linux-x64-0.35.5.tgz",
+      "integrity": "sha512-SxFtLTeJInhAA9Q836kux2vZNeOBQEx658qvbboZScr0wIARym3IcGmW7KpVD5sbVg0Ojy+udFQdayYIZyoNog==",
+      "repository": {
+        "url": "git+https://github.com/lovell/sharp.git",
+        "type": "git",
+        "directory": "npm/linux-x64"
+      },
+      "git_head": "51a990faa26ade5586a4934ac9673c98d8893326",
+      "types_only": false,
+      "native_only": false,
+      "rank": 245
+    },
+    {
+      "name": "@aws-sdk/core",
+      "downloads": 101731663,
+      "updated": "2026-10-13T21:38:28.393Z",
+      "version": "3.978.3",
+      "tarball": "https://registry.npmjs.org/@aws-sdk/core/-/core-3.978.3.tgz",
+      "integrity": "sha512-nslpzUCTI9b2IQMWSd6mSAXldBexPc8rr0d3dXUutXYFLFaTdsHa2GD7sJdsn3PhyjK0O5K8ypd6zi+RXXPVlg==",
+      "repository": {
+        "url": "git+https://github.com/aws/aws-sdk-js-v3.git",
+        "type": "git",
+        "directory": "packages-internal/core"
+      },
+      "git_head": null,
+      "types_only": false,
+      "native_only": false,
+      "rank": 246
+    },
+    {
+      "name": "@vitest/snapshot",
+      "downloads": 101693007,
+      "updated": "2026-10-13T21:36:05.415Z",
+      "version": "5.0.4",
+      "tarball": "https://registry.npmjs.org/@vitest/snapshot/-/snapshot-5.0.4.tgz",
+      "integrity": "sha512-d5bPylmU0je1vWdcXTj9NnYghZvFE/7jhYZZcW4TCa+f3aazYDN4szksKfuHqKjBm7NwtSEPpeY52Zn7lYuqTA==",
+      "repository": {
+        "url": "git+https://github.com/vitest-dev/vitest.git",
+        "type": "git",
+        "directory": "packages/snapshot"
+      },
+      "git_head": null,
+      "types_only": false,
+      "native_only": false,
+      "rank": 247
+    },
+    {
+      "name": "@img/sharp-libvips-linux-x64",
+      "downloads": 101660576,
+      "updated": "2026-10-13T21:42:47.141Z",
+      "version": "1.3.4",
+      "tarball": "https://registry.npmjs.org/@img/sharp-libvips-linux-x64/-/sharp-libvips-linux-x64-1.3.4.tgz",
+      "integrity": "sha512-GJ//SSXbnwSDes02umB3nDJLFcQzw8a18V8fyhqr6tV515tOEMdImjjxj1AoafMRz56F3PHgftnj1QEKSU1zkw==",
+      "repository": {
+        "url": "git+https://github.com/lovell/sharp-libvips.git",
+        "type": "git",
+        "directory": "npm/linux-x64"
+      },
+      "git_head": "ebb95f8add54eee8bed840e3fb587e4cbec857d7",
+      "types_only": false,
+      "native_only": false,
+      "rank": 248
+    },
+    {
+      "name": "obug",
+      "downloads": 100945246,
+      "updated": "2026-10-13T21:38:49.904Z",
+      "version": "3.0.0",
+      "tarball": "https://registry.npmjs.org/obug/-/obug-3.0.0.tgz",
+      "integrity": "sha512-5vvB5+W7ePv+p3uqxi+RcW1XAzLW0/hxt3/4X4Lc4qHudzOhmBiBwOY6DRob4WnanAEGvNcLjF+KNOufrUoEQw==",
+      "repository": {
+        "url": "git+https://github.com/sxzz/obug.git",
+        "type": "git"
+      },
+      "git_head": null,
+      "types_only": false,
+      "native_only": false,
+      "rank": 249
+    },
+    {
+      "name": "safe-regex-test",
+      "downloads": 100438751,
+      "updated": "2026-10-13T21:37:15.480Z",
+      "version": "1.1.0",
+      "tarball": "https://registry.npmjs.org/safe-regex-test/-/safe-regex-test-1.1.0.tgz",
+      "integrity": "sha512-x/+Cz4YrimQxQccJf5mKEbIa1NzeCRNI5Ecl/ekmlYaampdNLPalVyIcCZNNH3MvmqBugV5TMYZXv0ljslUlaw==",
+      "repository": {
+        "url": "git+https://github.com/ljharb/safe-regex-test.git",
+        "type": "git"
+      },
+      "git_head": "ea4173e88d68d8e9a95717fa5548a3ea524c2dc9",
+      "types_only": false,
+      "native_only": false,
+      "rank": 250
+    },
+    {
+      "name": "path-type",
+      "downloads": 100016942,
+      "updated": "2026-10-13T21:44:38.200Z",
+      "version": "6.0.0",
+      "tarball": "https://registry.npmjs.org/path-type/-/path-type-6.0.0.tgz",
+      "integrity": "sha512-Vj7sf++t5pBD637NSfkxpHSMfWaeig5+DKWLhcqIYx6mWQz5hdJTGDVMQiJcw1ZYkhs7AazKDGpRVji1LJCZUQ==",
+      "repository": {
+        "url": "git+https://github.com/sindresorhus/path-type.git",
+        "type": "git"
+      },
+      "git_head": "e772400aa20cc9371fd70943e731a36b30cf8950",
+      "types_only": false,
+      "native_only": false,
+      "rank": 251
+    },
+    {
+      "name": "@types/babel__template",
+      "downloads": 99393961,
+      "updated": "2026-10-13T21:38:27.889Z",
+      "version": "7.4.4",
+      "tarball": "https://registry.npmjs.org/@types/babel__template/-/babel__template-7.4.4.tgz",
+      "integrity": "sha512-h/NUaSyG5EyxBIp8YRxo4RMe2/qQgvyowRwVMzhYhBCONbW8PUsg4lkFMrhgZhUe5z3L3MiLDuvyJ/CaPa2A8A==",
+      "repository": {
+        "url": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+        "type": "git",
+        "directory": "types/babel__template"
+      },
+      "git_head": null,
+      "types_only": true,
+      "native_only": false,
+      "rank": 252
+    },
+    {
+      "name": "fflate",
+      "downloads": 99318677,
+      "updated": "2026-10-13T21:42:16.776Z",
+      "version": "0.8.3",
+      "tarball": "https://registry.npmjs.org/fflate/-/fflate-0.8.3.tgz",
+      "integrity": "sha512-tbZNuJrLwGUp3zshBtdy4W+ORxZuIh8a5ilyIEQDC5rY1f3U20JMry0Ll3WBzU58EZKsEuJFXhb5gwv8CsPvgA==",
+      "repository": {
+        "url": "git+https://github.com/101arrowz/fflate.git",
+        "type": "git"
+      },
+      "git_head": null,
+      "types_only": false,
+      "native_only": false,
+      "rank": 253
+    },
+    {
+      "name": "date-fns",
+      "downloads": 97060305,
+      "updated": "2026-10-13T21:40:18.357Z",
+      "version": "4.4.0",
+      "tarball": "https://registry.npmjs.org/date-fns/-/date-fns-4.4.0.tgz",
+      "integrity": "sha512-+1UMbeh68lH1SegH83CGWwpb6OHHbpSgr3+s5Eww5M4CAgswBpoWS0AjTOfEJ33HiYKz1hdj/KTFprzXHmq/6w==",
+      "repository": "https://github.com/date-fns/date-fns",
+      "git_head": null,
+      "types_only": false,
+      "native_only": false,
+      "rank": 254
+    },
+    {
+      "name": "@vitejs/plugin-react",
+      "downloads": 96704463,
+      "updated": "2026-10-13T21:43:49.566Z",
+      "version": "6.1.2",
+      "tarball": "https://registry.npmjs.org/@vitejs/plugin-react/-/plugin-react-6.1.2.tgz",
+      "integrity": "sha512-fhJNGUdscQa4HkI0xFxwonWyhnVReCPDbXI7FH7jmzpnVCrFQI7PRrhWecO263610vOrs9tr2Y4xcf8uAdFxbw==",
+      "repository": {
+        "url": "git+https://github.com/vitejs/vite-plugin-react.git",
+        "type": "git",
+        "directory": "packages/plugin-react"
+      },
+      "git_head": "ac47648e17674299accb51816e9e33b8a7b07b05",
+      "types_only": false,
+      "native_only": false,
+      "rank": 255
+    },
+    {
+      "name": "resolve-pkg-maps",
+      "downloads": 96601110,
+      "updated": "2026-10-13T21:45:28.031Z",
+      "version": "1.0.0",
+      "tarball": "https://registry.npmjs.org/resolve-pkg-maps/-/resolve-pkg-maps-1.0.0.tgz",
+      "integrity": "sha512-seS2Tj26TBVOC2NIc2rOe2y2ZO7efxITtLZcGSOnHHNOQ7CkiUBfw0Iw2ck6xkIhPwLhKNLS8BO+hEpngQlqzw==",
+      "repository": {
+        "url": "git+https://github.com/privatenumber/resolve-pkg-maps.git",
+        "type": "git"
+      },
+      "git_head": "6d788049958514dbce52ef2bebc633f0ad336b51",
+      "types_only": false,
+      "native_only": false,
+      "rank": 256
+    },
+    {
+      "name": "ora",
+      "downloads": 96241110,
+      "updated": "2026-10-13T21:42:19.934Z",
+      "version": "9.4.1",
+      "tarball": "https://registry.npmjs.org/ora/-/ora-9.4.1.tgz",
+      "integrity": "sha512-6VlU9MLXbjVQD04AZCMX28hVtA5bUoadvUqO76MUCVA0ilwJbMiHsITRPfyVm6p/BC0Av/BXMujx39WCe1LEqw==",
+      "repository": {
+        "url": "git+https://github.com/sindresorhus/ora.git",
+        "type": "git"
+      },
+      "git_head": "79cd8c15ac34572cffb3ab53e3d4b6bab6d59ea8",
+      "types_only": false,
+      "native_only": false,
+      "rank": 257
+    },
+    {
+      "name": "eslint-plugin-react-hooks",
+      "downloads": 96094482,
+      "updated": "2026-10-13T21:40:13.757Z",
+      "version": "7.1.1",
+      "tarball": "https://registry.npmjs.org/eslint-plugin-react-hooks/-/eslint-plugin-react-hooks-7.1.1.tgz",
+      "integrity": "sha512-f2I7Gw6JbvCexzIInuSbZpfdQ44D7iqdWX01FKLvrPgqxoE7oMj8clOfto8U6vYiz4yd5oKu39rRSVOe1zRu0g==",
+      "repository": {
+        "url": "git+https://github.com/facebook/react.git",
+        "type": "git",
+        "directory": "packages/eslint-plugin-react-hooks"
+      },
+      "git_head": "1ddff43c41147b880c22eb363e07aade5a71c5d9",
+      "types_only": false,
+      "native_only": false,
+      "rank": 258
+    },
+    {
+      "name": "d3-path",
+      "downloads": 96072101,
+      "updated": "2026-10-13T21:36:29.449Z",
+      "version": "3.1.0",
+      "tarball": "https://registry.npmjs.org/d3-path/-/d3-path-3.1.0.tgz",
+      "integrity": "sha512-p3KP5HCf/bvjBSSKuXid6Zqijx7wIfNW+J/maPs+iwR35at5JCbLUT0LzF1cnjbCHWhqzQTIN2Jpe8pRebIEFQ==",
+      "repository": {
+        "url": "git+https://github.com/d3/d3-path.git",
+        "type": "git"
+      },
+      "git_head": "58bce7a53df2b03f70092a9b00b78055c4ffee04",
+      "types_only": false,
+      "native_only": false,
+      "rank": 259
+    },
+    {
+      "name": "is-number-object",
+      "downloads": 93631533,
+      "updated": "2026-10-13T21:36:55.822Z",
+      "version": "1.1.1",
+      "tarball": "https://registry.npmjs.org/is-number-object/-/is-number-object-1.1.1.tgz",
+      "integrity": "sha512-lZhclumE1G6VYD8VHe35wFaIif+CTy5SJIi5+3y4psDgWu4wPDoBhF8NxUOinEc7pHgiTsT6MaBb92rKhhD+Xw==",
+      "repository": {
+        "url": "git://github.com/inspect-js/is-number-object.git",
+        "type": "git"
+      },
+      "git_head": "faf886f4703b8d38c1aef8a6117b9c6977eed1e5",
+      "types_only": false,
+      "native_only": false,
+      "rank": 260
+    },
+    {
+      "name": "is-string",
+      "downloads": 92717301,
+      "updated": "2026-10-13T21:45:03.346Z",
+      "version": "1.1.1",
+      "tarball": "https://registry.npmjs.org/is-string/-/is-string-1.1.1.tgz",
+      "integrity": "sha512-BtEeSsoaQjlSPBemMQIrY1MY0uM6vnS1g5fmufYOtnxLGUZM2178PKbhsk7Ffv58IX+ZtcvoGwccYsh0PglkAA==",
+      "repository": {
+        "url": "git://github.com/inspect-js/is-string.git",
+        "type": "git"
+      },
+      "git_head": "fbbcdaed74d18b6b6899b0a6e6310f5ce31d70c7",
+      "types_only": false,
+      "native_only": false,
+      "rank": 261
+    },
+    {
+      "name": "which-boxed-primitive",
+      "downloads": 92246433,
+      "updated": "2026-10-13T21:42:27.806Z",
+      "version": "1.1.1",
+      "tarball": "https://registry.npmjs.org/which-boxed-primitive/-/which-boxed-primitive-1.1.1.tgz",
+      "integrity": "sha512-TbX3mj8n0odCBFVlY8AxkqcHASw3L60jIuF8jFP78az3C2YhmGvqbHBpAjTRH2/xqYunrJ9g1jSyjCjpoWzIAA==",
+      "repository": {
+        "url": "git+https://github.com/inspect-js/which-boxed-primitive.git",
+        "type": "git"
+      },
+      "git_head": "3cb1edfed48c1a749cb497fa05b8b3971f798613",
+      "types_only": false,
+      "native_only": false,
+      "rank": 262
+    },
+    {
+      "name": "typed-array-buffer",
+      "downloads": 92240842,
+      "updated": "2026-10-13T21:43:31.421Z",
+      "version": "1.0.3",
+      "tarball": "https://registry.npmjs.org/typed-array-buffer/-/typed-array-buffer-1.0.3.tgz",
+      "integrity": "sha512-nAYYwfY3qnzX30IkA6AQZjVbtK6duGontcQm1WSG1MD94YLqK0515GNApXkoxKOWMusVssAHWLh9SeaoefYFGw==",
+      "repository": {
+        "url": "git+https://github.com/inspect-js/typed-array-buffer.git",
+        "type": "git"
+      },
+      "git_head": "348782b05f29ff3d7a4d947a56fc02c2d87fd83a",
+      "types_only": false,
+      "native_only": false,
+      "rank": 263
+    },
+    {
+      "name": "@img/colour",
+      "downloads": 91618104,
+      "updated": "2026-10-13T21:45:13.609Z",
+      "version": "1.1.0",
+      "tarball": "https://registry.npmjs.org/@img/colour/-/colour-1.1.0.tgz",
+      "integrity": "sha512-Td76q7j57o/tLVdgS746cYARfSyxk8iEfRxewL9h4OMzYhbW4TAcppl0mT4eyqXddh6L/jwoM75mo7ixa/pCeQ==",
+      "repository": {
+        "url": "git+https://github.com/lovell/colour.git",
+        "type": "git"
+      },
+      "git_head": "179fa91fbdb8786b661f6bfb2b6de2885d4860f8",
+      "types_only": false,
+      "native_only": false,
+      "rank": 264
+    },
+    {
+      "name": "is-shared-array-buffer",
+      "downloads": 91593086,
+      "updated": "2026-10-13T21:43:50.948Z",
+      "version": "1.0.4",
+      "tarball": "https://registry.npmjs.org/is-shared-array-buffer/-/is-shared-array-buffer-1.0.4.tgz",
+      "integrity": "sha512-ISWac8drv4ZGfwKl5slpHG9OwPNty4jOWPRIhBpxOoD+hqITiwuipOQ2bNthAzwA3B4fIjO4Nln74N0S9byq8A==",
+      "repository": {
+        "url": "git+https://github.com/inspect-js/is-shared-array-buffer.git",
+        "type": "git"
+      },
+      "git_head": "ded256fbfa78fdc7954959671930e71417f4fa7c",
+      "types_only": false,
+      "native_only": false,
+      "rank": 265
+    },
+    {
+      "name": "@types/yargs",
+      "downloads": 90395201,
+      "updated": "2026-10-13T21:42:17.995Z",
+      "version": "17.0.35",
+      "tarball": "https://registry.npmjs.org/@types/yargs/-/yargs-17.0.35.tgz",
+      "integrity": "sha512-qUHkeCyQFxMXg79wQfTtfndEC+N9ZZg76HJftDJp+qH2tV7Gj4OJi7l+PiWwJ+pWtW8GwSmqsDj/oymhrTWXjg==",
+      "repository": {
+        "url": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+        "type": "git",
+        "directory": "types/yargs"
+      },
+      "git_head": null,
+      "types_only": true,
+      "native_only": false,
+      "rank": 266
+    },
+    {
+      "name": "globby",
+      "downloads": 89837630,
+      "updated": "2026-10-13T21:36:09.556Z",
+      "version": "16.2.4",
+      "tarball": "https://registry.npmjs.org/globby/-/globby-16.2.4.tgz",
+      "integrity": "sha512-c8B/VNLmxRcmqqenRA9t+9IyOjf9+V6lTxPaUJLqOCONdQkWZ0ETYgX0qbtJqPsgCNusT9MZ5Jeidw8Eb9tn2g==",
+      "repository": {
+        "url": "git+https://github.com/sindresorhus/globby.git",
+        "type": "git"
+      },
+      "git_head": "46cf13ff8bf5f0e0db96c4985faf83a59d194777",
+      "types_only": false,
+      "native_only": false,
+      "rank": 267
+    },
+    {
+      "name": "@aws-sdk/xml-builder",
+      "downloads": 89807977,
+      "updated": "2026-10-13T21:35:57.278Z",
+      "version": "3.972.41",
+      "tarball": "https://registry.npmjs.org/@aws-sdk/xml-builder/-/xml-builder-3.972.41.tgz",
+      "integrity": "sha512-ctjVSyCMegrWfXlx6VqzSBFI6UqmQ5ZlnfMhdLIiWmhoH8UAQxSCP5N3OpG7X3k4LnS7ou74C4mt20+bfTW2aQ==",
+      "repository": {
+        "url": "git+https://github.com/aws/aws-sdk-js-v3.git",
+        "type": "git",
+        "directory": "packages-internal/xml-builder"
+      },
+      "git_head": null,
+      "types_only": false,
+      "native_only": false,
+      "rank": 268
+    },
+    {
+      "name": "typescript-eslint",
+      "downloads": 89734018,
+      "updated": "2026-10-13T21:38:11.827Z",
+      "version": "8.71.2",
+      "tarball": "https://registry.npmjs.org/typescript-eslint/-/typescript-eslint-8.71.2.tgz",
+      "integrity": "sha512-Rz4effbMy2g9wnvOJZG6SbVavX313Lap1vNEbk1RUochzickvzP8P4HB+bkNg5e50eVz1hQGjh9K1omI1xB4Bw==",
+      "repository": {
+        "url": "https://github.com/typescript-eslint/typescript-eslint.git",
+        "type": "git",
+        "directory": "packages/typescript-eslint"
+      },
+      "git_head": null,
+      "types_only": false,
+      "native_only": false,
+      "rank": 269
+    },
+    {
+      "name": "google-logging-utils",
+      "downloads": 89675037,
+      "updated": "2026-10-13T21:39:14.900Z",
+      "version": "2.1.0",
+      "tarball": "https://registry.npmjs.org/google-logging-utils/-/google-logging-utils-2.1.0.tgz",
+      "integrity": "sha512-1R6uiq6XhXW2ZrcGtZpGgVDsYGzSmveVOn8Pp37qe1fbThHZ34e3t3eXj5mVu6PFSVx9fvB1KNVnYgVtq/BRcA==",
+      "repository": {
+        "url": "git+https://github.com/googleapis/google-cloud-node.git",
+        "type": "git",
+        "directory": "core/packages/logging-utils"
+      },
+      "git_head": null,
+      "types_only": false,
+      "native_only": false,
+      "rank": 270
+    },
+    {
+      "name": "@aws-sdk/nested-clients",
+      "downloads": 89598542,
+      "updated": "2026-10-13T21:38:28.036Z",
+      "version": "3.997.48",
+      "tarball": "https://registry.npmjs.org/@aws-sdk/nested-clients/-/nested-clients-3.997.48.tgz",
+      "integrity": "sha512-B01jdXJtAW/XOiUzGdI2mz67WyEHbGEc9X6Euzw3bjLAa+txTqdZDER4X2FsIEcXzV2ABqudVZ5thali8tCCzQ==",
+      "repository": {
+        "url": "git+https://github.com/aws/aws-sdk-js-v3.git",
+        "type": "git",
+        "directory": "packages/nested-clients"
+      },
+      "git_head": null,
+      "types_only": false,
+      "native_only": false,
+      "rank": 271
+    },
+    {
+      "name": "is-array-buffer",
+      "downloads": 89382676,
+      "updated": "2026-10-13T21:42:13.296Z",
+      "version": "3.0.5",
+      "tarball": "https://registry.npmjs.org/is-array-buffer/-/is-array-buffer-3.0.5.tgz",
+      "integrity": "sha512-DDfANUiiG2wC1qawP66qlTugJeL5HyzMpfr8lLK+jMQirGzNod0B12cFB/9q838Ru27sBwfw78/rdoU7RERz6A==",
+      "repository": {
+        "url": "git+https://github.com/inspect-js/is-array-buffer.git",
+        "type": "git"
+      },
+      "git_head": "415b6eb1aae305496f376f008e4cf77da0a4d778",
+      "types_only": false,
+      "native_only": false,
+      "rank": 272
+    },
+    {
+      "name": "@radix-ui/react-id",
+      "downloads": 88925173,
+      "updated": "2026-10-13T21:43:01.085Z",
+      "version": "1.1.4",
+      "tarball": "https://registry.npmjs.org/@radix-ui/react-id/-/react-id-1.1.4.tgz",
+      "integrity": "sha512-TMQp2llA+RYn7JcjnrMnz7wN4pcVttPZnRZo52PLQsoLVKzNlVwUeHmfePgTgRluXFvlD3GD5g5MOVVTJCO0qA==",
+      "repository": {
+        "url": "git+https://github.com/radix-ui/primitives.git",
+        "type": "git",
+        "directory": "packages/react/id"
+      },
+      "git_head": null,
+      "types_only": false,
+      "native_only": false,
+      "rank": 273
+    },
+    {
+      "name": "array-buffer-byte-length",
+      "downloads": 88849848,
+      "updated": "2026-10-13T21:40:46.939Z",
+      "version": "1.0.2",
+      "tarball": "https://registry.npmjs.org/array-buffer-byte-length/-/array-buffer-byte-length-1.0.2.tgz",
+      "integrity": "sha512-LHE+8BuR7RYGDKvnrmcuSq3tDcKv9OFEXQt/HpbZhY7V6h0zlUXutnAD82GiFx9rdieCMjkvtcsPqBwgUl1Iiw==",
+      "repository": {
+        "url": "git+https://github.com/inspect-js/array-buffer-byte-length.git",
+        "type": "git"
+      },
+      "git_head": "59deea89141b4aeeb64122e5e15efda485942c00",
+      "types_only": false,
+      "native_only": false,
+      "rank": 274
+    },
+    {
+      "name": "ajv-keywords",
+      "downloads": 88476833,
+      "updated": "2026-10-13T21:35:57.546Z",
+      "version": "5.1.0",
+      "tarball": "https://registry.npmjs.org/ajv-keywords/-/ajv-keywords-5.1.0.tgz",
+      "integrity": "sha512-YCS/JNFAUyr5vAuhk1DWm1CBxRHW9LbJ2ozWeemrIqpbsqKjHVxYPyi5GC0rjZIT5JxJ3virVTS8wk4i/Z+krw==",
+      "repository": {
+        "url": "git+https://github.com/epoberezkin/ajv-keywords.git",
+        "type": "git"
+      },
+      "git_head": "7703b7826a284b851edb6f0004d997e8bbe2581c",
+      "types_only": false,
+      "native_only": false,
+      "rank": 275
+    },
+    {
+      "name": "@floating-ui/react-dom",
+      "downloads": 88243447,
+      "updated": "2026-10-13T21:43:17.299Z",
+      "version": "2.1.9",
+      "tarball": "https://registry.npmjs.org/@floating-ui/react-dom/-/react-dom-2.1.9.tgz",
+      "integrity": "sha512-JDjEFGCpImxDCA7JJKviA0M9+RtmJdj0m/NVU5IMgBK+AmZouAQQ7/+2GLH0GXXY0YMw9oXPB8hKdbPYg5QLYg==",
+      "repository": {
+        "url": "git+https://github.com/floating-ui/floating-ui.git",
+        "type": "git",
+        "directory": "packages/react-dom"
+      },
+      "git_head": null,
+      "types_only": false,
+      "native_only": false,
+      "rank": 276
+    },
+    {
+      "name": "cors",
+      "downloads": 87580301,
+      "updated": "2026-10-13T21:37:54.273Z",
+      "version": "2.8.6",
+      "tarball": "https://registry.npmjs.org/cors/-/cors-2.8.6.tgz",
+      "integrity": "sha512-tJtZBBHA6vjIAaF6EnIaq6laBBP9aq/Y3ouVJjEfoHbRBcHBAHYcMh/w8LDrk2PvIMMq8gmopa5D4V8RmbrxGw==",
+      "repository": {
+        "url": "git+https://github.com/expressjs/cors.git",
+        "type": "git"
+      },
+      "git_head": "f00a8c1f0af727ffe5ed35f3b2d0b1a7eb4b65bb",
+      "types_only": false,
+      "native_only": false,
+      "rank": 277
+    },
+    {
+      "name": "is-binary-path",
+      "downloads": 86620090,
+      "updated": "2026-10-13T21:36:10.373Z",
+      "version": "3.0.0",
+      "tarball": "https://registry.npmjs.org/is-binary-path/-/is-binary-path-3.0.0.tgz",
+      "integrity": "sha512-eSkpSYbqKip82Uw4z0iBK/5KmVzL2pf36kNKRtu6+mKvrow9sqF4w5hocQ9yV5v+9+wzHt620x3B7Wws/8lsGg==",
+      "repository": {
+        "url": "git+https://github.com/sindresorhus/is-binary-path.git",
+        "type": "git"
+      },
+      "git_head": "193564a81d4eeea5a29ddde7609b601b4a44898c",
+      "types_only": false,
+      "native_only": false,
+      "rank": 278
+    },
+    {
+      "name": "eastasianwidth",
+      "downloads": 86119192,
+      "updated": "2026-10-13T21:44:41.796Z",
+      "version": "0.3.0",
+      "tarball": "https://registry.npmjs.org/eastasianwidth/-/eastasianwidth-0.3.0.tgz",
+      "integrity": "sha512-JqasYqGO32J2c91uYKdhu1vNmXGADaLB7OOgjAhjMvpjdvGb0tsYcuwn381MwqCg4YBQDtByQcNlFYuv2kmOug==",
+      "repository": {
+        "url": "git://github.com/komagata/eastasianwidth.git",
+        "type": "git"
+      },
+      "git_head": "e5ee638e2039093c924b60d8a2ba7c12c52549f8",
+      "types_only": false,
+      "native_only": false,
+      "rank": 279
+    },
+    {
+      "name": "react-refresh",
+      "downloads": 86000292,
+      "updated": "2026-10-13T21:34:47.836Z",
+      "version": "0.19.0",
+      "tarball": "https://registry.npmjs.org/react-refresh/-/react-refresh-0.19.0.tgz",
+      "integrity": "sha512-5HdstYgoJBbBofjapO5qCPcovECJCBfvjLb+iTcsmqDFVMRdqy0qs7iiInBJTUXmIFc2bjoc5b2HVLp2zRtYhQ==",
+      "repository": {
+        "url": "git+https://github.com/react/react.git",
+        "type": "git",
+        "directory": "packages/react"
+      },
+      "git_head": "1d34f91dfde6bba84d08b683aaba164c7194dacb",
+      "types_only": false,
+      "native_only": false,
+      "rank": 280
+    },
+    {
+      "name": "which-collection",
+      "downloads": 85610569,
+      "updated": "2026-10-13T21:43:46.956Z",
+      "version": "1.0.2",
+      "tarball": "https://registry.npmjs.org/which-collection/-/which-collection-1.0.2.tgz",
+      "integrity": "sha512-K4jVyjnBdgvc86Y6BkaLZEN933SwYOuBFkdmBu9ZfkcAbdVbpITnDmjvZ/aQjRXQrv5EPkTnD1s39GiiqbngCw==",
+      "repository": {
+        "url": "git+https://github.com/inspect-js/which-collection.git",
+        "type": "git"
+      },
+      "git_head": "c0320b4bd454be60d24a3e7bdd76b28df7484399",
+      "types_only": false,
+      "native_only": false,
+      "rank": 281
+    },
+    {
+      "name": "@testing-library/dom",
+      "downloads": 85373769,
+      "updated": "2026-10-13T21:43:02.323Z",
+      "version": "10.4.2",
+      "tarball": "https://registry.npmjs.org/@testing-library/dom/-/dom-10.4.2.tgz",
+      "integrity": "sha512-yzr2S9HyAIdhz2/6qHgbs665Q7PKVcDF05vsOlHPxG1mo36gKVesdYVeDLnXgfjJ03CrKRk08knc6+E/9m8v2Q==",
+      "repository": {
+        "url": "git+https://github.com/testing-library/dom-testing-library.git",
+        "type": "git"
+      },
+      "git_head": "6049cc0bc7cf2201625c476c95fa6299d0e2fa8b",
+      "types_only": false,
+      "native_only": false,
+      "rank": 282
+    },
+    {
+      "name": "@types/ms",
+      "downloads": 85093435,
+      "updated": "2026-10-13T21:37:03.654Z",
+      "version": "2.1.0",
+      "tarball": "https://registry.npmjs.org/@types/ms/-/ms-2.1.0.tgz",
+      "integrity": "sha512-GsCCIZDE/p3i96vtEqx+7dBUGXrc7zeSK3wwPHIaRThS+9OhWIXRqzs4d6k1SVU8g91DrNRWxWUGhp5KXQb2VA==",
+      "repository": {
+        "url": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+        "type": "git",
+        "directory": "types/ms"
+      },
+      "git_head": null,
+      "types_only": true,
+      "native_only": false,
+      "rank": 283
+    },
+    {
+      "name": "@tailwindcss/oxide-linux-x64-gnu",
+      "downloads": 83765233,
+      "updated": "2026-10-13T21:40:04.584Z",
+      "version": "4.3.3",
+      "tarball": "https://registry.npmjs.org/@tailwindcss/oxide-linux-x64-gnu/-/oxide-linux-x64-gnu-4.3.3.tgz",
+      "integrity": "sha512-tx7us1muwOKAKWao2v/GaafFeQboE6aj88vC6ziN2NCGcRm8gWUhwjzg+YdVB1e4boAtdtma4L43onunI6NS4w==",
+      "repository": {
+        "url": "git+https://github.com/tailwindlabs/tailwindcss.git",
+        "type": "git",
+        "directory": "crates/node/npm/linux-x64-gnu"
+      },
+      "git_head": null,
+      "types_only": false,
+      "native_only": false,
+      "rank": 284
+    },
+    {
+      "name": "is-async-function",
+      "downloads": 82478542,
+      "updated": "2026-10-13T21:35:37.262Z",
+      "version": "2.1.1",
+      "tarball": "https://registry.npmjs.org/is-async-function/-/is-async-function-2.1.1.tgz",
+      "integrity": "sha512-9dgM/cZBnNvjzaMYHVoxxfPj2QXt22Ev7SuuPrs+xav0ukGB0S6d4ydZdEiM48kLx5kDV+QBPrpVnFyefL8kkQ==",
+      "repository": {
+        "url": "git://github.com/inspect-js/is-async-function.git",
+        "type": "git"
+      },
+      "git_head": "287a194ca6f5d484ae3c29819c4b0ec876fe0eca",
+      "types_only": false,
+      "native_only": false,
+      "rank": 285
+    },
+    {
+      "name": "data-view-buffer",
+      "downloads": 82429603,
+      "updated": "2026-10-13T21:39:07.857Z",
+      "version": "1.0.2",
+      "tarball": "https://registry.npmjs.org/data-view-buffer/-/data-view-buffer-1.0.2.tgz",
+      "integrity": "sha512-EmKO5V3OLXh1rtK2wgXRansaK1/mtVdTUEiEI0W8RkvgT05kfxaH29PliLnpLP73yYO6142Q72QNa8Wx/A5CqQ==",
+      "repository": {
+        "url": "git+https://github.com/inspect-js/data-view-buffer.git",
+        "type": "git"
+      },
+      "git_head": "38603a5b40cc02824054ec549cbf4a14c96cca41",
+      "types_only": false,
+      "native_only": false,
+      "rank": 286
+    },
+    {
+      "name": "@pkgjs/parseargs",
+      "downloads": 81714549,
+      "updated": "2026-10-13T21:43:43.086Z",
+      "version": "0.11.0",
+      "tarball": "https://registry.npmjs.org/@pkgjs/parseargs/-/parseargs-0.11.0.tgz",
+      "integrity": "sha512-+1VkjdD0QBLPodGrJUeqarH8VAIvQODIbwh9XpP5Syisf7YoQgsJKPNFoqqLQlu+VQ/tVSshMR6loPMn8U+dPg==",
+      "repository": {
+        "url": "git+ssh://git@github.com/pkgjs/parseargs.git",
+        "type": "git"
+      },
+      "git_head": "1e3a94a5f8fd42e7b56ac4a672adcb224ee3c9ff",
+      "types_only": false,
+      "native_only": false,
+      "rank": 287
+    },
+    {
+      "name": "@aws-sdk/signature-v4-multi-region",
+      "downloads": 81650738,
+      "updated": "2026-10-13T21:35:57.880Z",
+      "version": "3.996.48",
+      "tarball": "https://registry.npmjs.org/@aws-sdk/signature-v4-multi-region/-/signature-v4-multi-region-3.996.48.tgz",
+      "integrity": "sha512-cFDXfEbXaGwbnpvR/DyqfxfjxpjXVRVthQLgkwvcfDS5u3+8G9WSj1X1Ag/pTRg/QOeOno1Tq3ycEdrKsCUcOA==",
+      "repository": {
+        "url": "git+https://github.com/aws/aws-sdk-js-v3.git",
+        "type": "git",
+        "directory": "packages/signature-v4-multi-region"
+      },
+      "git_head": null,
+      "types_only": false,
+      "native_only": false,
+      "rank": 288
+    },
+    {
+      "name": "minizlib",
+      "downloads": 81526950,
+      "updated": "2026-10-13T21:43:35.902Z",
+      "version": "3.1.0",
+      "tarball": "https://registry.npmjs.org/minizlib/-/minizlib-3.1.0.tgz",
+      "integrity": "sha512-KZxYo1BUkWD2TVFLr0MQoM8vUUigWD3LlD83a/75BqC+4qE0Hb1Vo5v1FgcfaNXvfXzr+5EhQ6ing/CaBijTlw==",
+      "repository": {
+        "url": "git+https://github.com/isaacs/minizlib.git",
+        "type": "git"
+      },
+      "git_head": "ccedc7697b72cad5543aa1690a4f9d04e083b1cc",
+      "types_only": false,
+      "native_only": false,
+      "rank": 289
+    },
+    {
+      "name": "@radix-ui/react-focus-scope",
+      "downloads": 81466807,
+      "updated": "2026-10-13T21:41:48.931Z",
+      "version": "1.3.1",
+      "tarball": "https://registry.npmjs.org/@radix-ui/react-focus-scope/-/react-focus-scope-1.3.1.tgz",
+      "integrity": "sha512-ugeMhbXt4y5S2T1GnIqbWDKEN962PDwnX1fN0eKOOgf5f63Dh2mn8F1FUySlgW0iF6GiVsRF32DzuDIWTUyQJg==",
+      "repository": {
+        "url": "git+https://github.com/radix-ui/primitives.git",
+        "type": "git",
+        "directory": "packages/react/focus-scope"
+      },
+      "git_head": null,
+      "types_only": false,
+      "native_only": false,
+      "rank": 290
+    },
+    {
+      "name": "d3-color",
+      "downloads": 80996992,
+      "updated": "2026-10-13T21:42:24.375Z",
+      "version": "3.1.0",
+      "tarball": "https://registry.npmjs.org/d3-color/-/d3-color-3.1.0.tgz",
+      "integrity": "sha512-zg/chbXyeBtMQ1LbD/WSoW2DpC3I0mpmPdW+ynRTj/x2DAWYrIY7qeZIHidozwV24m4iavr15lNwIwLxRmOxhA==",
+      "repository": {
+        "url": "git+https://github.com/d3/d3-color.git",
+        "type": "git"
+      },
+      "git_head": "7a1573ed260de4fd97d061975244841132adde92",
+      "types_only": false,
+      "native_only": false,
+      "rank": 291
+    },
+    {
+      "name": "ecdsa-sig-formatter",
+      "downloads": 80687207,
+      "updated": "2026-10-13T21:40:20.768Z",
+      "version": "1.0.11",
+      "tarball": "https://registry.npmjs.org/ecdsa-sig-formatter/-/ecdsa-sig-formatter-1.0.11.tgz",
+      "integrity": "sha512-nagl3RYrbNv6kQkeJIpt6NJZy8twLB/2vtz6yN9Z4vRKHN4/QZJIEbqohALSgwKdnksuY3k5Addp5lg8sVoVcQ==",
+      "repository": {
+        "url": "git+ssh://git@github.com/Brightspace/node-ecdsa-sig-formatter.git",
+        "type": "git"
+      },
+      "git_head": "c730235f4a54526f33f5309d80beb12ee298db6b",
+      "types_only": false,
+      "native_only": false,
+      "rank": 292
+    },
+    {
+      "name": "@babel/plugin-syntax-typescript",
+      "downloads": 80656518,
+      "updated": "2026-10-13T21:35:56.406Z",
+      "version": "8.0.3",
+      "tarball": "https://registry.npmjs.org/@babel/plugin-syntax-typescript/-/plugin-syntax-typescript-8.0.3.tgz",
+      "integrity": "sha512-jmTPwps7oSQSZaV1SxkQ3C12UWyufGysGc5OzDpZzvPAIX4mO7dJT3hoqkWVrSImvkcMiknir1iLN1SNV/CZzg==",
+      "repository": {
+        "url": "https://github.com/babel/babel.git",
+        "type": "git",
+        "directory": "packages/babel-plugin-syntax-typescript"
+      },
+      "git_head": null,
+      "types_only": false,
+      "native_only": false,
+      "rank": 293
+    },
+    {
+      "name": "@vitest/runner",
+      "downloads": 80628400,
+      "updated": "2026-10-13T21:37:58.601Z",
+      "version": "4.1.11",
+      "tarball": "https://registry.npmjs.org/@vitest/runner/-/runner-4.1.11.tgz",
+      "integrity": "sha512-LztvUgdwMNJMIkj3hQnnxiC2Xy1zNxq928W/xhjCLaNCzqTZOudjwbQf6v9IntZGPw132i2Lq2rgTRZHD3JHNw==",
+      "repository": {
+        "url": "git+https://github.com/vitest-dev/vitest.git",
+        "type": "git",
+        "directory": "packages/runner"
+      },
+      "git_head": null,
+      "types_only": false,
+      "native_only": false,
+      "rank": 294
+    },
+    {
+      "name": "@asamuzakjp/css-color",
+      "downloads": 80079431,
+      "updated": "2026-10-13T21:35:41.089Z",
+      "version": "7.1.5",
+      "tarball": "https://registry.npmjs.org/@asamuzakjp/css-color/-/css-color-7.1.5.tgz",
+      "integrity": "sha512-jCpAvj8apa7SKHZYogk0rbXB3Kb0hLFrpkWF+Ap+vBA5rirItnpv9NKyAyEuDuFizvl0qwnj6JWR70RGJ0rOlw==",
+      "repository": {
+        "url": "git+https://github.com/asamuzaK/cssColor.git",
+        "type": "git"
+      },
+      "git_head": "ae58bff66dbd58b0e2391661140cad23497721c1",
+      "types_only": false,
+      "native_only": false,
+      "rank": 295
+    },
+    {
+      "name": "json-schema",
+      "downloads": 79845240,
+      "updated": "2026-10-13T21:35:57.635Z",
+      "version": "0.4.0",
+      "tarball": "https://registry.npmjs.org/json-schema/-/json-schema-0.4.0.tgz",
+      "integrity": "sha512-es94M3nTIfsEPisRafak+HDLfHXnKBhV3vU5eqPcS3flIWqcxJWgXHXiey3YrpaNsanY5ei1VoYEbOzijuq9BA==",
+      "repository": {
+        "url": "git+ssh://git@github.com/kriszyp/json-schema.git",
+        "type": "git"
+      },
+      "git_head": "f6f6a3b02d667aa4ba2d5d50cc19208c4462abfa",
+      "types_only": false,
+      "native_only": false,
+      "rank": 296
+    },
+    {
+      "name": "@types/ws",
+      "downloads": 79640860,
+      "updated": "2026-10-13T21:43:20.342Z",
+      "version": "8.18.2",
+      "tarball": "https://registry.npmjs.org/@types/ws/-/ws-8.18.2.tgz",
+      "integrity": "sha512-67MQl+fpWKVTT1NYdnmo3U4sc/xPo/zQBncVnI74qmQa0z/b+1g6iYqNmGCPbxO+zz2aklb08a0oHfegiVd0/w==",
+      "repository": {
+        "url": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+        "type": "git",
+        "directory": "types/ws"
+      },
+      "git_head": null,
+      "types_only": true,
+      "native_only": false,
+      "rank": 297
+    },
+    {
+      "name": "@rollup/rollup-linux-x64-musl",
+      "downloads": 79131995,
+      "updated": "2026-10-13T21:42:53.254Z",
+      "version": "4.64.6",
+      "tarball": "https://registry.npmjs.org/@rollup/rollup-linux-x64-musl/-/rollup-linux-x64-musl-4.64.6.tgz",
+      "integrity": "sha512-wJXKcdMjvkc/FaavZXNP1yW4i0pfOmhZAIWRSLG2yJ0PB0TWi7dkLErhX0u0vptDcXKKO/m1Y/YTeuyvb2MXwg==",
+      "repository": {
+        "url": "git+https://github.com/rollup/rollup.git",
+        "type": "git"
+      },
+      "git_head": "3ba51901a0f41d8e6d4152c407cba036fb599feb",
+      "types_only": false,
+      "native_only": false,
+      "rank": 298
+    },
+    {
+      "name": "p-map",
+      "downloads": 78840913,
+      "updated": "2026-10-13T21:44:36.119Z",
+      "version": "7.1.1",
+      "tarball": "https://registry.npmjs.org/p-map/-/p-map-7.1.1.tgz",
+      "integrity": "sha512-6Lh3jQPLthYujSrlw6ccWXBGZTkoTCz27Hd92g79LH/kjAbgoEu0t442cCCNbegPSJsA0lwDX8z0bcKtkpA32g==",
+      "repository": {
+        "url": "git+https://github.com/sindresorhus/p-map.git",
+        "type": "git"
+      },
+      "git_head": "d61b6a33cc1d5533ad5711b435959f3f78c3d2fe",
+      "types_only": false,
+      "native_only": false,
+      "rank": 299
+    },
+    {
+      "name": "sisteransi",
+      "downloads": 78192625,
+      "updated": "2026-10-13T21:36:57.599Z",
+      "version": "2.0.0",
+      "tarball": "https://registry.npmjs.org/sisteransi/-/sisteransi-2.0.0.tgz",
+      "integrity": "sha512-2WCqLdt12eN6ehLI50S2/ZxoowXU3DD1KVPRyVP0WEsFahrGZZmCdq1K59qjJljMRIDTwx1D9YaRK+hDneBUMg==",
+      "repository": {
+        "url": "git+https://github.com/terkelg/sisteransi.git",
+        "type": "git"
+      },
+      "git_head": "305922fd6654df4c77d1e023aa6c55162958eccb",
+      "types_only": false,
+      "native_only": false,
+      "rank": 300
+    }
+  ],
+  "peer_context": {
+    "typescript": "6.0.3",
+    "reason": "Latest TypeScript 7 package is installed as typescript-under-test; ESLint packages require the supported TypeScript 6 JS compiler API."
+  }
+}

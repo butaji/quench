@@ -1,0 +1,25 @@
+    Checking quench-runtime v0.1.0 (/workspace/quench/crates/quench-runtime)
+error[E0308]: mismatched types
+   --> crates/quench-runtime/src/vm/eval.rs:121:58
+    |
+121 |                 .alloc(Cell::String(JsString::from_units(flag_units)));
+    |                                     -------------------- ^^^^^^^^^^ expected `&[u16]`, found `Vec<u16>`
+    |                                     |
+    |                                     arguments to this function are incorrect
+    |
+    = note: expected reference `&[u16]`
+                  found struct `std::vec::Vec<u16>`
+note: associated function defined here
+   --> crates/quench-runtime/src/vm/wtf16.rs:522:19
+    |
+522 |     pub(crate) fn from_units(units: &[u16]) -> Self {
+    |                   ^^^^^^^^^^ -------------
+help: consider borrowing here
+    |
+121 |                 .alloc(Cell::String(JsString::from_units(&flag_units)));
+    |                                                          +
+
+For more information about this error, try `rustc --explain E0308`.
+error: could not compile `quench-runtime` (lib) due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `quench-runtime` (lib test) due to 1 previous error

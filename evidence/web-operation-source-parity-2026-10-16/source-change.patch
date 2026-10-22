@@ -1,0 +1,753 @@
+diff --git a/crates/quench-node-test/node-tests/test-assignment-access-columns.js b/crates/quench-node-test/node-tests/test-assignment-access-columns.js
+new file mode 100644
+index 000000000..fdc81ab54
+--- /dev/null
++++ b/crates/quench-node-test/node-tests/test-assignment-access-columns.js
+@@ -0,0 +1,9 @@
++const out=[];Error.prepareStackTrace=(_,frames)=>frames.filter(f=>f.getFileName()===__filename).map(f=>[f.getLineNumber(),f.getColumnNumber()]);function Capture(){return new Error().stack}let got=[];const object={get go(){got.push(['get',Capture()]);return 1},set go(value){got.push(['set',Capture()])}};
++object.go=1;out.push(got);got=[];
++object['go']=1;out.push(got);got=[];
++object.go++;out.push(got);got=[];
++++object.go;out.push(got);got=[];
++object.go+=1;out.push(got);got=[];
++object['go']+=1;out.push(got);got=[];
++object.go||=1;out.push(got);got=[];
++console.log(JSON.stringify(out));
+diff --git a/crates/quench-node-test/node-tests/test-call-column-trivia.js b/crates/quench-node-test/node-tests/test-call-column-trivia.js
+new file mode 100644
+index 000000000..379fed5dd
+--- /dev/null
++++ b/crates/quench-node-test/node-tests/test-call-column-trivia.js
+@@ -0,0 +1,9 @@
++const out=[];Error.prepareStackTrace=(_,frames)=>frames.slice(0,2).map(f=>[f.getLineNumber(),f.getColumnNumber()]);function Capture(){return new Error().stack}const object={go:Capture};
++out.push(object['go'] /* ( comment ) */ ());
++out.push((object.go) /* ( comment ) */ ());
++out.push(object.go?. /* ( comment ) */ ());
++out.push(Capture /* ( comment ) */ ());
++out.push(object.go /* ( comment ) */ ());
++out.push(object['go']
++());
++console.log(JSON.stringify(out));
+diff --git a/crates/quench-node-test/node-tests/test-complex-call-columns.js b/crates/quench-node-test/node-tests/test-complex-call-columns.js
+new file mode 100644
+index 000000000..e19d9f9ad
+--- /dev/null
++++ b/crates/quench-node-test/node-tests/test-complex-call-columns.js
+@@ -0,0 +1,7 @@
++const out=[];Error.prepareStackTrace=(_,frames)=>frames.filter(f=>f.getFileName()===__filename).map(f=>[f.getLineNumber(),f.getColumnNumber()]);function Capture(){return new Error().stack}function factory(){return Capture}
++out.push(factory()());
++out.push(function(){return Capture()}());
++out.push((function(){return Capture()})());
++out.push((0,Capture)());
++out.push((()=>Capture())());
++console.log(JSON.stringify(out));
+diff --git a/crates/quench-node-test/node-tests/test-getter-call-columns.js b/crates/quench-node-test/node-tests/test-getter-call-columns.js
+new file mode 100644
+index 000000000..1a7efa0f9
+--- /dev/null
++++ b/crates/quench-node-test/node-tests/test-getter-call-columns.js
+@@ -0,0 +1,7 @@
++const out=[];Error.prepareStackTrace=(_,frames)=>frames.filter(f=>f.getFileName()===__filename).map(f=>[f.getLineNumber(),f.getColumnNumber()]);function Capture(){return new Error().stack}let got;const object={get go(){got=Capture();return Capture}};
++out.push(object.go(),got);
++out.push(object['go'](),got);
++out.push((object.go)(),got);
++out.push(object?.go(),got);
++out.push(object.go?.(),got);
++console.log(JSON.stringify(out));
+diff --git a/crates/quench-node-test/node-tests/test-optional-private-call-columns.js b/crates/quench-node-test/node-tests/test-optional-private-call-columns.js
+new file mode 100644
+index 000000000..e7f0664fe
+--- /dev/null
++++ b/crates/quench-node-test/node-tests/test-optional-private-call-columns.js
+@@ -0,0 +1,10 @@
++const out=[];Error.prepareStackTrace=(_,frames)=>frames.slice(0,2).map(f=>[f.getLineNumber(),f.getColumnNumber()]);function Capture(){return new Error().stack}const object={go:Capture};
++out.push(object?.go());
++out.push(object.go?.());
++out.push(object?.['go']());
++out.push(object['go']?.());
++out.push((object?.go)());
++out.push((object.go)?.());
++class Holder{#go=Capture;run(){return this.#go()}}
++out.push(new Holder().run());
++console.log(JSON.stringify(out));
+diff --git a/crates/quench-node-test/node-tests/test-property-access-columns.js b/crates/quench-node-test/node-tests/test-property-access-columns.js
+new file mode 100644
+index 000000000..07b909ec2
+--- /dev/null
++++ b/crates/quench-node-test/node-tests/test-property-access-columns.js
+@@ -0,0 +1,11 @@
++const out=[];Error.prepareStackTrace=(_,frames)=>frames.filter(f=>f.getFileName()===__filename).map(f=>[f.getLineNumber(),f.getColumnNumber()]);function Capture(){return new Error().stack}let got;const object={get go(){got=Capture();return 1},set go(value){got=Capture()}};
++void object.go;out.push(got);
++void object['go'];out.push(got);
++void object?.go;out.push(got);
++void object?.['go'];out.push(got);
++object.go=1;out.push(got);
++object['go']=1;out.push(got);
++object.go++;out.push(got);
++class Holder{get #go(){return Capture()}run(){return this.#go}call(){return this.#go()}}
++out.push(new Holder().run());
++console.log(JSON.stringify(out));
+diff --git a/crates/quench-node-test/node-tests/test-source-line-terminators.js b/crates/quench-node-test/node-tests/test-source-line-terminators.js
+new file mode 100644
+index 000000000..1af3bbb09
+--- /dev/null
++++ b/crates/quench-node-test/node-tests/test-source-line-terminators.js
+@@ -0,0 +1,6 @@
++const out=[],vm=require('vm');Error.prepareStackTrace=(_,frames)=>frames.filter(site=>site.getFileName()==='line-break.js').map(site=>[site.getLineNumber(),site.getColumnNumber()]);
++for(const separator of ['\r','\r\n','\u2028','\u2029']){
++ const source='(function(){'+separator+'const Capture=()=>new Error().stack;'+separator+"const hint='😀';return Capture()"+separator+'})()';
++ out.push(vm.runInThisContext(source,{filename:'line-break.js'}));
++}
++console.log(JSON.stringify(out));
+diff --git a/crates/quench-node-test/node-tests/test-special-call-columns.js b/crates/quench-node-test/node-tests/test-special-call-columns.js
+new file mode 100644
+index 000000000..1e9a224f3
+--- /dev/null
++++ b/crates/quench-node-test/node-tests/test-special-call-columns.js
+@@ -0,0 +1,6 @@
++const out=[];Error.prepareStackTrace=(_,frames)=>frames.filter(f=>f.getFileName()===__filename).map(f=>[f.getLineNumber(),f.getColumnNumber()]);function Capture(){return new Error().stack}
++function invoke(){return this()}
++out.push(invoke.call(Capture));
++class Derived extends Capture{constructor(){super()}}
++out.push(new Derived());
++console.log(JSON.stringify(out));
+diff --git a/crates/quench-node-test/tests/child_entry.rs b/crates/quench-node-test/tests/child_entry.rs
+index ec7a1b4ec..fc01063f6 100644
+--- a/crates/quench-node-test/tests/child_entry.rs
++++ b/crates/quench-node-test/tests/child_entry.rs
+@@ -9469,3 +9469,27 @@ fn callsite_columns_follow_member_parenthesized_and_constructor_call_syntax() {
+ fn util_call_sites_capture_actual_metadata_without_error_hooks_and_use_node_validation() {
+     compare_node_source_with_args(include_str!("../node-tests/test-util-real-call-sites.js"), &[]);
+ }
++
++#[test]
++fn optional_private_and_complex_call_columns_follow_actual_syntax_tokens() {
++    for source in [include_str!("../node-tests/test-optional-private-call-columns.js"), include_str!("../node-tests/test-call-column-trivia.js"), include_str!("../node-tests/test-complex-call-columns.js"), include_str!("../node-tests/test-special-call-columns.js")] {
++        compare_node_source_with_args(source, &[]);
++    }
++}
++
++#[test]
++fn getter_operation_columns_remain_distinct_from_call_continuations() {
++    compare_node_source_with_args(include_str!("../node-tests/test-getter-call-columns.js"), &[]);
++}
++
++#[test]
++fn property_reads_and_writes_capture_their_own_operation_positions() {
++    for source in [include_str!("../node-tests/test-property-access-columns.js"), include_str!("../node-tests/test-assignment-access-columns.js")] {
++        compare_node_source_with_args(source, &[]);
++    }
++}
++
++#[test]
++fn source_positions_use_javascript_line_terminators_and_utf16_columns() {
++    compare_node_source_with_args(include_str!("../node-tests/test-source-line-terminators.js"), &[]);
++}
+diff --git a/crates/quench-runtime/src/compile.rs b/crates/quench-runtime/src/compile.rs
+index db86c0d36..73282d34e 100644
+--- a/crates/quench-runtime/src/compile.rs
++++ b/crates/quench-runtime/src/compile.rs
+@@ -1552,6 +1552,7 @@ struct Compiler<'a> {
+     source: &'a str,
+     text: &'a str,
+     source_line_starts: Vec<usize>,
++    source_comments: Vec<Span>,
+     /// Byte offset of each non-ASCII character with the running excess of
+     /// UTF-8 bytes over UTF-16 units through it; columns count UTF-16 units.
+     source_utf16_excess: Vec<(usize, usize)>,
+@@ -1833,10 +1834,11 @@ impl<'a> Compiler<'a> {
+     ) -> Self {
+         let atoms = CompilerAtoms::new(atom_prefix);
+         let mut source_line_starts = vec![0];
+-        source_line_starts.extend(
+-            text.match_indices('\n')
+-                .map(|(index, _)| index.saturating_add(1)),
+-        );
++        source_line_starts.extend(text.char_indices().filter_map(|(index, character)| {
++            let crlf_prefix = character == '\r' && text.as_bytes().get(index + 1) == Some(&b'\n');
++            (matches!(character, '\n' | '\r' | '\u{2028}' | '\u{2029}') && !crlf_prefix)
++                .then_some(index + character.len_utf8())
++        }));
+         let mut excess = 0;
+         let source_utf16_excess = text
+             .char_indices()
+@@ -1850,6 +1852,7 @@ impl<'a> Compiler<'a> {
+             source,
+             text,
+             source_line_starts,
++            source_comments: Vec::new(),
+             source_utf16_excess,
+             mode,
+             root_strict: false,
+@@ -1876,6 +1879,27 @@ impl<'a> Compiler<'a> {
+         }
+     }
+ 
++    /// Locate a delimiter between OXC-owned expression boundaries. Comment text
++    /// is excluded using OXC's own spans, including comments containing delimiters.
++    fn source_delimiter(&self, start: u32, end: u32, delimiter: char) -> u32 {
++        let mut cursor = start as usize;
++        let end = (end as usize).min(self.text.len());
++        let mut comment = self.source_comments.partition_point(|span| span.end <= start);
++        while cursor < end {
++            if let Some(span) = self.source_comments.get(comment) {
++                if span.start as usize <= cursor && cursor < span.end as usize {
++                    cursor = span.end as usize;
++                    comment += 1;
++                    continue;
++                }
++            }
++            let Some(character) = self.text[cursor..end].chars().next() else { break; };
++            if character == delimiter { return cursor as u32; }
++            cursor += character.len_utf8();
++        }
++        start
++    }
++
+     fn source_position(&self, offset: u32) -> SourcePosition {
+         let offset = (offset as usize).min(self.text.len());
+         let line_index = self
+@@ -1905,6 +1929,7 @@ impl<'a> Compiler<'a> {
+         module_goal: bool,
+         inherited_strict: bool,
+     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
++        self.source_comments = program.comments.iter().map(|comment| comment.span).collect();
+         self.module_goal = module_goal;
+         let module_requests = if module_goal {
+             module_requests(&program.body)
+diff --git a/crates/quench-runtime/src/compile/ast/call.rs b/crates/quench-runtime/src/compile/ast/call.rs
+index 5ea52c583..0c7f804cb 100644
+--- a/crates/quench-runtime/src/compile/ast/call.rs
++++ b/crates/quench-runtime/src/compile/ast/call.rs
+@@ -1,6 +1,36 @@
+ use super::*;
+ 
+ impl FunctionCompiler<'_, '_> {
++    pub(super) fn with_source_offset<T>(&mut self, offset: u32, emit: impl FnOnce(&mut Self) -> T) -> T {
++        let position = self.owner.source_position(offset);
++        let previous = self.current_source_position.replace((position.line, position.column));
++        let result = emit(self);
++        self.current_source_position = previous;
++        result
++    }
++
++    pub(super) fn static_access_source_offset(&self, member: &StaticMemberExpression<'_>) -> u32 {
++        if member.optional {
++            self.owner.source_delimiter(member.object.span().end, member.span.end, '?')
++        } else { member.property.span.start }
++    }
++
++    pub(super) fn computed_access_source_offset(&self, member: &ComputedMemberExpression<'_>) -> u32 {
++        self.owner.source_delimiter(member.object.span().end, member.span.end, '[')
++    }
++
++    pub(super) fn call_source_offset(&self, call: &CallExpression<'_>) -> u32 {
++        if !call.optional {
++            match &call.callee {
++                Expression::Identifier(_) | Expression::Super(_) => return call.callee.span().start,
++                Expression::StaticMemberExpression(member) => return member.property.span.start,
++                _ => {}
++            }
++        }
++        let start = call.type_arguments.as_ref().map_or(call.callee.span().end, |arguments| arguments.span.end);
++        self.owner.source_delimiter(start, call.span.end, '(')
++    }
++
+     pub(super) fn throw_invalid_call_assignment(&mut self, call: &Expression<'_>) -> Register {
+         if self.strict {
+             self.owner
+@@ -418,13 +448,10 @@ impl FunctionCompiler<'_, '_> {
+         };
+         let atom = self.owner.atom(member.property.name.as_str());
+         let cache = self.owner.cache_site();
+-        self.emit(
+-            Op::GetField,
+-            callee,
+-            FieldBase::register(receiver).0,
+-            cache,
+-            atom,
+-        );
++        let source = self.static_access_source_offset(member);
++        self.with_source_offset(source, |compiler| compiler.emit(
++            Op::GetField, callee, FieldBase::register(receiver).0, cache, atom,
++        ));
+         if let Some(end) = end {
+             self.patch(end);
+         }
+@@ -448,7 +475,8 @@ impl FunctionCompiler<'_, '_> {
+             (self.reg(), None)
+         };
+         let key = self.expression_outside_optional_chain(&member.expression);
+-        self.emit(Op::GetIndex, callee, receiver, key, 0);
++        let source = self.computed_access_source_offset(member);
++        self.with_source_offset(source, |compiler| compiler.emit(Op::GetIndex, callee, receiver, key, 0));
+         if let Some(end) = end {
+             self.patch(end);
+         }
+@@ -469,13 +497,9 @@ impl FunctionCompiler<'_, '_> {
+         };
+         let atom = self.owner.private_name_atom(member.field.span);
+         let cache = self.owner.cache_site();
+-        self.emit(
+-            Op::GetField,
+-            callee,
+-            FieldBase::register(receiver).0,
+-            cache,
+-            atom,
+-        );
++        self.with_source_offset(member.field.span.start, |compiler| compiler.emit(
++            Op::GetField, callee, FieldBase::register(receiver).0, cache, atom,
++        ));
+         if let Some(end) = end {
+             self.patch(end);
+         }
+diff --git a/crates/quench-runtime/src/compile/ast/destructure.rs b/crates/quench-runtime/src/compile/ast/destructure.rs
+index 6c4be31b7..1221b9980 100644
+--- a/crates/quench-runtime/src/compile/ast/destructure.rs
++++ b/crates/quench-runtime/src/compile/ast/destructure.rs
+@@ -42,6 +42,8 @@ pub(super) enum AssignmentReference {
+ impl FunctionCompiler<'_, '_> {
+     pub(super) fn assignment(&mut self, value: &AssignmentExpression<'_>) -> Register {
+         if let Some(target) = value.left.as_simple_assignment_target() {
++            let write_source = self.owner.source_delimiter(value.left.span().end, value.right.span().start,
++                value.operator.as_str().chars().next().expect("assignment operator"));
+             let reference = self.prepare_assignment_reference(target);
+             if let AssignmentReference::Abrupt(result) = reference {
+                 return result;
+@@ -54,7 +56,7 @@ impl FunctionCompiler<'_, '_> {
+                 {
+                     self.emit(Op::SetFunctionName, right, 0, 0, name);
+                 }
+-                self.store_assignment_reference(reference, right);
++                self.with_source_offset(write_source, |compiler| compiler.store_assignment_reference(reference, right));
+                 return right;
+             }
+ 
+@@ -98,7 +100,7 @@ impl FunctionCompiler<'_, '_> {
+                     self.emit(Op::SetFunctionName, right, 0, 0, name);
+                 }
+                 self.emit(Op::Move, old, right, 0, 0);
+-                self.store_assignment_reference(reference, old);
++                self.with_source_offset(write_source, |compiler| compiler.store_assignment_reference(reference, old));
+                 self.patch(skip);
+                 return old;
+             }
+@@ -109,7 +111,7 @@ impl FunctionCompiler<'_, '_> {
+                 Operand::register(old),
+                 Operand::register(right),
+             );
+-            self.store_assignment_reference(reference, result);
++            self.with_source_offset(write_source, |compiler| compiler.store_assignment_reference(reference, result));
+             result
+         } else if value.operator == AssignmentOperator::Assign {
+             let right = self.expression(&value.right);
+diff --git a/crates/quench-runtime/src/compile/ast/expression.rs b/crates/quench-runtime/src/compile/ast/expression.rs
+index 78d1fbf30..cf9c3a2f3 100644
+--- a/crates/quench-runtime/src/compile/ast/expression.rs
++++ b/crates/quench-runtime/src/compile/ast/expression.rs
+@@ -10,11 +10,10 @@ impl FunctionCompiler<'_, '_> {
+ 
+     pub(crate) fn expression_with_debug_name(&mut self, expression: &Expression<'_>, debug_name: Option<Atom>) -> Register {
+         let start = match expression {
+-            Expression::CallExpression(call) => match &call.callee {
+-                Expression::StaticMemberExpression(member) => member.property.span.start,
+-                Expression::ComputedMemberExpression(_) | Expression::ParenthesizedExpression(_) => call.callee.span().end,
+-                _ => expression.span().start,
+-            },
++            Expression::CallExpression(call) => self.call_source_offset(call),
++            Expression::StaticMemberExpression(member) => self.static_access_source_offset(member),
++            Expression::ComputedMemberExpression(member) => self.computed_access_source_offset(member),
++            Expression::PrivateFieldExpression(member) => member.field.span.start,
+             _ => expression.span().start,
+         };
+         let position = self.owner.source_position(start);
+@@ -684,6 +683,17 @@ impl FunctionCompiler<'_, '_> {
+     }
+ 
+     pub(super) fn update(&mut self, value: &UpdateExpression<'_>, result_used: bool) -> Register {
++        let write_source = if value.prefix {
++            match &value.argument {
++                SimpleAssignmentTarget::StaticMemberExpression(member) => self.static_access_source_offset(member),
++                SimpleAssignmentTarget::ComputedMemberExpression(member) => self.computed_access_source_offset(member),
++                SimpleAssignmentTarget::PrivateFieldExpression(member) => member.field.span.start,
++                _ => value.argument.span().start,
++            }
++        } else {
++            self.owner.source_delimiter(value.argument.span().end, value.span.end,
++                value.operator.as_str().chars().next().expect("update operator"))
++        };
+         let last_operand = std::mem::take(&mut self.last_operand);
+         let reference = self.prepare_assignment_reference(&value.argument);
+         if let AssignmentReference::Abrupt(result) = reference {
+@@ -698,7 +708,7 @@ impl FunctionCompiler<'_, '_> {
+         // whose value is unused, increments the register in place.
+         if value.prefix && (last_operand || !result_used) && self.is_promoted_register(old) {
+             self.emit(Op::IncDec, old, old, 0, u32::from(value.operator as u8));
+-            self.store_assignment_reference(reference, old);
++            self.with_source_offset(write_source, |compiler| compiler.store_assignment_reference(reference, old));
+             return old;
+         }
+         // A postfix update whose value is used yields the old value after ToNumeric.
+@@ -717,7 +727,7 @@ impl FunctionCompiler<'_, '_> {
+             0,
+             u32::from(value.operator as u8),
+         );
+-        self.store_assignment_reference(reference, next);
++        self.with_source_offset(write_source, |compiler| compiler.store_assignment_reference(reference, next));
+         if value.prefix || !result_used {
+             next
+         } else {
+diff --git a/crates/quench-runtime/src/compile/ast/optional.rs b/crates/quench-runtime/src/compile/ast/optional.rs
+index 8d3ccd33e..1b8c33581 100644
+--- a/crates/quench-runtime/src/compile/ast/optional.rs
++++ b/crates/quench-runtime/src/compile/ast/optional.rs
+@@ -139,6 +139,16 @@ impl FunctionCompiler<'_, '_> {
+     }
+ 
+     fn chain_element_expression(&mut self, value: &ChainElement<'_>) -> Register {
++        let offset = match value {
++            ChainElement::StaticMemberExpression(member) => self.static_access_source_offset(member),
++            ChainElement::ComputedMemberExpression(member) => self.computed_access_source_offset(member),
++            ChainElement::PrivateFieldExpression(member) => member.field.span.start,
++            _ => return self.chain_element_at_current_position(value),
++        };
++        self.with_source_offset(offset, |compiler| compiler.chain_element_at_current_position(value))
++    }
++
++    fn chain_element_at_current_position(&mut self, value: &ChainElement<'_>) -> Register {
+         match value {
+             ChainElement::CallExpression(item) => self.optional_call(item),
+             ChainElement::TSNonNullExpression(item) => self.expression(&item.expression),
+@@ -200,6 +210,14 @@ impl FunctionCompiler<'_, '_> {
+     }
+ 
+     pub(super) fn optional_call(&mut self, value: &CallExpression<'_>) -> Register {
++        let position = self.owner.source_position(self.call_source_offset(value));
++        let previous = self.current_source_position.replace((position.line, position.column));
++        let result = self.optional_call_at_current_position(value);
++        self.current_source_position = previous;
++        result
++    }
++
++    fn optional_call_at_current_position(&mut self, value: &CallExpression<'_>) -> Register {
+         if matches!(&value.callee, Expression::Super(_)) {
+             return self.call(value);
+         }
+diff --git a/crates/quench-runtime/src/vm.rs b/crates/quench-runtime/src/vm.rs
+index 5326e6e4b..a719c0966 100644
+--- a/crates/quench-runtime/src/vm.rs
++++ b/crates/quench-runtime/src/vm.rs
+@@ -191,6 +191,8 @@ pub(super) struct Frame {
+     program: ProgramId,
+     function: u32,
+     pc: usize,
++    /// Whether pc is a saved continuation after a call rather than the executing operation.
++    pc_is_resume: bool,
+     // The current operation's lexical projection, independent of the PC
+     // published for GC roots or saved as the continuation after a call.
+     binding_site_pc: Option<u32>,
+@@ -241,6 +243,10 @@ impl Default for CaptureCache {
+ }
+ 
+ impl Frame {
++    fn source_instruction_pc(&self) -> usize {
++        if self.pc_is_resume { self.pc.saturating_sub(1) } else { self.pc }
++    }
++
+     fn empty(program: ProgramId, with_base: usize) -> Self {
+         Self {
+             context: CallContext::Internal,
+@@ -249,6 +255,7 @@ impl Frame {
+             program,
+             function: 0,
+             pc: 0,
++            pc_is_resume: true,
+             binding_site_pc: None,
+             env: Value::NULL,
+             this: Value::UNDEFINED,
+diff --git a/crates/quench-runtime/src/vm/activation.rs b/crates/quench-runtime/src/vm/activation.rs
+index f6205dbca..259524163 100644
+--- a/crates/quench-runtime/src/vm/activation.rs
++++ b/crates/quench-runtime/src/vm/activation.rs
+@@ -191,6 +191,7 @@ impl Continuation {
+             program: self.program,
+             function: self.function,
+             pc: self.pc,
++            pc_is_resume: true,
+             binding_site_pc: None,
+             env: self.env,
+             this: self.this,
+diff --git a/crates/quench-runtime/src/vm/dispatch.rs b/crates/quench-runtime/src/vm/dispatch.rs
+index a465a8bf1..a5fc6dfdc 100644
+--- a/crates/quench-runtime/src/vm/dispatch.rs
++++ b/crates/quench-runtime/src/vm/dispatch.rs
+@@ -78,6 +78,7 @@ impl<H: Host> Vm<H> {
+         let window = i.call_window();
+         let this = self.read(f, i.register_c());
+         self.frames[f].pc = pc;
++        self.frames[f].pc_is_resume = true;
+         self.profile.call_target(1, usize::from(window.count));
+         // Collection happens only at back edges, tail calls and explicit host safepoints, none
+         // of which can run while a frame is pushed; afterwards the new frame itself roots the
+@@ -211,6 +212,7 @@ impl<H: Host> Vm<H> {
+         }
+         self.profile.call_source(0);
+         self.frames[f].pc = pc;
++        self.frames[f].pc_is_resume = true;
+         self.profile.call_target(1, arguments.len());
+         let call_guard = self.push_general_user_frame(
+             p,
+@@ -1117,6 +1119,7 @@ impl<H: Host> Vm<H> {
+             Op::Jump => {
+                 *pc = i.jump_target() as usize;
+                 self.frames[f].pc = *pc;
++                self.frames[f].pc_is_resume = true;
+                 self.maybe_collect(p);
+             }
+             Op::JumpFalse => {
+@@ -1173,6 +1176,7 @@ impl<H: Host> Vm<H> {
+                 let callee = self.read(f, i.register_b());
+                 let caller = &mut *self.frames[f];
+                 caller.pc = *pc;
++                caller.pc_is_resume = true;
+                 debug_assert_eq!(caller.program, self.active_program);
+                 let direct_eval = i.direct_eval()
+                     && matches!(
+@@ -1339,6 +1343,7 @@ impl<H: Host> Vm<H> {
+                     return Ok(StepResult::Continue);
+                 }
+                 self.frames[f].pc = *pc;
++                self.frames[f].pc_is_resume = true;
+                 let call_guard = self.push_wasm_frame(
+                     p,
+                     f,
+@@ -1360,6 +1365,7 @@ impl<H: Host> Vm<H> {
+                 let parent = self.capture_env(f, 0).unwrap_or(self.frames[f].env);
+                 self.profile.call_target(1, usize::from(window.count));
+                 self.frames[f].pc = *pc;
++                self.frames[f].pc_is_resume = true;
+                 let terminal = i.returns_from_frame();
+                 if ((p.kind == crate::bytecode::ProgramKind::Wasm && i.returns_from_frame())
+                     || (p.kind != crate::bytecode::ProgramKind::Wasm
+@@ -1400,6 +1406,7 @@ impl<H: Host> Vm<H> {
+                 self.profile.call_source(2);
+                 let this = self.read(f, i.register_b());
+                 self.frames[f].pc = *pc;
++                self.frames[f].pc_is_resume = true;
+                 let value = self.call_method_site_safe(p, f, i.method_site_index(), this)?;
+                 if i.returns_from_frame() {
+                     self.profile.terminal_call(1);
+@@ -1417,6 +1424,7 @@ impl<H: Host> Vm<H> {
+                     self.frames[f].this
+                 };
+                 self.frames[f].pc = *pc;
++                self.frames[f].pc_is_resume = true;
+                 let value = self.call_method_site_safe(p, f, method_site, this)?;
+                 if i.returns_from_frame() {
+                     self.profile.terminal_call(2);
+@@ -1437,6 +1445,7 @@ impl<H: Host> Vm<H> {
+                     if let Some((id, env, this)) = self.inline_construct_target(p, f, callee) {
+                         let arguments: *const [Value] = self.register_window(f, window);
+                         self.frames[f].pc = *pc;
++                        self.frames[f].pc_is_resume = true;
+                         self.construct_target = Some(ConstructionTarget { callee, new_target: callee });
+                         // SAFETY: see `push_general_user_frame`; the window outlives callee setup.
+                         let pushed = self.push_general_user_frame(
+@@ -1470,6 +1479,7 @@ impl<H: Host> Vm<H> {
+                     }
+                 };
+                 self.frames[f].pc = *pc;
++                self.frames[f].pc_is_resume = true;
+                 let callee = self.read(f, i.register_b());
+                 let v = if i.is_super_construct() {
+                     self.construct_super_value(p, callee, &args)?
+diff --git a/crates/quench-runtime/src/vm/dispatch_fast.rs b/crates/quench-runtime/src/vm/dispatch_fast.rs
+index a8a6a3701..1e0ceb9a3 100644
+--- a/crates/quench-runtime/src/vm/dispatch_fast.rs
++++ b/crates/quench-runtime/src/vm/dispatch_fast.rs
+@@ -3127,6 +3127,7 @@ impl<H: Host> Vm<H> {
+             let call_pc = unsafe { activation.call.offset_from(activation.caller_base) } as usize;
+             let result = unsafe { (*activation.call).a };
+             self.frames[caller].pc = call_pc + 1;
++            self.frames[caller].pc_is_resume = true;
+             let count = usize::from(code.functions[activation.function as usize].registers);
+             let window = &registers[activation.window..activation.window + count];
+             let construct_this = activation
+@@ -3910,6 +3911,7 @@ fn lane_call_frame<H: Host>(ip: Ip) -> Ip {
+         return exit(ip);
+     };
+     vm.frames[caller].pc = call_pc + 1;
++    vm.frames[caller].pc_is_resume = true;
+     unsafe { &mut *(*cx).pending }.push(PendingGeneralCall {
+         caller,
+         caller_cursor: None,
+diff --git a/crates/quench-runtime/src/vm/dispatch_frame.rs b/crates/quench-runtime/src/vm/dispatch_frame.rs
+index 9581f78fa..94b63a850 100644
+--- a/crates/quench-runtime/src/vm/dispatch_frame.rs
++++ b/crates/quench-runtime/src/vm/dispatch_frame.rs
+@@ -245,6 +245,7 @@ impl<H: Host> Vm<H> {
+         frame.function = id;
+         frame.program = program;
+         frame.pc = 0;
++        frame.pc_is_resume = true;
+         frame.binding_site_pc = None;
+         frame.env = caller.env;
+         frame.this = Value::UNDEFINED;
+@@ -279,6 +280,7 @@ impl<H: Host> Vm<H> {
+         frame.function = id;
+         frame.program = program;
+         frame.pc = 0;
++        frame.pc_is_resume = true;
+         frame.binding_site_pc = None;
+         frame.env = self.frames[caller].env;
+         frame.this = Value::UNDEFINED;
+@@ -426,6 +428,7 @@ impl<H: Host> Vm<H> {
+         frame.function = id;
+         frame.program = self.active_program;
+         frame.pc = 0;
++        frame.pc_is_resume = true;
+         frame.binding_site_pc = None;
+         frame.env = parent;
+         frame.this = this;
+@@ -496,6 +499,7 @@ impl<H: Host> Vm<H> {
+         frame.function = id;
+         frame.program = self.active_program;
+         frame.pc = 0;
++        frame.pc_is_resume = true;
+         frame.binding_site_pc = None;
+         frame.env = parent;
+         let arrow = function.is_arrow;
+@@ -581,6 +585,7 @@ impl<H: Host> Vm<H> {
+         frame.program = self.active_program;
+         frame.function = id;
+         frame.pc = 0;
++        frame.pc_is_resume = true;
+         frame.binding_site_pc = None;
+         frame.env = parent;
+         let arrow = function.is_arrow;
+@@ -1246,6 +1251,7 @@ impl<H: Host> Vm<H> {
+             }
+             if STOPS && stop_pc == Some(pc) {
+                 self.frames[frame].pc = pc;
++                self.frames[frame].pc_is_resume = true;
+                 return Ok(FrameOutcome::ParameterInitializationComplete);
+             }
+             debug_assert_eq!(cursor.program, self.frames[frame].program);
+@@ -1507,6 +1513,7 @@ impl<H: Host> Vm<H> {
+             // for every iteration that dispatches it.
+             debug_assert!(std::ptr::eq(published_pc, &self.frames[frame].pc));
+             unsafe { *published_pc = instruction_pc };
++            self.frames[frame].pc_is_resume = false;
+             // Returns and inline calls produce their step result here rather than through the
+             // general `step` dispatch.
+             let step = match ins.op() {
+@@ -1564,6 +1571,7 @@ impl<H: Host> Vm<H> {
+                         break;
+                     }
+                     self.frames[frame].pc = pc;
++                    self.frames[frame].pc_is_resume = true;
+                     return Ok(FrameOutcome::Complete(value));
+                 },
+                 Ok(StepResult::Continue) => {}
+@@ -1620,6 +1628,7 @@ impl<H: Host> Vm<H> {
+                 Ok(StepResult::Await { value, destination }) => {
+                     debug_assert!(pending_calls.is_empty());
+                     self.frames[frame].pc = pc;
++                    self.frames[frame].pc_is_resume = true;
+                     return Ok(FrameOutcome::Await {
+                         value,
+                         destination,
+@@ -1633,6 +1642,7 @@ impl<H: Host> Vm<H> {
+                 }) => {
+                     debug_assert!(pending_calls.is_empty());
+                     self.frames[frame].pc = pc;
++                    self.frames[frame].pc_is_resume = true;
+                     return Ok(FrameOutcome::Yield {
+                         value,
+                         destination,
+@@ -1682,6 +1692,7 @@ impl<H: Host> Vm<H> {
+                 Ok(target) => return Ok((frame, target)),
+                 Err(unhandled) => {
+                     self.frames[frame].pc = pc;
++                    self.frames[frame].pc_is_resume = true;
+                     let Some(pending) = pending_calls.pop() else {
+                         return Err(unhandled);
+                     };
+diff --git a/crates/quench-runtime/src/vm/error.rs b/crates/quench-runtime/src/vm/error.rs
+index 4a7c0d8f3..340fb5add 100644
+--- a/crates/quench-runtime/src/vm/error.rs
++++ b/crates/quench-runtime/src/vm/error.rs
+@@ -545,7 +545,7 @@ impl<H: Host> Vm<H> {
+         }
+         let residual = self.programs.get(frame.program)?;
+         let function = residual.functions.get(frame.function as usize)?;
+-        let pc = u32::try_from(frame.pc.saturating_sub(1)).unwrap_or(u32::MAX);
++        let pc = u32::try_from(frame.source_instruction_pc()).unwrap_or(u32::MAX);
+         let position = residual.source_position(frame.function, pc)?;
+         let name = frame.context.callable().map_or_else(
+             || function.name.map_or(CallSiteName::Anonymous, |name| CallSiteName::Static(self.atom_value(name))),
+diff --git a/crates/quench-runtime/src/vm/generator.rs b/crates/quench-runtime/src/vm/generator.rs
+index 51143cd45..e8c9e6b99 100644
+--- a/crates/quench-runtime/src/vm/generator.rs
++++ b/crates/quench-runtime/src/vm/generator.rs
+@@ -113,6 +113,7 @@ impl<H: Host> Vm<H> {
+         frame.function = id;
+         frame.program = self.active_program;
+         frame.pc = 0;
++        frame.pc_is_resume = true;
+         frame.binding_site_pc = None;
+         frame.env = parent;
+         frame.this = self.call_this_value(this, function.strict)?;
+diff --git a/crates/quench-runtime/src/vm/tests.rs b/crates/quench-runtime/src/vm/tests.rs
+index d2a4097b4..12d9d0347 100644
+--- a/crates/quench-runtime/src/vm/tests.rs
++++ b/crates/quench-runtime/src/vm/tests.rs
+@@ -1495,6 +1495,7 @@ fn unrepresentable_register_maps_keep_the_conservative_frame_roots() {
+         program: super::program_store::ProgramId::MAIN,
+         function: 0,
+         pc: 0,
++        pc_is_resume: true,
+         binding_site_pc: None,
+         env: Value::NULL,
+         this: Value::UNDEFINED,
+@@ -4560,6 +4561,7 @@ fn pooled_frame_registers_are_reset_when_their_length_is_reused() {
+         program: super::program_store::ProgramId::MAIN,
+         function: 0,
+         pc: 0,
++        pc_is_resume: true,
+         binding_site_pc: None,
+         env: Value::NULL,
+         this: Value::UNDEFINED,
+@@ -6824,6 +6826,7 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
+                 program: super::program_store::ProgramId::MAIN,
+                 function: 0,
+                 pc: 0,
++                pc_is_resume: true,
+                 binding_site_pc: None,
+                 env,
+                 this: receiver,
+diff --git a/docs/node-host-contracts.md b/docs/node-host-contracts.md
+index 0787eec21..2357cddbb 100644
+--- a/docs/node-host-contracts.md
++++ b/docs/node-host-contracts.md
+@@ -67,9 +67,17 @@ identities, mapped filenames, positions and the column alias. Native helper
+ frames are excluded. Error CallSites and detailed capture share the source-frame
+ projection; host filename mapping stays an explicit mutable host boundary.
+ 
+-Call positions cover static member names and computed/parenthesized invocation
+-parentheses as well as existing identifier and constructor positions. Complete
+-optional-chain, eval/sourceURL, source-map and Node host-stack conformance remains
++The frame cursor explicitly distinguishes an executing guest-capable operation
++from a saved call continuation. Source inspection uses that state; GC root-map
++and lexical-binding projections keep their existing owners. General calls,
++materialized lane calls and restored activations preserve the distinction.
++
++Call positions use OXC expression/comment spans to identify method names and
++actual argument parentheses, including optional/private calls, returned
++functions, comments and line breaks. Property reads and writes have distinct
++operation positions, including assignments and updates. Source lines recognize
++all JavaScript line terminators and columns count UTF-16 units. Full fused
++sub-operation, eval/sourceURL, source-map and Node host-stack conformance remains
+ open. Source IDs denote actual compiled units; missing host frames are not
+ fabricated.
+ 

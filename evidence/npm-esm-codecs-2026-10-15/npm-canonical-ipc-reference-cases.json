@@ -1,0 +1,140 @@
+[
+  {
+    "methods": [
+      "unrefCounted"
+    ],
+    "expected_kept": true,
+    "engine": "node",
+    "exit": 0,
+    "stdout": "setup\nkept\n",
+    "stderr": ""
+  },
+  {
+    "methods": [
+      "unrefCounted"
+    ],
+    "expected_kept": true,
+    "engine": "quench",
+    "exit": 0,
+    "stdout": "setup\n",
+    "stderr": ""
+  },
+  {
+    "methods": [
+      "refCounted",
+      "unrefCounted"
+    ],
+    "expected_kept": false,
+    "engine": "node",
+    "exit": 0,
+    "stdout": "setup\n",
+    "stderr": ""
+  },
+  {
+    "methods": [
+      "refCounted",
+      "unrefCounted"
+    ],
+    "expected_kept": false,
+    "engine": "quench",
+    "exit": 0,
+    "stdout": "setup\n",
+    "stderr": ""
+  },
+  {
+    "methods": [
+      "refCounted",
+      "refCounted",
+      "unrefCounted"
+    ],
+    "expected_kept": true,
+    "engine": "node",
+    "exit": 0,
+    "stdout": "setup\nkept\n",
+    "stderr": ""
+  },
+  {
+    "methods": [
+      "refCounted",
+      "refCounted",
+      "unrefCounted"
+    ],
+    "expected_kept": true,
+    "engine": "quench",
+    "exit": 0,
+    "stdout": "setup\n",
+    "stderr": ""
+  },
+  {
+    "methods": [
+      "unref",
+      "refCounted",
+      "refCounted"
+    ],
+    "expected_kept": false,
+    "engine": "node",
+    "exit": 0,
+    "stdout": "setup\n",
+    "stderr": ""
+  },
+  {
+    "methods": [
+      "unref",
+      "refCounted",
+      "refCounted"
+    ],
+    "expected_kept": false,
+    "engine": "quench",
+    "exit": 0,
+    "stdout": "setup\n",
+    "stderr": ""
+  },
+  {
+    "methods": [
+      "ref",
+      "unrefCounted"
+    ],
+    "expected_kept": true,
+    "engine": "node",
+    "exit": 0,
+    "stdout": "setup\nkept\n",
+    "stderr": ""
+  },
+  {
+    "methods": [
+      "ref",
+      "unrefCounted"
+    ],
+    "expected_kept": true,
+    "engine": "quench",
+    "exit": 0,
+    "stdout": "setup\n",
+    "stderr": ""
+  },
+  {
+    "methods": [
+      "unrefCounted",
+      "refCounted",
+      "refCounted",
+      "unrefCounted"
+    ],
+    "expected_kept": false,
+    "engine": "node",
+    "exit": 0,
+    "stdout": "setup\n",
+    "stderr": ""
+  },
+  {
+    "methods": [
+      "unrefCounted",
+      "refCounted",
+      "refCounted",
+      "unrefCounted"
+    ],
+    "expected_kept": false,
+    "engine": "quench",
+    "exit": 0,
+    "stdout": "setup\n",
+    "stderr": ""
+  }
+]

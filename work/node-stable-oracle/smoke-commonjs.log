@@ -1,0 +1,36 @@
+TAP version 13
+1..2
+ok 1 /workspace/quench/work/node-stable-oracle-root/test/parallel/test-fs-glob-throw
+  ---
+  duration_ms: 80.14300
+  ...
+not ok 2 /workspace/quench/work/node-stable-oracle-root/test/parallel/test-abortcontroller
+  ---
+  duration_ms: 111.69600
+  severity: fail
+  exitcode: 7
+  stack: |-
+    node:internal/test_runner/harness:124
+          throw err;
+          ^
+    
+    Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/workspace/quench/test/common/test-error-reporter.js' imported from /workspace/quench/
+        at finalizeResolution (node:internal/modules/esm/resolve:241:11)
+        at moduleResolve (node:internal/modules/esm/resolve:846:10)
+        at defaultResolve (node:internal/modules/esm/resolve:973:11)
+        at #cachedDefaultResolve (node:internal/modules/esm/loader:752:20)
+        at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:772:38)
+        at ModuleLoader.resolveSync (node:internal/modules/esm/loader:810:56)
+        at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:651:27)
+        at node:internal/modules/esm/loader:683:32
+        at TracingChannel.tracePromise (node:diagnostics_channel:582:22)
+        at ModuleLoader.import (node:internal/modules/esm/loader:679:21) {
+      code: 'ERR_MODULE_NOT_FOUND',
+      url: 'file:///workspace/quench/test/common/test-error-reporter.js'
+    }
+    
+    Node.js v26.12.0
+  ...
+
+Failed tests:
+/workspace/quench/work/node-v26.12.0-linux-x64/bin/node --expose-gc --test-reporter=./test/common/test-error-reporter.js --test-reporter-destination=stdout /workspace/quench/work/node-stable-oracle-root/test/parallel/test-abortcontroller.js

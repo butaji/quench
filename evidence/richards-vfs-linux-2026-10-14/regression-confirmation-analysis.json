@@ -1,0 +1,62 @@
+{
+  "qualification": false,
+  "notes": "Eleven-round repeats of noisy three-round guard; raw setup-subtracted wall only, no available Linux counters.",
+  "fixtures": [
+    {
+      "fixture": "raytrace",
+      "valid": true,
+      "output_equal": true,
+      "median_change_pct": -0.8085667478230585,
+      "ci95_pct": [
+        -3.2639357800892888,
+        1.0023425665668606
+      ],
+      "wall_wins": 7,
+      "rss": {
+        "quench_baseline": 45273088,
+        "quench_candidate": 41136128
+      },
+      "ratios": [
+        0.9673606421991071,
+        0.9844532531716421,
+        0.958663854629762,
+        1.0100234256656686,
+        0.9728554954898313,
+        1.0115615672812477,
+        0.9533928128320701,
+        0.9952611327158478,
+        0.9919143325217694,
+        1.0112669058825339,
+        1.0057550492682317
+      ]
+    },
+    {
+      "fixture": "earley-boyer",
+      "valid": true,
+      "output_equal": true,
+      "median_change_pct": -0.7187594751688398,
+      "ci95_pct": [
+        -9.27120320253223,
+        3.499858250530541
+      ],
+      "wall_wins": 7,
+      "rss": {
+        "quench_baseline": 56901632,
+        "quench_candidate": 53235712
+      },
+      "ratios": [
+        1.0328855294046453,
+        0.9928124052483116,
+        0.9947964072304268,
+        0.9072879679746777,
+        1.1345147843664802,
+        0.9817484734589682,
+        1.0972947038347038,
+        1.0349985825053054,
+        0.8979157240305832,
+        0.8860704238566204,
+        0.9205093013647399
+      ]
+    }
+  ]
+}

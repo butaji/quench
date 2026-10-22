@@ -1,0 +1,22 @@
+[package]
+name = "npm-private-metadata-probe"
+version = "0.0.0"
+edition = "2024"
+[[bin]]
+name = "npm-private-metadata-probe"
+path = "../resolve-main.rs"
+[dependencies]
+oxc_allocator = "=0.153.0"
+oxc_parser = { version = "=0.153.0", default-features = false }
+oxc_span = "=0.153.0"
+oxc_semantic = "=0.153.0"
+oxc_ast = "=0.153.0"
+oxc_ast_visit = "=0.153.0"
+oxc_syntax = "=0.153.0"
+rustc-hash = "2"
+[profile.dev]
+debug = 0
+codegen-units = 16
+[patch.crates-io]
+oxc_parser = { path = "/workspace/scratch/quench-npm-file-url/vendor/oxc-parser" }
+oxc_regular_expression = { path = "/workspace/scratch/quench-npm-file-url/vendor/oxc-regular-expression" }

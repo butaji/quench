@@ -1,0 +1,81 @@
+{
+  "scope": "Complete unchanged pinned parallel inventory after original glob/Dirent policy and prepared realm-local SDK code",
+  "source_commit": "e9ec2e9c1372e8640ef1ab027bbe5f9a5f5e3e33",
+  "release": "v27.0.0-nightly20260819c79868f102",
+  "fixture_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+  "counts": {
+    "timeout": 79,
+    "fail": 2150,
+    "pass": 1821,
+    "skip": 677
+  },
+  "total": 4727,
+  "inventory_hash": "1e51ca4121020d14",
+  "baseline": {
+    "counts": {
+      "timeout": 81,
+      "fail": 2152,
+      "pass": 1817,
+      "skip": 677
+    },
+    "total": 4727,
+    "inventory_hash": "1e51ca4121020d14"
+  },
+  "gained": [
+    "test-fs-glob-throw.mjs",
+    "test-fs-glob.mjs",
+    "test-icu-env.js",
+    "test-stream2-read-sync-stack.js",
+    "test-stringbytes-external.js"
+  ],
+  "lost": [
+    "test-os-checked-function.js"
+  ],
+  "skip_changes": {},
+  "memory_events_delta": {
+    "low": 0,
+    "high": 0,
+    "max": 6787,
+    "oom": 0,
+    "oom_kill": 0,
+    "oom_group_kill": 0
+  },
+  "elapsed_seconds": 1690.7098269939888,
+  "raw": [
+    {
+      "path": "work/full-prepared-realm-glob-pinned/results.json",
+      "bytes": 13240455,
+      "sha256": "45a66fadf88de6f7cec60b84be9d433753ba65bd8fd541164d6bb2f92aa582dd"
+    },
+    {
+      "path": "work/full-prepared-realm-glob-pinned/runner.log",
+      "bytes": 391267,
+      "sha256": "a6ee67b8b9bd718822bab323efcda458fbd4f629590267c122f869191427586e"
+    },
+    {
+      "path": "work/full-prepared-realm-glob-pinned/receipt-before.json",
+      "bytes": 1120,
+      "sha256": "b879a66c51796bfa51a8b53ebb9f6ff6d4d0153dad46dcba633cb18fbef9221e"
+    },
+    {
+      "path": "work/full-prepared-realm-glob-pinned/receipt.json",
+      "bytes": 1764,
+      "sha256": "3eb27ed9afd90dc491b6bb7aa503e6dfba705a917c6bd47d43f1363eead3f299"
+    },
+    {
+      "path": "work/full-prepared-realm-glob-pinned/summary.json",
+      "bytes": 150,
+      "sha256": "3448338cc54f58d84c861124f97a9d91f2db770169310bee69a78588cb869d24"
+    },
+    {
+      "path": "work/full-prepared-realm-glob-pinned/comparison.json",
+      "bytes": 246,
+      "sha256": "527e42882d571986c30a1f985eb7cc935ff75d671a0ed904be843c53227e80d8"
+    }
+  ],
+  "limitations": [
+    "Goal remains open; all nonpass outcomes retained. No selected-case sums, skips/deadline/budget changes or speed claim.",
+    "This frozen e9 run includes glob and prepared realm-local SDK code but excludes later shared eval/array/lazy-policy repairs and the unqualified error-source primitive.",
+    "Native compilation overlapped part of this run. Actual memory.events deltas are retained below; concurrent resource pressure is not subtracted from outcomes. All full outcomes retained, no speed claim or adjusted totals."
+  ]
+}

@@ -1,0 +1,71 @@
+{
+  "base_source": "7592f8d54ca85d3001f3f74e6231f43eb86ac863",
+  "source_files": {
+    "crates/quench-node-test/node-tests/test-function-constructor-debug-names.js": "c061bc570daa9735a3bd7912806f4a7bdee8eba69881ac9adfd4bb7a1eb62cef",
+    "crates/quench-node-test/node-tests/test-function-prototype-info-lookups.js": "efcb93849d4cdd48f7a70644147752a55d485c383b7500d533035a3a77dae452",
+    "crates/quench-node-test/tests/child_entry.rs": "dbc78366e7752ffc6f997a735483c3e819d758745d1c91d1ee5f9a4879db3861",
+    "crates/quench-runtime/src/heap/cell.rs": "57e1b6e3a982b42ef4860304910e20d3c3eb2e0087581240080941f2f5c5cc1f",
+    "crates/quench-runtime/src/vm.rs": "3aa0100fa6c6a51f713f0a091c592cddd872edf9d3836c6f6a5c1cf6ef177283",
+    "crates/quench-runtime/src/vm/construction.rs": "ef27a3a5598ff711ddb48bf0e51630f002a03c168834fe45928834367140d2ae",
+    "crates/quench-runtime/src/vm/dispatch_fast.rs": "99a3ef4f524b35c4d78e77c61e3e76d3ac0562ad86147b46e72bfe069fa7f263",
+    "crates/quench-runtime/src/vm/error.rs": "ce75ee5284bd97c432c579a289b8b5535fa2f872e0445e9a4066ff4713669200",
+    "crates/quench-runtime/src/vm/gc.rs": "129b3e355c9835a0c440626c0feec62f3979bcf9e8cfda4598fe460f2b1e4d55",
+    "crates/quench-runtime/src/vm/inspection.rs": "cab06ff73239e1e3f30b37931fddba990090b14dc7fd7352dc9cc03ceb1407e0",
+    "crates/quench-runtime/src/vm/object.rs": "19ceae2f63b950543feba8cf382567c9c66303b32112d46320a82551ec6f6771",
+    "crates/quench-runtime/src/vm/program_store.rs": "af2ed4bc7507b9fd716aec50714230d83ba673acb8ce163c1bc2499fc3c8111d",
+    "crates/quench-runtime/src/vm/provenance.rs": "578c46a5de02097fb5ec00a2e27b643bd0db0f6c3d12331b7a7cffdbe52e437b",
+    "crates/quench-runtime/src/vm/tests.rs": "11a6c132cb36529554caa0437362c4b016adb81e8ec256fb3ade42605e733a16",
+    "docs/node-host-contracts.md": "359b68a3e02b6f0f3ce6f909b9b833ce28e439111b2d84dc3c3ecf292a80a25a"
+  },
+  "patch": "work/function-prototype-lookup-source.patch",
+  "patch_sha256": "3749a293d361dc5eb073cbbcd3661220b6e84848dfd84a7272768d9fdabe154c",
+  "binaries": {
+    "cli": {
+      "path": "work/quench-function-info-qualified",
+      "sha256": "34f8728ce730abd7b71e86afccce938fd2d748ff1e3b8ba3afd0fadabeff6226"
+    },
+    "host_cli": {
+      "path": "work/host-build/iteration/quench-node",
+      "sha256": "34f8728ce730abd7b71e86afccce938fd2d748ff1e3b8ba3afd0fadabeff6226"
+    },
+    "runner": {
+      "path": "work/host-build/iteration/run-parallel",
+      "sha256": "d801749b3020995c7059a928b93dc63e94fad1d7ed824788150caad7a5356160"
+    },
+    "api_tests": {
+      "path": "work/host-build/iteration/deps/child_entry-70660f0a4dee9e77",
+      "sha256": "54ccebd8dac4009733c0aa216adb12e580f82dd830bf7fab26faed194b807c66"
+    }
+  },
+  "oracle": {
+    "path": "work/node-v26.12.0-linux-x64/bin/node",
+    "version": "v26.12.0",
+    "sha256": "caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943"
+  },
+  "runtime_tests": 659,
+  "runtime_exit": 0,
+  "workspace_exit": 0,
+  "no_authored_optimization": true,
+  "identity_checks": {
+    "binaries": true,
+    "source_files": true,
+    "oracle": true
+  },
+  "api_exit": 0,
+  "reconciled_candidate_source": "3e349f1775f1b15feae31b6d992687441ffdd911",
+  "candidate_source": "3e349f1775f1b15feae31b6d992687441ffdd911",
+  "api_cases_passed": 376,
+  "framework_fixtures": 43,
+  "web_correctness_targets": 9,
+  "instruction_limit_met": false,
+  "passed_instruction_guards": 2,
+  "warmup_control": {
+    "rows": 80,
+    "parent_differing_rows": 21,
+    "candidate_differing_rows": 3,
+    "newly_differing_rows": 0
+  },
+  "subsequent_function_constructor_source_layout_changes_excluded": true,
+  "total_node_parity": false,
+  "throughput_win": false
+}

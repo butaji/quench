@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+set -euo pipefail
+trap 'status=$?; printf "%s\n" "$status" > /workspace/scratch/npm-icu-build-checks.exit' EXIT
+source /workspace/quench-build-env.sh
+export PATH="/workspace/shared/node-v26.12.0-linux-x64/bin:$PATH"
+export CARGO_TARGET_DIR=/workspace/quench/target/npm-file-url CARGO_INCREMENTAL=0
+export PKG_CONFIG_PATH=/workspace/shared/icu78-node-repro/lib/pkgconfig
+cd /workspace/scratch/quench-npm-file-url
+run() {
+  local label=$1; shift
+  local status
+  if "$@" > "/workspace/scratch/npm-icu-${label}.log" 2>&1; then status=0; else status=$?; fi
+  printf '%s\n' "$status" > "/workspace/scratch/npm-icu-${label}.exit"
+  return "$status"
+}
+run workspace-check cargo check --workspace --all-targets
+run fast-core cargo test -p quench-runtime --lib
+run cli cargo build --profile iteration -p quench-node --bin quench-node
+run runners cargo build --profile iteration -p quench-node-test --bin run-npm --bin npm-coverage
+run coverage-unit cargo test -p quench-node-test --bin npm-coverage
+python3 - <<'PY'
+from pathlib import Path
+import shutil,hashlib,json,subprocess
+root=Path('/workspace/scratch/quench-npm-file-url');expected='5dfcf152c056f6ba6974be3c1ae94d486307064f'
+assert subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip()==expected
+source=Path('/workspace/quench/target/npm-file-url/iteration/quench-node');target=Path('/workspace/scratch/npm-icu-candidate');shutil.copy2(source,target)
+node=Path(shutil.which('node'))
+Path('/workspace/scratch/npm-icu-engines.json').write_text(json.dumps({'candidate':{'source':expected,'sha256':hashlib.sha256(target.read_bytes()).hexdigest()},'baseline':{'source':'cac5edc64d41ce6e76b0bd800e193fbb14493f4b','published_merge':'08a7dfb81d4153a39f4f30e610909ec565461ddb','sha256':hashlib.sha256(Path('/workspace/scratch/npm-functions-candidate').read_bytes()).hexdigest()},'node':{'path':str(node),'version':subprocess.check_output([node,'--version'],text=True).strip(),'sha256':hashlib.sha256(node.read_bytes()).hexdigest()}},indent=2)+'\n')
+PY
+export QUENCH_NODE_TEST_EXECUTABLE=/workspace/scratch/npm-icu-candidate
+export QUENCH_NODE_LIBRARY_ROOT=/workspace/scratch/quench-npm-file-url/tests/node
+run node-api cargo test -p quench-node-test --test child_entry -- --test-threads=1
+run node-lib cargo test -p quench-node --lib
+run opt-core cargo test --profile iteration -p quench-runtime --lib

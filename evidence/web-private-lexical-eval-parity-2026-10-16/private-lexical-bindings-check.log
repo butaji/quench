@@ -1,0 +1,112 @@
+    Checking quench-runtime v0.1.0 (/workspace/quench/crates/quench-runtime)
+error[E0428]: the name `PrivateName` is defined multiple times
+    --> crates/quench-runtime/src/bytecode.rs:1671:5
+     |
+1670 |     PrivateName = 3,
+     |     --------------- previous definition of the type `PrivateName` here
+1671 |     PrivateName = 3,
+     |     ^^^^^^^^^^^^^^^ `PrivateName` redefined here
+     |
+     = note: `PrivateName` must be defined only once in the type namespace of this enum
+
+error[E0081]: discriminant value `3` assigned more than once
+    --> crates/quench-runtime/src/bytecode.rs:1666:1
+     |
+1666 | pub(crate) enum LexicalBindingKind {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+1670 |     PrivateName = 3,
+     |                   - `3` assigned here
+1671 |     PrivateName = 3,
+     |                   - `3` assigned here
+
+error[E0616]: field `lexical_scopes` of struct `compile::ast::FunctionCompiler` is private
+   --> crates/quench-runtime/src/compile/class.rs:170:30
+    |
+170 |             let scope = self.lexical_scopes.last_mut().expect("private lexical scope");
+    |                              ^^^^^^^^^^^^^^ private field
+
+error[E0616]: field `lexical_scopes` of struct `compile::ast::FunctionCompiler` is private
+   --> crates/quench-runtime/src/compile/class.rs:191:30
+    |
+191 |             let scope = self.lexical_scopes.last_mut().expect("private lexical scope");
+    |                              ^^^^^^^^^^^^^^ private field
+
+error[E0004]: non-exhaustive patterns: `&bytecode::LexicalBindingKind::PrivateName` not covered
+    --> crates/quench-runtime/src/bytecode.rs:1664:23
+     |
+1664 | #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+     |                       ^^^^^ pattern `&bytecode::LexicalBindingKind::PrivateName` not covered
+     |
+note: `bytecode::LexicalBindingKind` defined here
+    --> crates/quench-runtime/src/bytecode.rs:1666:17
+     |
+1666 | pub(crate) enum LexicalBindingKind {
+     |                 ^^^^^^^^^^^^^^^^^^
+...
+1671 |     PrivateName = 3,
+     |     ----------- not covered
+     = note: the matched value is of type `&bytecode::LexicalBindingKind`
+
+error: unreachable pattern
+    --> crates/quench-runtime/src/bytecode.rs:1683:13
+     |
+1682 |             Self::PrivateName => "\0quench:private-name-capture:",
+     |             ----------------- matches all the relevant values
+1683 |             Self::PrivateName => "\0quench:private-name-capture:",
+     |             ^^^^^^^^^^^^^^^^^ no value can reach this
+     |
+note: the lint level is defined here
+    --> crates/quench-runtime/src/lib.rs:1:9
+     |
+   1 | #![deny(warnings)]
+     |         ^^^^^^^^
+     = note: `#[deny(unreachable_patterns)]` implied by `#[deny(warnings)]`
+
+error[E0004]: non-exhaustive patterns: `bytecode::LexicalBindingKind::PrivateName` not covered
+    --> crates/quench-runtime/src/bytecode.rs:1678:15
+     |
+1678 |         match self {
+     |               ^^^^ pattern `bytecode::LexicalBindingKind::PrivateName` not covered
+     |
+note: `bytecode::LexicalBindingKind` defined here
+    --> crates/quench-runtime/src/bytecode.rs:1666:17
+     |
+1666 | pub(crate) enum LexicalBindingKind {
+     |                 ^^^^^^^^^^^^^^^^^^
+...
+1671 |     PrivateName = 3,
+     |     ----------- not covered
+     = note: the matched value is of type `bytecode::LexicalBindingKind`
+help: ensure that all possible cases are being handled by adding a match arm with a wildcard pattern or an explicit pattern as shown
+     |
+1683 ~             Self::PrivateName => "\0quench:private-name-capture:",
+1684 ~             bytecode::LexicalBindingKind::PrivateName => todo!(),
+     |
+
+error[E0004]: non-exhaustive patterns: `bytecode::LexicalBindingKind::PrivateName` and `bytecode::LexicalBindingKind::PrivateName` not covered
+    --> crates/quench-runtime/src/vm/environment.rs:407:15
+     |
+ 407 |         match kind {
+     |               ^^^^ patterns `bytecode::LexicalBindingKind::PrivateName` and `bytecode::LexicalBindingKind::PrivateName` not covered
+     |
+note: `bytecode::LexicalBindingKind` defined here
+    --> crates/quench-runtime/src/bytecode.rs:1666:17
+     |
+1666 | pub(crate) enum LexicalBindingKind {
+     |                 ^^^^^^^^^^^^^^^^^^
+...
+1670 |     PrivateName = 3,
+     |     ----------- not covered
+1671 |     PrivateName = 3,
+     |     ----------- not covered
+     = note: the matched value is of type `bytecode::LexicalBindingKind`
+help: ensure that all possible cases are being handled by adding a match arm with a wildcard pattern, a match arm with multiple or-patterns as shown, or multiple match arms
+     |
+ 415 ~             crate::bytecode::LexicalBindingKind::FunctionName => Ok(false),
+ 416 ~             bytecode::LexicalBindingKind::PrivateName | bytecode::LexicalBindingKind::PrivateName => todo!(),
+     |
+
+Some errors have detailed explanations: E0004, E0081, E0428, E0616.
+For more information about an error, try `rustc --explain E0004`.
+error: could not compile `quench-runtime` (lib) due to 8 previous errors

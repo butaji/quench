@@ -1,0 +1,14 @@
+   Compiling quench-runtime v0.1.0 (/workspace/scratch/quench-npm-file-url/crates/quench-runtime)
+   Compiling quench-wasm v0.1.0 (/workspace/scratch/quench-npm-file-url/crates/quench-wasm)
+   Compiling quench-node v0.1.0 (/workspace/scratch/quench-npm-file-url/crates/quench-node)
+    Finished `test` profile [unoptimized] target(s) in 28.87s
+     Running unittests src/lib.rs (/workspace/quench/target/npm-file-url/debug/deps/quench_node-fc5de5569aff38c3)
+
+running 4 tests
+test polyfills::tests::bootstrap_source_preserves_order_and_separates_fragments ... ok
+test polyfills::tests::live_tables_contain_only_runtime_fragments_in_order ... ok
+test modules::process_shared_vm::tests::canonical_process_root_survives_global_replacement_and_refreshes_with_the_vm ... ok
+test modules::process_shared_vm::tests::shared_module_cache_roots_survive_collection_and_expire_on_fresh_execution ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.29s
+

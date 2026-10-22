@@ -1,0 +1,96 @@
+{
+  "schema": 1,
+  "task": "86",
+  "kind": "Linux supplemental Stage A correctness follow-up",
+  "recorded_at": "2026-10-08",
+  "source_revision": "ac8febd3729384a382a7947d4cddb4b8ed167d6a",
+  "source_clean": true,
+  "official_gate": "The completion gate remains the tracked M4 report; this Linux follow-up does not replace or recertify the complete 53,406-case inventory.",
+  "fixes": [
+    {
+      "commit": "cce40d6c7e093343d795285c55f0131e2b4f6189",
+      "area": "Wasm floating point",
+      "change": "Quiet signaling NaNs for arithmetic results; local Node v24.19.0 produced f32 bits 0x7fe00000 from input 0x7fa00000; W3C Wasm Core 2 arithmetic NaN most-significant-payload-bit rule.",
+      "spec_url": "https://www.w3.org/TR/wasm-core-2/#floating-point-operations",
+      "linux_report": "target/production/stageb-runtime-atoms/wasm-after-snan-fix.json",
+      "linux_report_sha256": "4dc0aa7746e95a22d55e34dd9d066e25e23c800ba41ae70f0d7976a38d9384c0",
+      "passed": 67124,
+      "total": 67124,
+      "pinned_inputs": 288
+    },
+    {
+      "commit": "ac8febd3729384a382a7947d4cddb4b8ed167d6a",
+      "area": "Node HTTP response lifecycle",
+      "change": "Ignore stale finish after socket close; local Node v24.19.0 oracle showed response.end() called from close does not throw.",
+      "node_http_docs": "https://nodejs.org/api/http.html#responseenddata-encoding-callback"
+    }
+  ],
+  "affected_checks": {
+    "test262": {
+      "stage10": {
+        "baseline": 11102,
+        "candidate": 11102,
+        "total": 11102,
+        "failed": 0,
+        "outcomes_equal": true,
+        "baseline_report_sha256": "0c466189031076189071f6f52148340fee716f321b13b21cd9f300011b38453a",
+        "candidate_report_sha256": "b55354bf94fe41fcab32426df2453e1d1cad7661017970e9b52ec3923d606af4"
+      },
+      "stages60_63": {
+        "baseline": 4604,
+        "candidate": 4604,
+        "total": 4604,
+        "failed": 0,
+        "outcomes_equal": true,
+        "baseline_report_sha256": "faffdcdf91237ff752fd9cd169c6c5fcb2cf66fc4aea3211de98ab13b6bdabf9",
+        "candidate_report_sha256": "f49ed7b740063654324bcfe3a202b383cf6ece2fa1a7520956df17a207496b14"
+      },
+      "candidate_total": 15706
+    },
+    "framework_core": {
+      "passed": 43,
+      "total": 43,
+      "skipped": 0,
+      "failed": 0,
+      "log_path": "target/production/stageb-own-field/framework-core-after-http-finish-fix.log",
+      "log_sha256": "b41881f94821125815bc87efbbbd7d26b13fd072686394014795864fa55f2ae8"
+    },
+    "framework_scenarios": {
+      "node_version": "v24.19.0",
+      "report_path": "target/production/stageb-own-field/framework-scenarios-after-finish-fix.json",
+      "report_sha256": "63f7def6f44ebf56d82e9aef3ebef008a412bf5b27bc104744952ec877d64862",
+      "rows": [
+        {
+          "scenario": "express",
+          "candidate_runs": 10,
+          "all_match_node": true
+        },
+        {
+          "scenario": "koa",
+          "candidate_runs": 1,
+          "all_match_node": true
+        },
+        {
+          "scenario": "fastify",
+          "candidate_runs": 1,
+          "all_match_node": true
+        }
+      ]
+    },
+    "wasm": {
+      "passed": 67124,
+      "total": 67124,
+      "failed": 0,
+      "report_path": "target/production/stageb-own-field/wasm-full.json",
+      "report_sha256": "22808011384345ad84d7f050a79579f318ea7b151a4aef7ebc3ddde3377ac6a3",
+      "log_path": "target/production/stageb-own-field/wasm-full.log",
+      "log_sha256": "40c413f2bbf0885fe0079532e4d947a7c128b3731502775a236cf63f98e2a533"
+    }
+  },
+  "official_m4_stagea_evidence_path": "tasks/evidence/task86-stagea-final-2026-10-08.json",
+  "official_m4_stagea_evidence_sha256": "b0dab4906e29323ce23253a0ba033fb82288a7dd6831d9d121f295dbcc43ea94",
+  "limitations": [
+    "Linux affected Test262 report covers own-field candidate stages 10 and 60-63 before the later HTTP lifecycle fix; that fix does not touch runtime semantics.",
+    "No fresh complete Test262 inventory was run on Linux."
+  ]
+}

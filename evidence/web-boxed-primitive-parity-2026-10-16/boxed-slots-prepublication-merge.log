@@ -1,0 +1,16 @@
+Auto-merging docs/node-host-contracts.md
+Merge made by the 'ort' strategy.
+ Cargo.lock                                         |  1 +
+ crates/quench-node/src/host/shared_vm.rs           |  3 -
+ crates/quench-node/src/host/shared_vm/commonjs.rs  |  7 +-
+ crates/quench-runtime/Cargo.toml                   |  2 +
+ crates/quench-runtime/src/vm/shape_transitions.rs  | 89 ++++++++--------------
+ docs/node-host-contracts.md                        |  7 +-
+ evidence/tod123-rss-linux-2026-10-14/README.md     | 28 +++++++
+ .../board-bolt-vs-qjs-b20.txt                      | 16 ++++
+ .../board-trunk-eager-inspect.txt                  | 16 ++++
+ .../guard-lazy-library-raw.txt                     | 32 ++++++++
+ 10 files changed, 136 insertions(+), 65 deletions(-)
+ create mode 100644 evidence/tod123-rss-linux-2026-10-14/board-bolt-vs-qjs-b20.txt
+ create mode 100644 evidence/tod123-rss-linux-2026-10-14/board-trunk-eager-inspect.txt
+ create mode 100644 evidence/tod123-rss-linux-2026-10-14/guard-lazy-library-raw.txt

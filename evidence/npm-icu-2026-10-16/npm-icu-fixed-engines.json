@@ -1,0 +1,16 @@
+{
+  "candidate": {
+    "source": "383fcec1750a9eca4673853b2137d3b746c246d3",
+    "sha256": "6488fa2069243903ac2ba1e3b6f7ca6d025cc9111c9d9aafb964bd44236b88f7"
+  },
+  "baseline": {
+    "source": "cac5edc64d41ce6e76b0bd800e193fbb14493f4b",
+    "published_merge": "08a7dfb81d4153a39f4f30e610909ec565461ddb",
+    "sha256": "3c83e9e92ce727b70f931eddf6f124861f80dda08c824ef968a3b7036e1c6c53"
+  },
+  "node": {
+    "path": "/workspace/shared/node-v26.12.0-linux-x64/bin/node",
+    "version": "v26.12.0",
+    "sha256": "caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "source_commit": "88abab792",
+  "run": "npm-parseargs-all-child.log",
+  "state": "interrupted, unqualified",
+  "reason": "Broad debug-profile child fixtures were running concurrently with optimized compiler builds, package sweeps and four Callgrind jobs; the independent coded_argument_errors_preserve_prototype_shape_and_constant_code_rendering rerun failed its five-second timeout assertion. Re-run the broad suite in a quiet window; do not count this run as parity or discard its failures.",
+  "focused_timeout_reproduction": "npm-parseargs-coded-argument-timeout.log",
+  "follow_up": "The same focused test passed in 2.90 seconds after the broad suite was stopped, with compiler/Callgrind work still active. This supports resource contention as the timeout cause; all broad assertions still need a quiet rerun.",
+  "serial_debug_run": "Also interrupted (npm-parseargs-all-child-serial.log), with raw failures retained, in favor of the exact frozen optimized CLI via the explicit Unix-exec test-harness selector. The environment fixture is byte-identical in direct optimized probes.",
+  "production_fixture_selector": "QUENCH_NODE_TEST_EXECUTABLE=/workspace/scratch/npm-parseargs-candidate"
+}

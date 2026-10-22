@@ -1,0 +1,9 @@
+statSync buffer-hook true
+statSync uint8 true
+statSync null object TypeError ERR_INVALID_ARG_VALUE The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received 'a\x00b'
+lstatSync buffer-hook true
+lstatSync uint8 true
+lstatSync null object TypeError ERR_INVALID_ARG_VALUE The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received 'a\x00b'
+statfsSync buffer-hook true
+statfsSync uint8 true
+statfsSync null object TypeError ERR_INVALID_ARG_VALUE The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received 'a\x00b'

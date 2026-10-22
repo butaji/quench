@@ -1,0 +1,1550 @@
+[
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/actual-binding-check.log",
+    "file": "followup/decoder-probes/actual-binding-check.log",
+    "bytes": 48,
+    "sha256": "00a6864258ef50f49821de18c8f05a9e5f52c7f3f2a442995183827344d145c2"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/actual-binding-check.py",
+    "file": "followup/decoder-probes/actual-binding-check.py",
+    "bytes": 1454,
+    "sha256": "9128b8ee52bd22ca1b984f019f9f45006a0843ac998ce21a44ea0e2d5a9ead98"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/actual-transcode-native-nonempty-finding.json",
+    "file": "followup/decoder-probes/actual-transcode-native-nonempty-finding.json",
+    "bytes": 194,
+    "sha256": "ab518c94f82e4d0a79a55df0d09b45670417cd58b3908f3604473a3f7a6522ab"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/actual-transcode-native-nonempty-quench.jsonl",
+    "file": "followup/decoder-probes/actual-transcode-native-nonempty-quench.jsonl.gz",
+    "bytes": 412529,
+    "sha256": "6f8f1fe08b0b4dd106f6b94ecc2008c6beb5ebb145249920bd96c07248103cef"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/actual-transcode-native-nonempty-quench.stderr",
+    "file": "followup/decoder-probes/actual-transcode-native-nonempty-quench.stderr",
+    "bytes": 96,
+    "sha256": "2b6b245663496a5d902fdf68396cec2cc8ba63bd57a0bbaec9b9bf41d187358b"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/actual-transcode-native-nonempty.exit",
+    "file": "followup/decoder-probes/actual-transcode-native-nonempty.exit",
+    "bytes": 2,
+    "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/actual-width-finding.json",
+    "file": "followup/decoder-probes/actual-width-finding.json",
+    "bytes": 196,
+    "sha256": "c19f6a428fc8508347e3ea910a3b0bdf3d5517684b43394f02cdfcd9f90633b2"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/actual-width-quench.jsonl",
+    "file": "followup/decoder-probes/actual-width-quench.jsonl.gz",
+    "bytes": 262176,
+    "sha256": "656b273d2607d9d4b6d4c599c0279d187e46b0590bd9d3fa0ef201f1cff3edb7"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/actual-width-quench.stderr",
+    "file": "followup/decoder-probes/actual-width-quench.stderr",
+    "bytes": 96,
+    "sha256": "de7eaa043864d4bd919de4551ab7ccc61c5a5eef5b5b10b30f1649a5851b52d8"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/actual-width.exit",
+    "file": "followup/decoder-probes/actual-width.exit",
+    "bytes": 2,
+    "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/align-published-integration.log",
+    "file": "followup/decoder-probes/align-published-integration.log",
+    "bytes": 43,
+    "sha256": "729e7ef13cd116a3f73c2227ad8498310ce5240a21d9ae7930b3f9ed83b5b627"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/api-check-bootstrap-failed.log",
+    "file": "followup/decoder-probes/api-check-bootstrap-failed.log",
+    "bytes": 4049,
+    "sha256": "a523a30cb1665924418bb4384d1a0f710641cda7b67fdc44c3753942dac8914d"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/api-check-launch.log",
+    "file": "followup/decoder-probes/api-check-launch.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/api-check-stopped.txt",
+    "file": "followup/decoder-probes/api-check-stopped.txt",
+    "bytes": 169,
+    "sha256": "4af5013db20de332167fb6bec723f23f81caf9a13c6a7f438f1b23e740c60872"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/api-check.exit",
+    "file": "followup/decoder-probes/api-check.exit",
+    "bytes": 2,
+    "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/api-check.log",
+    "file": "followup/decoder-probes/api-check.log",
+    "bytes": 4049,
+    "sha256": "a523a30cb1665924418bb4384d1a0f710641cda7b67fdc44c3753942dac8914d"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/api-check.sh",
+    "file": "followup/decoder-probes/api-check.sh",
+    "bytes": 761,
+    "sha256": "6fb11da666f724d7ed0473c916df2aabc083136e6ad92710c565edc89bec07cd"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/applied-files.txt",
+    "file": "followup/decoder-probes/applied-files.txt",
+    "bytes": 476,
+    "sha256": "2735c9c7a7564e8487776669c38436ab78b9bbf20597eb2663eb145b0fbb7db2"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/apply.py",
+    "file": "followup/decoder-probes/apply.py",
+    "bytes": 4648,
+    "sha256": "074b6326567414f5395128b38728bb8eb9cc0eab4c88fa0309a587fd768ef6a0"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/bootstrap-rebuild-launch.log",
+    "file": "followup/decoder-probes/bootstrap-rebuild-launch.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/build-2021.log",
+    "file": "followup/decoder-probes/build-2021.log",
+    "bytes": 1835,
+    "sha256": "89edc5853c0d1fe00a3158c52e01cd6f772597aebfb65e298d20c69f047f6ed9"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/build-78.log",
+    "file": "followup/decoder-probes/build-78.log",
+    "bytes": 1977,
+    "sha256": "ddc60b88e7c0e1a96e7b05e9b37e6d2a88bef99f57f596e4b889cc2ec7e8edb7"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/build-icu.log",
+    "file": "followup/decoder-probes/build-icu.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/build-icu.py",
+    "file": "followup/decoder-probes/build-icu.py",
+    "bytes": 2486,
+    "sha256": "13dca429c12c9096b32ec9cd274ac8afad29960d0d0143cea494aed8e9cee3eb"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/build.log",
+    "file": "followup/decoder-probes/build.log",
+    "bytes": 1632,
+    "sha256": "c2d6a71ba5c7743a7358dabca7e985a3810a7432b4b18a9dc125262c2cafebc6"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/cache-clean.log",
+    "file": "followup/decoder-probes/cache-clean.log",
+    "bytes": 37,
+    "sha256": "95959c4348386e1a3511f1412937fb384485860d4f545c86e7c06ab914809e4d"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/check-launch.log",
+    "file": "followup/decoder-probes/check-launch.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/check.exit",
+    "file": "followup/decoder-probes/check.exit",
+    "bytes": 2,
+    "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/check.log",
+    "file": "followup/decoder-probes/check.log",
+    "bytes": 645,
+    "sha256": "298b3e5c33a2a800b4716056b4406c41353b1bbf3baa1fdb1ca3642597c0137a"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/check.sh",
+    "file": "followup/decoder-probes/check.sh",
+    "bytes": 477,
+    "sha256": "386855f5d749c37ab8ef8bb8ce30bebbc96532c1081ece9c5a7ee78f709a37f7"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/compare.py",
+    "file": "followup/decoder-probes/compare.py",
+    "bytes": 1696,
+    "sha256": "c6a1a68094f470736562437535e5406db0c4fd4885b726c6980b9bf43d2ac08e"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/compare78.py",
+    "file": "followup/decoder-probes/compare78.py",
+    "bytes": 1704,
+    "sha256": "b44db246c1d28c87f63470bb8c3dbc394f5acd1595a049d85e59dfc577d2c9ef"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/complete-input-api-finding.json",
+    "file": "followup/decoder-probes/complete-input-api-finding.json",
+    "bytes": 6635,
+    "sha256": "d070ccf4135bf52edae3868e95517d812d7c4163b645f5b3b3d40ec4aeb71887"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/current-contract-finding.json",
+    "file": "followup/decoder-probes/current-contract-finding.json",
+    "bytes": 1510,
+    "sha256": "88fcb0081bdf5e234a9911bfd2267e33525cde1f523083a2fd94425bd2a1cd39"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/current-contract-quench.json",
+    "file": "followup/decoder-probes/current-contract-quench.json",
+    "bytes": 5645,
+    "sha256": "150d07a61187e46f3ab8672b8f71e8bff554dad40572cab28458781634da7f50"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/current-contract-quench.stderr",
+    "file": "followup/decoder-probes/current-contract-quench.stderr",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/current-recovery-finding.json",
+    "file": "followup/decoder-probes/current-recovery-finding.json",
+    "bytes": 109,
+    "sha256": "1700f14e15f162d361d19b606d618e0e9146565baa2caf438526e0e4c8ffaddc"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/current-recovery-quench.json",
+    "file": "followup/decoder-probes/current-recovery-quench.json",
+    "bytes": 32034,
+    "sha256": "05d35c2fbc2df288a8b26259029cd8ba8c6b33fdbc7327505627de21a6947f57"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/current-recovery-quench.stderr",
+    "file": "followup/decoder-probes/current-recovery-quench.stderr",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/current-streaming-finding.json",
+    "file": "followup/decoder-probes/current-streaming-finding.json",
+    "bytes": 109,
+    "sha256": "487a486d8fefbac6f3fb45340573c678b7f6580bfb27658b7d3359b187a0769a"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/current-streaming-quench.json",
+    "file": "followup/decoder-probes/current-streaming-quench.json",
+    "bytes": 9899,
+    "sha256": "a577ec578e82f205a801b312240f065ae2d06c7bef23dee229a31fccc5ff36d6"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/current-streaming-quench.stderr",
+    "file": "followup/decoder-probes/current-streaming-quench.stderr",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/fetch.log",
+    "file": "followup/decoder-probes/fetch.log",
+    "bytes": 144,
+    "sha256": "a5c1c51a3021e4cbea9047331fabc7d889e30ed8301a48be0fe5278f7ddd6dab"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/final-debug-build-launch.log",
+    "file": "followup/decoder-probes/final-debug-build-launch.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/final-draft-source.patch",
+    "file": "followup/decoder-probes/final-draft-source.patch",
+    "bytes": 43772,
+    "sha256": "22dfe41a9563333662f57b043df35a5d358f59d09e0dbdb33ceca9c294b0bc86"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/final-fast-core.log",
+    "file": "followup/decoder-probes/final-fast-core.log",
+    "bytes": 55933,
+    "sha256": "cf46d7ed8658143c9ba2e8116c2116ae864915ecc96c11f39fd7605dd5dc1fbb"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/final-workspace-check.log",
+    "file": "followup/decoder-probes/final-workspace-check.log",
+    "bytes": 254,
+    "sha256": "6843896bd23a4d176f74d3d31cd36ca0c9e86099b2d97dc4e605def643efba4b"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/first-contract-quench.json",
+    "file": "followup/decoder-probes/first-contract-quench.json",
+    "bytes": 5645,
+    "sha256": "150d07a61187e46f3ab8672b8f71e8bff554dad40572cab28458781634da7f50"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/first-contract-quench.stderr",
+    "file": "followup/decoder-probes/first-contract-quench.stderr",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/first-production-probe-finding.json",
+    "file": "followup/decoder-probes/first-production-probe-finding.json",
+    "bytes": 296,
+    "sha256": "9745a3612d927aab585bbc3283f8150c997f4baec39a4f4fcd973234d6fd0dc1"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/first-streaming-quench.json",
+    "file": "followup/decoder-probes/first-streaming-quench.json",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/first-streaming-quench.stderr",
+    "file": "followup/decoder-probes/first-streaming-quench.stderr",
+    "bytes": 636,
+    "sha256": "e83d56b5dfa65a10ea9b5bf858f87034c0dd89d240f64fa6f414c79977431cb9"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/focused-build-launch.log",
+    "file": "followup/decoder-probes/focused-build-launch.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/focused-build.exit",
+    "file": "followup/decoder-probes/focused-build.exit",
+    "bytes": 2,
+    "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/focused-build.log",
+    "file": "followup/decoder-probes/focused-build.log",
+    "bytes": 153,
+    "sha256": "9d93bb90f1c5622bd3b38af690c53b98567bf904242667c6e44eb49ac725667a"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/focused-build.sh",
+    "file": "followup/decoder-probes/focused-build.sh",
+    "bytes": 731,
+    "sha256": "d26ebbe30d431b5465f6d158009ddf52d4b9afffcdc84efc97e3e4c2fd7be6fe"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/focused-rebuild-launch.log",
+    "file": "followup/decoder-probes/focused-rebuild-launch.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/fs-bootstrap-binding-stage1.exit",
+    "file": "followup/decoder-probes/fs-bootstrap-binding-stage1.exit",
+    "bytes": 4,
+    "sha256": "39b8dc3fc8b44765c8e6f1adee04c5b465e555ab791cc42d0d9e810d5b64297c"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/fs-bootstrap-binding-stage1.log",
+    "file": "followup/decoder-probes/fs-bootstrap-binding-stage1.log",
+    "bytes": 1071,
+    "sha256": "f1426ecfe0e25870c0cd91bffa485529e2b8858fd104bc0c0d34fb17d3dc293a"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/fs-bootstrap-fixed.exit",
+    "file": "followup/decoder-probes/fs-bootstrap-fixed.exit",
+    "bytes": 2,
+    "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/fs-bootstrap-fixed.log",
+    "file": "followup/decoder-probes/fs-bootstrap-fixed.log",
+    "bytes": 196,
+    "sha256": "8f69bcfdfbff93e808723bb06e28634c358a71f499766c935477d3a1ee5db93f"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/fs-identity-focus.log",
+    "file": "followup/decoder-probes/fs-identity-focus.log",
+    "bytes": 1222,
+    "sha256": "6145386891e47d6f0ba3880acc62df4d280ecd18ac7214946f9053187ab8ba93"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/icu_binding_shared_vm.rs",
+    "file": "followup/decoder-probes/icu_binding_shared_vm.rs",
+    "bytes": 6881,
+    "sha256": "cc412ff2c03337202d79e97ca13e6c137c9fa6d52b5490a957e333073002c390"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/initial-applied.patch",
+    "file": "followup/decoder-probes/initial-applied.patch.gz",
+    "bytes": 88133,
+    "sha256": "c42deea3fff6000dbd56143b337c0c17e6932b0288852b094d2f35a541d54405"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/integration-merge-commit.log",
+    "file": "followup/decoder-probes/integration-merge-commit.log",
+    "bytes": 105,
+    "sha256": "402c3196689dc1764c18af2b7bc4dd560a4f8386317fe9cb54bf1671e95540a9"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/integration-merge.log",
+    "file": "followup/decoder-probes/integration-merge.log",
+    "bytes": 237,
+    "sha256": "060188279a7d1f5b47bf6c27ce6b68365da4ccebfce04ac112a911ee6b81e17c"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/main.rs",
+    "file": "followup/decoder-probes/main.rs",
+    "bytes": 852,
+    "sha256": "ead8074d46d75625d96a63415bee75a2cb84df9db93f7b78db9adbcd5e9b4c46"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/merged-fs-bootstrap.exit",
+    "file": "followup/decoder-probes/merged-fs-bootstrap.exit",
+    "bytes": 2,
+    "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/merged-fs-bootstrap.log",
+    "file": "followup/decoder-probes/merged-fs-bootstrap.log",
+    "bytes": 196,
+    "sha256": "3fe71cc8beb17e7c2988c540f21ae924d154cffe874cc1bde15eaa5d983bac03"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/merged-rebuild-launch.log",
+    "file": "followup/decoder-probes/merged-rebuild-launch.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/merged-text-decoders.exit",
+    "file": "followup/decoder-probes/merged-text-decoders.exit",
+    "bytes": 2,
+    "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/merged-text-decoders.log",
+    "file": "followup/decoder-probes/merged-text-decoders.log",
+    "bytes": 346,
+    "sha256": "b63ac811be35c384b84b8a843be580ad29717429c5ec70d3abd8f45854d074e7"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/merged-util-aliases.exit",
+    "file": "followup/decoder-probes/merged-util-aliases.exit",
+    "bytes": 2,
+    "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/merged-util-aliases.log",
+    "file": "followup/decoder-probes/merged-util-aliases.log",
+    "bytes": 190,
+    "sha256": "0464c01c14e21f02e4f24153e405ac516c37fcf40db21ab251c7d2a5eba83858"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/native-oracle.cjs",
+    "file": "followup/decoder-probes/native-oracle.cjs",
+    "bytes": 546,
+    "sha256": "e9daaa684fd88725c5999297e72aee7b303128ef77456bc1f0f0c7f93c1d799a"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/no-icu-check.log",
+    "file": "followup/decoder-probes/no-icu-check.log",
+    "bytes": 439,
+    "sha256": "76c9e6b5d4d946a3030d2e2672151ce33ba0efdc9cbc130b164e046fe69f202e"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/oracle.cjs",
+    "file": "followup/decoder-probes/oracle.cjs",
+    "bytes": 411,
+    "sha256": "8a0f99f455105ec3ebf8a8f5287db3380bc7580488595166df8d14f839527974"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/pre-checkpoint-source.patch",
+    "file": "followup/decoder-probes/pre-checkpoint-source.patch",
+    "bytes": 44990,
+    "sha256": "9731582814e40d9b7e4776f22de6c45fe51be05e5b089680d583aac591759306"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/preflight-launch.log",
+    "file": "followup/decoder-probes/preflight-launch.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/preflight.exit",
+    "file": "followup/decoder-probes/preflight.exit",
+    "bytes": 2,
+    "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/preflight.sh",
+    "file": "followup/decoder-probes/preflight.sh",
+    "bytes": 749,
+    "sha256": "7fdd67ac1c17d354475aac60f3f1962f4f40401ac0f7349082015ba1f1e2c429"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/production-contract-finding.json",
+    "file": "followup/decoder-probes/production-contract-finding.json",
+    "bytes": 1847,
+    "sha256": "5f3a9702e752377d8de32a96b6bf97759b6cb1f79393e137372b614a1f68827b"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/production-contract-quench.json",
+    "file": "followup/decoder-probes/production-contract-quench.json",
+    "bytes": 5645,
+    "sha256": "150d07a61187e46f3ab8672b8f71e8bff554dad40572cab28458781634da7f50"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/production-contract-quench.stderr",
+    "file": "followup/decoder-probes/production-contract-quench.stderr",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/production-contract.exit",
+    "file": "followup/decoder-probes/production-contract.exit",
+    "bytes": 2,
+    "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/production-debug.patch",
+    "file": "followup/decoder-probes/production-debug.patch",
+    "bytes": 29376,
+    "sha256": "b7524d9c4d3f54cdc5e8c070be90ed535db6adb0eff7d53af2211d024f2e9d27"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/production-streaming-finding.json",
+    "file": "followup/decoder-probes/production-streaming-finding.json",
+    "bytes": 446,
+    "sha256": "94142418c14f740545685271e1748d1b809d4867cabe0abd5b5a8b791f7e4be8"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/production-streaming-quench.json",
+    "file": "followup/decoder-probes/production-streaming-quench.json",
+    "bytes": 9899,
+    "sha256": "a577ec578e82f205a801b312240f065ae2d06c7bef23dee229a31fccc5ff36d6"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/production-streaming-quench.stderr",
+    "file": "followup/decoder-probes/production-streaming-quench.stderr",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/production-streaming.exit",
+    "file": "followup/decoder-probes/production-streaming.exit",
+    "bytes": 2,
+    "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/protected-startup-commit.log",
+    "file": "followup/decoder-probes/protected-startup-commit.log",
+    "bytes": 159,
+    "sha256": "a88146b89981f99d31e228d430b4cac62625591af1ff952e04f82ba4cde68b8b"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/protected-startup-core.log",
+    "file": "followup/decoder-probes/protected-startup-core.log",
+    "bytes": 507,
+    "sha256": "869ad093160efaddcf664b65543c65c2da0c34a27397ffe350127289428d9fc3"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/recipe-build.log",
+    "file": "followup/decoder-probes/recipe-build.log",
+    "bytes": 85,
+    "sha256": "1ece72f63815455a5a49536b3c4622bbb3385c9082636eec1043ee7dcdae9be8"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/reduced-check.log",
+    "file": "followup/decoder-probes/reduced-check.log",
+    "bytes": 255,
+    "sha256": "cad4e5368e04b475bfeafc603dc3d8fdd93853bc3dd6769ce036acfe83a3fd04"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/source-commit.log",
+    "file": "followup/decoder-probes/source-commit.log",
+    "bytes": 279,
+    "sha256": "580516491b63e8208c967d70b9cedaefb6613346566f59d1b48a42001c65c65c"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/stash-id.txt",
+    "file": "followup/decoder-probes/stash-id.txt",
+    "bytes": 41,
+    "sha256": "2a4367b2669f8a97a1326a0a646b85336043a3c119d6fe7c4fe8b2dac9637a22"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/stash-restore.log",
+    "file": "followup/decoder-probes/stash-restore.log",
+    "bytes": 2033,
+    "sha256": "2e5f547a2de53687f1e57d380cc349ba59c4cb00ebbdc9fc6880f306132220ab"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/stashed-source-files.json",
+    "file": "followup/decoder-probes/stashed-source-files.json",
+    "bytes": 701,
+    "sha256": "1295f20475107e120d50dbbb9ea9367a6efe23c3711b8c6ea7033e20eca319f3"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/stream-recovery-finding.json",
+    "file": "followup/decoder-probes/stream-recovery-finding.json",
+    "bytes": 70,
+    "sha256": "2cc172dd238f127186b3105f2365fc96aaa7a8e2031f72b336f96228c80131da"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/stream-recovery-node.json",
+    "file": "followup/decoder-probes/stream-recovery-node.json",
+    "bytes": 32034,
+    "sha256": "05d35c2fbc2df288a8b26259029cd8ba8c6b33fdbc7327505627de21a6947f57"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/stream-recovery-quench.json",
+    "file": "followup/decoder-probes/stream-recovery-quench.json",
+    "bytes": 32034,
+    "sha256": "05d35c2fbc2df288a8b26259029cd8ba8c6b33fdbc7327505627de21a6947f57"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/stream-recovery-quench.stderr",
+    "file": "followup/decoder-probes/stream-recovery-quench.stderr",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/stream-recovery.cjs",
+    "file": "followup/decoder-probes/stream-recovery.cjs",
+    "bytes": 1194,
+    "sha256": "5fc845e1f6398640fe27c3ae0f8880f5802d9537a23ef950fc5460d8cd3c04d4"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/text-decoders-binding-stage1.exit",
+    "file": "followup/decoder-probes/text-decoders-binding-stage1.exit",
+    "bytes": 4,
+    "sha256": "39b8dc3fc8b44765c8e6f1adee04c5b465e555ab791cc42d0d9e810d5b64297c"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/text-decoders-binding-stage1.log",
+    "file": "followup/decoder-probes/text-decoders-binding-stage1.log.gz",
+    "bytes": 67757,
+    "sha256": "0c0b99df677ca96d5067f6e0e2ada73792ee5269b84a3b2f2de267e95d99bf32"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/text-decoders-fixed.exit",
+    "file": "followup/decoder-probes/text-decoders-fixed.exit",
+    "bytes": 2,
+    "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/text-decoders-fixed.log",
+    "file": "followup/decoder-probes/text-decoders-fixed.log",
+    "bytes": 346,
+    "sha256": "01c1ec57938b53c487550275c5f0bf0ee9e27ea410b9749f6d2b9fb1ee929247"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/text_decoder_icu.rs",
+    "file": "followup/decoder-probes/text_decoder_icu.rs",
+    "bytes": 14688,
+    "sha256": "945a55dc5347065a37346deff5594e2eaa1325552d2bd289f8757426e88d43b8"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/transcode-draft.jsonl",
+    "file": "followup/decoder-probes/transcode-draft.jsonl.gz",
+    "bytes": 412799,
+    "sha256": "c007f303ace50177bd062fbee032107ebc6ec413c1f400a17cdefa08b14c65dd"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/transcode-draft.stderr",
+    "file": "followup/decoder-probes/transcode-draft.stderr",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/transcode-finding.json",
+    "file": "followup/decoder-probes/transcode-finding.json",
+    "bytes": 588,
+    "sha256": "eb6f93761765dc63e531abafafb019cfc840d00294839be75833d9031fb2ad2c"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/transcode-input.jsonl",
+    "file": "followup/decoder-probes/transcode-input.jsonl.gz",
+    "bytes": 881744,
+    "sha256": "b7fd1db662eaf1d8d8729c32304c9c6a886c72f866a3bd046571e76ebb0a13e1"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/transcode-native-node.jsonl",
+    "file": "followup/decoder-probes/transcode-native-node.jsonl.gz",
+    "bytes": 77654,
+    "sha256": "cd4c18dcb37a0d1bfa5e79fe1f425531b3d7e8312179057d0e9712a2a6ae7516"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/transcode-native-node.stderr",
+    "file": "followup/decoder-probes/transcode-native-node.stderr",
+    "bytes": 1038,
+    "sha256": "a7b2726a03d1eeb4ce76268321d4b944679dd250b8f56078291545a0ce98143b"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/transcode-native-nonempty-draft.jsonl",
+    "file": "followup/decoder-probes/transcode-native-nonempty-draft.jsonl.gz",
+    "bytes": 412529,
+    "sha256": "6f8f1fe08b0b4dd106f6b94ecc2008c6beb5ebb145249920bd96c07248103cef"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/transcode-native-nonempty-draft.stderr",
+    "file": "followup/decoder-probes/transcode-native-nonempty-draft.stderr",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/transcode-native-nonempty-draft78.jsonl",
+    "file": "followup/decoder-probes/transcode-native-nonempty-draft78.jsonl.gz",
+    "bytes": 412529,
+    "sha256": "6f8f1fe08b0b4dd106f6b94ecc2008c6beb5ebb145249920bd96c07248103cef"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/transcode-native-nonempty-draft78.stderr",
+    "file": "followup/decoder-probes/transcode-native-nonempty-draft78.stderr",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/transcode-native-nonempty-finding.json",
+    "file": "followup/decoder-probes/transcode-native-nonempty-finding.json",
+    "bytes": 54,
+    "sha256": "6532abfb39d8c12c05ee3476f78ea4d559951b2db1e6336ab9b91f7a25f35cca"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/transcode-native-nonempty-finding78.json",
+    "file": "followup/decoder-probes/transcode-native-nonempty-finding78.json",
+    "bytes": 54,
+    "sha256": "6532abfb39d8c12c05ee3476f78ea4d559951b2db1e6336ab9b91f7a25f35cca"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/transcode-native-nonempty-input.jsonl",
+    "file": "followup/decoder-probes/transcode-native-nonempty-input.jsonl.gz",
+    "bytes": 880688,
+    "sha256": "5d4e5a917fd3e24c143f3f25d71423778d74ff126a18962f8d145f1de8fdc68b"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/transcode-native-nonempty-node.jsonl",
+    "file": "followup/decoder-probes/transcode-native-nonempty-node.jsonl.gz",
+    "bytes": 412529,
+    "sha256": "6f8f1fe08b0b4dd106f6b94ecc2008c6beb5ebb145249920bd96c07248103cef"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/transcode-native-nonempty-node.stderr",
+    "file": "followup/decoder-probes/transcode-native-nonempty-node.stderr",
+    "bytes": 168,
+    "sha256": "a382b84e5f4bff61008c7bc820530e5b23dd1aeef88adde32b668c94bf1ba089"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/transcode-node.jsonl",
+    "file": "followup/decoder-probes/transcode-node.jsonl.gz",
+    "bytes": 412737,
+    "sha256": "79102a9cd736a81a96acbfcb5ed41d191846cd2bff020d827cc2ad16ef47faf2"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/transcode-node.stderr",
+    "file": "followup/decoder-probes/transcode-node.stderr",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/types-rebuild-launch.log",
+    "file": "followup/decoder-probes/types-rebuild-launch.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/util-aliases-binding-stage1.exit",
+    "file": "followup/decoder-probes/util-aliases-binding-stage1.exit",
+    "bytes": 2,
+    "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/util-aliases-binding-stage1.log",
+    "file": "followup/decoder-probes/util-aliases-binding-stage1.log",
+    "bytes": 190,
+    "sha256": "61f66fa5427ea857848c597115431a2eac1a7d7f7290cc85668a847db97e08a4"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/util-aliases-fixed.exit",
+    "file": "followup/decoder-probes/util-aliases-fixed.exit",
+    "bytes": 2,
+    "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/util-aliases-fixed.log",
+    "file": "followup/decoder-probes/util-aliases-fixed.log",
+    "bytes": 190,
+    "sha256": "db4fdd1a73cece948df91856ca1d702b886d8ec72d0902fa92d7cf285729ae0d"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/width-draft.jsonl",
+    "file": "followup/decoder-probes/width-draft.jsonl.gz",
+    "bytes": 262176,
+    "sha256": "270af5864e8ea54e6224ed319360e0b78f075b67a4313a2e37183e11d3e13e62"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/width-draft.stderr",
+    "file": "followup/decoder-probes/width-draft.stderr",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/width-draft78.jsonl",
+    "file": "followup/decoder-probes/width-draft78.jsonl.gz",
+    "bytes": 262176,
+    "sha256": "656b273d2607d9d4b6d4c599c0279d187e46b0590bd9d3fa0ef201f1cff3edb7"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/width-draft78.stderr",
+    "file": "followup/decoder-probes/width-draft78.stderr",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/width-finding.json",
+    "file": "followup/decoder-probes/width-finding.json",
+    "bytes": 10427,
+    "sha256": "b5ec154bc39e36e968b1807cd7f063e1d5e41e8f09a2ac6115e43db483dd6f76"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/width-finding78.json",
+    "file": "followup/decoder-probes/width-finding78.json",
+    "bytes": 56,
+    "sha256": "1665735b6113f0a91b38c297a70131fe778243262e96da54d01dfd4db6f97889"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/width-input.jsonl",
+    "file": "followup/decoder-probes/width-input.jsonl.gz",
+    "bytes": 9154200,
+    "sha256": "5e918f537a230284120d6e77ac78cc1634a0a31a5c9b6fb5c51ab327bf1d5d14"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/width-node.jsonl",
+    "file": "followup/decoder-probes/width-node.jsonl.gz",
+    "bytes": 262176,
+    "sha256": "656b273d2607d9d4b6d4c599c0279d187e46b0590bd9d3fa0ef201f1cff3edb7"
+  },
+  {
+    "source": "/workspace/scratch/npm-decoder-production-draft/width-node.stderr",
+    "file": "followup/decoder-probes/width-node.stderr",
+    "bytes": 168,
+    "sha256": "24a55289c8b72b0fcf64865cd8ad7e8dd422f26750ec619980859a6f0f2001f1"
+  },
+  {
+    "source": "/workspace/scratch/npm-icu-rejected-5df/failure.json",
+    "file": "followup/rejected-5df/failure.json",
+    "bytes": 390,
+    "sha256": "735a756d680b11fc244ecd1775a5503700d68d2f175e2cdba6fdf9374ac09a44"
+  },
+  {
+    "source": "/workspace/scratch/npm-icu-rejected-5df/npm-icu-build-checks.exit",
+    "file": "followup/rejected-5df/npm-icu-build-checks.exit",
+    "bytes": 4,
+    "sha256": "39b8dc3fc8b44765c8e6f1adee04c5b465e555ab791cc42d0d9e810d5b64297c"
+  },
+  {
+    "source": "/workspace/scratch/npm-icu-rejected-5df/npm-icu-build-checks.sh",
+    "file": "followup/rejected-5df/npm-icu-build-checks.sh",
+    "bytes": 2387,
+    "sha256": "e427c73cc6a8b6c7c7f338de557ff78a72ff2ff571caa0329065e11dbd2e6a7f"
+  },
+  {
+    "source": "/workspace/scratch/npm-icu-rejected-5df/npm-icu-build-launch.log",
+    "file": "followup/rejected-5df/npm-icu-build-launch.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/workspace/scratch/npm-icu-rejected-5df/npm-icu-cli.exit",
+    "file": "followup/rejected-5df/npm-icu-cli.exit",
+    "bytes": 2,
+    "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+  },
+  {
+    "source": "/workspace/scratch/npm-icu-rejected-5df/npm-icu-cli.log",
+    "file": "followup/rejected-5df/npm-icu-cli.log",
+    "bytes": 443,
+    "sha256": "89e2ab03dd801590629dba0ba4841d8d7bb13678fac038042119a2f1c2565f10"
+  },
+  {
+    "source": "/workspace/scratch/npm-icu-rejected-5df/npm-icu-coverage-unit.exit",
+    "file": "followup/rejected-5df/npm-icu-coverage-unit.exit",
+    "bytes": 2,
+    "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+  },
+  {
+    "source": "/workspace/scratch/npm-icu-rejected-5df/npm-icu-coverage-unit.log",
+    "file": "followup/rejected-5df/npm-icu-coverage-unit.log",
+    "bytes": 1016,
+    "sha256": "c49e376d996840feae77ca3ad148c805812ffa0fe9316b5a1c10163173f4dd8c"
+  },
+  {
+    "source": "/workspace/scratch/npm-icu-rejected-5df/npm-icu-engines.json",
+    "file": "followup/rejected-5df/npm-icu-engines.json",
+    "bytes": 582,
+    "sha256": "48c3a8365140f7cdcdcdc31ca852f231b696d9622a79309b3bd22781d39b190f"
+  },
+  {
+    "source": "/workspace/scratch/npm-icu-rejected-5df/npm-icu-fast-core.exit",
+    "file": "followup/rejected-5df/npm-icu-fast-core.exit",
+    "bytes": 2,
+    "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+  },
+  {
+    "source": "/workspace/scratch/npm-icu-rejected-5df/npm-icu-fast-core.log",
+    "file": "followup/rejected-5df/npm-icu-fast-core.log",
+    "bytes": 55738,
+    "sha256": "c1cde65094c932e5b3b8414616581d256430c674e7481eec9013defb536c587a"
+  },
+  {
+    "source": "/workspace/scratch/npm-icu-rejected-5df/npm-icu-node-api.exit",
+    "file": "followup/rejected-5df/npm-icu-node-api.exit",
+    "bytes": 4,
+    "sha256": "39b8dc3fc8b44765c8e6f1adee04c5b465e555ab791cc42d0d9e810d5b64297c"
+  },
+  {
+    "source": "/workspace/scratch/npm-icu-rejected-5df/npm-icu-node-api.log",
+    "file": "followup/rejected-5df/npm-icu-node-api.log",
+    "bytes": 27245,
+    "sha256": "f97aaf748490786f2743fee2648b83647254aeaff557bb0c4a244b00b2d0cff6"
+  },
+  {
+    "source": "/workspace/scratch/npm-icu-rejected-5df/npm-icu-runners.exit",
+    "file": "followup/rejected-5df/npm-icu-runners.exit",
+    "bytes": 2,
+    "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+  },
+  {
+    "source": "/workspace/scratch/npm-icu-rejected-5df/npm-icu-runners.log",
+    "file": "followup/rejected-5df/npm-icu-runners.log",
+    "bytes": 545,
+    "sha256": "1a6dc918a3a7e872040678812fc86aed52af8d9ece255a7d5eaf27985ec9dd55"
+  },
+  {
+    "source": "/workspace/scratch/npm-icu-rejected-5df/npm-icu-suite-error.txt",
+    "file": "followup/rejected-5df/npm-icu-suite-error.txt",
+    "bytes": 50,
+    "sha256": "64180f1c491787850a9f2de5287a3ff630ea9e490eae84fd23369845efa73d30"
+  },
+  {
+    "source": "/workspace/scratch/npm-icu-rejected-5df/npm-icu-suite.exit",
+    "file": "followup/rejected-5df/npm-icu-suite.exit",
+    "bytes": 2,
+    "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+  },
+  {
+    "source": "/workspace/scratch/npm-icu-rejected-5df/npm-icu-suites-launch.log",
+    "file": "followup/rejected-5df/npm-icu-suites-launch.log",
+    "bytes": 282,
+    "sha256": "968ed7c55afd4e5f7f62047fe781e705e2a25eb1d47c2cb8f2c0b89a89b09bd1"
+  },
+  {
+    "source": "/workspace/scratch/npm-icu-rejected-5df/npm-icu-suites.py",
+    "file": "followup/rejected-5df/npm-icu-suites.py",
+    "bytes": 8051,
+    "sha256": "4445ca8b7649aa0cc5c9f4cae05711823b2f3ddfb6f146d7d6bb8ee763cd66e1"
+  },
+  {
+    "source": "/workspace/scratch/npm-icu-rejected-5df/npm-icu-workspace-check.exit",
+    "file": "followup/rejected-5df/npm-icu-workspace-check.exit",
+    "bytes": 2,
+    "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+  },
+  {
+    "source": "/workspace/scratch/npm-icu-rejected-5df/npm-icu-workspace-check.log",
+    "file": "followup/rejected-5df/npm-icu-workspace-check.log",
+    "bytes": 162,
+    "sha256": "261ffd0621f1418c27f28881c3cb9d4ef0545ce3f3626c8c8cf23e2a764d5eb2"
+  },
+  {
+    "source": "/workspace/scratch/npm-icu-fixed-guard-attempt1/cause.txt",
+    "file": "followup/guard-setup-failure/cause.txt",
+    "bytes": 227,
+    "sha256": "a2f0ba8541473753f27fa66d68085e4ee9e62f65cda83687e0cd478f24fb4f83"
+  },
+  {
+    "source": "/workspace/scratch/npm-icu-fixed-guard-attempt1/executed-resume-runner.py",
+    "file": "followup/guard-setup-failure/executed-resume-runner.py",
+    "bytes": 2765,
+    "sha256": "0ae758ea47836f68fc9ee9af8ffb5534df11c917731916ae8099b1ceb702c4ea"
+  },
+  {
+    "source": "/workspace/scratch/npm-icu-fixed-guard-attempt1/npm-icu-fixed-instruction-guard.exit",
+    "file": "followup/guard-setup-failure/npm-icu-fixed-instruction-guard.exit",
+    "bytes": 2,
+    "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+  },
+  {
+    "source": "/workspace/scratch/npm-icu-fixed-guard-attempt1/npm-icu-fixed-instruction-guard.log",
+    "file": "followup/guard-setup-failure/npm-icu-fixed-instruction-guard.log",
+    "bytes": 133,
+    "sha256": "e36e536eda5f445b81ac981e9917827bee97e4a1d44eb9b45db2ac8adf33e85d"
+  },
+  {
+    "source": "/workspace/scratch/npm-icu-fixed-guard-attempt1/npm-icu-fixed-suite-error.txt",
+    "file": "followup/guard-setup-failure/npm-icu-fixed-suite-error.txt",
+    "bytes": 41,
+    "sha256": "cb47120f845d34d5f343d0ca4b637a3bedabbb91b833fc391360cb9ff9803736"
+  },
+  {
+    "source": "/workspace/scratch/npm-icu-fixed-guard-attempt1/npm-icu-fixed-suite.exit",
+    "file": "followup/guard-setup-failure/npm-icu-fixed-suite.exit",
+    "bytes": 2,
+    "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+  },
+  {
+    "source": "/workspace/scratch/npm-icu-fixed-guard-attempt1/raw.txt",
+    "file": "followup/guard-setup-failure/raw.txt",
+    "bytes": 562,
+    "sha256": "cbc1353c47719a47f7c2b3cdb526e0eda22d3f89db9ff923af5623aa6dfc79ba"
+  },
+  {
+    "source": "/workspace/scratch/npm-private-brand-draft/PLAN.md",
+    "file": "followup/private-findings/PLAN.md",
+    "bytes": 3247,
+    "sha256": "1ba99055a79895bc2d0c1e2868d51f6741d1d7f12bc1af73af347fd76015fc25"
+  },
+  {
+    "source": "/workspace/scratch/npm-private-brand-draft/cargo/Cargo.lock",
+    "file": "followup/private-findings/cargo/Cargo.lock",
+    "bytes": 14789,
+    "sha256": "f772363fe0404e318199500c9902914b803a1fd78f15241f6a3b9c4ac7435c6f"
+  },
+  {
+    "source": "/workspace/scratch/npm-private-brand-draft/cargo/Cargo.toml",
+    "file": "followup/private-findings/cargo/Cargo.toml",
+    "bytes": 647,
+    "sha256": "9c4d72809641b395e57866b55f87c7a2477ad23887af3a4f9c93a46e637999bf"
+  },
+  {
+    "source": "/workspace/scratch/npm-private-brand-draft/compiler-dependencies.json",
+    "file": "followup/private-findings/compiler-dependencies.json",
+    "bytes": 627,
+    "sha256": "b12da5db5ca43c1acf06535e9a362fbfd2d43e23224ac46e5c28e40ba9a8e0dc"
+  },
+  {
+    "source": "/workspace/scratch/npm-private-brand-draft/extended-finding.json",
+    "file": "followup/private-findings/extended-finding.json",
+    "bytes": 32045,
+    "sha256": "2261a5011a28d35071f4e3623be7cfa5cb08e3f0a4fac69406735406620112b0"
+  },
+  {
+    "source": "/workspace/scratch/npm-private-brand-draft/extended-invalid-static-names.cjs",
+    "file": "followup/private-findings/extended-invalid-static-names.cjs",
+    "bytes": 1699,
+    "sha256": "16488955bc917c26649f8400808747fa32984e2db7ca43c6f6a9cdaccc348732"
+  },
+  {
+    "source": "/workspace/scratch/npm-private-brand-draft/extended-node.json",
+    "file": "followup/private-findings/extended-node.json",
+    "bytes": 9753,
+    "sha256": "e3b35f8a1ccaff6b449e35861587061427186fac8e772ef86a7d1c1cea9d4426"
+  },
+  {
+    "source": "/workspace/scratch/npm-private-brand-draft/extended-node.stderr",
+    "file": "followup/private-findings/extended-node.stderr",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/workspace/scratch/npm-private-brand-draft/extended-quench.json",
+    "file": "followup/private-findings/extended-quench.json",
+    "bytes": 10959,
+    "sha256": "009dcdb5de781cc2993b424d6e1647bb5e72a3b68e6ba918895227ffb64cb806"
+  },
+  {
+    "source": "/workspace/scratch/npm-private-brand-draft/extended-quench.stderr",
+    "file": "followup/private-findings/extended-quench.stderr",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/workspace/scratch/npm-private-brand-draft/extended.cjs",
+    "file": "followup/private-findings/extended.cjs",
+    "bytes": 1783,
+    "sha256": "7931c31b3ac386ee7dc65f806485b2ee218cf07ed574428c7c25a8d19b66961d"
+  },
+  {
+    "source": "/workspace/scratch/npm-private-brand-draft/identity-tests.log",
+    "file": "followup/private-findings/identity-tests.log",
+    "bytes": 281,
+    "sha256": "08f4e9a99b1237d57a5a2afb32883e397d187813ffcde05f9040d3c0a61affdc"
+  },
+  {
+    "source": "/workspace/scratch/npm-private-brand-draft/invalid-static-names.exit",
+    "file": "followup/private-findings/invalid-static-names.exit",
+    "bytes": 2,
+    "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+  },
+  {
+    "source": "/workspace/scratch/npm-private-brand-draft/invalid-static-names.stderr",
+    "file": "followup/private-findings/invalid-static-names.stderr",
+    "bytes": 792,
+    "sha256": "205bf498fa9b7bfe6a825b7903f592997e37556c710740b49685747f02b041bc"
+  },
+  {
+    "source": "/workspace/scratch/npm-private-brand-draft/metadata-cargo-fixed.log",
+    "file": "followup/private-findings/metadata-cargo-fixed.log",
+    "bytes": 391,
+    "sha256": "9520ab6a2f2fa4bd9dde0400869558c1e84252fe4e56441b7d35b1337a77f7a2"
+  },
+  {
+    "source": "/workspace/scratch/npm-private-brand-draft/metadata-cargo-fixed.stdout",
+    "file": "followup/private-findings/metadata-cargo-fixed.stdout",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/workspace/scratch/npm-private-brand-draft/metadata-cargo-node-store-free.log",
+    "file": "followup/private-findings/metadata-cargo-node-store-free.log",
+    "bytes": 138,
+    "sha256": "053347bda625b29afed8a62e17fd19d21b03d8eeadb520b17ff96f37a58371f0"
+  },
+  {
+    "source": "/workspace/scratch/npm-private-brand-draft/metadata-cargo-node-store-free.stdout",
+    "file": "followup/private-findings/metadata-cargo-node-store-free.stdout",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/workspace/scratch/npm-private-brand-draft/metadata-cargo-pinned.log",
+    "file": "followup/private-findings/metadata-cargo-pinned.log",
+    "bytes": 4502,
+    "sha256": "2434379cb9df6c98dd8546e8765573c8bb386ca4f32bb8369118a3f89049cd8b"
+  },
+  {
+    "source": "/workspace/scratch/npm-private-brand-draft/metadata-cargo-pinned.stdout",
+    "file": "followup/private-findings/metadata-cargo-pinned.stdout",
+    "bytes": 1277,
+    "sha256": "81859bb45612ec8dfbce206300c6dc198db72c3411ccd3622113bef674f02a40"
+  },
+  {
+    "source": "/workspace/scratch/npm-private-brand-draft/metadata-cargo.log",
+    "file": "followup/private-findings/metadata-cargo.log",
+    "bytes": 194,
+    "sha256": "85d35efc24ca601673a255e3f30a706d3f2ac5202f0b7452c08ddad6a549dccc"
+  },
+  {
+    "source": "/workspace/scratch/npm-private-brand-draft/metadata-cargo.stdout",
+    "file": "followup/private-findings/metadata-cargo.stdout",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/workspace/scratch/npm-private-brand-draft/metadata-sparse-span.log",
+    "file": "followup/private-findings/metadata-sparse-span.log",
+    "bytes": 2354,
+    "sha256": "76bbc8ef526cd0bc5ea732347da9ab31ffc6bd280642e5b404ff55503d3ec3f7"
+  },
+  {
+    "source": "/workspace/scratch/npm-private-brand-draft/metadata-sparse-span.stdout",
+    "file": "followup/private-findings/metadata-sparse-span.stdout",
+    "bytes": 1277,
+    "sha256": "81859bb45612ec8dfbce206300c6dc198db72c3411ccd3622113bef674f02a40"
+  },
+  {
+    "source": "/workspace/scratch/npm-private-brand-draft/npm-private-brand-oracle-metadata.stderr",
+    "file": "followup/private-findings/npm-private-brand-oracle-metadata.stderr",
+    "bytes": 271,
+    "sha256": "db18fcee69753e316762908d8e9fc62ca5339affdfbbb60bafab661c486f5684"
+  },
+  {
+    "source": "/workspace/scratch/npm-private-brand-draft/npm-private-brand-oracle-metadata.txt",
+    "file": "followup/private-findings/npm-private-brand-oracle-metadata.txt",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/workspace/scratch/npm-private-brand-draft/private_name.rs",
+    "file": "followup/private-findings/private_name.rs",
+    "bytes": 3719,
+    "sha256": "22cf353d2bd6c993fd1cf86ba0699336c6e7730cde791b1ad4656a5ff5b28c62"
+  },
+  {
+    "source": "/workspace/scratch/npm-private-brand-draft/resolve-build-class-table.log",
+    "file": "followup/private-findings/resolve-build-class-table.log",
+    "bytes": 1522,
+    "sha256": "48cc16a11d27d38cc759ee9e8672c99556e05f0e70c389991ab823901b214166"
+  },
+  {
+    "source": "/workspace/scratch/npm-private-brand-draft/resolve-build-fixed.log",
+    "file": "followup/private-findings/resolve-build-fixed.log",
+    "bytes": 1522,
+    "sha256": "48cc16a11d27d38cc759ee9e8672c99556e05f0e70c389991ab823901b214166"
+  },
+  {
+    "source": "/workspace/scratch/npm-private-brand-draft/resolve-build-sparse-class.log",
+    "file": "followup/private-findings/resolve-build-sparse-class.log",
+    "bytes": 297,
+    "sha256": "1340a600ef5196a2c02b7aa84cf3fe08a70bf8c12222140383b4d7fd09c6f9e7"
+  },
+  {
+    "source": "/workspace/scratch/npm-private-brand-draft/resolve-build.log",
+    "file": "followup/private-findings/resolve-build.log",
+    "bytes": 2014,
+    "sha256": "02b12b8510e796ef4d696e04125bd163f7cfaf5f82ced94ff7a09e9e4d753787"
+  },
+  {
+    "source": "/workspace/scratch/npm-private-brand-draft/resolve-main.rs",
+    "file": "followup/private-findings/resolve-main.rs",
+    "bytes": 706,
+    "sha256": "8cc90cd3ad538f316cfd17cffb341aff2958c811deb5a73c1a2558bf4cbb8109"
+  },
+  {
+    "source": "/workspace/scratch/npm-private-brand-draft/resolve-oracle-metadata.stderr",
+    "file": "followup/private-findings/resolve-oracle-metadata.stderr",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/workspace/scratch/npm-private-brand-draft/resolve-oracle-metadata.txt",
+    "file": "followup/private-findings/resolve-oracle-metadata.txt",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/workspace/scratch/npm-private-brand-draft/resolve.rs",
+    "file": "followup/private-findings/resolve.rs",
+    "bytes": 2763,
+    "sha256": "b85085a0c307233af4f52c4db191f6aceae525296d8a26fcae4d9c59e2cbf2db"
+  },
+  {
+    "source": "/workspace/scratch/npm-private-brand-draft/string-key-isolation-finding.json",
+    "file": "followup/private-findings/string-key-isolation-finding.json",
+    "bytes": 626,
+    "sha256": "dca10a1eb253c8d5e9da26464c97820c8e7d003677ca7c853a422ad87fa0318a"
+  },
+  {
+    "source": "/workspace/scratch/npm-private-brand-draft/string-key-isolation-node.json",
+    "file": "followup/private-findings/string-key-isolation-node.json",
+    "bytes": 157,
+    "sha256": "a2deb9739abcce54a68ab809b070dc5484aeb8f2a64bf120d90e512392ebb606"
+  },
+  {
+    "source": "/workspace/scratch/npm-private-brand-draft/string-key-isolation-node.stderr",
+    "file": "followup/private-findings/string-key-isolation-node.stderr",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/workspace/scratch/npm-private-brand-draft/string-key-isolation-original.cjs",
+    "file": "followup/private-findings/string-key-isolation-original.cjs",
+    "bytes": 562,
+    "sha256": "2bbb7017e85b7b31a78c77c232883ed7e3ed7b137c2c02759b36a10727c00303"
+  },
+  {
+    "source": "/workspace/scratch/npm-private-brand-draft/string-key-isolation-quench.json",
+    "file": "followup/private-findings/string-key-isolation-quench.json",
+    "bytes": 56,
+    "sha256": "98291a56799f788eb4260d0fe162e7700a1585219149fa35e131cd49597976ab"
+  },
+  {
+    "source": "/workspace/scratch/npm-private-brand-draft/string-key-isolation-quench.stderr",
+    "file": "followup/private-findings/string-key-isolation-quench.stderr",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/workspace/scratch/npm-private-brand-draft/string-key-isolation.cjs",
+    "file": "followup/private-findings/string-key-isolation.cjs",
+    "bytes": 687,
+    "sha256": "6668e53ad35278b5cf30cc414f8ccb22663c6c019cfe1a479f78ec9f2ee25042"
+  },
+  {
+    "source": "/workspace/scratch/npm-private-brand-draft/string-namespace-expanded-finding.json",
+    "file": "followup/private-findings/string-namespace-expanded-finding.json",
+    "bytes": 2904,
+    "sha256": "771d46d222fb835b97447f4a412694fe7e4128771b622bfed3840f102cfd6044"
+  },
+  {
+    "source": "/workspace/scratch/npm-private-brand-draft/string-namespace-expanded-node.json",
+    "file": "followup/private-findings/string-namespace-expanded-node.json",
+    "bytes": 1116,
+    "sha256": "c4a07e8618772a6d68f7b8820c376d1a643c7eea13187b9a9c786a919a4a0480"
+  },
+  {
+    "source": "/workspace/scratch/npm-private-brand-draft/string-namespace-expanded-quench.json",
+    "file": "followup/private-findings/string-namespace-expanded-quench.json",
+    "bytes": 724,
+    "sha256": "f7620e944e55af2057f4be5014364875cfaa75bf928bfd1cfae7b224d2745b13"
+  },
+  {
+    "source": "/workspace/scratch/npm-zlib-draft/Cargo.lock",
+    "file": "followup/zlib-findings/Cargo.lock",
+    "bytes": 4147,
+    "sha256": "49905c38a369267f21e4b37616170ddbe768ec433d0e2961860a96419a80fd66"
+  },
+  {
+    "source": "/workspace/scratch/npm-zlib-draft/Cargo.toml",
+    "file": "followup/zlib-findings/Cargo.toml",
+    "bytes": 440,
+    "sha256": "f929d0ceca7a27481f2b75f2ec27668fac10e54bc6094932cacb7f1a4bbe9ed8"
+  },
+  {
+    "source": "/workspace/scratch/npm-zlib-draft/README.md",
+    "file": "followup/zlib-findings/README.md",
+    "bytes": 1448,
+    "sha256": "1fee6bb1df23622d45060028b16be05285377e42d74dda8bed558609dc4af3ac"
+  },
+  {
+    "source": "/workspace/scratch/npm-zlib-draft/build-pinned.log",
+    "file": "followup/zlib-findings/build-pinned.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/workspace/scratch/npm-zlib-draft/build-pinned.py",
+    "file": "followup/zlib-findings/build-pinned.py",
+    "bytes": 1611,
+    "sha256": "c176cb78ed529a06ce2116a10d8ba84885328b42f1bd87248e6c371bf214a6f0"
+  },
+  {
+    "source": "/workspace/scratch/npm-zlib-draft/build-unsupported-block.log",
+    "file": "followup/zlib-findings/build-unsupported-block.log",
+    "bytes": 917,
+    "sha256": "75653e5f01a6737fbb1f56977ea6c3ebf30e88de8b870c2a948300e7d9fc29a2"
+  },
+  {
+    "source": "/workspace/scratch/npm-zlib-draft/build.log",
+    "file": "followup/zlib-findings/build.log",
+    "bytes": 917,
+    "sha256": "75653e5f01a6737fbb1f56977ea6c3ebf30e88de8b870c2a948300e7d9fc29a2"
+  },
+  {
+    "source": "/workspace/scratch/npm-zlib-draft/codec-build.log",
+    "file": "followup/zlib-findings/codec-build.log",
+    "bytes": 1061,
+    "sha256": "64cd91a871b78f95861db680f342c6f6844777d05050025d534fbb18304e7142"
+  },
+  {
+    "source": "/workspace/scratch/npm-zlib-draft/codec-finding.json",
+    "file": "followup/zlib-findings/codec-finding.json",
+    "bytes": 79,
+    "sha256": "922e3c89497d8df07d70c7e371bfb5a38bd287b007db5eb10da76c01b300a3d0"
+  },
+  {
+    "source": "/workspace/scratch/npm-zlib-draft/codec-lifetime-build.log",
+    "file": "followup/zlib-findings/codec-lifetime-build.log",
+    "bytes": 1061,
+    "sha256": "cbb6fc09f064aeb73b4a32c7f74e2e62ea32f8d7a94bf3a3c6f7c1a39651b1c6"
+  },
+  {
+    "source": "/workspace/scratch/npm-zlib-draft/codec-lifetime-rust.jsonl",
+    "file": "followup/zlib-findings/codec-lifetime-rust.jsonl.gz",
+    "bytes": 1362462,
+    "sha256": "7e4f3bc8160d7be98989dbe95c78c5cd504b4c07e45f134ba927a566c091739e"
+  },
+  {
+    "source": "/workspace/scratch/npm-zlib-draft/codec-main.rs",
+    "file": "followup/zlib-findings/codec-main.rs",
+    "bytes": 932,
+    "sha256": "8fa7bb1041c5128431a7efd6ed4afb8d6a2b4d81af60a729fa69a05770f3e212"
+  },
+  {
+    "source": "/workspace/scratch/npm-zlib-draft/codec-rust.jsonl",
+    "file": "followup/zlib-findings/codec-rust.jsonl.gz",
+    "bytes": 1362462,
+    "sha256": "7e4f3bc8160d7be98989dbe95c78c5cd504b4c07e45f134ba927a566c091739e"
+  },
+  {
+    "source": "/workspace/scratch/npm-zlib-draft/gzip-header-finding.json",
+    "file": "followup/zlib-findings/gzip-header-finding.json",
+    "bytes": 347,
+    "sha256": "fff4b1da9f1455581310bca73aef0b0efaaf71cad3f5a51db54fc3aa08c17480"
+  },
+  {
+    "source": "/workspace/scratch/npm-zlib-draft/gzip-header-node.json",
+    "file": "followup/zlib-findings/gzip-header-node.json",
+    "bytes": 94,
+    "sha256": "957344b1f6f992aaeee4215650b462e7bd743ba039b24f714f1dbce70f8727be"
+  },
+  {
+    "source": "/workspace/scratch/npm-zlib-draft/gzip-header-quench.json",
+    "file": "followup/zlib-findings/gzip-header-quench.json",
+    "bytes": 77,
+    "sha256": "9d360febda9a4ba38d12157fc5823b91ee1037291957da03852e8aca3a4d03cb"
+  },
+  {
+    "source": "/workspace/scratch/npm-zlib-draft/input.jsonl",
+    "file": "followup/zlib-findings/input.jsonl.gz",
+    "bytes": 2428050,
+    "sha256": "1685599b7d2e77cc106f4c1e148ae1a85dacd65e235659f0382de6d24fc57c76"
+  },
+  {
+    "source": "/workspace/scratch/npm-zlib-draft/main-unsupported-block.rs",
+    "file": "followup/zlib-findings/main-unsupported-block.rs",
+    "bytes": 1460,
+    "sha256": "40e058545afbd49381473d69710c149161beefe07f43d500310bdf084e19fbf5"
+  },
+  {
+    "source": "/workspace/scratch/npm-zlib-draft/main.rs",
+    "file": "followup/zlib-findings/main.rs",
+    "bytes": 1436,
+    "sha256": "cb1c863a2fac22657af45f05c768f2c4f49ebea9222e56756631d3f6b311f8f3"
+  },
+  {
+    "source": "/workspace/scratch/npm-zlib-draft/native-codec.rs",
+    "file": "followup/zlib-findings/native-codec.rs",
+    "bytes": 6296,
+    "sha256": "a1668636ff91314e37f12959f83919a8f1dc7a9da451bdd0cab9001e0f56366a"
+  },
+  {
+    "source": "/workspace/scratch/npm-zlib-draft/native-main.rs",
+    "file": "followup/zlib-findings/native-main.rs",
+    "bytes": 2358,
+    "sha256": "3668f53baf62800e3f72620ea03f5bac9aace9b440784afb325742214c25cc3c"
+  },
+  {
+    "source": "/workspace/scratch/npm-zlib-draft/node.exit",
+    "file": "followup/zlib-findings/node.exit",
+    "bytes": 2,
+    "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+  },
+  {
+    "source": "/workspace/scratch/npm-zlib-draft/node.jsonl",
+    "file": "followup/zlib-findings/node.jsonl.gz",
+    "bytes": 1362462,
+    "sha256": "7e4f3bc8160d7be98989dbe95c78c5cd504b4c07e45f134ba927a566c091739e"
+  },
+  {
+    "source": "/workspace/scratch/npm-zlib-draft/node.stderr",
+    "file": "followup/zlib-findings/node.stderr",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/workspace/scratch/npm-zlib-draft/oneshot-build.log",
+    "file": "followup/zlib-findings/oneshot-build.log",
+    "bytes": 1169,
+    "sha256": "9ef14c1c5ef8a409a31ff201b52fbea232763b0e04189cd3f3be7eef309d47f2"
+  },
+  {
+    "source": "/workspace/scratch/npm-zlib-draft/oneshot-finding.json",
+    "file": "followup/zlib-findings/oneshot-finding.json",
+    "bytes": 79,
+    "sha256": "097e0e908f750e2c9a0f6adde5587ef9f4345ecdceca2aea65e1915080f14e72"
+  },
+  {
+    "source": "/workspace/scratch/npm-zlib-draft/oneshot-input.jsonl",
+    "file": "followup/zlib-findings/oneshot-input.jsonl.gz",
+    "bytes": 525606,
+    "sha256": "ef5d76a4ea532c3a78eb68478026cffe46add80e39cd791b7155170c3b1e4cd4"
+  },
+  {
+    "source": "/workspace/scratch/npm-zlib-draft/oneshot-main.rs",
+    "file": "followup/zlib-findings/oneshot-main.rs",
+    "bytes": 564,
+    "sha256": "2778a2c6f63b90ba81194ec817c10959972eb954ccdb752003fe6f1d9266f665"
+  },
+  {
+    "source": "/workspace/scratch/npm-zlib-draft/oneshot-rust.jsonl",
+    "file": "followup/zlib-findings/oneshot-rust.jsonl.gz",
+    "bytes": 286357,
+    "sha256": "9891233d0ae0a70535e7ef4d6c5a1fea8b6df54d7cc8838bc6231de820c4934b"
+  },
+  {
+    "source": "/workspace/scratch/npm-zlib-draft/oracle.cjs",
+    "file": "followup/zlib-findings/oracle.cjs",
+    "bytes": 577,
+    "sha256": "2d4b417f9578a387a2cc0d2eed3931a21fd309d3a7b449e358066726f496bd9d"
+  },
+  {
+    "source": "/workspace/scratch/npm-zlib-draft/pinned-finding.json",
+    "file": "followup/zlib-findings/pinned-finding.json",
+    "bytes": 174,
+    "sha256": "a4c628d07647748b74e2c8a66b91afedd84cdd2f86df22775c33d1d67cfa8ed6"
+  },
+  {
+    "source": "/workspace/scratch/npm-zlib-draft/pinned-rust-build.log",
+    "file": "followup/zlib-findings/pinned-rust-build.log",
+    "bytes": 568,
+    "sha256": "66f39932e95603a5482fd353882d94968046cf8a1b7bf240563c96d41183e93a"
+  },
+  {
+    "source": "/workspace/scratch/npm-zlib-draft/pinned-rust.jsonl",
+    "file": "followup/zlib-findings/pinned-rust.jsonl.gz",
+    "bytes": 1362462,
+    "sha256": "7e4f3bc8160d7be98989dbe95c78c5cd504b4c07e45f134ba927a566c091739e"
+  },
+  {
+    "source": "/workspace/scratch/npm-zlib-draft/public-sync-finding.json",
+    "file": "followup/zlib-findings/public-sync-finding.json.gz",
+    "bytes": 957700,
+    "sha256": "2ebffe4eda3e7790a77bd7c31e16265a4f8d6a56bf73a9e568735b40c46f93f1"
+  },
+  {
+    "source": "/workspace/scratch/npm-zlib-draft/public-sync-node.json",
+    "file": "followup/zlib-findings/public-sync-node.json.gz",
+    "bytes": 289051,
+    "sha256": "a5bebab4fa8121c940edc2446e917e3bf459fc31f621a11c750d125f8b22a760"
+  },
+  {
+    "source": "/workspace/scratch/npm-zlib-draft/public-sync-node.stderr",
+    "file": "followup/zlib-findings/public-sync-node.stderr",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/workspace/scratch/npm-zlib-draft/public-sync-quench.json",
+    "file": "followup/zlib-findings/public-sync-quench.json.gz",
+    "bytes": 291351,
+    "sha256": "3aa477ce74b3f397ef5c459b20009dcbb52a786706715fb202563f9306bfd392"
+  },
+  {
+    "source": "/workspace/scratch/npm-zlib-draft/public-sync-quench.stderr",
+    "file": "followup/zlib-findings/public-sync-quench.stderr",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/workspace/scratch/npm-zlib-draft/public-sync.cjs",
+    "file": "followup/zlib-findings/public-sync.cjs",
+    "bytes": 585,
+    "sha256": "a13780cf5f42b747bb1794dd9b2ed482a35c01a223e686e1e383e679de864731"
+  },
+  {
+    "source": "/workspace/scratch/npm-zlib-draft/rust.jsonl",
+    "file": "followup/zlib-findings/rust.jsonl",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/workspace/scratch/npm-zlib-draft/scope.json",
+    "file": "followup/zlib-findings/scope.json",
+    "bytes": 132,
+    "sha256": "647f1e4a76f608b878e69eb2e0ddc33440ef8832c33fabf7273b926dfb2daaa1"
+  },
+  {
+    "source": "/workspace/scratch/npm-zlib-draft/supported-build.log",
+    "file": "followup/zlib-findings/supported-build.log",
+    "bytes": 210,
+    "sha256": "2701f1322fb903b6eb9ea583552c899999d655c5b61c79452219697f4f40393d"
+  },
+  {
+    "source": "/workspace/scratch/npm-zlib-draft/supported-finding.json",
+    "file": "followup/zlib-findings/supported-finding.json.gz",
+    "bytes": 2964019,
+    "sha256": "a86ff3b25dfe4456e2bf8fcc36322ab1eed43f02f62e11ec82518159ba22afbf"
+  },
+  {
+    "source": "/workspace/scratch/npm-zlib-draft/supported-input.jsonl",
+    "file": "followup/zlib-findings/supported-input.jsonl.gz",
+    "bytes": 1942440,
+    "sha256": "23bb5cbb619213e98e096ab0ecaa41c8ff24a88920dd2145ac6208b590343b88"
+  },
+  {
+    "source": "/workspace/scratch/npm-zlib-draft/supported-node.jsonl",
+    "file": "followup/zlib-findings/supported-node.jsonl.gz",
+    "bytes": 1389830,
+    "sha256": "a62ba6a49d79f1e87c6389a64a1b6d49c5812bc9ed0cd4f81a3d5a70c7f94294"
+  },
+  {
+    "source": "/workspace/scratch/npm-zlib-draft/supported-rust.jsonl",
+    "file": "followup/zlib-findings/supported-rust.jsonl.gz",
+    "bytes": 1098630,
+    "sha256": "f4a6efe0ed168d5a39edfb299a9a7a829b2fc953e6dc3da23ade54ebfec637e0"
+  }
+]

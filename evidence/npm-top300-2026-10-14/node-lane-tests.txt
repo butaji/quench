@@ -1,0 +1,340 @@
+   Compiling serde v1.0.229
+   Compiling zerofrom v0.1.8
+   Compiling bitflags v2.13.1
+   Compiling oxc_span v0.153.0
+   Compiling yoke v0.8.3
+   Compiling zerovec v0.11.8
+   Compiling zerotrie v0.2.5
+   Compiling phf v0.14.0
+   Compiling indexmap v2.14.0
+   Compiling smallvec v1.15.2
+   Compiling tinystr v0.8.4
+   Compiling potential_utf v0.1.6
+   Compiling icu_locale_core v2.3.0
+   Compiling icu_collections v2.3.0
+   Compiling oxc_diagnostics v0.153.0
+   Compiling oxc_index v5.0.0
+   Compiling icu_provider v2.3.1
+   Compiling icu_properties v2.3.0
+   Compiling oxc_syntax v0.153.0
+   Compiling oxc_regular_expression v0.153.0 (/workspace/quench/vendor/oxc-regular-expression)
+   Compiling icu_normalizer v2.3.0
+   Compiling typenum v1.20.1
+   Compiling oxc_ast v0.153.0
+   Compiling generic-array v0.14.7
+   Compiling icu_locale_fallback v2.3.0
+   Compiling once_cell v1.21.4
+   Compiling gimli v0.33.0
+   Compiling regalloc2 v0.15.2
+   Compiling regex-syntax v0.8.11
+   Compiling scopeguard v1.2.0
+   Compiling regex-automata v0.4.18
+   Compiling oxc_ecmascript v0.153.0
+   Compiling oxc_parser v0.153.0 (/workspace/quench/vendor/oxc-parser)
+   Compiling cranelift-codegen v0.134.3 (/workspace/quench/vendor/cranelift-codegen)
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling fixed_decimal v0.7.2
+   Compiling alloc-no-stdlib v2.0.4
+   Compiling alloc-stdlib v0.2.4
+   Compiling icu_calendar v2.3.0
+   Compiling oxc v0.153.0
+   Compiling icu_plurals v2.3.0
+   Compiling icu_casemap v2.3.0
+   Compiling icu_collator v2.3.1
+   Compiling digest v0.10.7
+   Compiling regex v1.13.1
+   Compiling oxc_ast_visit v0.153.0
+   Compiling lock_api v0.4.14
+   Compiling tracing-core v0.1.36
+   Compiling idna_adapter v1.2.2
+   Compiling parking_lot_core v0.9.12
+   Compiling zstd-sys v2.1.0+zstd.1.5.7
+   Compiling simdutf8 v0.1.5
+   Compiling foreign-types-shared v0.1.1
+   Compiling cpufeatures v0.2.17
+   Compiling simd-adler32 v0.3.10
+   Compiling adler2 v2.0.1
+   Compiling hashbrown v0.14.5
+   Compiling pin-project-lite v0.2.17
+   Compiling tracing v0.1.44
+   Compiling dashmap v6.2.1
+   Compiling wasmparser v0.247.0
+   Compiling quench-intl v0.1.0 (/workspace/quench/crates/quench-intl)
+   Compiling oxc_semantic v0.153.0
+   Compiling cranelift-native v0.134.3
+   Compiling cranelift-frontend v0.134.3
+   Compiling miniz_oxide v0.9.1
+   Compiling foreign-types v0.3.2
+   Compiling zstd-safe v7.3.0
+   Compiling idna v1.1.0
+   Compiling quench-regexp v0.1.0 (/workspace/quench/crates/quench-regexp)
+   Compiling brotli-decompressor v4.0.3
+   Compiling serde_json v1.0.151
+   Compiling thiserror v1.0.69
+   Compiling crc32fast v1.5.2
+   Compiling openssl-sys v0.9.117
+   Compiling form_urlencoded v1.2.2
+   Compiling json-strip-comments v1.0.4
+   Compiling linux-raw-sys v0.12.1
+   Compiling zlib-rs v0.6.8
+   Compiling core_detect v1.0.0
+   Compiling encoding_rs v0.8.42
+   Compiling flate2 v1.1.10
+   Compiling rustix v1.1.4
+   Compiling oxc_resolver v2.1.1
+   Compiling url v2.5.8
+   Compiling openssl v0.10.81
+   Compiling quench-runtime v0.1.0 (/workspace/quench/crates/quench-runtime)
+   Compiling brotli v7.0.0
+   Compiling zstd v0.13.3
+   Compiling sha1 v0.10.7
+   Compiling sysinfo v0.32.1
+   Compiling getrandom v0.4.3
+   Compiling socket2 v0.6.5
+   Compiling hex v0.4.3
+   Compiling base64 v0.22.1
+   Compiling fastrand v2.5.0
+   Compiling tempfile v3.27.0
+   Compiling sha2 v0.10.9
+   Compiling wait-timeout v0.2.1
+   Compiling quench-node-test v0.1.0 (/workspace/quench/crates/quench-node-test)
+   Compiling quench-node v0.1.0 (/workspace/quench/crates/quench-node)
+    Finished `iteration` profile [optimized] target(s) in 4m 02s
+     Running tests/child_entry.rs (target/iteration/deps/child_entry-0249b7cff966a5ba)
+
+running 178 tests
+test abort_onabort_uses_the_ordered_handler_wrapper ... ok
+test async_hooks_keep_active_snapshot_during_nested_subscription_changes ... ok
+test assertion_exception_objects_share_strict_property_comparison ... ok
+test abort_listener_disposal_and_stopped_propagation_match_node ... FAILED
+test async_resource_hooks_preserve_scope_identity_receiver_and_destroy_order ... ok
+test before_exit_restarts_referenced_work_and_precedes_exit ... ok
+test before_exit_routes_original_exceptions_before_restarting_work ... ok
+test borrowed_emit_and_domain_errors_preserve_original_values ... ok
+test buffer_alloc_supports_construction_and_ordinary_calls ... ok
+test buffer_private_encoding_does_not_consult_typed_length_or_subarray_hooks ... ok
+test buffer_string_encoding_uses_intrinsic_bytes_without_guest_iterator_hooks ... ok
+test callbackify_matches_node_descriptors_receivers_and_tick_order ... ok
+test canceled_preconnect_write_matches_node_callback_error ... ok
+test bounded_zlib_streams_match_node_roundtrips_and_close_lifecycle ... ok
+test child_disposal_and_sync_shell_options_observe_public_hooks_and_native_validation ... ok
+test child_file_and_argument_null_validation_preserves_node_codes_and_messages ... ok
+test child_environment_coercion_inheritance_and_undefined_match_node ... ok
+test child_cwd_accepts_file_urls_and_bytes_and_rejects_invalid_paths_before_launch ... ok
+test child_ipc_stdio_maps_a_real_duplex_socket_at_standard_and_extra_descriptors ... ok
+test child_identity_uses_kernel_credentials_sessions_and_spawn_error_boundaries ... ok
+test child_options_snapshot_getters_once_and_validate_common_fields_in_native_code ... ok
+test child_launches_inherit_guest_cwd_and_resolve_relative_overrides ... ok
+test child_stdio_stream_forwarding_matches_node_pipe_ownership ... ok
+test child_stdin_backpressure_preserves_bytes_and_finishes_synchronously_drained_tail ... ok
+test child_stdio_specs_match_node_pipe_ignore_inherit_and_descriptors ... ok
+test child_stdout_without_newline_is_visible_before_stdin_response ... ok
+test coded_argument_errors_preserve_prototype_shape_and_constant_code_rendering ... ok
+test cli_stdin_preserves_source_arguments_and_commonjs_origin ... ok
+test child_process_reference_state_and_public_handle_hooks_match_node_liveness ... ok
+test configured_node_library_survives_guest_cwd_changes ... ok
+test commonjs_namespace_static_prefix_uses_syntax_and_matches_node ... ok
+test console_counters_and_timer_coercion_order_match_node ... ok
+test commonjs_namespace_follows_static_require_reexports_and_cycles ... ok
+test console_write_error_policy_preserves_identity_and_guards_stream_errors ... ok
+test deep_comparison_modes_match_node_values_keys_and_prototypes ... ok
+test dom_event_phase_constants_match_node_descriptors ... ok
+test destroyed_child_streams_release_shell_descendant_close_waiting ... ok
+test children_inherit_directory_identity_after_rename_and_unlink ... ok
+test embedding_children_execute_node_arguments_instead_of_the_suite ... ok
+test emitter_async_resource_preserves_brands_hooks_and_scoped_dispatch ... ok
+test emitter_callable_construction_matches_metadata_defaults_and_numeric_counters ... ok
+test emitter_capture_rejections_preserves_thenable_identity_and_tick_order ... ok
+test emitter_inspection_unwraps_once_and_preserves_raw_copies_and_filters ... ok
+test emitter_removal_preserves_duplicate_notifications_and_numeric_rules ... ok
+test emitter_listener_store_tracks_nested_emission_and_copy_on_mutation ... ok
+test emitter_public_method_metadata_and_once_override_order_match_node ... ok
+test environment_tracing_records_real_spans_and_matching_lifetime_ids ... ok
+test error_constructors_capture_stack_at_the_node_observable_phase ... ok
+test event_listener_limits_share_defaults_and_match_target_symbols_and_errors ... ok
+test event_listener_warnings_preserve_error_identity_types_and_once_delivery ... ok
+test error_monitors_use_public_emit_and_capture_listener_mutations ... ok
+test events_listener_count_preserves_target_branding_and_method_dispatch ... ok
+test exit_from_timer_abandons_remaining_callbacks_without_uncaught_exception ... ok
+test exec_reports_kill_override_errors_through_its_callback ... ok
+test exec_normalization_and_collection_match_node ... ok
+test exec_file_matches_node_output_limits_errors_and_completion ... ok
+test extensionless_entries_use_the_package_module_scope ... ok
+test exposed_gc_preserves_weak_targets_until_job_checkpoint ... ok
+test fatal_before_exit_errors_retain_diagnostics_and_final_exit_status ... ok
+test fatal_source_excerpts_use_compiler_snapshots_and_commonjs_origins ... ok
+test global_crypto_is_lazy_and_random_values_preserve_views ... ok
+test filesystem_descriptors_match_node_positioned_io_and_spawn_inheritance ... ok
+test fork_json_ipc_matches_node_frames_callbacks_and_disconnect_lifecycle ... ok
+test handled_exceptions_do_not_read_stack_or_coerce_thrown_values ... ok
+test internal_inspect_retains_canonical_identity_when_public_alias_changes ... ok
+test http_agent_pool_names_preserve_property_reads_and_coercion ... ok
+test json_import_attributes_parse_the_original_payload ... ok
+test fatal_promise_rejections_preserve_original_stack_and_intrinsic_wrapper ... ok
+test legacy_pipe_close_and_throwing_completion_match_node_without_destroying_readables ... ok
+test local_abstract_socket_uses_kernel_namespace_and_releases_on_close ... ok
+test local_socket_bind_errors_are_async_and_long_paths_preserve_os_errno ... ok
+test local_socket_path_overloads_and_os_connection_errors_are_observable ... ok
+test local_socket_transport_exchanges_raw_bytes_with_an_external_process_and_unlinks_listener ... ok
+test module_create_require_url_shapes_errors_and_directory_base_match_node ... ok
+test module_node_search_paths_share_resolution_and_preserve_public_hooks ... ok
+test native_fs_watch_ignore_validation_and_filters_match_node ... ok
+test module_path_to_file_url_uses_guest_cwd_and_original_resolver_hooks ... ok
+test module_resolve_filename_uses_the_parent_base_without_loading ... ok
+test native_fs_watch_inherited_options_and_encoding_getters_match_node ... ok
+test native_fs_watch_keeps_roots_across_gc_and_routes_original_callback_errors ... ok
+test native_net_accepted_resources_are_visible_inside_original_connection_callback ... ok
+test native_fs_watch_matches_node_events_close_references_and_abort_lifecycle ... ok
+test native_net_delivery_gates_preserve_connection_before_bytes_and_write_completion ... ok
+test native_net_resource_visibility_follows_original_connection_delivery_and_close ... ok
+test native_promise_watch_abort_preserves_cause_and_descriptor_like_node ... ok
+test native_promise_watch_abort_resists_stopped_propagation_like_node ... ok
+test native_net_unconsumed_bytes_remain_buffered_and_count_before_data_listeners ... ok
+test native_promise_watch_lazy_validation_matches_node ... ok
+test native_promise_watch_buffers_burst_events_and_closes_like_node ... ok
+test native_promise_watch_overflow_error_releases_handle_like_node ... ok
+test native_recursive_watch_class_close_and_per_path_hooks_match_node ... FAILED
+test native_recursive_watch_callback_rm_is_async_and_preserves_errors_like_node ... ok
+test native_recursive_watch_internal_url_conversion_preserves_brands_and_identity ... ok
+test native_recursive_watch_discovery_changes_and_ignore_match_node ... ok
+test native_recursive_watch_globstar_root_and_nested_paths_match_node ... ok
+test native_recursive_watch_promises_forward_iterator_and_abort_cause_like_node ... ok
+test native_recursive_watch_iterator_and_gc_match_node ... ok
+test native_recursive_watch_validation_matches_node ... ok
+test native_stat_watch_bigint_timestamps_and_original_callback_error_match_node ... ok
+test native_stat_watch_cache_stop_order_and_reference_counts_match_node ... ok
+test native_stat_watch_initial_request_survives_unreference_like_node ... ok
+test native_fs_watch_missing_path_and_unreferenced_exit_match_node ... ok
+test native_stat_watch_stats_constructor_projection_matches_node ... ok
+test native_stat_watch_missing_creation_stats_match_node ... ok
+test native_tls_cipher_discovery_and_cached_copy_contract_match_node ... ok
+test native_stat_watch_validation_option_getters_and_stop_removal_match_node ... ok
+test native_tls_context_option_getter_and_native_method_hook_order_match_node ... ok
+test native_tls_context_internal_binding_constructor_snapshot_and_missing_engine_hooks_match_node ... FAILED
+test native_tls_context_engine_errors_and_shared_crypto_warning_match_node ... FAILED
+test native_tls_context_retains_real_certificate_material_and_view_offsets_match_node ... ok
+test native_tls_context_protocol_options_errors_match_node ... ok
+test native_tls_context_versions_constructors_and_weak_gc_match_node ... ok
+test native_tls_hostname_authorization_values_errors_and_getter_order_match_node ... ok
+test net_create_server_preserves_options_connection_listener_and_arity ... ok
+test net_endpoint_invalid_options_preserve_node_error_codes_and_messages ... ok
+test net_family_attempt_timeout_matches_node_ranges_brands_and_defaults ... ok
+test net_ip_predicates_preserve_original_coercion_exceptions_and_zone_syntax ... ok
+test net_family_attempt_timeout_cli_preserves_value_and_last_override ... ok
+test net_option_validation_preserves_coded_prototypes_original_getters_and_messages ... ok
+test net_lookup_callbacks_preserve_original_errors_order_metadata_and_preconnect_bytes ... ok
+test net_resource_counts_exclude_undelivered_accepted_wrappers ... ok
+test native_tls_client_exchanges_encrypted_bytes_with_independent_node_peer ... ok
+test net_server_constructor_rejects_primitive_options_with_direct_node_errors ... ok
+test net_server_uses_original_event_emitter_protocol ... ok
+test net_socket_close_completion_follows_ticks_and_releases_captured_handle_reference ... ok
+test net_socket_end_listener_and_write_after_fin_match_node ... ok
+test net_socket_option_normalization_cache_and_metadata_match_node ... ok
+test native_tls_server_accepts_encrypted_bytes_from_independent_node_client ... FAILED
+test node_entry_resolution_matches_extensionless_files_and_package_directories ... ok
+test node_cli_separates_runtime_options_from_guest_arguments ... ok
+test open_stdin_repeats_public_getter_and_preserves_resume_receiver ... ok
+test original_socket_option_exception_preserves_identity_and_close_progress ... ok
+test oversized_read_file_returns_node_range_error_without_allocating ... ok
+test package_scope_applies_inside_nested_checkouts ... ok
+test primitive_constructor_names_descriptors_and_prototype_aliases_match_node ... ok
+test posix_resolve_validates_only_consumed_paths_and_queries_cwd_lazily ... ok
+test process_kill_matches_node_coercion_errors_and_mutable_native_hook ... ok
+test process_output_streams_preserve_raw_view_bytes_and_reject_invalid_chunks ... ok
+test process_signals_preserve_delivery_order_listener_lifetime_and_uncaught_identity ... ok
+test promisified_child_execution_matches_node_capabilities_and_validation ... ok
+test read_file_abort_and_callback_exceptions_match_node ... ok
+test readable_pipe_matches_node_stdio_lifetime_and_captured_end_option ... ok
+test read_file_sync_accepts_file_urls_and_uses_url_validation ... ok
+test shell_argument_deprecation_is_shared_and_emitted_once ... ok
+test static_event_listeners_project_records_and_delegate_public_hooks ... ok
+test stdin_reads_pipe_bytes_and_releases_input_at_end ... ok
+test stream_defaults_match_node_mutation_descriptors_and_validation ... ok
+test stream_emit_close_option_suppresses_only_close_and_preserves_destroy_errors ... ok
+test really_exit_coerces_int32_and_skips_guest_exit_handlers ... ok
+test string_repeat_node_limit_errors_and_lazy_lengths_match_node ... ok
+test net_server_reference_requests_preserve_public_hooks_and_real_listener_liveness ... ok
+test synchronous_child_output_limits_match_node_values_and_errors ... ok
+test net_socket_reference_requests_preserve_public_hooks_and_real_socket_liveness ... ok
+test synchronous_child_deadlines_reap_selected_signals_and_preserve_exit_handlers ... ok
+test synchronous_child_stdin_and_stdio_preserve_raw_views_and_encoded_units ... ok
+test system_error_names_and_validation_match_node ... ok
+test synchronous_child_outputs_preserve_buffer_identity_encoding_and_result_shape ... ok
+test tcp_peer_reset_preserves_os_errno_syscall_and_error_message ... ok
+test tcp_connect_failures_preserve_os_fields_property_order_and_intrinsic_error ... ok
+test tcp_write_completion_retains_buffers_and_applies_backpressure ... ok
+test trace_categories_retain_enabled_objects_and_capture_array_policy ... ok
+test tls_context_material_uses_real_crl_and_pkcs12_parsers ... ok
+test tracing_intrinsics_validate_in_order_and_serialize_with_original_json ... ok
+test trace_category_buffers_follow_activation_without_retaining_dead_views ... ok
+test tcp_reuse_port_shares_os_listeners_across_processes_like_node ... ok
+test tracing_writes_console_events_to_expanded_file_pattern ... ok
+test typed_array_fill_matches_node_bytes_coercion_and_live_view_ranges ... ok
+test util_custom_inspection_preserves_depth_receiver_and_hook_order ... ok
+test synchronous_child_timeout_closes_grandchild_pipes_after_direct_exit ... ok
+test util_styles_match_node_ansi_aliases_cache_and_iterator_protocol ... ok
+test util_text_codec_aliases_capture_initialized_global_constructors ... ok
+test util_type_predicates_match_node_internal_brands ... ok
+test warning_options_validation_and_deprecation_delivery_match_node ... ok
+test util_text_operations_match_node_without_utf16_loss ... ok
+test zlib_callback_exceptions_escape_once_after_initial_jobs ... ok
+test zlib_crc32_and_bounded_sync_inputs_match_node_errors_and_bytes ... ok
+test zlib_info_returns_captured_engines_and_preserves_handle_lifecycle ... ok
+test zlib_options_match_node_ranges_parameters_and_getter_order ... ok
+
+failures:
+
+---- abort_listener_disposal_and_stopped_propagation_match_node stdout ----
+
+thread 'abort_listener_disposal_and_stopped_propagation_match_node' (114045) panicked at crates/quench-node-test/tests/child_entry.rs:3769:5:
+assertion `left == right` failed
+  left: [91, 34, 115, 116, 111, 112, 34, 44, 34, 114, 101, 115, 105, 115, 116, 34, 44, 116, 114, 117, 101, 44, 34, 115, 121, 110, 99, 34, 44, 50, 44, 49, 93, 10]
+ right: [91, 34, 115, 116, 111, 112, 34, 44, 34, 114, 101, 115, 105, 115, 116, 34, 44, 116, 114, 117, 101, 44, 34, 115, 121, 110, 99, 34, 44, 50, 44, 49, 44, 34, 113, 117, 101, 117, 101, 100, 34, 44, 116, 114, 117, 101, 44, 48, 93, 10]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- native_recursive_watch_class_close_and_per_path_hooks_match_node stdout ----
+
+thread 'native_recursive_watch_class_close_and_per_path_hooks_match_node' (116285) panicked at crates/quench-node-test/tests/child_entry.rs:1472:5:
+assertion `left == right` failed
+  left: [91, 91, 34, 112, 97, 116, 104, 115, 34, 44, 91, 34, 34, 44, 34, 115, 117, 98, 34, 93, 93, 44, 91, 34, 109, 101, 116, 97, 34, 44, 34, 70, 83, 87, 97, 116, 99, 104, 101, 114, 34, 44, 91, 34, 95, 101, 118, 101, 110, 116, 115, 34, 44, 34, 95, 101, 118, 101, 110, 116, 115, 67, 111, 117, 110, 116, 34, 44, 34, 95, 109, 97, 120, 76, 105, 115, 116, 101, 110, 101, 114, 115, 34, 93, 44, 91, 34, 83, 121, 109, 98, 111, 108, 40, 107, 70, 83, 87, 97, 116, 99, 104, 83, 116, 97, 114, 116, 41, 34, 44, 34, 83, 121, 109, 98, 111, 108, 40, 83, 121, 109, 98, 111, 108, 46, 97, 115, 121, 110, 99, 73, 116, 101, 114, 97, 116, 111, 114, 41, 34, 93, 44, 91, 91, 34, 99, 108, 111, 115, 101, 34, 44, 48, 44, 102, 97, 108, 115, 101, 93, 44, 91, 34, 114, 101, 102, 34, 44, 48, 44, 102, 97, 108, 115, 101, 93, 44, 91, 34, 117, 110, 114, 101, 102, 34, 44, 48, 44, 102, 97, 108, 115, 101, 93, 93, 93, 44, 34, 99, 108, 111, 115, 101, 34, 93, 10]
+ right: [91, 91, 34, 112, 97, 116, 104, 115, 34, 44, 91, 34, 34, 44, 34, 115, 117, 98, 34, 44, 34, 115, 117, 98, 47, 102, 105, 108, 101, 34, 93, 93, 44, 91, 34, 109, 101, 116, 97, 34, 44, 34, 70, 83, 87, 97, 116, 99, 104, 101, 114, 34, 44, 91, 34, 95, 101, 118, 101, 110, 116, 115, 34, 44, 34, 95, 101, 118, 101, 110, 116, 115, 67, 111, 117, 110, 116, 34, 44, 34, 95, 109, 97, 120, 76, 105, 115, 116, 101, 110, 101, 114, 115, 34, 93, 44, 91, 34, 83, 121, 109, 98, 111, 108, 40, 107, 70, 83, 87, 97, 116, 99, 104, 83, 116, 97, 114, 116, 41, 34, 44, 34, 83, 121, 109, 98, 111, 108, 40, 83, 121, 109, 98, 111, 108, 46, 97, 115, 121, 110, 99, 73, 116, 101, 114, 97, 116, 111, 114, 41, 34, 93, 44, 91, 91, 34, 99, 108, 111, 115, 101, 34, 44, 48, 44, 102, 97, 108, 115, 101, 93, 44, 91, 34, 114, 101, 102, 34, 44, 48, 44, 102, 97, 108, 115, 101, 93, 44, 91, 34, 117, 110, 114, 101, 102, 34, 44, 48, 44, 102, 97, 108, 115, 101, 93, 93, 93, 44, 34, 99, 108, 111, 115, 101, 34, 93, 10]
+
+---- native_tls_context_internal_binding_constructor_snapshot_and_missing_engine_hooks_match_node stdout ----
+
+thread 'native_tls_context_internal_binding_constructor_snapshot_and_missing_engine_hooks_match_node' (116932) panicked at crates/quench-node-test/tests/child_entry.rs:5667:5:
+assertion `left == right` failed
+  left: [91, 34, 69, 114, 114, 111, 114, 34, 44, 34, 69, 82, 82, 95, 67, 82, 89, 80, 84, 79, 95, 67, 85, 83, 84, 79, 77, 95, 69, 78, 71, 73, 78, 69, 95, 78, 79, 84, 95, 83, 85, 80, 80, 79, 82, 84, 69, 68, 34, 44, 34, 67, 117, 115, 116, 111, 109, 32, 101, 110, 103, 105, 110, 101, 115, 32, 110, 111, 116, 32, 115, 117, 112, 112, 111, 114, 116, 101, 100, 32, 98, 121, 32, 116, 104, 105, 115, 32, 79, 112, 101, 110, 83, 83, 76, 34, 44, 91, 34, 99, 111, 100, 101, 34, 93, 93, 10, 91, 34, 69, 114, 114, 111, 114, 34, 44, 34, 69, 82, 82, 95, 67, 82, 89, 80, 84, 79, 95, 67, 85, 83, 84, 79, 77, 95, 69, 78, 71, 73, 78, 69, 95, 78, 79, 84, 95, 83, 85, 80, 80, 79, 82, 84, 69, 68, 34, 44, 34, 67, 117, 115, 116, 111, 109, 32, 101, 110, 103, 105, 110, 101, 115, 32, 110, 111, 116, 32, 115, 117, 112, 112, 111, 114, 116, 101, 100, 32, 98, 121, 32, 116, 104, 105, 115, 32, 79, 112, 101, 110, 83, 83, 76, 34, 44, 91, 34, 99, 111, 100, 101, 34, 93, 93, 10, 55, 55, 49, 32, 51, 10, 91, 91, 34, 84, 104, 101, 115, 101, 32, 65, 80, 73, 115, 32, 97, 114, 101, 32, 102, 111, 114, 32, 105, 110, 116, 101, 114, 110, 97, 108, 32, 116, 101, 115, 116, 105, 110, 103, 32, 111, 110, 108, 121, 46, 32, 68, 111, 32, 110, 111, 116, 32, 117, 115, 101, 32, 116, 104, 101, 109, 46, 34, 44, 34, 105, 110, 116, 101, 114, 110, 97, 108, 47, 116, 101, 115, 116, 47, 98, 105, 110, 100, 105, 110, 103, 34, 93, 93, 10]
+ right: [91, 34, 69, 114, 114, 111, 114, 34, 44, 34, 69, 82, 82, 95, 67, 82, 89, 80, 84, 79, 95, 67, 85, 83, 84, 79, 77, 95, 69, 78, 71, 73, 78, 69, 95, 78, 79, 84, 95, 83, 85, 80, 80, 79, 82, 84, 69, 68, 34, 44, 34, 67, 117, 115, 116, 111, 109, 32, 101, 110, 103, 105, 110, 101, 115, 32, 110, 111, 116, 32, 115, 117, 112, 112, 111, 114, 116, 101, 100, 32, 98, 121, 32, 116, 104, 105, 115, 32, 79, 112, 101, 110, 83, 83, 76, 34, 44, 91, 34, 99, 111, 100, 101, 34, 93, 93, 10, 91, 34, 69, 114, 114, 111, 114, 34, 44, 34, 69, 82, 82, 95, 67, 82, 89, 80, 84, 79, 95, 67, 85, 83, 84, 79, 77, 95, 69, 78, 71, 73, 78, 69, 95, 78, 79, 84, 95, 83, 85, 80, 80, 79, 82, 84, 69, 68, 34, 44, 34, 67, 117, 115, 116, 111, 109, 32, 101, 110, 103, 105, 110, 101, 115, 32, 110, 111, 116, 32, 115, 117, 112, 112, 111, 114, 116, 101, 100, 32, 98, 121, 32, 116, 104, 105, 115, 32, 79, 112, 101, 110, 83, 83, 76, 34, 44, 91, 34, 99, 111, 100, 101, 34, 93, 93, 10, 55, 55, 49, 32, 51, 10, 91, 91, 34, 84, 104, 101, 115, 101, 32, 65, 80, 73, 115, 32, 97, 114, 101, 32, 102, 111, 114, 32, 105, 110, 116, 101, 114, 110, 97, 108, 32, 116, 101, 115, 116, 105, 110, 103, 32, 111, 110, 108, 121, 46, 32, 68, 111, 32, 110, 111, 116, 32, 117, 115, 101, 32, 116, 104, 101, 109, 46, 34, 44, 34, 105, 110, 116, 101, 114, 110, 97, 108, 47, 116, 101, 115, 116, 47, 98, 105, 110, 100, 105, 110, 103, 34, 93, 44, 91, 34, 79, 112, 101, 110, 83, 83, 76, 32, 101, 110, 103, 105, 110, 101, 45, 98, 97, 115, 101, 100, 32, 65, 80, 73, 115, 32, 97, 114, 101, 32, 100, 101, 112, 114, 101, 99, 97, 116, 101, 100, 46, 34, 44, 34, 68, 101, 112, 114, 101, 99, 97, 116, 105, 111, 110, 87, 97, 114, 110, 105, 110, 103, 34, 44, 34, 68, 69, 80, 48, 49, 56, 51, 34, 44, 110, 117, 108, 108, 93, 93, 10]
+
+---- native_tls_context_engine_errors_and_shared_crypto_warning_match_node stdout ----
+
+thread 'native_tls_context_engine_errors_and_shared_crypto_warning_match_node' (116904) panicked at crates/quench-node-test/tests/child_entry.rs:1472:5:
+assertion `left == right` failed
+  left: [91, 34, 69, 114, 114, 111, 114, 34, 44, 110, 117, 108, 108, 44, 34, 101, 114, 114, 111, 114, 58, 49, 50, 56, 48, 48, 48, 54, 55, 58, 68, 83, 79, 32, 115, 117, 112, 112, 111, 114, 116, 32, 114, 111, 117, 116, 105, 110, 101, 115, 58, 58, 99, 111, 117, 108, 100, 32, 110, 111, 116, 32, 108, 111, 97, 100, 32, 116, 104, 101, 32, 115, 104, 97, 114, 101, 100, 32, 108, 105, 98, 114, 97, 114, 121, 34, 44, 91, 34, 111, 112, 101, 110, 115, 115, 108, 69, 114, 114, 111, 114, 83, 116, 97, 99, 107, 34, 93, 44, 91, 34, 101, 114, 114, 111, 114, 58, 49, 51, 48, 48, 48, 48, 56, 52, 58, 101, 110, 103, 105, 110, 101, 32, 114, 111, 117, 116, 105, 110, 101, 115, 58, 58, 100, 115, 111, 32, 110, 111, 116, 32, 102, 111, 117, 110, 100, 34, 44, 34, 101, 114, 114, 111, 114, 58, 49, 50, 56, 48, 48, 48, 54, 55, 58, 68, 83, 79, 32, 115, 117, 112, 112, 111, 114, 116, 32, 114, 111, 117, 116, 105, 110, 101, 115, 58, 58, 99, 111, 117, 108, 100, 32, 110, 111, 116, 32, 108, 111, 97, 100, 32, 116, 104, 101, 32, 115, 104, 97, 114, 101, 100, 32, 108, 105, 98, 114, 97, 114, 121, 34, 44, 34, 101, 114, 114, 111, 114, 58, 49, 50, 56, 48, 48, 48, 54, 55, 58, 68, 83, 79, 32, 115, 117, 112, 112, 111, 114, 116, 32, 114, 111, 117, 116, 105, 110, 101, 115, 58, 58, 99, 111, 117, 108, 100, 32, 110, 111, 116, 32, 108, 111, 97, 100, 32, 116, 104, 101, 32, 115, 104, 97, 114, 101, 100, 32, 108, 105, 98, 114, 97, 114, 121, 34, 44, 34, 101, 114, 114, 111, 114, 58, 49, 51, 48, 48, 48, 48, 55, 52, 58, 101, 110, 103, 105, 110, 101, 32, 114, 111, 117, 116, 105, 110, 101, 115, 58, 58, 110, 111, 32, 115, 117, 99, 104, 32, 101, 110, 103, 105, 110, 101, 34, 44, 34, 101, 114, 114, 111, 114, 58, 49, 51, 48, 48, 48, 48, 56, 52, 58, 101, 110, 103, 105, 110, 101, 32, 114, 111, 117, 116, 105, 110, 101, 115, 58, 58, 100, 115, 111, 32, 110, 111, 116, 32, 102, 111, 117, 110, 100, 34, 44, 34, 101, 114, 114, 111, 114, 58, 49, 50, 56, 48, 48, 48, 54, 55, 58, 68, 83, 79, 32, 115, 117, 112, 112, 111, 114, 116, 32, 114, 111, 117, 116, 105, 110, 101, 115, 58, 58, 99, 111, 117, 108, 100, 32, 110, 111, 116, 32, 108, 111, 97, 100, 32, 116, 104, 101, 32, 115, 104, 97, 114, 101, 100, 32, 108, 105, 98, 114, 97, 114, 121, 34, 93, 93, 10, 91, 34, 69, 114, 114, 111, 114, 34, 44, 110, 117, 108, 108, 44, 34, 101, 114, 114, 111, 114, 58, 49, 50, 56, 48, 48, 48, 54, 55, 58, 68, 83, 79, 32, 115, 117, 112, 112, 111, 114, 116, 32, 114, 111, 117, 116, 105, 110, 101, 115, 58, 58, 99, 111, 117, 108, 100, 32, 110, 111, 116, 32, 108, 111, 97, 100, 32, 116, 104, 101, 32, 115, 104, 97, 114, 101, 100, 32, 108, 105, 98, 114, 97, 114, 121, 34, 44, 91, 34, 111, 112, 101, 110, 115, 115, 108, 69, 114, 114, 111, 114, 83, 116, 97, 99, 107, 34, 93, 44, 91, 34, 101, 114, 114, 111, 114, 58, 49, 51, 48, 48, 48, 48, 56, 52, 58, 101, 110, 103, 105, 110, 101, 32, 114, 111, 117, 116, 105, 110, 101, 115, 58, 58, 100, 115, 111, 32, 110, 111, 116, 32, 102, 111, 117, 110, 100, 34, 44, 34, 101, 114, 114, 111, 114, 58, 49, 50, 56, 48, 48, 48, 54, 55, 58, 68, 83, 79, 32, 115, 117, 112, 112, 111, 114, 116, 32, 114, 111, 117, 116, 105, 110, 101, 115, 58, 58, 99, 111, 117, 108, 100, 32, 110, 111, 116, 32, 108, 111, 97, 100, 32, 116, 104, 101, 32, 115, 104, 97, 114, 101, 100, 32, 108, 105, 98, 114, 97, 114, 121, 34, 44, 34, 101, 114, 114, 111, 114, 58, 49, 50, 56, 48, 48, 48, 54, 55, 58, 68, 83, 79, 32, 115, 117, 112, 112, 111, 114, 116, 32, 114, 111, 117, 116, 105, 110, 101, 115, 58, 58, 99, 111, 117, 108, 100, 32, 110, 111, 116, 32, 108, 111, 97, 100, 32, 116, 104, 101, 32, 115, 104, 97, 114, 101, 100, 32, 108, 105, 98, 114, 97, 114, 121, 34, 44, 34, 101, 114, 114, 111, 114, 58, 49, 51, 48, 48, 48, 48, 55, 52, 58, 101, 110, 103, 105, 110, 101, 32, 114, 111, 117, 116, 105, 110, 101, 115, 58, 58, 110, 111, 32, 115, 117, 99, 104, 32, 101, 110, 103, 105, 110, 101, 34, 44, 34, 101, 114, 114, 111, 114, 58, 49, 51, 48, 48, 48, 48, 56, 52, 58, 101, 110, 103, 105, 110, 101, 32, 114, 111, 117, 116, 105, 110, 101, 115, 58, 58, 100, 115, 111, 32, 110, 111, 116, 32, 102, 111, 117, 110, 100, 34, 44, 34, 101, 114, 114, 111, 114, 58, 49, 50, 56, 48, 48, 48, 54, 55, 58, 68, 83, 79, 32, 115, 117, 112, 112, 111, 114, 116, 32, 114, 111, 117, 116, 105, 110, 101, 115, 58, 58, 99, 111, 117, 108, 100, 32, 110, 111, 116, 32, 108, 111, 97, 100, 32, 116, 104, 101, 32, 115, 104, 97, 114, 101, 100, 32, 108, 105, 98, 114, 97, 114, 121, 34, 93, 93, 10, 91, 34, 69, 114, 114, 111, 114, 34, 44, 34, 69, 82, 82, 95, 67, 82, 89, 80, 84, 79, 95, 69, 78, 71, 73, 78, 69, 95, 85, 78, 75, 78, 79, 87, 78, 34, 44, 34, 69, 110, 103, 105, 110, 101, 32, 92, 34, 113, 117, 101, 110, 99, 104, 95, 109, 105, 115, 115, 105, 110, 103, 95, 101, 110, 103, 105, 110, 101, 92, 34, 32, 119, 97, 115, 32, 110, 111, 116, 32, 102, 111, 117, 110, 100, 34, 44, 91, 34, 99, 111, 100, 101, 34, 93, 44, 110, 117, 108, 108, 93, 10, 91, 34, 69, 114, 114, 111, 114, 34, 44, 34, 69, 82, 82, 95, 67, 82, 89, 80, 84, 79, 95, 69, 78, 71, 73, 78, 69, 95, 85, 78, 75, 78, 79, 87, 78, 34, 44, 34, 69, 110, 103, 105, 110, 101, 32, 92, 34, 113, 117, 101, 110, 99, 104, 95, 109, 105, 115, 115, 105, 110, 103, 95, 101, 110, 103, 105, 110, 101, 92, 34, 32, 119, 97, 115, 32, 110, 111, 116, 32, 102, 111, 117, 110, 100, 34, 44, 91, 34, 99, 111, 100, 101, 34, 93, 44, 110, 117, 108, 108, 93, 10, 91, 34, 84, 121, 112, 101, 69, 114, 114, 111, 114, 34, 44, 34, 69, 82, 82, 95, 73, 78, 86, 65, 76, 73, 68, 95, 65, 82, 71, 95, 84, 89, 80, 69, 34, 44, 34, 84, 104, 101, 32, 92, 34, 105, 100, 92, 34, 32, 97, 114, 103, 117, 109, 101, 110, 116, 32, 109, 117, 115, 116, 32, 98, 101, 32, 111, 102, 32, 116, 121, 112, 101, 32, 115, 116, 114, 105, 110, 103, 46, 32, 82, 101, 99, 101, 105, 118, 101, 100, 32, 116, 121, 112, 101, 32, 110, 117, 109, 98, 101, 114, 32, 40, 49, 41, 34, 44, 91, 34, 99, 111, 100, 101, 34, 93, 44, 110, 117, 108, 108, 93, 10, 91, 34, 84, 121, 112, 101, 69, 114, 114, 111, 114, 34, 44, 34, 69, 82, 82, 95, 73, 78, 86, 65, 76, 73, 68, 95, 65, 82, 71, 95, 84, 89, 80, 69, 34, 44, 34, 84, 104, 101, 32, 92, 34, 102, 108, 97, 103, 115, 92, 34, 32, 97, 114, 103, 117, 109, 101, 110, 116, 32, 109, 117, 115, 116, 32, 98, 101, 32, 111, 102, 32, 116, 121, 112, 101, 32, 110, 117, 109, 98, 101, 114, 46, 32, 82, 101, 99, 101, 105, 118, 101, 100, 32, 116, 121, 112, 101, 32, 115, 116, 114, 105, 110, 103, 32, 40, 39, 49, 39, 41, 34, 44, 91, 34, 99, 111, 100, 101, 34, 93, 44, 110, 117, 108, 108, 93, 10, 91, 34, 84, 121, 112, 101, 69, 114, 114, 111, 114, 34, 44, 34, 69, 82, 82, 95, 73, 78, 86, 65, 76, 73, 68, 95, 65, 82, 71, 95, 84, 89, 80, 69, 34, 44, 34, 84, 104, 101, 32, 92, 34, 111, 112, 116, 105, 111, 110, 115, 46, 99, 108, 105, 101, 110, 116, 67, 101, 114, 116, 69, 110, 103, 105, 110, 101, 92, 34, 32, 112, 114, 111, 112, 101, 114, 116, 121, 32, 109, 117, 115, 116, 32, 98, 101, 32, 111, 102, 32, 116, 121, 112, 101, 32, 115, 116, 114, 105, 110, 103, 32, 111, 114, 32, 111, 110, 101, 32, 111, 102, 32, 110, 117, 108, 108, 32, 111, 114, 32, 117, 110, 100, 101, 102, 105, 110, 101, 100, 46, 32, 82, 101, 99, 101, 105, 118, 101, 100, 32, 116, 121, 112, 101, 32, 110, 117, 109, 98, 101, 114, 32, 40, 49, 41, 34, 44, 91, 34, 99, 111, 100, 101, 34, 93, 44, 110, 117, 108, 108, 93, 10, 91, 34, 84, 121, 112, 101, 69, 114, 114, 111, 114, 34, 44, 34, 69, 82, 82, 95, 73, 78, 86, 65, 76, 73, 68, 95, 65, 82, 71, 95, 84, 89, 80, 69, 34, 44, 34, 84, 104, 101, 32, 92, 34, 111, 112, 116, 105, 111, 110, 115, 46, 112, 114, 105, 118, 97, 116, 101, 75, 101, 121, 73, 100, 101, 110, 116, 105, 102, 105, 101, 114, 92, 34, 32, 112, 114, 111, 112, 101, 114, 116, 121, 32, 109, 117, 115, 116, 32, 98, 101, 32, 111, 102, 32, 116, 121, 112, 101, 32, 115, 116, 114, 105, 110, 103, 32, 111, 114, 32, 111, 110, 101, 32, 111, 102, 32, 110, 117, 108, 108, 32, 111, 114, 32, 117, 110, 100, 101, 102, 105, 110, 101, 100, 46, 32, 82, 101, 99, 101, 105, 118, 101, 100, 32, 116, 121, 112, 101, 32, 110, 117, 109, 98, 101, 114, 32, 40, 49, 41, 34, 44, 91, 34, 99, 111, 100, 101, 34, 93, 44, 110, 117, 108, 108, 93, 10, 91, 34, 84, 121, 112, 101, 69, 114, 114, 111, 114, 34, 44, 34, 69, 82, 82, 95, 73, 78, 86, 65, 76, 73, 68, 95, 65, 82, 71, 95, 84, 89, 80, 69, 34, 44, 34, 84, 104, 101, 32, 92, 34, 111, 112, 116, 105, 111, 110, 115, 46, 112, 114, 105, 118, 97, 116, 101, 75, 101, 121, 69, 110, 103, 105, 110, 101, 92, 34, 32, 112, 114, 111, 112, 101, 114, 116, 121, 32, 109, 117, 115, 116, 32, 98, 101, 32, 111, 102, 32, 116, 121, 112, 101, 32, 115, 116, 114, 105, 110, 103, 32, 111, 114, 32, 111, 110, 101, 32, 111, 102, 32, 110, 117, 108, 108, 32, 111, 114, 32, 117, 110, 100, 101, 102, 105, 110, 101, 100, 46, 32, 82, 101, 99, 101, 105, 118, 101, 100, 32, 116, 121, 112, 101, 32, 110, 117, 109, 98, 101, 114, 32, 40, 49, 41, 34, 44, 91, 34, 99, 111, 100, 101, 34, 93, 44, 110, 117, 108, 108, 93, 10, 91, 93, 10]
+ right: [91, 34, 69, 114, 114, 111, 114, 34, 44, 110, 117, 108, 108, 44, 34, 101, 114, 114, 111, 114, 58, 49, 50, 56, 48, 48, 48, 54, 55, 58, 68, 83, 79, 32, 115, 117, 112, 112, 111, 114, 116, 32, 114, 111, 117, 116, 105, 110, 101, 115, 58, 58, 99, 111, 117, 108, 100, 32, 110, 111, 116, 32, 108, 111, 97, 100, 32, 116, 104, 101, 32, 115, 104, 97, 114, 101, 100, 32, 108, 105, 98, 114, 97, 114, 121, 34, 44, 91, 34, 111, 112, 101, 110, 115, 115, 108, 69, 114, 114, 111, 114, 83, 116, 97, 99, 107, 34, 93, 44, 91, 34, 101, 114, 114, 111, 114, 58, 49, 51, 48, 48, 48, 48, 56, 52, 58, 101, 110, 103, 105, 110, 101, 32, 114, 111, 117, 116, 105, 110, 101, 115, 58, 58, 100, 115, 111, 32, 110, 111, 116, 32, 102, 111, 117, 110, 100, 34, 44, 34, 101, 114, 114, 111, 114, 58, 49, 50, 56, 48, 48, 48, 54, 55, 58, 68, 83, 79, 32, 115, 117, 112, 112, 111, 114, 116, 32, 114, 111, 117, 116, 105, 110, 101, 115, 58, 58, 99, 111, 117, 108, 100, 32, 110, 111, 116, 32, 108, 111, 97, 100, 32, 116, 104, 101, 32, 115, 104, 97, 114, 101, 100, 32, 108, 105, 98, 114, 97, 114, 121, 34, 44, 34, 101, 114, 114, 111, 114, 58, 49, 50, 56, 48, 48, 48, 54, 55, 58, 68, 83, 79, 32, 115, 117, 112, 112, 111, 114, 116, 32, 114, 111, 117, 116, 105, 110, 101, 115, 58, 58, 99, 111, 117, 108, 100, 32, 110, 111, 116, 32, 108, 111, 97, 100, 32, 116, 104, 101, 32, 115, 104, 97, 114, 101, 100, 32, 108, 105, 98, 114, 97, 114, 121, 34, 44, 34, 101, 114, 114, 111, 114, 58, 49, 51, 48, 48, 48, 48, 55, 52, 58, 101, 110, 103, 105, 110, 101, 32, 114, 111, 117, 116, 105, 110, 101, 115, 58, 58, 110, 111, 32, 115, 117, 99, 104, 32, 101, 110, 103, 105, 110, 101, 34, 44, 34, 101, 114, 114, 111, 114, 58, 49, 51, 48, 48, 48, 48, 56, 52, 58, 101, 110, 103, 105, 110, 101, 32, 114, 111, 117, 116, 105, 110, 101, 115, 58, 58, 100, 115, 111, 32, 110, 111, 116, 32, 102, 111, 117, 110, 100, 34, 44, 34, 101, 114, 114, 111, 114, 58, 49, 50, 56, 48, 48, 48, 54, 55, 58, 68, 83, 79, 32, 115, 117, 112, 112, 111, 114, 116, 32, 114, 111, 117, 116, 105, 110, 101, 115, 58, 58, 99, 111, 117, 108, 100, 32, 110, 111, 116, 32, 108, 111, 97, 100, 32, 116, 104, 101, 32, 115, 104, 97, 114, 101, 100, 32, 108, 105, 98, 114, 97, 114, 121, 34, 93, 93, 10, 91, 34, 69, 114, 114, 111, 114, 34, 44, 110, 117, 108, 108, 44, 34, 101, 114, 114, 111, 114, 58, 49, 50, 56, 48, 48, 48, 54, 55, 58, 68, 83, 79, 32, 115, 117, 112, 112, 111, 114, 116, 32, 114, 111, 117, 116, 105, 110, 101, 115, 58, 58, 99, 111, 117, 108, 100, 32, 110, 111, 116, 32, 108, 111, 97, 100, 32, 116, 104, 101, 32, 115, 104, 97, 114, 101, 100, 32, 108, 105, 98, 114, 97, 114, 121, 34, 44, 91, 34, 111, 112, 101, 110, 115, 115, 108, 69, 114, 114, 111, 114, 83, 116, 97, 99, 107, 34, 93, 44, 91, 34, 101, 114, 114, 111, 114, 58, 49, 51, 48, 48, 48, 48, 56, 52, 58, 101, 110, 103, 105, 110, 101, 32, 114, 111, 117, 116, 105, 110, 101, 115, 58, 58, 100, 115, 111, 32, 110, 111, 116, 32, 102, 111, 117, 110, 100, 34, 44, 34, 101, 114, 114, 111, 114, 58, 49, 50, 56, 48, 48, 48, 54, 55, 58, 68, 83, 79, 32, 115, 117, 112, 112, 111, 114, 116, 32, 114, 111, 117, 116, 105, 110, 101, 115, 58, 58, 99, 111, 117, 108, 100, 32, 110, 111, 116, 32, 108, 111, 97, 100, 32, 116, 104, 101, 32, 115, 104, 97, 114, 101, 100, 32, 108, 105, 98, 114, 97, 114, 121, 34, 44, 34, 101, 114, 114, 111, 114, 58, 49, 50, 56, 48, 48, 48, 54, 55, 58, 68, 83, 79, 32, 115, 117, 112, 112, 111, 114, 116, 32, 114, 111, 117, 116, 105, 110, 101, 115, 58, 58, 99, 111, 117, 108, 100, 32, 110, 111, 116, 32, 108, 111, 97, 100, 32, 116, 104, 101, 32, 115, 104, 97, 114, 101, 100, 32, 108, 105, 98, 114, 97, 114, 121, 34, 44, 34, 101, 114, 114, 111, 114, 58, 49, 51, 48, 48, 48, 48, 55, 52, 58, 101, 110, 103, 105, 110, 101, 32, 114, 111, 117, 116, 105, 110, 101, 115, 58, 58, 110, 111, 32, 115, 117, 99, 104, 32, 101, 110, 103, 105, 110, 101, 34, 44, 34, 101, 114, 114, 111, 114, 58, 49, 51, 48, 48, 48, 48, 56, 52, 58, 101, 110, 103, 105, 110, 101, 32, 114, 111, 117, 116, 105, 110, 101, 115, 58, 58, 100, 115, 111, 32, 110, 111, 116, 32, 102, 111, 117, 110, 100, 34, 44, 34, 101, 114, 114, 111, 114, 58, 49, 50, 56, 48, 48, 48, 54, 55, 58, 68, 83, 79, 32, 115, 117, 112, 112, 111, 114, 116, 32, 114, 111, 117, 116, 105, 110, 101, 115, 58, 58, 99, 111, 117, 108, 100, 32, 110, 111, 116, 32, 108, 111, 97, 100, 32, 116, 104, 101, 32, 115, 104, 97, 114, 101, 100, 32, 108, 105, 98, 114, 97, 114, 121, 34, 93, 93, 10, 91, 34, 69, 114, 114, 111, 114, 34, 44, 34, 69, 82, 82, 95, 67, 82, 89, 80, 84, 79, 95, 69, 78, 71, 73, 78, 69, 95, 85, 78, 75, 78, 79, 87, 78, 34, 44, 34, 69, 110, 103, 105, 110, 101, 32, 92, 34, 113, 117, 101, 110, 99, 104, 95, 109, 105, 115, 115, 105, 110, 103, 95, 101, 110, 103, 105, 110, 101, 92, 34, 32, 119, 97, 115, 32, 110, 111, 116, 32, 102, 111, 117, 110, 100, 34, 44, 91, 34, 99, 111, 100, 101, 34, 93, 44, 110, 117, 108, 108, 93, 10, 91, 34, 69, 114, 114, 111, 114, 34, 44, 34, 69, 82, 82, 95, 67, 82, 89, 80, 84, 79, 95, 69, 78, 71, 73, 78, 69, 95, 85, 78, 75, 78, 79, 87, 78, 34, 44, 34, 69, 110, 103, 105, 110, 101, 32, 92, 34, 113, 117, 101, 110, 99, 104, 95, 109, 105, 115, 115, 105, 110, 103, 95, 101, 110, 103, 105, 110, 101, 92, 34, 32, 119, 97, 115, 32, 110, 111, 116, 32, 102, 111, 117, 110, 100, 34, 44, 91, 34, 99, 111, 100, 101, 34, 93, 44, 110, 117, 108, 108, 93, 10, 91, 34, 84, 121, 112, 101, 69, 114, 114, 111, 114, 34, 44, 34, 69, 82, 82, 95, 73, 78, 86, 65, 76, 73, 68, 95, 65, 82, 71, 95, 84, 89, 80, 69, 34, 44, 34, 84, 104, 101, 32, 92, 34, 105, 100, 92, 34, 32, 97, 114, 103, 117, 109, 101, 110, 116, 32, 109, 117, 115, 116, 32, 98, 101, 32, 111, 102, 32, 116, 121, 112, 101, 32, 115, 116, 114, 105, 110, 103, 46, 32, 82, 101, 99, 101, 105, 118, 101, 100, 32, 116, 121, 112, 101, 32, 110, 117, 109, 98, 101, 114, 32, 40, 49, 41, 34, 44, 91, 34, 99, 111, 100, 101, 34, 93, 44, 110, 117, 108, 108, 93, 10, 91, 34, 84, 121, 112, 101, 69, 114, 114, 111, 114, 34, 44, 34, 69, 82, 82, 95, 73, 78, 86, 65, 76, 73, 68, 95, 65, 82, 71, 95, 84, 89, 80, 69, 34, 44, 34, 84, 104, 101, 32, 92, 34, 102, 108, 97, 103, 115, 92, 34, 32, 97, 114, 103, 117, 109, 101, 110, 116, 32, 109, 117, 115, 116, 32, 98, 101, 32, 111, 102, 32, 116, 121, 112, 101, 32, 110, 117, 109, 98, 101, 114, 46, 32, 82, 101, 99, 101, 105, 118, 101, 100, 32, 116, 121, 112, 101, 32, 115, 116, 114, 105, 110, 103, 32, 40, 39, 49, 39, 41, 34, 44, 91, 34, 99, 111, 100, 101, 34, 93, 44, 110, 117, 108, 108, 93, 10, 91, 34, 84, 121, 112, 101, 69, 114, 114, 111, 114, 34, 44, 34, 69, 82, 82, 95, 73, 78, 86, 65, 76, 73, 68, 95, 65, 82, 71, 95, 84, 89, 80, 69, 34, 44, 34, 84, 104, 101, 32, 92, 34, 111, 112, 116, 105, 111, 110, 115, 46, 99, 108, 105, 101, 110, 116, 67, 101, 114, 116, 69, 110, 103, 105, 110, 101, 92, 34, 32, 112, 114, 111, 112, 101, 114, 116, 121, 32, 109, 117, 115, 116, 32, 98, 101, 32, 111, 102, 32, 116, 121, 112, 101, 32, 115, 116, 114, 105, 110, 103, 32, 111, 114, 32, 111, 110, 101, 32, 111, 102, 32, 110, 117, 108, 108, 32, 111, 114, 32, 117, 110, 100, 101, 102, 105, 110, 101, 100, 46, 32, 82, 101, 99, 101, 105, 118, 101, 100, 32, 116, 121, 112, 101, 32, 110, 117, 109, 98, 101, 114, 32, 40, 49, 41, 34, 44, 91, 34, 99, 111, 100, 101, 34, 93, 44, 110, 117, 108, 108, 93, 10, 91, 34, 84, 121, 112, 101, 69, 114, 114, 111, 114, 34, 44, 34, 69, 82, 82, 95, 73, 78, 86, 65, 76, 73, 68, 95, 65, 82, 71, 95, 84, 89, 80, 69, 34, 44, 34, 84, 104, 101, 32, 92, 34, 111, 112, 116, 105, 111, 110, 115, 46, 112, 114, 105, 118, 97, 116, 101, 75, 101, 121, 73, 100, 101, 110, 116, 105, 102, 105, 101, 114, 92, 34, 32, 112, 114, 111, 112, 101, 114, 116, 121, 32, 109, 117, 115, 116, 32, 98, 101, 32, 111, 102, 32, 116, 121, 112, 101, 32, 115, 116, 114, 105, 110, 103, 32, 111, 114, 32, 111, 110, 101, 32, 111, 102, 32, 110, 117, 108, 108, 32, 111, 114, 32, 117, 110, 100, 101, 102, 105, 110, 101, 100, 46, 32, 82, 101, 99, 101, 105, 118, 101, 100, 32, 116, 121, 112, 101, 32, 110, 117, 109, 98, 101, 114, 32, 40, 49, 41, 34, 44, 91, 34, 99, 111, 100, 101, 34, 93, 44, 110, 117, 108, 108, 93, 10, 91, 34, 84, 121, 112, 101, 69, 114, 114, 111, 114, 34, 44, 34, 69, 82, 82, 95, 73, 78, 86, 65, 76, 73, 68, 95, 65, 82, 71, 95, 84, 89, 80, 69, 34, 44, 34, 84, 104, 101, 32, 92, 34, 111, 112, 116, 105, 111, 110, 115, 46, 112, 114, 105, 118, 97, 116, 101, 75, 101, 121, 69, 110, 103, 105, 110, 101, 92, 34, 32, 112, 114, 111, 112, 101, 114, 116, 121, 32, 109, 117, 115, 116, 32, 98, 101, 32, 111, 102, 32, 116, 121, 112, 101, 32, 115, 116, 114, 105, 110, 103, 32, 111, 114, 32, 111, 110, 101, 32, 111, 102, 32, 110, 117, 108, 108, 32, 111, 114, 32, 117, 110, 100, 101, 102, 105, 110, 101, 100, 46, 32, 82, 101, 99, 101, 105, 118, 101, 100, 32, 116, 121, 112, 101, 32, 110, 117, 109, 98, 101, 114, 32, 40, 49, 41, 34, 44, 91, 34, 99, 111, 100, 101, 34, 93, 44, 110, 117, 108, 108, 93, 10, 91, 91, 34, 79, 112, 101, 110, 83, 83, 76, 32, 101, 110, 103, 105, 110, 101, 45, 98, 97, 115, 101, 100, 32, 65, 80, 73, 115, 32, 97, 114, 101, 32, 100, 101, 112, 114, 101, 99, 97, 116, 101, 100, 46, 34, 44, 34, 68, 101, 112, 114, 101, 99, 97, 116, 105, 111, 110, 87, 97, 114, 110, 105, 110, 103, 34, 44, 34, 68, 69, 80, 48, 49, 56, 51, 34, 44, 110, 117, 108, 108, 93, 93, 10]
+
+---- native_tls_server_accepts_encrypted_bytes_from_independent_node_client stdout ----
+
+thread 'native_tls_server_accepts_encrypted_bytes_from_independent_node_client' (117018) panicked at crates/quench-node-test/tests/child_entry.rs:5823:64:
+assertion `left == right` failed: engine node; server 
+const tls=require('tls'),net=require('net'),fs=require('fs'),path=require('path');const root=process.env.QUENCH_TLS_PEER_ROOT;
+const context=tls.createSecureContext({key:fs.readFileSync(path.join(root,'test/fixtures/keys/agent1-key.pem')),cert:fs.readFileSync(path.join(root,'test/fixtures/keys/agent1-cert.pem'))});
+const server=net.createServer(raw=>{const socket=new tls.TLSSocket(raw,{isServer:true,secureContext:context});socket.on('secure',()=>{console.log(JSON.stringify([socket instanceof tls.TLSSocket,socket instanceof net.Socket,socket.encrypted,socket.secureConnecting,socket.getProtocol()]));socket.on('data',chunk=>socket.destroy());socket.on('close',()=>server.close());});socket.on('error',()=>{});});
+server.listen(0,'127.0.0.1',()=>console.log(server.address().port));
+; client stdout: [true,[]]
+; stderr: 
+  left: Some(0)
+ right: Some(1)
+
+
+failures:
+    abort_listener_disposal_and_stopped_propagation_match_node
+    native_recursive_watch_class_close_and_per_path_hooks_match_node
+    native_tls_context_engine_errors_and_shared_crypto_warning_match_node
+    native_tls_context_internal_binding_constructor_snapshot_and_missing_engine_hooks_match_node
+    native_tls_server_accepts_encrypted_bytes_from_independent_node_client
+
+test result: FAILED. 173 passed; 5 failed; 0 ignored; 0 measured; 0 filtered out; finished in 17.68s
+
+error: test failed, to rerun pass `-p quench-node-test --test child_entry`

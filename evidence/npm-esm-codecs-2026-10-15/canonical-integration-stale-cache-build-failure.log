@@ -1,0 +1,54 @@
+   Compiling quench-runtime v0.1.0 (/workspace/scratch/quench-npm-file-url/crates/quench-runtime)
+   Compiling quench-wasm v0.1.0 (/workspace/scratch/quench-npm-file-url/crates/quench-wasm)
+   Compiling quench-node v0.1.0 (/workspace/scratch/quench-npm-file-url/crates/quench-node)
+error[E0609]: no field `module_cache` on type `Ref<'_, SharedNodeState>`
+    --> crates/quench-node/src/modules/fs_shared_vm.rs:2087:46
+     |
+2087 |     if let Some(constants) = shared.borrow().module_cache.get(CACHE_KEY).copied() { return Ok(constants); }
+     |                                              ^^^^^^^^^^^^ unknown field
+     |
+     = note: available fields are: `async_hooks`, `scheduler`, `fs`, `fs_watch`, `tls_contexts` ... and 49 others
+
+error[E0609]: no field `module_cache` on type `RefMut<'_, SharedNodeState>`
+    --> crates/quench-node/src/modules/fs_shared_vm.rs:2095:25
+     |
+2095 |     shared.borrow_mut().module_cache.insert(CACHE_KEY.to_owned(), retained);
+     |                         ^^^^^^^^^^^^ unknown field
+     |
+     = note: available fields are: `async_hooks`, `scheduler`, `fs`, `fs_watch`, `tls_contexts` ... and 49 others
+
+error[E0609]: no field `module_cache` on type `Ref<'_, SharedNodeState>`
+   --> crates/quench-node/src/modules/zlib_shared_vm.rs:309:42
+    |
+309 |     if let Some(value) = shared.borrow().module_cache.get(CACHE_KEY).copied() { return Ok(value); }
+    |                                          ^^^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `async_hooks`, `scheduler`, `fs`, `fs_watch`, `tls_contexts` ... and 49 others
+
+error[E0609]: no field `module_cache` on type `RefMut<'_, SharedNodeState>`
+   --> crates/quench-node/src/modules/zlib_shared_vm.rs:319:25
+    |
+319 |     shared.borrow_mut().module_cache.insert(CACHE_KEY.to_owned(), retained);
+    |                         ^^^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `async_hooks`, `scheduler`, `fs`, `fs_watch`, `tls_contexts` ... and 49 others
+
+error[E0609]: no field `module_cache` on type `Ref<'_, SharedNodeState>`
+  --> crates/quench-node/src/modules/encoding_binding_shared_vm.rs:17:42
+   |
+17 |     if let Some(value) = shared.borrow().module_cache.get(CACHE_KEY).copied() {
+   |                                          ^^^^^^^^^^^^ unknown field
+   |
+   = note: available fields are: `async_hooks`, `scheduler`, `fs`, `fs_watch`, `tls_contexts` ... and 49 others
+
+error[E0609]: no field `module_cache` on type `RefMut<'_, SharedNodeState>`
+  --> crates/quench-node/src/modules/encoding_binding_shared_vm.rs:55:10
+   |
+55 |         .module_cache
+   |          ^^^^^^^^^^^^ unknown field
+   |
+   = note: available fields are: `async_hooks`, `scheduler`, `fs`, `fs_watch`, `tls_contexts` ... and 49 others
+
+For more information about this error, try `rustc --explain E0609`.
+error: could not compile `quench-node` (lib) due to 6 previous errors
+warning: build failed, waiting for other jobs to finish...

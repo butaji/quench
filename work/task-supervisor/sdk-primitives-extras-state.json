@@ -1,0 +1,12 @@
+{
+  "status": "failed",
+  "index": 0,
+  "command": [
+    "bash",
+    "/workspace/quench/work/sdk-primitives-policy/extras.sh"
+  ],
+  "exit": 1,
+  "supervisor_pid": 3248855,
+  "session_id": 3248854,
+  "utc": "2026-10-16T10:44:26.607327+00:00"
+}

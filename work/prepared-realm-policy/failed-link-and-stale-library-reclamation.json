@@ -1,0 +1,166 @@
+{
+  "reason": "Failed SIGBUS linker temporary and stale completed quench-node/runtime static-library caches only. No compiler/test process remains active; upcoming source requires fresh libraries. All frozen binaries, source and published raw evidence preserved.",
+  "files": [
+    {
+      "path": "target/debug/deps/quench_runtime-faba0c2c63dca90b.tmpbee5e5c",
+      "bytes": 547475224,
+      "blocks_bytes": 426717184,
+      "links": 1,
+      "sha256": "7d088c5f1c9a7df677dc48d0311bda2c57020d368021408dfcccb098ec9555bc"
+    },
+    {
+      "path": "target/iteration/deps/libquench_node-05949ae6dfa8c66a.rlib",
+      "bytes": 31700268,
+      "blocks_bytes": 31703040,
+      "links": 1,
+      "sha256": "2877bfe7e19b159bd53ac023349d25b339d59ce3c23a8d666f49b77f77ca6715"
+    },
+    {
+      "path": "target/iteration/deps/libquench_node-124932d855c55133.rlib",
+      "bytes": 51918180,
+      "blocks_bytes": 51924992,
+      "links": 1,
+      "sha256": "1c86f2421fd333e99e321d7cb5921ee125ff57d8e6eb1e4b3f2058a5966000b2"
+    },
+    {
+      "path": "target/iteration/deps/libquench_node-15778a88404a1bec.rlib",
+      "bytes": 25020456,
+      "blocks_bytes": 25022464,
+      "links": 1,
+      "sha256": "6321f04b61f761bfde0417d3ca85e5651a41eb554f092dd16fe58c2477cc5ec1"
+    },
+    {
+      "path": "target/iteration/deps/libquench_node-16e57d6098ff1131.rlib",
+      "bytes": 27051144,
+      "blocks_bytes": 27054080,
+      "links": 1,
+      "sha256": "83c373f4b5554d79be3320d35490a0f0292a9232238009ea59878f3d00f3da9d"
+    },
+    {
+      "path": "target/iteration/deps/libquench_node-302c32d81798575a.rlib",
+      "bytes": 32082274,
+      "blocks_bytes": 32083968,
+      "links": 1,
+      "sha256": "a685ca42c0e2266e1eafe75926380a7c0296dbbeb22f88295038a3767af9b549"
+    },
+    {
+      "path": "target/iteration/deps/libquench_node-4048e2f0147b5dd8.rlib",
+      "bytes": 26307998,
+      "blocks_bytes": 26308608,
+      "links": 1,
+      "sha256": "801d36d6cca991e975d12690190f7bbde0ddd564a2cda9bb3349ae2f1624b1dc"
+    },
+    {
+      "path": "target/iteration/deps/libquench_node-4448daa51c4bc839.rlib",
+      "bytes": 29845580,
+      "blocks_bytes": 29847552,
+      "links": 1,
+      "sha256": "f12461a1c8efae349ba8a8445998839745c4dbad8770f349efd1ccc214535f7d"
+    },
+    {
+      "path": "target/iteration/deps/libquench_node-7438e5835042227f.rlib",
+      "bytes": 29226230,
+      "blocks_bytes": 29229056,
+      "links": 1,
+      "sha256": "0155919ff2e54fb6912e0995b1a975aa9f10bf2e8b532e31f894f6c1650919ac"
+    },
+    {
+      "path": "target/iteration/deps/libquench_node-7c114c21b9bd184c.rlib",
+      "bytes": 54201676,
+      "blocks_bytes": 54206464,
+      "links": 1,
+      "sha256": "ccbce187f9c62cdec0303216abc20a415bd488b8fbe3be36388d9c0307884410"
+    },
+    {
+      "path": "target/iteration/deps/libquench_node-99d95180c7a86857.rlib",
+      "bytes": 24327620,
+      "blocks_bytes": 24330240,
+      "links": 1,
+      "sha256": "f93d4fb56617f5f171fb416b93278e1ebeb403854ac816da4d2b4e1da7f72c83"
+    },
+    {
+      "path": "target/iteration/deps/libquench_node-9bf4290b312c991d.rlib",
+      "bytes": 52391050,
+      "blocks_bytes": 52396032,
+      "links": 1,
+      "sha256": "d079147a3cbea628c6e42556a407c0fb1d0aac4c876cdbc5350119ccc208231a"
+    },
+    {
+      "path": "target/iteration/deps/libquench_node-9c36c12762b8de6a.rlib",
+      "bytes": 37112258,
+      "blocks_bytes": 37117952,
+      "links": 1,
+      "sha256": "632151e27d99eacaf0a864c8660700afdd5bc67fff3c5298561232739bb472dd"
+    },
+    {
+      "path": "target/iteration/deps/libquench_node-a010581422712be5.rlib",
+      "bytes": 37148012,
+      "blocks_bytes": 37154816,
+      "links": 1,
+      "sha256": "3f43c891faf8a831508ac69125e24b4b39da3fd85cb759d96dc65a095341abfc"
+    },
+    {
+      "path": "target/iteration/deps/libquench_node-a598b717dc3c4353.rlib",
+      "bytes": 54202814,
+      "blocks_bytes": 54210560,
+      "links": 1,
+      "sha256": "54c24b04a54064a8570b2478aa2856e0f85ac3d4b407b8ce543374d99c4bbb1d"
+    },
+    {
+      "path": "target/iteration/deps/libquench_node-a5d865bdfa67f0c3.rlib",
+      "bytes": 27825906,
+      "blocks_bytes": 27828224,
+      "links": 1,
+      "sha256": "634ed78746ab58294ec37d195fa222ad39b19d776c1b539a6280bfca1b21de5a"
+    },
+    {
+      "path": "target/iteration/deps/libquench_node-ae618027c41d1f74.rlib",
+      "bytes": 32770508,
+      "blocks_bytes": 32772096,
+      "links": 1,
+      "sha256": "ff6639920911131f396edbc28e034676ba0855a395c4cabc7f7cec503e460d2e"
+    },
+    {
+      "path": "target/iteration/deps/libquench_node-b4343d9cca1a3bae.rlib",
+      "bytes": 54308388,
+      "blocks_bytes": 54312960,
+      "links": 1,
+      "sha256": "a9a1ca8311f3ad5d7b6f55e2159d22686deae8d443b999fab1916440a4cbd2ac"
+    },
+    {
+      "path": "target/iteration/deps/libquench_node-bbb7b00a128dfa88.rlib",
+      "bytes": 31975000,
+      "blocks_bytes": 31977472,
+      "links": 1,
+      "sha256": "e792ee3dd232d99258144cfba681700743fda42ad952d953434541e51f0a61d1"
+    },
+    {
+      "path": "target/iteration/deps/libquench_node-c0ce38f83fe21931.rlib",
+      "bytes": 34749280,
+      "blocks_bytes": 34750464,
+      "links": 1,
+      "sha256": "138a4fff5f8233e592df2dea0c64dfecf0d40cd210f793c386b29ba1fd5775cf"
+    },
+    {
+      "path": "target/iteration/deps/libquench_node-c856e34781fce07a.rlib",
+      "bytes": 28993074,
+      "blocks_bytes": 28995584,
+      "links": 1,
+      "sha256": "1b3bcb9d93978ba27a9fb7c9fe9d5e6b187589bad999516713c4ea6772caf452"
+    },
+    {
+      "path": "target/iteration/deps/libquench_node-cd05c9e9c5e7ecda.rlib",
+      "bytes": 22619654,
+      "blocks_bytes": 22622208,
+      "links": 1,
+      "sha256": "2196f2b9b12edc76216e47ca66aaac60f74701efd5173f5f393554bb1265df5a"
+    },
+    {
+      "path": "target/iteration/deps/libquench_node-d62565b85ef4cec6.rlib",
+      "bytes": 54582748,
+      "blocks_bytes": 54587392,
+      "links": 1,
+      "sha256": "97ef7021bf468a0b3cefe0cff19e8242de1e05077d3be9a9e2e375695f246c57"
+    }
+  ]
+}

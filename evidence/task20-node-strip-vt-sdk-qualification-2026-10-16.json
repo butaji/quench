@@ -1,0 +1,453 @@
+{
+  "scope": "Original SDK terminal escape stripping plus normal shared HTTP/net/capture lifecycle integration",
+  "source_commit": "1208a19a61c408728e0391eac92c7b8ab65fe8eb",
+  "host": "Linux-6.18.44-x86_64-with-glibc2.41",
+  "node_latest_stable": "v26.12.0",
+  "tracked_crate_files": 700,
+  "checks": {
+    "core": 671,
+    "node_api": 393,
+    "shared": 7,
+    "framework": 43,
+    "workspace_all_targets": true,
+    "differentials": 5,
+    "framework_scenarios": 3,
+    "fixed_work_valid": 8,
+    "fixed_work_clean": 0
+  },
+  "utility_family": {
+    "inventory_hash": "f035af0889138a8c",
+    "total": 36,
+    "before": {
+      "pass": 18,
+      "fail": 16,
+      "skip": 2
+    },
+    "candidate": {
+      "pass": 26,
+      "fail": 8,
+      "skip": 2
+    },
+    "gained": [
+      "test-util-convert-signal-to-exit-code.mjs",
+      "test-util-debounce.js",
+      "test-util-exception-with-host-port.js",
+      "test-util-isPartialDeepStrictEqual.js",
+      "test-util-promisify.js",
+      "test-util-stripvtcontrolcharacters.js",
+      "test-util-throttle.js",
+      "test-util.js"
+    ],
+    "lost": [],
+    "skip_changes": []
+  },
+  "limitations": [
+    "Goal remains open. Selected-family gains are not added to full audit totals. Latest completed full7f stable1793/5015, pinned1821/4727. New frozen source full inventories are separate.",
+    "Initial full389 source301 run388pass/1fail exposed displaced SDK strict directives. Exact original tests pass after restoring strict SDK wrappers; raw failure retained.",
+    "Initial focused attempts exposed missing native lazy properties and missing private loader timers forwarding. Actual failed observations retained; no assertions/fixtures/deadlines changed.",
+    "Abort-transfer, weak-event and signal tracing remain unavailable. Public stripVT uses unchanged SDK policy; callbackify/parseArgs/style/parseEnv adapters remain native.",
+    "All-eight exact software instruction screen is a separate artifact; instrumented wall-time/RSS are not production claims.",
+    "This image includes sharedf4e6ed305 HTTP/net lifecycle work. Later2fdb67fcb exception-capture, regex-feature and Core environment changes and later native Contextify/MockTracker work are excluded.",
+    "Runner runtime_commit metadata observes live checkout; immutable bundle commit and per-file/binary hashes identify actual compared source.",
+    "Initial Core test link failed from exhausted32GB disk before tests started; partial output and inactive caches were reclaimed, then the unchanged671 tests passed. Original failure retained.",
+    "Functional milestone only. RayTrace marginal+2.50950% exceeds the1% instruction screen; no all-eight pass, isolated attribution or native wall-time/RSS speed claim.",
+    "The complete stable\u2192pinned inventories began after qualification; results are separate and not yet complete."
+  ],
+  "raw": [
+    {
+      "path": "work/strip-vt-sdk/all-api.log",
+      "bytes": 32587,
+      "sha256": "b31d196e60f0d7d6ccd9a9515abcc1cd4159727ee0a9e6168bc9e0b6b67796be"
+    },
+    {
+      "path": "work/strip-vt-sdk/buffer-concat-oracle.diff",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/strip-vt-sdk/buffer-concat-oracle.log",
+      "bytes": 945,
+      "sha256": "6952b631101e34ed06edc5159ea6b526493f0567d64f94710f686417c70d0b7d"
+    },
+    {
+      "path": "work/strip-vt-sdk/buffer-latin1-oracle.diff",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/strip-vt-sdk/buffer-latin1-oracle.log",
+      "bytes": 1863,
+      "sha256": "09939bcf717a24a1d1193e5d2dbf4d0d6b23ecbde28bc8e551a3afaef73c562a"
+    },
+    {
+      "path": "work/strip-vt-sdk/buffer-oracle.diff",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/strip-vt-sdk/buffer-oracle.log",
+      "bytes": 4169,
+      "sha256": "f9d0f3418b5812dbcd7e927283a12ea6ff35b6b736c9073a3243ad20342338ce"
+    },
+    {
+      "path": "work/strip-vt-sdk/buffer-poison-oracle.diff",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/strip-vt-sdk/buffer-poison-oracle.log",
+      "bytes": 476,
+      "sha256": "13189736a66e7b1615619955feaa462064b24ed73d07b84b76bd4d5c21fd39e8"
+    },
+    {
+      "path": "work/strip-vt-sdk/cache-config.json",
+      "bytes": 264,
+      "sha256": "3102313d810ee4a1432dd5216c7542c0741812c8cdc4e3ac50871d78ba91aeb5"
+    },
+    {
+      "path": "work/strip-vt-sdk/cache-initial-state.json",
+      "bytes": 250,
+      "sha256": "5410675c780ec16f0768d3e726e00fd33cb98e1614e79a123093b3e7ad48c245"
+    },
+    {
+      "path": "work/strip-vt-sdk/cache-supervisor.log",
+      "bytes": 761,
+      "sha256": "ea8a553805f472c7e24ad9459a1a3fdae5696d32a635fe8fb26a24fa58c92764"
+    },
+    {
+      "path": "work/strip-vt-sdk/completed-core-cache-reclamation.json",
+      "bytes": 290,
+      "sha256": "69077494fd334cfc833900d83954fe175ea2d187484c8bb84d0f02a246548540"
+    },
+    {
+      "path": "work/strip-vt-sdk/completed-old-node-library-cache-reclamation.json",
+      "bytes": 759,
+      "sha256": "1afa561a6b4f3013242431358e19ed270e0e49af2b3909bb8dc0765867fef91f"
+    },
+    {
+      "path": "work/strip-vt-sdk/completed-run-compat-cache-reclamation.json",
+      "bytes": 385,
+      "sha256": "0fee9aeec02371a46952532da27d975b21c7e58003631a5957cf1530ac1f238e"
+    },
+    {
+      "path": "work/strip-vt-sdk/core-initial-disk-link-failure.log",
+      "bytes": 5764,
+      "sha256": "9824184a2662b30741d7f4af65ae8b53caaf3132ca04765a29d7c5e1c015038b"
+    },
+    {
+      "path": "work/strip-vt-sdk/core.log",
+      "bytes": 59197,
+      "sha256": "ad931a7d914bab02520dc0418f4292ddab602555f87f0a779f331a1bbad0a6d2"
+    },
+    {
+      "path": "work/strip-vt-sdk/extras-config.json",
+      "bytes": 251,
+      "sha256": "ebdc24e0c79fd4095488569346b0936d8e7dc21f71f1828e55aa505bd087c540"
+    },
+    {
+      "path": "work/strip-vt-sdk/extras-initial-state.json",
+      "bytes": 235,
+      "sha256": "d20ddcb572370cdc82f307d1191114106dd9595f0fa0a21d09b31c6436cadbcb"
+    },
+    {
+      "path": "work/strip-vt-sdk/extras-supervisor.log",
+      "bytes": 297,
+      "sha256": "291b1d59473fb4d1c5d79970d9edd5d494ad02da39331409ef9676cacab5de3a"
+    },
+    {
+      "path": "work/strip-vt-sdk/extras.sh",
+      "bytes": 2874,
+      "sha256": "527318946c3e3d464b13e33c792479063ec235eb664c2b021bd4728579d4eeb6"
+    },
+    {
+      "path": "work/strip-vt-sdk/failed-core-link-output-reclamation.json",
+      "bytes": 334,
+      "sha256": "e65a7db595465c35b8c3175907226fb32d42da0fb8260fc53dea4178d80ee72f"
+    },
+    {
+      "path": "work/strip-vt-sdk/fixed-work.json",
+      "bytes": 153520,
+      "sha256": "43ef7ace765458febb0f969d83b21b860beeebdf598a200a7b9beea741a98cb3"
+    },
+    {
+      "path": "work/strip-vt-sdk/fixed-work.log",
+      "bytes": 1121,
+      "sha256": "b73d165d1a7ba2bcb3dab22a8f0afd5831ab9c66f613d1351666f72da4e1c9d4"
+    },
+    {
+      "path": "work/strip-vt-sdk/focused.log",
+      "bytes": 410,
+      "sha256": "7e7b229d9b044ad742329c7dff9fb98712217056bc70fbf1222e21328aa1aea6"
+    },
+    {
+      "path": "work/strip-vt-sdk/framework-scenarios.json",
+      "bytes": 1532,
+      "sha256": "430b01db7c0b95dabde93c79e4d6e37720d49c1a3e13c7d3491f1ec7b4998e8f"
+    },
+    {
+      "path": "work/strip-vt-sdk/framework.log",
+      "bytes": 3798,
+      "sha256": "b41881f94821125815bc87efbbbd7d26b13fd072686394014795864fa55f2ae8"
+    },
+    {
+      "path": "work/strip-vt-sdk/full-checkout.log",
+      "bytes": 45,
+      "sha256": "781140a4241410324cd6cce529eb34cd346fecb3e149f26a722a70368845bec1"
+    },
+    {
+      "path": "work/strip-vt-sdk/full-config.json",
+      "bytes": 248,
+      "sha256": "4d65988457af7e40d3fb9df6e8349e667deff4936cc684c05261cdfb074665aa"
+    },
+    {
+      "path": "work/strip-vt-sdk/full-initial-state.json",
+      "bytes": 236,
+      "sha256": "46885a32d57f87725f250b481d494d053cee71e940ee267ccf7320fc773e6046"
+    },
+    {
+      "path": "work/strip-vt-sdk/full-supervisor.log",
+      "bytes": 438,
+      "sha256": "2f1fd3e064f9608eb5e60f91179b990622b0faca9ddadcd75fdef8b2b018313d"
+    },
+    {
+      "path": "work/strip-vt-sdk/full.py",
+      "bytes": 531,
+      "sha256": "de673962c8801166fd97abaa32e9c9bd2fc74448a62202c36fd12e468338b5fc"
+    },
+    {
+      "path": "work/strip-vt-sdk/gates-config.json",
+      "bytes": 248,
+      "sha256": "57464dc5f66a886130592ae25900d06c91763931208bd95c0ee5b6fdf5788209"
+    },
+    {
+      "path": "work/strip-vt-sdk/gates-initial-state.json",
+      "bytes": 236,
+      "sha256": "211220c60d65543092b9e2bc871c434fa9749c6c4b8172659983521f3cdbc8a8"
+    },
+    {
+      "path": "work/strip-vt-sdk/gates-supervisor.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/strip-vt-sdk/gates.sh",
+      "bytes": 765,
+      "sha256": "6ff480a5461d3750a09b71b2a3296d7da6f71ea4e6fb54333a3e1c9c59b74b64"
+    },
+    {
+      "path": "work/strip-vt-sdk/implement.py",
+      "bytes": 985,
+      "sha256": "f7ab4bbb04092d045ccb7cad8af75de0233457c5ef7969eea35fe1f99f666e54"
+    },
+    {
+      "path": "work/strip-vt-sdk/instruction-counts.log",
+      "bytes": 2950,
+      "sha256": "03dc5ca8d27e768535879c721142a0b4e7a37ab4adc83d2fbc25ee2bcadddc88"
+    },
+    {
+      "path": "work/strip-vt-sdk/merge-test-preservation.json",
+      "bytes": 754,
+      "sha256": "3c003ef4a59b82932d608e02f2d2c0484f6927317f27aa711326820590575999"
+    },
+    {
+      "path": "work/strip-vt-sdk/paired-build.log",
+      "bytes": 365,
+      "sha256": "c16b6bb51b55bc2ad41ca87eb39f86dbac5f483de3c9714fef1b29def7033265"
+    },
+    {
+      "path": "work/strip-vt-sdk/paired-config.json",
+      "bytes": 251,
+      "sha256": "8297ed6654c2e012bded30ca80cac78b9ac0877bb6efc9008518bc287bc852da"
+    },
+    {
+      "path": "work/strip-vt-sdk/paired-supervisor.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/strip-vt-sdk/paired.sh",
+      "bytes": 394,
+      "sha256": "3f6aa0151ec6801e11ae5ed56c0c07783b41dd30c5306d29e58909fc77810b48"
+    },
+    {
+      "path": "work/strip-vt-sdk/pre-next-fetch.log",
+      "bytes": 94,
+      "sha256": "006dd2ea4e7d9d847430ac0b47e97bac67ddecb873997dbb5723e366275a9609"
+    },
+    {
+      "path": "work/strip-vt-sdk/qualified-evidence-merge.log",
+      "bytes": 571,
+      "sha256": "8da37e29f7b48cc791e679b9ccb9ea48b5865bc4ecadfb1052b91e512a61a33e"
+    },
+    {
+      "path": "work/strip-vt-sdk/reclaim-core-cache.py",
+      "bytes": 999,
+      "sha256": "6f6c972a890c3313c5653cd07e1202a38c464b906d0f3c6c7141d1a9e9545325"
+    },
+    {
+      "path": "work/strip-vt-sdk/shadow-node.log",
+      "bytes": 195,
+      "sha256": "5bb1c6f6a341403cc0fb9a357f431916fbbeb47d4b36b6b0a8179f599a2f7a1f"
+    },
+    {
+      "path": "work/strip-vt-sdk/shadow-quench.log",
+      "bytes": 195,
+      "sha256": "5bb1c6f6a341403cc0fb9a357f431916fbbeb47d4b36b6b0a8179f599a2f7a1f"
+    },
+    {
+      "path": "work/strip-vt-sdk/shadow.diff",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/strip-vt-sdk/shared-merge-commit.log",
+      "bytes": 93,
+      "sha256": "f69b3a1f571b9a509d72d6de6b848b873eaca71557b78c6b0ddb1e457d40fdae"
+    },
+    {
+      "path": "work/strip-vt-sdk/shared-merge.log",
+      "bytes": 419,
+      "sha256": "b475c4bfd825fa69f376814e7699f7137305a67c4123863301a795b762e52b98"
+    },
+    {
+      "path": "work/strip-vt-sdk/shared.log",
+      "bytes": 882,
+      "sha256": "2b2d218d2102ad59088841661248f136d527ec1ef92f1f2f8634f17ea54fab98"
+    },
+    {
+      "path": "work/strip-vt-sdk/source-commit.log",
+      "bytes": 160,
+      "sha256": "1be9e3c87ce2e633a864a2561d30e6e109fd57c7883252dea562233d1098fd3a"
+    },
+    {
+      "path": "work/strip-vt-sdk/stable-focused.json",
+      "bytes": 687,
+      "sha256": "8e7d9127bd772057f2361245c800ee459284f2d80d8887a1aa98254327c570ae"
+    },
+    {
+      "path": "work/strip-vt-sdk/stable-focused.log",
+      "bytes": 206,
+      "sha256": "2c3c1985020e78cff3eba691e3b1726b69a59c9e1976ffd5e8609cdc14376889"
+    },
+    {
+      "path": "work/strip-vt-sdk/stable-util-candidate.json",
+      "bytes": 35949,
+      "sha256": "8f13a250d2363a21971a63f148f0d77bfd263e63860e40889cd0cb2a67994209"
+    },
+    {
+      "path": "work/strip-vt-sdk/stable-util-candidate.log",
+      "bytes": 3627,
+      "sha256": "340b592d6289010582a95ae5a73e29c706cbb46ddfb28b146bf08f6ca2cfda33"
+    },
+    {
+      "path": "work/strip-vt-sdk/stale-check-cache-reclamation.json",
+      "bytes": 69454,
+      "sha256": "48e879f28b69c03336c1edcadab81532e4c3818f4148736985a063c928635101"
+    },
+    {
+      "path": "work/strip-vt-sdk/superseded-unstarted-audit-queue.json",
+      "bytes": 555,
+      "sha256": "f701f87fa85f3b2f955e5c995c9259babe44f4776725a81d4bc3ba432693bb50"
+    },
+    {
+      "path": "work/strip-vt-sdk/utility-focused.log",
+      "bytes": 366,
+      "sha256": "ec53578f1bffdeca61b9cea4b5097334994ef04b8c1a512dc8d4995d19a24b2e"
+    },
+    {
+      "path": "work/strip-vt-sdk/workspace.log",
+      "bytes": 7260,
+      "sha256": "fc3664faba66af8dc847ecfaf6d5482250082443ea8368ac4f0b749f0755e28b"
+    },
+    {
+      "path": "work/strip-vt-sdk-bin/source-commit.txt",
+      "bytes": 41,
+      "sha256": "05c7fd09c53996d5b1950b46e540bb7239faa2773a801fdcb8577a1c244063cf"
+    },
+    {
+      "path": "work/strip-vt-sdk-bin/source-sha256.json",
+      "bytes": 86448,
+      "sha256": "0baf86f974c41984dc16145413b1d2bba75faaf558ebea703d8bdf4d7d841f3a"
+    },
+    {
+      "path": "work/strip-vt-sdk-bin/sha256.txt",
+      "bytes": 235,
+      "sha256": "2793542381ab956dda728626dcef1c4b025e004dd703f8e19efc620cd347a9de"
+    },
+    {
+      "path": "work/util-sdk-policy/stable-util-before.json",
+      "bytes": 32638,
+      "sha256": "ad73e37321038db3cd9dbf66f257a9144e80659704bc0a3b93deb132fc37d616"
+    },
+    {
+      "path": "work/util-sdk-policy/stable-util-matched-receipt.json",
+      "bytes": 1461,
+      "sha256": "17f9f58783c67504756137ba07c0c899027b808565f362ff4323378786e912e4"
+    },
+    {
+      "path": "work/util-sdk-policy/all-api.log",
+      "bytes": 32954,
+      "sha256": "51fe7e0376d494f284adaad4a3a413267f1d60011e4a7d4e45e21a7bceef7076"
+    },
+    {
+      "path": "work/util-sdk-policy/strict-extend-focused.log",
+      "bytes": 440,
+      "sha256": "79a9831ee679b8fb6ad88ef00a7cdec7b5aecd3e3badfb1df0acf26095e2c31b"
+    },
+    {
+      "path": "work/util-sdk-policy/strict-projection-focused.log",
+      "bytes": 366,
+      "sha256": "127a402aedadb6c39cf02613353015292dbf5cfecfb188619a5ff0caa47f3798"
+    },
+    {
+      "path": "work/util-sdk-policy/focused.log",
+      "bytes": 1067,
+      "sha256": "784e336496c070b23e92fe78b9cf2f474d1eedc297c4fa13d5ea311fb65c8f8b"
+    },
+    {
+      "path": "work/util-sdk-policy/lazy-focused.log",
+      "bytes": 1059,
+      "sha256": "6eb1281e423c3cd272ef502b055ecf755b8a139f05721326401ac0580c14969c"
+    }
+  ],
+  "performance_screen": {
+    "all_eight_pass": false,
+    "passed_fixtures": 7,
+    "regressions": [
+      {
+        "fixture": "quench-bench/js-engine-benchmark/v8-v7/raytrace.js",
+        "metrics": {
+          "work": {
+            "aa0": 9854204231,
+            "aa1": 9854204319,
+            "observed_aa_relative_band": 8.930198515996234e-09,
+            "before": 9854204229,
+            "candidate": 8361017987,
+            "relative_delta": -0.15152783596728112,
+            "within_one_percent_plus_observed_band": true
+          },
+          "setup": {
+            "aa0": 1812374607,
+            "aa1": 1812374841,
+            "observed_aa_relative_band": 1.2911238057309638e-07,
+            "before": 1812374823,
+            "candidate": 117378500,
+            "relative_delta": -0.9352349753978015,
+            "within_one_percent_plus_observed_band": true
+          },
+          "marginal": {
+            "aa0": 8041829624,
+            "aa1": 8041829478,
+            "observed_aa_relative_band": 1.815507284746731e-08,
+            "before": 8041829406,
+            "candidate": 8243639487,
+            "relative_delta": 0.02509504626514829,
+            "within_one_percent_plus_observed_band": false
+          }
+        },
+        "passes_instruction_screen": false
+      }
+    ],
+    "artifact": "evidence/task20-node-strip-vt-sdk-software-instruction-screen-2026-10-16.json"
+  }
+}

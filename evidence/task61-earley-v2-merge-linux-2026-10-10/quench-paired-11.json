@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "task": "61",
+  "experiment": "V2 merge on EarleyBoyer with matched thin-LTO profile",
+  "baseline_sha256": "d48392c4241dc90969f469e17d6a89c9ea16473ff6a15921221645c379377144",
+  "candidate_sha256": "f3940bcc9cff03f9bf3c6888864e3d96586d4991f4c56df4cc1e87d829e9fe00",
+  "fixture_sha256": "aa379c1d54f5d13de32ebf2b50729d0cbc64bb23de5e524256c7b2270213cc0b",
+  "corpus_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+  "rounds": 11,
+  "bootstrap_replicates": 100000,
+  "baseline_source_revision": "f49b01e6953e3fad68d8c127358f63294ccd217c",
+  "v2_source_revision": "dfa08983abac3b2ee48d5b1255528766accce0e4",
+  "baseline_score_median": 209.0,
+  "candidate_score_median": 378.0,
+  "score_delta_median": 168.0,
+  "score_delta_95_ci": [
+    161.0,
+    171.0
+  ],
+  "baseline_maximum_rss_median_bytes": 51486720,
+  "candidate_maximum_rss_median_bytes": 42770432,
+  "maximum_rss_delta_median_bytes": -8749056,
+  "maximum_rss_delta_95_ci_bytes": [
+    -8925184,
+    -8404992
+  ],
+  "candidate_score_worse_pairs": 0,
+  "candidate_rss_lower_pairs": 11,
+  "valid": true,
+  "output_equal": true,
+  "qualification_ready": false,
+  "decision_limit": "One-fixture Quench-only pairs do not establish Task 61 engine leadership."
+}

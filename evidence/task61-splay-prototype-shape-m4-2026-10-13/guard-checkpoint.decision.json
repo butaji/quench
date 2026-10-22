@@ -1,0 +1,320 @@
+{
+  "schema": 2,
+  "checkpoint": {
+    "schema": 2,
+    "created_unix_ns": 1791912745403449000,
+    "updated_unix_ns": 1791912745403449000,
+    "change_kind": "layout",
+    "minimum_clean_pairs": 11,
+    "top_up_rounds": 7,
+    "maximum_top_up_batches_per_fixture": 10,
+    "instruction_aa_band_percent": 0.14,
+    "maximum_rss_increase_percent": 0.5,
+    "measurement_runner": {
+      "path": "/Users/admin/Code/GitHub/quench-v2/target/candidate-b/production/quench-bench",
+      "sha256": "bdc9d6c4afc537fe8ed30d4fccba9157cd4232e345ce75810465a0fff98db109"
+    },
+    "baseline": {
+      "path": "/private/tmp/quench-task61-splay-free-bitmap-m4/target/pinned/098cc7aa69195bab87115b496a4df9660f78c5d7364e60a52c8761f2e857f5e6/quench-node",
+      "sha256": "098cc7aa69195bab87115b496a4df9660f78c5d7364e60a52c8761f2e857f5e6"
+    },
+    "candidate": {
+      "path": "/private/tmp/quench-task61-splay-free-bitmap-m4/target/pinned/64dd819ab550b15b1056b76c8f1118cabb8ce569cd3b09a3caa7d7a05746f143/quench-node",
+      "sha256": "64dd819ab550b15b1056b76c8f1118cabb8ce569cd3b09a3caa7d7a05746f143"
+    },
+    "timeout_ms": 300000,
+    "source_revision": "4062a6be95e53bc600747a72f19c24efa7f4fb61",
+    "source_dirty": true,
+    "corpus": {
+      "checkout_clean": true,
+      "checkout_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+      "fixture_set_matches": true,
+      "pinned_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b"
+    },
+    "suite_inputs": [
+      {
+        "modified_unix_ns": 1791906743939485870,
+        "path": "quench-bench/js-engine-benchmark/v8-v7/base.js",
+        "sha256": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51",
+        "size_bytes": 9351
+      },
+      {
+        "modified_unix_ns": 1791906743939603454,
+        "path": "quench-bench/js-engine-benchmark/v8-v7/crypto.js",
+        "sha256": "5321d2ada9b61e01d5f281609513467cbaa7c0effb12c577ed08088d812453af",
+        "size_bytes": 48043
+      },
+      {
+        "modified_unix_ns": 1791906743939687496,
+        "path": "quench-bench/js-engine-benchmark/v8-v7/deltablue.js",
+        "sha256": "74b5a95f4877701073c6efef08e4ae306562747067e292925b69cbd629a511b9",
+        "size_bytes": 25653
+      },
+      {
+        "modified_unix_ns": 1791906743939910289,
+        "path": "quench-bench/js-engine-benchmark/v8-v7/earley-boyer.js",
+        "sha256": "dbf3aeb6b3d056e8ea35b5f19aa8c8a4fb1053e41d07f096c22483b2c1c6ee01",
+        "size_bytes": 195205
+      },
+      {
+        "modified_unix_ns": 1791906743940604418,
+        "path": "quench-bench/js-engine-benchmark/v8-v7/navier-stokes.js",
+        "sha256": "ce241465ffeee77b5c4f7119f522aa971fe1fe92c3aed76f7514ea43e07fec84",
+        "size_bytes": 12690
+      },
+      {
+        "modified_unix_ns": 1791906743940705502,
+        "path": "quench-bench/js-engine-benchmark/v8-v7/raytrace.js",
+        "sha256": "d52183ca324cdb88d9ee3e78326433fe2ca28d6436f0a6c3ec013ab67cb798eb",
+        "size_bytes": 27996
+      },
+      {
+        "modified_unix_ns": 1791906743940889169,
+        "path": "quench-bench/js-engine-benchmark/v8-v7/regexp.js",
+        "sha256": "5268b0d15931fda4e331de35fc58e5beded9a250b60764e1cc7cfc898ab53602",
+        "size_bytes": 111299
+      },
+      {
+        "modified_unix_ns": 1791906743940996211,
+        "path": "quench-bench/js-engine-benchmark/v8-v7/richards.js",
+        "sha256": "d86eac4108343a54ba6e10621a77b46f82f554c3b0a46e8fb4032d5cf65a2a11",
+        "size_bytes": 15776
+      },
+      {
+        "modified_unix_ns": 1791906743941164296,
+        "path": "quench-bench/js-engine-benchmark/v8-v7/splay.js",
+        "sha256": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d",
+        "size_bytes": 10746
+      }
+    ],
+    "initial_report": {
+      "path": "/private/tmp/quench-task61-splay-free-bitmap-m4/evidence/task61-splay-prototype-shape-m4-2026-10-13/all-eight-ab-11.json",
+      "sha256": "1ca17bf6c32da248209bd250796e49eef9d667448715eec81f70244163908b3e"
+    },
+    "top_up_batches": []
+  },
+  "reports": [
+    {
+      "path": "/private/tmp/quench-task61-splay-free-bitmap-m4/evidence/task61-splay-prototype-shape-m4-2026-10-13/all-eight-ab-11.json",
+      "sha256": "1ca17bf6c32da248209bd250796e49eef9d667448715eec81f70244163908b3e"
+    }
+  ],
+  "fixtures": {
+    "crypto.js": {
+      "clean_pairs": 11,
+      "valid_pairs": 11,
+      "cycles": {
+        "median_percent": 0.9984665233228718,
+        "interval_95_percent": [
+          0.653870803070733,
+          2.4615202663835545
+        ],
+        "samples": 11,
+        "status": "regression"
+      },
+      "instructions": {
+        "median_percent": 0.019324139145870944,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "within_budget"
+      },
+      "max_rss": {
+        "median_percent": -1.5924601884952927,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "within_budget"
+      },
+      "classification": "regression"
+    },
+    "deltablue.js": {
+      "clean_pairs": 11,
+      "valid_pairs": 11,
+      "cycles": {
+        "median_percent": 0.6853211028755135,
+        "interval_95_percent": [
+          0.44055186473750396,
+          1.4295605651464927
+        ],
+        "samples": 11,
+        "status": "regression"
+      },
+      "instructions": {
+        "median_percent": 0.600486464045269,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "over_budget"
+      },
+      "max_rss": {
+        "median_percent": -1.181634031060097,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "within_budget"
+      },
+      "classification": "regression"
+    },
+    "earley-boyer.js": {
+      "clean_pairs": 11,
+      "valid_pairs": 11,
+      "cycles": {
+        "median_percent": 1.361875407382973,
+        "interval_95_percent": [
+          0.6271911793994889,
+          2.1802277070388065
+        ],
+        "samples": 11,
+        "status": "regression"
+      },
+      "instructions": {
+        "median_percent": 0.7702752914368283,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "over_budget"
+      },
+      "max_rss": {
+        "median_percent": -3.1409601634320716,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "within_budget"
+      },
+      "classification": "regression"
+    },
+    "navier-stokes.js": {
+      "clean_pairs": 9,
+      "valid_pairs": 11,
+      "cycles": {
+        "median_percent": 0.7008225473667418,
+        "interval_95_percent": [
+          -1.804152715966345,
+          1.103332100671106
+        ],
+        "samples": 9,
+        "status": "insufficient_clean_pairs"
+      },
+      "instructions": {
+        "median_percent": -0.0003506509891115783,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "within_budget"
+      },
+      "max_rss": {
+        "median_percent": -0.8364001338240223,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "within_budget"
+      },
+      "classification": "inconclusive"
+    },
+    "raytrace.js": {
+      "clean_pairs": 8,
+      "valid_pairs": 11,
+      "cycles": {
+        "median_percent": 2.9740419064043566,
+        "interval_95_percent": [
+          0.9686969576585769,
+          3.8829017125797227
+        ],
+        "samples": 8,
+        "status": "insufficient_clean_pairs"
+      },
+      "instructions": {
+        "median_percent": 0.6625816090187975,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "over_budget"
+      },
+      "max_rss": {
+        "median_percent": -1.3328890369876722,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "within_budget"
+      },
+      "classification": "inconclusive"
+    },
+    "regexp.js": {
+      "clean_pairs": 11,
+      "valid_pairs": 11,
+      "cycles": {
+        "median_percent": 0.4327239701519714,
+        "interval_95_percent": [
+          -3.804043755879427,
+          1.1260368375172858
+        ],
+        "samples": 11,
+        "status": "no_detected_regression"
+      },
+      "instructions": {
+        "median_percent": 0.10309124467970943,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "within_budget"
+      },
+      "max_rss": {
+        "median_percent": -0.1268498942917584,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "within_budget"
+      },
+      "classification": "cycles"
+    },
+    "richards.js": {
+      "clean_pairs": 10,
+      "valid_pairs": 11,
+      "cycles": {
+        "median_percent": 0.718712333987126,
+        "interval_95_percent": [
+          -0.003952560080999756,
+          1.1594755121983935
+        ],
+        "samples": 10,
+        "status": "insufficient_clean_pairs"
+      },
+      "instructions": {
+        "median_percent": 0.6561310305343682,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "over_budget"
+      },
+      "max_rss": {
+        "median_percent": -0.4165220409580006,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "within_budget"
+      },
+      "classification": "inconclusive"
+    },
+    "splay.js": {
+      "clean_pairs": 6,
+      "valid_pairs": 11,
+      "cycles": {
+        "median_percent": 0.7260772219969236,
+        "interval_95_percent": [
+          -0.036587906450608054,
+          2.4188272431787894
+        ],
+        "samples": 6,
+        "status": "insufficient_clean_pairs"
+      },
+      "instructions": {
+        "median_percent": 0.4211906460187098,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "over_budget"
+      },
+      "max_rss": {
+        "median_percent": -10.568197682535253,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "within_budget"
+      },
+      "classification": "inconclusive"
+    }
+  },
+  "pending_fixtures": [
+    "navier-stokes.js",
+    "raytrace.js",
+    "richards.js",
+    "splay.js"
+  ],
+  "all_fixtures_classified": false,
+  "overall": "rejected"
+}

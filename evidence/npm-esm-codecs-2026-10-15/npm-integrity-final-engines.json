@@ -1,0 +1,14 @@
+{
+  "candidate": {
+    "source": "71db8015352e6056208f091a67645620226267e7",
+    "sha256": "90b02c0002b101b2a93706bb27423e80630fac4ff42b372100799d68921ef01d"
+  },
+  "baseline": {
+    "source": "791776ba46e7920212949c49bbf43baa0da8fadc",
+    "sha256": "37a6b7ff031dbcf65c5dd7daf0fbb34fc351811bf3b3af177790526fd2888f60"
+  },
+  "node": {
+    "version": "26.12.0",
+    "sha256": "caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943"
+  }
+}

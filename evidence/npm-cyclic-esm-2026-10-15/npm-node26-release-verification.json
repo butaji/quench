@@ -1,0 +1,8 @@
+{
+  "version": "v26.12.0",
+  "release_date": "2026-10-14",
+  "archive": "node-v26.12.0-linux-x64.tar.xz",
+  "sha256": "fd47865ecd6391ebb431fc815e01b9135bf83ded5cf373247e9331e196b7aded",
+  "manifest_url": "https://nodejs.org/dist/v26.12.0/SHASUMS256.txt",
+  "release_index_url": "https://nodejs.org/dist/index.json"
+}

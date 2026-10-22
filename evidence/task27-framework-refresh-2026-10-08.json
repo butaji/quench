@@ -1,0 +1,99 @@
+{
+  "schema": 1,
+  "task": "27",
+  "kind": "current_framework_node_requalification",
+  "reviewed_on": "2026-10-08",
+  "source": {
+    "revision": "e3d3e40a93033cb7d2f16b0bd8c9823d3827d079",
+    "dirty": true,
+    "platform": "Darwin arm64",
+    "snapshot_algorithm": "SHA-256 over sorted UTF-8 relative path, NUL, file SHA-256 hex, newline records",
+    "snapshot_file_count": 1024,
+    "snapshot_sha256": "023ab780ae7daa2945dd879aeb9641e18d3f388f51e86cf67ab7e74e765569db",
+    "snapshot_roots": [
+      "crates/quench-node/src",
+      "crates/quench-node-test/src",
+      "crates/quench-runtime-next/src",
+      "crates/quench-runtime/src",
+      "vendor/oxc-parser-next/src"
+    ],
+    "snapshot_additional_files": [
+      "Cargo.toml",
+      "Cargo.lock",
+      "crates/quench-node/Cargo.toml",
+      "crates/quench-node-test/Cargo.toml",
+      "crates/quench-runtime-next/Cargo.toml",
+      "crates/quench-runtime/Cargo.toml",
+      "vendor/oxc-parser-next/Cargo.toml",
+      "crates/quench-node-test/node-tests/parallel.txt"
+    ]
+  },
+  "node": {
+    "version": "v26.10.0",
+    "executable": "/opt/homebrew/bin/node"
+  },
+  "authority": {
+    "profile": "framework-core",
+    "node_parallel_manifest": "crates/quench-node-test/node-tests/parallel.txt",
+    "node_parallel_manifest_sha256": "0209917422a2f0f3fa241d941ec4bc88c9917d5322b69014ab1a662a52e9dfca",
+    "cases_selected_from_manifest": 43
+  },
+  "binaries": {
+    "run-parallel_sha256": "bf60d2ed5b627097db71ce3b01ca9c08c9cc3c588395b92b09f5be40a746c68d",
+    "quench-node_sha256": "72921d543ab447330f1f22baa0bc33925a10d3e9bbaedfc4ee7ce797f4028b73"
+  },
+  "profile_result": {
+    "command": "target/iteration/run-parallel --profile framework-core",
+    "exit_status": 0,
+    "pass": 43,
+    "skip": 0,
+    "fail": 0,
+    "timeout": 0,
+    "crash": 0,
+    "unclassified": 0,
+    "total": 43,
+    "stdout_artifact": "target/iteration/task27-framework-refresh-2026-10-08/framework-core.stdout",
+    "stderr_artifact": "target/iteration/task27-framework-refresh-2026-10-08/framework-core.stderr",
+    "stdout_sha256": "2f2d921dcfce7bd620f630e927555625fcd4e20465e3fc2110af3973bf050cc9",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "framework_scenario_inputs_sha256": {
+    "tests/frameworks/driver.cjs": "e8dd245f9bbfcdcd3a430ff7ed663c3310fdf32fae23cfc5c24d24cbeda96bfb",
+    "tests/frameworks/scenarios/express.cjs": "85eebbbc5c9cfaa01f2f16b6c7e181a4c4bc2e308bd1bb179f49c5d9700f8158",
+    "tests/frameworks/scenarios/koa.cjs": "962e4c326df72b30eed4306494e2218475456c7c816220a6e46a898b040185f9",
+    "tests/frameworks/scenarios/fastify.cjs": "1ff4fc87e2a4c792761c286bc0f255d0ab9be27e810dbf98938a1ac717d1ba6a",
+    "tests/frameworks/scenarios/asset.txt": "d74d6fb7af1951d71bc36de5b5f9f50c09c6adb8ab00b82e2041415715b213ce",
+    "tests/frameworks/package.json": "5f82b6f9cf2dd1e2ad385afebeda3627ac952366004c76350e4f87b0bac170d5",
+    "tests/frameworks/package-lock.json": "fb752f9a87781cc8132c88ced58a8c17ebaacc1789d244b8b7c4a6c9888d5759"
+  },
+  "legacy_surface_prunes_in_snapshot": [
+    "Removed the `ajv`, `chalk`, and `prettier` hard-coded legacy package facsimiles; unknown package names continue through file/package resolution.",
+    "Removed the legacy-only navigator.locks shim, HostState lock queue, module, and capability specs. The shared CommonJS web API projection starts after this shim and remains unchanged."
+  ],
+  "scenario_result": {
+    "node_command_pattern": "/opt/homebrew/bin/node driver.cjs scenarios/{express,koa,fastify}.cjs",
+    "quench_command_pattern": "../../target/iteration/quench-node driver.cjs scenarios/{express,koa,fastify}.cjs",
+    "exit_status": 0,
+    "stdout_bytes": 29,
+    "stdout_sha256": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+    "stdout_text": "statuses 200,200,200,200,404\n",
+    "stderr_bytes": 0,
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "exact_match": true,
+    "raw_artifacts": {
+      "express_node_stdout": "target/iteration/task27-framework-refresh-2026-10-08/express-node.stdout",
+      "express_node_stderr": "target/iteration/task27-framework-refresh-2026-10-08/express-node.stderr",
+      "express_quench_stdout": "target/iteration/task27-framework-refresh-2026-10-08/express-quench.stdout",
+      "express_quench_stderr": "target/iteration/task27-framework-refresh-2026-10-08/express-quench.stderr",
+      "koa_node_stdout": "target/iteration/task27-framework-refresh-2026-10-08/koa-node.stdout",
+      "koa_node_stderr": "target/iteration/task27-framework-refresh-2026-10-08/koa-node.stderr",
+      "koa_quench_stdout": "target/iteration/task27-framework-refresh-2026-10-08/koa-quench.stdout",
+      "koa_quench_stderr": "target/iteration/task27-framework-refresh-2026-10-08/koa-quench.stderr",
+      "fastify_node_stdout": "target/iteration/task27-framework-refresh-2026-10-08/fastify-node.stdout",
+      "fastify_node_stderr": "target/iteration/task27-framework-refresh-2026-10-08/fastify-node.stderr",
+      "fastify_quench_stdout": "target/iteration/task27-framework-refresh-2026-10-08/fastify-quench.stdout",
+      "fastify_quench_stderr": "target/iteration/task27-framework-refresh-2026-10-08/fastify-quench.stderr"
+    }
+  },
+  "qualification_limit": "These checks cover the selected Node framework gate on this dirty source snapshot. Task 27 remains open until the legacy runtime dependency and compile-reachable legacy host/dispatch graph are removed."
+}

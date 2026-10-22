@@ -1,0 +1,29 @@
+{
+  "source_commit": "3218431de1e87a51b63fee8bd3091aa631eec046",
+  "checkout_commit": "3218431de1e87a51b63fee8bd3091aa631eec046",
+  "release": "v26.12.0",
+  "fixture_commit": "26e72d85a611e222e3f06025de8a3c496923bacd",
+  "command": [
+    "/workspace/quench/work/sdk-primitives-bin/run-parallel",
+    "--all",
+    "--parallel-dir",
+    "/workspace/work/node-stable-release/node-v26.12.0/test/parallel",
+    "--jobs",
+    "4",
+    "--timeout-secs",
+    "30",
+    "--results",
+    "/workspace/quench/work/full-sdk-primitives-stable/results.json"
+  ],
+  "binaries_before": {
+    "quench-node": "7220e65fa1f11c8ba2e3452cb1df210eb7d2fc8301818f0670f2b0cb966460da",
+    "run-parallel": "ad3d1af9eaf9a23ce3f94e17f1116377b3066d7507e687654bd9cc5fe3b86a07",
+    "openssl-cli": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1"
+  },
+  "protected_before": {
+    "restored": true,
+    "sha256": "b0e78cd4bb13929391b33a2ad7d80f61d8b2f1d66533aaf31d95807e5f3863eb"
+  },
+  "memory_before": "low 0\nhigh 0\nmax 827108\noom 0\noom_kill 0\noom_group_kill 0\n",
+  "started_utc": "2026-10-16T11:03:53.438450+00:00"
+}

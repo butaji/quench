@@ -1,0 +1,77 @@
+{
+  "scope": "Complete unchanged pinned parallel inventory after canonical function-info guards and owned logical Script code",
+  "source_commit": "7f8660459256f3552691074c219a14eb031132ba",
+  "release": "v27.0.0-nightly20260819c79868f102",
+  "fixture_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+  "counts": {
+    "timeout": 84,
+    "fail": 2144,
+    "pass": 1821,
+    "skip": 678
+  },
+  "total": 4727,
+  "inventory_hash": "1e51ca4121020d14",
+  "baseline": {
+    "counts": {
+      "timeout": 81,
+      "fail": 2144,
+      "pass": 1824,
+      "skip": 678
+    },
+    "total": 4727,
+    "inventory_hash": "1e51ca4121020d14"
+  },
+  "gained": [],
+  "lost": [
+    "test-performance-many-marks.js",
+    "test-stream2-read-sync-stack.js",
+    "test-stringbytes-external.js"
+  ],
+  "skip_changes": {},
+  "memory_events_delta": {
+    "low": 0,
+    "high": 0,
+    "max": 19401,
+    "oom": 0,
+    "oom_kill": 0,
+    "oom_group_kill": 0
+  },
+  "elapsed_seconds": 1834.837277792045,
+  "raw": [
+    {
+      "path": "work/full-owned-script-pinned/results.json",
+      "bytes": 12746585,
+      "sha256": "d209fb691f7439021d4759496e464dad9f64bf1d2e170ef1f256c6986b5d52dd"
+    },
+    {
+      "path": "work/full-owned-script-pinned/runner.log",
+      "bytes": 391282,
+      "sha256": "001cb8d820a698462876ba5fdcf51331f7118f69871c5c06b20b3703280e4d8b"
+    },
+    {
+      "path": "work/full-owned-script-pinned/receipt-before.json",
+      "bytes": 1111,
+      "sha256": "0e59832f4cf2d485294af9b70dc7919b74e973ecff47b6be18a09ce7211f822a"
+    },
+    {
+      "path": "work/full-owned-script-pinned/receipt.json",
+      "bytes": 1754,
+      "sha256": "511f76ab32a61b01f67174f3c5a2cc05fe44f73c12da44c09959bb2089b59384"
+    },
+    {
+      "path": "work/full-owned-script-pinned/summary.json",
+      "bytes": 150,
+      "sha256": "a76e247be093911b1a2472384595e421f2279ba08a326e9bd153ceb16aecae30"
+    },
+    {
+      "path": "work/full-owned-script-pinned/comparison.json",
+      "bytes": 170,
+      "sha256": "587a3ae8d7eab3578625001119bf157004946641542ae96c043d25d6f12bfea2"
+    }
+  ],
+  "limitations": [
+    "Goal remains open; all nonpass outcomes retained. No selected-case sums, skips/deadline/budget changes or speed claim.",
+    "This frozen7f run includes owned Script/function-info work, but excludes later canonical Function source626 and native directory source918.",
+    "Native compilation overlapped part of this run. Actual memory.events deltas are retained below; concurrent resource pressure is not subtracted from outcomes. All full outcomes retained, no speed claim or adjusted totals."
+  ]
+}

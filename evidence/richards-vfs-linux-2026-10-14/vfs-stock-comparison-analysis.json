@@ -1,0 +1,33 @@
+{
+  "comparisons": {
+    "raw_score": {
+      "median_change_pct": -2.4930747922437657,
+      "independent_bootstrap_95ci_pct": [
+        -21.039603960396036,
+        22.500000000000007
+      ]
+    },
+    "quickjs": {
+      "median_change_pct": 0.822620929859541,
+      "independent_bootstrap_95ci_pct": [
+        -31.755805377377467,
+        40.957894813935944
+      ]
+    },
+    "bun": {
+      "median_change_pct": -11.491726278964387,
+      "independent_bootstrap_95ci_pct": [
+        -30.863524330926783,
+        19.658316407131558
+      ]
+    },
+    "node": {
+      "median_change_pct": 5.841207535800064,
+      "independent_bootstrap_95ci_pct": [
+        -14.448220522986876,
+        29.503199823458015
+      ]
+    }
+  },
+  "note": "Two sequential eleven-round interleaved four-engine blocks; reference-normalized screens and independent bootstrap, not a paired Score gate or qualification."
+}

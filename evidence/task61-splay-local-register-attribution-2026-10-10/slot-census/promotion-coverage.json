@@ -1,0 +1,915 @@
+{
+  "schema": 1,
+  "kind": "task61-splay-local-register-promotion-coverage-census",
+  "measurement_role": "counter-only compiler-mode attribution; no timing or performance claim",
+  "source_revision": "7dfe2e1f1",
+  "source_tree_dirty": true,
+  "profile_binary": "target/pinned/b2600310b6f404eeac016ac7944c28209600733a77be27db27efc5e6567e4a02/quench-node",
+  "profile_binary_sha256": "b2600310b6f404eeac016ac7944c28209600733a77be27db27efc5e6567e4a02",
+  "features": [
+    "profile-aggregate",
+    "profile-memory"
+  ],
+  "compile_modes": {
+    "baseline": "QUENCH_DISABLE_LOCAL_PROMOTION=1 (local operand forwarding and all other source state retained)",
+    "candidate": "local parameter promotion enabled (environment variable unset)"
+  },
+  "workload": {
+    "fixture": "Splay",
+    "setup_items": 8000,
+    "run_items": 80,
+    "run_count": 1,
+    "difference_method": "setup-plus-one-run profile minus setup-only profile, separately in each compile mode",
+    "scripts": {
+      "setup_only": {
+        "path": "tasks/evidence/task61-gc-headroom-2026-10-09/splay-setup_only.js",
+        "sha256": "f5d3e2d8f7bb2389e19ec123c625bbbf918f9d429807b9cf35039c209f80b0e3"
+      },
+      "setup_plus_one_run": {
+        "path": "tasks/evidence/task61-splay-profile-program-accounting-2026-10-09/splay-profile-one.js",
+        "sha256": "8f96127142e73bd4693cd6cc1487bd1671da3c37a7eae01ba5069f6ce26d609b"
+      }
+    }
+  },
+  "capture_hashes": {
+    "baseline_setup": {
+      "stderr_sha256": "ab7e43dfa6b6e619116b38fc4c0e93413fbba679eddb2134283fcd047ad0bfb7",
+      "stdout_sha256": "f999653ed8fc804bba23bf407df5a231ae8dfb622805c79a35f47189615e721a"
+    },
+    "baseline_setup_run": {
+      "stderr_sha256": "485e4e27a12cc56a95dfa03782232d9ada6537d04272c1d295449d98013d0fc4",
+      "stdout_sha256": "0cdc7379e26d2d652f8b71dc95f16822b64ca738ba6f8c6518fe5327e3b39b73"
+    },
+    "promoted_setup": {
+      "stderr_sha256": "477f33c6ec501f944e56d0ac19ffcf7f97beeb418f3c22c95f17e14b73e5dcdb",
+      "stdout_sha256": "f999653ed8fc804bba23bf407df5a231ae8dfb622805c79a35f47189615e721a"
+    },
+    "promoted_setup_run": {
+      "stderr_sha256": "32765e9df52bb029f217dd68e01fee6f01643836f8858a4f6bceeb6d8354ffbe",
+      "stdout_sha256": "0cdc7379e26d2d652f8b71dc95f16822b64ca738ba6f8c6518fe5327e3b39b73"
+    }
+  },
+  "counter_reconciliation": {
+    "dispatch_total_equals_site_total": true,
+    "local_slot_rows_equal_global_opcode_counts": true,
+    "promotion_map_equals_local_opcode_delta": true,
+    "promoted_candidate_residual_equals_unpromoted_local_slots": true
+  },
+  "one_run": {
+    "physical_dispatches": {
+      "baseline": 181454,
+      "promoted": 140752
+    },
+    "physical_dispatch_reduction": 40702,
+    "physical_dispatch_reduction_percent": 22.43102935179164,
+    "opcode_reductions": {
+      "LoadLocalPlain": 24222,
+      "StoreLocalPlain": 11920,
+      "Move": 4560
+    },
+    "plain_local_dispatches": {
+      "baseline": {
+        "LoadLocalPlain": 52311,
+        "StoreLocalPlain": 20645,
+        "total": 72956
+      },
+      "promoted": {
+        "LoadLocalPlain": 28089,
+        "StoreLocalPlain": 8725,
+        "total": 36814
+      },
+      "promoted_parameter_removed": {
+        "LoadLocalPlain": 24222,
+        "StoreLocalPlain": 11920,
+        "total": 36142
+      },
+      "promoted_parameter_share_of_baseline_percent": 49.539448434672956,
+      "promoted_parameter_share_of_old_82957_count_percent": 43.56714924599491,
+      "unpromoted_parameter": {
+        "LoadLocalPlain": 0,
+        "StoreLocalPlain": 0,
+        "total": 0
+      },
+      "non_parameter_locals": {
+        "LoadLocalPlain": 28089,
+        "StoreLocalPlain": 8725,
+        "total": 36814
+      },
+      "residual_share_of_baseline_percent": 50.46055156532705
+    },
+    "details_by_function_and_slot": [
+      {
+        "function_id": 5,
+        "name": "BenchmarkSuite",
+        "baseline_local_dispatches": 0,
+        "promoted_local_dispatches": 0,
+        "promoted_parameter_dispatches_removed": 0,
+        "residual_local_dispatches": 0,
+        "slots": [
+          {
+            "slot": 0,
+            "name": "name",
+            "parameter": true,
+            "promotion_register": 0,
+            "category": "promoted_parameter",
+            "baseline_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            },
+            "promoted_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            }
+          },
+          {
+            "slot": 1,
+            "name": "reference",
+            "parameter": true,
+            "promotion_register": 1,
+            "category": "promoted_parameter",
+            "baseline_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            },
+            "promoted_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            }
+          },
+          {
+            "slot": 2,
+            "name": "benchmarks",
+            "parameter": true,
+            "promotion_register": 2,
+            "category": "promoted_parameter",
+            "baseline_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            },
+            "promoted_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            }
+          },
+          {
+            "slot": 3,
+            "name": "arguments",
+            "parameter": false,
+            "promotion_register": null,
+            "category": "non_parameter_local",
+            "baseline_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            },
+            "promoted_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            }
+          }
+        ]
+      },
+      {
+        "function_id": 6,
+        "name": "GeneratePayloadTree",
+        "baseline_local_dispatches": 25120,
+        "promoted_local_dispatches": 0,
+        "promoted_parameter_dispatches_removed": 25120,
+        "residual_local_dispatches": 0,
+        "slots": [
+          {
+            "slot": 0,
+            "name": "depth",
+            "parameter": true,
+            "promotion_register": 0,
+            "category": "promoted_parameter",
+            "baseline_run": {
+              "load_plain": 5040,
+              "store_plain": 5040
+            },
+            "promoted_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            }
+          },
+          {
+            "slot": 1,
+            "name": "tag",
+            "parameter": true,
+            "promotion_register": 1,
+            "category": "promoted_parameter",
+            "baseline_run": {
+              "load_plain": 10000,
+              "store_plain": 5040
+            },
+            "promoted_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            }
+          },
+          {
+            "slot": 2,
+            "name": "arguments",
+            "parameter": false,
+            "promotion_register": null,
+            "category": "non_parameter_local",
+            "baseline_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            },
+            "promoted_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            }
+          }
+        ]
+      },
+      {
+        "function_id": 8,
+        "name": "InsertNewNode",
+        "baseline_local_dispatches": 560,
+        "promoted_local_dispatches": 560,
+        "promoted_parameter_dispatches_removed": 0,
+        "residual_local_dispatches": 560,
+        "slots": [
+          {
+            "slot": 0,
+            "name": "key",
+            "parameter": false,
+            "promotion_register": null,
+            "category": "non_parameter_local",
+            "baseline_run": {
+              "load_plain": 320,
+              "store_plain": 80
+            },
+            "promoted_run": {
+              "load_plain": 320,
+              "store_plain": 80
+            }
+          },
+          {
+            "slot": 1,
+            "name": "payload",
+            "parameter": false,
+            "promotion_register": null,
+            "category": "non_parameter_local",
+            "baseline_run": {
+              "load_plain": 80,
+              "store_plain": 80
+            },
+            "promoted_run": {
+              "load_plain": 80,
+              "store_plain": 80
+            }
+          },
+          {
+            "slot": 2,
+            "name": "arguments",
+            "parameter": false,
+            "promotion_register": null,
+            "category": "non_parameter_local",
+            "baseline_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            },
+            "promoted_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            }
+          }
+        ]
+      },
+      {
+        "function_id": 11,
+        "name": "SplayRun",
+        "baseline_local_dispatches": 562,
+        "promoted_local_dispatches": 562,
+        "promoted_parameter_dispatches_removed": 0,
+        "residual_local_dispatches": 562,
+        "slots": [
+          {
+            "slot": 0,
+            "name": "i",
+            "parameter": false,
+            "promotion_register": null,
+            "category": "non_parameter_local",
+            "baseline_run": {
+              "load_plain": 161,
+              "store_plain": 81
+            },
+            "promoted_run": {
+              "load_plain": 161,
+              "store_plain": 81
+            }
+          },
+          {
+            "slot": 1,
+            "name": "key",
+            "parameter": false,
+            "promotion_register": null,
+            "category": "non_parameter_local",
+            "baseline_run": {
+              "load_plain": 80,
+              "store_plain": 80
+            },
+            "promoted_run": {
+              "load_plain": 80,
+              "store_plain": 80
+            }
+          },
+          {
+            "slot": 2,
+            "name": "greatest",
+            "parameter": false,
+            "promotion_register": null,
+            "category": "non_parameter_local",
+            "baseline_run": {
+              "load_plain": 80,
+              "store_plain": 80
+            },
+            "promoted_run": {
+              "load_plain": 80,
+              "store_plain": 80
+            }
+          },
+          {
+            "slot": 3,
+            "name": "arguments",
+            "parameter": false,
+            "promotion_register": null,
+            "category": "non_parameter_local",
+            "baseline_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            },
+            "promoted_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            }
+          }
+        ]
+      },
+      {
+        "function_id": 31,
+        "name": "SplayTree.insert",
+        "baseline_local_dispatches": 960,
+        "promoted_local_dispatches": 320,
+        "promoted_parameter_dispatches_removed": 640,
+        "residual_local_dispatches": 320,
+        "slots": [
+          {
+            "slot": 0,
+            "name": "key",
+            "parameter": true,
+            "promotion_register": 0,
+            "category": "promoted_parameter",
+            "baseline_run": {
+              "load_plain": 320,
+              "store_plain": 80
+            },
+            "promoted_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            }
+          },
+          {
+            "slot": 1,
+            "name": "value",
+            "parameter": true,
+            "promotion_register": 1,
+            "category": "promoted_parameter",
+            "baseline_run": {
+              "load_plain": 160,
+              "store_plain": 80
+            },
+            "promoted_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            }
+          },
+          {
+            "slot": 2,
+            "name": "node",
+            "parameter": false,
+            "promotion_register": null,
+            "category": "non_parameter_local",
+            "baseline_run": {
+              "load_plain": 240,
+              "store_plain": 80
+            },
+            "promoted_run": {
+              "load_plain": 240,
+              "store_plain": 80
+            }
+          },
+          {
+            "slot": 3,
+            "name": "arguments",
+            "parameter": false,
+            "promotion_register": null,
+            "category": "non_parameter_local",
+            "baseline_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            },
+            "promoted_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            }
+          }
+        ]
+      },
+      {
+        "function_id": 32,
+        "name": "SplayTree.remove",
+        "baseline_local_dispatches": 640,
+        "promoted_local_dispatches": 320,
+        "promoted_parameter_dispatches_removed": 320,
+        "residual_local_dispatches": 320,
+        "slots": [
+          {
+            "slot": 0,
+            "name": "key",
+            "parameter": true,
+            "promotion_register": 0,
+            "category": "promoted_parameter",
+            "baseline_run": {
+              "load_plain": 240,
+              "store_plain": 80
+            },
+            "promoted_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            }
+          },
+          {
+            "slot": 1,
+            "name": "removed",
+            "parameter": false,
+            "promotion_register": null,
+            "category": "non_parameter_local",
+            "baseline_run": {
+              "load_plain": 80,
+              "store_plain": 80
+            },
+            "promoted_run": {
+              "load_plain": 80,
+              "store_plain": 80
+            }
+          },
+          {
+            "slot": 2,
+            "name": "right",
+            "parameter": false,
+            "promotion_register": null,
+            "category": "non_parameter_local",
+            "baseline_run": {
+              "load_plain": 80,
+              "store_plain": 80
+            },
+            "promoted_run": {
+              "load_plain": 80,
+              "store_plain": 80
+            }
+          },
+          {
+            "slot": 3,
+            "name": "arguments",
+            "parameter": false,
+            "promotion_register": null,
+            "category": "non_parameter_local",
+            "baseline_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            },
+            "promoted_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            }
+          }
+        ]
+      },
+      {
+        "function_id": 33,
+        "name": "SplayTree.find",
+        "baseline_local_dispatches": 240,
+        "promoted_local_dispatches": 0,
+        "promoted_parameter_dispatches_removed": 240,
+        "residual_local_dispatches": 0,
+        "slots": [
+          {
+            "slot": 0,
+            "name": "key",
+            "parameter": true,
+            "promotion_register": 0,
+            "category": "promoted_parameter",
+            "baseline_run": {
+              "load_plain": 160,
+              "store_plain": 80
+            },
+            "promoted_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            }
+          },
+          {
+            "slot": 1,
+            "name": "arguments",
+            "parameter": false,
+            "promotion_register": null,
+            "category": "non_parameter_local",
+            "baseline_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            },
+            "promoted_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            }
+          }
+        ]
+      },
+      {
+        "function_id": 34,
+        "name": "SplayTree.findMax",
+        "baseline_local_dispatches": 480,
+        "promoted_local_dispatches": 240,
+        "promoted_parameter_dispatches_removed": 240,
+        "residual_local_dispatches": 240,
+        "slots": [
+          {
+            "slot": 0,
+            "name": "opt_startNode",
+            "parameter": true,
+            "promotion_register": 0,
+            "category": "promoted_parameter",
+            "baseline_run": {
+              "load_plain": 160,
+              "store_plain": 80
+            },
+            "promoted_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            }
+          },
+          {
+            "slot": 1,
+            "name": "current",
+            "parameter": false,
+            "promotion_register": null,
+            "category": "non_parameter_local",
+            "baseline_run": {
+              "load_plain": 160,
+              "store_plain": 80
+            },
+            "promoted_run": {
+              "load_plain": 160,
+              "store_plain": 80
+            }
+          },
+          {
+            "slot": 2,
+            "name": "arguments",
+            "parameter": false,
+            "promotion_register": null,
+            "category": "non_parameter_local",
+            "baseline_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            },
+            "promoted_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            }
+          }
+        ]
+      },
+      {
+        "function_id": 35,
+        "name": "SplayTree.findGreatestLessThan",
+        "baseline_local_dispatches": 240,
+        "promoted_local_dispatches": 0,
+        "promoted_parameter_dispatches_removed": 240,
+        "residual_local_dispatches": 0,
+        "slots": [
+          {
+            "slot": 0,
+            "name": "key",
+            "parameter": true,
+            "promotion_register": 0,
+            "category": "promoted_parameter",
+            "baseline_run": {
+              "load_plain": 160,
+              "store_plain": 80
+            },
+            "promoted_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            }
+          },
+          {
+            "slot": 1,
+            "name": "arguments",
+            "parameter": false,
+            "promotion_register": null,
+            "category": "non_parameter_local",
+            "baseline_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            },
+            "promoted_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            }
+          }
+        ]
+      },
+      {
+        "function_id": 37,
+        "name": "<script>",
+        "baseline_local_dispatches": 0,
+        "promoted_local_dispatches": 0,
+        "promoted_parameter_dispatches_removed": 0,
+        "residual_local_dispatches": 0,
+        "slots": [
+          {
+            "slot": 0,
+            "name": "node",
+            "parameter": true,
+            "promotion_register": 0,
+            "category": "promoted_parameter",
+            "baseline_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            },
+            "promoted_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            }
+          },
+          {
+            "slot": 1,
+            "name": "arguments",
+            "parameter": false,
+            "promotion_register": null,
+            "category": "non_parameter_local",
+            "baseline_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            },
+            "promoted_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            }
+          }
+        ]
+      },
+      {
+        "function_id": 38,
+        "name": "SplayTree.splay_",
+        "baseline_local_dispatches": 41274,
+        "promoted_local_dispatches": 34812,
+        "promoted_parameter_dispatches_removed": 6462,
+        "residual_local_dispatches": 34812,
+        "slots": [
+          {
+            "slot": 0,
+            "name": "key",
+            "parameter": true,
+            "promotion_register": 0,
+            "category": "promoted_parameter",
+            "baseline_run": {
+              "load_plain": 6062,
+              "store_plain": 400
+            },
+            "promoted_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            }
+          },
+          {
+            "slot": 1,
+            "name": "dummy",
+            "parameter": false,
+            "promotion_register": null,
+            "category": "non_parameter_local",
+            "baseline_run": {
+              "load_plain": 800,
+              "store_plain": 400
+            },
+            "promoted_run": {
+              "load_plain": 800,
+              "store_plain": 400
+            }
+          },
+          {
+            "slot": 2,
+            "name": "left",
+            "parameter": false,
+            "promotion_register": null,
+            "category": "non_parameter_local",
+            "baseline_run": {
+              "load_plain": 1426,
+              "store_plain": 1426
+            },
+            "promoted_run": {
+              "load_plain": 1426,
+              "store_plain": 1426
+            }
+          },
+          {
+            "slot": 3,
+            "name": "right",
+            "parameter": false,
+            "promotion_register": null,
+            "category": "non_parameter_local",
+            "baseline_run": {
+              "load_plain": 1280,
+              "store_plain": 1280
+            },
+            "promoted_run": {
+              "load_plain": 1280,
+              "store_plain": 1280
+            }
+          },
+          {
+            "slot": 4,
+            "name": "current",
+            "parameter": false,
+            "promotion_register": null,
+            "category": "non_parameter_local",
+            "baseline_run": {
+              "load_plain": 19414,
+              "store_plain": 3602
+            },
+            "promoted_run": {
+              "load_plain": 19414,
+              "store_plain": 3602
+            }
+          },
+          {
+            "slot": 5,
+            "name": "tmp",
+            "parameter": false,
+            "promotion_register": null,
+            "category": "non_parameter_local",
+            "baseline_run": {
+              "load_plain": 3888,
+              "store_plain": 1296
+            },
+            "promoted_run": {
+              "load_plain": 3888,
+              "store_plain": 1296
+            }
+          },
+          {
+            "slot": 6,
+            "name": "arguments",
+            "parameter": false,
+            "promotion_register": null,
+            "category": "non_parameter_local",
+            "baseline_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            },
+            "promoted_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            }
+          }
+        ]
+      },
+      {
+        "function_id": 39,
+        "name": "SplayTree.Node",
+        "baseline_local_dispatches": 2880,
+        "promoted_local_dispatches": 0,
+        "promoted_parameter_dispatches_removed": 2880,
+        "residual_local_dispatches": 0,
+        "slots": [
+          {
+            "slot": 0,
+            "name": "key",
+            "parameter": true,
+            "promotion_register": 0,
+            "category": "promoted_parameter",
+            "baseline_run": {
+              "load_plain": 960,
+              "store_plain": 480
+            },
+            "promoted_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            }
+          },
+          {
+            "slot": 1,
+            "name": "value",
+            "parameter": true,
+            "promotion_register": 1,
+            "category": "promoted_parameter",
+            "baseline_run": {
+              "load_plain": 960,
+              "store_plain": 480
+            },
+            "promoted_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            }
+          },
+          {
+            "slot": 2,
+            "name": "arguments",
+            "parameter": false,
+            "promotion_register": null,
+            "category": "non_parameter_local",
+            "baseline_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            },
+            "promoted_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            }
+          }
+        ]
+      },
+      {
+        "function_id": 40,
+        "name": "<script>",
+        "baseline_local_dispatches": 0,
+        "promoted_local_dispatches": 0,
+        "promoted_parameter_dispatches_removed": 0,
+        "residual_local_dispatches": 0,
+        "slots": [
+          {
+            "slot": 0,
+            "name": "f",
+            "parameter": true,
+            "promotion_register": 0,
+            "category": "promoted_parameter",
+            "baseline_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            },
+            "promoted_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            }
+          },
+          {
+            "slot": 1,
+            "name": "current",
+            "parameter": false,
+            "promotion_register": null,
+            "category": "non_parameter_local",
+            "baseline_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            },
+            "promoted_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            }
+          },
+          {
+            "slot": 2,
+            "name": "left",
+            "parameter": false,
+            "promotion_register": null,
+            "category": "non_parameter_local",
+            "baseline_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            },
+            "promoted_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            }
+          },
+          {
+            "slot": 3,
+            "name": "arguments",
+            "parameter": false,
+            "promotion_register": null,
+            "category": "non_parameter_local",
+            "baseline_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            },
+            "promoted_run": {
+              "load_plain": 0,
+              "store_plain": 0
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "historical_denominator_note": {
+    "saved_pre_promotion_count": 82957,
+    "current_unpromoted_count": 72956,
+    "difference": 10001,
+    "note": "The current dirty tree includes the local-operand-forwarding candidate in both compile modes. Its separate evidence anticipated 10,000 fewer LoadLocalPlain dispatches/run; this same-source mode comparison, rather than the older denominator, is the basis for promotion coverage. The remaining one-dispatch difference versus that anticipated figure is not isolated here."
+  },
+  "performance_claim": null
+}

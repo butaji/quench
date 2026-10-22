@@ -1,0 +1,68 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index ccf703a66..563f3535a 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1402,6 +1402,7 @@ dependencies = [
+  "oxc",
+  "quench-stack",
+  "regex",
++ "smallvec",
+ ]
+ 
+ [[package]]
+diff --git a/crates/quench-regexp/Cargo.toml b/crates/quench-regexp/Cargo.toml
+index 745b42fc0..ed103914f 100644
+--- a/crates/quench-regexp/Cargo.toml
++++ b/crates/quench-regexp/Cargo.toml
+@@ -10,4 +10,5 @@ quench-stack = { path = "../quench-stack" }
+ icu_casemap = { version = "2.2", features = ["compiled_data"] }
+ icu_properties = { version = "2.3", features = ["compiled_data"] }
+ oxc = { workspace = true }
++smallvec = "1.15.2"
+ regex = { version = "1.11", default-features = false, features = ["std", "unicode-perl", "perf-literal", "perf-onepass", "perf-backtrack"] }
+diff --git a/crates/quench-regexp/src/lib.rs b/crates/quench-regexp/src/lib.rs
+index 9f853f9ef..dde848131 100644
+--- a/crates/quench-regexp/src/lib.rs
++++ b/crates/quench-regexp/src/lib.rs
+@@ -6,7 +6,8 @@
+ 
+ use std::{cell::RefCell, ops::Range};
+ 
+-use oxc::regular_expression::{LiteralParser, Options, ast};
++use oxc::regular_expression::{ast, LiteralParser, Options};
++use smallvec::SmallVec;
+ 
+ mod stack;
+ 
+@@ -226,6 +227,13 @@ struct State {
+ const MAX_BACKTRACK_STATES: usize = usize::MAX;
+ const ASCII_MAX: u16 = 0x7F;
+ const BMP_MAX: u32 = u16::MAX as u32;
++const INLINE_ASCII_INPUT_CAPACITY: usize = 128;
++type AsciiInputBytes = SmallVec<[u8; INLINE_ASCII_INPUT_CAPACITY]>;
++
++fn ascii_input_bytes(input: &[u16]) -> AsciiInputBytes {
++    debug_assert!(input.iter().all(|unit| *unit <= ASCII_MAX));
++    input.iter().map(|unit| *unit as u8).collect()
++}
+ 
+ pub struct Regex {
+     program: Expr,
+@@ -380,7 +388,7 @@ impl Regex {
+             && (!self.compiled_dot_requires_cr_guard || !input.contains(&u16::from(b'\r')))
+         {
+             if let Some(compiled) = &self.compiled {
+-                let bytes = input.iter().map(|unit| *unit as u8).collect::<Vec<_>>();
++                let bytes = ascii_input_bytes(input);
+                 let mut workspace = self.compiled_locations.borrow_mut();
+                 let locations = workspace
+                     .as_mut()
+@@ -412,7 +420,7 @@ impl Regex {
+             && (!self.compiled_dot_requires_cr_guard || !input.contains(&u16::from(b'\r')))
+         {
+             if let Some(compiled) = &self.compiled_test {
+-                let bytes = input.iter().map(|unit| *unit as u8).collect::<Vec<_>>();
++                let bytes = ascii_input_bytes(input);
+                 return compiled
+                     .find_at(&bytes, start)
+                     .map(|matched| matched.range());

@@ -1,0 +1,35 @@
+{
+  "task": "27",
+  "purpose": "Verify canonical stage-based Test262 execution routes to Quench's shared VM.",
+  "source_revision": "6a091e89e7b8bb9fc4f162fee08cbc52a605192b",
+  "worktree_dirty": true,
+  "command": "TEST262_TEST_TIMEOUT_MS=30000 cargo run --profile iteration -p quench-test262 --bin run-stages -- --from 8 --to 8 --filter lex-env-heritage.js",
+  "binary": "target/iteration/run-stages",
+  "binary_sha256": "ee3cfed6d80749e2a03825fb7b3481942a7271caa713d45ea6f64cf722fd8c46",
+  "report": "target/iteration/test262-stages-report.json",
+  "report_sha256": "51ed7f0fa0751a46ab1382abc3697225944a9ee393a8a2c19d1048284263c45e",
+  "counts": {
+    "stage": 8,
+    "selected": 2,
+    "pass": 2,
+    "fail": 0
+  },
+  "cases": [
+    "language/eval-code/direct/lex-env-heritage.js",
+    "language/eval-code/indirect/lex-env-heritage.js"
+  ],
+  "source_sha256": {
+    "crates/quench-test262/src/bin/run-stages.rs": "9bca0c5540e9f1b6a7866e1a02a83d7b4027053350dbf694eaed26f8b77551ce",
+    "crates/quench-test262/src/next_host.rs": "620c95d3c64f89f230ebdd85488332dd034cc2c87cca243768bc8be5eedef654",
+    "crates/quench-test262/src/reporting.rs": "bfb3e9bd48a2120f5a2b9a575540730426c6292566c615fc9aca0eec863a095c",
+    "crates/quench-test262/Cargo.toml": "30b4819724ca36eac41374fc4f6e173d3087bf0f79d152828a5757111032c9c4",
+    "docs/STAGES.md": "4cb13c366db7ed8d7ae0a1b7fe63eb18f93def77fd09231630ba5050f7d7d3d2"
+  },
+  "qualification": "Focused canonical-runner evidence only. It does not qualify the full Test262 inventory or remove the legacy Test262 host.",
+  "cli_checks": [
+    "--help",
+    "--list",
+    "--from 8 --to 8 --filter lex-env-heritage.js",
+    "8 8 lex-env-heritage.js"
+  ]
+}

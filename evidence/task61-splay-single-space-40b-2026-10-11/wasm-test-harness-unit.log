@@ -1,0 +1,21 @@
+    Finished `test` profile [unoptimized] target(s) in 0.07s
+     Running unittests src/lib.rs (/Users/admin/Code/GitHub/quench-v2/target/candidate-a/debug/deps/quench_wasm_test-2b477ae334110818)
+
+running 3 tests
+test tests::proposals_are_walked_not_omitted ... ok
+test tests::scores_fixture_directives_not_files ... ok
+test tests::names_and_legacy_are_scored_as_directives ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.45s
+
+     Running unittests src/bin/run.rs (/Users/admin/Code/GitHub/quench-v2/target/candidate-a/debug/deps/run-37d4f9461244584d)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests quench_wasm_test
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

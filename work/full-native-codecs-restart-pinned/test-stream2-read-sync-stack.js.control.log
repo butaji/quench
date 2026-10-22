@@ -1,0 +1,2 @@
+Pass /workspace/work/node-fixtures/test/parallel/test-stream2-read-sync-stack.js
+all: pass=1 skip=0 fail=0 timeout=0 crash=0 unclassified=0 total=1 inventory_hash=d8c444e61d27d1f9

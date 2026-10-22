@@ -1,0 +1,17 @@
+
+running 1 test
+
+thread 'api::native::tests::error_source_metadata_owns_original_text_across_same_named_scripts_and_collection' (3246882) panicked at crates/quench-runtime/src/api_native_tests.rs:1669:13:
+assertion `left == right` failed
+  left: None
+ right: Some("same-source-name.js")
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test api::native::tests::error_source_metadata_owns_original_text_across_same_named_scripts_and_collection ... FAILED
+
+failures:
+
+failures:
+    api::native::tests::error_source_metadata_owns_original_text_across_same_named_scripts_and_collection
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 659 filtered out; finished in 0.04s
+

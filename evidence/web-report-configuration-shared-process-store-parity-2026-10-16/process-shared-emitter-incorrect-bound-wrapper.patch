@@ -1,0 +1,43 @@
+diff --git a/crates/quench-node/src/modules/event_emitter_shared_vm.rs b/crates/quench-node/src/modules/event_emitter_shared_vm.rs
+index 0dc433ed3..d61cd92c9 100644
+--- a/crates/quench-node/src/modules/event_emitter_shared_vm.rs
++++ b/crates/quench-node/src/modules/event_emitter_shared_vm.rs
+@@ -87,17 +87,10 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
+         .borrow()
+         .event_targets_api
+         .ok_or_else(|| RootedError::host("emitter configuration missing"))?;
+-    let once_factory = context.evaluate_script_rooted(
+-        "(invoke) => function wrapper(...args) { return invoke(...args); }",
+-        "node:events/once-wrapper.js",
+-    )?;
+-    super::event_constructor_shared_vm::named_set(
+-        context,
+-        data,
+-        data,
+-        "onceFactory",
+-        once_factory,
+-    )?;
++    let function = get(context, global, "Function")?;
++    let function_prototype = get(context, function, "prototype")?;
++    let bind = get(context, function_prototype, "bind")?;
++    super::event_constructor_shared_vm::named_set(context, data, data, "bind", bind)?;
+     let emit_bridge = get(context, prototype, "emit")?;
+     super::event_constructor_shared_vm::named_set(context, data, data, "emitBridge", emit_bridge)?;
+     let mut operations = [
+@@ -685,12 +678,11 @@ pub(crate) fn once(
+     ] {
+         named_set(context, data, state, name, value)?;
+     }
+-    let invoke = context.host_function_with_data(
+-        crate::host::shared_vm::operation("emitterOnceInvoke"),
+-        state,
++    let invoke = context.host_function_named_with_data(
++        crate::host::shared_vm::operation("emitterOnceInvoke"), "onceWrapper", state,
+     )?;
+-    let factory = get(context, data, "onceFactory")?;
+-    let wrapper = context.call_rooted(factory, missing, &[invoke])?;
++    let bind = get(context, data, "bind")?;
++    let wrapper = context.call_rooted(bind, invoke, &[state])?;
+     named_set(context, data, state, "wrapper", wrapper)?;
+     named_set(context, data, wrapper, "listener", listener)?;
+     let add = get(

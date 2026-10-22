@@ -1,0 +1,50 @@
+{
+  "schema": 1,
+  "task": "61",
+  "experiment": "Check whether SmallVec union storage is absent from the current production build",
+  "decision": "no-op: workspace feature unification already enables union transitively; direct activation produced a byte-identical production binary",
+  "source": {
+    "branch": "v2-cloud",
+    "base_revision": "b81e63f51d9048bdd2ea64d6df950378d6326b3e",
+    "candidate_manifest_sha256": "b5b2bc6044de924003abd18ca6396226c83defa8eaa6fbb7371b93ddb0a51945",
+    "baseline_manifest_sha256": "92534e4c455b5fcdcad385972dbb22e8eb5e147ee96c07c14fd2ae57b87fb80a",
+    "candidate_source_dirty_during_build": true,
+    "candidate_manifest_restored": true,
+    "Cargo_lock_changed": false,
+    "candidate_delta": "Add smallvec 1.15.2's union feature directly to quench-runtime while retaining SmallVec<[Value; 8]> capacity."
+  },
+  "research": {
+    "url": "https://docs.rs/smallvec/1.15.2/smallvec/",
+    "finding": "The pinned crate documents that union representation removes one machine-word enum tag. Cargo feature unification means this feature can already be active through another workspace dependency even when quench-runtime does not request it directly."
+  },
+  "feature_resolution": {
+    "command": "cargo tree -p quench-runtime -e features -i smallvec",
+    "baseline_manifest_result": "smallvec feature union is already enabled through icu_collator, oxc_diagnostics, and oxc_semantic",
+    "tree_path": "target/stageb-candidates/smallvec-union/feature-tree.txt",
+    "tree_sha256": "60c67fb4ff7a10822978116a1c57688e273ff7f3c4f8a809165f05edae1cd644"
+  },
+  "build": {
+    "command": "cargo build --profile production -p quench-node",
+    "result": "passed",
+    "baseline_binary_sha256": "4141420eb899e0fb5f1d8a214bfbb6cba9b66f8e0145e12e3da003c3efe13f74",
+    "candidate_binary_sha256": "4141420eb899e0fb5f1d8a214bfbb6cba9b66f8e0145e12e3da003c3efe13f74",
+    "candidate_binary_path": "target/stageb-candidates/smallvec-union/union-quench-node",
+    "baseline_binary_path": "target/stageb-candidates/call-arguments-smallvec/smallvec-quench-node",
+    "binary_identical": true,
+    "smallvec_dependency_rebuilt": false
+  },
+  "correctness": {
+    "node_oracle": {
+      "engine": "Node.js v24.19.0",
+      "script": "work/frame-rooted-call-oracle.js",
+      "script_sha256": "6b455a63be8ad0a5efb1ee8fe38248d2bb8cb3cdc79c28ec80b1b89a845c6cb1",
+      "stdout_sha256": "b9829e48bedf0f3799f75c6542d94eff18953bb8391a00015595ada6fd249e03",
+      "baseline_and_candidate_match_node": true
+    }
+  },
+  "performance": {
+    "paired_run": "not run: baseline and candidate binaries are identical",
+    "candidate_production_policy_changed": false
+  },
+  "stage_b_status": "no additional candidate delta; retained capacity-eight implementation already uses union representation in the resolved workspace build"
+}

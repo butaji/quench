@@ -1,0 +1,24 @@
+
+const assert=require('node:assert'),Module=require('node:module');
+assert.strictEqual(typeof Module,'function');assert.strictEqual(Module.Module,Module);
+assert.strictEqual(Module.length,0);assert.strictEqual(Module.name,'Module');
+const parent={children:[]};const m=new Module('/a/b.js',parent);
+assert(m instanceof Module);assert.strictEqual(m.constructor,Module);
+assert.deepStrictEqual(Object.keys(m),['id','path','exports','filename','loaded','children']);
+assert.strictEqual(m.id,'/a/b.js');assert.strictEqual(m.path,'/a');
+assert.strictEqual(m.filename,null);assert.strictEqual(m.loaded,false);
+assert.strictEqual(m.parent,parent);assert.strictEqual(parent.children[0],m);
+const replacement={};m.parent=replacement;assert.strictEqual(m.parent,replacement);
+assert.strictEqual(m.require('node:assert'),assert);
+const result=m._compile('exports.value=42;exports.info=[__filename,__dirname,module.filename,module.loaded,this===exports,arguments.length];','/virtual/file.cjs');
+assert.strictEqual(result,undefined);assert.deepStrictEqual(m.exports,{value:42,info:['/virtual/file.cjs','/virtual',null,false,true,5]});
+assert.strictEqual(m.filename,null);assert.strictEqual(m.loaded,false);
+m._compile('#!/usr/bin/node\nmodule.exports={replacement:true};','virtual.cjs');
+assert.deepStrictEqual(m.exports,{replacement:true});
+m._compile('\uFEFFmodule.exports={bom:true};','virtual.cjs');assert.deepStrictEqual(m.exports,{bom:true});
+const getter=Object.getOwnPropertyDescriptor(Module.prototype,'constructor');
+assert.strictEqual(typeof getter.get,'function');assert.strictEqual(getter.set,undefined);
+assert.strictEqual(getter.enumerable,false);assert.strictEqual(getter.configurable,false);
+assert.throws(()=>new Module(null),e=>e.code==='ERR_INVALID_ARG_TYPE');
+assert.throws(()=>Module('bare'),TypeError);
+console.log(JSON.stringify([m.id,m.path,m.loaded,m.exports,Module.prototype._compile.length]));

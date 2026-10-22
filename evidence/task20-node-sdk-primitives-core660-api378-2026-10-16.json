@@ -1,0 +1,638 @@
+{
+  "source_commit": "3218431de1e87a51b63fee8bd3091aa631eec046",
+  "scope": "Genuine SDK source/error/caller bindings, header-derived protocol enums and deferred promises glob policy",
+  "oracle": "Node v26.12.0 latest stable, official index rechecked 2026-10-16T10:33Z",
+  "checks": {
+    "core": 660,
+    "api": 378,
+    "framework": 43,
+    "shared": 7,
+    "workspace_all_targets": true,
+    "focused_native_oracles": 4,
+    "framework_scenarios": 3,
+    "empty_differentials": 5
+  },
+  "tracked_source_files": 684,
+  "family": {
+    "before": {
+      "fail": 7,
+      "pass": 8
+    },
+    "candidate": {
+      "fail": 4,
+      "pass": 11
+    },
+    "total": 15,
+    "gained": [
+      "test-assert-first-line.js",
+      "test-assert.js",
+      "test-os-checked-function.js"
+    ],
+    "lost": [],
+    "skip_changes": {}
+  },
+  "fixed_work": {
+    "valid": 8,
+    "clean": 0,
+    "speed_claim": false
+  },
+  "design": [
+    "Core captured error metadata shares immutable compiler text, owns no guest objects and survives collection or duplicate filenames. Current activation fallback never invokes guest stack/proxy/name hooks.",
+    "Source positions derive from actual captured records; Node projects null-prototype metadata, zero-based start columns and undefined unnamed-eval resources.",
+    "Unchanged configured Acorn is embedded through the existing shared dependency table for original Node assertion expression extraction.",
+    "Exit-code and compile-cache protocol tables derive from configured SDK macro owners, retaining original descriptors, ordering and binding identity. This does not implement compile-cache operations.",
+    "Caller location projects genuine VM activations and compilation origin, without fabricated bootstrap frames or stack hooks.",
+    "Promises glob materializes the actual unchanged SDK export as a lazy data property, preserving descriptors and OS binding-capture order without eagerly importing readline/history."
+  ],
+  "limitations": [
+    "All-parallel goal remains open; latest frozen e9 stable full is1791/5015 and pinned full is1821/4727, both from immutable e9. No selected-case sums substituted.",
+    "No speed claim; concurrent compilation/audits and actual instruction/RSS screen diagnostics retained.",
+    "Initial all-API run377pass/1fail: the unchanged500ms child-liveness probe did not receive a PID under the concurrent pinned full audit. Isolated unchanged control passed2.10s; a full unchanged-source rerun after audits is retained separately. No deadline or assertion changed.",
+    "Initial source binding check had incorrect descriptor-helper calls, retained and corrected. First focused attempt exposed missing Acorn dependency; the assertion comparison was preserved and dependency owner fixed.",
+    "Initial Core attempt659pass/1fail used embedding eval in a new test while expecting Script origin. Corrected test uses the explicit Script API and adds separate eval-origin assertions; original failed result retained.",
+    "Original node:test harness now progresses through genuine protocol/caller bindings to the missing native ContextifyScript; no fake VM class, callback, handle or compile-cache operation was introduced.",
+    "Regular-file stdin on stock Node loads OS before input execution, unlike -e or piped stdin; oracle mode controls are retained. All four qualified API comparisons use the same -e mode as the established runner."
+  ],
+  "raw": [
+    {
+      "path": "work/sdk-primitives-policy/all-api-initial-contended-liveness-failure.log",
+      "bytes": 31850,
+      "sha256": "23349404f4175eb080d6de83ba4cb99374d245af5f998f53a0fa946930522ec3"
+    },
+    {
+      "path": "work/sdk-primitives-policy/all-api.log",
+      "bytes": 31089,
+      "sha256": "97ff38911a2a5bcf0e2c33e0bd8d0d17f65046dea40c369935ed89d4473d6396"
+    },
+    {
+      "path": "work/sdk-primitives-policy/buffer-concat-oracle.diff",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/sdk-primitives-policy/buffer-concat-oracle.log",
+      "bytes": 945,
+      "sha256": "6952b631101e34ed06edc5159ea6b526493f0567d64f94710f686417c70d0b7d"
+    },
+    {
+      "path": "work/sdk-primitives-policy/buffer-latin1-oracle.diff",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/sdk-primitives-policy/buffer-latin1-oracle.log",
+      "bytes": 1863,
+      "sha256": "09939bcf717a24a1d1193e5d2dbf4d0d6b23ecbde28bc8e551a3afaef73c562a"
+    },
+    {
+      "path": "work/sdk-primitives-policy/buffer-oracle.diff",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/sdk-primitives-policy/buffer-oracle.log",
+      "bytes": 4169,
+      "sha256": "f9d0f3418b5812dbcd7e927283a12ea6ff35b6b736c9073a3243ad20342338ce"
+    },
+    {
+      "path": "work/sdk-primitives-policy/buffer-poison-oracle.diff",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/sdk-primitives-policy/buffer-poison-oracle.log",
+      "bytes": 476,
+      "sha256": "13189736a66e7b1615619955feaa462064b24ed73d07b84b76bd4d5c21fd39e8"
+    },
+    {
+      "path": "work/sdk-primitives-policy/check.log",
+      "bytes": 284,
+      "sha256": "840df7ddfef725e14778d2ebda62a2b8332367e2e405e02e0a151d4e73d1e7d3"
+    },
+    {
+      "path": "work/sdk-primitives-policy/completed-core-cache-reclamation.json",
+      "bytes": 316,
+      "sha256": "b04c5de4740d8b257fb9710691ff1e2c725ed82ec4b51a791a27675542e1f023"
+    },
+    {
+      "path": "work/sdk-primitives-policy/core.log",
+      "bytes": 58151,
+      "sha256": "1ceda41926f62757f3cacdadbb5733cf21da2cc99bbb789c51bd841f368d6325"
+    },
+    {
+      "path": "work/sdk-primitives-policy/extras.sh",
+      "bytes": 3493,
+      "sha256": "052c6e6da8e9261fd3af6526aec80ed192e7c841f2ed2cd9d972540b35e4b819"
+    },
+    {
+      "path": "work/sdk-primitives-policy/family-before-test-assert.json",
+      "bytes": 12509,
+      "sha256": "d30619176d37a8d78bc983c6030bed600e5bef4d1f21bf00ac376fa1e870dc2a"
+    },
+    {
+      "path": "work/sdk-primitives-policy/family-before-test-assert.log",
+      "bytes": 1437,
+      "sha256": "339a6c260ee0a96f86c380f7c3267744f66b40959b2575998a0b6cd2162feb2f"
+    },
+    {
+      "path": "work/sdk-primitives-policy/family-before-test-os-checked-function.json",
+      "bytes": 994,
+      "sha256": "ef4d1bbde82ac640f8ee244787b1fce9f7c0674e4450b4e6104278abf3b363a1"
+    },
+    {
+      "path": "work/sdk-primitives-policy/family-before-test-os-checked-function.log",
+      "bytes": 196,
+      "sha256": "a1cf04c115670ce5c0247101450c7195f5da22e63259a8fbae997eedd30e3a66"
+    },
+    {
+      "path": "work/sdk-primitives-policy/family-candidate-test-assert.json",
+      "bytes": 10967,
+      "sha256": "97d817987cf6b2f0ced8c9cffea7674acd2d7a548b2f0f5a13eb58b99386df3c"
+    },
+    {
+      "path": "work/sdk-primitives-policy/family-candidate-test-assert.log",
+      "bytes": 1438,
+      "sha256": "be29845e1b2d203fa01f37cfa515d302b0f6df360c00594f56d60370f2648b4c"
+    },
+    {
+      "path": "work/sdk-primitives-policy/family-candidate-test-os-checked-function.json",
+      "bytes": 2299,
+      "sha256": "4814f114eb96244edf50b428f1ebdfae80814ec6e322feba86f0cef85f3ed512"
+    },
+    {
+      "path": "work/sdk-primitives-policy/family-candidate-test-os-checked-function.log",
+      "bytes": 196,
+      "sha256": "103e6f19e6cb0ac7c40c7df43245c7df459e9a3069e057f4450e5e73685f8cc1"
+    },
+    {
+      "path": "work/sdk-primitives-policy/family-driver.log",
+      "bytes": 2103,
+      "sha256": "dfc8371320f27ed017afbbe56cd464eb1bf4d1c69a7dfafbd0149f315ccbb075"
+    },
+    {
+      "path": "work/sdk-primitives-policy/family-receipt.json",
+      "bytes": 2843,
+      "sha256": "8055161ce240775063f7ba84793420a247ff061bf30d79e7580d74608dc3ae18"
+    },
+    {
+      "path": "work/sdk-primitives-policy/family.py",
+      "bytes": 1848,
+      "sha256": "a553f0b1d13a98ea93b7c9b694a2c039a219da0e9d051a10cc053624e2e4236b"
+    },
+    {
+      "path": "work/sdk-primitives-policy/feature-merge.log",
+      "bytes": 1483,
+      "sha256": "d7932dfd451a538df34a0ffcf73554b80c3bfc9cbcbe9c9872ddaf6c9e18a04f"
+    },
+    {
+      "path": "work/sdk-primitives-policy/fixed-work.json",
+      "bytes": 153784,
+      "sha256": "b86b7cb51a358fde3aa4876c60db5945a68aeca5d203ec791af5a4e82a0c1e84"
+    },
+    {
+      "path": "work/sdk-primitives-policy/fixed-work.log",
+      "bytes": 1130,
+      "sha256": "8b0dd1635973b8e23e20615799d4c1015876db416cd8878f2834332a986a2ad4"
+    },
+    {
+      "path": "work/sdk-primitives-policy/focused-error_source_positions_preserve_captured_compiler_metadata_without_guest_hooks.log",
+      "bytes": 437,
+      "sha256": "dd42fe391abf87aecba4399b2c0656754936e22a6e16d5923cc07c8fae03a6f0"
+    },
+    {
+      "path": "work/sdk-primitives-policy/focused-filesystem_glob_policy_defers_promises_dependencies_and_preserves_data_descriptors.log",
+      "bytes": 360,
+      "sha256": "d45947a814be8b4fa875f7efb7f61ee5ac5e98f709bb6f4bafb8a13761a5f58a"
+    },
+    {
+      "path": "work/sdk-primitives-policy/focused-native_caller_location_uses_original_activations_independently_of_error_hooks.log",
+      "bytes": 355,
+      "sha256": "17b0551dd0deb0eb9a5e522664cc83fd0dce3c7ef01ee4ddb8c33f34734588d0"
+    },
+    {
+      "path": "work/sdk-primitives-policy/focused-native_protocol_constants_derive_from_configured_sdk_headers_and_preserve_descriptors.log",
+      "bytes": 363,
+      "sha256": "6b27a626054b618325454b901a00c1ffd97e633622ba46e332a92039323f909e"
+    },
+    {
+      "path": "work/sdk-primitives-policy/framework-scenarios.json",
+      "bytes": 1532,
+      "sha256": "430b01db7c0b95dabde93c79e4d6e37720d49c1a3e13c7d3491f1ec7b4998e8f"
+    },
+    {
+      "path": "work/sdk-primitives-policy/framework.log",
+      "bytes": 3798,
+      "sha256": "b41881f94821125815bc87efbbbd7d26b13fd072686394014795864fa55f2ae8"
+    },
+    {
+      "path": "work/sdk-primitives-policy/liveness-focused-control.log",
+      "bytes": 351,
+      "sha256": "b60c1bee3dc5ddffb3b02952b8564f00a574acda61c620d8fe0bf3ac3555f38f"
+    },
+    {
+      "path": "work/sdk-primitives-policy/paired-build.log",
+      "bytes": 365,
+      "sha256": "d1f548d93cab1da461e0095afed61d6544608f7eab932b34a0f790ae7f650425"
+    },
+    {
+      "path": "work/sdk-primitives-policy/pre-remainder-binaries.json",
+      "bytes": 174,
+      "sha256": "457df93c83a1dde93b3a2c42cc09784dc1d4a668db3a6c87012f68a5ca3f6165"
+    },
+    {
+      "path": "work/sdk-primitives-policy/qualified-source-commit.txt",
+      "bytes": 41,
+      "sha256": "fabfa13f17fa796c06f8b3506bf6218c7f88f1a723f71f51ce07b20391ba819c"
+    },
+    {
+      "path": "work/sdk-primitives-policy/qualified-source-sha256.json",
+      "bytes": 84190,
+      "sha256": "f0ea6671532d82dc09ab53e54655717131bcca0d0f526fdf766d1cf7f5e80e4c"
+    },
+    {
+      "path": "work/sdk-primitives-policy/qualify-remainder.sh",
+      "bytes": 1544,
+      "sha256": "152ee092c9cd239c6c234a067328862648267d70dd8681298776d12d9060201a"
+    },
+    {
+      "path": "work/sdk-primitives-policy/qualify.sh",
+      "bytes": 1587,
+      "sha256": "7e1ce44107750b7642bf583e3961713c2f0987602d50f5fddc09fda3a9da2293"
+    },
+    {
+      "path": "work/sdk-primitives-policy/shadow-node.log",
+      "bytes": 195,
+      "sha256": "5bb1c6f6a341403cc0fb9a357f431916fbbeb47d4b36b6b0a8179f599a2f7a1f"
+    },
+    {
+      "path": "work/sdk-primitives-policy/shadow-quench.log",
+      "bytes": 195,
+      "sha256": "5bb1c6f6a341403cc0fb9a357f431916fbbeb47d4b36b6b0a8179f599a2f7a1f"
+    },
+    {
+      "path": "work/sdk-primitives-policy/shadow.diff",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/sdk-primitives-policy/shared.log",
+      "bytes": 882,
+      "sha256": "4598da27e3bf68882ba2be09e11f5a8f06b814e3d4837892951777e4d271e921"
+    },
+    {
+      "path": "work/sdk-primitives-policy/workspace.log",
+      "bytes": 519,
+      "sha256": "91dcd74f04e1027035cad2b583df9b8dabb46dcf9c368795b4ea23618d1283e9"
+    },
+    {
+      "path": "work/sdk-primitives-bin/source-commit.txt",
+      "bytes": 41,
+      "sha256": "fabfa13f17fa796c06f8b3506bf6218c7f88f1a723f71f51ce07b20391ba819c"
+    },
+    {
+      "path": "work/sdk-primitives-bin/source-sha256.json",
+      "bytes": 84190,
+      "sha256": "f0ea6671532d82dc09ab53e54655717131bcca0d0f526fdf766d1cf7f5e80e4c"
+    },
+    {
+      "path": "work/sdk-primitives-bin/sha256.txt",
+      "bytes": 235,
+      "sha256": "baac562347e742f69a0bb8f3618019c91ddc1ab71f7d883fcfe3860651f874f5"
+    },
+    {
+      "path": "work/task-supervisor/sdk-primitives-quiet-state.json",
+      "bytes": 260,
+      "sha256": "2c662afcc20c4af234e7ca88d396523506c1cc3c22d0d8af1281b05b867627b5"
+    },
+    {
+      "path": "work/task-supervisor/sdk-primitives-quiet-config.json",
+      "bytes": 278,
+      "sha256": "b7709069b8b04ae7bbfaf19a13975f5253f42a7c28778daeae6daf72e446190c"
+    },
+    {
+      "path": "work/task-supervisor/sdk-primitives-quiet.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/task-supervisor/sdk-primitives-extras-quiet-state.json",
+      "bytes": 249,
+      "sha256": "fd675da2cafb2b73305f8f9bc52c4bb4211a421b5950ffc7558f4735d0cb62e3"
+    },
+    {
+      "path": "work/task-supervisor/sdk-primitives-extras-quiet-config.json",
+      "bytes": 281,
+      "sha256": "38daffba9540401df9f72868b45e350d0a46479604640c086bc7d122b00f1410"
+    },
+    {
+      "path": "work/task-supervisor/sdk-primitives-extras-quiet.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/error-source-policy/acorn-dependency-failed-state.json",
+      "bytes": 245,
+      "sha256": "0f9aa93f6227414b1c3bb426d57071c0bd1f117bdd739d568cf8030246f263a9"
+    },
+    {
+      "path": "work/error-source-policy/assert-dependency-failure.log",
+      "bytes": 991,
+      "sha256": "27f471872f0b2ad100cd9acda419e9a2a050de0cc06a4e306aecdf4698f8dcb7"
+    },
+    {
+      "path": "work/error-source-policy/check.log",
+      "bytes": 135,
+      "sha256": "fdcaed7a685feb6106d0500618b48286931b04f587ec45b37dff82fec9814e78"
+    },
+    {
+      "path": "work/error-source-policy/core-source-focused-diagnostic.log",
+      "bytes": 713,
+      "sha256": "bd2efa9e074a5acfee3a7fc28bd0079be107d5d8692913f721e76483276fc9d2"
+    },
+    {
+      "path": "work/error-source-policy/core.log",
+      "bytes": 58817,
+      "sha256": "bac97d431ec4a6100cb7f3221f6692067c6170c49b73b090c57cedece3140f73"
+    },
+    {
+      "path": "work/error-source-policy/core659-cache-reclamation.json",
+      "bytes": 309,
+      "sha256": "131de166edddb30071c8ee7a1f36209630f7c1a407dee1cfbccd21ab0c0da314"
+    },
+    {
+      "path": "work/error-source-policy/extras.sh",
+      "bytes": 3449,
+      "sha256": "6a95cf7da616b2f53b84912b90b9c3c7c340da9829d4e059c042a5e81cc65923"
+    },
+    {
+      "path": "work/error-source-policy/family.py",
+      "bytes": 1817,
+      "sha256": "cf0b4339f5510d814683eecd013b492788aab1878cb251c8126ed0204771d507"
+    },
+    {
+      "path": "work/error-source-policy/feature-merge.log",
+      "bytes": 1078,
+      "sha256": "b59e891f07bf12882108f7b8e3a3393867f16e56302865cf6f8c3e601cff63a6"
+    },
+    {
+      "path": "work/error-source-policy/focused-initial-acorn-dependency-failure.log",
+      "bytes": 1293,
+      "sha256": "07b7165af61d8cebad7475b248a937aa86cbfec15f48e205f3ace162571a5858"
+    },
+    {
+      "path": "work/error-source-policy/focused.log",
+      "bytes": 438,
+      "sha256": "baf46d0e119f793d0a815eac93267bf9d625ee90d830fcb21fd37ad81c2fb484"
+    },
+    {
+      "path": "work/error-source-policy/initial-binding-signature-check-failure.log",
+      "bytes": 6032,
+      "sha256": "bc6f5a65a94f9c2003c347061e72636730f8d7aac1b4988dbddcf65c3e005312"
+    },
+    {
+      "path": "work/error-source-policy/initial-failed-state.json",
+      "bytes": 245,
+      "sha256": "6b09338a4101b7b7663939548dfb134cf3614863a12de671c219ab72ad5ef7d7"
+    },
+    {
+      "path": "work/error-source-policy/paired-build.log",
+      "bytes": 217,
+      "sha256": "af894b880580466796499d891bc2c58ddcc2fe3d09be579d10cfda90b9a6ec79"
+    },
+    {
+      "path": "work/error-source-policy/pre-batch-fetch.log",
+      "bytes": 94,
+      "sha256": "3e668f74f6d6206e72bdc8e4c3214e102a121017a209b6bfe8e37d197b5b84e1"
+    },
+    {
+      "path": "work/error-source-policy/qualify.sh",
+      "bytes": 1286,
+      "sha256": "28d1dc5e038beb568c44c831e22a391fd6ce6e071fbad8fca6e1e93b013b2c99"
+    },
+    {
+      "path": "work/error-source-policy/retain-prepared-full.py",
+      "bytes": 2962,
+      "sha256": "363a0840eda3a4e66731144194395583f1c2818e0e68b9f73d535c02b1aed2c6"
+    },
+    {
+      "path": "work/test-runner-policy/add-caller-location.py",
+      "bytes": 2275,
+      "sha256": "9cbfb250ce60301f5e63a31e815eae70e564659284cc26f8411dd22ebbf3a629"
+    },
+    {
+      "path": "work/test-runner-policy/add-error-binding.py",
+      "bytes": 2899,
+      "sha256": "653c1a6393c57380b34950a2d59da591cbcf2005b5cd61f9c4681456bf084f39"
+    },
+    {
+      "path": "work/test-runner-policy/add-error-source.py",
+      "bytes": 5698,
+      "sha256": "d220aa688a4856ac166b6c322aea8f95948b46f8e29b3af334096eb512a76cbf"
+    },
+    {
+      "path": "work/test-runner-policy/add-protocol-constants.py",
+      "bytes": 4656,
+      "sha256": "f4764aa57aa9553ce0050e20a5e67301b61cdd2f470a7a9277134f9c6ba21cd8"
+    },
+    {
+      "path": "work/test-runner-policy/caller-fixture-node.log",
+      "bytes": 45,
+      "sha256": "ff1e86fa34f8d3942d690dbf8fdf4f3d74069201c5fbadac8e386e586f3e7d0b"
+    },
+    {
+      "path": "work/test-runner-policy/dependency-probe.cjs",
+      "bytes": 1693,
+      "sha256": "149ba8de48114f8ba5e476dbb403baf3b1d67fbda505d2eaef75469c5dd162a1"
+    },
+    {
+      "path": "work/test-runner-policy/dependency-probe.log",
+      "bytes": 876,
+      "sha256": "475504c1bda7ac9dbd2d6847bdf4b0a3a6c5c97d9ec270c7756e1d00ed4071f6"
+    },
+    {
+      "path": "work/test-runner-policy/error-source-edge-oracle.cjs",
+      "bytes": 769,
+      "sha256": "51be51e688ba730dd9eed47adacbeb55578ed994db6d27399787cd8f4205846a"
+    },
+    {
+      "path": "work/test-runner-policy/error-source-edge-oracle.log",
+      "bytes": 2060,
+      "sha256": "a1a1f1dc947526c9c835e47a33f1b38ef7fe44a406d8939072d30b837a786698"
+    },
+    {
+      "path": "work/test-runner-policy/error-source-fixture-node.log",
+      "bytes": 27,
+      "sha256": "adcc76e345e8356f1f99125798884a2ae303d9b5503f01b107b6780172625aa8"
+    },
+    {
+      "path": "work/test-runner-policy/error-source-oracle.cjs",
+      "bytes": 588,
+      "sha256": "10352e96f547a8163c41f10710d44c70bf9387088b7885c24567d0bb3668f34d"
+    },
+    {
+      "path": "work/test-runner-policy/error-source-oracle.log",
+      "bytes": 1377,
+      "sha256": "7a6e24d1f1af66b9dc9ae2b508911fce5c3e6efa3dd03ee40aa5793ecebfa755"
+    },
+    {
+      "path": "work/test-runner-policy/failure-clusters.json",
+      "bytes": 167057,
+      "sha256": "86a89a5916cd04b8275fb18f6d6b9f7ef276b1aab93ecb6dbbce471891ef20a0"
+    },
+    {
+      "path": "work/test-runner-policy/focused-primitives-harness-load.log",
+      "bytes": 484,
+      "sha256": "82e25072a30489c3d5c527a49065e7124462d90a5114b7788a6dd5e8c1e332e7"
+    },
+    {
+      "path": "work/test-runner-policy/glob-lazy-fixture-node-e.log",
+      "bytes": 33,
+      "sha256": "b489168d2c5fd48dd5c194c62e5c3b4309c0a30adffa23da572a7901f1073a8e"
+    },
+    {
+      "path": "work/test-runner-policy/glob-lazy-fixture-node.log",
+      "bytes": 818,
+      "sha256": "d5ba48988517323940e05e2846f138ccb2c8d6c200d2e887b487e45e234e81b5"
+    },
+    {
+      "path": "work/test-runner-policy/load-probe.log",
+      "bytes": 316,
+      "sha256": "b0713969d2151286fcd3e264ac4f8ce156a4373042ab6dbe8706690c9a295e84"
+    },
+    {
+      "path": "work/test-runner-policy/module-binding-oracle.log",
+      "bytes": 373,
+      "sha256": "34ab176e17237cc15fabbea02cd05ba7a41f62dcbb0c77dd13ecec615a792013"
+    },
+    {
+      "path": "work/test-runner-policy/module-dependency-probe.cjs",
+      "bytes": 1838,
+      "sha256": "78f9084dfc4128012bcd4594ade75096cba3cd8b55bc4300842f80744a306d1b"
+    },
+    {
+      "path": "work/test-runner-policy/module-dependency-probe.log",
+      "bytes": 876,
+      "sha256": "458eeb07967e6cf9bdf1e16193b5cd3bf25ce0a3f5d661d3c51b5274fbb221e9"
+    },
+    {
+      "path": "work/test-runner-policy/modules-oracle.log",
+      "bytes": 401,
+      "sha256": "a6f9776db05946418279c0b434bf25c284410347cce03f35d08c24863795bcfb"
+    },
+    {
+      "path": "work/test-runner-policy/native-oracle.log",
+      "bytes": 642,
+      "sha256": "5e4de2917d09438b2870fec40fbcf320769d3728830fe6dbc6bd3d50353c0158"
+    },
+    {
+      "path": "work/test-runner-policy/node-input-os-bootstrap-control.json",
+      "bytes": 280,
+      "sha256": "0b20ab86a1e6f11572a215e90c73e8fd70caecae58463cdd0f8a343a7b681649"
+    },
+    {
+      "path": "work/test-runner-policy/node-input-os-bootstrap-probe.cjs",
+      "bytes": 65,
+      "sha256": "fe315ba66d214bd3d709c61d40d8f781020604254f333976d5f9f2671fb16af9"
+    },
+    {
+      "path": "work/test-runner-policy/node_protocol_constants.rs",
+      "bytes": 662,
+      "sha256": "37529be515a1fe16075829fda116847323a662cd7dee106dbd7ed63c7a8b4064"
+    },
+    {
+      "path": "work/test-runner-policy/os-stable-file-control.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/test-runner-policy/protocol-fixture-node.log",
+      "bytes": 2314,
+      "sha256": "bcec9a9719c6f3892a916434d1d2ba175357eebc3cf7df936be61a1e2b7e2891"
+    },
+    {
+      "path": "work/test-runner-policy/protocol-generator-check.log",
+      "bytes": 145,
+      "sha256": "d8ebd73329e2ec8d93ec68071a81faef9eb070e75660af72896a629297683d4e"
+    },
+    {
+      "path": "work/test-runner-policy/protocol-generator-check.rs",
+      "bytes": 2044,
+      "sha256": "0e00bb4819cbc4713a8f0b75dde3cac9de7834408fa85743a09737e5d19672bf"
+    },
+    {
+      "path": "work/test-runner-policy/protocol-oracle.cjs",
+      "bytes": 831,
+      "sha256": "da9fa5f45b4f9bf47d1afe22c83197a1f4b52aeed3e6f6aab763c1353120a4e9"
+    },
+    {
+      "path": "work/test-runner-policy/protocol-oracle.log",
+      "bytes": 2410,
+      "sha256": "11c93c7b7bd8f25461ab60d03d52a1e3b1f757ba808a2728db82c2b7943f5feb"
+    },
+    {
+      "path": "work/task-supervisor/sdk-primitives-state.json",
+      "bytes": 247,
+      "sha256": "4c5e1d6b9f635dc06a179002103072df82c79baab194d8ff1e4d80cb8f555913"
+    },
+    {
+      "path": "work/task-supervisor/sdk-primitives-config.json",
+      "bytes": 256,
+      "sha256": "7878b7c38632924fefc3c6b97154c3d06d7b3edb5a5c961b4eb7636e3d258c91"
+    },
+    {
+      "path": "work/task-supervisor/sdk-primitives.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/task-supervisor/sdk-primitives-extras-state.json",
+      "bytes": 244,
+      "sha256": "2e6fdeb7e02077bb2e58431b308b83398728c3b38d15c51d2282f18222a89e3f"
+    },
+    {
+      "path": "work/task-supervisor/sdk-primitives-extras-config.json",
+      "bytes": 269,
+      "sha256": "b63f7f540d3b66ddf1d5f4e50c1808693d2e76256aac3e18d78649eb4a50031e"
+    },
+    {
+      "path": "work/task-supervisor/sdk-primitives-extras.log",
+      "bytes": 308,
+      "sha256": "bcc73e5fd144a0d40945faa06091c5ba9dfc0ab7fa3bda5635391fb11f64bb45"
+    },
+    {
+      "path": "work/task-supervisor/error-source-state.json",
+      "bytes": 245,
+      "sha256": "e0eaad280e1f5fbfe282e5e4982aa0768935a3166b8fe2255448b3ddbf30f343"
+    },
+    {
+      "path": "work/task-supervisor/error-source-config.json",
+      "bytes": 250,
+      "sha256": "28dd2a185d7ef4886f43f220d71a72fcfe761e427d658232592682b170a2496d"
+    },
+    {
+      "path": "work/task-supervisor/error-source.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/task-supervisor/error-source-extras-state.json",
+      "bytes": 242,
+      "sha256": "34ead628ae83ef9fab91df9fe25ff210a4792a4d72b6ced2443087e2bfc79096"
+    },
+    {
+      "path": "work/task-supervisor/error-source-extras-config.json",
+      "bytes": 263,
+      "sha256": "1059eb74f20bad290ee82b2e49b0bfc8cbbb38a3d721a8e3b64787310d2e4dbb"
+    },
+    {
+      "path": "work/task-supervisor/error-source-extras.log",
+      "bytes": 306,
+      "sha256": "ff6b81c24c028b384fb0f4a6c96759732a02a81a86ffbdac7098244a709176d8"
+    },
+    {
+      "path": "work/node-release-index-2026-10-16T1033.json",
+      "bytes": 333611,
+      "sha256": "b52f521b8e24898364b74f03596afef1f97c1448014df7c2b5ebdcd2b69ca4a9"
+    }
+  ]
+}

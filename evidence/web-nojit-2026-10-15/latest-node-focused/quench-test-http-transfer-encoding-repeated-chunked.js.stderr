@@ -1,0 +1,8 @@
+/workspace/quench/work/node_modules/node-stable-source/test/parallel/test-http-transfer-encoding-repeated-chunked.js:3
+const common = require('../common');
+               ^
+
+ReferenceError: require is not defined
+    at /workspace/quench/work/node_modules/node-stable-source/test/parallel/test-http-transfer-encoding-repeated-chunked.js:3:16
+
+Node.js v22.0.0

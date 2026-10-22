@@ -1,0 +1,11 @@
+{
+  "cwd": "/workspace/quench",
+  "commands": [
+    [
+      "bash",
+      "/workspace/quench/work/native-buffer-unsafe/qualify.sh"
+    ]
+  ],
+  "state": "/workspace/quench/work/task-supervisor/buffer-unsafe-qualify-state.json",
+  "log": "/workspace/quench/work/task-supervisor/buffer-unsafe-qualify.log"
+}

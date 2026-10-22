@@ -1,0 +1,128 @@
+{
+  "schema": 1,
+  "task": "27",
+  "kind": "legacy_dispatch_prune",
+  "recorded_on": "2026-10-08",
+  "source": {
+    "revision": "e3d3e40a93033cb7d2f16b0bd8c9823d3827d079",
+    "worktree_dirty": true,
+    "platform": "Darwin arm64",
+    "changed_source_sha256": {
+      "crates/quench-node/src/lib.rs": "410341fd004b9ebcb1aa48cf33eaa04758ea4aec093a0b5ccd124fb3057f5e26",
+      "crates/quench-node/src/modules/fs.rs": "1a76d32af589366868d2148639d7709b2a5fd2028e65b960071025b0f0d3ef9c",
+      "crates/quench-node/src/modules/process.rs": "690924f91d031eb01ef360b9b745f9353964452b9efdf6cead45ae5f888cb3b8",
+      "crates/quench-node/src/polyfills/bootstrap.rs": "cd77d86dadb06dd3b650481390c62f19867530c1f69a9d34f2a0ab8947102af7"
+    },
+    "deleted_source_preimage_sha256": {
+      "crates/quench-node/src/dispatch.rs": "b623442c002443d0765dd0181be203976d462d5d8f6a9bd195bf8f1a4b85f84e",
+      "crates/quench-node/src/dispatch_buffer.rs": "38fef1a9f33bae31572ca840d17f48227450b75c8fc40d7d5fa20de5b34d96e6",
+      "crates/quench-node/src/dispatch_fs.rs": "de7b29037c83df61576dfc99e5879c7ec8d378836e8ded6973993a1c5ec24067"
+    }
+  },
+  "cleanup": {
+    "removed": [
+      "crates/quench-node/src/dispatch.rs",
+      "crates/quench-node/src/dispatch_buffer.rs",
+      "crates/quench-node/src/dispatch_fs.rs",
+      "dead fs.glob compatibility implementation in crates/quench-node/src/modules/fs.rs",
+      "unused process.skip_if_perfetto helper in crates/quench-node/src/modules/process.rs"
+    ],
+    "deleted_dispatch_source_lines": 2104,
+    "dispatch_module_declarations_removed": 3,
+    "inventory_membership_changed": false
+  },
+  "binaries": {
+    "production_quench_node_sha256": "72051a66b6900515111ef9f4da5c92a530987ada95f8053d668dc5cd2986f40b",
+    "iteration_quench_node_sha256": "d73bfc53671840c72c6be2c6ef2798f2c12839ee366c7e510df60d347043e1c9",
+    "iteration_run_parallel_sha256": "8fba8a88e214f8187816d67dd7a91c956b90be0998e1bcace6172d1563f366fe"
+  },
+  "validation": {
+    "commands": [
+      "cargo check -p quench-node",
+      "cargo build --profile production -p quench-node",
+      "cargo build --profile iteration -p quench-node --bin quench-node",
+      "cargo run --profile iteration -p quench-node-test --bin run-parallel -- --profile framework-core",
+      "local Node and target/iteration/quench-node: tests/frameworks/driver.cjs scenarios/{express,koa,fastify}.cjs"
+    ],
+    "cargo_check": "pass",
+    "production_build": "pass",
+    "iteration_build": "pass",
+    "framework_core": {
+      "pass": 43,
+      "skip": 0,
+      "fail": 0,
+      "timeout": 0,
+      "crash": 0,
+      "unclassified": 0,
+      "manifest_sha256": "0209917422a2f0f3fa241d941ec4bc88c9917d5322b69014ab1a662a52e9dfca",
+      "stdout_sha256": "2f2d921dcfce7bd620f630e927555625fcd4e20465e3fc2110af3973bf050cc9",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "node": {
+      "executable": "/opt/homebrew/bin/node",
+      "version": "v26.10.0"
+    },
+    "framework_scenarios": {
+      "express": {
+        "node_exit": 0,
+        "quench_exit": 0,
+        "stdout_sha256": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout_artifacts": [
+          "target/iteration/task27-legacy-dispatch-prune-2026-10-08/express-node.stdout",
+          "target/iteration/task27-legacy-dispatch-prune-2026-10-08/express-quench.stdout"
+        ],
+        "stderr_artifacts": [
+          "target/iteration/task27-legacy-dispatch-prune-2026-10-08/express-node.stderr",
+          "target/iteration/task27-legacy-dispatch-prune-2026-10-08/express-quench.stderr"
+        ],
+        "exact_match": true
+      },
+      "koa": {
+        "node_exit": 0,
+        "quench_exit": 0,
+        "stdout_sha256": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout_artifacts": [
+          "target/iteration/task27-legacy-dispatch-prune-2026-10-08/koa-node.stdout",
+          "target/iteration/task27-legacy-dispatch-prune-2026-10-08/koa-quench.stdout"
+        ],
+        "stderr_artifacts": [
+          "target/iteration/task27-legacy-dispatch-prune-2026-10-08/koa-node.stderr",
+          "target/iteration/task27-legacy-dispatch-prune-2026-10-08/koa-quench.stderr"
+        ],
+        "exact_match": true
+      },
+      "fastify": {
+        "node_exit": 0,
+        "quench_exit": 0,
+        "stdout_sha256": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout_artifacts": [
+          "target/iteration/task27-legacy-dispatch-prune-2026-10-08/fastify-node.stdout",
+          "target/iteration/task27-legacy-dispatch-prune-2026-10-08/fastify-quench.stdout"
+        ],
+        "stderr_artifacts": [
+          "target/iteration/task27-legacy-dispatch-prune-2026-10-08/fastify-node.stderr",
+          "target/iteration/task27-legacy-dispatch-prune-2026-10-08/fastify-quench.stderr"
+        ],
+        "exact_match": true
+      }
+    },
+    "unit_tests": "not run by instruction"
+  },
+  "remaining_cutover": {
+    "quench_node_normal_dependency_on_quench_runtime": true,
+    "dispatch_handlers_lines": 16093,
+    "direct_dispatch_handlers_call_sites": 4,
+    "legacy_only_call_sites": [
+      "crates/quench-node/src/modules/event_target.rs:689 activate_abort_composite",
+      "crates/quench-node/src/modules/event_target.rs:886 custom_event_new",
+      "crates/quench-node/src/modules/event_target.rs:1285 activate_abort_composite",
+      "crates/quench-node/src/modules/require.rs:200 internal_system_error_constructor"
+    ],
+    "legacy_host_value_and_module_adapters_remain": true,
+    "task27_complete": false,
+    "task86_complete": false
+  }
+}

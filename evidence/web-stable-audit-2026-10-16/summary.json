@@ -1,0 +1,149 @@
+{
+  "source_commit": "4aa47e844c463a9f6ef48a536c07e89d0cead53d",
+  "fixture_archive_sha256": "ce59f9038dda0e637656fb1c36cf52c07c637922fd81d419dbba2ec129afbd35",
+  "counts": {
+    "timeout": 96,
+    "fail": 2716,
+    "pass": 1605,
+    "skip": 598
+  },
+  "total": 5015,
+  "source_files_unchanged": false,
+  "changed_existing_files": 1,
+  "binaries_unchanged": {
+    "quench-node": true,
+    "run-parallel": true
+  },
+  "diagnostic_only": true,
+  "total_node_parity": false,
+  "benchmark_win": false,
+  "notes": [
+    "Runner node_version is the frozen Quench compatibility version on PATH, not the oracle version.",
+    "tests_node_commit identifies the embedded repository pin, not the selected stable fixture checkout; the archive and source manifest identify that checkout.",
+    "This run uses two workers and a 30-second case deadline with concurrent Callgrind and compilation activity; compare individual observations, not timing or unqualified pass-count gains.",
+    "All literal node child commands resolve to the frozen Quench CLI."
+  ],
+  "first_blockers": [
+    {
+      "reason": "TypeError: value is not callable",
+      "count": 733
+    },
+    {
+      "reason": "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal",
+      "count": 236
+    },
+    {
+      "reason": "AssertionError [ERR_ASSERTION]: The error did not match the expected object.",
+      "count": 137
+    },
+    {
+      "reason": "Error: Worker threads are unavailable in this runtime",
+      "count": 128
+    },
+    {
+      "reason": "TypeError: value is not a constructor",
+      "count": 127
+    },
+    {
+      "reason": "/workspace/quench/work/node_modules/node-stable-conformance/lib/internal/errors.js:955",
+      "count": 121
+    },
+    {
+      "reason": "AssertionError [ERR_ASSERTION]: Missing expected exception.",
+      "count": 81
+    },
+    {
+      "reason": "No worker diagnostic",
+      "count": 78
+    },
+    {
+      "reason": "AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value",
+      "count": 63
+    },
+    {
+      "reason": "AssertionError: Expected values to be strictly equal",
+      "count": 54
+    },
+    {
+      "reason": "TypeError: static module request was not resolved",
+      "count": 52
+    },
+    {
+      "reason": "Error: Cannot find module 'stream/iter'",
+      "count": 52
+    },
+    {
+      "reason": "AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal",
+      "count": 38
+    },
+    {
+      "reason": "TypeError: Cannot read properties of undefined (reading 'importKey')",
+      "count": 34
+    },
+    {
+      "reason": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression",
+      "count": 33
+    },
+    {
+      "reason": "Error: - process terminated with status 1, expected 0",
+      "count": 33
+    },
+    {
+      "reason": "Error: Cannot find module 'node:bench'",
+      "count": 20
+    },
+    {
+      "reason": "AssertionError [ERR_ASSERTION]: The error did not match the expected regular expression.",
+      "count": 20
+    },
+    {
+      "reason": "TypeError: Cannot read properties of undefined (reading 'generateKey')",
+      "count": 19
+    },
+    {
+      "reason": "TypeError: TLS socket has no native transport",
+      "count": 16
+    },
+    {
+      "reason": "TypeError: Cannot read properties of undefined (reading 'prototype')",
+      "count": 15
+    },
+    {
+      "reason": "SyntaxError: Unexpected token",
+      "count": 13
+    },
+    {
+      "reason": "TypeError: cannot destructure null or undefined",
+      "count": 12
+    },
+    {
+      "reason": "Error: - stderr did not match expectation, checker throws:",
+      "count": 11
+    },
+    {
+      "reason": "AssertionError: Test should have aborted but instead exited with exit code 1 and signal null",
+      "count": 10
+    },
+    {
+      "reason": "AssertionError: Expected values to be strictly deep-equal",
+      "count": 9
+    },
+    {
+      "reason": "TypeError: Invalid URL",
+      "count": 8
+    },
+    {
+      "reason": "TypeError: class constructor cannot be called without new",
+      "count": 8
+    },
+    {
+      "reason": "Error: This handle type cannot be sent",
+      "count": 7
+    },
+    {
+      "reason": "AssertionError [ERR_ASSERTION]: ifError got unwanted exception: Key generation for ec keys is not supported",
+      "count": 7
+    }
+  ],
+  "memory_events_after": "low 0\nhigh 0\nmax 820101\noom 0\noom_kill 0\noom_group_kill 0\n"
+}

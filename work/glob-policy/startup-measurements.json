@@ -1,0 +1,30 @@
+[
+  {
+    "engine": "before",
+    "elapsed_seconds": 0.2850822919863276,
+    "exit": 0,
+    "stdout": "false\n",
+    "stderr": ""
+  },
+  {
+    "engine": "before",
+    "elapsed_seconds": 0.22856883599888533,
+    "exit": 0,
+    "stdout": "false\n",
+    "stderr": ""
+  },
+  {
+    "engine": "candidate",
+    "elapsed_seconds": 0.2487289949785918,
+    "exit": 0,
+    "stdout": "false\n",
+    "stderr": ""
+  },
+  {
+    "engine": "candidate",
+    "elapsed_seconds": 0.22761006897781044,
+    "exit": 0,
+    "stdout": "false\n",
+    "stderr": ""
+  }
+]

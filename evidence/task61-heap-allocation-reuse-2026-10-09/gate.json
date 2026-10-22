@@ -1,0 +1,2274 @@
+{
+  "schema": "quench.task61.heap-allocation-reuse.v1",
+  "date": "2026-10-09",
+  "platform": "macOS-26.5-arm64-arm-64bit",
+  "machine": "arm64",
+  "cpu": "Apple M4",
+  "profile": "production-thin-lto; codegen-units=1; panic=abort",
+  "baseline_source_revision": "01884eb123f95c521433da067c79d825902e520c",
+  "candidate_source_revision": "01884eb123f95c521433da067c79d825902e520c + sparse-reuse edit",
+  "binaries": {
+    "baseline": {
+      "path": "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+      "sha256": "697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02"
+    },
+    "candidate": {
+      "path": "/Users/admin/Code/GitHub/quench-v2/target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+      "sha256": "681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc"
+    }
+  },
+  "inputs": {
+    "tasks/evidence/task61-heap-allocation-reuse-2026-10-09/sparse-side-table-active.cjs": "696576e5aa7dadf8124ba17146b2c3fa1439aeb2cdecac49cb53a6e3eae9bf90",
+    "tasks/evidence/task61-heap-allocation-reuse-2026-10-09/sparse-side-table-zero.cjs": "be44f06658d8d109a39e36b6c74506eb2efcaddd478a8a88d2b8e5038ced96bc",
+    "tasks/evidence/task61-heap-allocation-reuse-2026-10-09/no-side-table-active.cjs": "1bfbec8750a1553aa8b333cc07dcbdb775c0129db5bdafe342d4f041e93a40e5",
+    "tasks/evidence/task61-heap-allocation-reuse-2026-10-09/no-side-table-zero.cjs": "b36d2c6656f9e80c99582b4c9369b670cbfa0afd6c21d293f8193790e7dfaed2"
+  },
+  "method": "11 alternating Quench-only production pairs per case; subtract each binary's zero-iteration counters and divide by N. Cycles are the decision metric. The allocation control omits explicit large sparse-array setup; it does not prove the runtime sparse-array side table is absent because Node bootstrap could initialize it. RSS uses active-run maximum.",
+  "summary": {
+    "sparse-side-table": {
+      "instructions_retired": {
+        "pair_improvements": [
+          0.004817771279774674,
+          0.006297126249806273,
+          0.006658116074591325,
+          0.004976178987576962,
+          0.005459175911779912,
+          0.005967983229719143,
+          0.0045831525402888484,
+          0.004965359276390191,
+          0.00564123796640581,
+          0.006371877671211501,
+          0.005228316299326408
+        ],
+        "median_relative_improvement": 0.005459175911779912,
+        "bootstrap_95_percent_interval": [
+          0.004965359276390191,
+          0.006297126249806273
+        ],
+        "improved_pairs": 11
+      },
+      "cycles_elapsed": {
+        "pair_improvements": [
+          -0.002280945898964326,
+          0.010728849021095388,
+          0.026539021374320626,
+          0.018151240416143022,
+          -0.019666671526016977,
+          0.016695012250242947,
+          -0.008745836033398957,
+          0.003501794111298917,
+          0.021706012028689825,
+          0.006751969928165624,
+          0.003082855566315379
+        ],
+        "median_relative_improvement": 0.006751969928165624,
+        "bootstrap_95_percent_interval": [
+          -0.002280945898964326,
+          0.018151240416143022
+        ],
+        "improved_pairs": 8
+      },
+      "maximum_rss_bytes": {
+        "pair_changes": [
+          -32768,
+          49152,
+          131072,
+          278528,
+          81920,
+          229376,
+          376832,
+          -98304,
+          131072,
+          311296,
+          -32768
+        ],
+        "median_change": 131072,
+        "baseline_median": 18006016,
+        "candidate_median": 18055168,
+        "relative_change_of_medians": 0.0027297543221109777
+      }
+    },
+    "allocation-control-no-large-array": {
+      "instructions_retired": {
+        "pair_improvements": [
+          0.0005410399791300202,
+          0.0007688643668314343,
+          -0.0006770702277627549,
+          0.0005448321166056092,
+          0.0013363799670336185,
+          -0.00021438113168126272,
+          0.00029641978633399013,
+          0.00020891265218048183,
+          0.0012138324426587133,
+          0.0011542705932792163,
+          -5.450956150188091e-05
+        ],
+        "median_relative_improvement": 0.0005410399791300202,
+        "bootstrap_95_percent_interval": [
+          -5.450956150188091e-05,
+          0.0011542705932792163
+        ],
+        "improved_pairs": 8
+      },
+      "cycles_elapsed": {
+        "pair_improvements": [
+          0.006210752967056754,
+          0.009090419400557104,
+          0.023368432971637487,
+          0.014719034452408186,
+          0.0033605061518767743,
+          -0.0013204541719848972,
+          -0.001722748620533343,
+          -0.012586611613638388,
+          0.0022179671674977808,
+          0.009724987279439268,
+          -0.03177276486771663
+        ],
+        "median_relative_improvement": 0.0033605061518767743,
+        "bootstrap_95_percent_interval": [
+          -0.001722748620533343,
+          0.009724987279439268
+        ],
+        "improved_pairs": 7
+      },
+      "maximum_rss_bytes": {
+        "pair_changes": [
+          65536,
+          -49152,
+          180224,
+          16384,
+          -16384,
+          -16384,
+          -131072,
+          229376,
+          163840,
+          -81920,
+          49152
+        ],
+        "median_change": 16384,
+        "baseline_median": 18071552,
+        "candidate_median": 18120704,
+        "relative_change_of_medians": 0.0027198549410698547
+      }
+    }
+  },
+  "pairs": [
+    {
+      "case": "sparse-side-table",
+      "pair": 1,
+      "iterations": 400000,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variants": {
+        "candidate": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/sparse-side-table-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2043851399,
+              "cycles_elapsed": 347169169,
+              "maximum_rss_bytes": 18038784,
+              "elapsed_seconds": 0.08
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.08 real         0.08 user         0.00 sys\n            18038784  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1284  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  19  involuntary context switches\n          2043851399  instructions retired\n           347169169  cycles elapsed\n             8667544  peak memory footprint\n",
+            "wall_seconds": 0.091172542
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/sparse-side-table-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 222619469,
+              "cycles_elapsed": 65141010,
+              "maximum_rss_bytes": 18120704,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            18120704  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1289  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   8  involuntary context switches\n           222619469  instructions retired\n            65141010  cycles elapsed\n             8749464  peak memory footprint\n",
+            "wall_seconds": 0.01966462499999999
+          },
+          "net_per_iteration": {
+            "instructions_retired": 4553.079825,
+            "cycles_elapsed": 705.0703975
+          }
+        },
+        "baseline": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/sparse-side-table-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2051569559,
+              "cycles_elapsed": 347494936,
+              "maximum_rss_bytes": 18071552,
+              "elapsed_seconds": 0.08
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.08 real         0.08 user         0.00 sys\n            18071552  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1286  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  12  involuntary context switches\n          2051569559  instructions retired\n           347494936  cycles elapsed\n             8716696  peak memory footprint\n",
+            "wall_seconds": 0.09093441699999999
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/sparse-side-table-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 221520873,
+              "cycles_elapsed": 66108604,
+              "maximum_rss_bytes": 17989632,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            17989632  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1282  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  10  involuntary context switches\n           221520873  instructions retired\n            66108604  cycles elapsed\n             8634776  peak memory footprint\n",
+            "wall_seconds": 0.02019970800000001
+          },
+          "net_per_iteration": {
+            "instructions_retired": 4575.121715,
+            "cycles_elapsed": 703.46583
+          }
+        }
+      }
+    },
+    {
+      "case": "sparse-side-table",
+      "pair": 2,
+      "iterations": 400000,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variants": {
+        "baseline": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/sparse-side-table-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2053225032,
+              "cycles_elapsed": 355507271,
+              "maximum_rss_bytes": 18006016,
+              "elapsed_seconds": 0.09
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.09 real         0.08 user         0.00 sys\n            18006016  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1282  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  17  involuntary context switches\n          2053225032  instructions retired\n           355507271  cycles elapsed\n             8651160  peak memory footprint\n",
+            "wall_seconds": 0.093436292
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/sparse-side-table-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 221567774,
+              "cycles_elapsed": 62822567,
+              "maximum_rss_bytes": 17678336,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            17678336  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1262  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   7  involuntary context switches\n           221567774  instructions retired\n            62822567  cycles elapsed\n             8307072  peak memory footprint\n",
+            "wall_seconds": 0.01903125
+          },
+          "net_per_iteration": {
+            "instructions_retired": 4579.143145,
+            "cycles_elapsed": 731.71176
+          }
+        },
+        "candidate": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/sparse-side-table-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2043093866,
+              "cycles_elapsed": 355304294,
+              "maximum_rss_bytes": 18055168,
+              "elapsed_seconds": 0.09
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.09 real         0.08 user         0.00 sys\n            18055168  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1286  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  10  involuntary context switches\n          2043093866  instructions retired\n           355304294  cycles elapsed\n             8667520  peak memory footprint\n",
+            "wall_seconds": 0.09335891699999999
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/sparse-side-table-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 222970785,
+              "cycles_elapsed": 65759760,
+              "maximum_rss_bytes": 17989632,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            17989632  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1281  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   8  involuntary context switches\n           222970785  instructions retired\n            65759760  cycles elapsed\n             8618392  peak memory footprint\n",
+            "wall_seconds": 0.020030166000000016
+          },
+          "net_per_iteration": {
+            "instructions_retired": 4550.3077025,
+            "cycles_elapsed": 723.861335
+          }
+        }
+      }
+    },
+    {
+      "case": "sparse-side-table",
+      "pair": 3,
+      "iterations": 400000,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variants": {
+        "candidate": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/sparse-side-table-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2044347351,
+              "cycles_elapsed": 350988196,
+              "maximum_rss_bytes": 18202624,
+              "elapsed_seconds": 0.08
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.08 real         0.08 user         0.00 sys\n            18202624  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1294  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  17  involuntary context switches\n          2044347351  instructions retired\n           350988196  cycles elapsed\n             8814976  peak memory footprint\n",
+            "wall_seconds": 0.09210750000000001
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/sparse-side-table-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 222916828,
+              "cycles_elapsed": 64120235,
+              "maximum_rss_bytes": 17874944,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            17874944  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1275  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  15  involuntary context switches\n           222916828  instructions retired\n            64120235  cycles elapsed\n             8503704  peak memory footprint\n",
+            "wall_seconds": 0.019458707999999936
+          },
+          "net_per_iteration": {
+            "instructions_retired": 4553.5763075,
+            "cycles_elapsed": 717.1699025
+          }
+        },
+        "baseline": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/sparse-side-table-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2055178547,
+              "cycles_elapsed": 358377979,
+              "maximum_rss_bytes": 18071552,
+              "elapsed_seconds": 0.09
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.09 real         0.08 user         0.00 sys\n            18071552  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1286  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  32  involuntary context switches\n          2055178547  instructions retired\n           358377979  cycles elapsed\n             8716696  peak memory footprint\n",
+            "wall_seconds": 0.0943481249999999
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/sparse-side-table-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 221539442,
+              "cycles_elapsed": 63689268,
+              "maximum_rss_bytes": 17711104,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            17711104  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1265  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   5  involuntary context switches\n           221539442  instructions retired\n            63689268  cycles elapsed\n             8356248  peak memory footprint\n",
+            "wall_seconds": 0.019411874999999967
+          },
+          "net_per_iteration": {
+            "instructions_retired": 4584.0977625,
+            "cycles_elapsed": 736.7217775
+          }
+        }
+      }
+    },
+    {
+      "case": "sparse-side-table",
+      "pair": 4,
+      "iterations": 400000,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variants": {
+        "baseline": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/sparse-side-table-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2051198544,
+              "cycles_elapsed": 356648524,
+              "maximum_rss_bytes": 17940480,
+              "elapsed_seconds": 0.09
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.09 real         0.08 user         0.00 sys\n            17940480  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1279  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  22  involuntary context switches\n          2051198544  instructions retired\n           356648524  cycles elapsed\n             8569216  peak memory footprint\n",
+            "wall_seconds": 0.09391004200000008
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/sparse-side-table-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 221571229,
+              "cycles_elapsed": 65242489,
+              "maximum_rss_bytes": 18038784,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            18038784  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1284  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   7  involuntary context switches\n           221571229  instructions retired\n            65242489  cycles elapsed\n             8683928  peak memory footprint\n",
+            "wall_seconds": 0.020031624999999997
+          },
+          "net_per_iteration": {
+            "instructions_retired": 4574.0682875,
+            "cycles_elapsed": 728.5150875
+          }
+        },
+        "candidate": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/sparse-side-table-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2043084558,
+              "cycles_elapsed": 351806123,
+              "maximum_rss_bytes": 18219008,
+              "elapsed_seconds": 0.08
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.08 real         0.08 user         0.00 sys\n            18219008  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1295  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  17  involuntary context switches\n          2043084558  instructions retired\n           351806123  cycles elapsed\n             8847768  peak memory footprint\n",
+            "wall_seconds": 0.09241191599999998
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/sparse-side-table-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 222561796,
+              "cycles_elapsed": 65689469,
+              "maximum_rss_bytes": 17891328,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            17891328  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1275  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   8  involuntary context switches\n           222561796  instructions retired\n            65689469  cycles elapsed\n             8520088  peak memory footprint\n",
+            "wall_seconds": 0.020156874999999963
+          },
+          "net_per_iteration": {
+            "instructions_retired": 4551.306905,
+            "cycles_elapsed": 715.291635
+          }
+        }
+      }
+    },
+    {
+      "case": "sparse-side-table",
+      "pair": 5,
+      "iterations": 400000,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variants": {
+        "candidate": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/sparse-side-table-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2043306262,
+              "cycles_elapsed": 356266906,
+              "maximum_rss_bytes": 18006016,
+              "elapsed_seconds": 0.09
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.09 real         0.08 user         0.00 sys\n            18006016  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1283  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  21  involuntary context switches\n          2043306262  instructions retired\n           356266906  cycles elapsed\n             8634776  peak memory footprint\n",
+            "wall_seconds": 0.09341754099999988
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/sparse-side-table-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 222631590,
+              "cycles_elapsed": 63405783,
+              "maximum_rss_bytes": 18137088,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            18137088  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1290  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   5  involuntary context switches\n           222631590  instructions retired\n            63405783  cycles elapsed\n             8765848  peak memory footprint\n",
+            "wall_seconds": 0.019333792000000072
+          },
+          "net_per_iteration": {
+            "instructions_retired": 4551.68668,
+            "cycles_elapsed": 732.1528075
+          }
+        },
+        "baseline": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/sparse-side-table-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2052234730,
+              "cycles_elapsed": 352078777,
+              "maximum_rss_bytes": 17924096,
+              "elapsed_seconds": 0.09
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.09 real         0.08 user         0.00 sys\n            17924096  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1278  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  19  involuntary context switches\n          2052234730  instructions retired\n           352078777  cycles elapsed\n             8569240  peak memory footprint\n",
+            "wall_seconds": 0.09247649999999985
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/sparse-side-table-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 221566116,
+              "cycles_elapsed": 64866170,
+              "maximum_rss_bytes": 17924096,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            17924096  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1278  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   8  involuntary context switches\n           221566116  instructions retired\n            64866170  cycles elapsed\n             8552832  peak memory footprint\n",
+            "wall_seconds": 0.019834791999999934
+          },
+          "net_per_iteration": {
+            "instructions_retired": 4576.671535,
+            "cycles_elapsed": 718.0315175
+          }
+        }
+      }
+    },
+    {
+      "case": "sparse-side-table",
+      "pair": 6,
+      "iterations": 400000,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variants": {
+        "baseline": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/sparse-side-table-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2053156801,
+              "cycles_elapsed": 355698009,
+              "maximum_rss_bytes": 18022400,
+              "elapsed_seconds": 0.09
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.09 real         0.08 user         0.00 sys\n            18022400  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1284  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  21  involuntary context switches\n          2053156801  instructions retired\n           355698009  cycles elapsed\n             8667544  peak memory footprint\n",
+            "wall_seconds": 0.09315699999999993
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/sparse-side-table-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 221311506,
+              "cycles_elapsed": 65160097,
+              "maximum_rss_bytes": 17956864,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            17956864  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1279  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   7  involuntary context switches\n           221311506  instructions retired\n            65160097  cycles elapsed\n             8602008  peak memory footprint\n",
+            "wall_seconds": 0.019614291999999978
+          },
+          "net_per_iteration": {
+            "instructions_retired": 4579.6132375,
+            "cycles_elapsed": 726.34478
+          }
+        },
+        "candidate": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/sparse-side-table-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2043382305,
+              "cycles_elapsed": 349640354,
+              "maximum_rss_bytes": 18251776,
+              "elapsed_seconds": 0.08
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.08 real         0.08 user         0.00 sys\n            18251776  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1297  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  10  involuntary context switches\n          2043382305  instructions retired\n           349640354  cycles elapsed\n             8880536  peak memory footprint\n",
+            "wall_seconds": 0.09168695800000015
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/sparse-side-table-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 222469432,
+              "cycles_elapsed": 63952976,
+              "maximum_rss_bytes": 18120704,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            18120704  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1289  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   7  involuntary context switches\n           222469432  instructions retired\n            63952976  cycles elapsed\n             8749464  peak memory footprint\n",
+            "wall_seconds": 0.01926370899999985
+          },
+          "net_per_iteration": {
+            "instructions_retired": 4552.2821825,
+            "cycles_elapsed": 714.218445
+          }
+        }
+      }
+    },
+    {
+      "case": "sparse-side-table",
+      "pair": 7,
+      "iterations": 400000,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variants": {
+        "candidate": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/sparse-side-table-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2043096787,
+              "cycles_elapsed": 352554297,
+              "maximum_rss_bytes": 18202624,
+              "elapsed_seconds": 0.08
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.08 real         0.08 user         0.00 sys\n            18202624  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1294  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  12  involuntary context switches\n          2043096787  instructions retired\n           352554297  cycles elapsed\n             8831384  peak memory footprint\n",
+            "wall_seconds": 0.09201741600000002
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/sparse-side-table-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 222183776,
+              "cycles_elapsed": 63644350,
+              "maximum_rss_bytes": 17842176,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            17842176  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1273  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   7  involuntary context switches\n           222183776  instructions retired\n            63644350  cycles elapsed\n             8470936  peak memory footprint\n",
+            "wall_seconds": 0.019181249999999928
+          },
+          "net_per_iteration": {
+            "instructions_retired": 4552.2825275,
+            "cycles_elapsed": 722.2748675
+          }
+        },
+        "baseline": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/sparse-side-table-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2051287600,
+              "cycles_elapsed": 349858346,
+              "maximum_rss_bytes": 17825792,
+              "elapsed_seconds": 0.08
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.08 real         0.08 user         0.00 sys\n            17825792  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1271  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  27  involuntary context switches\n          2051287600  instructions retired\n           349858346  cycles elapsed\n             8470936  peak memory footprint\n",
+            "wall_seconds": 0.09191549999999982
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/sparse-side-table-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 221990642,
+              "cycles_elapsed": 63453251,
+              "maximum_rss_bytes": 17760256,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            17760256  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1267  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   6  involuntary context switches\n           221990642  instructions retired\n            63453251  cycles elapsed\n             8405400  peak memory footprint\n",
+            "wall_seconds": 0.019109958000000038
+          },
+          "net_per_iteration": {
+            "instructions_retired": 4573.242395,
+            "cycles_elapsed": 716.0127375
+          }
+        }
+      }
+    },
+    {
+      "case": "sparse-side-table",
+      "pair": 8,
+      "iterations": 400000,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variants": {
+        "baseline": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/sparse-side-table-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2051881471,
+              "cycles_elapsed": 347492524,
+              "maximum_rss_bytes": 18104320,
+              "elapsed_seconds": 0.08
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.08 real         0.08 user         0.00 sys\n            18104320  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1289  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  19  involuntary context switches\n          2051881471  instructions retired\n           347492524  cycles elapsed\n             8733056  peak memory footprint\n",
+            "wall_seconds": 0.09127529199999995
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/sparse-side-table-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 222267843,
+              "cycles_elapsed": 63199682,
+              "maximum_rss_bytes": 17825792,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            17825792  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1271  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   5  involuntary context switches\n           222267843  instructions retired\n            63199682  cycles elapsed\n             8470936  peak memory footprint\n",
+            "wall_seconds": 0.018979666999999978
+          },
+          "net_per_iteration": {
+            "instructions_retired": 4574.03407,
+            "cycles_elapsed": 710.732105
+          }
+        },
+        "candidate": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/sparse-side-table-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2043070252,
+              "cycles_elapsed": 346307955,
+              "maximum_rss_bytes": 18006016,
+              "elapsed_seconds": 0.08
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.08 real         0.08 user         0.00 sys\n            18006016  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1282  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   9  involuntary context switches\n          2043070252  instructions retired\n           346307955  cycles elapsed\n             8634776  peak memory footprint\n",
+            "wall_seconds": 0.09068879200000013
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/sparse-side-table-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 222541313,
+              "cycles_elapsed": 63010648,
+              "maximum_rss_bytes": 17907712,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            17907712  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1277  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   6  involuntary context switches\n           222541313  instructions retired\n            63010648  cycles elapsed\n             8536472  peak memory footprint\n",
+            "wall_seconds": 0.018865625000000108
+          },
+          "net_per_iteration": {
+            "instructions_retired": 4551.3223475,
+            "cycles_elapsed": 708.2432675
+          }
+        }
+      }
+    },
+    {
+      "case": "sparse-side-table",
+      "pair": 9,
+      "iterations": 400000,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variants": {
+        "candidate": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/sparse-side-table-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2043280906,
+              "cycles_elapsed": 341270275,
+              "maximum_rss_bytes": 17989632,
+              "elapsed_seconds": 0.08
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.08 real         0.08 user         0.00 sys\n            17989632  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1281  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  14  involuntary context switches\n          2043280906  instructions retired\n           341270275  cycles elapsed\n             8618392  peak memory footprint\n",
+            "wall_seconds": 0.08903933300000011
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/sparse-side-table-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 222689635,
+              "cycles_elapsed": 64080702,
+              "maximum_rss_bytes": 18038784,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            18038784  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1285  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   7  involuntary context switches\n           222689635  instructions retired\n            64080702  cycles elapsed\n             8667544  peak memory footprint\n",
+            "wall_seconds": 0.019131457999999935
+          },
+          "net_per_iteration": {
+            "instructions_retired": 4551.4781775,
+            "cycles_elapsed": 692.9739325
+          }
+        },
+        "baseline": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/sparse-side-table-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2052252111,
+              "cycles_elapsed": 345235580,
+              "maximum_rss_bytes": 17858560,
+              "elapsed_seconds": 0.08
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.08 real         0.08 user         0.00 sys\n            17858560  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1273  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  23  involuntary context switches\n          2052252111  instructions retired\n           345235580  cycles elapsed\n             8503704  peak memory footprint\n",
+            "wall_seconds": 0.09008274999999988
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/sparse-side-table-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 221332185,
+              "cycles_elapsed": 61895831,
+              "maximum_rss_bytes": 17793024,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            17793024  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1270  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   5  involuntary context switches\n           221332185  instructions retired\n            61895831  cycles elapsed\n             8438168  peak memory footprint\n",
+            "wall_seconds": 0.018506916000000206
+          },
+          "net_per_iteration": {
+            "instructions_retired": 4577.299815,
+            "cycles_elapsed": 708.3493725
+          }
+        }
+      }
+    },
+    {
+      "case": "sparse-side-table",
+      "pair": 10,
+      "iterations": 400000,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variants": {
+        "baseline": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/sparse-side-table-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2054181955,
+              "cycles_elapsed": 343877882,
+              "maximum_rss_bytes": 17940480,
+              "elapsed_seconds": 0.08
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.08 real         0.08 user         0.00 sys\n            17940480  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1279  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  18  involuntary context switches\n          2054181955  instructions retired\n           343877882  cycles elapsed\n             8569216  peak memory footprint\n",
+            "wall_seconds": 0.08972299999999978
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/sparse-side-table-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 221517456,
+              "cycles_elapsed": 61959861,
+              "maximum_rss_bytes": 17940480,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            17940480  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1279  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   5  involuntary context switches\n           221517456  instructions retired\n            61959861  cycles elapsed\n             8585624  peak memory footprint\n",
+            "wall_seconds": 0.018463000000000118
+          },
+          "net_per_iteration": {
+            "instructions_retired": 4581.6612475,
+            "cycles_elapsed": 704.7950525
+          }
+        },
+        "candidate": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/sparse-side-table-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2043470974,
+              "cycles_elapsed": 342029548,
+              "maximum_rss_bytes": 18251776,
+              "elapsed_seconds": 0.08
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.08 real         0.08 user         0.00 sys\n            18251776  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1298  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  10  involuntary context switches\n          2043470974  instructions retired\n           342029548  cycles elapsed\n             8864128  peak memory footprint\n",
+            "wall_seconds": 0.08923891699999986
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/sparse-side-table-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 222483989,
+              "cycles_elapsed": 62015029,
+              "maximum_rss_bytes": 17842176,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            17842176  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1272  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   5  involuntary context switches\n           222483989  instructions retired\n            62015029  cycles elapsed\n             8470936  peak memory footprint\n",
+            "wall_seconds": 0.018478541999999987
+          },
+          "net_per_iteration": {
+            "instructions_retired": 4552.4674625,
+            "cycles_elapsed": 700.0362975
+          }
+        }
+      }
+    },
+    {
+      "case": "sparse-side-table",
+      "pair": 11,
+      "iterations": 400000,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variants": {
+        "candidate": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/sparse-side-table-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2042989491,
+              "cycles_elapsed": 343476147,
+              "maximum_rss_bytes": 18006016,
+              "elapsed_seconds": 0.08
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.08 real         0.08 user         0.00 sys\n            18006016  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1283  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  12  involuntary context switches\n          2042989491  instructions retired\n           343476147  cycles elapsed\n             8634776  peak memory footprint\n",
+            "wall_seconds": 0.089469083
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/sparse-side-table-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 222906796,
+              "cycles_elapsed": 61942028,
+              "maximum_rss_bytes": 18137088,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            18137088  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1291  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   5  involuntary context switches\n           222906796  instructions retired\n            61942028  cycles elapsed\n             8749440  peak memory footprint\n",
+            "wall_seconds": 0.01840850000000005
+          },
+          "net_per_iteration": {
+            "instructions_retired": 4550.2067375,
+            "cycles_elapsed": 703.8352975
+          }
+        },
+        "baseline": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/sparse-side-table-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2052110354,
+              "cycles_elapsed": 344435557,
+              "maximum_rss_bytes": 18038784,
+              "elapsed_seconds": 0.09
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.09 real         0.08 user         0.00 sys\n            18038784  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1285  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  12  involuntary context switches\n          2052110354  instructions retired\n           344435557  cycles elapsed\n             8667520  peak memory footprint\n",
+            "wall_seconds": 0.09637349999999989
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/sparse-side-table-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 222461677,
+              "cycles_elapsed": 62030825,
+              "maximum_rss_bytes": 17907712,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            17907712  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1277  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   5  involuntary context switches\n           222461677  instructions retired\n            62030825  cycles elapsed\n             8536448  peak memory footprint\n",
+            "wall_seconds": 0.01872137500000015
+          },
+          "net_per_iteration": {
+            "instructions_retired": 4574.1216925,
+            "cycles_elapsed": 706.01183
+          }
+        }
+      }
+    },
+    {
+      "case": "allocation-control-no-large-array",
+      "pair": 1,
+      "iterations": 400000,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variants": {
+        "baseline": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/no-side-table-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2021415116,
+              "cycles_elapsed": 341147918,
+              "maximum_rss_bytes": 18087936,
+              "elapsed_seconds": 0.08
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.08 real         0.08 user         0.00 sys\n            18087936  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1288  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  15  involuntary context switches\n          2021415116  instructions retired\n           341147918  cycles elapsed\n             8716672  peak memory footprint\n",
+            "wall_seconds": 0.08894037499999996
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/no-side-table-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 221335570,
+              "cycles_elapsed": 62125711,
+              "maximum_rss_bytes": 17727488,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            17727488  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1265  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   7  involuntary context switches\n           221335570  instructions retired\n            62125711  cycles elapsed\n             8356248  peak memory footprint\n",
+            "wall_seconds": 0.01856579199999997
+          },
+          "net_per_iteration": {
+            "instructions_retired": 4500.198865,
+            "cycles_elapsed": 697.5555175
+          }
+        },
+        "candidate": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/no-side-table-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2021663355,
+              "cycles_elapsed": 341050694,
+              "maximum_rss_bytes": 18153472,
+              "elapsed_seconds": 0.08
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.08 real         0.08 user         0.00 sys\n            18153472  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1291  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  26  involuntary context switches\n          2021663355  instructions retired\n           341050694  cycles elapsed\n             8782232  peak memory footprint\n",
+            "wall_seconds": 0.08933091599999976
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/no-side-table-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 222557724,
+              "cycles_elapsed": 63761425,
+              "maximum_rss_bytes": 17973248,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            17973248  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1280  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   7  involuntary context switches\n           222557724  instructions retired\n            63761425  cycles elapsed\n             8602008  peak memory footprint\n",
+            "wall_seconds": 0.019106791000000012
+          },
+          "net_per_iteration": {
+            "instructions_retired": 4497.7640775,
+            "cycles_elapsed": 693.2231725
+          }
+        }
+      }
+    },
+    {
+      "case": "allocation-control-no-large-array",
+      "pair": 2,
+      "iterations": 400000,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variants": {
+        "candidate": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/no-side-table-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2021541049,
+              "cycles_elapsed": 340837667,
+              "maximum_rss_bytes": 18022400,
+              "elapsed_seconds": 0.08
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.08 real         0.08 user         0.00 sys\n            18022400  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1283  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  18  involuntary context switches\n          2021541049  instructions retired\n           340837667  cycles elapsed\n             8651160  peak memory footprint\n",
+            "wall_seconds": 0.08902954199999957
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/no-side-table-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 222225628,
+              "cycles_elapsed": 64440062,
+              "maximum_rss_bytes": 18055168,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            18055168  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1286  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  12  involuntary context switches\n           222225628  instructions retired\n            64440062  cycles elapsed\n             8667520  peak memory footprint\n",
+            "wall_seconds": 0.019523625000000155
+          },
+          "net_per_iteration": {
+            "instructions_retired": 4498.2885525,
+            "cycles_elapsed": 690.9940125
+          }
+        },
+        "baseline": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/no-side-table-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2021992525,
+              "cycles_elapsed": 342499855,
+              "maximum_rss_bytes": 18071552,
+              "elapsed_seconds": 0.08
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.08 real         0.08 user         0.00 sys\n            18071552  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1286  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  13  involuntary context switches\n          2021992525  instructions retired\n           342499855  cycles elapsed\n             8716696  peak memory footprint\n",
+            "wall_seconds": 0.08983270899999996
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/no-side-table-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 221292610,
+              "cycles_elapsed": 63566630,
+              "maximum_rss_bytes": 17760256,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            17760256  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1268  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   7  involuntary context switches\n           221292610  instructions retired\n            63566630  cycles elapsed\n             8405400  peak memory footprint\n",
+            "wall_seconds": 0.019236209000000226
+          },
+          "net_per_iteration": {
+            "instructions_retired": 4501.7497875,
+            "cycles_elapsed": 697.3330625
+          }
+        }
+      }
+    },
+    {
+      "case": "allocation-control-no-large-array",
+      "pair": 3,
+      "iterations": 400000,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variants": {
+        "baseline": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/no-side-table-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2020974500,
+              "cycles_elapsed": 342923988,
+              "maximum_rss_bytes": 18087936,
+              "elapsed_seconds": 0.08
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.08 real         0.08 user         0.00 sys\n            18087936  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1287  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  19  involuntary context switches\n          2020974500  instructions retired\n           342923988  cycles elapsed\n             8733080  peak memory footprint\n",
+            "wall_seconds": 0.08977945900000028
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/no-side-table-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 222518520,
+              "cycles_elapsed": 64783515,
+              "maximum_rss_bytes": 17678336,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            17678336  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1263  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  10  involuntary context switches\n           222518520  instructions retired\n            64783515  cycles elapsed\n             8323480  peak memory footprint\n",
+            "wall_seconds": 0.020025083000000166
+          },
+          "net_per_iteration": {
+            "instructions_retired": 4496.13995,
+            "cycles_elapsed": 695.3511825
+          }
+        },
+        "candidate": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/no-side-table-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2021859535,
+              "cycles_elapsed": 337004122,
+              "maximum_rss_bytes": 18268160,
+              "elapsed_seconds": 0.08
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.08 real         0.08 user         0.00 sys\n            18268160  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1299  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  15  involuntary context switches\n          2021859535  instructions retired\n           337004122  cycles elapsed\n             8880512  peak memory footprint\n",
+            "wall_seconds": 0.08857349999999986
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/no-side-table-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 222185874,
+              "cycles_elapsed": 65363356,
+              "maximum_rss_bytes": 17793024,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            17793024  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1269  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   6  involuntary context switches\n           222185874  instructions retired\n            65363356  cycles elapsed\n             8405376  peak memory footprint\n",
+            "wall_seconds": 0.01981845800000004
+          },
+          "net_per_iteration": {
+            "instructions_retired": 4499.1841525,
+            "cycles_elapsed": 679.101915
+          }
+        }
+      }
+    },
+    {
+      "case": "allocation-control-no-large-array",
+      "pair": 4,
+      "iterations": 400000,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variants": {
+        "candidate": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/no-side-table-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2021348099,
+              "cycles_elapsed": 341865756,
+              "maximum_rss_bytes": 18169856,
+              "elapsed_seconds": 0.08
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.08 real         0.08 user         0.00 sys\n            18169856  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1292  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  12  involuntary context switches\n          2021348099  instructions retired\n           341865756  cycles elapsed\n             8798616  peak memory footprint\n",
+            "wall_seconds": 0.08977520899999991
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/no-side-table-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 222482540,
+              "cycles_elapsed": 63588696,
+              "maximum_rss_bytes": 17874944,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            17874944  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1275  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   8  involuntary context switches\n           222482540  instructions retired\n            63588696  cycles elapsed\n             8503704  peak memory footprint\n",
+            "wall_seconds": 0.01931800000000017
+          },
+          "net_per_iteration": {
+            "instructions_retired": 4497.1638975,
+            "cycles_elapsed": 695.69265
+          }
+        },
+        "baseline": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/no-side-table-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2021314788,
+              "cycles_elapsed": 346057931,
+              "maximum_rss_bytes": 18153472,
+              "elapsed_seconds": 0.08
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.08 real         0.08 user         0.00 sys\n            18153472  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1292  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  12  involuntary context switches\n          2021314788  instructions retired\n           346057931  cycles elapsed\n             8782208  peak memory footprint\n",
+            "wall_seconds": 0.09064300000000003
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/no-side-table-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 221468615,
+              "cycles_elapsed": 63623712,
+              "maximum_rss_bytes": 17956864,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            17956864  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1279  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   6  involuntary context switches\n           221468615  instructions retired\n            63623712  cycles elapsed\n             8602008  peak memory footprint\n",
+            "wall_seconds": 0.01913616699999965
+          },
+          "net_per_iteration": {
+            "instructions_retired": 4499.6154325,
+            "cycles_elapsed": 706.0855475
+          }
+        }
+      }
+    },
+    {
+      "case": "allocation-control-no-large-array",
+      "pair": 5,
+      "iterations": 400000,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variants": {
+        "baseline": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/no-side-table-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2022430952,
+              "cycles_elapsed": 345125772,
+              "maximum_rss_bytes": 18006016,
+              "elapsed_seconds": 0.08
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.08 real         0.08 user         0.00 sys\n            18006016  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1283  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  13  involuntary context switches\n          2022430952  instructions retired\n           345125772  cycles elapsed\n             8634752  peak memory footprint\n",
+            "wall_seconds": 0.09032529200000017
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/no-side-table-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 221036843,
+              "cycles_elapsed": 64440376,
+              "maximum_rss_bytes": 17694720,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            17694720  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1263  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   7  involuntary context switches\n           221036843  instructions retired\n            64440376  cycles elapsed\n             8339864  peak memory footprint\n",
+            "wall_seconds": 0.01955862499999972
+          },
+          "net_per_iteration": {
+            "instructions_retired": 4503.4852725,
+            "cycles_elapsed": 701.71349
+          }
+        },
+        "candidate": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/no-side-table-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2021080293,
+              "cycles_elapsed": 343200759,
+              "maximum_rss_bytes": 17989632,
+              "elapsed_seconds": 0.08
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.08 real         0.08 user         0.00 sys\n            17989632  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1281  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  15  involuntary context switches\n          2021080293  instructions retired\n           343200759  cycles elapsed\n             8618392  peak memory footprint\n",
+            "wall_seconds": 0.09013445800000008
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/no-side-table-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 222093531,
+              "cycles_elapsed": 63458608,
+              "maximum_rss_bytes": 17809408,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            17809408  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1271  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   8  involuntary context switches\n           222093531  instructions retired\n            63458608  cycles elapsed\n             8421760  peak memory footprint\n",
+            "wall_seconds": 0.019303958000000065
+          },
+          "net_per_iteration": {
+            "instructions_retired": 4497.466905,
+            "cycles_elapsed": 699.3553775
+          }
+        }
+      }
+    },
+    {
+      "case": "allocation-control-no-large-array",
+      "pair": 6,
+      "iterations": 400000,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variants": {
+        "candidate": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/no-side-table-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2021482701,
+              "cycles_elapsed": 341198839,
+              "maximum_rss_bytes": 18038784,
+              "elapsed_seconds": 0.08
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.08 real         0.08 user         0.00 sys\n            18038784  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1285  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  25  involuntary context switches\n          2021482701  instructions retired\n           341198839  cycles elapsed\n             8667544  peak memory footprint\n",
+            "wall_seconds": 0.0904209589999998
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/no-side-table-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 221866810,
+              "cycles_elapsed": 62794034,
+              "maximum_rss_bytes": 18169856,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            18169856  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1292  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                   5  involuntary context switches\n           221866810  instructions retired\n            62794034  cycles elapsed\n             8782232  peak memory footprint\n",
+            "wall_seconds": 0.019779750000000096
+          },
+          "net_per_iteration": {
+            "instructions_retired": 4499.0397275,
+            "cycles_elapsed": 696.0120125
+          }
+        },
+        "baseline": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/no-side-table-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2021437763,
+              "cycles_elapsed": 341448162,
+              "maximum_rss_bytes": 18055168,
+              "elapsed_seconds": 0.08
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.08 real         0.08 user         0.00 sys\n            18055168  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1286  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  17  involuntary context switches\n          2021437763  instructions retired\n           341448162  cycles elapsed\n             8700312  peak memory footprint\n",
+            "wall_seconds": 0.09001733399999967
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/no-side-table-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 222207593,
+              "cycles_elapsed": 63410493,
+              "maximum_rss_bytes": 17661952,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            17661952  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1262  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   6  involuntary context switches\n           222207593  instructions retired\n            63410493  cycles elapsed\n             8307096  peak memory footprint\n",
+            "wall_seconds": 0.019183167
+          },
+          "net_per_iteration": {
+            "instructions_retired": 4498.075425,
+            "cycles_elapsed": 695.0941725
+          }
+        }
+      }
+    },
+    {
+      "case": "allocation-control-no-large-array",
+      "pair": 7,
+      "iterations": 400000,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variants": {
+        "baseline": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/no-side-table-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2021107142,
+              "cycles_elapsed": 341398962,
+              "maximum_rss_bytes": 18153472,
+              "elapsed_seconds": 0.08
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.08 real         0.08 user         0.00 sys\n            18153472  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1292  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   8  involuntary context switches\n          2021107142  instructions retired\n           341398962  cycles elapsed\n             8798616  peak memory footprint\n",
+            "wall_seconds": 0.08955533299999985
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/no-side-table-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 221284645,
+              "cycles_elapsed": 63563302,
+              "maximum_rss_bytes": 17956864,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            17956864  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1280  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   8  involuntary context switches\n           221284645  instructions retired\n            63563302  cycles elapsed\n             8602008  peak memory footprint\n",
+            "wall_seconds": 0.01932758400000001
+          },
+          "net_per_iteration": {
+            "instructions_retired": 4499.5562425,
+            "cycles_elapsed": 694.58915
+          }
+        },
+        "candidate": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/no-side-table-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2021310375,
+              "cycles_elapsed": 342190030,
+              "maximum_rss_bytes": 18022400,
+              "elapsed_seconds": 0.08
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.08 real         0.08 user         0.00 sys\n            18022400  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1284  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  13  involuntary context switches\n          2021310375  instructions retired\n           342190030  cycles elapsed\n             8651160  peak memory footprint\n",
+            "wall_seconds": 0.08936566599999995
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/no-side-table-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 222021381,
+              "cycles_elapsed": 63875729,
+              "maximum_rss_bytes": 17924096,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            17924096  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1276  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                   7  involuntary context switches\n           222021381  instructions retired\n            63875729  cycles elapsed\n             8536472  peak memory footprint\n",
+            "wall_seconds": 0.01990645800000035
+          },
+          "net_per_iteration": {
+            "instructions_retired": 4498.222485,
+            "cycles_elapsed": 695.7857525
+          }
+        }
+      }
+    },
+    {
+      "case": "allocation-control-no-large-array",
+      "pair": 8,
+      "iterations": 400000,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variants": {
+        "candidate": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/no-side-table-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2021177779,
+              "cycles_elapsed": 347030293,
+              "maximum_rss_bytes": 18137088,
+              "elapsed_seconds": 0.08
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.08 real         0.08 user         0.00 sys\n            18137088  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1291  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   8  involuntary context switches\n          2021177779  instructions retired\n           347030293  cycles elapsed\n             8765848  peak memory footprint\n",
+            "wall_seconds": 0.09083400000000008
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/no-side-table-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 222213165,
+              "cycles_elapsed": 63716357,
+              "maximum_rss_bytes": 17809408,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            17809408  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1271  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   7  involuntary context switches\n           222213165  instructions retired\n            63716357  cycles elapsed\n             8438168  peak memory footprint\n",
+            "wall_seconds": 0.019190500000000554
+          },
+          "net_per_iteration": {
+            "instructions_retired": 4497.411535,
+            "cycles_elapsed": 708.28484
+          }
+        },
+        "baseline": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/no-side-table-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2021575496,
+              "cycles_elapsed": 342304423,
+              "maximum_rss_bytes": 17907712,
+              "elapsed_seconds": 0.08
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.08 real         0.08 user         0.00 sys\n            17907712  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1275  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  19  involuntary context switches\n          2021575496  instructions retired\n           342304423  cycles elapsed\n             8536472  peak memory footprint\n",
+            "wall_seconds": 0.08956237499999986
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/no-side-table-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 222234977,
+              "cycles_elapsed": 62512124,
+              "maximum_rss_bytes": 17907712,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            17907712  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1276  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   7  involuntary context switches\n           222234977  instructions retired\n            62512124  cycles elapsed\n             8552856  peak memory footprint\n",
+            "wall_seconds": 0.018793041000000343
+          },
+          "net_per_iteration": {
+            "instructions_retired": 4498.3512975,
+            "cycles_elapsed": 699.4807475
+          }
+        }
+      }
+    },
+    {
+      "case": "allocation-control-no-large-array",
+      "pair": 9,
+      "iterations": 400000,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variants": {
+        "baseline": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/no-side-table-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2022035951,
+              "cycles_elapsed": 343629811,
+              "maximum_rss_bytes": 18022400,
+              "elapsed_seconds": 0.08
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.08 real         0.08 user         0.00 sys\n            18022400  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1284  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  16  involuntary context switches\n          2022035951  instructions retired\n           343629811  cycles elapsed\n             8667544  peak memory footprint\n",
+            "wall_seconds": 0.0901348749999995
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/no-side-table-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 220994948,
+              "cycles_elapsed": 63791133,
+              "maximum_rss_bytes": 17694720,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            17694720  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1264  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   9  involuntary context switches\n           220994948  instructions retired\n            63791133  cycles elapsed\n             8339864  peak memory footprint\n",
+            "wall_seconds": 0.0195032089999998
+          },
+          "net_per_iteration": {
+            "instructions_retired": 4502.6025075,
+            "cycles_elapsed": 699.596695
+          }
+        },
+        "candidate": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/no-side-table-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2021272294,
+              "cycles_elapsed": 342967060,
+              "maximum_rss_bytes": 18186240,
+              "elapsed_seconds": 0.08
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.08 real         0.08 user         0.00 sys\n            18186240  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1294  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  13  involuntary context switches\n          2021272294  instructions retired\n           342967060  cycles elapsed\n             8815000  peak memory footprint\n",
+            "wall_seconds": 0.0897672079999996
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/no-side-table-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 222417453,
+              "cycles_elapsed": 63749055,
+              "maximum_rss_bytes": 18038784,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            18038784  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1285  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   8  involuntary context switches\n           222417453  instructions retired\n            63749055  cycles elapsed\n             8667544  peak memory footprint\n",
+            "wall_seconds": 0.019142875000000004
+          },
+          "net_per_iteration": {
+            "instructions_retired": 4497.1371025,
+            "cycles_elapsed": 698.0450125
+          }
+        }
+      }
+    },
+    {
+      "case": "allocation-control-no-large-array",
+      "pair": 10,
+      "iterations": 400000,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variants": {
+        "candidate": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/no-side-table-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2021313196,
+              "cycles_elapsed": 340434293,
+              "maximum_rss_bytes": 18055168,
+              "elapsed_seconds": 0.08
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.08 real         0.08 user         0.00 sys\n            18055168  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1285  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  18  involuntary context switches\n          2021313196  instructions retired\n           340434293  cycles elapsed\n             8683928  peak memory footprint\n",
+            "wall_seconds": 0.08921137500000054
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/no-side-table-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 221944080,
+              "cycles_elapsed": 64195164,
+              "maximum_rss_bytes": 18087936,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            18087936  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1288  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   8  involuntary context switches\n           221944080  instructions retired\n            64195164  cycles elapsed\n             8716696  peak memory footprint\n",
+            "wall_seconds": 0.01946183300000026
+          },
+          "net_per_iteration": {
+            "instructions_retired": 4498.42279,
+            "cycles_elapsed": 690.5978225
+          }
+        },
+        "baseline": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/no-side-table-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2022485396,
+              "cycles_elapsed": 342729582,
+              "maximum_rss_bytes": 18137088,
+              "elapsed_seconds": 0.08
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.08 real         0.08 user         0.00 sys\n            18137088  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1290  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  18  involuntary context switches\n          2022485396  instructions retired\n           342729582  cycles elapsed\n             8782232  peak memory footprint\n",
+            "wall_seconds": 0.08989862500000001
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/no-side-table-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 221036921,
+              "cycles_elapsed": 63777649,
+              "maximum_rss_bytes": 17956864,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            17956864  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1280  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                   8  involuntary context switches\n           221036921  instructions retired\n            63777649  cycles elapsed\n             8602008  peak memory footprint\n",
+            "wall_seconds": 0.019845000000000113
+          },
+          "net_per_iteration": {
+            "instructions_retired": 4503.6211875,
+            "cycles_elapsed": 697.3798325
+          }
+        }
+      }
+    },
+    {
+      "case": "allocation-control-no-large-array",
+      "pair": 11,
+      "iterations": 400000,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variants": {
+        "baseline": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/no-side-table-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2021355891,
+              "cycles_elapsed": 343002370,
+              "maximum_rss_bytes": 18071552,
+              "elapsed_seconds": 0.08
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.08 real         0.08 user         0.00 sys\n            18071552  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1287  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  19  involuntary context switches\n          2021355891  instructions retired\n           343002370  cycles elapsed\n             8700288  peak memory footprint\n",
+            "wall_seconds": 0.08976254199999989
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/no-side-table-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 222607244,
+              "cycles_elapsed": 70767107,
+              "maximum_rss_bytes": 18120704,
+              "elapsed_seconds": 0.02
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.02 real         0.01 user         0.00 sys\n            18120704  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1288  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 159  involuntary context switches\n           222607244  instructions retired\n            70767107  cycles elapsed\n             8765872  peak memory footprint\n",
+            "wall_seconds": 0.023544207999999678
+          },
+          "net_per_iteration": {
+            "instructions_retired": 4496.8716175,
+            "cycles_elapsed": 680.5881575
+          }
+        },
+        "candidate": {
+          "active": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/no-side-table-active.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 2021134560,
+              "cycles_elapsed": 343998773,
+              "maximum_rss_bytes": 18120704,
+              "elapsed_seconds": 0.08
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.08 real         0.08 user         0.00 sys\n            18120704  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1290  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  24  involuntary context switches\n          2021134560  instructions retired\n           343998773  cycles elapsed\n             8749464  peak memory footprint\n",
+            "wall_seconds": 0.09040158300000023
+          },
+          "zero_iteration": {
+            "command": [
+              "/usr/bin/time",
+              "-l",
+              "/Users/admin/Code/GitHub/quench-v2/target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+              "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/no-side-table-zero.cjs"
+            ],
+            "exit_code": 0,
+            "metrics": {
+              "instructions_retired": 222287864,
+              "cycles_elapsed": 63113843,
+              "maximum_rss_bytes": 17891328,
+              "elapsed_seconds": 0.01
+            },
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "        0.01 real         0.01 user         0.00 sys\n            17891328  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1276  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   5  involuntary context switches\n           222287864  instructions retired\n            63113843  cycles elapsed\n             8520088  peak memory footprint\n",
+            "wall_seconds": 0.01893345900000032
+          },
+          "net_per_iteration": {
+            "instructions_retired": 4497.11674,
+            "cycles_elapsed": 702.212325
+          }
+        }
+      }
+    }
+  ],
+  "control_adjusted_cycles": {
+    "paired_improvements": [
+      -0.00849169886602108,
+      0.0016384296205382842,
+      0.003170588402683139,
+      0.0034322059637348357,
+      -0.02302717767789375,
+      0.018015466422227844,
+      -0.007023087412865614,
+      0.016088405724937305,
+      0.019488044861192044,
+      -0.0029730173512736435,
+      0.03485562043403201
+    ],
+    "median_relative_improvement": 0.003170588402683139,
+    "bootstrap_95_percent_interval": [
+      -0.007023087412865614,
+      0.018015466422227844
+    ],
+    "improved_pairs": 7
+  },
+  "host_resources": {
+    "physical_memory_bytes": 17179869184,
+    "logical_cpu_count": 10,
+    "container_cpu_or_memory_limit": "none reported on this macOS host"
+  },
+  "decision": "Retain as a lifecycle simplification: sweep removes sparse-array metadata before making a slot reusable, so allocation-time removal duplicates cleanup. The paired cycle result is inconclusive; no performance win is claimed."
+}

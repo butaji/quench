@@ -1,0 +1,17 @@
+constructor ZstdCompress ZstdCompress 0 true
+constructor ZstdDecompress ZstdDecompress 0 true
+sync 28b52ffd00581d0100d861637475616c205a7374642073747265616d65642062797465732001007b8bf7730c true
+async 28b52ffd00581d0100d861637475616c205a7374642073747265616d65642062797465732001007b8bf7730c true
+Error: Setting parameter failed
+    at createZstdHandle (node:internal/streams/iter/transform:279:3)
+    at node:internal/streams/iter/transform:821:20
+    at transform (node:internal/streams/iter/transform:597:22)
+    at applyStatefulSyncTransform (node:internal/streams/iter/pull:518:3)
+    at createSyncPipeline (node:internal/streams/iter/pull:558:3)
+    at [Symbol.iterator] (node:internal/streams/iter/pull:833:7)
+    at normalizeSyncSource (node:internal/streams/iter/from:304:3)
+    at [Symbol.iterator] (node:internal/streams/iter/from:768:7)
+    at collectSync (node:internal/streams/iter/consumers:111:3)
+    at bytesSync (node:internal/streams/iter/consumers:204:22) {
+  code: 'ERR_ZLIB_INITIALIZATION_FAILED'
+}

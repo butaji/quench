@@ -1,0 +1,65 @@
+{
+  "reason": "Completed iteration static-library caches only. Active Core test compilation uses target/debug; fresh prepared-Script source requires rebuilt iteration libraries. Frozen executable bundles and all source/evidence retained.",
+  "files": [
+    {
+      "path": "target/iteration/deps/libquench_runtime-00093db67d1eef79.rlib",
+      "bytes": 32372660,
+      "links": 1,
+      "sha256": "cefcfe0de91e5dd4475e2af89d2ac9cc2801fc460e82593e9aa1dfbd124cc306"
+    },
+    {
+      "path": "target/iteration/deps/libquench_runtime-095eefd2373b7c55.rlib",
+      "bytes": 37023058,
+      "links": 1,
+      "sha256": "116a428d556cf293a7078e89e60f004671e91eda6b7aed7648a41bfc4678c76a"
+    },
+    {
+      "path": "target/iteration/deps/libquench_runtime-0e5eee8edbad88be.rlib",
+      "bytes": 34307190,
+      "links": 1,
+      "sha256": "3cccde4eaed73ad5b5883caf33db4746574423aa6856feaae2904457fd9f3c8a"
+    },
+    {
+      "path": "target/iteration/deps/libquench_runtime-1e14b5d5045ccd56.rlib",
+      "bytes": 33713024,
+      "links": 1,
+      "sha256": "9ea4c55998ffc1d9ce65772705ef4ce037002f75d489094a52143dc333c9647d"
+    },
+    {
+      "path": "target/iteration/deps/libquench_runtime-9f5a741b7bd645e3.rlib",
+      "bytes": 37167228,
+      "links": 1,
+      "sha256": "d2e324dda29f9f4a00cbe120617196b61544676081d77666c0d68d7df5c8c9bc"
+    },
+    {
+      "path": "target/iteration/deps/libquench_runtime-a2890142a8219632.rlib",
+      "bytes": 31898032,
+      "links": 1,
+      "sha256": "ee84038efbe935bac787af5d5e5b4a6c56792e6252d33490cf5c9bcc03fe006a"
+    },
+    {
+      "path": "target/iteration/deps/libquench_runtime-e9a6ad4311e27704.rlib",
+      "bytes": 36795370,
+      "links": 1,
+      "sha256": "4369ce147f8ec9a139f91824c3535d405e42e71c99c3842063de399fd3703ded"
+    },
+    {
+      "path": "target/iteration/deps/libquench_runtime-f21fc98be8519836.rlib",
+      "bytes": 37256560,
+      "links": 1,
+      "sha256": "4b8188495c30e4e072b2bcf4aebea22141784e8755bcddfab1323a4e25947db2"
+    },
+    {
+      "path": "target/iteration/deps/libquench_runtime-f2c73db38b886019.rlib",
+      "bytes": 37039256,
+      "links": 1,
+      "sha256": "18081a2b1e00a774317cc00eb19502fa9410afd13e72fd25aa2399f46d819000"
+    },
+    {
+      "path": "target/iteration/deps/libquench_runtime-f7b7dfacb08791d6.rlib",
+      "bytes": 33760638,
+      "links": 1,
+      "sha256": "dc802a61c6dc44574a627f4849b0f2c571018463398b160be8709d2edf9d2c64"
+    }
+  ]
+}

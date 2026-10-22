@@ -1,0 +1,10 @@
+/workspace/quench/work/module-special-names/internal/per_context/primordials.js:1
+primordials ??= {};
+^
+
+ReferenceError: primordials is not defined
+    at /workspace/quench/work/module-special-names/internal/per_context/primordials.js:1:1
+    at /workspace/quench/work/module-special-names/probe.cjs:1:98
+    at /workspace/quench/work/module-special-names/probe.cjs:1:28
+
+Node.js v22.0.0

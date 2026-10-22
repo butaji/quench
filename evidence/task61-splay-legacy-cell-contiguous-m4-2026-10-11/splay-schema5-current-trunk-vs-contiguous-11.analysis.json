@@ -1,0 +1,63 @@
+{
+  "schema": 1,
+  "measurement": "paired fixed-work Splay; 300 run() calls; K=0 differenced",
+  "report_sha256": "8e44085dbd161a1188b1d770cf1d10e8beba8eab652547416d62b92f98456baf",
+  "source_revision": "19f4a1aea8edaf3932225fbae5de606fddbc9f41",
+  "source_dirty": true,
+  "platform": "Darwin mini.local 25.5.0 Darwin Kernel Version 25.5.0: Mon Apr 27 20:41:26 PDT 2026; root:xnu-12377.121.6~2/RELEASE_ARM64_T8132 arm64",
+  "logical_cpus": 10,
+  "binary_sha256": {
+    "quench_baseline": "ceeca73f772b141ee7619ae869bffaac1d93eeee99ecba2b07337d8345937e80",
+    "quench_candidate": "bdcc9a93be82d25c1bdef0bbc1c7db677a0dd4905b87d92a8b0c6d341f87ca71"
+  },
+  "valid_rounds": 11,
+  "clean_pairs": 11,
+  "marginal_per_run": {
+    "quench_baseline": {
+      "median_wall_ns": 1062493.1933333334,
+      "median_cycles": 4348431.823333333,
+      "median_instructions": 24078396.333333332,
+      "paired_samples": 11,
+      "clean_paired_samples": 11
+    },
+    "quench_candidate": {
+      "median_wall_ns": 1054458.3333333333,
+      "median_cycles": 4329774.616666666,
+      "median_instructions": 23916282.793333333,
+      "paired_samples": 11,
+      "clean_paired_samples": 11
+    }
+  },
+  "paired_candidate_vs_baseline_percent": {
+    "wall_ns": {
+      "median": -1.0281235640753783,
+      "bootstrap_95": [
+        -2.441244610188742,
+        1.1305908162055678
+      ]
+    },
+    "cycles": {
+      "median": -0.20822663666352215,
+      "bootstrap_95": [
+        -2.0849984908217767,
+        0.9687025460746623
+      ]
+    },
+    "instructions": {
+      "median": -0.6792871761316155,
+      "bootstrap_95": [
+        -0.6885913635600871,
+        -0.6697876072254361
+      ]
+    }
+  },
+  "work_max_rss_candidate_vs_baseline_percent": {
+    "median": -22.02364199268224,
+    "bootstrap_95": [
+      -22.15813168261114,
+      -22.004786709840918
+    ],
+    "baseline_median_bytes": 116424704,
+    "candidate_median_bytes": 90718208
+  }
+}

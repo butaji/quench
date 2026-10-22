@@ -1,0 +1,5 @@
+(node:2893245) ExperimentalWarning: stream/iter is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+10 6 0
+100 1 0
+1000 8 0

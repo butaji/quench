@@ -1,0 +1,19 @@
+   Compiling quench-regexp v0.1.0 (/workspace/quench/crates/quench-regexp)
+   Compiling quench-runtime v0.1.0 (/workspace/quench/crates/quench-runtime)
+   Compiling quench-wasm v0.1.0 (/workspace/quench/crates/quench-wasm)
+   Compiling quench-node v0.1.0 (/workspace/quench/crates/quench-node)
+   Compiling quench-node-test v0.1.0 (/workspace/quench/crates/quench-node-test)
+    Finished `iteration` profile [optimized] target(s) in 3m 01s
+     Running tests/child_entry.rs (work/host-build/iteration/deps/child_entry-0c4d472d0248eb46)
+
+running 7 tests
+test structured_clone_builtin_graphs_preserve_snapshots_and_ignore_public_hooks ... ok
+test structured_clone_preserves_array_elements_holes_and_aliases ... ok
+test structured_clone_boxed_values_and_rejected_brands_match_node ... ok
+test structured_clone_errors_preserve_intrinsics_descriptors_snapshots_and_cycles ... ok
+test structured_clone_views_preserve_backing_aliases_transfers_and_resize_modes ... ok
+test structured_clone_webidl_options_preserve_errors_iteration_and_original_intrinsics ... ok
+test structured_clone_transfer_markers_and_commit_order_match_node ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 255 filtered out; finished in 2.58s
+

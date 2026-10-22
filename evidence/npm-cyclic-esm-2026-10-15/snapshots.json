@@ -1,0 +1,121 @@
+{
+  "platform": "Linux-6.18.44-x86_64-with-glibc2.41",
+  "machine": "x86_64",
+  "node": "v26.11.1",
+  "node_sha256": "5a7b8a3cf5ccb57d297519754fd73238f64cf560afd0ef19a2f9bf7384cbb657",
+  "binaries": {
+    "npm-cycle-final-candidate": {
+      "path": "/workspace/scratch/npm-cycle-final-candidate",
+      "sha256": "93f662f0b6c47dcc89c37d8e4fc56f2347332e39083a906408c6cee88c13c109"
+    },
+    "npm-cycle-retry-cli-candidate": {
+      "path": "/workspace/scratch/npm-cycle-retry-cli-candidate",
+      "sha256": "300f251bcbd10b503e6f793b932c0f2d7f22a77c8709711f15afc8e8df22c69a"
+    },
+    "npm-cycle-integration-baseline": {
+      "path": "/workspace/scratch/npm-cycle-integration-baseline",
+      "sha256": "872cac5d56dd06e1e037b7668219f2778429c27359236993f3eb8c1d62d441da"
+    }
+  },
+  "graph_source_commit": "0f2ee536f005d6384650834e40c3932e89f1f591",
+  "retry_source_commit": "bb128213afb42d64345f5dfcd54baf928a6165a4",
+  "integration_baseline": "a76631e687c276e7990d45dbbb5532724095865d",
+  "guard_qualification": false,
+  "guard_limitation": "Baseline CARGO_INCREMENTAL=0; candidate CARGO_PROFILE_ITERATION_INCREMENTAL=true. Instruction deltas are diagnostic and not an isolated lane attribution or speed claim.",
+  "fixtures": {
+    "crypto-0.js": "8033c2f351dd0dc3d22a8984f07125779e6800db0d18d1cdc1297d4b7a99dabf",
+    "crypto-1.js": "503985d8dc7f0f1482ac830d850506ef12fb88edb027bfdb803b10db6d793350",
+    "deltablue-0.js": "6b574c154e9813db6295f427e875d64b2bc11dbba939eed45e44144a088a4abe",
+    "deltablue-10.js": "94ad9cd0ade255de35ab14fe84715c825fd547022e0024a16b7ed5f47a0c0fe0",
+    "earley-boyer-0.js": "435ce2e0e38336f05a797de549764c407abc3a3a98d5dbf549ef8c97d51482fe",
+    "earley-boyer-1.js": "16d7b1ceb8ca393730a46b42e046b6c81f928654eeaec8a957cefd35a0aaf168",
+    "navier-stokes-0.js": "aa93f9aaafdf39eb9a6fba21cb0df9c7f189d2e95998a86a8ea5527bc9970e8c",
+    "navier-stokes-1.js": "00d27e3d49bc2015349fcc5243076ac2ab65bc1c875abaa941df80d23b4b59d7",
+    "raytrace-0.js": "24e0ddf9a979e5ce113ba59fac8e4b7f0201404cc7c7c286e40ed00ebdf76b96",
+    "raytrace-3.js": "bc1870485d2425041043c51075ba8042c3526d60e01e83c09efaec09109dd1e1",
+    "regexp-0.js": "257087a723bb3a06aad3a0db9b13615adf871a20fcdfec85c2dc3572271df020",
+    "regexp-1.js": "3fa6412c8dcea1947ad04829000722ed2818d2b7fd2fb80818cd53f98396d76c",
+    "richards-0.js": "2a7c2080c45f4dac2e47676d042dc07dc40979f03e7560ef28129d87fc580951",
+    "richards-25.js": "e6a7011a625787f350fb4d5111f6b8c99edd44316d5a1b2929a0109dd14cf912",
+    "splay-0.js": "3e919dd1f4f72b4cd62e319318258704cb781ddab850cc09fbf1713f16ff2d70",
+    "splay-75.js": "254221707fe6780ca2810cce23690d1d34aa34e4671f427b523664415c125fc2"
+  },
+  "cpu_max": "400000 100000",
+  "memory_max": "17179869184",
+  "latest_node_verification": {
+    "version": "v26.12.0",
+    "release_date": "2026-10-14",
+    "archive": "node-v26.12.0-linux-x64.tar.xz",
+    "sha256": "fd47865ecd6391ebb431fc815e01b9135bf83ded5cf373247e9331e196b7aded",
+    "manifest_url": "https://nodejs.org/dist/v26.12.0/SHASUMS256.txt",
+    "release_index_url": "https://nodejs.org/dist/index.json"
+  },
+  "latest_node_sha256": "caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943",
+  "module_retry_latest_node_source_commit": "8528d3f6be78c7577252e248cda85fa1e6cba909",
+  "combined_integration_source_commit": "606439b9e70d8ed0415a8a0e7c3f13e270bab9a1",
+  "pinned_node_source_commit": "26e72d85a611e222e3f06025de8a3c496923bacd",
+  "matched_guard_8c9bedaf8": {
+    "baseline": "5f1ccdc91",
+    "candidate": "8c9bedaf8",
+    "incremental": false,
+    "opt_level": 1,
+    "limitation": "Includes intervening integration changes; not isolated npm attribution or a package speed claim",
+    "maximum_per_run_regression_percent": 0.4
+  },
+  "qualified_snapshot_606439b9e": {
+    "source_commit": "606439b9e70d8ed0415a8a0e7c3f13e270bab9a1",
+    "baseline_source": "8d592cfb3",
+    "node_version": "v26.12.0",
+    "packages": {
+      "api_pass": 268,
+      "declarations_pass": 13,
+      "quench_failed": 18,
+      "oracle_failed": 1
+    },
+    "coverage": {
+      "checked": 339,
+      "discovered": 70236,
+      "uncovered": 69897,
+      "qualified": false
+    },
+    "runtime": {
+      "default_profile_pass": 618,
+      "iteration_profile_pass": 618
+    },
+    "node_fixture_suite": {
+      "passed": 235,
+      "failed": 9,
+      "total": 244
+    },
+    "guard": {
+      "maximum_per_run_regression_percent": 0.31,
+      "script_completions_pass": 32
+    },
+    "candidate": {
+      "path": "/workspace/scratch/npm-cycle-publish-candidate",
+      "sha256": "507d12b67b728be9aabb16794d0ac04d1f40f685c734d14717d75bae92669d71"
+    },
+    "baseline": {
+      "path": "/workspace/scratch/npm-cycle-publish-baseline",
+      "sha256": "70be72ccdd7f2db7088d63c81aff2b592588b64945902a584267bc8f797c792f"
+    },
+    "worker": {
+      "path": "/workspace/scratch/npm-cycle-publish-isolated-worker",
+      "sha256": "cb097445f7915bab95cceb8e3babe469ac1b61b5fa856e6aa4f15f8b23e14fbf"
+    },
+    "build_settings": {
+      "profile": "iteration",
+      "opt_level": 1,
+      "incremental": false,
+      "isolated_candidate_target": "target/npm-publish-candidate"
+    },
+    "limitation": "Broader Node failures retained; web/watch regression reproduces in integration baseline. No total parity or package performance claim."
+  },
+  "later_integration_source_commit": "23d4b4bbb",
+  "later_integration_gates": {
+    "workspace_all_targets": 0,
+    "default_runtime_pass": 618,
+    "earlier_binary_reports_not_retargeted": true
+  },
+  "functional_publication_merge": "e17120a3c77e7f2dfbcff08fd3a66a5107905e9d"
+}

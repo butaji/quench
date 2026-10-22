@@ -1,0 +1,66 @@
+{
+  "experiment": "SmallVec scratch buffer for ASCII regex input conversion",
+  "decision": "reject",
+  "source_revision": "cbb72f34aa3a8cd15ca8ce8c68f32d9b8650b393",
+  "candidate_source_diff": "tasks/evidence/task61-regexp-inline-ascii-rejected-2026-10-09.patch",
+  "candidate_source_diff_sha256": "90c8609805d6270d31f3f72a77bc71344bbe10a471979543bdfedda50979e136",
+  "mechanism": "Use a per-call SmallVec<[u8; 128]> for the compiled ASCII matcher path in find_from_utf16 and find_range_from_utf16, avoiding the per-call heap allocation for short ASCII input while retaining UTF-16 as the authoritative string representation and using SmallVec spill storage for longer input.",
+  "host": {
+    "platform": "macOS-26.5-arm64-arm-64bit",
+    "machine": "arm64",
+    "processor": "Apple M4",
+    "memory_bytes": 17179869184
+  },
+  "build": {
+    "profile": "production",
+    "lto": "thin",
+    "baseline_commit": "cbb72f34aa3a8cd15ca8ce8c68f32d9b8650b393",
+    "baseline_binary_sha256": "2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7",
+    "candidate_binary_sha256": "c4e75b56bf30e916627f8a9b20b4ecf88f74a8c5ec6971a263891db224564a98",
+    "candidate_binary_path": "target/pinned/c4e75b56bf30e916627f8a9b20b4ecf88f74a8c5ec6971a263891db224564a98/quench-node"
+  },
+  "micro_gate": {
+    "raw": "tasks/evidence/task61-regexp-inline-ascii-gate-2026-10-09.json",
+    "raw_sha256": "5160de14c7882d1fc00a829b6a311948b29e84cbfc6bdf5474b67837d3c63ae8",
+    "runner": "tasks/evidence/task61-regexp-inline-ascii-gate-2026-10-09.py",
+    "pairs_per_case": 11,
+    "paired_cycle_change_percent": {
+      "regexp_exec_median": -3.856,
+      "regexp_exec_bootstrap_95_percentile_interval": [-4.581, 6.013],
+      "regexp_exec_candidate_faster_pairs": 6,
+      "regexp_replace_median": 3.381,
+      "regexp_replace_bootstrap_95_percentile_interval": [-7.097, 5.095],
+      "regexp_replace_candidate_faster_pairs": 5,
+      "local_store_control_median": -2.980,
+      "local_store_control_bootstrap_95_percentile_interval": [-11.557, 4.451],
+      "local_store_control_candidate_faster_pairs": 7
+    },
+    "paired_instruction_change_percent": {
+      "regexp_exec_median": -0.911,
+      "regexp_exec_bootstrap_95_percentile_interval": [-1.079, -0.727],
+      "regexp_replace_median": -1.526,
+      "regexp_replace_bootstrap_95_percentile_interval": [-1.593, -1.395],
+      "local_store_control_median": -0.020,
+      "local_store_control_bootstrap_95_percentile_interval": [-0.142, 0.096]
+    },
+    "paired_maximum_rss_change_percent": {
+      "regexp_exec_median": 0.443,
+      "regexp_replace_median": -0.177,
+      "local_store_control_median": 0.0
+    },
+    "stdout_matched": true,
+    "interpretation": "Instruction retirement fell consistently, but cycle intervals include zero and direction disagrees between exec and replace. The unaffected local-store control also moved by a similar cycle amount. No V8-v7 fixture gate was run because cycle evidence does not establish a reliable runtime benefit."
+  },
+  "correctness": {
+    "test262_report": "tasks/evidence/task61-regexp-inline-ascii-tests-2026-10-09/regexp-stages-candidate.json",
+    "test262_report_sha256": "7bb0d0c1430661b3a77316c08e00b81ec4cab7416d10fc29aaad72a82279b200",
+    "test262_stages_64_to_70": "3681/3681, zero failures",
+    "node_oracle_probe": "tasks/evidence/task61-regexp-inline-ascii-tests-2026-10-09/regexp-ascii-oracle.js",
+    "node_oracle_probe_sha256": "74a445307d7efff1e87a7bc19606cb78b7704ee9d9a9e51c38b10419070247bd",
+    "node_oracle_results": "tasks/evidence/task61-regexp-inline-ascii-tests-2026-10-09/regexp-ascii-oracle-results.json",
+    "node_oracle_results_sha256": "9c9799c87b544abd121335de52bafe35fe6d2b0f3927cc29a7b2c2dc099c0ac2",
+    "oracle_result": "Candidate, baseline and local Node exited successfully with identical output hashes; cases included short and long ASCII, Unicode, astral text, a lone surrogate, captures, empty global matches, exec and replace.",
+    "baseline_comparison_note": "A clean-HEAD Test262 comparison was stopped after 800 stage-64 cases, all passing, because the candidate completed all affected selected stages with zero failures and the oracle matched both baseline and Node. No complete baseline report was produced."
+  },
+  "next_candidate": "Object-literal site templates: static key sets can share a final shape and pre-sized slot layout, removing repeated generic property transitions from the creation path. Rank by the refreshed per-op table and fixture sample share before implementation."
+}

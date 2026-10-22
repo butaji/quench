@@ -1,0 +1,8 @@
+    Finished `iteration` profile [optimized] target(s) in 0.11s
+     Running tests/child_entry.rs (target/iteration/deps/child_entry-37d870d271c8d35b)
+
+running 1 test
+test default_node_stack_policy_uses_real_coded_brands_and_system_errors ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 348 filtered out; finished in 0.47s
+

@@ -1,0 +1,12 @@
+{
+  "stock_source": "fdc8430339774ad88081ceec29c3a175b674768b",
+  "diagnostic_source": "fdc843033 plus diagnostic-source.patch",
+  "production_profile": "Rust1.99.0 thinLTO opt3 codegen1 repository flags, no PGO",
+  "binaries": {
+    "work/pinned/richards-control/quench-node": "196bc8c43cab926c8d0f220a00c0361aa64a28d1a6064fc6bdc312677900e4f9",
+    "work/richards/quench-node-memory": "0a2324339a81e238ada060bfb57e4d2c01821cb033093ffd64b03fe6828a6b89",
+    "work/richards/quench-node-all-program-profile": "f725b9515e4a6764b957a8153250dcceebe5523d0670f544374f5fb90448c396",
+    "target/production/quench": "f3b01738d8e484bbe2e0f41a58fa9d7db609ec36fe3fdc5b3245207e4888f261",
+    "work/pinned/quench-bench": "5dd4281520a75224a73e1b79d936dd7b0353b541aa7138c09697a32de0631e97"
+  }
+}

@@ -1,0 +1,68 @@
+{
+  "schema": 1,
+  "task": "61",
+  "experiment": "Reduce repeated receiver and cache-site work in GetField reads",
+  "decision": "retain as a focused Stage B candidate; fixture-level and cross-engine qualification remains open",
+  "source": {
+    "base_revision": "d8a4a0987e86250ae7aa6442c28c808aa87cf6d3",
+    "measured_source_diff_sha256": "66d362163fda7ee7379f829a5726856f7fadc962155e03305f7d9f5169e2e87d",
+    "final_formatted_source_diff_sha256": "6a6dcee60ecd7d5183bc9817073f503e10929bd692ba214a34ffc67806dfb00b",
+    "final_format_delta": "rustfmt line wrapping only; final production build and oracle smoke check completed",
+    "files": [
+      "crates/quench-runtime/src/vm/field_cache.rs",
+      "crates/quench-runtime/src/vm/object.rs"
+    ],
+    "measurement_candidate_binary_sha256": "95745b6b8f2a94b37279bb15e75b8fd392192f6d051b468e504dedb0e2a26f56",
+    "measurement_baseline_binary_sha256": "d57de12813b4e251b1c4c1f3167bcf1eaa86e67ef0f525e6b518d488cb0a0b41",
+    "final_formatted_build_sha256": "49d528644afa2b7dae41e68d95908a934eb68c47bded32fbd3dfc7baf8a93ac1",
+    "final_build_command": "CARGO_TARGET_DIR=target/iteration/getfield-final-20261008/build CARGO_INCREMENTAL=0 cargo build --locked --offline --profile production -p quench-node --bin quench-node"
+  },
+  "host": {
+    "cpu": "Apple M4",
+    "os": "macOS 26.5 ARM64",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+    "cargo": "cargo 1.99.0 (5f94df478 2026-08-27) (Homebrew)"
+  },
+  "measurement": {
+    "kind": "diagnostic production instruction-retirement microbenchmark",
+    "input": "CJS loop with 1,000,000 reads of r = o.x and matched loop control",
+    "pairs": 11,
+    "order": "alternating baseline/candidate",
+    "normalization": "median retired instructions after same-binary control subtraction",
+    "baseline_median_instructions": 370048000,
+    "candidate_median_instructions": 332271000,
+    "paired_median_instruction_delta": -38167000,
+    "paired_median_change_percent": -10.3,
+    "candidate_lower_instruction_count_pairs": 11,
+    "baseline_max_rss_median_mib": 19.047,
+    "candidate_max_rss_median_mib": 19.031,
+    "rss_intervals_overlap": true,
+    "artifact_directory": "target/iteration/getfield-refactor-only-20261008",
+    "scope_limit": "Own-field microbenchmark only; no V8-v7 fixture or four-engine score claim."
+  },
+  "implementation": "Read the heap cell once and pass it into shape eligibility checks; preserve all exotic/name guards; carry the resolved inline-cache index into the miss handler; retain the checked slot-presence test before unchecked loads.",
+  "verification": {
+    "focused_field_cache_tests": {
+      "passed": 8,
+      "failed": 0
+    },
+    "test262": {
+      "stages": [20, 31, 45, 60],
+      "passed": 7184,
+      "failed": 0,
+      "report_directory": "target/iteration/getfield-only-validation-20261008"
+    },
+    "node_oracle": {
+      "version": "v26.10.0",
+      "final_formatted_binary_sha256": "49d528644afa2b7dae41e68d95908a934eb68c47bded32fbd3dfc7baf8a93ac1",
+      "candidate_stdout_sha256": "8177f6ba840d5541a57cffc6c61d2b3aaa723d19e7f441f7ec603a5fd940abc0",
+      "node_stdout_sha256": "8177f6ba840d5541a57cffc6c61d2b3aaa723d19e7f441f7ec603a5fd940abc0",
+      "matched": true
+    },
+    "full_object_test_module": {
+      "passed": 9,
+      "failed": 5,
+      "failure_cause": "unchanged test helper rejects invalid source positions during program validation before runtime execution"
+    }
+  }
+}

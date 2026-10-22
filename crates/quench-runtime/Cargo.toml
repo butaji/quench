@@ -1,37 +1,69 @@
 [package]
 name = "quench-runtime"
 version = "0.1.0"
-edition = "2021"
-description = "Residual VM kernel for the Quench program reducer"
+edition = "2024"
+rust-version = "1.97"
 license = "MIT"
+description = "JavaScript and WebAssembly execution runtime for Quench"
+
+[lib]
+name = "quench_runtime"
+
+[[bin]]
+name = "quench"
+path = "src/bin/quench.rs"
 
 [features]
-execution-trace = []
-legacy-native-tests = []
+default = []
+profile-aggregate = []
+profile-trace = ["profile-aggregate"]
+profile-memory = []
+profile-allocator = []
+profile-gc-time = []
+# Counts, by opcode, the instructions the lane leaves to the general loop; reported at exit.
+profile-lane-exits = []
+# Reads the collection pacing knobs from the environment (measurement builds only).
+gc-tuning = []
+reference = []
+# Recompiles each replayable function after its program loads and logs any difference
+# (`QUENCH_REPLAY_LOG`); verification builds only.
+verify-replay = []
 
 [dependencies]
 quench-stack = { path = "../quench-stack" }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 chrono-tz = "0.10"
-icu_collator = { version = "2.3", features = ["compiled_data"] }
-icu_calendar = { version = "2.3", features = ["compiled_data"] }
-icu_casemap = { version = "2.2", features = ["compiled_data"] }
-icu_locale_core = "2.3"
-icu_provider = "2.3"
-icu_properties = { version = "2.3", features = ["compiled_data"] }
+oxc_allocator = { workspace = true }
+oxc_ast = { workspace = true }
+oxc_ast_visit = { workspace = true }
+oxc_parser = { workspace = true }
+oxc_semantic = { workspace = true }
+oxc_span = { workspace = true }
+oxc_syntax = { workspace = true }
+oxc_diagnostics = { workspace = true }
+rustc-hash = "2.1"
+# The shape transition index keeps only child ids (`vm::shape_transitions`).
+hashbrown = { version = "0.16", default-features = false }
+rayon = "1.12.0"
+smallvec = "1.15.2"
 num-bigint = "0.4"
-rug = { version = "1.30", default-features = false, features = ["integer", "std"] }
-oxc = { version = "0.47", features = ["semantic"] }
-regex = { version = "1.11", default-features = false, features = ["std", "unicode-perl"] }
+num-traits = "0.2"
 quench-regexp = { path = "../quench-regexp" }
 quench-intl = { path = "../quench-intl" }
 quench-temporal = { path = "../quench-temporal" }
-stacker = "0.1"
-serde_json = "1"
+wasmparser = "0.247"
+# The compiled execution mode: Cranelift is the code generator the generating
+# extension emits into; libc maps the resulting code executable.
+cranelift-codegen = { version = "=0.134.3", default-features = false, features = ["std", "host-arch"] }
+cranelift-frontend = { version = "=0.134.3", default-features = false, features = ["std"] }
+cranelift-native = { version = "=0.134.3", default-features = false }
+libc = "0.2"
+# fdlibm atan is part of the shared binary64 Math rounding policy.
+libm = "=0.2.16"
 unicode-normalization = "0.1"
 unicode-segmentation = "1.13"
-wasmparser = "0.247"
 
 [dev-dependencies]
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

@@ -1,0 +1,70 @@
+{
+  "method": "paired bootstrap over per-round candidate-minus-baseline percentages",
+  "bootstrap_samples": 100000,
+  "seed": 61102027,
+  "cases": {
+    "captured-call": {
+      "pairs": 11,
+      "baseline_instruction_median": 7887333201,
+      "candidate_instruction_median": 7699333703,
+      "instruction_delta_median_percent": -2.382487809392598,
+      "instruction_delta_95_percentile_interval": [
+        -2.3847441619192775,
+        -2.379034629765071
+      ],
+      "candidate_lower_instruction_pairs": 11,
+      "elapsed_delta_median_percent": -3.571428571428574,
+      "candidate_faster_elapsed_pairs": 11,
+      "baseline_maximum_rss_median_bytes": 12730368,
+      "candidate_maximum_rss_median_bytes": 12812288,
+      "maximum_rss_delta_median_percent": 0.5108556832694764,
+      "maximum_rss_delta_95_percentile_interval": [
+        -0.2554278416347382,
+        1.03359173126615
+      ],
+      "candidate_lower_maximum_rss_pairs": 3
+    },
+    "local-control": {
+      "pairs": 11,
+      "baseline_instruction_median": 2082449828,
+      "candidate_instruction_median": 2082555858,
+      "instruction_delta_median_percent": 0.008128800431791814,
+      "instruction_delta_95_percentile_interval": [
+        -0.0011400125474371754,
+        0.011662633682335319
+      ],
+      "candidate_lower_instruction_pairs": 3,
+      "elapsed_delta_median_percent": 0.0,
+      "candidate_faster_elapsed_pairs": 1,
+      "baseline_maximum_rss_median_bytes": 12763136,
+      "candidate_maximum_rss_median_bytes": 12795904,
+      "maximum_rss_delta_median_percent": 0.38461538461538464,
+      "maximum_rss_delta_95_percentile_interval": [
+        0.0,
+        0.5154639175257731
+      ],
+      "candidate_lower_maximum_rss_pairs": 1
+    },
+    "plain-call": {
+      "pairs": 11,
+      "baseline_instruction_median": 6881286180,
+      "candidate_instruction_median": 6735248620,
+      "instruction_delta_median_percent": -2.1187853116493933,
+      "instruction_delta_95_percentile_interval": [
+        -2.126042859767786,
+        -2.1154539969534
+      ],
+      "candidate_lower_instruction_pairs": 11,
+      "elapsed_delta_median_percent": -4.0000000000000036,
+      "candidate_faster_elapsed_pairs": 6,
+      "baseline_maximum_rss_median_bytes": 12730368,
+      "candidate_maximum_rss_median_bytes": 12763136,
+      "maximum_rss_delta_median_percent": 0.0,
+      "maximum_rss_delta_95_percentile_interval": [
+        -0.2564102564102564,
+        0.7741935483870968
+      ],
+      "candidate_lower_maximum_rss_pairs": 5
+    }
+  }
+}

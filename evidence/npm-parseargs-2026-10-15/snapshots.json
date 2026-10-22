@@ -1,0 +1,52 @@
+{
+  "source_commit": "88abab792",
+  "fixture_harness_commit": "7b4393d68",
+  "integration_baseline": "3070816f4",
+  "source_note": "Candidate built from source-equivalent uncommitted changes before the source commit. Later harness-only commit does not change the engine. Reports retain their actual dirty/source metadata.",
+  "engines": {
+    "baseline": {
+      "path": "/workspace/scratch/npm-parseargs-baseline",
+      "sha256": "fa07d5b9835491026d50d914d7fbd9690b955ebcbba6f46c4f3d89416a390c10"
+    },
+    "candidate": {
+      "path": "/workspace/scratch/npm-parseargs-candidate",
+      "sha256": "8e1963c2c615edc8206d9cedf2c72a9201bf9d8d1a741cdfc981a74f07f468d6"
+    },
+    "node": {
+      "path": "/workspace/shared/node-v26.12.0-linux-x64/bin/node",
+      "sha256": "caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943"
+    }
+  },
+  "guard_max_delta_percent": 0.0014311439090382721,
+  "optimized_runtime_state": "618/618 iteration-profile tests pass; source-equivalent 88abab792 Core, unchanged through 2a42e5f04",
+  "broad_production_api_state": "250/250 pass against frozen source-equivalent 88abab792 CLI via 7b4393d68 harness selector",
+  "next_combined_source": "2a42e5f04",
+  "post_sync": {
+    "source": "2a42e5f04",
+    "baseline": "d1c09c900",
+    "core_identical_to": "88abab792",
+    "api_fixtures": 251,
+    "scenario": {
+      "api_pass": 269,
+      "declaration_pass": 13,
+      "quench_fail": 17,
+      "oracle_fail": 1
+    },
+    "surface": {
+      "unqualified_match": 151,
+      "diff": 140,
+      "oracle_fail": 9
+    },
+    "callable_paths": {
+      "checked": 397,
+      "discovered": 70236,
+      "uncovered": 69839,
+      "qualified": false
+    },
+    "engine_sha256": {
+      "baseline": "351070610bb3d9cf6ddddedd9acddb5a1bdd4042a4b3dca723549e79e5fb4832",
+      "candidate": "4a32b20de5f3b5f961179cb6d96fa8dd9c65d4c3ebe06ce948d33aa203c5e6e6"
+    },
+    "guard_max_delta_percent": 0.01442699351580827
+  }
+}

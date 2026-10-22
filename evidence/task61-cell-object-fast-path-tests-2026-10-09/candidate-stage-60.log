@@ -1,0 +1,37 @@
+stage  60 batch   1/35  passed=100 failed=0 total=100
+stage  60 batch   2/35  passed=100 failed=0 total=100
+stage  60 batch   3/35  passed=100 failed=0 total=100
+stage  60 batch   4/35  passed=100 failed=0 total=100
+stage  60 batch   5/35  passed=100 failed=0 total=100
+stage  60 batch   6/35  passed=100 failed=0 total=100
+stage  60 batch   7/35  passed=100 failed=0 total=100
+stage  60 batch   8/35  passed=100 failed=0 total=100
+stage  60 batch   9/35  passed=100 failed=0 total=100
+stage  60 batch  10/35  passed=100 failed=0 total=100
+stage  60 batch  11/35  passed=100 failed=0 total=100
+stage  60 batch  12/35  passed=100 failed=0 total=100
+stage  60 batch  13/35  passed=100 failed=0 total=100
+stage  60 batch  14/35  passed=100 failed=0 total=100
+stage  60 batch  15/35  passed=100 failed=0 total=100
+stage  60 batch  16/35  passed=100 failed=0 total=100
+stage  60 batch  17/35  passed=100 failed=0 total=100
+stage  60 batch  18/35  passed=100 failed=0 total=100
+stage  60 batch  19/35  passed=100 failed=0 total=100
+stage  60 batch  20/35  passed=100 failed=0 total=100
+stage  60 batch  21/35  passed=100 failed=0 total=100
+stage  60 batch  22/35  passed=100 failed=0 total=100
+stage  60 batch  23/35  passed=100 failed=0 total=100
+stage  60 batch  24/35  passed=100 failed=0 total=100
+stage  60 batch  25/35  passed=100 failed=0 total=100
+stage  60 batch  26/35  passed=100 failed=0 total=100
+stage  60 batch  27/35  passed=100 failed=0 total=100
+stage  60 batch  28/35  passed=100 failed=0 total=100
+stage  60 batch  29/35  passed=100 failed=0 total=100
+stage  60 batch  30/35  passed=100 failed=0 total=100
+stage  60 batch  31/35  passed=100 failed=0 total=100
+stage  60 batch  32/35  passed=100 failed=0 total=100
+stage  60 batch  33/35  passed=100 failed=0 total=100
+stage  60 batch  34/35  passed=100 failed=0 total=100
+stage  60 batch  35/35  passed=11 failed=0 total=11
+stage  60: built-ins/Object passed=3411 failed=0 total=3411
+stages=1 passed=3411 failed=0 total=3411

@@ -1,0 +1,14 @@
+    Finished `iteration` profile [optimized] target(s) in 0.12s
+     Running tests/child_entry.rs (work/host-build/iteration/deps/child_entry-0c4d472d0248eb46)
+
+running 7 tests
+test read_file_abort_and_callback_exceptions_match_node ... ok
+test read_file_options_flags_and_getter_order_match_node_policy ... ok
+test oversized_read_file_returns_node_range_error_without_allocating ... ok
+test read_file_preserves_raw_paths_descriptor_positions_and_utf8_conversion_boundaries ... ok
+test read_file_sync_accepts_file_urls_and_uses_url_validation ... ok
+test read_file_supplied_buffers_factories_aliases_and_cleanup_match_node ... ok
+test read_file_unknown_size_supplied_buffer_errors_preserve_node_prototypes ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 274 filtered out; finished in 2.30s
+

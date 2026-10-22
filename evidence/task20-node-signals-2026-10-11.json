@@ -1,0 +1,151 @@
+{
+  "scope": "Linux process signals, public kill coercion and mutable delegation, timer exit routing",
+  "branch": "v2-cloud-node",
+  "source_parent": "725a3463cf9bbdf2ab183c5767306717ca4cedc0",
+  "oracle": "v27.0.0-nightly20260819c79868f102",
+  "fixture_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+  "host": {
+    "platform": "Linux-x86_64",
+    "cpu_max": "400000 100000",
+    "memory_max_bytes": 17179869184
+  },
+  "oracle_checks": {
+    "pass": 29,
+    "fail": 0,
+    "log": "work/signals-oracle-final.log"
+  },
+  "runtime_checks": [
+    {
+      "test": "numeric_binary_fast_paths_preserve_number_edges_and_generic_coercion",
+      "status": "pass"
+    },
+    {
+      "test": "equality_roots_the_opposite_primitive_during_object_coercion",
+      "status": "pass"
+    }
+  ],
+  "native_signal_checks": {
+    "status": "pass",
+    "source": "production process_signals_state.rs",
+    "scope": "ordered pipe records, multiple subscribers, unregister/re-register stale notification filtering, noncatchable registration error",
+    "log": "work/process-signals-state-check.log"
+  },
+  "framework_core": {
+    "pass": 43,
+    "fail": 0,
+    "log": "work/signals-framework-core.log"
+  },
+  "framework_scenarios": [
+    {
+      "scenario": "express",
+      "observations": [
+        {
+          "engine": "node",
+          "exit_code": 0,
+          "stdout": "statuses 200,200,200,200,404\n",
+          "stderr": "",
+          "timeout": false
+        },
+        {
+          "engine": "quench-node",
+          "exit_code": 0,
+          "stdout": "statuses 200,200,200,200,404\n",
+          "stderr": "",
+          "timeout": false
+        }
+      ],
+      "matches": true
+    },
+    {
+      "scenario": "koa",
+      "observations": [
+        {
+          "engine": "node",
+          "exit_code": 0,
+          "stdout": "statuses 200,200,200,200,404\n",
+          "stderr": "",
+          "timeout": false
+        },
+        {
+          "engine": "quench-node",
+          "exit_code": 0,
+          "stdout": "statuses 200,200,200,200,404\n",
+          "stderr": "",
+          "timeout": false
+        }
+      ],
+      "matches": true
+    },
+    {
+      "scenario": "fastify",
+      "observations": [
+        {
+          "engine": "node",
+          "exit_code": 0,
+          "stdout": "statuses 200,200,200,200,404\n",
+          "stderr": "",
+          "timeout": false
+        },
+        {
+          "engine": "quench-node",
+          "exit_code": 0,
+          "stdout": "statuses 200,200,200,200,404\n",
+          "stderr": "",
+          "timeout": false
+        }
+      ],
+      "matches": true
+    }
+  ],
+  "focused_fixtures": [
+    {
+      "fixture": "test-signal-args.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-signal-handler-remove-on-exit.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-signal-handler.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-signal-safety.js",
+      "status": "fail"
+    },
+    {
+      "fixture": "test-signal-unregister.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-process-kill-pid.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-process-remove-all-signal-listeners.js",
+      "status": "fail"
+    }
+  ],
+  "process_group": {
+    "counts": {
+      "pass": 60,
+      "fail": 33,
+      "skip": 3,
+      "timeout": 1
+    },
+    "jobs": 2,
+    "timeout_secs": 10,
+    "previous_passes_lost_against_frozen_full": 0,
+    "raw_results": "work/signals-process-group.json"
+  },
+  "qualifications": [
+    "The complete 4k goal remains incomplete. Frozen full inventory evidence is separate and predates these signal changes.",
+    "Delivery and public kill correction are Linux only; other platforms retain prior behavior.",
+    "Standard OS signals may coalesce; pipe overflow preserves a pending notification per physical signal, without an exact burst-count guarantee.",
+    "Signal watchers do not themselves keep the host loop alive.",
+    "process.stdin is not yet implemented: the remove-all-signal-listeners fixture fails before exercising unregistration. Internal signal_wrap receiver safety also remains open.",
+    "Timer process.exit routing is qualified; uncatchable exit through guest try/catch and every promise-job termination path are not qualified."
+  ],
+  "performance_claim": false
+}

@@ -1,0 +1,456 @@
+{
+  "schema": 1,
+  "task": "61",
+  "experiment": "direct numeric dispatch paired follow-up",
+  "source_revision": "1c67c75b9e9c4f5dd032c131287a7e5c9c5b130d",
+  "baseline_sha256": "d6165b53df0198b58e5c3887fed1afad351bde17e237a6f711d495987cb79158",
+  "candidate_sha256": "e83200ec7666a02f8e4807fdb476eeb4dcef449ef469d15eefce1413f11369d5",
+  "rounds_per_fixture": 11,
+  "bootstrap_replicates": 100000,
+  "corpus_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+  "fixtures": {
+    "earley-boyer.js": {
+      "fixture_sha256": "aa379c1d54f5d13de32ebf2b50729d0cbc64bb23de5e524256c7b2270213cc0b",
+      "valid": true,
+      "output_equal": true,
+      "baseline_score_median": 207.0,
+      "candidate_score_median": 213.0,
+      "score_delta_median": 3.0,
+      "score_delta_95_ci": [
+        1.0,
+        9.0
+      ],
+      "baseline_maximum_rss_median_bytes": 51429376,
+      "candidate_maximum_rss_median_bytes": 50282496,
+      "maximum_rss_delta_median_bytes": -782336,
+      "maximum_rss_delta_95_ci_bytes": [
+        -1593344,
+        -286720
+      ],
+      "candidate_score_worse_pairs": 2,
+      "candidate_rss_lower_pairs": 10,
+      "pairs": [
+        {
+          "fixture": "earley-boyer.js",
+          "pair": 1,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "baseline_score": 207.0,
+          "candidate_score": 215.0,
+          "score_delta": 8.0,
+          "baseline_rss_bytes": 51666944,
+          "candidate_rss_bytes": 50073600,
+          "rss_delta_bytes": -1593344,
+          "baseline_wall_ns": 38504686502,
+          "candidate_wall_ns": 38744940148,
+          "results": {
+            "baseline": {
+              "exit_code": 0,
+              "score": 207.0,
+              "maximum_rss_bytes": 51666944,
+              "wall_ns": 38504686502,
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 207\n----\nScore: 207\n",
+              "stderr": ""
+            },
+            "candidate": {
+              "exit_code": 0,
+              "score": 215.0,
+              "maximum_rss_bytes": 50073600,
+              "wall_ns": 38744940148,
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 215\n----\nScore: 215\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "fixture": "earley-boyer.js",
+          "pair": 2,
+          "execution_order": [
+            "candidate",
+            "baseline"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "baseline_score": 200.0,
+          "candidate_score": 201.0,
+          "score_delta": 1.0,
+          "baseline_rss_bytes": 51777536,
+          "candidate_rss_bytes": 50266112,
+          "rss_delta_bytes": -1511424,
+          "baseline_wall_ns": 40286249593,
+          "candidate_wall_ns": 39764711306,
+          "results": {
+            "candidate": {
+              "exit_code": 0,
+              "score": 201.0,
+              "maximum_rss_bytes": 50266112,
+              "wall_ns": 39764711306,
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 201\n----\nScore: 201\n",
+              "stderr": ""
+            },
+            "baseline": {
+              "exit_code": 0,
+              "score": 200.0,
+              "maximum_rss_bytes": 51777536,
+              "wall_ns": 40286249593,
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 200\n----\nScore: 200\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "fixture": "earley-boyer.js",
+          "pair": 3,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "baseline_score": 207.0,
+          "candidate_score": 208.0,
+          "score_delta": 1.0,
+          "baseline_rss_bytes": 51732480,
+          "candidate_rss_bytes": 48840704,
+          "rss_delta_bytes": -2891776,
+          "baseline_wall_ns": 39087624261,
+          "candidate_wall_ns": 38218651365,
+          "results": {
+            "baseline": {
+              "exit_code": 0,
+              "score": 207.0,
+              "maximum_rss_bytes": 51732480,
+              "wall_ns": 39087624261,
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 207\n----\nScore: 207\n",
+              "stderr": ""
+            },
+            "candidate": {
+              "exit_code": 0,
+              "score": 208.0,
+              "maximum_rss_bytes": 48840704,
+              "wall_ns": 38218651365,
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 208\n----\nScore: 208\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "fixture": "earley-boyer.js",
+          "pair": 4,
+          "execution_order": [
+            "candidate",
+            "baseline"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "baseline_score": 213.0,
+          "candidate_score": 211.0,
+          "score_delta": -2.0,
+          "baseline_rss_bytes": 50569216,
+          "candidate_rss_bytes": 50282496,
+          "rss_delta_bytes": -286720,
+          "baseline_wall_ns": 38319633596,
+          "candidate_wall_ns": 39305116686,
+          "results": {
+            "candidate": {
+              "exit_code": 0,
+              "score": 211.0,
+              "maximum_rss_bytes": 50282496,
+              "wall_ns": 39305116686,
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 211\n----\nScore: 211\n",
+              "stderr": ""
+            },
+            "baseline": {
+              "exit_code": 0,
+              "score": 213.0,
+              "maximum_rss_bytes": 50569216,
+              "wall_ns": 38319633596,
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 213\n----\nScore: 213\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "fixture": "earley-boyer.js",
+          "pair": 5,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "baseline_score": 207.0,
+          "candidate_score": 210.0,
+          "score_delta": 3.0,
+          "baseline_rss_bytes": 51429376,
+          "candidate_rss_bytes": 51326976,
+          "rss_delta_bytes": -102400,
+          "baseline_wall_ns": 39508001081,
+          "candidate_wall_ns": 38417138766,
+          "results": {
+            "baseline": {
+              "exit_code": 0,
+              "score": 207.0,
+              "maximum_rss_bytes": 51429376,
+              "wall_ns": 39508001081,
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 207\n----\nScore: 207\n",
+              "stderr": ""
+            },
+            "candidate": {
+              "exit_code": 0,
+              "score": 210.0,
+              "maximum_rss_bytes": 51326976,
+              "wall_ns": 38417138766,
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 210\n----\nScore: 210\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "fixture": "earley-boyer.js",
+          "pair": 6,
+          "execution_order": [
+            "candidate",
+            "baseline"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "baseline_score": 216.0,
+          "candidate_score": 215.0,
+          "score_delta": -1.0,
+          "baseline_rss_bytes": 50245632,
+          "candidate_rss_bytes": 50409472,
+          "rss_delta_bytes": 163840,
+          "baseline_wall_ns": 37262986579,
+          "candidate_wall_ns": 39463095380,
+          "results": {
+            "candidate": {
+              "exit_code": 0,
+              "score": 215.0,
+              "maximum_rss_bytes": 50409472,
+              "wall_ns": 39463095380,
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 215\n----\nScore: 215\n",
+              "stderr": ""
+            },
+            "baseline": {
+              "exit_code": 0,
+              "score": 216.0,
+              "maximum_rss_bytes": 50245632,
+              "wall_ns": 37262986579,
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 216\n----\nScore: 216\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "fixture": "earley-boyer.js",
+          "pair": 7,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "baseline_score": 201.0,
+          "candidate_score": 213.0,
+          "score_delta": 12.0,
+          "baseline_rss_bytes": 50933760,
+          "candidate_rss_bytes": 50151424,
+          "rss_delta_bytes": -782336,
+          "baseline_wall_ns": 39635179819,
+          "candidate_wall_ns": 37655482966,
+          "results": {
+            "baseline": {
+              "exit_code": 0,
+              "score": 201.0,
+              "maximum_rss_bytes": 50933760,
+              "wall_ns": 39635179819,
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 201\n----\nScore: 201\n",
+              "stderr": ""
+            },
+            "candidate": {
+              "exit_code": 0,
+              "score": 213.0,
+              "maximum_rss_bytes": 50151424,
+              "wall_ns": 37655482966,
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 213\n----\nScore: 213\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "fixture": "earley-boyer.js",
+          "pair": 8,
+          "execution_order": [
+            "candidate",
+            "baseline"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "baseline_score": 204.0,
+          "candidate_score": 213.0,
+          "score_delta": 9.0,
+          "baseline_rss_bytes": 51187712,
+          "candidate_rss_bytes": 50597888,
+          "rss_delta_bytes": -589824,
+          "baseline_wall_ns": 40438088058,
+          "candidate_wall_ns": 39251101259,
+          "results": {
+            "candidate": {
+              "exit_code": 0,
+              "score": 213.0,
+              "maximum_rss_bytes": 50597888,
+              "wall_ns": 39251101259,
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 213\n----\nScore: 213\n",
+              "stderr": ""
+            },
+            "baseline": {
+              "exit_code": 0,
+              "score": 204.0,
+              "maximum_rss_bytes": 51187712,
+              "wall_ns": 40438088058,
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 204\n----\nScore: 204\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "fixture": "earley-boyer.js",
+          "pair": 9,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "baseline_score": 204.0,
+          "candidate_score": 207.0,
+          "score_delta": 3.0,
+          "baseline_rss_bytes": 51654656,
+          "candidate_rss_bytes": 48705536,
+          "rss_delta_bytes": -2949120,
+          "baseline_wall_ns": 39145470770,
+          "candidate_wall_ns": 38285520619,
+          "results": {
+            "baseline": {
+              "exit_code": 0,
+              "score": 204.0,
+              "maximum_rss_bytes": 51654656,
+              "wall_ns": 39145470770,
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 204\n----\nScore: 204\n",
+              "stderr": ""
+            },
+            "candidate": {
+              "exit_code": 0,
+              "score": 207.0,
+              "maximum_rss_bytes": 48705536,
+              "wall_ns": 38285520619,
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 207\n----\nScore: 207\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "fixture": "earley-boyer.js",
+          "pair": 10,
+          "execution_order": [
+            "candidate",
+            "baseline"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "baseline_score": 210.0,
+          "candidate_score": 217.0,
+          "score_delta": 7.0,
+          "baseline_rss_bytes": 51462144,
+          "candidate_rss_bytes": 50282496,
+          "rss_delta_bytes": -1179648,
+          "baseline_wall_ns": 38195631440,
+          "candidate_wall_ns": 38355956912,
+          "results": {
+            "candidate": {
+              "exit_code": 0,
+              "score": 217.0,
+              "maximum_rss_bytes": 50282496,
+              "wall_ns": 38355956912,
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 217\n----\nScore: 217\n",
+              "stderr": ""
+            },
+            "baseline": {
+              "exit_code": 0,
+              "score": 210.0,
+              "maximum_rss_bytes": 51462144,
+              "wall_ns": 38195631440,
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 210\n----\nScore: 210\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "fixture": "earley-boyer.js",
+          "pair": 11,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "baseline_score": 209.0,
+          "candidate_score": 219.0,
+          "score_delta": 10.0,
+          "baseline_rss_bytes": 50737152,
+          "candidate_rss_bytes": 50282496,
+          "rss_delta_bytes": -454656,
+          "baseline_wall_ns": 39272145871,
+          "candidate_wall_ns": 38345717363,
+          "results": {
+            "baseline": {
+              "exit_code": 0,
+              "score": 209.0,
+              "maximum_rss_bytes": 50737152,
+              "wall_ns": 39272145871,
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 209\n----\nScore: 209\n",
+              "stderr": ""
+            },
+            "candidate": {
+              "exit_code": 0,
+              "score": 219.0,
+              "maximum_rss_bytes": 50282496,
+              "wall_ns": 38345717363,
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 219\n----\nScore: 219\n",
+              "stderr": ""
+            }
+          }
+        }
+      ]
+    }
+  },
+  "qualification_ready": false,
+  "decision_limit": "Eight-fixture Quench-only paired follow-up; this cannot establish the four-engine all-eight Task 61 gate."
+}

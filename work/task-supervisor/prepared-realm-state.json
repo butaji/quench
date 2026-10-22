@@ -1,0 +1,13 @@
+{
+  "status": "complete",
+  "commands": [
+    [
+      "bash",
+      "/workspace/quench/work/prepared-realm-policy/qualify.sh"
+    ]
+  ],
+  "exit": 0,
+  "supervisor_pid": 3202445,
+  "session_id": 3202444,
+  "utc": "2026-10-16T09:33:39.408124+00:00"
+}

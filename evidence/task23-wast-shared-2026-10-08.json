@@ -1,0 +1,28 @@
+{
+  "task": "23",
+  "status": "done",
+  "branch": "v2-cloud",
+  "date": "2026-10-08",
+  "execution": {
+    "command": "target/iteration/run crates/quench-wasm-test/testsuite",
+    "binary": "target/iteration/run",
+    "binary_sha256": "ec6bda163809ff6b7f666ff951a6f0efbeedab151baeb3477e3de55006219f83",
+    "result_log": "target/iteration/task24-integrated-2026-10-08/wasm-full.log",
+    "total": 67124,
+    "passed": 67124,
+    "failed": 0
+  },
+  "source": {
+    "repository_head": "cebb58b5cf4118fb8022386f013d8009193cc306",
+    "worktree": "dirty; source fingerprint covers every file under crates/quench-runtime-next/src, crates/quench-wasm/src, and crates/quench-wasm-test/src",
+    "source_fingerprint_sha256": "1e262bde0371f689d034603c1fb65dea848e7f84ab09f9cdc8d1cc7a0ef45bef",
+    "suite_inventory_fingerprint_sha256": "c02ffc9364222ad7ad725dd8ed30c4d6d53e4cbd445ebff34e051de93a5f3315",
+    "execution_path": "quench-wasm WAST adapter lowers and executes directives through rqj Runtime on quench-runtime-next; cargo tree -p quench-wasm contains quench-runtime-next and no legacy quench-runtime dependency"
+  },
+  "environment": {
+    "host": "Linux 6.18.44 x86_64",
+    "rustc": "1.99.0 (b940084d7 2026-09-28)",
+    "cargo": "1.99.0 (5f94df478 2026-08-27)",
+    "profile": "iteration"
+  }
+}

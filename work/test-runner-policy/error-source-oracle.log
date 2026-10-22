@@ -1,0 +1,6 @@
+fresh {"sourceLine":"function make(){return new Error('sample')}","scriptResourceName":"/workspace/quench/work/test-runner-policy/error-source-oracle.cjs","lineNumber":3,"startColumn":23}
+formatted {"sourceLine":" try{console.log(mode,JSON.stringify(b.getErrorSourcePositions(e)))}catch(x){console.log(mode,x.name,x.code,x.message)}","scriptResourceName":"/workspace/quench/work/test-runner-policy/error-source-oracle.cjs","lineNumber":11,"startColumn":39}
+custom {"sourceLine":"function make(){return new Error('sample')}","scriptResourceName":"/workspace/quench/work/test-runner-policy/error-source-oracle.cjs","lineNumber":3,"startColumn":23}
+capture {"sourceLine":" if(mode==='capture'){e={};Error.captureStackTrace(e)}","scriptResourceName":"/workspace/quench/work/test-runner-policy/error-source-oracle.cjs","lineNumber":8,"startColumn":33}
+plain {"sourceLine":" try{console.log(mode,JSON.stringify(b.getErrorSourcePositions(e)))}catch(x){console.log(mode,x.name,x.code,x.message)}","scriptResourceName":"/workspace/quench/work/test-runner-policy/error-source-oracle.cjs","lineNumber":11,"startColumn":39}
+proxy {"sourceLine":" try{console.log(mode,JSON.stringify(b.getErrorSourcePositions(e)))}catch(x){console.log(mode,x.name,x.code,x.message)}","scriptResourceName":"/workspace/quench/work/test-runner-policy/error-source-oracle.cjs","lineNumber":11,"startColumn":39}

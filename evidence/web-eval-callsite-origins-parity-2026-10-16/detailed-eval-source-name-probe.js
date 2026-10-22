@@ -1,0 +1,1 @@
+const source='require("util").getCallSites(1).map(f=>({name:f.functionName,file:f.scriptName}))';console.log(JSON.stringify((0,eval)(source)));console.log(JSON.stringify(Function('return '+source)()));

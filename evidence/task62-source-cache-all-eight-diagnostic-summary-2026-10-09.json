@@ -1,0 +1,275 @@
+{
+  "binaries": {
+    "bun": {
+      "path": "/opt/homebrew/Cellar/bun/1.4.2/bin/bun",
+      "sha256": "b36d2e9d9bd50e3a3b6a8f2d481839417d6600d4c1753411b094ee0da3222cef"
+    },
+    "node": {
+      "path": "/opt/homebrew/Cellar/node/26.10.0_1/bin/node",
+      "sha256": "4ca2a42d6d55a834b04d0892c5bc646a6869fcebec57f91c849dac0aa1031610"
+    },
+    "quench": {
+      "path": "target/iteration/task61-function-source-cache-production-20261009/production/quench-node",
+      "sha256": "cf3916764bd3b59ac3dcb91bd9787cb31ec01537245eaa785ae1cd9e7d6d1d57"
+    },
+    "quickjs": {
+      "path": "/Users/admin/Code/GitHub/quickjs/qjs",
+      "sha256": "60baacdd677a07f27b0aa95b9ad640de33c3442cbf65c9fb4d803017ab3c4811"
+    },
+    "runner": {
+      "path": "target/production/quench-bench",
+      "sha256": "7530076292020d65cc1cc9c47fbe90534470144588e8ed17ec0107553c8c44fc"
+    }
+  },
+  "campaign": {
+    "all_eight_valid": true,
+    "all_outputs_equal": true,
+    "complete": true,
+    "rounds_requested": 1,
+    "timeout_ms": 300000
+  },
+  "corpus": {
+    "checkout_clean": true,
+    "checkout_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+    "fixture_set_matches": true,
+    "pinned_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b"
+  },
+  "experiment": "Source-cache candidate diagnostic V8-v7 four-engine screen",
+  "fixtures": {
+    "crypto": {
+      "all_engine_outputs_equal": true,
+      "median_max_rss_bytes": {
+        "bun": 30556160,
+        "node": 45023232,
+        "quench": 21561344,
+        "quickjs": 3211264
+      },
+      "median_score": {
+        "bun": 4037.0,
+        "node": 2487.0,
+        "quench": 400.0,
+        "quickjs": 1819.0
+      },
+      "valid": true,
+      "valid_samples": {
+        "bun": 1,
+        "node": 1,
+        "quench": 1,
+        "quickjs": 1
+      }
+    },
+    "deltablue": {
+      "all_engine_outputs_equal": true,
+      "median_max_rss_bytes": {
+        "bun": 31440896,
+        "node": 47005696,
+        "quench": 19955712,
+        "quickjs": 3145728
+      },
+      "median_score": {
+        "bun": 2021.0,
+        "node": 2393.0,
+        "quench": 212.0,
+        "quickjs": 1702.0
+      },
+      "valid": true,
+      "valid_samples": {
+        "bun": 1,
+        "node": 1,
+        "quench": 1,
+        "quickjs": 1
+      }
+    },
+    "earley-boyer": {
+      "all_engine_outputs_equal": true,
+      "median_max_rss_bytes": {
+        "bun": 33652736,
+        "node": 112312320,
+        "quench": 51314688,
+        "quickjs": 17661952
+      },
+      "median_score": {
+        "bun": 9540.0,
+        "node": 12401.0,
+        "quench": 377.0,
+        "quickjs": 5451.0
+      },
+      "valid": true,
+      "valid_samples": {
+        "bun": 1,
+        "node": 1,
+        "quench": 1,
+        "quickjs": 1
+      }
+    },
+    "navier-stokes": {
+      "all_engine_outputs_equal": true,
+      "median_max_rss_bytes": {
+        "bun": 21512192,
+        "node": 50003968,
+        "quench": 20594688,
+        "quickjs": 6373376
+      },
+      "median_score": {
+        "bun": 4768.0,
+        "node": 3381.0,
+        "quench": 554.0,
+        "quickjs": 4606.0
+      },
+      "valid": true,
+      "valid_samples": {
+        "bun": 1,
+        "node": 1,
+        "quench": 1,
+        "quickjs": 1
+      }
+    },
+    "raytrace": {
+      "all_engine_outputs_equal": true,
+      "median_max_rss_bytes": {
+        "bun": 29736960,
+        "node": 52084736,
+        "quench": 19759104,
+        "quickjs": 2867200
+      },
+      "median_score": {
+        "bun": 5602.0,
+        "node": 7774.0,
+        "quench": 361.0,
+        "quickjs": 4014.0
+      },
+      "valid": true,
+      "valid_samples": {
+        "bun": 1,
+        "node": 1,
+        "quench": 1,
+        "quickjs": 1
+      }
+    },
+    "regexp": {
+      "all_engine_outputs_equal": true,
+      "median_max_rss_bytes": {
+        "bun": 35504128,
+        "node": 55787520,
+        "quench": 39337984,
+        "quickjs": 7962624
+      },
+      "median_score": {
+        "bun": 1033.0,
+        "node": 5677.0,
+        "quench": 129.0,
+        "quickjs": 987.0
+      },
+      "valid": true,
+      "valid_samples": {
+        "bun": 1,
+        "node": 1,
+        "quench": 1,
+        "quickjs": 1
+      }
+    },
+    "richards": {
+      "all_engine_outputs_equal": true,
+      "median_max_rss_bytes": {
+        "bun": 22839296,
+        "node": 44761088,
+        "quench": 18825216,
+        "quickjs": 2736128
+      },
+      "median_score": {
+        "bun": 3198.0,
+        "node": 2612.0,
+        "quench": 428.0,
+        "quickjs": 1961.0
+      },
+      "valid": true,
+      "valid_samples": {
+        "bun": 1,
+        "node": 1,
+        "quench": 1,
+        "quickjs": 1
+      }
+    },
+    "splay": {
+      "all_engine_outputs_equal": true,
+      "median_max_rss_bytes": {
+        "bun": 60112896,
+        "node": 393494528,
+        "quench": 315441152,
+        "quickjs": 151224320
+      },
+      "median_score": {
+        "bun": 6553.0,
+        "node": 11115.0,
+        "quench": 2880.0,
+        "quickjs": 2974.0
+      },
+      "valid": true,
+      "valid_samples": {
+        "bun": 1,
+        "node": 1,
+        "quench": 1,
+        "quickjs": 1
+      }
+    }
+  },
+  "full_runner_report": {
+    "path": "target/iteration/task62-source-cache-all-eight-2026-10-09-full.json",
+    "sha256": "f9d688419f669f254085ab82b842a25e1c2a128522f7d62773c28fcc0cd2e0c3"
+  },
+  "host": {
+    "ambient_benchmark_activity": "None observed before run; no concurrent quench-bench/qjs/bun/node process found",
+    "measurement_backend": "macOS /usr/bin/time -l",
+    "memory_bytes": 17179869184,
+    "model": "Mac16,10",
+    "platform": "macOS-26.5-arm64-arm-64bit",
+    "resource_limits": "No CPU or memory quota reported",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)\nbinary: rustc\ncommit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4\ncommit-date: 2026-09-28\nhost: aarch64-apple-darwin\nrelease: 1.99.0\nLLVM version: 23.1.2",
+    "uname": "Darwin mini.local 25.5.0 Darwin Kernel Version 25.5.0: Mon Apr 27 20:41:26 PDT 2026; root:xnu-12377.121.6~2/RELEASE_ARM64_T8132 arm64"
+  },
+  "qualification": false,
+  "schema": 1,
+  "source": {
+    "dirty": false,
+    "revision": "a4d239fe2f1412fc12ff9b820aea0789e1f9111d"
+  },
+  "suite_inputs": [
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/base.js",
+      "sha256": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/crypto.js",
+      "sha256": "5321d2ada9b61e01d5f281609513467cbaa7c0effb12c577ed08088d812453af"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/deltablue.js",
+      "sha256": "74b5a95f4877701073c6efef08e4ae306562747067e292925b69cbd629a511b9"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/earley-boyer.js",
+      "sha256": "dbf3aeb6b3d056e8ea35b5f19aa8c8a4fb1053e41d07f096c22483b2c1c6ee01"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/navier-stokes.js",
+      "sha256": "ce241465ffeee77b5c4f7119f522aa971fe1fe92c3aed76f7514ea43e07fec84"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/raytrace.js",
+      "sha256": "d52183ca324cdb88d9ee3e78326433fe2ca28d6436f0a6c3ec013ab67cb798eb"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/regexp.js",
+      "sha256": "5268b0d15931fda4e331de35fc58e5beded9a250b60764e1cc7cfc898ab53602"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/richards.js",
+      "sha256": "d86eac4108343a54ba6e10621a77b46f82f554c3b0a46e8fb4032d5cf65a2a11"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/splay.js",
+      "sha256": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d"
+    }
+  ],
+  "task": "62"
+}

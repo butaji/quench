@@ -1,0 +1,36 @@
+{
+  "cases": 8272,
+  "differences": 2,
+  "rows": [
+    {
+      "input": {
+        "op": "transcode",
+        "bytes": [],
+        "from": "utf8",
+        "to": "utf16le"
+      },
+      "node": {
+        "bytes": []
+      },
+      "draft": {
+        "error": "U_INVALID_CHAR_FOUND",
+        "errno": 10
+      }
+    },
+    {
+      "input": {
+        "op": "transcode",
+        "bytes": [],
+        "from": "utf16le",
+        "to": "utf8"
+      },
+      "node": {
+        "bytes": []
+      },
+      "draft": {
+        "error": "U_INVALID_CHAR_FOUND",
+        "errno": 10
+      }
+    }
+  ]
+}

@@ -1,0 +1,57 @@
+{
+  "schema": 1,
+  "task": "61",
+  "experiment": "Splay GC pacing cost diagnostic on Apple M4",
+  "decision": "do not tighten the large-heap allocation headroom yet; measured mark+sweep share is 12.94%, and the prior Linux live/2 trial reduced Score 16.94%",
+  "source": {
+    "revision": "7ea19dcaa0491ef3bec7408b19eb7c3cf1b1866c",
+    "source_clean": true,
+    "binary_sha256": "6e0e27f3c4022ad367732cba50cfd36d5cc654133160de6f4b17ab47d418f400"
+  },
+  "host": {
+    "platform": "macOS 26.5; arm64 Apple M4",
+    "measurement": "profile-aggregate counters plus /usr/bin/time wall clock"
+  },
+  "input": {
+    "corpus_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+    "sha256": "31c30963144a07d45bcbfe9988bec95df39f8447485806e4decc7fa457c86215",
+    "fixture": "Splay"
+  },
+  "measurement": {
+    "collections": 17,
+    "mark_nanos": 290205211,
+    "sweep_nanos": 34087834,
+    "mark_plus_sweep_nanos": 324293045,
+    "process_wall_nanos": 2506222792,
+    "mark_plus_sweep_share_percent": 12.93951383872021,
+    "profile_score": 1452,
+    "score_note": "Profile build score is diagnostic only and excluded from performance comparisons.",
+    "pacing_model": {
+      "current_large_heap_headroom": "one live-cell count of allocations after collection",
+      "estimated_high_water": "about 2x survivors",
+      "if_headroom_halved": {
+        "gc_share_as_fraction_of_new_total": 0.1146,
+        "interpretation": "rough score loss estimate assuming collection count doubles and per-collection work is unchanged"
+      }
+    },
+    "decision_basis": "Measured 12.94% is above the suggested 10% cutoff; the simple model predicts about 11.46% score loss for half headroom. Prior Linux results likewise do not justify this policy change before collections are cheaper."
+  },
+  "profile_integrity": {
+    "exit_status": -6,
+    "complete": false,
+    "reason": "dispatch/opcode matrix lost physical executions",
+    "physical_dispatches": 82565283,
+    "derived_dispatches": 82570447,
+    "note": "GC counters were emitted before the existing post-run dispatch accounting assertion. Diagnostic estimate only, not qualification."
+  },
+  "artifacts": {
+    "summary_path": "target/iteration/task61-splay-gc-share-20261009/summary.json",
+    "summary_sha256": "74fba7c77c2d753d9d74c85067f8ddce158229b7b8fab746c7606b0235717f87",
+    "profile_path": "target/iteration/task61-splay-gc-share-20261009/profile.json",
+    "profile_sha256": "0aec442fe7347bcc670aaa1b5f47e19f34f0105cc4e99f1080b3643ff16fee4e",
+    "stdout_path": "target/iteration/task61-splay-gc-share-20261009/splay.stdout",
+    "stdout_sha256": "7814b3faca7ee8c2eee78a9a2b26a66574214d5eeb904775a2c6b985331477e9",
+    "stderr_path": "target/iteration/task61-splay-gc-share-20261009/splay.stderr",
+    "stderr_sha256": "14db50e6dd41af25359a6463dd2883fa006844515099202568988c8840f4499d"
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "all_valid": false,
+  "binaries": [
+    {
+      "path": "/workspace/quench/work/guard-marker-but-failure.sh",
+      "sha256": "893410352e562828903119126539fb634db1c0267fde1e2a76b00c2ce636c6db"
+    }
+  ],
+  "cases_per_binary": 2,
+  "expected_cases": 2,
+  "identities_unchanged": true,
+  "kind": "fixed-work correctness replay, not timing or instruction measurement",
+  "results": [
+    {
+      "binary_index": 0,
+      "completion_marker": true,
+      "exit_code": 7,
+      "fixture": "probe",
+      "input": "/workspace/quench/work/guard-negative-inputs/probe-0.js",
+      "input_sha256": "97e97c267bb445d4167d18087147e45ed3951fef31e08ce977e81b4955598bd3",
+      "runs": 0,
+      "stderr": "/workspace/quench/work/guard-negative-failed-process/0-probe-0.stderr",
+      "stderr_empty": true,
+      "stdout": "/workspace/quench/work/guard-negative-failed-process/0-probe-0.stdout",
+      "timed_out": false,
+      "valid": false
+    },
+    {
+      "binary_index": 0,
+      "completion_marker": true,
+      "exit_code": 7,
+      "fixture": "probe",
+      "input": "/workspace/quench/work/guard-negative-inputs/probe-1.js",
+      "input_sha256": "72aa717cae8582bf5da3b9d0e8fc8384d2c87d5dfe3a0861ee773bcf06bcef8e",
+      "runs": 1,
+      "stderr": "/workspace/quench/work/guard-negative-failed-process/0-probe-1.stderr",
+      "stderr_empty": true,
+      "stdout": "/workspace/quench/work/guard-negative-failed-process/0-probe-1.stdout",
+      "timed_out": false,
+      "valid": false
+    }
+  ]
+}

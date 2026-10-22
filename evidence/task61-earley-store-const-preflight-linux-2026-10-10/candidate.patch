@@ -1,0 +1,114 @@
+diff --git a/crates/quench-runtime/src/bytecode.rs b/crates/quench-runtime/src/bytecode.rs
+index 315d451f8..25405595d 100644
+--- a/crates/quench-runtime/src/bytecode.rs
++++ b/crates/quench-runtime/src/bytecode.rs
+@@ -533,6 +533,7 @@ opcodes!(
+     MakeObject2 => CALL_EFFECT; layout Scalar; meaning ObjectSiteIndex, @ Returnable, @ fields(ResultRegister, Register, Register),
+     MakeObjectLiteral => CALL_EFFECT; layout Scalar; meaning ObjectSiteIndex, @ Returnable, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
+     SuperConstArrayObject2 => CALL_EFFECT; layout Scalar; meaning SuperinstructionIndex, @ Returnable, @ fields(ResultRegister, Unused, Unused),
++    SuperStoreLocalPlainLoadConst => Effect::PURE; layout Scalar; meaning SuperinstructionIndex, @ Register, @ fields(Unused, Unused, Unused),
+     GetIterator => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
+     GetAsyncIterator => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
+     CreateRegExpLiteral => CALL_EFFECT; layout Scalar; meaning RegExpLiteralSiteIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
+diff --git a/crates/quench-runtime/src/compile/rewrite.rs b/crates/quench-runtime/src/compile/rewrite.rs
+index 44e54a12a..d57445c54 100644
+--- a/crates/quench-runtime/src/compile/rewrite.rs
++++ b/crates/quench-runtime/src/compile/rewrite.rs
+@@ -194,11 +194,18 @@ struct SuperRule {
+ }
+ 
+ const CONST_ARRAY_OBJECT2: [Op; 4] = [Op::MakeConstArray, Op::Binary, Op::Binary, Op::MakeObject2];
+-
+-const SUPER_RULES: &[SuperRule] = &[SuperRule {
+-    pattern: &[Op::MakeConstArray, Op::Binary, Op::Binary, Op::MakeObject2],
+-    fuse: fuse_const_array_object2,
+-}];
++const STORE_LOCAL_PLAIN_LOAD_CONST: [Op; 2] = [Op::StoreLocalPlain, Op::LoadConst];
++
++const SUPER_RULES: &[SuperRule] = &[
++    SuperRule {
++        pattern: &STORE_LOCAL_PLAIN_LOAD_CONST,
++        fuse: fuse_store_local_plain_load_const,
++    },
++    SuperRule {
++        pattern: &[Op::MakeConstArray, Op::Binary, Op::Binary, Op::MakeObject2],
++        fuse: fuse_const_array_object2,
++    },
++];
+ 
+ fn rewrite_super_window(
+     function: &mut BcFunction,
+@@ -285,6 +292,23 @@ fn fuse_const_array_object2(
+     ))
+ }
+ 
++fn fuse_store_local_plain_load_const(
++    window: &[Instr],
++    superinstructions: &mut Vec<Superinstruction>,
++) -> Option<Instr> {
++    let [store, load]: [Instr; 2] = window.try_into().ok()?;
++    if store.result_flags() != 0 || load.result_flags() != 0 {
++        return None;
++    }
++    let site = u32::try_from(superinstructions.len()).ok()?;
++    let instruction = Instr::try_new(Op::SuperStoreLocalPlainLoadConst, 0, 0, 0, site)?;
++    let nop = Instr::new(Op::Nop, 0, 0, 0, 0);
++    superinstructions.push(Superinstruction {
++        code: [store, load, nop, nop],
++    });
++    Some(instruction)
++}
++
+ pub(super) fn protected_positions(
+     code: &[Instr],
+     handlers: &[crate::bytecode::Handler],
+diff --git a/crates/quench-runtime/src/vm/dispatch.rs b/crates/quench-runtime/src/vm/dispatch.rs
+index 46ba9a381..1bf380ad3 100644
+--- a/crates/quench-runtime/src/vm/dispatch.rs
++++ b/crates/quench-runtime/src/vm/dispatch.rs
+@@ -400,6 +400,9 @@ impl<H: Host> Vm<H> {
+                     return Ok(StepResult::Return(value));
+                 }
+             }
++            Op::SuperStoreLocalPlainLoadConst => {
++                self.execute_store_local_plain_load_const(p, f, i)?;
++            }
+             Op::MakeArray => {
+                 let v = self.heap.alloc(Cell::Array {
+                     object: Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
+diff --git a/crates/quench-runtime/src/vm/superinstruction.rs b/crates/quench-runtime/src/vm/superinstruction.rs
+index 0b6eecb45..55ea7a560 100644
+--- a/crates/quench-runtime/src/vm/superinstruction.rs
++++ b/crates/quench-runtime/src/vm/superinstruction.rs
+@@ -1,6 +1,31 @@
+ use super::*;
+ 
+ impl<H: Host> Vm<H> {
++    #[inline(always)]
++    pub(super) fn execute_store_local_plain_load_const(
++        &mut self,
++        program: &ResidualProgram,
++        frame: usize,
++        instruction: WideInstruction,
++    ) -> Result<(), JsError> {
++        let [store, load, _, _] =
++            program.superinstructions[instruction.superinstruction_index()].code;
++        debug_assert_eq!(store.op(), Op::StoreLocalPlain);
++        debug_assert_eq!(load.op(), Op::LoadConst);
++        let value = self.read(frame, store.register_a());
++        // SAFETY: validation bounds the local slot by the current function.
++        unsafe { self.write_validated_local(frame, store.local_slot(), value) };
++        if let Some(register) = store.optional_register_b() {
++            self.write(frame, register, value);
++        }
++        let constant = self
++            .programs
++            .constant(self.frames[frame].program, load.constant_index())
++            .ok_or_else(|| JsError::validation("constant index is outside program".into()))?;
++        self.write(frame, load.result_register(), constant);
++        Ok(())
++    }
++
+     pub(super) fn execute_const_array_object2(
+         &mut self,
+         program: &ResidualProgram,

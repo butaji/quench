@@ -1,0 +1,9 @@
+    Finished `iteration` profile [optimized] target(s) in 0.11s
+     Running tests/child_entry.rs (work/host-build/iteration/deps/child_entry-0c4d472d0248eb46)
+
+running 2 tests
+test filesystem_metadata_file_urls_validate_scheme_host_and_encoded_separators ... ok
+test filesystem_metadata_callback_exceptions_escape_without_second_delivery ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 261 filtered out; finished in 1.91s
+

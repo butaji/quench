@@ -1,0 +1,14 @@
+{
+  "scope": "Extended util.types to 40 runtime builtin-slot predicates.",
+  "node_oracle": "v24.19.0",
+  "oracle_regression": "40 predicates over 52 values including boxed primitives, async/generator functions and objects, Map/Set iterator variants, prototype spoofs, proxies/revoked proxies, and cross-realm values. Native names/lengths and util/types identity match.",
+  "module_namespace_probe": {
+    "source": "import * as util from 'node:util'; console.log(util.types.isModuleNamespaceObject(util)); console.log(util.types.isModuleNamespaceObject(new Proxy(util, {}))); console.log(util.types.isModuleNamespaceObject({[Symbol.toStringTag]: 'Module'}));",
+    "node_and_quench_output": [
+      "true",
+      "false",
+      "false"
+    ]
+  },
+  "performance_claim": false
+}

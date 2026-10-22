@@ -1,0 +1,583 @@
+{
+  "schema": 1,
+  "task": "61",
+  "experiment": "V2 bounded dense array holes, isolated Linux EarleyBoyer production pairs",
+  "source": {
+    "baseline_revision": "665811c9273b0b734a5b1ec80f78434a11037423",
+    "candidate_base_revision": "665811c9273b0b734a5b1ec80f78434a11037423",
+    "candidate_dirty": true,
+    "candidate_patch_sha256": "cbdf81a3da058e201ab147dd03b4d40a80d8d6a8b5e82344d142c0e31c524db4"
+  },
+  "host": {
+    "uname": {
+      "system": "Linux",
+      "node": "1c7595109800",
+      "release": "6.18.44",
+      "version": "#1 SMP Sat Sep 26 20:02:31 UTC 2026",
+      "machine": "x86_64",
+      "processor": ""
+    },
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)\nbinary: rustc\ncommit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4\ncommit-date: 2026-09-28\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.0\nLLVM version: 23.1.1",
+    "cpu_quota": "400000 100000",
+    "memory_limit_bytes": 17179869184,
+    "rss_backend": "Linux wait4 ru_maxrss, KiB normalized to bytes"
+  },
+  "corpus_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+  "runner_sha256": "5db8fc3d95af475430bc5015aeaf1f1ff899d8bf670067f91bc75087e360c7cb",
+  "rounds_per_fixture": 11,
+  "bootstrap_resamples": 100000,
+  "binary_sha256": {
+    "baseline": "0d213301e93ce81273de2e687215537eec4709907be5140fb6ea4e8a5e675ed7",
+    "candidate": "13420569b20285cdb9833af1314527c1d83af7d9fdba8ecefc162be30bf348b6"
+  },
+  "commands": {
+    "baseline": [
+      "work/stageb-dense-holes-linux-2026-10-09/quench-node-baseline",
+      "<materialized-fixture>"
+    ],
+    "candidate": [
+      "work/stageb-dense-holes-linux-2026-10-09/quench-node-candidate",
+      "<materialized-fixture>"
+    ]
+  },
+  "measurement_environment": {
+    "HOME": "/home/agent",
+    "LANG": "C.UTF-8",
+    "LC_ALL": "C.UTF-8",
+    "PATH": "/workspace/quench/work/stageb-tools/cargo-home/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+  },
+  "fixtures": {
+    "earley-boyer.js": {
+      "source_sha256": "dbf3aeb6b3d056e8ea35b5f19aa8c8a4fb1053e41d07f096c22483b2c1c6ee01",
+      "materialized_sha256": "aa379c1d54f5d13de32ebf2b50729d0cbc64bb23de5e524256c7b2270213cc0b",
+      "materialized_path": "work/stageb-dense-holes-linux-2026-10-09/materialized/earley-boyer-materialized.js",
+      "valid": true,
+      "output_equal": true,
+      "rounds": [
+        {
+          "pair": 1,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "baseline": {
+              "command": [
+                "work/stageb-dense-holes-linux-2026-10-09/quench-node-baseline",
+                "/workspace/quench/work/stageb-dense-holes-linux-2026-10-09/materialized/earley-boyer-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 174.0,
+              "maximum_rss_bytes": 53436416,
+              "wall_ns": 41541622100,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 174"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 174\n----\nScore: 174\n",
+              "stderr": ""
+            },
+            "candidate": {
+              "command": [
+                "work/stageb-dense-holes-linux-2026-10-09/quench-node-candidate",
+                "/workspace/quench/work/stageb-dense-holes-linux-2026-10-09/materialized/earley-boyer-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 177.0,
+              "maximum_rss_bytes": 52768768,
+              "wall_ns": 43530672667,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 177"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 177\n----\nScore: 177\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "pair": 2,
+          "execution_order": [
+            "candidate",
+            "baseline"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "candidate": {
+              "command": [
+                "work/stageb-dense-holes-linux-2026-10-09/quench-node-candidate",
+                "/workspace/quench/work/stageb-dense-holes-linux-2026-10-09/materialized/earley-boyer-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 168.0,
+              "maximum_rss_bytes": 53469184,
+              "wall_ns": 43515457867,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 168"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 168\n----\nScore: 168\n",
+              "stderr": ""
+            },
+            "baseline": {
+              "command": [
+                "work/stageb-dense-holes-linux-2026-10-09/quench-node-baseline",
+                "/workspace/quench/work/stageb-dense-holes-linux-2026-10-09/materialized/earley-boyer-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 180.0,
+              "maximum_rss_bytes": 55042048,
+              "wall_ns": 41232965191,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 180"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 180\n----\nScore: 180\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "pair": 3,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "baseline": {
+              "command": [
+                "work/stageb-dense-holes-linux-2026-10-09/quench-node-baseline",
+                "/workspace/quench/work/stageb-dense-holes-linux-2026-10-09/materialized/earley-boyer-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 175.0,
+              "maximum_rss_bytes": 53739520,
+              "wall_ns": 42208200456,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 175"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 175\n----\nScore: 175\n",
+              "stderr": ""
+            },
+            "candidate": {
+              "command": [
+                "work/stageb-dense-holes-linux-2026-10-09/quench-node-candidate",
+                "/workspace/quench/work/stageb-dense-holes-linux-2026-10-09/materialized/earley-boyer-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 170.0,
+              "maximum_rss_bytes": 53067776,
+              "wall_ns": 43428440489,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 170"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 170\n----\nScore: 170\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "pair": 4,
+          "execution_order": [
+            "candidate",
+            "baseline"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "candidate": {
+              "command": [
+                "work/stageb-dense-holes-linux-2026-10-09/quench-node-candidate",
+                "/workspace/quench/work/stageb-dense-holes-linux-2026-10-09/materialized/earley-boyer-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 173.0,
+              "maximum_rss_bytes": 52908032,
+              "wall_ns": 42135023280,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 173"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 173\n----\nScore: 173\n",
+              "stderr": ""
+            },
+            "baseline": {
+              "command": [
+                "work/stageb-dense-holes-linux-2026-10-09/quench-node-baseline",
+                "/workspace/quench/work/stageb-dense-holes-linux-2026-10-09/materialized/earley-boyer-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 174.0,
+              "maximum_rss_bytes": 53706752,
+              "wall_ns": 42545207575,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 174"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 174\n----\nScore: 174\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "pair": 5,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "baseline": {
+              "command": [
+                "work/stageb-dense-holes-linux-2026-10-09/quench-node-baseline",
+                "/workspace/quench/work/stageb-dense-holes-linux-2026-10-09/materialized/earley-boyer-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 173.0,
+              "maximum_rss_bytes": 53583872,
+              "wall_ns": 41869661130,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 173"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 173\n----\nScore: 173\n",
+              "stderr": ""
+            },
+            "candidate": {
+              "command": [
+                "work/stageb-dense-holes-linux-2026-10-09/quench-node-candidate",
+                "/workspace/quench/work/stageb-dense-holes-linux-2026-10-09/materialized/earley-boyer-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 170.0,
+              "maximum_rss_bytes": 53862400,
+              "wall_ns": 43886136502,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 170"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 170\n----\nScore: 170\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "pair": 6,
+          "execution_order": [
+            "candidate",
+            "baseline"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "candidate": {
+              "command": [
+                "work/stageb-dense-holes-linux-2026-10-09/quench-node-candidate",
+                "/workspace/quench/work/stageb-dense-holes-linux-2026-10-09/materialized/earley-boyer-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 171.0,
+              "maximum_rss_bytes": 53796864,
+              "wall_ns": 43859938815,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 171"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 171\n----\nScore: 171\n",
+              "stderr": ""
+            },
+            "baseline": {
+              "command": [
+                "work/stageb-dense-holes-linux-2026-10-09/quench-node-baseline",
+                "/workspace/quench/work/stageb-dense-holes-linux-2026-10-09/materialized/earley-boyer-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 156.0,
+              "maximum_rss_bytes": 52682752,
+              "wall_ns": 45528909295,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 156"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 156\n----\nScore: 156\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "pair": 7,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "baseline": {
+              "command": [
+                "work/stageb-dense-holes-linux-2026-10-09/quench-node-baseline",
+                "/workspace/quench/work/stageb-dense-holes-linux-2026-10-09/materialized/earley-boyer-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 179.0,
+              "maximum_rss_bytes": 52051968,
+              "wall_ns": 41723703304,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 179"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 179\n----\nScore: 179\n",
+              "stderr": ""
+            },
+            "candidate": {
+              "command": [
+                "work/stageb-dense-holes-linux-2026-10-09/quench-node-candidate",
+                "/workspace/quench/work/stageb-dense-holes-linux-2026-10-09/materialized/earley-boyer-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 172.0,
+              "maximum_rss_bytes": 53153792,
+              "wall_ns": 42567147941,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 172"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 172\n----\nScore: 172\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "pair": 8,
+          "execution_order": [
+            "candidate",
+            "baseline"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "candidate": {
+              "command": [
+                "work/stageb-dense-holes-linux-2026-10-09/quench-node-candidate",
+                "/workspace/quench/work/stageb-dense-holes-linux-2026-10-09/materialized/earley-boyer-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 172.0,
+              "maximum_rss_bytes": 53510144,
+              "wall_ns": 44897334647,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 172"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 172\n----\nScore: 172\n",
+              "stderr": ""
+            },
+            "baseline": {
+              "command": [
+                "work/stageb-dense-holes-linux-2026-10-09/quench-node-baseline",
+                "/workspace/quench/work/stageb-dense-holes-linux-2026-10-09/materialized/earley-boyer-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 161.0,
+              "maximum_rss_bytes": 53248000,
+              "wall_ns": 43385254932,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 161"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 161\n----\nScore: 161\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "pair": 9,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "baseline": {
+              "command": [
+                "work/stageb-dense-holes-linux-2026-10-09/quench-node-baseline",
+                "/workspace/quench/work/stageb-dense-holes-linux-2026-10-09/materialized/earley-boyer-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 160.0,
+              "maximum_rss_bytes": 53485568,
+              "wall_ns": 44065835908,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 160"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 160\n----\nScore: 160\n",
+              "stderr": ""
+            },
+            "candidate": {
+              "command": [
+                "work/stageb-dense-holes-linux-2026-10-09/quench-node-candidate",
+                "/workspace/quench/work/stageb-dense-holes-linux-2026-10-09/materialized/earley-boyer-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 177.0,
+              "maximum_rss_bytes": 53682176,
+              "wall_ns": 40848353928,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 177"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 177\n----\nScore: 177\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "pair": 10,
+          "execution_order": [
+            "candidate",
+            "baseline"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "candidate": {
+              "command": [
+                "work/stageb-dense-holes-linux-2026-10-09/quench-node-candidate",
+                "/workspace/quench/work/stageb-dense-holes-linux-2026-10-09/materialized/earley-boyer-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 176.0,
+              "maximum_rss_bytes": 53219328,
+              "wall_ns": 41441860890,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 176"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 176\n----\nScore: 176\n",
+              "stderr": ""
+            },
+            "baseline": {
+              "command": [
+                "work/stageb-dense-holes-linux-2026-10-09/quench-node-baseline",
+                "/workspace/quench/work/stageb-dense-holes-linux-2026-10-09/materialized/earley-boyer-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 174.0,
+              "maximum_rss_bytes": 53522432,
+              "wall_ns": 41880756974,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 174"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 174\n----\nScore: 174\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "pair": 11,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "baseline": {
+              "command": [
+                "work/stageb-dense-holes-linux-2026-10-09/quench-node-baseline",
+                "/workspace/quench/work/stageb-dense-holes-linux-2026-10-09/materialized/earley-boyer-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 177.0,
+              "maximum_rss_bytes": 54153216,
+              "wall_ns": 41895666260,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 177"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 177\n----\nScore: 177\n",
+              "stderr": ""
+            },
+            "candidate": {
+              "command": [
+                "work/stageb-dense-holes-linux-2026-10-09/quench-node-candidate",
+                "/workspace/quench/work/stageb-dense-holes-linux-2026-10-09/materialized/earley-boyer-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 181.0,
+              "maximum_rss_bytes": 53837824,
+              "wall_ns": 40856246116,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 181"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 181\n----\nScore: 181\n",
+              "stderr": ""
+            }
+          }
+        }
+      ],
+      "summary": {
+        "baseline_median_score": 174.0,
+        "candidate_median_score": 172.0,
+        "score_delta": -2.0,
+        "score_delta_percent": -1.1494252873563204,
+        "score_delta_95_percentile_interval": {
+          "lower_95": -5.0,
+          "upper_95": 11.0,
+          "resamples": 100000,
+          "method": "paired percentile bootstrap of difference in medians",
+          "seed": 20261009
+        },
+        "baseline_median_maximum_rss_bytes": 53522432,
+        "candidate_median_maximum_rss_bytes": 53469184,
+        "maximum_rss_delta_bytes": -53248,
+        "maximum_rss_delta_95_percentile_interval": {
+          "lower_95": -638976.0,
+          "upper_95": 274432.0,
+          "resamples": 100000,
+          "method": "paired percentile bootstrap of difference in medians",
+          "seed": 20261009
+        },
+        "candidate_lower_score_pairs": 5,
+        "candidate_lower_rss_pairs": 6
+      }
+    }
+  },
+  "valid": true,
+  "qualification_ready": false,
+  "decision_rule": "Report paired Score and maximum-RSS intervals per affected fixture; output must match. This Quench-only screen does not establish Task 61 engine leadership."
+}

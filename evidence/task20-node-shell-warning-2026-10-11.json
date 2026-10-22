@@ -1,0 +1,27 @@
+{
+  "scope": "Once-only DEP0190 policy shared by synchronous and asynchronous child execution",
+  "oracle": "v27.0.0-nightly20260819c79868f102",
+  "validation": {
+    "child_entry": {
+      "pass": 12,
+      "fail": 0,
+      "log": "work/shell-warning-integration.log"
+    },
+    "execution_subset": {
+      "counts": {
+        "fail": 12,
+        "skip": 1,
+        "pass": 3,
+        "timeout": 2
+      },
+      "total": 18,
+      "inventory_hash": "33b0084ac9056ec4",
+      "timeout_secs": 10,
+      "jobs": 2,
+      "raw_results": "work/exec-shell-warning-subset.json"
+    }
+  },
+  "new_pass": "test-child-process-execfile.js",
+  "remaining": "Parallel inventory and callbackify exception output remain incomplete",
+  "performance_claim": false
+}

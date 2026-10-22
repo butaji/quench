@@ -1,0 +1,272 @@
+{
+  "schema": 1,
+  "task": "50 / 61",
+  "date": "2026-10-09",
+  "experiment": "compact cold Cell payloads to 80-byte slots",
+  "status": "pre-gate Linux optimization retained for a measured Splay RSS reduction; Stage B qualification remains open",
+  "branch": "v2-cloud",
+  "base_revision": "97f90b95655d9716a27183121e34965445b1c1e1",
+  "source_dirty": true,
+  "source_diff_sha256": "720cdc0fb715f251db238939ae96e2bca63b8244fb9d8dba74b97022f043437b",
+  "baseline_binary_sha256": "078d7134ec90d29b640d224223bdf663a400f12b2a8fbcb53e912fcce62e9509",
+  "candidate_binary_sha256": "560ee6976cf5240549e92df223636c15fcba202a716834a4ed852420d9d8cd90",
+  "host": {
+    "uname": "Linux-6.18.44-x86_64-with-glibc2.41",
+    "cpu_model": "AMD EPYC 9V74 80-Core Processor",
+    "cpu_quota": "400000 100000",
+    "memory_limit_bytes": 17179869184,
+    "measurement_backend": "Linux wait4 rusage"
+  },
+  "toolchain": {
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)",
+    "candidate_build": "cargo build --profile production -p quench-node --bin quench-node",
+    "type_layout_command": "RUSTC_BOOTSTRAP=1 cargo rustc -p quench-runtime --profile production --lib -- -Zprint-type-sizes"
+  },
+  "representation_changes": [
+    "Cell::WeakMap.entries: WeakMapEntries -> Box<WeakMapEntries>",
+    "Cell::Iterator.next_method: Option<Value> -> Value, using Value::DELETED for absent internal methods",
+    "Cell::Environment.dynamic_bindings: EnvironmentBindings -> Box<EnvironmentBindings>",
+    "Cell::RegExp.source: JsString -> Box<JsString>",
+    "Cell::TemporalDuration.fields: [f64; 10] -> Box<[f64; 10]>",
+    "Cell::TemporalZonedDateTime.time_zone: String -> Box<String>"
+  ],
+  "type_layout": {
+    "baseline_from_task50": {
+      "Cell_bytes": 96,
+      "Slot_bytes": 96
+    },
+    "candidate": {
+      "Cell_bytes": 80,
+      "Slot_bytes": 80,
+      "alignment_bytes": 16
+    },
+    "saved_bytes_per_slot": 16,
+    "splay_slot_capacity": 1562624,
+    "candidate_slot_bytes_at_capacity": 125009920,
+    "baseline_slot_bytes_at_same_capacity": 150011904,
+    "saved_bytes_at_same_capacity": 25001984,
+    "excerpt": "task50-compact-cell-80byte-type-layout-2026-10-09.txt",
+    "baseline_excerpt": "task50-compact-cells-type-layout-excerpt.txt"
+  },
+  "splay_paired_screen": {
+    "fixture": "quench-bench/js-engine-benchmark/v8-v7/splay.js (base.js and benchmark runner materialized)",
+    "fixture_sha256": "31c30963144a07d45bcbfe9988bec95df39f8447485806e4decc7fa457c86215",
+    "rounds": 11,
+    "order": "alternating baseline/candidate",
+    "binary_hashes": {
+      "baseline": "078d7134ec90d29b640d224223bdf663a400f12b2a8fbcb53e912fcce62e9509",
+      "candidate": "560ee6976cf5240549e92df223636c15fcba202a716834a4ed852420d9d8cd90"
+    },
+    "summary": {
+      "baseline_score_median": 831.0,
+      "candidate_score_median": 906.0,
+      "score_delta": {
+        "median": 47.0,
+        "95_ci": [
+          -9.0,
+          275.0
+        ]
+      },
+      "baseline_rss_median_bytes": 235425792,
+      "candidate_rss_median_bytes": 202526720,
+      "rss_delta_bytes": {
+        "median": -32915456,
+        "95_ci": [
+          -33087488,
+          -32694272
+        ]
+      },
+      "all_outputs_equal": true
+    },
+    "raw_pairs": "task50-compact-cell-80byte-splay-pairs-2026-10-09.json",
+    "runner": "task50-compact-cell-80byte-run-splay-pairs-2026-10-09.py"
+  },
+  "regexp_directional_screen": {
+    "fixture": "quench-bench/js-engine-benchmark/v8-v7/regexp.js (base.js and benchmark runner materialized)",
+    "fixture_sha256": "2ec05d15bfdece58aea94cd92b47dcd60ea605787c81f6e50db0c2830f3cbb16",
+    "rounds": 1,
+    "summary": {
+      "baseline_score_median": 17.9,
+      "candidate_score_median": 17.6,
+      "score_delta": {
+        "median": -0.29999999999999716,
+        "95_ci": [
+          -0.29999999999999716,
+          -0.29999999999999716
+        ]
+      },
+      "baseline_rss_median_bytes": 42209280,
+      "candidate_rss_median_bytes": 42352640,
+      "rss_delta_bytes": {
+        "median": 143360,
+        "95_ci": [
+          143360,
+          143360
+        ]
+      },
+      "all_outputs_equal": true
+    },
+    "interpretation": "directional only; one pair is not enough to estimate a confidence interval",
+    "raw_pairs": "task50-compact-cell-80byte-regexp-pairs-2026-10-09.json",
+    "runner": "task50-compact-cell-80byte-run-regexp-screen-2026-10-09.py"
+  },
+  "memory_profile": {
+    "command": "QUENCH_MEMORY=1 target/production/quench-node work/stageb-candidates/splay-memory-profile.js",
+    "profile_binary_sha256": "b543801cb8cf96472683720df7559f0d3a9e255ba5f96ae1e56c7e0b61b6e7d8",
+    "fixture_sha256": "361cd3d5972fce0079ff4511e71f34deb3091a72c744c41033695534c2c5bf09",
+    "heap_slots": 1562212,
+    "slot_bytes": 125009920,
+    "free_bytes": 3145728,
+    "cell_bytes": 82246376,
+    "property_values": 3799312,
+    "property_capacity": 4904060,
+    "live_property_values": 1992929,
+    "live_property_capacity": 3799312,
+    "array_elements": 4580521,
+    "array_capacity": 4580538,
+    "cell_counts": {
+      "object": 947877,
+      "array": 458082,
+      "map": 0,
+      "set": 0,
+      "iterator": 16,
+      "weak_map": 4,
+      "weak_set": 0,
+      "weak_ref": 0,
+      "function": 1524,
+      "environment": 185,
+      "string": 54052,
+      "bigint": 0,
+      "symbol": 38,
+      "date": 80,
+      "error": 0,
+      "regexp": 0,
+      "array_from_async": 0,
+      "temporal_duration": 0,
+      "temporal_plain_date": 0,
+      "temporal_plain_date_time": 0,
+      "temporal_plain_month_day": 0,
+      "temporal_plain_year_month": 0,
+      "temporal_zoned_date_time": 0,
+      "temporal_instant": 0,
+      "wasm_global": 0,
+      "wasm_memory": 0,
+      "wasm_table": 0,
+      "wasm_elements": 0,
+      "wasm_bits64": 0,
+      "wasm_host_function": 0,
+      "wasm_v128": 0,
+      "wasm_gc": 0,
+      "wasm_extern": 0,
+      "wasm_tag": 0,
+      "wasm_exception": 0
+    },
+    "selected_allocation_counts_and_live_payload_bytes": {
+      "object": {
+        "allocated_counts": 1726821,
+        "live_counts": 947877,
+        "live_current_bytes": 216,
+        "peak_live_counts": 1030388,
+        "allocated_birth_bytes": 0
+      },
+      "array": {
+        "allocated_counts": 811609,
+        "live_counts": 458082,
+        "live_current_bytes": 36647112,
+        "peak_live_counts": 496347,
+        "allocated_birth_bytes": 64924008
+      },
+      "weak_map": {
+        "allocated_counts": 4,
+        "live_counts": 4,
+        "live_current_bytes": 224,
+        "peak_live_counts": 4,
+        "allocated_birth_bytes": 224
+      },
+      "function": {
+        "allocated_counts": 1542,
+        "live_counts": 1524,
+        "live_current_bytes": 36576,
+        "peak_live_counts": 1523,
+        "allocated_birth_bytes": 37008
+      },
+      "environment": {
+        "allocated_counts": 214,
+        "live_counts": 185,
+        "live_current_bytes": 133896,
+        "peak_live_counts": 183,
+        "allocated_birth_bytes": 152192
+      },
+      "string": {
+        "allocated_counts": 106523,
+        "live_counts": 54052,
+        "live_current_bytes": 3905089,
+        "peak_live_counts": 33617,
+        "allocated_birth_bytes": 8522579
+      }
+    },
+    "raw_stdout": "task50-compact-cell-80byte-splay-profile-2026-10-09.stdout",
+    "raw_stderr": "task50-compact-cell-80byte-splay-profile-2026-10-09.stderr",
+    "fixture_copy": "task50-compact-cell-80byte-splay-profile-fixture-2026-10-09.js"
+  },
+  "correctness": {
+    "cargo_check_default": "passed",
+    "cargo_check_profile_memory": "passed",
+    "profile_memory_box_accounting_unit_test": "passed (1 test)",
+    "node_version": "v24.19.0",
+    "node_oracle_flags": [
+      "--harmony-temporal"
+    ],
+    "node_oracle_common_outputs_equal": true,
+    "node_oracle_sha256": "9d8927a7485c71424e3a80169c647280aeb6bf833ef9afb9de7f7b0711855e6f",
+    "node_oracle_script": "task50-compact-cell-80byte-node-oracle-2026-10-09.js",
+    "node_output": "task50-compact-cell-80byte-node-oracle-2026-10-09-node.out",
+    "quench_output": "task50-compact-cell-80byte-node-oracle-2026-10-09-quench.out",
+    "node_temporal_limit": "Node v24.19 experimental Temporal does not expose timeZoneId; the current TC39 proposal specifies it as an accessor returning [[TimeZone]], so it was excluded from the common-output comparison.",
+    "test262": {
+      "language_stages_8_to_14": 11780,
+      "array_stages_31_to_35": 3471,
+      "iterator_map_stages_52_to_55": 894,
+      "regexp_source": 12,
+      "regexp_lastindex": 63,
+      "regexp_string_iterator_stage_65": 17,
+      "temporal_duration": 540,
+      "temporal_zoned_datetime": 994,
+      "weakmap_stage_79": 141,
+      "passed_total": 17912,
+      "failed": 0,
+      "full_regexp_stage_64": "not completed; focused source and lastIndex cases were used because generated Unicode property cases took several minutes per batch"
+    },
+    "full_runtime_unit_suite": {
+      "passed": 502,
+      "failed": 8,
+      "total": 510,
+      "failures": [
+        "api::tests::regression_intl_german_date_format_ignores_string_split_override",
+        "bytecode::tests::decoder_rejects_invalid_binding_site_metadata",
+        "five vm::object_tests optional/method-cache cases: invalid function source positions",
+        "vm::wasm::tests::serialized_function_imports_preserve_identity_capture_and_index_domains_through_gc"
+      ],
+      "status": "not resolved by this heap-layout experiment; failures are outside the changed Cell field accessors, but were not baseline-controlled"
+    }
+  },
+  "online_research": [
+    {
+      "url": "https://doc.rust-lang.org/unstable-book/compiler-flags/print-type-sizes.html",
+      "use": "official explanation of the Rust layout census flag; byte sizes come from this local production build"
+    },
+    {
+      "url": "https://doc.rust-lang.org/std/boxed/struct.Box.html",
+      "use": "official Box ownership and allocation documentation; performance conclusions come from paired local measurements"
+    },
+    {
+      "url": "https://tc39.es/proposal-temporal/#sec-get-temporal.zoneddatetime.prototype.timezoneid",
+      "use": "current Temporal getter semantics used to resolve Node v24 experimental implementation drift"
+    }
+  ],
+  "stage_b_gates_remaining": [
+    "11 paired production rounds on all eight fixtures against QuickJS, Bun/JSC with JIT disabled, and Node --jitless",
+    "candidate must beat every comparator in median Score and maximum RSS per fixture with paired intervals excluding ties",
+    "host qualification on Apple M4"
+  ]
+}

@@ -1,0 +1,15 @@
+diff --git a/crates/quench-runtime/src/vm/construction.rs b/crates/quench-runtime/src/vm/construction.rs
+index 52c2ad541..f67c19deb 100644
+--- a/crates/quench-runtime/src/vm/construction.rs
++++ b/crates/quench-runtime/src/vm/construction.rs
+@@ -457,7 +457,9 @@ impl<H: Host> Vm<H> {
+                 if !vm.is_constructable(p, callee) {
+                     return Err(vm.type_error(p, "value is not a constructor".into()));
+                 }
+-                if !vm.is_constructable(p, new_target) {
++                // `Construct` supplies the callee as its own newTarget. In that
++                // common case the first check already proves both conditions.
++                if new_target != callee && !vm.is_constructable(p, new_target) {
+                     return Err(vm.type_error(p, "newTarget is not a constructor".into()));
+                 }
+                 let (kind, derived_constructor) = match vm.heap.get(callee) {

@@ -1,0 +1,62 @@
+warning: function `normalize_escaped_backslash_quantifiers` is never used
+  --> /workspace/scratch/quench-npm-file-url/vendor/oxc-parser/src/js/expression.rs:44:4
+   |
+44 | fn normalize_escaped_backslash_quantifiers(source: &str) -> Option<String> {
+   |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `escaped_backslash_quantifier_end` is never used
+  --> /workspace/scratch/quench-npm-file-url/vendor/oxc-parser/src/js/expression.rs:76:4
+   |
+76 | fn escaped_backslash_quantifier_end(bytes: &[u8], start: usize) -> Option<usize> {
+   |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `oxc_parser` (lib) generated 2 warnings
+   Compiling npm-private-metadata-probe v0.0.0 (/workspace/scratch/npm-private-brand-draft/cargo)
+warning: constant `PREFIX` is never used
+ --> ../private_name.rs:4:18
+  |
+4 | pub(crate) const PREFIX: &str = "\0quench:private:";
+  |                  ^^^^^^
+  |
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: associated items `storage` and `identity` are never used
+  --> ../private_name.rs:18:19
+   |
+17 | impl Name {
+   | --------- associated items in this implementation
+18 |     pub(crate) fn storage(id: u32) -> Self {
+   |                   ^^^^^^^
+...
+21 |     pub(crate) fn identity(&self, source: &str) -> String {
+   |                   ^^^^^^^^
+
+warning: enum `ReceiverRef` is never used
+  --> ../private_name.rs:31:17
+   |
+31 | pub(crate) enum ReceiverRef<'a> {
+   |                 ^^^^^^^^^^^
+
+warning: struct `Diagnostic` is never constructed
+  --> ../private_name.rs:37:19
+   |
+37 | pub(crate) struct Diagnostic<'a> {
+   |                   ^^^^^^^^^^
+
+warning: function `diagnostic` is never used
+  --> ../private_name.rs:41:15
+   |
+41 | pub(crate) fn diagnostic(identity: &str) -> Option<Diagnostic<'_>> {
+   |               ^^^^^^^^^^
+
+warning: function `label` is never used
+  --> ../private_name.rs:59:15
+   |
+59 | pub(crate) fn label(identity: &str) -> Option<&str> {
+   |               ^^^^^
+
+warning: `npm-private-metadata-probe` (bin "npm-private-metadata-probe") generated 6 warnings
+    Finished `dev` profile [unoptimized] target(s) in 0.30s
+     Running `quench/target/npm-private-metadata/debug/npm-private-metadata-probe /workspace/scratch/npm-private-brand-oracle.cjs`

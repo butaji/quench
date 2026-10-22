@@ -1,0 +1,378 @@
+{
+  "schema": 1,
+  "task": "61",
+  "date": "2026-10-08",
+  "kind": "M4 startup allocator phase census",
+  "qualification_ready": false,
+  "decision": "Use phase attribution to rank future RSS work. The largest measured live-allocation phases are core runtime builtins, web streams, web APIs, Intl, and EventEmitter. This is allocator attribution, not a claim that laziness is semantically safe or that resident RSS falls by the same amount.",
+  "host": {
+    "cpu": "Apple M4",
+    "os": "macOS 26.5 build 25F71 ARM64",
+    "kernel": "Darwin 25.5.0",
+    "measurement": "profile-memory allocator snapshots emitted at named initialization boundaries"
+  },
+  "source_revision": "3bd66e1940c3dfb9194daa3db7d1d8d5f68b1346",
+  "instrumented_worktree_diff_sha256": "28925744c84fae917b779d91e4c28dad32e97093b1b8370b86dea4bc9398b4ce",
+  "build": {
+    "command": "CARGO_INCREMENTAL=0 cargo build --profile production -p quench-node -p quench-runtime --features quench-node/profile-memory,quench-runtime/profile-memory",
+    "environment": "QUENCH_MEMORY=1",
+    "node_binary_sha256": "39ed7b255a66d948c6a21e05871b28e7f423c3a0bb93fca0410abcc0dab52f2b",
+    "runtime_binary_sha256": "d4b95fae7a776ff29657a1bf3de414e62cf313b0cadea957afa07c4380e5374e",
+    "node_command": "target/production/quench-node -e \"\"",
+    "runtime_command": "target/production/quench -e \"\"",
+    "instrumented_only": true
+  },
+  "metric": {
+    "allocator_live_bytes": "malloc size_in_use",
+    "resident_bytes": "allocator resident pages",
+    "note": "Phase deltas are adjacent snapshots within a single instrumented process; allocator reuse/GC can make a delta negative. These are not fresh-process maximum RSS measurements."
+  },
+  "node": {
+    "path": "tasks/evidence/task61-startup-rss-node-phases-2026-10-08.stderr",
+    "sha256": "06e59400c28d742ec38e9bd076354acab46f34bceb952444d47d1edb18ce23bb",
+    "phases": [
+      {
+        "phase": "vm_shell",
+        "size_in_use": 287712,
+        "resident_bytes": 8011776,
+        "size_allocated": 16777216,
+        "size_in_use_delta_from_previous_bytes": null,
+        "resident_delta_from_previous_bytes": null
+      },
+      {
+        "phase": "program_constants",
+        "size_in_use": 287744,
+        "resident_bytes": 8011776,
+        "size_allocated": 16777216,
+        "size_in_use_delta_from_previous_bytes": 32,
+        "resident_delta_from_previous_bytes": 0
+      },
+      {
+        "phase": "runtime_prototypes",
+        "size_in_use": 287888,
+        "resident_bytes": 8060928,
+        "size_allocated": 16777216,
+        "size_in_use_delta_from_previous_bytes": 144,
+        "resident_delta_from_previous_bytes": 49152
+      },
+      {
+        "phase": "runtime_native_function_table",
+        "size_in_use": 474608,
+        "resident_bytes": 8568832,
+        "size_allocated": 29360128,
+        "size_in_use_delta_from_previous_bytes": 186720,
+        "resident_delta_from_previous_bytes": 507904
+      },
+      {
+        "phase": "runtime_core_builtins",
+        "size_in_use": 1360032,
+        "resident_bytes": 10747904,
+        "size_allocated": 29360128,
+        "size_in_use_delta_from_previous_bytes": 885424,
+        "resident_delta_from_previous_bytes": 2179072
+      },
+      {
+        "phase": "runtime_intl",
+        "size_in_use": 1804192,
+        "resident_bytes": 11304960,
+        "size_allocated": 29360128,
+        "size_in_use_delta_from_previous_bytes": 444160,
+        "resident_delta_from_previous_bytes": 557056
+      },
+      {
+        "phase": "runtime_builtins_before_temporal",
+        "size_in_use": 1851488,
+        "resident_bytes": 11419648,
+        "size_allocated": 29360128,
+        "size_in_use_delta_from_previous_bytes": 47296,
+        "resident_delta_from_previous_bytes": 114688
+      },
+      {
+        "phase": "runtime_temporal",
+        "size_in_use": 1905696,
+        "resident_bytes": 11730944,
+        "size_allocated": 29360128,
+        "size_in_use_delta_from_previous_bytes": 54208,
+        "resident_delta_from_previous_bytes": 311296
+      },
+      {
+        "phase": "runtime_builtins",
+        "size_in_use": 1905696,
+        "resident_bytes": 11730944,
+        "size_allocated": 29360128,
+        "size_in_use_delta_from_previous_bytes": 0,
+        "resident_delta_from_previous_bytes": 0
+      },
+      {
+        "phase": "node_process",
+        "size_in_use": 2019440,
+        "resident_bytes": 12156928,
+        "size_allocated": 29360128,
+        "size_in_use_delta_from_previous_bytes": 113744,
+        "resident_delta_from_previous_bytes": 425984
+      },
+      {
+        "phase": "node_abort_polyfill",
+        "size_in_use": 2232976,
+        "resident_bytes": 13877248,
+        "size_allocated": 29360128,
+        "size_in_use_delta_from_previous_bytes": 213536,
+        "resident_delta_from_previous_bytes": 1720320
+      },
+      {
+        "phase": "node_event_target_polyfill",
+        "size_in_use": 2321664,
+        "resident_bytes": 14237696,
+        "size_allocated": 29360128,
+        "size_in_use_delta_from_previous_bytes": 88688,
+        "resident_delta_from_previous_bytes": 360448
+      },
+      {
+        "phase": "node_event_emitter_polyfill",
+        "size_in_use": 2749056,
+        "resident_bytes": 16187392,
+        "size_allocated": 29360128,
+        "size_in_use_delta_from_previous_bytes": 427392,
+        "resident_delta_from_previous_bytes": 1949696
+      },
+      {
+        "phase": "node_text_decoder",
+        "size_in_use": 2882048,
+        "resident_bytes": 16367616,
+        "size_allocated": 29360128,
+        "size_in_use_delta_from_previous_bytes": 132992,
+        "resident_delta_from_previous_bytes": 180224
+      },
+      {
+        "phase": "node_buffer_global",
+        "size_in_use": 3150624,
+        "resident_bytes": 16875520,
+        "size_allocated": 33554432,
+        "size_in_use_delta_from_previous_bytes": 268576,
+        "resident_delta_from_previous_bytes": 507904
+      },
+      {
+        "phase": "node_url_global",
+        "size_in_use": 3320880,
+        "resident_bytes": 17039360,
+        "size_allocated": 33554432,
+        "size_in_use_delta_from_previous_bytes": 170256,
+        "resident_delta_from_previous_bytes": 163840
+      },
+      {
+        "phase": "node_web_streams_polyfill",
+        "size_in_use": 4139520,
+        "resident_bytes": 18743296,
+        "size_allocated": 33554432,
+        "size_in_use_delta_from_previous_bytes": 818640,
+        "resident_delta_from_previous_bytes": 1703936
+      },
+      {
+        "phase": "node_web_apis_polyfill",
+        "size_in_use": 4761136,
+        "resident_bytes": 19333120,
+        "size_allocated": 33554432,
+        "size_in_use_delta_from_previous_bytes": 621616,
+        "resident_delta_from_previous_bytes": 589824
+      },
+      {
+        "phase": "node_blob_exports",
+        "size_in_use": 4761248,
+        "resident_bytes": 19333120,
+        "size_allocated": 33554432,
+        "size_in_use_delta_from_previous_bytes": 112,
+        "resident_delta_from_previous_bytes": 0
+      },
+      {
+        "phase": "node_console_global",
+        "size_in_use": 5072736,
+        "resident_bytes": 19464192,
+        "size_allocated": 33554432,
+        "size_in_use_delta_from_previous_bytes": 311488,
+        "resident_delta_from_previous_bytes": 131072
+      },
+      {
+        "phase": "node_commonjs_entry",
+        "size_in_use": 5076160,
+        "resident_bytes": 19464192,
+        "size_allocated": 33554432,
+        "size_in_use_delta_from_previous_bytes": 3424,
+        "resident_delta_from_previous_bytes": 0
+      },
+      {
+        "phase": "node_commonjs",
+        "size_in_use": 5076160,
+        "resident_bytes": 19464192,
+        "size_allocated": 33554432,
+        "size_in_use_delta_from_previous_bytes": 0,
+        "resident_delta_from_previous_bytes": 0
+      },
+      {
+        "phase": "host_bootstrap",
+        "size_in_use": 5069888,
+        "resident_bytes": 19464192,
+        "size_allocated": 33554432,
+        "size_in_use_delta_from_previous_bytes": -6272,
+        "resident_delta_from_previous_bytes": 0
+      },
+      {
+        "phase": "initialized",
+        "size_in_use": 5069888,
+        "resident_bytes": 19464192,
+        "size_allocated": 33554432,
+        "size_in_use_delta_from_previous_bytes": 0,
+        "resident_delta_from_previous_bytes": 0
+      },
+      {
+        "phase": "complete",
+        "size_in_use": 5070112,
+        "resident_bytes": 19611648,
+        "size_allocated": 33554432,
+        "size_in_use_delta_from_previous_bytes": 224,
+        "resident_delta_from_previous_bytes": 147456
+      }
+    ]
+  },
+  "runtime_only": {
+    "path": "tasks/evidence/task61-startup-rss-runtime-phases-2026-10-08.stderr",
+    "sha256": "2eef94b34b8431d509acd4d226f28e9714b0ab0ff2e9091b2d4305c1a590eb80",
+    "phases": [
+      {
+        "phase": "vm_shell",
+        "size_in_use": 283760,
+        "resident_bytes": 7503872,
+        "size_allocated": 16777216,
+        "size_in_use_delta_from_previous_bytes": null,
+        "resident_delta_from_previous_bytes": null
+      },
+      {
+        "phase": "program_constants",
+        "size_in_use": 283792,
+        "resident_bytes": 7520256,
+        "size_allocated": 16777216,
+        "size_in_use_delta_from_previous_bytes": 32,
+        "resident_delta_from_previous_bytes": 16384
+      },
+      {
+        "phase": "runtime_prototypes",
+        "size_in_use": 283936,
+        "resident_bytes": 7585792,
+        "size_allocated": 16777216,
+        "size_in_use_delta_from_previous_bytes": 144,
+        "resident_delta_from_previous_bytes": 65536
+      },
+      {
+        "phase": "runtime_native_function_table",
+        "size_in_use": 470656,
+        "resident_bytes": 8126464,
+        "size_allocated": 29360128,
+        "size_in_use_delta_from_previous_bytes": 186720,
+        "resident_delta_from_previous_bytes": 540672
+      },
+      {
+        "phase": "runtime_core_builtins",
+        "size_in_use": 1356080,
+        "resident_bytes": 10010624,
+        "size_allocated": 29360128,
+        "size_in_use_delta_from_previous_bytes": 885424,
+        "resident_delta_from_previous_bytes": 1884160
+      },
+      {
+        "phase": "runtime_intl",
+        "size_in_use": 1800240,
+        "resident_bytes": 10567680,
+        "size_allocated": 29360128,
+        "size_in_use_delta_from_previous_bytes": 444160,
+        "resident_delta_from_previous_bytes": 557056
+      },
+      {
+        "phase": "runtime_builtins_before_temporal",
+        "size_in_use": 1847536,
+        "resident_bytes": 10665984,
+        "size_allocated": 29360128,
+        "size_in_use_delta_from_previous_bytes": 47296,
+        "resident_delta_from_previous_bytes": 98304
+      },
+      {
+        "phase": "runtime_temporal",
+        "size_in_use": 1901744,
+        "resident_bytes": 11042816,
+        "size_allocated": 29360128,
+        "size_in_use_delta_from_previous_bytes": 54208,
+        "resident_delta_from_previous_bytes": 376832
+      },
+      {
+        "phase": "runtime_builtins",
+        "size_in_use": 1901744,
+        "resident_bytes": 11042816,
+        "size_allocated": 29360128,
+        "size_in_use_delta_from_previous_bytes": 0,
+        "resident_delta_from_previous_bytes": 0
+      },
+      {
+        "phase": "host_bootstrap",
+        "size_in_use": 1901744,
+        "resident_bytes": 11042816,
+        "size_allocated": 29360128,
+        "size_in_use_delta_from_previous_bytes": 0,
+        "resident_delta_from_previous_bytes": 0
+      },
+      {
+        "phase": "initialized",
+        "size_in_use": 1901744,
+        "resident_bytes": 11042816,
+        "size_allocated": 29360128,
+        "size_in_use_delta_from_previous_bytes": 0,
+        "resident_delta_from_previous_bytes": 0
+      },
+      {
+        "phase": "complete",
+        "size_in_use": 1903872,
+        "resident_bytes": 11190272,
+        "size_allocated": 29360128,
+        "size_in_use_delta_from_previous_bytes": 2128,
+        "resident_delta_from_previous_bytes": 147456
+      }
+    ]
+  },
+  "largest_positive_phase_deltas_bytes": [
+    {
+      "phase": "runtime_core_builtins",
+      "bytes": 885424
+    },
+    {
+      "phase": "node_web_streams_polyfill",
+      "bytes": 818640
+    },
+    {
+      "phase": "node_web_apis_polyfill",
+      "bytes": 621616
+    },
+    {
+      "phase": "runtime_intl",
+      "bytes": 444160
+    },
+    {
+      "phase": "node_event_emitter_polyfill",
+      "bytes": 427392
+    },
+    {
+      "phase": "node_console_global",
+      "bytes": 311488
+    },
+    {
+      "phase": "node_buffer_global",
+      "bytes": 268576
+    }
+  ],
+  "limitations": [
+    "One Apple M4 host only; no Linux measurement.",
+    "profile-memory builds include instrumentation and do not qualify production RSS or performance.",
+    "Allocator live bytes and resident bytes are distinct; phase deltas do not predict equal max-RSS savings.",
+    "No initialization was made lazy; Node API and builtin semantics remain unchanged."
+  ],
+  "raw_reports": {
+    "node": "tasks/evidence/task61-startup-rss-node-phases-2026-10-08.stderr",
+    "runtime_only": "tasks/evidence/task61-startup-rss-runtime-phases-2026-10-08.stderr"
+  }
+}

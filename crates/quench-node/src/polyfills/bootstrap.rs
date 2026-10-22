@@ -4,11 +4,6 @@
 //! remaining fragment files are retained as source history, but are not
 //! compiled into the host until a caller adds them here.
 
-#[path = "bootstrap/cluster.rs"]
-pub mod cluster;
-#[path = "bootstrap/iterators.rs"]
-pub mod iterators;
-
 abilities!(crate::polyfills::Phase::Bootstrap;
     "globals-extra" => globals_extra,
     "fetch" => fetch,
@@ -33,12 +28,10 @@ abilities!(crate::polyfills::Phase::Bootstrap;
 /// Installed Node globals shared by file, eval and embedded entry points.
 pub fn entry_globals_source() -> String {
     [
+        globals_extra::web_api_source(),
         web_streams::JS,
         performance::JS,
         r#"
-Object.defineProperty(globalThis, "URL", { value: URL, writable: true, configurable: true });
-Object.defineProperty(globalThis, "__nodeURL", { value: globalThis.URL, configurable: true });
-Object.defineProperty(globalThis, "__nodeURLSearchParams", { value: globalThis.URLSearchParams, configurable: true });
 "#,
     ]
     .join("\n")

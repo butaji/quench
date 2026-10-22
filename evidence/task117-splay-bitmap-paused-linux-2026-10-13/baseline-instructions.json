@@ -1,0 +1,20 @@
+{
+  "source_revision": "81b5711948577e75ec5ab445a2481291a4024e69",
+  "binary_sha256": "1c8128016a1483ff697ce28273ddf51df116798eac73c59b274d8e9d8f5b3f82",
+  "callgrind_version": "3.24.0",
+  "samples": [
+    {
+      "iterations": 0,
+      "instructions": 3229495972,
+      "materialized_source_sha256": "79c7f56c9424f930adaa8dedbef1e2e4568458efcf812cfa625968244ff926a8",
+      "callgrind_sha256": "2e25d1665b29dd53136bb539ab422247eaef9160e8e62510905114c318b15844"
+    },
+    {
+      "iterations": 300,
+      "instructions": 10213742231,
+      "materialized_source_sha256": "ac9c33765fb2968c78c1f116563913f575451d84826ea8a7bdf79a791bb3f345",
+      "callgrind_sha256": "b4b72bae8c34fa9ef29f8b3c077309f853eff0e8d5a3138986d81d146c45d7ff"
+    }
+  ],
+  "marginal_instructions_per_run": 23280820.863333333
+}

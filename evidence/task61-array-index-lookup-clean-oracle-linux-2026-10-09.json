@@ -1,0 +1,48 @@
+{
+  "schema": 1,
+  "task": "61",
+  "kind": "clean-build array-index Node oracle",
+  "recorded_at_utc": "2026-10-09T02:47:58Z",
+  "source_revision": "142c3ac05046ea1cbe8bf7f0e645d6ba9f52db4b",
+  "source_dirty": false,
+  "node_version": "v24.19.0",
+  "oracle_path": "tasks/evidence/task61-array-index-atom-oracle-2026-10-09.cjs",
+  "oracle_sha256": "c7df4b7b866ad9689fe809ff210c58ead3b7946beec152fa333aadb5ec27dca9",
+  "all_status_zero": true,
+  "all_stdout_equal": true,
+  "runs": {
+    "node": {
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "/workspace/quench/tasks/evidence/task61-array-index-atom-oracle-2026-10-09.cjs"
+      ],
+      "status": 0,
+      "stdout": "indexed-write oracle: PASS\narray-index oracle extensions: PASS\n",
+      "stderr": "",
+      "stdout_sha256": "6e1192dcb0190f35e45cdd905b15271c7a632e85358b7c9586a8ec5443006c14",
+      "executable_sha256": "bc17c508ffeed0ec622934f9b7fa72f8e78da65350e63c3eceb56fa688aa5e12"
+    },
+    "baseline": {
+      "command": [
+        "/workspace/quench/target/stageb-candidates/array-index-lookup/baseline-quench-node",
+        "/workspace/quench/tasks/evidence/task61-array-index-atom-oracle-2026-10-09.cjs"
+      ],
+      "status": 0,
+      "stdout": "indexed-write oracle: PASS\narray-index oracle extensions: PASS\n",
+      "stderr": "",
+      "stdout_sha256": "6e1192dcb0190f35e45cdd905b15271c7a632e85358b7c9586a8ec5443006c14",
+      "executable_sha256": "9d6f2a425a741230a6e12d9e05dc9cb5ee93bc56b638533c95f797650bac9948"
+    },
+    "candidate": {
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tasks/evidence/task61-array-index-atom-oracle-2026-10-09.cjs"
+      ],
+      "status": 0,
+      "stdout": "indexed-write oracle: PASS\narray-index oracle extensions: PASS\n",
+      "stderr": "",
+      "stdout_sha256": "6e1192dcb0190f35e45cdd905b15271c7a632e85358b7c9586a8ec5443006c14",
+      "executable_sha256": "63985cb7a9cee8ff73466728dd1b3443aee43297aba824a37308c884fb942e57"
+    }
+  }
+}

@@ -1,0 +1,38 @@
+[
+  {
+    "test": "module_constructor_and_compile_preserve_receiver_exports_and_parent",
+    "exit_code": 0,
+    "stdout": "\nrunning 1 test\ntest module_constructor_and_compile_preserve_receiver_exports_and_parent ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 212 filtered out; finished in 0.08s\n\n",
+    "stderr": ""
+  },
+  {
+    "test": "os_cpus_reports_online_linux_facts_and_millisecond_times",
+    "exit_code": 0,
+    "stdout": "\nrunning 1 test\ntest os_cpus_reports_online_linux_facts_and_millisecond_times ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 212 filtered out; finished in 0.17s\n\n",
+    "stderr": ""
+  },
+  {
+    "test": "binary_base64_globals_preserve_utf16_coercion_validation_and_identity",
+    "exit_code": 0,
+    "stdout": "\nrunning 1 test\ntest binary_base64_globals_preserve_utf16_coercion_validation_and_identity ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 212 filtered out; finished in 0.17s\n\n",
+    "stderr": ""
+  },
+  {
+    "test": "stream_resume_preserves_readable_listener_buffer_ownership",
+    "exit_code": 0,
+    "stdout": "\nrunning 1 test\ntest stream_resume_preserves_readable_listener_buffer_ownership ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 212 filtered out; finished in 0.14s\n\n",
+    "stderr": ""
+  },
+  {
+    "test": "native_buffer_search_matches_node_offsets_bounds_encodings_and_original_hooks",
+    "exit_code": 0,
+    "stdout": "\nrunning 1 test\ntest native_buffer_search_matches_node_offsets_bounds_encodings_and_original_hooks ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 212 filtered out; finished in 0.13s\n\n",
+    "stderr": ""
+  },
+  {
+    "test": "async_process_exit_preserves_requested_status_and_stops_rejection_dispatch",
+    "exit_code": 0,
+    "stdout": "\nrunning 1 test\ntest async_process_exit_preserves_requested_status_and_stops_rejection_dispatch ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 212 filtered out; finished in 0.37s\n\n",
+    "stderr": ""
+  }
+]

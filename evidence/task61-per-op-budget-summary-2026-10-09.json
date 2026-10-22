@@ -1,0 +1,411 @@
+{
+  "schema": "quench.task61.per-op-budget-summary.v1",
+  "date": "2026-10-09",
+  "raw": "tasks/evidence/task61-per-op-budget-2026-10-09.json",
+  "raw_sha256": "0174803497e82235bfb377a0a2e1a6ccef22f7349243056dd3801a1f92c5255c",
+  "source_revision": "c17c5c0ec400c273a7dc1327ab2520ce0e0aaa0a",
+  "runtime_source_revision": "855a083a4e398743b359a8ac1efeecee4eea60d4",
+  "platform": "macOS-26.5-arm64-arm-64bit",
+  "machine": "arm64",
+  "engine_versions": {
+    "node": "v26.10.0 (node --jitless)",
+    "bun": "1.4.2 (BUN_JSC_useJIT=0)",
+    "qjs": "2026-06-04",
+    "rqj_source_commit": "072ca256e3b2bf958e0fcb5e22082707d9526495"
+  },
+  "repetitions": 3,
+  "metric": "Median retired instructions per iteration after subtracting a zero-iteration process, from three runs; cycles are reported as supporting attribution. Ratios use the lowest successfully measured reference engine (rqj, qjs, Node jitless, Bun no-JIT), not fixture Score.",
+  "rows": [
+    {
+      "case": "array-literal",
+      "instructions_per_iteration": {
+        "quench": 5288.048825,
+        "rqj": 1644.302925,
+        "qjs": 792.25991,
+        "node_jitless": 629.24127,
+        "bun_no_jit": 581.8306
+      },
+      "cycles_per_iteration": {
+        "quench": 775.402115,
+        "rqj": 244.52672,
+        "qjs": 112.7785,
+        "node_jitless": 96.003825,
+        "bun_no_jit": 95.971165
+      },
+      "best_reference_engine": "bun_no_jit",
+      "quench_to_best_reference_instruction_ratio": 9.088639932310194,
+      "unsupported_or_failed_reference": {}
+    },
+    {
+      "case": "array-read",
+      "instructions_per_iteration": {
+        "quench": 1731.5044315,
+        "rqj": 414.055462,
+        "qjs": 182.0499575,
+        "node_jitless": 269.2117135,
+        "bun_no_jit": 162.1475825
+      },
+      "cycles_per_iteration": {
+        "quench": 216.292865,
+        "rqj": 49.7570825,
+        "qjs": 30.073233,
+        "node_jitless": 34.044539,
+        "bun_no_jit": 19.0741465
+      },
+      "best_reference_engine": "bun_no_jit",
+      "quench_to_best_reference_instruction_ratio": 10.678570748965685,
+      "unsupported_or_failed_reference": {}
+    },
+    {
+      "case": "array-write",
+      "instructions_per_iteration": {
+        "quench": 2452.1746215,
+        "rqj": 420.050932,
+        "qjs": 182.02346,
+        "node_jitless": 298.7453165,
+        "bun_no_jit": 183.0913585
+      },
+      "cycles_per_iteration": {
+        "quench": 310.3494085,
+        "rqj": 50.5455665,
+        "qjs": 30.019396,
+        "node_jitless": 37.018772,
+        "bun_no_jit": 21.26239
+      },
+      "best_reference_engine": "qjs",
+      "quench_to_best_reference_instruction_ratio": 13.471750407886983,
+      "unsupported_or_failed_reference": {}
+    },
+    {
+      "case": "char-code-at",
+      "instructions_per_iteration": {
+        "quench": 2671.022226,
+        "rqj": 615.025962,
+        "qjs": 556.0855,
+        "node_jitless": 429.931355,
+        "bun_no_jit": 326.050945
+      },
+      "cycles_per_iteration": {
+        "quench": 338.971957,
+        "rqj": 74.114919,
+        "qjs": 80.505731,
+        "node_jitless": 55.76783,
+        "bun_no_jit": 41.49028
+      },
+      "best_reference_engine": "bun_no_jit",
+      "quench_to_best_reference_instruction_ratio": 8.192039517014742,
+      "unsupported_or_failed_reference": {}
+    },
+    {
+      "case": "closure-create",
+      "instructions_per_iteration": {
+        "quench": 24758.80857,
+        "rqj": 1143.48673,
+        "qjs": 2404.7468,
+        "node_jitless": 362.67632,
+        "bun_no_jit": 407.10285
+      },
+      "cycles_per_iteration": {
+        "quench": 3827.86973,
+        "rqj": 164.6172,
+        "qjs": 328.7781,
+        "node_jitless": 47.76332,
+        "bun_no_jit": 59.76999
+      },
+      "best_reference_engine": "node_jitless",
+      "quench_to_best_reference_instruction_ratio": 68.26695652476016,
+      "unsupported_or_failed_reference": {}
+    },
+    {
+      "case": "compound-index",
+      "instructions_per_iteration": {
+        "quench": 3077.223361,
+        "rqj": null,
+        "qjs": 227.001087,
+        "node_jitless": 411.758584,
+        "bun_no_jit": 318.142394
+      },
+      "cycles_per_iteration": {
+        "quench": 382.386755,
+        "rqj": null,
+        "qjs": 32.880158,
+        "node_jitless": 51.734487,
+        "bun_no_jit": 37.258718
+      },
+      "best_reference_engine": "qjs",
+      "quench_to_best_reference_instruction_ratio": 13.555985134996291,
+      "unsupported_or_failed_reference": {
+        "rqj": [
+          "rqj: value is not callable\n        0.01 real         0.01 user         0.00 sys\n             1753088  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                 502  page reclaims\n                   4  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   1  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  10  involuntary context switches\n           600338494  instructions retired\n            77231329  cycles elapsed\n              885048  peak memory footprint\n",
+          "rqj: value is not callable\n        0.01 real         0.01 user         0.00 sys\n             1753088  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                 501  page reclaims\n                   4  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   1  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  11  involuntary context switches\n           600347584  instructions retired\n            77655381  cycles elapsed\n              885048  peak memory footprint\n",
+          "rqj: value is not callable\n        0.01 real         0.01 user         0.00 sys\n             1753088  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                 501  page reclaims\n                   4  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   1  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  10  involuntary context switches\n           600339195  instructions retired\n            76533891  cycles elapsed\n              885048  peak memory footprint\n"
+        ]
+      }
+    },
+    {
+      "case": "construct",
+      "instructions_per_iteration": {
+        "quench": 9411.26701,
+        "rqj": 1446.09325,
+        "qjs": 1452.39709,
+        "node_jitless": 574.2496,
+        "bun_no_jit": 589.51877
+      },
+      "cycles_per_iteration": {
+        "quench": 1458.2096,
+        "rqj": 187.089475,
+        "qjs": 207.46479,
+        "node_jitless": 110.571285,
+        "bun_no_jit": 88.92219
+      },
+      "best_reference_engine": "node_jitless",
+      "quench_to_best_reference_instruction_ratio": 16.388808995252237,
+      "unsupported_or_failed_reference": {}
+    },
+    {
+      "case": "field-read",
+      "instructions_per_iteration": {
+        "quench": 1289.1497965,
+        "rqj": 344.026926,
+        "qjs": 153.0203445,
+        "node_jitless": 194.571988,
+        "bun_no_jit": 121.9958135
+      },
+      "cycles_per_iteration": {
+        "quench": 145.2814815,
+        "rqj": 40.543604,
+        "qjs": 25.028736,
+        "node_jitless": 26.07287,
+        "bun_no_jit": 15.2689955
+      },
+      "best_reference_engine": "bun_no_jit",
+      "quench_to_best_reference_instruction_ratio": 10.567164228959383,
+      "unsupported_or_failed_reference": {}
+    },
+    {
+      "case": "from-char-code",
+      "instructions_per_iteration": {
+        "quench": 13778.7023,
+        "rqj": 1750.84226,
+        "qjs": 659.053915,
+        "node_jitless": 431.06102,
+        "bun_no_jit": 389.58586
+      },
+      "cycles_per_iteration": {
+        "quench": 3456.960345,
+        "rqj": 256.50939,
+        "qjs": 88.71486,
+        "node_jitless": 39.480025,
+        "bun_no_jit": 53.059945
+      },
+      "best_reference_engine": "bun_no_jit",
+      "quench_to_best_reference_instruction_ratio": 35.367562621497605,
+      "unsupported_or_failed_reference": {}
+    },
+    {
+      "case": "instanceof",
+      "instructions_per_iteration": {
+        "quench": 4632.250218,
+        "rqj": null,
+        "qjs": 586.067577,
+        "node_jitless": 413.234754,
+        "bun_no_jit": 364.030436
+      },
+      "cycles_per_iteration": {
+        "quench": 615.871383,
+        "rqj": null,
+        "qjs": 77.07248,
+        "node_jitless": 46.415153,
+        "bun_no_jit": 43.831496
+      },
+      "best_reference_engine": "bun_no_jit",
+      "quench_to_best_reference_instruction_ratio": 12.72489814011046,
+      "unsupported_or_failed_reference": {
+        "rqj": [
+          "rqj: unsupported binary operator 21\n        0.00 real         0.00 user         0.00 sys\n             1785856  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                 505  page reclaims\n                   4  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   1  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  10  involuntary context switches\n            32265173  instructions retired\n            11645640  cycles elapsed\n              885048  peak memory footprint\n",
+          "rqj: unsupported binary operator 21\n        0.00 real         0.00 user         0.00 sys\n             1785856  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                 504  page reclaims\n                   4  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   1  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  11  involuntary context switches\n            32257505  instructions retired\n            11266994  cycles elapsed\n              885048  peak memory footprint\n",
+          "rqj: unsupported binary operator 21\n        0.00 real         0.00 user         0.00 sys\n             1785856  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                 504  page reclaims\n                   4  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   1  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  10  involuntary context switches\n            32243542  instructions retired\n            11843728  cycles elapsed\n              885048  peak memory footprint\n"
+        ]
+      }
+    },
+    {
+      "case": "local-call",
+      "instructions_per_iteration": {
+        "quench": 2977.473818,
+        "rqj": 822.1569,
+        "qjs": 396.07853,
+        "node_jitless": 364.054586,
+        "bun_no_jit": 303.073206
+      },
+      "cycles_per_iteration": {
+        "quench": 401.818342,
+        "rqj": 94.793335,
+        "qjs": 54.877332,
+        "node_jitless": 52.604703,
+        "bun_no_jit": 48.927046
+      },
+      "best_reference_engine": "bun_no_jit",
+      "quench_to_best_reference_instruction_ratio": 9.8242726808387,
+      "unsupported_or_failed_reference": {}
+    },
+    {
+      "case": "local-store",
+      "instructions_per_iteration": {
+        "quench": 1006.1768995,
+        "rqj": 260.024727,
+        "qjs": 110.023332,
+        "node_jitless": 145.756153,
+        "bun_no_jit": 89.0784765
+      },
+      "cycles_per_iteration": {
+        "quench": 114.7153975,
+        "rqj": 30.7181085,
+        "qjs": 22.037838,
+        "node_jitless": 17.5841495,
+        "bun_no_jit": 13.629857
+      },
+      "best_reference_engine": "bun_no_jit",
+      "quench_to_best_reference_instruction_ratio": 11.295398608439381,
+      "unsupported_or_failed_reference": {}
+    },
+    {
+      "case": "math-floor",
+      "instructions_per_iteration": {
+        "quench": 9757.402632,
+        "rqj": 622.73405,
+        "qjs": 440.032561,
+        "node_jitless": 445.427956,
+        "bun_no_jit": 523.553828
+      },
+      "cycles_per_iteration": {
+        "quench": 2522.089552,
+        "rqj": 95.818088,
+        "qjs": 62.434365,
+        "node_jitless": 54.330396,
+        "bun_no_jit": 71.229514
+      },
+      "best_reference_engine": "qjs",
+      "quench_to_best_reference_instruction_ratio": 22.174274126045866,
+      "unsupported_or_failed_reference": {}
+    },
+    {
+      "case": "object-literal",
+      "instructions_per_iteration": {
+        "quench": 19528.063905,
+        "rqj": 1595.94784,
+        "qjs": 1888.29474,
+        "node_jitless": 373.516765,
+        "bun_no_jit": 498.97525
+      },
+      "cycles_per_iteration": {
+        "quench": 3180.22958,
+        "rqj": 207.399245,
+        "qjs": 260.054955,
+        "node_jitless": 33.64831,
+        "bun_no_jit": 96.73455
+      },
+      "best_reference_engine": "node_jitless",
+      "quench_to_best_reference_instruction_ratio": 52.28162624775356,
+      "unsupported_or_failed_reference": {}
+    },
+    {
+      "case": "regexp-exec",
+      "instructions_per_iteration": {
+        "quench": 22115.2503,
+        "rqj": null,
+        "qjs": 2489.2351,
+        "node_jitless": 980.36382,
+        "bun_no_jit": 903.58788
+      },
+      "cycles_per_iteration": {
+        "quench": 3558.978,
+        "rqj": null,
+        "qjs": 334.30457,
+        "node_jitless": 149.32705,
+        "bun_no_jit": 160.88929
+      },
+      "best_reference_engine": "bun_no_jit",
+      "quench_to_best_reference_instruction_ratio": 24.474930208227228,
+      "unsupported_or_failed_reference": {
+        "rqj": [
+          "rqj: /Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-per-op-budget-2026-10-09/regexp-exec-active.cjs:106..109: expression is outside the supported subset\n        0.00 real         0.00 user         0.00 sys\n             2162688  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                 293  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   3  involuntary context switches\n            15466495  instructions retired\n             5465145  cycles elapsed\n              999736  peak memory footprint\n",
+          "rqj: /Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-per-op-budget-2026-10-09/regexp-exec-active.cjs:106..109: expression is outside the supported subset\n        0.00 real         0.00 user         0.00 sys\n             2162688  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                 293  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   3  involuntary context switches\n            15437194  instructions retired\n             5141141  cycles elapsed\n              999736  peak memory footprint\n",
+          "rqj: /Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-per-op-budget-2026-10-09/regexp-exec-active.cjs:106..109: expression is outside the supported subset\n        0.00 real         0.00 user         0.00 sys\n             2162688  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                 293  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   3  involuntary context switches\n            15440364  instructions retired\n             5214708  cycles elapsed\n              999736  peak memory footprint\n"
+        ]
+      }
+    },
+    {
+      "case": "regexp-replace",
+      "instructions_per_iteration": {
+        "quench": 46081.13144,
+        "rqj": null,
+        "qjs": 4972.81422,
+        "node_jitless": 1751.46672,
+        "bun_no_jit": 1910.41984
+      },
+      "cycles_per_iteration": {
+        "quench": 9152.1488,
+        "rqj": null,
+        "qjs": 707.31178,
+        "node_jitless": 226.71468,
+        "bun_no_jit": 275.62608
+      },
+      "best_reference_engine": "node_jitless",
+      "quench_to_best_reference_instruction_ratio": 26.31002400091279,
+      "unsupported_or_failed_reference": {
+        "rqj": [
+          "rqj: /Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-per-op-budget-2026-10-09/regexp-replace-active.cjs:115..119: expression is outside the supported subset\n        0.00 real         0.00 user         0.00 sys\n             2162688  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                 293  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   3  involuntary context switches\n            15473322  instructions retired\n             4918405  cycles elapsed\n              999736  peak memory footprint\n",
+          "rqj: /Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-per-op-budget-2026-10-09/regexp-replace-active.cjs:115..119: expression is outside the supported subset\n        0.00 real         0.00 user         0.00 sys\n             2179072  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                 294  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   8  involuntary context switches\n            15510527  instructions retired\n             5304971  cycles elapsed\n              999736  peak memory footprint\n",
+          "rqj: /Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-per-op-budget-2026-10-09/regexp-replace-active.cjs:115..119: expression is outside the supported subset\n        0.00 real         0.00 user         0.00 sys\n             2162688  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                 293  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   3  involuntary context switches\n            15478340  instructions retired\n             5072992  cycles elapsed\n              999736  peak memory footprint\n"
+        ]
+      }
+    },
+    {
+      "case": "substring",
+      "instructions_per_iteration": {
+        "quench": 7072.192605,
+        "rqj": 1258.15938,
+        "qjs": 838.349305,
+        "node_jitless": 552.893305,
+        "bun_no_jit": 422.74597
+      },
+      "cycles_per_iteration": {
+        "quench": 1024.210445,
+        "rqj": 172.26144,
+        "qjs": 126.73704,
+        "node_jitless": 61.169455,
+        "bun_no_jit": 59.82419
+      },
+      "best_reference_engine": "bun_no_jit",
+      "quench_to_best_reference_instruction_ratio": 16.729178056978284,
+      "unsupported_or_failed_reference": {}
+    },
+    {
+      "case": "typeof",
+      "instructions_per_iteration": {
+        "quench": 5068.308833,
+        "rqj": 910.6655275,
+        "qjs": 208.033239,
+        "node_jitless": 190.022605,
+        "bun_no_jit": 214.001976
+      },
+      "cycles_per_iteration": {
+        "quench": 741.550909,
+        "rqj": 129.0200675,
+        "qjs": 32.2671765,
+        "node_jitless": 25.9127355,
+        "bun_no_jit": 27.053679
+      },
+      "best_reference_engine": "node_jitless",
+      "quench_to_best_reference_instruction_ratio": 26.672136365039307,
+      "unsupported_or_failed_reference": {}
+    }
+  ],
+  "host": {
+    "model": "Mac16,10",
+    "processor": "Apple M4",
+    "memory_bytes": 17179869184,
+    "free_disk_bytes_at_capture": 70866960384,
+    "concurrent_timing_or_test_campaigns": 0
+  }
+}

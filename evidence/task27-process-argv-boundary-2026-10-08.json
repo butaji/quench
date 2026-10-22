@@ -1,0 +1,149 @@
+{
+  "schema": 1,
+  "task": "27",
+  "kind": "shared_process_args_state_boundary",
+  "recorded_on": "2026-10-08",
+  "source": {
+    "revision": "f9a887324e56b9d95cee5f0dfff08a9c4de2a26a",
+    "worktree_dirty": true,
+    "platform": "Darwin arm64",
+    "node": "v26.10.0",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+    "tests_node_revision": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+    "binaries_sha256": {
+      "target/iteration/quench-node": "1702ae6949f22ab1c3552e9c47d17297312cbfdd04b0717818bdb123eaa2177a",
+      "target/iteration/run-parallel": "a8b2e1ac0bf1bf4c244ae7f678448f450f1d72f317dbf065db6ac8da929bb940"
+    },
+    "files_sha256": {
+      "crates/quench-node/src/host.rs": "88dca1c0c54d2a2f84375a7fd0addca8ba793f174613d8ab237fc0ffc33092fb",
+      "crates/quench-node/src/modules/process.rs": "50bfa8c51d34c86466b76f7305160e725b913cc80693b99b214ec5fcd207f4be",
+      "crates/quench-node/src/modules/process/shared_vm.rs": "0a801a9e74f466312fd148713706bb0a3b4027be97452dcaab76c919b1b6f58c",
+      "crates/quench-node/src/modules/require.rs": "8caa127699c449f121a0089a698ca41e80abab707e213911d7bd8e6d6aa4e07c",
+      "crates/quench-node/src/modules/util.rs": "f20aafd23b3697693c00dadddeba7ea2587456a03fe747a001230360a504fa81",
+      "tasks/node-compat-inventory.json": "668c4302964d57f9e693e08f9225a9692072c435468c63f721627a45b3e37702",
+      "crates/quench-node-test/node-tests/parallel.txt": "0209917422a2f0f3fa241d941ec4bc88c9917d5322b69014ab1a662a52e9dfca",
+      "tests/node/test/parallel/test-process-argv-0.js": "d4823f97c6b4109436684d5ec103a700f92b4cdfaed65c25e71fd912423aed30",
+      "tests/frameworks/driver.cjs": "e8dd245f9bbfcdcd3a430ff7ed663c3310fdf32fae23cfc5c24d24cbeda96bfb",
+      "tests/frameworks/scenarios/express.cjs": "85eebbbc5c9cfaa01f2f16b6c7e181a4c4bc2e308bd1bb179f49c5d9700f8158",
+      "tests/frameworks/scenarios/koa.cjs": "962e4c326df72b30eed4306494e2218475456c7c816220a6e46a898b040185f9",
+      "tests/frameworks/scenarios/fastify.cjs": "1ff4fc87e2a4c792761c286bc0f255d0ab9be27e810dbf98938a1ac717d1ba6a",
+      "target/iteration/task27-process-argv-boundary-2026-10-08/framework-core.stdout": "2f2d921dcfce7bd620f630e927555625fcd4e20465e3fc2110af3973bf050cc9",
+      "target/iteration/task27-process-argv-boundary-2026-10-08/framework-core.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "target/iteration/task27-process-argv-boundary-2026-10-08/process-argv-0-results.json": "abc90f450ec172e9bb802c29e52913ce726f680472e5a0ec7143b54238eff375",
+      "target/iteration/task27-process-argv-boundary-2026-10-08/apps/express-node.stdout": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+      "target/iteration/task27-process-argv-boundary-2026-10-08/apps/express-node.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "target/iteration/task27-process-argv-boundary-2026-10-08/apps/express-quench.stdout": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+      "target/iteration/task27-process-argv-boundary-2026-10-08/apps/express-quench.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "target/iteration/task27-process-argv-boundary-2026-10-08/apps/koa-node.stdout": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+      "target/iteration/task27-process-argv-boundary-2026-10-08/apps/koa-node.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "target/iteration/task27-process-argv-boundary-2026-10-08/apps/koa-quench.stdout": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+      "target/iteration/task27-process-argv-boundary-2026-10-08/apps/koa-quench.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "target/iteration/task27-process-argv-boundary-2026-10-08/apps/fastify-node.stdout": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+      "target/iteration/task27-process-argv-boundary-2026-10-08/apps/fastify-node.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "target/iteration/task27-process-argv-boundary-2026-10-08/apps/fastify-quench.stdout": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+      "target/iteration/task27-process-argv-boundary-2026-10-08/apps/fastify-quench.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "target/iteration/task27-process-argv-boundary-2026-10-08/apps/process-status.json": "9b889c66b6efcaaa9453fa0764a5a67e885f1e634978c55d9f87a9bab4d32af9"
+    }
+  },
+  "change": {
+    "authority": "ProcessArgs(Rc<[String]>) is constructed once per NodeHost and cloned into SharedNodeState and ProcessState; both views read the same immutable host input.",
+    "guest_process_argv": "The shared adapter materializes a separate rooted JavaScript Array from ProcessArgs, so guest mutations do not modify the host startup vector.",
+    "api_boundary": "HostState.process and ProcessState.argv are crate-private; ProcessState::argv() exposes a read-only slice. This prevents downstream embedders from replacing one host view and splitting the shared source.",
+    "readers": [
+      "modules/process/shared_vm.rs materializes shared process.argv",
+      "modules/require.rs uses the same initial arguments in the legacy process-module fallback",
+      "modules/util.rs reads argv[1] for the legacy source-map script name"
+    ],
+    "inventory_membership_changed": false,
+    "runtime_dependency_removed": false
+  },
+  "verification": {
+    "checks": [
+      {
+        "command": "cargo check --quiet -p quench-node -p quench-node-test",
+        "exit_code": 0,
+        "result": "passed; only existing deprecated Atomic::fetch_update warnings in quench-runtime"
+      },
+      {
+        "command": "cargo build --profile iteration -p quench-node --bin quench-node -p quench-node-test --bin run-parallel",
+        "exit_code": 0,
+        "result": "passed"
+      },
+      {
+        "command": "target/iteration/run-parallel --profile framework-core --timeout-secs 60",
+        "exit_code": 0,
+        "result": {
+          "pass": 43,
+          "skip": 0,
+          "fail": 0,
+          "timeout": 0,
+          "crash": 0,
+          "unclassified": 0,
+          "total": 43
+        },
+        "stdout_artifact": "target/iteration/task27-process-argv-boundary-2026-10-08/framework-core.stdout",
+        "stderr_artifact": "target/iteration/task27-process-argv-boundary-2026-10-08/framework-core.stderr"
+      },
+      {
+        "command": "From tests/frameworks, run local Node and target/iteration/quench-node driver.cjs scenarios/{express,koa,fastify}.cjs; compare exit status, stdout and stderr exactly",
+        "exit_code": 0,
+        "result": "All six processes exited 0; each pair had byte-identical stdout and empty stderr.",
+        "stdout_sha256": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "artifacts_directory": "target/iteration/task27-process-argv-boundary-2026-10-08/apps",
+        "status_artifact": "target/iteration/task27-process-argv-boundary-2026-10-08/apps/process-status.json",
+        "process_results": [
+          {
+            "framework": "express",
+            "engine": "node",
+            "exit_code": 0,
+            "signal": null,
+            "error": null
+          },
+          {
+            "framework": "express",
+            "engine": "quench",
+            "exit_code": 0,
+            "signal": null,
+            "error": null
+          },
+          {
+            "framework": "koa",
+            "engine": "node",
+            "exit_code": 0,
+            "signal": null,
+            "error": null
+          },
+          {
+            "framework": "koa",
+            "engine": "quench",
+            "exit_code": 0,
+            "signal": null,
+            "error": null
+          },
+          {
+            "framework": "fastify",
+            "engine": "node",
+            "exit_code": 0,
+            "signal": null,
+            "error": null
+          },
+          {
+            "framework": "fastify",
+            "engine": "quench",
+            "exit_code": 0,
+            "signal": null,
+            "error": null
+          }
+        ]
+      },
+      {
+        "command": "target/iteration/run-parallel --all --filter test-process-argv-0 --results target/iteration/task27-process-argv-boundary-2026-10-08/process-argv-0-results.json",
+        "exit_code": 1,
+        "result": "One out-of-profile fixture failed: TypeError: The path argument must be of type string. Received an instance of Object; stdout and stderr were empty, so the fixture did not reach its child-output assertion.",
+        "artifact": "target/iteration/task27-process-argv-boundary-2026-10-08/process-argv-0-results.json"
+      }
+    ],
+    "unit_tests": "not run"
+  }
+}

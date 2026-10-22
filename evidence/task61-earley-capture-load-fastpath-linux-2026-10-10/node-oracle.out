@@ -1,0 +1,1 @@
+CAPTURE_ENV_ORACLE:[[2,3],"depth-two",[0,1,2,3],"after",["ReferenceError","initialized"],"script-b"]

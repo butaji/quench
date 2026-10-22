@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "experiment": "EarleyBoyer StoreLocalPlain-to-LoadConst superinstruction preflight",
+  "branch": "v2-cloud",
+  "source_revision": "7ec9401c26c51694ada46bdce3dc06f535a738b4",
+  "fixture": "EarleyBoyer",
+  "fixture_sha256": "aa379c1d54f5d13de32ebf2b50729d0cbc64bb23de5e524256c7b2270213cc0b",
+  "profile_binary_sha256": "c12a873b63f6c5fd4e279a057d013bd80ee9710aa1ffc44fd16d25ee955d4543",
+  "census": {
+    "physical_dispatches": 737899774,
+    "SuperStoreLocalPlainLoadConst": 0,
+    "StoreLocalPlain": 78441565,
+    "LoadConst": 63166445
+  },
+  "production_pairs_run": 0,
+  "profile_candidate_exit_code": 0,
+  "decision": "rejected before production scoring because the fused opcode executed zero times; the dynamic transition count did not create a fusible straight-line site."
+}

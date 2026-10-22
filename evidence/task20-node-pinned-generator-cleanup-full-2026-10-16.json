@@ -1,0 +1,139 @@
+{
+  "scope": "Complete pinned Node v27.0.0-nightly20260819c79868f102 inventory, configured CLI/iterable streams and genuine generator cleanup",
+  "source_commit": "63bb54bdda93af01b71838e18c26bb9c9afb3340",
+  "qualified_evidence": "7f5ba8cd4",
+  "node_release": "v27.0.0-nightly20260819c79868f102",
+  "fixture_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+  "inventory_hash": "1e51ca4121020d14",
+  "counts": {
+    "timeout": 81,
+    "fail": 2169,
+    "pass": 1799,
+    "skip": 678
+  },
+  "total": 4727,
+  "jobs": 4,
+  "timeout_seconds": 30,
+  "crash": 0,
+  "unclassified": 0,
+  "comparison_to_1753": {
+    "gained": [
+      "test-console-issue-43095.js",
+      "test-console-tty-colors-per-stream.js",
+      "test-error-value-type-detection.mjs",
+      "test-internal-async-context-frame-disable.js",
+      "test-options-binding.js",
+      "test-runner-seeded-generator.js",
+      "test-stream-iter-broadcast-backpressure.js",
+      "test-stream-iter-broadcast-basic.js",
+      "test-stream-iter-broadcast-coverage.js",
+      "test-stream-iter-broadcast-from.js",
+      "test-stream-iter-consumers-bytes.js",
+      "test-stream-iter-consumers-merge.js",
+      "test-stream-iter-consumers-tap.js",
+      "test-stream-iter-consumers-text.js",
+      "test-stream-iter-cross-realm.js",
+      "test-stream-iter-disabled.js",
+      "test-stream-iter-duplex.js",
+      "test-stream-iter-from-async.js",
+      "test-stream-iter-from-coverage.js",
+      "test-stream-iter-from-sync.js",
+      "test-stream-iter-from-writable-cache-options.js",
+      "test-stream-iter-namespace.js",
+      "test-stream-iter-pipeto-edge.js",
+      "test-stream-iter-pipeto-signal.js",
+      "test-stream-iter-pipeto-writev.js",
+      "test-stream-iter-pipeto.js",
+      "test-stream-iter-pull-sync.js",
+      "test-stream-iter-push-backpressure.js",
+      "test-stream-iter-push-basic.js",
+      "test-stream-iter-push-writer.js",
+      "test-stream-iter-readable-interop-disabled.js",
+      "test-stream-iter-share-async.js",
+      "test-stream-iter-share-coverage.js",
+      "test-stream-iter-share-from.js",
+      "test-stream-iter-share-sync.js",
+      "test-stream-iter-sharedarraybuffer.js",
+      "test-stream-iter-transform-output.js",
+      "test-stream-iter-writable-from.js",
+      "test-util-format.js",
+      "test-util-inspect-getters-accessing-this.js",
+      "test-util-inspect-long-running.js",
+      "test-util-inspect-proxy.js",
+      "test-util-inspect-regexp.js",
+      "test-util-primordial-monkeypatching.js",
+      "test-webstream-encoding-inspect.js",
+      "test-whatwg-encoding-custom-textdecoder-invalid-arg.js",
+      "test-whatwg-encoding-custom-textdecoder-streaming.js",
+      "test-whatwg-encoding-custom-textdecoder.js"
+    ],
+    "lost": [
+      "test-dgram-socket-buffer-size.js",
+      "test-release-npm.js"
+    ],
+    "new_skips": [
+      "test-quic-endpoint-close-destroy.mjs",
+      "test-quic-h3-stream-idle-timeout.mjs",
+      "test-quic-stream-idle-timeout.mjs"
+    ]
+  },
+  "official_new_skip_controls": {
+    "total": 3,
+    "same_skip": 3,
+    "reason": "QUIC is not enabled in either runtime on this host",
+    "raw": {
+      "path": "work/full-generator-cleanup-pinned/new-skip-controls.json",
+      "bytes": 834,
+      "sha256": "67686149b7ca1ba87043bc4195f4bbfb1ff8f573bb878e8fe9056c51d4c7c1dd"
+    }
+  },
+  "memory_delta": {
+    "low": 0,
+    "high": 0,
+    "max": 0,
+    "oom": 0,
+    "oom_kill": 0,
+    "oom_group_kill": 0
+  },
+  "raw": {
+    "results": {
+      "path": "work/full-generator-cleanup-pinned/results.json",
+      "bytes": 13880615,
+      "sha256": "9dd165a4179278ca4416eda70bc1053c4b76053b8ac7bec5fc55637d8aa693f7"
+    },
+    "runner": {
+      "path": "work/full-generator-cleanup-pinned/runner.log",
+      "bytes": 391273,
+      "sha256": "8058dc1206b61d655c4a6e00c022279ac732aa60f2576602f420c208514f99ce"
+    },
+    "receipt": {
+      "path": "work/full-generator-cleanup-pinned/receipt.json",
+      "bytes": 1765,
+      "sha256": "25c4612f0b38a8a75319769a94ef3d7e1a92cebbd40a0dcee2cedf253474b5cf"
+    },
+    "source_manifest": {
+      "path": "work/generator-cleanup-bin/source-sha256.json",
+      "bytes": 77340,
+      "sha256": "bfe91e07bd903990da21f4021dcb8449a07db9ce4bc80791500c7ce72f8bd2c1"
+    },
+    "binary_sha": {
+      "path": "work/generator-cleanup-bin/sha256.txt",
+      "bytes": 316,
+      "sha256": "df7c7c8ab259b5f139485260375b2293fce5ae1bcc3a4156cc19bb725bc40384"
+    },
+    "comparison": {
+      "path": "work/full-generator-cleanup-pinned/comparison.json",
+      "bytes": 2268,
+      "sha256": "92685263c38249090cccb1b9546b2eabf121c2fa7b328634617421df1833a38b"
+    }
+  },
+  "limitations": [
+    "Goal remains open:1799passes/4727 with2169failures and81timeouts. Skips are not passes.",
+    "48gained and2lost passes relative to previous pinned1753 on67391cdd; no attribution solely to any one incoming source change.",
+    "All3new skips are official-Node-equivalent QUIC guards, confirmed by executing all3 unchanged fixtures with their original flags on official pinned Node. Existing SQLite missing-capability skip remains a gap (official pinned7subtests pass). Do not interpret all678skips as equivalent to Node.",
+    "Lost test-dgram-socket-buffer-size.js exposes legacy constructed SystemError inspection/getter provenance under canonical util; lost test-release-npm.js reports npm11.20 rejecting advertised Nodev22.0.0. Both retained failures, not hidden.",
+    "Run used frozen source63bb54bdd. Newer abort listener source7a413a9a1 and in-progress compression native binding are outside this inventory. No selected-family additions inferred.",
+    "Sequential stable then pinned audits share original jobs4/30 criteria. Implementation compilation and focused checks overlapped some stable work; native builds used lower priority. Zero max/oom/oomkill event deltas. Timing differences are not attributed solely to source.",
+    "Every frozen binary and all635 detached source hashes verified before/after. Permission fixture restored and bytechecked; no scored fixture/oracle/configuration rewrites."
+  ]
+}

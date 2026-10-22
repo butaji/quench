@@ -1,0 +1,84 @@
+{
+  "host": {
+    "platform": "macOS-26.5-arm64-arm-64bit",
+    "machine": "arm64",
+    "logical_cpus": 10,
+    "load_average_before": [
+      2.86474609375,
+      6.84423828125,
+      8.36181640625
+    ],
+    "load_average_after": [
+      2.79541015625,
+      6.763671875,
+      8.32421875
+    ]
+  },
+  "binary": "/private/tmp/quench-task61-splay-free-bitmap-m4/target/pinned/098cc7aa69195bab87115b496a4df9660f78c5d7364e60a52c8761f2e857f5e6/quench-node",
+  "binary_sha256": "098cc7aa69195bab87115b496a4df9660f78c5d7364e60a52c8761f2e857f5e6",
+  "capture_script_sha256": "a78ec25ec18842dc431df0a638329237cd4c9dfdc0fe64e0a8f7203d9297b999",
+  "base_sha256": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51",
+  "fixture_sha256": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d",
+  "work_runs": 300,
+  "capture_stages": [
+    {
+      "stage": "pre-setup",
+      "pid": 71724,
+      "source": "evidence/task61-splay-rss-current-m4-2026-10-13/final-capture/splay-pre-setup-hold.js",
+      "source_sha256": "462e871563e247d0aeeb01c1063f9e603af30a576f6c8a891a760255c2eb4338",
+      "captured_unix_seconds": 1791914809.018126,
+      "marker": "__quenchMemoryHold:pre-setup",
+      "vmmap_exit": 0,
+      "summary_exit": 0,
+      "process_info_exit": 0,
+      "files": [
+        "evidence/task61-splay-rss-current-m4-2026-10-13/final-capture/pre-setup.stdout.txt",
+        "evidence/task61-splay-rss-current-m4-2026-10-13/final-capture/pre-setup.stderr.txt",
+        "evidence/task61-splay-rss-current-m4-2026-10-13/final-capture/pre-setup.vmmap.txt",
+        "evidence/task61-splay-rss-current-m4-2026-10-13/final-capture/pre-setup.vmmap-summary.txt",
+        "evidence/task61-splay-rss-current-m4-2026-10-13/final-capture/pre-setup.process.txt"
+      ]
+    },
+    {
+      "stage": "setup",
+      "pid": 71728,
+      "source": "evidence/task61-splay-rss-current-m4-2026-10-13/final-capture/splay-setup-hold.js",
+      "source_sha256": "2b66f1509ce44c1e43ad3d407c998bb72e585a384befd3f148d1c0d07e199623",
+      "captured_unix_seconds": 1791914810.221733,
+      "marker": "__quenchMemoryHold:setup",
+      "vmmap_exit": 0,
+      "summary_exit": 0,
+      "process_info_exit": 0,
+      "files": [
+        "evidence/task61-splay-rss-current-m4-2026-10-13/final-capture/setup.stdout.txt",
+        "evidence/task61-splay-rss-current-m4-2026-10-13/final-capture/setup.stderr.txt",
+        "evidence/task61-splay-rss-current-m4-2026-10-13/final-capture/setup.vmmap.txt",
+        "evidence/task61-splay-rss-current-m4-2026-10-13/final-capture/setup.vmmap-summary.txt",
+        "evidence/task61-splay-rss-current-m4-2026-10-13/final-capture/setup.process.txt"
+      ]
+    },
+    {
+      "stage": "work",
+      "pid": 71732,
+      "source": "evidence/task61-splay-rss-current-m4-2026-10-13/final-capture/splay-work-hold.js",
+      "source_sha256": "a82b78175a35d43b92ccad034a51f645d8ca0b0ffcd2b6ffaa428dfab6d36c3f",
+      "captured_unix_seconds": 1791914811.4696078,
+      "marker": "__quenchMemoryHold:work",
+      "vmmap_exit": 0,
+      "summary_exit": 0,
+      "process_info_exit": 0,
+      "files": [
+        "evidence/task61-splay-rss-current-m4-2026-10-13/final-capture/work.stdout.txt",
+        "evidence/task61-splay-rss-current-m4-2026-10-13/final-capture/work.stderr.txt",
+        "evidence/task61-splay-rss-current-m4-2026-10-13/final-capture/work.vmmap.txt",
+        "evidence/task61-splay-rss-current-m4-2026-10-13/final-capture/work.vmmap-summary.txt",
+        "evidence/task61-splay-rss-current-m4-2026-10-13/final-capture/work.process.txt"
+      ]
+    }
+  ],
+  "method": "Stop the uninstrumented pinned process after loading base.js and splay.js but before Setup, after Setup, and after 300 run() calls; capture vmmap and ps before teardown.",
+  "limits": [
+    "This is an OS mapping snapshot, not the profile-memory structural counter build.",
+    "The work snapshot is after the final run(), before TearDown(); it may miss a transient intra-run RSS peak."
+  ]
+}

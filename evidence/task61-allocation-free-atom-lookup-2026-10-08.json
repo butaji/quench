@@ -1,0 +1,412 @@
+{
+  "schema": 1,
+  "experiment": "allocation-free UTF-16 atom lookup",
+  "decision": "retain as a measured Stage B candidate; complete V8-v7 qualification remains open",
+  "decision_reason": "The previous string-key path materialized a JsString and then performed a separate lookup. The new path hashes and compares the existing atom representation first, materializing only on a miss. Richards shows a strong local Score/instruction improvement; the RSS interval includes a tie and the experiment covers one Quench-only workload.",
+  "binding_time": {
+    "static": "The source string and its UTF-16 sequence are known at the intern_atom call site.",
+    "dynamic": "The atom table contents and collisions remain runtime state; lookup still compares exact UTF-16 contents before reusing an Atom.",
+    "representation": "UTF-16 code units remain the identity authority for static and dynamic atom keys; FxHasher output is only an index, never identity."
+  },
+  "source": {
+    "revision": "ad91c3884d20242d88ee33db14710db39ad3c455",
+    "worktree_dirty": true,
+    "owner_files_sha256": {
+      "crates/quench-runtime-next/src/vm/atom_keys.rs": "7bb93c7f7a9ddebcdc4cb1280abbf203c0d2c368ee1f5457454de0663405ce9a",
+      "crates/quench-runtime-next/src/vm/builtins.rs": "87ffba9ec3b07bf31558ee352e0022d693e98741cea297053412007a09c75ec3",
+      "crates/quench-runtime-next/src/vm.rs": "5df8ec6967d877ebc1413f4915f706d0f20786e4deb4db0c7c4bcf79260369ca"
+    },
+    "candidate_binary_sha256": "2868c927268c9cb809cd1e4c4ce17ed4929d01f2ebddea5dcd0913fcfa445f7c",
+    "baseline_binary_sha256": "a4294ac48cd40dce0e3dc2d3da5f73df9deae632a9bc2c49cf658a84865518a6",
+    "baseline_binary_was_copied_before_candidate_change": true,
+    "profile": "production"
+  },
+  "measurement": {
+    "kind": "diagnostic single-engine paired screen",
+    "benchmark": "V8-v7 Richards materialized input, Quench only",
+    "fixture_sha256": "c6e5fd39715ae35ebb5bca9474b69a6eeb180da5ac2fc1455ed4d7ff4a29b60c",
+    "pairs": 11,
+    "pair_order_alternated": true,
+    "baseline_score_median": 63.9,
+    "candidate_score_median": 98.3,
+    "paired_score_delta_median": 34.699999999999996,
+    "paired_score_delta_bootstrap_95_ci": [
+      31.0,
+      38.400000000000006
+    ],
+    "baseline_max_rss_median_bytes": 16056320,
+    "candidate_max_rss_median_bytes": 16023552,
+    "paired_max_rss_delta_median_bytes": -16384,
+    "paired_max_rss_delta_bootstrap_95_ci_bytes": [
+      -442368,
+      245760
+    ],
+    "paired_retired_instruction_delta_median": -11497044881,
+    "raw_pairs": [
+      {
+        "pair": 1,
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "baseline": {
+          "score": 70.9,
+          "benchmark_result": 70.9,
+          "max_rss_bytes": 15728640,
+          "instructions": 78746268467,
+          "elapsed_ns": 3117173166,
+          "stdout_sha256": "cfcad052ee250aaf0a7ec3f1a10f2c354fc0225593fc0996b29b76af1ac4969c"
+        },
+        "candidate": {
+          "score": 105.0,
+          "benchmark_result": 105.0,
+          "max_rss_bytes": 15974400,
+          "instructions": 64594063779,
+          "elapsed_ns": 3033048250,
+          "stdout_sha256": "9a99901de0f4d8d0aa3069a0ad28cda8a964e86f4beaf25607ff0d5eb849ccd7"
+        },
+        "score_delta": 34.099999999999994,
+        "rss_delta_bytes": 245760,
+        "instruction_delta": -14152204688
+      },
+      {
+        "pair": 2,
+        "order": [
+          "candidate",
+          "baseline"
+        ],
+        "baseline": {
+          "score": 63.2,
+          "benchmark_result": 63.2,
+          "max_rss_bytes": 15990784,
+          "instructions": 71243750416,
+          "elapsed_ns": 3099980750,
+          "stdout_sha256": "0f3070a84b03ff90ead199467073582324c347dc220934e84fba4019f12f6bb1"
+        },
+        "candidate": {
+          "score": 106.0,
+          "benchmark_result": 106.0,
+          "max_rss_bytes": 15548416,
+          "instructions": 65348544134,
+          "elapsed_ns": 3081448166,
+          "stdout_sha256": "662a97dce5c4ebb413a33f58387fd6670192d7a03f0211dc489713d14717f81c"
+        },
+        "score_delta": 42.8,
+        "rss_delta_bytes": -442368,
+        "instruction_delta": -5895206282
+      },
+      {
+        "pair": 3,
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "baseline": {
+          "score": 63.9,
+          "benchmark_result": 63.9,
+          "max_rss_bytes": 16056320,
+          "instructions": 68742533163,
+          "elapsed_ns": 3077085959,
+          "stdout_sha256": "79abaf828516f7a363d3c07b651852e331bef902f504d65ce6d96f2df305a385"
+        },
+        "candidate": {
+          "score": 108.0,
+          "benchmark_result": 108.0,
+          "max_rss_bytes": 17154048,
+          "instructions": 64625038804,
+          "elapsed_ns": 3059783125,
+          "stdout_sha256": "d664731e0bd115c84e1c2865380872f6a2a82ededd5be1013e2a40f653d011ed"
+        },
+        "score_delta": 44.1,
+        "rss_delta_bytes": 1097728,
+        "instruction_delta": -4117494359
+      },
+      {
+        "pair": 4,
+        "order": [
+          "candidate",
+          "baseline"
+        ],
+        "baseline": {
+          "score": 60.0,
+          "benchmark_result": 60.0,
+          "max_rss_bytes": 16236544,
+          "instructions": 68721953661,
+          "elapsed_ns": 3086708000,
+          "stdout_sha256": "ea7bca3952a98891330640ba24d194f86f88d263a21fcb927e854dfb376c548a"
+        },
+        "candidate": {
+          "score": 98.4,
+          "benchmark_result": 98.4,
+          "max_rss_bytes": 16023552,
+          "instructions": 62528496628,
+          "elapsed_ns": 3054004125,
+          "stdout_sha256": "80c1608f75c977022dddf1b24edcd736646dbdd42b32dac1e1e6241a8cc830c6"
+        },
+        "score_delta": 38.400000000000006,
+        "rss_delta_bytes": -212992,
+        "instruction_delta": -6193457033
+      },
+      {
+        "pair": 5,
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "baseline": {
+          "score": 65.2,
+          "benchmark_result": 65.2,
+          "max_rss_bytes": 16678912,
+          "instructions": 71229530761,
+          "elapsed_ns": 3087681417,
+          "stdout_sha256": "9ff68a5b149dd96c8052a5d0714d9965049d0c6734efa30f9775b3dbf7c4f410"
+        },
+        "candidate": {
+          "score": 95.2,
+          "benchmark_result": 95.2,
+          "max_rss_bytes": 16859136,
+          "instructions": 59030460595,
+          "elapsed_ns": 3077003375,
+          "stdout_sha256": "671bd9759f012c310c98509821d38a5fa461da439811795c14226fc1c0ebd8bc"
+        },
+        "score_delta": 30.0,
+        "rss_delta_bytes": 180224,
+        "instruction_delta": -12199070166
+      },
+      {
+        "pair": 6,
+        "order": [
+          "candidate",
+          "baseline"
+        ],
+        "baseline": {
+          "score": 69.6,
+          "benchmark_result": 69.6,
+          "max_rss_bytes": 16941056,
+          "instructions": 74989656579,
+          "elapsed_ns": 3086247042,
+          "stdout_sha256": "2d02f840c0d17e38a0c40f7b8942287d6fcc94369f27b8494b26909d74b18a09"
+        },
+        "candidate": {
+          "score": 100.0,
+          "benchmark_result": 100.0,
+          "max_rss_bytes": 15990784,
+          "instructions": 59729116693,
+          "elapsed_ns": 3033597125,
+          "stdout_sha256": "88666b5482358a84856bbc3258eb55f5db0f64051b13208c575ea5a8d8f851f2"
+        },
+        "score_delta": 30.400000000000006,
+        "rss_delta_bytes": -950272,
+        "instruction_delta": -15260539886
+      },
+      {
+        "pair": 7,
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "baseline": {
+          "score": 62.2,
+          "benchmark_result": 62.2,
+          "max_rss_bytes": 14942208,
+          "instructions": 71227600345,
+          "elapsed_ns": 3098221708,
+          "stdout_sha256": "2953ee1168ac9809f650c16ce0448abbbf1c36938ca3f33ac80dfa722ada16a7"
+        },
+        "candidate": {
+          "score": 97.0,
+          "benchmark_result": 97.0,
+          "max_rss_bytes": 17268736,
+          "instructions": 59730555464,
+          "elapsed_ns": 3061159459,
+          "stdout_sha256": "e2d1cf7deb16fecb722d787a20fe2954a354ae0958d19d1aac44b10a93b37548"
+        },
+        "score_delta": 34.8,
+        "rss_delta_bytes": 2326528,
+        "instruction_delta": -11497044881
+      },
+      {
+        "pair": 8,
+        "order": [
+          "candidate",
+          "baseline"
+        ],
+        "baseline": {
+          "score": 65.0,
+          "benchmark_result": 65.0,
+          "max_rss_bytes": 16842752,
+          "instructions": 72487037954,
+          "elapsed_ns": 3123418500,
+          "stdout_sha256": "d95cd0af7a5ac95de8ffe1f25342043ce0f5606fc88be8cee3252a4420f67321"
+        },
+        "candidate": {
+          "score": 97.0,
+          "benchmark_result": 97.0,
+          "max_rss_bytes": 16285696,
+          "instructions": 59718806884,
+          "elapsed_ns": 3070308167,
+          "stdout_sha256": "e2d1cf7deb16fecb722d787a20fe2954a354ae0958d19d1aac44b10a93b37548"
+        },
+        "score_delta": 32.0,
+        "rss_delta_bytes": -557056,
+        "instruction_delta": -12768231070
+      },
+      {
+        "pair": 9,
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "baseline": {
+          "score": 66.5,
+          "benchmark_result": 66.5,
+          "max_rss_bytes": 15990784,
+          "instructions": 74984330822,
+          "elapsed_ns": 3088661584,
+          "stdout_sha256": "478e2d2f11e300a6ed66238ddbdec707dc6f8aa6effa5aa9c66c9fb97c06b9b8"
+        },
+        "candidate": {
+          "score": 97.5,
+          "benchmark_result": 97.5,
+          "max_rss_bytes": 16023552,
+          "instructions": 59015227444,
+          "elapsed_ns": 3045141834,
+          "stdout_sha256": "8f517df8d68dd489a55712064930223ab9b1e692e3cdd653d28cb73da892a79a"
+        },
+        "score_delta": 31.0,
+        "rss_delta_bytes": 32768,
+        "instruction_delta": -15969103378
+      },
+      {
+        "pair": 10,
+        "order": [
+          "candidate",
+          "baseline"
+        ],
+        "baseline": {
+          "score": 63.1,
+          "benchmark_result": 63.1,
+          "max_rss_bytes": 16056320,
+          "instructions": 71231037274,
+          "elapsed_ns": 3112428000,
+          "stdout_sha256": "2f20d0481aee52ca46c492229b1d0c4a7ac076d2ad076b4c0b714111596f57fe"
+        },
+        "candidate": {
+          "score": 97.8,
+          "benchmark_result": 97.8,
+          "max_rss_bytes": 16023552,
+          "instructions": 60430082364,
+          "elapsed_ns": 3095954750,
+          "stdout_sha256": "23344492e4d8b26d0a132e8dc388c09ec11ea97b6088666bdd49727b51ae7f6c"
+        },
+        "score_delta": 34.699999999999996,
+        "rss_delta_bytes": -32768,
+        "instruction_delta": -10800954910
+      },
+      {
+        "pair": 11,
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "baseline": {
+          "score": 60.2,
+          "benchmark_result": 60.2,
+          "max_rss_bytes": 16121856,
+          "instructions": 67473691740,
+          "elapsed_ns": 3087659209,
+          "stdout_sha256": "d62832ffe259f3f3b088f24b8a25fbb4dbcfc0d349909c786d22193dc471ee26"
+        },
+        "candidate": {
+          "score": 98.3,
+          "benchmark_result": 98.3,
+          "max_rss_bytes": 16105472,
+          "instructions": 60428535977,
+          "elapsed_ns": 3061973042,
+          "stdout_sha256": "2211524a1b4d431a21afa68eb53d45628447117ba6ed099b56a02322d3ee14e6"
+        },
+        "score_delta": 38.099999999999994,
+        "rss_delta_bytes": -16384,
+        "instruction_delta": -7045155763
+      }
+    ],
+    "host": "Mac16,10 / macos-aarch64",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+    "command": "/usr/bin/time -l <baseline-or-candidate> /tmp/quench-v8v7-richards-same-input.js"
+  },
+  "correctness": {
+    "test262": {
+      "engine": "next",
+      "runner_sha256": "eb1d4409e0bed0af30830e530195604971b40016d88f31291f2aee6a5aa5bb63",
+      "total_passed": 16009,
+      "total_failed": 0,
+      "stages": {
+        "10": {
+          "passed": 11102,
+          "failed": 0,
+          "total": 11102,
+          "report_sha256": "ffc02f226c3479a69d5d3cb5136df0befce5454c97a49ff360ba1ecb46108038",
+          "report_path": "/tmp/quench-atom-hash-final-stages-10-11.json"
+        },
+        "11": {
+          "passed": 217,
+          "failed": 0,
+          "total": 217,
+          "report_sha256": "ffc02f226c3479a69d5d3cb5136df0befce5454c97a49ff360ba1ecb46108038",
+          "report_path": "/tmp/quench-atom-hash-final-stages-10-11.json"
+        },
+        "13": {
+          "passed": 42,
+          "failed": 0,
+          "total": 42,
+          "report_sha256": "88ef64c9995dc60ce8e80dacc1cf9a8aab2438b9413bf93083edae0ae36f92a1",
+          "report_path": "/tmp/quench-atom-hash-final-stages-13-14.json"
+        },
+        "14": {
+          "passed": 14,
+          "failed": 0,
+          "total": 14,
+          "report_sha256": "88ef64c9995dc60ce8e80dacc1cf9a8aab2438b9413bf93083edae0ae36f92a1",
+          "report_path": "/tmp/quench-atom-hash-final-stages-13-14.json"
+        },
+        "60": {
+          "passed": 3411,
+          "failed": 0,
+          "total": 3411,
+          "report_sha256": "24507a966ffc691ad52187de46172316ea955c6d8a4424f10fa14d29a811ff7c",
+          "report_path": "/tmp/quench-atom-hash-final-stage-60.json"
+        },
+        "70": {
+          "passed": 1223,
+          "failed": 0,
+          "total": 1223,
+          "report_sha256": "7c3a5339838e198fd4db85c435e904815ec31e21e99fbe391e330bbb8d1150b5",
+          "report_path": "/tmp/quench-atom-hash-final-stage-70.json"
+        }
+      },
+      "timeout_ms": 15000,
+      "jobs": 8
+    },
+    "node_oracle": {
+      "node_version": "v26.10.0",
+      "node_binary_sha256": "4ca2a42d6d55a834b04d0892c5bc646a6869fcebec57f91c849dac0aa1031610",
+      "script_sha256": "e990651faa57191c26b0bea87b8bdcccd74fd3764e70a7c3cbb15e67ea3e7f75",
+      "node_stdout_sha256": "587189b051176fafa445705c65a429d14c5a6e767839422c8891e5eb58dde960",
+      "quench_stdout_sha256": "587189b051176fafa445705c65a429d14c5a6e767839422c8891e5eb58dde960",
+      "output_equal": true,
+      "observed_keys": [
+        "BMP non-ASCII",
+        "astral pair",
+        "lone high surrogate",
+        "replacement character",
+        "static source atom accessed through a dynamic key"
+      ],
+      "observed_result": "[[\"λ\",\"🚀\",\"\\ud800\",\"�\"],[0,1,2,3],17,17,23]"
+    }
+  },
+  "limits": [
+    "One Richards input and one engine only; this does not establish cross-benchmark or cross-engine leadership.",
+    "RSS paired interval spans zero.",
+    "Worktree was dirty from independent Stage A work; source owner hashes and binary hashes bind this candidate, but the measurement is diagnostic rather than release qualification."
+  ]
+}

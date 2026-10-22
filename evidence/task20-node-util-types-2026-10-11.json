@@ -1,0 +1,15 @@
+{
+  "scope": "28 util.types predicates implemented in Rust using runtime internal-slot brands, without guest getters/proxy traps.",
+  "node_oracle": "v24.19.0",
+  "oracle_regression": "28 predicates compared against local Node over 34 values including genuine, prototype-spoofed, proxied, revoked, cross-realm, and throwing toStringTag values; function name/length and util/types identity also match.",
+  "validation": "All 4 child-entry integration tests pass.",
+  "upstream_subset": {
+    "total": 30,
+    "pass": 5,
+    "skip": 1,
+    "fail": 24,
+    "timeout": 0,
+    "change_from_446c96e81": "No count change; missing internal library source still blocks most util cases."
+  },
+  "performance_claim": false
+}

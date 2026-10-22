@@ -1,0 +1,7 @@
+
+running 2 tests
+test headers_and_host_clone_markers_match_the_node_oracle ... ok
+test binary_http_response_views_match_the_node_oracle ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 239 filtered out; finished in 0.77s
+

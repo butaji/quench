@@ -1,0 +1,99 @@
+{
+  "source": "383fcec1750a9eca4673853b2137d3b746c246d3",
+  "equal": false,
+  "observations": {
+    "node": {
+      "complete": true,
+      "out": [
+        [
+          "before",
+          "\u0000quench:private:/workspace/scratch/npm-private-brand-draft/string-key-isolation.cjs:0:value",
+          null
+        ],
+        [
+          "after",
+          "\u0000quench:private:/workspace/scratch/npm-private-brand-draft/string-key-isolation.cjs:0:value",
+          7,
+          9,
+          [
+            "\u0000quench:private:/workspace/scratch/npm-private-brand-draft/string-key-isolation.cjs:0:value"
+          ]
+        ],
+        [
+          "before",
+          "\u0000quench:private:/workspace/scratch/npm-private-brand-draft/string-key-isolation.cjs:0:field::value",
+          null
+        ],
+        [
+          "after",
+          "\u0000quench:private:/workspace/scratch/npm-private-brand-draft/string-key-isolation.cjs:0:field::value",
+          7,
+          9,
+          [
+            "\u0000quench:private:/workspace/scratch/npm-private-brand-draft/string-key-isolation.cjs:0:value",
+            "\u0000quench:private:/workspace/scratch/npm-private-brand-draft/string-key-isolation.cjs:0:field::value"
+          ]
+        ],
+        [
+          "before",
+          "\u0000plain-public-key",
+          null
+        ],
+        [
+          "after",
+          "\u0000plain-public-key",
+          7,
+          9,
+          [
+            "\u0000quench:private:/workspace/scratch/npm-private-brand-draft/string-key-isolation.cjs:0:value",
+            "\u0000quench:private:/workspace/scratch/npm-private-brand-draft/string-key-isolation.cjs:0:field::value",
+            "\u0000plain-public-key"
+          ]
+        ]
+      ]
+    },
+    "quench": {
+      "complete": true,
+      "out": [
+        [
+          "before",
+          "\u0000quench:private:/workspace/scratch/npm-private-brand-draft/string-key-isolation.cjs:0:value",
+          7
+        ],
+        [
+          "after",
+          "\u0000quench:private:/workspace/scratch/npm-private-brand-draft/string-key-isolation.cjs:0:value",
+          9,
+          9,
+          []
+        ],
+        [
+          "before-error",
+          "\u0000quench:private:/workspace/scratch/npm-private-brand-draft/string-key-isolation.cjs:0:field::value",
+          "TypeError",
+          "private member is not present on this object"
+        ],
+        [
+          "after-error",
+          "\u0000quench:private:/workspace/scratch/npm-private-brand-draft/string-key-isolation.cjs:0:field::value",
+          "TypeError",
+          "private member is not present on this object"
+        ],
+        [
+          "before",
+          "\u0000plain-public-key",
+          null
+        ],
+        [
+          "after",
+          "\u0000plain-public-key",
+          9,
+          9,
+          [
+            "\u0000plain-public-key"
+          ]
+        ]
+      ]
+    }
+  }
+}

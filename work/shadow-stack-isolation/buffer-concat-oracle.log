@@ -1,0 +1,14 @@
+length undefined 01020304 true
+length 0  false
+length 1 01 true
+length 3 010203 true
+length 6 010203040000 true
+invalid null TypeError ERR_INVALID_ARG_TYPE The "length" argument must be of type number. Received null
+invalid -1 RangeError ERR_OUT_OF_RANGE The value of "length" is out of range. It must be >= 0 && <= 9007199254740991. Received -1
+invalid 1.5 RangeError ERR_OUT_OF_RANGE The value of "length" is out of range. It must be an integer. Received 1.5
+invalid 3 TypeError ERR_INVALID_ARG_TYPE The "length" argument must be of type number. Received type string ('3')
+invalid NaN RangeError ERR_OUT_OF_RANGE The value of "length" is out of range. It must be an integer. Received NaN
+empty 0
+proxy 0304 length,length,length,0,length,1,length,length,0,length,1,length
+wrong TypeError ERR_INVALID_ARG_TYPE The "list[0]" argument must be an instance of Buffer or Uint8Array. Received an instance of Uint16Array
+reentrant 010000 09 true false

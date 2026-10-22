@@ -1,0 +1,10 @@
+{
+  "counts": {
+    "timeout": 96,
+    "fail": 2511,
+    "pass": 1770,
+    "skip": 638
+  },
+  "total": 5015,
+  "inventory_hash": "a3820c977f97ed07"
+}

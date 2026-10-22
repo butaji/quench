@@ -1,0 +1,107 @@
+[
+  {
+    "test": "abort_listener_disposal_and_stopped_propagation_match_node",
+    "side": "base",
+    "exit_code": 0,
+    "stdout": "[\"stop\",\"resist\",true,\"sync\",2,1,\"queued\",true,0]\n",
+    "stderr": ""
+  },
+  {
+    "test": "abort_listener_disposal_and_stopped_propagation_match_node",
+    "side": "candidate",
+    "exit_code": 0,
+    "stdout": "[\"stop\",\"resist\",true,\"sync\",2,1,\"queued\",true,0]\n",
+    "stderr": ""
+  },
+  {
+    "test": "abort_listener_disposal_and_stopped_propagation_match_node",
+    "side": "node",
+    "exit_code": 0,
+    "stdout": "[\"stop\",\"resist\",true,\"sync\",2,1]\n",
+    "stderr": ""
+  },
+  {
+    "test": "native_recursive_watch_class_close_and_per_path_hooks_match_node",
+    "side": "base",
+    "exit_code": 0,
+    "stdout": "[[\"paths\",[\"\",\"sub\",\"sub/file\"]],[\"meta\",\"FSWatcher\",[\"_events\",\"_eventsCount\",\"_maxListeners\"],[\"Symbol(kFSWatchStart)\",\"Symbol(Symbol.asyncIterator)\"],[[\"close\",0,false],[\"ref\",0,false],[\"unref\",0,false]]],\"close\"]\n",
+    "stderr": ""
+  },
+  {
+    "test": "native_recursive_watch_class_close_and_per_path_hooks_match_node",
+    "side": "candidate",
+    "exit_code": 0,
+    "stdout": "[[\"paths\",[\"\",\"sub\",\"sub/file\"]],[\"meta\",\"FSWatcher\",[\"_events\",\"_eventsCount\",\"_maxListeners\"],[\"Symbol(kFSWatchStart)\",\"Symbol(Symbol.asyncIterator)\"],[[\"close\",0,false],[\"ref\",0,false],[\"unref\",0,false]]],\"close\"]\n",
+    "stderr": ""
+  },
+  {
+    "test": "native_recursive_watch_class_close_and_per_path_hooks_match_node",
+    "side": "node",
+    "exit_code": 0,
+    "stdout": "[[\"paths\",[\"\",\"sub\"]],[\"meta\",\"FSWatcher\",[\"_events\",\"_eventsCount\",\"_maxListeners\"],[\"Symbol(kFSWatchStart)\",\"Symbol(Symbol.asyncIterator)\"],[[\"close\",0,false],[\"ref\",0,false],[\"unref\",0,false]]],\"close\"]\n",
+    "stderr": ""
+  },
+  {
+    "test": "native_tls_context_engine_errors_and_shared_crypto_warning_match_node",
+    "side": "base",
+    "exit_code": 0,
+    "stdout": "[\"Error\",null,\"error:12800067:DSO support routines::could not load the shared library\",[\"opensslErrorStack\"],[\"error:13000084:engine routines::dso not found\",\"error:12800067:DSO support routines::could not load the shared library\",\"error:12800067:DSO support routines::could not load the shared library\",\"error:13000074:engine routines::no such engine\",\"error:13000084:engine routines::dso not found\",\"error:12800067:DSO support routines::could not load the shared library\"]]\n[\"Error\",null,\"error:12800067:DSO support routines::could not load the shared library\",[\"opensslErrorStack\"],[\"error:13000084:engine routines::dso not found\",\"error:12800067:DSO support routines::could not load the shared library\",\"error:12800067:DSO support routines::could not load the shared library\",\"error:13000074:engine routines::no such engine\",\"error:13000084:engine routines::dso not found\",\"error:12800067:DSO support routines::could not load the shared library\"]]\n[\"Error\",\"ERR_CRYPTO_ENGINE_UNKNOWN\",\"Engine \\\"quench_missing_engine\\\" was not found\",[\"code\"],null]\n[\"Error\",\"ERR_CRYPTO_ENGINE_UNKNOWN\",\"Engine \\\"quench_missing_engine\\\" was not found\",[\"code\"],null]\n[\"TypeError\",\"ERR_INVALID_ARG_TYPE\",\"The \\\"id\\\" argument must be of type string. Received type number (1)\",[\"code\"],null]\n[\"TypeError\",\"ERR_INVALID_ARG_TYPE\",\"The \\\"flags\\\" argument must be of type number. Received type string ('1')\",[\"code\"],null]\n[\"TypeError\",\"ERR_INVALID_ARG_TYPE\",\"The \\\"options.clientCertEngine\\\" property must be of type string or one of null or undefined. Received type number (1)\",[\"code\"],null]\n[\"TypeError\",\"ERR_INVALID_ARG_TYPE\",\"The \\\"options.privateKeyIdentifier\\\" property must be of type string or one of null or undefined. Received type number (1)\",[\"code\"],null]\n[\"TypeError\",\"ERR_INVALID_ARG_TYPE\",\"The \\\"options.privateKeyEngine\\\" property must be of type string or one of null or undefined. Received type number (1)\",[\"code\"],null]\n[[\"OpenSSL engine-based APIs are deprecated.\",\"DeprecationWarning\",\"DEP0183\",null]]\n",
+    "stderr": ""
+  },
+  {
+    "test": "native_tls_context_engine_errors_and_shared_crypto_warning_match_node",
+    "side": "candidate",
+    "exit_code": 0,
+    "stdout": "[\"Error\",null,\"error:12800067:DSO support routines::could not load the shared library\",[\"opensslErrorStack\"],[\"error:13000084:engine routines::dso not found\",\"error:12800067:DSO support routines::could not load the shared library\",\"error:12800067:DSO support routines::could not load the shared library\",\"error:13000074:engine routines::no such engine\",\"error:13000084:engine routines::dso not found\",\"error:12800067:DSO support routines::could not load the shared library\"]]\n[\"Error\",null,\"error:12800067:DSO support routines::could not load the shared library\",[\"opensslErrorStack\"],[\"error:13000084:engine routines::dso not found\",\"error:12800067:DSO support routines::could not load the shared library\",\"error:12800067:DSO support routines::could not load the shared library\",\"error:13000074:engine routines::no such engine\",\"error:13000084:engine routines::dso not found\",\"error:12800067:DSO support routines::could not load the shared library\"]]\n[\"Error\",\"ERR_CRYPTO_ENGINE_UNKNOWN\",\"Engine \\\"quench_missing_engine\\\" was not found\",[\"code\"],null]\n[\"Error\",\"ERR_CRYPTO_ENGINE_UNKNOWN\",\"Engine \\\"quench_missing_engine\\\" was not found\",[\"code\"],null]\n[\"TypeError\",\"ERR_INVALID_ARG_TYPE\",\"The \\\"id\\\" argument must be of type string. Received type number (1)\",[\"code\"],null]\n[\"TypeError\",\"ERR_INVALID_ARG_TYPE\",\"The \\\"flags\\\" argument must be of type number. Received type string ('1')\",[\"code\"],null]\n[\"TypeError\",\"ERR_INVALID_ARG_TYPE\",\"The \\\"options.clientCertEngine\\\" property must be of type string or one of null or undefined. Received type number (1)\",[\"code\"],null]\n[\"TypeError\",\"ERR_INVALID_ARG_TYPE\",\"The \\\"options.privateKeyIdentifier\\\" property must be of type string or one of null or undefined. Received type number (1)\",[\"code\"],null]\n[\"TypeError\",\"ERR_INVALID_ARG_TYPE\",\"The \\\"options.privateKeyEngine\\\" property must be of type string or one of null or undefined. Received type number (1)\",[\"code\"],null]\n[[\"OpenSSL engine-based APIs are deprecated.\",\"DeprecationWarning\",\"DEP0183\",null]]\n",
+    "stderr": ""
+  },
+  {
+    "test": "native_tls_context_engine_errors_and_shared_crypto_warning_match_node",
+    "side": "node",
+    "exit_code": 0,
+    "stdout": "[\"Error\",null,\"error:12800067:DSO support routines::could not load the shared library\",[\"opensslErrorStack\"],[\"error:13000084:engine routines::dso not found\",\"error:12800067:DSO support routines::could not load the shared library\",\"error:12800067:DSO support routines::could not load the shared library\",\"error:13000074:engine routines::no such engine\",\"error:13000084:engine routines::dso not found\",\"error:12800067:DSO support routines::could not load the shared library\"]]\n[\"Error\",null,\"error:12800067:DSO support routines::could not load the shared library\",[\"opensslErrorStack\"],[\"error:13000084:engine routines::dso not found\",\"error:12800067:DSO support routines::could not load the shared library\",\"error:12800067:DSO support routines::could not load the shared library\",\"error:13000074:engine routines::no such engine\",\"error:13000084:engine routines::dso not found\",\"error:12800067:DSO support routines::could not load the shared library\"]]\n[\"Error\",\"ERR_CRYPTO_ENGINE_UNKNOWN\",\"Engine \\\"quench_missing_engine\\\" was not found\",[\"code\"],null]\n[\"Error\",\"ERR_CRYPTO_ENGINE_UNKNOWN\",\"Engine \\\"quench_missing_engine\\\" was not found\",[\"code\"],null]\n[\"TypeError\",\"ERR_INVALID_ARG_TYPE\",\"The \\\"id\\\" argument must be of type string. Received type number (1)\",[\"code\"],null]\n[\"TypeError\",\"ERR_INVALID_ARG_TYPE\",\"The \\\"flags\\\" argument must be of type number. Received type string ('1')\",[\"code\"],null]\n[\"TypeError\",\"ERR_INVALID_ARG_TYPE\",\"The \\\"options.clientCertEngine\\\" property must be of type string or one of null or undefined. Received type number (1)\",[\"code\"],null]\n[\"TypeError\",\"ERR_INVALID_ARG_TYPE\",\"The \\\"options.privateKeyIdentifier\\\" property must be of type string or one of null or undefined. Received type number (1)\",[\"code\"],null]\n[\"TypeError\",\"ERR_INVALID_ARG_TYPE\",\"The \\\"options.privateKeyEngine\\\" property must be of type string or one of null or undefined. Received type number (1)\",[\"code\"],null]\n[]\n",
+    "stderr": ""
+  },
+  {
+    "test": "native_tls_context_internal_binding_constructor_snapshot_and_missing_engine_hooks_match_node",
+    "side": "base",
+    "exit_code": 0,
+    "stdout": "[\"Error\",\"ERR_CRYPTO_CUSTOM_ENGINE_NOT_SUPPORTED\",\"Custom engines not supported by this OpenSSL\",[\"code\"]]\n[\"Error\",\"ERR_CRYPTO_CUSTOM_ENGINE_NOT_SUPPORTED\",\"Custom engines not supported by this OpenSSL\",[\"code\"]]\n771 3\n[[\"These APIs are for internal testing only. Do not use them.\",\"internal/test/binding\"],[\"OpenSSL engine-based APIs are deprecated.\",\"DeprecationWarning\",\"DEP0183\",null]]\n",
+    "stderr": ""
+  },
+  {
+    "test": "native_tls_context_internal_binding_constructor_snapshot_and_missing_engine_hooks_match_node",
+    "side": "candidate",
+    "exit_code": 0,
+    "stdout": "[\"Error\",\"ERR_CRYPTO_CUSTOM_ENGINE_NOT_SUPPORTED\",\"Custom engines not supported by this OpenSSL\",[\"code\"]]\n[\"Error\",\"ERR_CRYPTO_CUSTOM_ENGINE_NOT_SUPPORTED\",\"Custom engines not supported by this OpenSSL\",[\"code\"]]\n771 3\n[[\"These APIs are for internal testing only. Do not use them.\",\"internal/test/binding\"],[\"OpenSSL engine-based APIs are deprecated.\",\"DeprecationWarning\",\"DEP0183\",null]]\n",
+    "stderr": ""
+  },
+  {
+    "test": "native_tls_context_internal_binding_constructor_snapshot_and_missing_engine_hooks_match_node",
+    "side": "node",
+    "exit_code": 1,
+    "stdout": "",
+    "stderr": "node:internal/modules/cjs/loader:1607\n  throw err;\n  ^\n\nError: Cannot find module 'internal/test/binding'\nRequire stack:\n- /tmp/tmp2r187qai/[eval]\n    at Module._resolveFilename (node:internal/modules/cjs/loader:1603:15)\n    at wrapResolveFilename (node:internal/modules/cjs/loader:1145:27)\n    at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1169:10)\n    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1196:12)\n    at Module._load (node:internal/modules/cjs/loader:1370:5)\n    at wrapModuleLoad (node:internal/modules/cjs/loader:261:19)\n    at Module.require (node:internal/modules/cjs/loader:1713:12)\n    at require (node:internal/modules/helpers:318:16)\n    at [eval]:3:25\n    at [eval]:10:4 {\n  code: 'MODULE_NOT_FOUND',\n  requireStack: [ '/tmp/tmp2r187qai/[eval]' ]\n}\n\nNode.js v26.11.1\n"
+  },
+  {
+    "test": "deep_named_calls_raise_catchable_range_error_and_recover",
+    "side": "base",
+    "exit_code": 1,
+    "stdout": "",
+    "stderr": "<eval>:13\nif (!caught) throw new Error(\"deep call did not throw the stack RangeError\");\n             ^\n\nError: deep call did not throw the stack RangeError\n    at <eval>:13:20\n\nNode.js v22.0.0\n"
+  },
+  {
+    "test": "deep_named_calls_raise_catchable_range_error_and_recover",
+    "side": "candidate",
+    "exit_code": 1,
+    "stdout": "",
+    "stderr": "<eval>:13\nif (!caught) throw new Error(\"deep call did not throw the stack RangeError\");\n             ^\n\nError: deep call did not throw the stack RangeError\n    at <eval>:13:20\n\nNode.js v22.0.0\n"
+  },
+  {
+    "test": "deep_named_calls_raise_catchable_range_error_and_recover",
+    "side": "node",
+    "exit_code": 1,
+    "stdout": "",
+    "stderr": "[eval]:13\nif (!caught) throw new Error(\"deep call did not throw the stack RangeError\");\n             ^\n\nError: deep call did not throw the stack RangeError\n    at [eval]:13:20\n    at runScriptInThisContext (node:internal/vm:219:10)\n    at node:internal/process/execution:485:12\n    at [eval]-wrapper:6:24\n    at runScriptInContext (node:internal/process/execution:483:60)\n    at evalFunction (node:internal/process/execution:317:30)\n    at evalTypeScript (node:internal/process/execution:329:3)\n    at node:internal/main/eval_string:71:3\n\nNode.js v26.11.1\n"
+  }
+]

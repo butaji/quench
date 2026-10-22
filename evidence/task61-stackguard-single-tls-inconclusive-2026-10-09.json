@@ -1,0 +1,180 @@
+{
+  "schema": 1,
+  "task": "61",
+  "date": "2026-10-09",
+  "kind": "M4 StackGuard TLS-state candidate",
+  "decision": "inconclusive",
+  "qualification_ready": false,
+  "hypothesis": "Combine ACTIVE_TRANSITIONS and STACK_ORIGIN into one thread-local StackState to reduce per-enter/drop TLS accesses while preserving the same depth limit, stack origin, stack-distance check, and RangeError behavior.",
+  "decision_reason": "The CJS call-loop candidate used 0.9908% more cycles at the median, but the unrelated local-store control used 8.1170% more. Because control movement exceeded target movement, this campaign does not isolate a candidate effect and cannot support a performance rejection. This experiment merged TLS cells and retained a TLS lookup; it did not test the distinct VM-cached stack-boundary design that removes TLS from ordinary JS-to-JS calls.",
+  "source": {
+    "base_revision": "974d31f09",
+    "candidate_patch": "tasks/evidence/task61-stackguard-single-tls-rejected-2026-10-09.patch",
+    "candidate_patch_sha256": "594d640568d1fbad71a318f85ae0dcee961aefafbd9b3f48c7dcc1de0229060c",
+    "touched_files": [
+      "crates/quench-stack/src/lib.rs"
+    ]
+  },
+  "host": {
+    "cpu": "Apple M4",
+    "os": "macOS 26.5 ARM64",
+    "kernel": "Darwin 25.5",
+    "memory_bytes": 17179869184,
+    "resource_limits": "No container memory or CPU quota reported",
+    "measurement": "/usr/bin/time -l; alternating paired production-binary runs"
+  },
+  "build": {
+    "command": "CARGO_TARGET_DIR=target/candidate-{a,b} CARGO_INCREMENTAL=0 CARGO_PROFILE_PRODUCTION_STRIP=symbols cargo build --locked --offline --profile production -p quench-node --bin quench-node",
+    "baseline_binary": "target/pinned/cf3916764bd3b59ac3dcb91bd9787cb31ec01537245eaa785ae1cd9e7d6d1d57/quench-node",
+    "baseline_binary_sha256": "cf3916764bd3b59ac3dcb91bd9787cb31ec01537245eaa785ae1cd9e7d6d1d57",
+    "candidate_binary": "target/pinned/d204963b6a9b1c9ac8ab4079f70bc3d3e92c74b242350848c5f2c8228212c012/quench-node",
+    "candidate_binary_sha256": "d204963b6a9b1c9ac8ab4079f70bc3d3e92c74b242350848c5f2c8228212c012"
+  },
+  "runner": {
+    "path": "tasks/evidence/task61-register-live-entry-pairs-2026-10-09.py",
+    "sha256": "154720d92c2925cfb06c554efe930d1ef296fee8e05946bde096e196d0765eb8",
+    "pairs": 11,
+    "order": "alternating candidate/baseline start order"
+  },
+  "fixtures": [
+    {
+      "name": "CJS function-call loop",
+      "path": "tasks/evidence/task61-dispatch-executing-program-cjs-call-10m-2026-10-08.cjs",
+      "sha256": "9ca4e9511fa1cce15a96ed1acaedf9f9757a8613392e9d4d3f8c46195b553ee9",
+      "paired_csv": "tasks/evidence/task61-stackguard-single-tls-call-pairs-2026-10-09.csv",
+      "paired_csv_sha256": "c0546492118679b7f1f8ba19e54384235f7def0917545795cb5c0af7b2c20fe0",
+      "candidate_paired_metrics": {
+        "instructions_retired": {
+          "baseline_median": 28365455669.0,
+          "candidate_median": 28533816033.0,
+          "median_paired_improvement_percent": -0.5939,
+          "paired_95_percent_bootstrap_interval_percent": [
+            -0.6003,
+            -0.5927
+          ],
+          "candidate_better_pairs": 0,
+          "pairs": 11
+        },
+        "cycles_elapsed": {
+          "baseline_median": 3878700836.0,
+          "candidate_median": 3914987980.0,
+          "median_paired_improvement_percent": -0.9908,
+          "paired_95_percent_bootstrap_interval_percent": [
+            -1.5233,
+            -0.5036
+          ],
+          "candidate_better_pairs": 1,
+          "pairs": 11
+        },
+        "elapsed_seconds": {
+          "baseline_median": 0.96,
+          "candidate_median": 0.97,
+          "median_paired_improvement_percent": -1.0417,
+          "paired_95_percent_bootstrap_interval_percent": [
+            -2.0833,
+            0.0
+          ],
+          "candidate_better_pairs": 1,
+          "pairs": 11
+        },
+        "maximum_rss_bytes": {
+          "baseline_median": 17907712.0,
+          "candidate_median": 17874944.0,
+          "median_paired_improvement_percent": 0.2742,
+          "paired_95_percent_bootstrap_interval_percent": [
+            -0.7326,
+            1.2774
+          ],
+          "candidate_better_pairs": 6,
+          "pairs": 11
+        }
+      }
+    },
+    {
+      "name": "local-store control",
+      "path": "tasks/evidence/task61-dispatch-executing-program-local-store-10m-2026-10-08.cjs",
+      "sha256": "cbb15d2006c400cea5393e55234cdc5952998f9c194f74e830bc60b2c854366e",
+      "paired_csv": "tasks/evidence/task61-stackguard-single-tls-control-pairs-2026-10-09.csv",
+      "paired_csv_sha256": "38655a68bfb36f13fec1ed5d04b5f3cb328b206c37428c89edb7028c3b33248a",
+      "candidate_paired_metrics": {
+        "instructions_retired": {
+          "baseline_median": 9082839830.0,
+          "candidate_median": 9321456235.0,
+          "median_paired_improvement_percent": -2.6268,
+          "paired_95_percent_bootstrap_interval_percent": [
+            -2.6293,
+            -2.6194
+          ],
+          "candidate_better_pairs": 0,
+          "pairs": 11
+        },
+        "cycles_elapsed": {
+          "baseline_median": 1026851076.0,
+          "candidate_median": 1103677254.0,
+          "median_paired_improvement_percent": -8.117,
+          "paired_95_percent_bootstrap_interval_percent": [
+            -14.9217,
+            -5.8896
+          ],
+          "candidate_better_pairs": 0,
+          "pairs": 11
+        },
+        "elapsed_seconds": {
+          "baseline_median": 0.25,
+          "candidate_median": 0.27,
+          "median_paired_improvement_percent": -8.0,
+          "paired_95_percent_bootstrap_interval_percent": [
+            -16.0,
+            -8.0
+          ],
+          "candidate_better_pairs": 0,
+          "pairs": 11
+        },
+        "maximum_rss_bytes": {
+          "baseline_median": 17891328.0,
+          "candidate_median": 17743872.0,
+          "median_paired_improvement_percent": 0.7366,
+          "paired_95_percent_bootstrap_interval_percent": [
+            -0.185,
+            0.9166
+          ],
+          "candidate_better_pairs": 6,
+          "pairs": 11
+        }
+      }
+    }
+  ],
+  "outputs_equal_all_pairs": true,
+  "correctness": {
+    "quench_stack_tests": "5/5 passed; doctests 0",
+    "runtime_stack_exhaustion_test": "1/1 passed",
+    "compiler_stack_regressions": "3/3 passed",
+    "node_oracle_probe": {
+      "path": "tasks/evidence/task61-stackguard-node-oracle-2026-10-09.cjs",
+      "sha256": "93105e169efb52c2b1a340379b6e13e3480e6e46742ed3aebfda20aa766c9628",
+      "commands": [
+        "target/pinned/cf3916764bd3b59ac3dcb91bd9787cb31ec01537245eaa785ae1cd9e7d6d1d57/quench-node tasks/evidence/task61-stackguard-node-oracle-2026-10-09.cjs",
+        "target/pinned/d204963b6a9b1c9ac8ab4079f70bc3d3e92c74b242350848c5f2c8228212c012/quench-node tasks/evidence/task61-stackguard-node-oracle-2026-10-09.cjs",
+        "node --jitless tasks/evidence/task61-stackguard-node-oracle-2026-10-09.cjs"
+      ],
+      "all_stdout": [
+        "RangeError",
+        "Maximum call stack size exceeded",
+        "true"
+      ],
+      "all_exit_zero": true
+    }
+  },
+  "profile_attribution": {
+    "path": "tasks/evidence/task61-earley-post-source-cache-profile-2026-10-09.json",
+    "stack_guard_self_samples": 32,
+    "sample_count": 3333,
+    "tlv_get_addr_self_samples": 33
+  },
+  "notes": [
+    "The first three-pair screen against a symbolized, differently sized baseline was discarded as unmatched; the 11-pair measurements use baseline and candidate binaries built with identical production strip settings.",
+    "All paired stdout hashes match. The source candidate was restored; this record is rejection evidence only.",
+    "Per the revised Stage A protocol, use target-minus-control movement for this and future small candidates; this result is inconclusive rather than a measured StackGuard regression."
+  ],
+  "next_hypothesis": "At an active VM execution boundary, cache the shared thread stack origin in the VM; on ordinary JS-to-JS frame push, check the current SP against that origin and a named logical depth bound without touching TLS. Nested host-to-guest VM entry must inherit or validate the existing thread origin."
+}

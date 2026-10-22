@@ -1,0 +1,16 @@
+    Checking quench-stack v0.1.0 (/workspace/quench/crates/quench-stack)
+    Checking oxc_regular_expression v0.153.0 (/workspace/quench/vendor/oxc-regular-expression)
+    Checking oxc_ast v0.153.0
+    Checking oxc_ecmascript v0.153.0
+    Checking cranelift-codegen v0.134.3 (/workspace/quench/vendor/cranelift-codegen)
+    Checking oxc_parser v0.153.0 (/workspace/quench/vendor/oxc-parser)
+    Checking oxc v0.153.0
+    Checking oxc_ast_visit v0.153.0
+    Checking quench-temporal v0.1.0 (/workspace/quench/crates/quench-temporal)
+    Checking oxc_semantic v0.153.0
+    Checking quench-intl v0.1.0 (/workspace/quench/crates/quench-intl)
+    Checking quench-regexp v0.1.0 (/workspace/quench/crates/quench-regexp)
+    Checking cranelift-frontend v0.134.3
+    Checking cranelift-native v0.134.3
+    Checking quench-runtime v0.1.0 (/workspace/quench/crates/quench-runtime)
+    Finished `dev` profile [unoptimized] target(s) in 26.16s

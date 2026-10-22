@@ -1,0 +1,1 @@
+Error.prepareStackTrace=(_,frames)=>frames;function inspect(){const frame=new Error().stack[0]; console.log(JSON.stringify(Reflect.ownKeys(Object.getPrototypeOf(frame)).map(key=>[String(key),typeof frame[key],typeof frame[key]==='function'?frame[key].length:null])))}inspect();

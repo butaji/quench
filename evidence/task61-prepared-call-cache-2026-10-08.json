@@ -1,0 +1,403 @@
+{
+  "schema": 1,
+  "experiment": "prepared member-call target cache",
+  "decision": "reject",
+  "decision_reason": "The one-callee-per-site target cache did not improve Richards Score or maximum RSS in the alternating paired screen. Its residual metadata and dispatch path were removed after the measurement.",
+  "binding_time_note": "The static member-call form was made explicit after the existing property read, preserving dynamic getter/Proxy effects and argument order. The remaining target classification fact was memoized by exact callee identity; the measurement did not justify the added residual path.",
+  "measurement": {
+    "kind": "diagnostic pre-gate paired V8-v7 screen",
+    "fixture": "quench-bench/js-engine-benchmark/v8-v7/richards.js",
+    "fixture_sha256": "d86eac4108343a54ba6e10621a77b46f82f554c3b0a46e8fb4032d5cf65a2a11",
+    "corpus_pinned_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+    "corpus_checkout_clean": true,
+    "source_revision": "0d50b18caa33ed1f03f3e04ce75ad180c2f4d498",
+    "source_dirty": true,
+    "host_model": "Mac16,10",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+    "timeout_ms": 300000,
+    "pairs": 11,
+    "pair_order_alternated": true,
+    "all_four_engines_valid_and_outputs_equal": true,
+    "engine_provenance": {
+      "quench": {
+        "version": "Quench shared-VM interpreter build; package 0.1.0",
+        "jit_mode": "interpreter"
+      },
+      "quickjs": {
+        "version": "QuickJS version 2026-06-04",
+        "executable_sha256": "60baacdd677a07f27b0aa95b9ad640de33c3442cbf65c9fb4d803017ab3c4811",
+        "jit_mode": "interpreter"
+      },
+      "bun": {
+        "version": "1.4.2",
+        "executable_sha256": "b36d2e9d9bd50e3a3b6a8f2d481839417d6600d4c1753411b094ee0da3222cef",
+        "jit_mode": "disabled-and-probed"
+      },
+      "node": {
+        "version": "v26.10.0",
+        "executable_sha256": "4ca2a42d6d55a834b04d0892c5bc646a6869fcebec57f91c849dac0aa1031610",
+        "jit_mode": "disabled-and-probed"
+      }
+    },
+    "baseline_quench_binary_sha256": "371c5f6dca4551d9ecf7f5cb480e3e0e4618129c24bc871902b539d6b7864341",
+    "candidate_quench_binary_sha256": "a13eed67819174ed0ebd31f9257e356e3dedb00f44e4ee733d51b384ec98eaef",
+    "baseline_score_samples": [
+      78.9,
+      79.2,
+      78.5,
+      79.7,
+      78.4,
+      78.6,
+      78.7,
+      78.2,
+      78.5,
+      75.2,
+      77.9
+    ],
+    "candidate_score_samples": [
+      80.3,
+      78.6,
+      78.0,
+      78.0,
+      78.3,
+      78.1,
+      77.7,
+      78.5,
+      78.6,
+      78.4,
+      73.0
+    ],
+    "paired_score_deltas": [
+      1.3999999999999915,
+      -0.6000000000000085,
+      -0.5,
+      -1.7000000000000028,
+      -0.10000000000000853,
+      -0.5,
+      -1.0,
+      0.29999999999999716,
+      0.09999999999999432,
+      3.200000000000003,
+      -4.900000000000006
+    ],
+    "median_baseline_score": 78.5,
+    "median_candidate_score": 78.3,
+    "median_paired_score_delta": -0.5,
+    "paired_score_delta_95_percentile_bootstrap_ci": [
+      -1.0,
+      0.29999999999999716
+    ],
+    "median_baseline_peak_rss_bytes": 22511616,
+    "median_candidate_peak_rss_bytes": 22626304,
+    "paired_peak_rss_deltas_bytes": [
+      917504,
+      163840,
+      163840,
+      16384,
+      32768,
+      -65536,
+      753664,
+      -81920,
+      229376,
+      -966656,
+      1392640
+    ],
+    "median_paired_peak_rss_delta_bytes": 163840,
+    "paired_peak_rss_delta_95_percentile_bootstrap_ci_bytes": [
+      -65536,
+      753664
+    ],
+    "paired_instruction_deltas": [
+      431964171,
+      434807490,
+      1628318263,
+      -762777222,
+      431596194,
+      -1969312094,
+      -1963401098,
+      440155560,
+      441318171,
+      2817233234,
+      -3174863418
+    ],
+    "median_paired_instruction_delta": 431964171,
+    "paired_instruction_delta_95_percentile_bootstrap_ci": [
+      -1963401098,
+      441318171
+    ],
+    "raw_pairs": [
+      {
+        "pair": 1,
+        "before": {
+          "report": "target/iteration/stageb-pilots/prepared-call-pairs/pair-01-before.json",
+          "sha256": "740da3307e9f68aff09697d90084dd424b96cd9aecbfaef87a5c8c2203b32965",
+          "score": 78.9,
+          "peak_rss_bytes": 22413312,
+          "instructions": 82863233032
+        },
+        "after": {
+          "report": "target/iteration/stageb-pilots/prepared-call-pairs/pair-01-after.json",
+          "sha256": "c426c1b9277b69aad33791e0e6bd2685c10e9738bbf59dde4bb80f50f1c853eb",
+          "score": 80.3,
+          "peak_rss_bytes": 23330816,
+          "instructions": 83295197203
+        },
+        "before_output_equal": true,
+        "after_output_equal": true
+      },
+      {
+        "pair": 2,
+        "before": {
+          "report": "target/iteration/stageb-pilots/prepared-call-pairs/pair-02-before.json",
+          "sha256": "baa43b2a3bcfacf8e50a3e9cf884e9cbfc3be167c162b40c275931afbe88f104",
+          "score": 79.2,
+          "peak_rss_bytes": 22462464,
+          "instructions": 82861254987
+        },
+        "after": {
+          "report": "target/iteration/stageb-pilots/prepared-call-pairs/pair-02-after.json",
+          "sha256": "1a3920fbd1041bbbc41dfbb5a47ac7350ac92fd1db4cdb2d36eb43e748048260",
+          "score": 78.6,
+          "peak_rss_bytes": 22626304,
+          "instructions": 83296062477
+        },
+        "before_output_equal": true,
+        "after_output_equal": true
+      },
+      {
+        "pair": 3,
+        "before": {
+          "report": "target/iteration/stageb-pilots/prepared-call-pairs/pair-03-before.json",
+          "sha256": "2813e8bafc784e022bca7823df05fbc2a32a8b428fee49caf0989d2661382317",
+          "score": 78.5,
+          "peak_rss_bytes": 22462464,
+          "instructions": 81666584441
+        },
+        "after": {
+          "report": "target/iteration/stageb-pilots/prepared-call-pairs/pair-03-after.json",
+          "sha256": "c25a6d881fc76d7e600d66b18abece272e931b1525b0d686ee0de92a3dcafc93",
+          "score": 78.0,
+          "peak_rss_bytes": 22626304,
+          "instructions": 83294902704
+        },
+        "before_output_equal": true,
+        "after_output_equal": true
+      },
+      {
+        "pair": 4,
+        "before": {
+          "report": "target/iteration/stageb-pilots/prepared-call-pairs/pair-04-before.json",
+          "sha256": "3a6e60bc6d33b06e0b4b9b3b21b628196a2efa202a27b16edc96a25d6efabaac",
+          "score": 79.7,
+          "peak_rss_bytes": 22528000,
+          "instructions": 82860839164
+        },
+        "after": {
+          "report": "target/iteration/stageb-pilots/prepared-call-pairs/pair-04-after.json",
+          "sha256": "a6b8c3906d37a71493ddbe806d2fb350168f7e54d97d30b203d4c6845eefd383",
+          "score": 78.0,
+          "peak_rss_bytes": 22544384,
+          "instructions": 82098061942
+        },
+        "before_output_equal": true,
+        "after_output_equal": true
+      },
+      {
+        "pair": 5,
+        "before": {
+          "report": "target/iteration/stageb-pilots/prepared-call-pairs/pair-05-before.json",
+          "sha256": "81d1d83b68ca3a21ed16efd9fe4b52be4a264ad33bba9142cc07794a5f57ddb4",
+          "score": 78.4,
+          "peak_rss_bytes": 22528000,
+          "instructions": 82862235340
+        },
+        "after": {
+          "report": "target/iteration/stageb-pilots/prepared-call-pairs/pair-05-after.json",
+          "sha256": "11b5724fce3e029552cd7ce68e70b2806ce28a6b4f20187a3a8a26dbc8b37f8e",
+          "score": 78.3,
+          "peak_rss_bytes": 22560768,
+          "instructions": 83293831534
+        },
+        "before_output_equal": true,
+        "after_output_equal": true
+      },
+      {
+        "pair": 6,
+        "before": {
+          "report": "target/iteration/stageb-pilots/prepared-call-pairs/pair-06-before.json",
+          "sha256": "9d67f4e0a3cacc00539a81375be2a6fb82bc61db39ac785a9c738414e373142a",
+          "score": 78.6,
+          "peak_rss_bytes": 22528000,
+          "instructions": 82864614941
+        },
+        "after": {
+          "report": "target/iteration/stageb-pilots/prepared-call-pairs/pair-06-after.json",
+          "sha256": "5f936283bc14690084bd9f20e53ae32914ed8e5f84ffd5098963e006121aa980",
+          "score": 78.1,
+          "peak_rss_bytes": 22462464,
+          "instructions": 80895302847
+        },
+        "before_output_equal": true,
+        "after_output_equal": true
+      },
+      {
+        "pair": 7,
+        "before": {
+          "report": "target/iteration/stageb-pilots/prepared-call-pairs/pair-07-before.json",
+          "sha256": "2653a69c5f1c610de6e1a1ba1c83449a562cd3f8375f66b62d1164edd747ffdb",
+          "score": 78.7,
+          "peak_rss_bytes": 22511616,
+          "instructions": 82860371848
+        },
+        "after": {
+          "report": "target/iteration/stageb-pilots/prepared-call-pairs/pair-07-after.json",
+          "sha256": "2981097827896aa258f1d4cba3e116b6546aeb8a5a967f3af130b2d4ed7535e6",
+          "score": 77.7,
+          "peak_rss_bytes": 23265280,
+          "instructions": 80896970750
+        },
+        "before_output_equal": true,
+        "after_output_equal": true
+      },
+      {
+        "pair": 8,
+        "before": {
+          "report": "target/iteration/stageb-pilots/prepared-call-pairs/pair-08-before.json",
+          "sha256": "360c027179383d66355f7a97b6b9adec4a9131b2f68617c37799df6e38071c98",
+          "score": 78.2,
+          "peak_rss_bytes": 22511616,
+          "instructions": 82859338553
+        },
+        "after": {
+          "report": "target/iteration/stageb-pilots/prepared-call-pairs/pair-08-after.json",
+          "sha256": "6324be989c532c4f9fe2de2dd269c1e99d5517b5fe1d8d5a382c283ace8c779c",
+          "score": 78.5,
+          "peak_rss_bytes": 22429696,
+          "instructions": 83299494113
+        },
+        "before_output_equal": true,
+        "after_output_equal": true
+      },
+      {
+        "pair": 9,
+        "before": {
+          "report": "target/iteration/stageb-pilots/prepared-call-pairs/pair-09-before.json",
+          "sha256": "6c044592a815bd191eb1d55794c96e996fd168aff95d6a43da528b0bf58a65b5",
+          "score": 78.5,
+          "peak_rss_bytes": 22380544,
+          "instructions": 82858441588
+        },
+        "after": {
+          "report": "target/iteration/stageb-pilots/prepared-call-pairs/pair-09-after.json",
+          "sha256": "1281522b8e1be48275d3aec283f96ab919f5da101da79e0e87cc051d7564ca1c",
+          "score": 78.6,
+          "peak_rss_bytes": 22609920,
+          "instructions": 83299759759
+        },
+        "before_output_equal": true,
+        "after_output_equal": true
+      },
+      {
+        "pair": 10,
+        "before": {
+          "report": "target/iteration/stageb-pilots/prepared-call-pairs/pair-10-before.json",
+          "sha256": "683e8b3996dfc0e5979e053573fe2e3169dbb930283c5d547330cededea66029",
+          "score": 75.2,
+          "peak_rss_bytes": 23756800,
+          "instructions": 79275830310
+        },
+        "after": {
+          "report": "target/iteration/stageb-pilots/prepared-call-pairs/pair-10-after.json",
+          "sha256": "ef15745d58d6bc12ab98e27f3d0b3d7544f523dd5cc9e99e7cbfb383c7fb4607",
+          "score": 78.4,
+          "peak_rss_bytes": 22790144,
+          "instructions": 82093063544
+        },
+        "before_output_equal": true,
+        "after_output_equal": true
+      },
+      {
+        "pair": 11,
+        "before": {
+          "report": "target/iteration/stageb-pilots/prepared-call-pairs/pair-11-before.json",
+          "sha256": "727b6f5104718600eba4229dd03b4d62f72383f1d6574167e6f6a1807a8d828a",
+          "score": 77.9,
+          "peak_rss_bytes": 22413312,
+          "instructions": 81668918800
+        },
+        "after": {
+          "report": "target/iteration/stageb-pilots/prepared-call-pairs/pair-11-after.json",
+          "sha256": "6c2b463021fd88136e849756584a270d23842e9433719df08db8b1d90b24cfee",
+          "score": 73.0,
+          "peak_rss_bytes": 23805952,
+          "instructions": 78494055382
+        },
+        "before_output_equal": true,
+        "after_output_equal": true
+      }
+    ],
+    "qualification_ready": false
+  },
+  "correctness": {
+    "test262_stages": [
+      {
+        "stage": 10,
+        "passed": 11102,
+        "failed": 0,
+        "report": "target/iteration/prepared-call/stage-10.json",
+        "report_sha256": "6cfc87b7643849e5dd794158e53329df2e878d16c62dad769912b4009a77ae6b"
+      },
+      {
+        "stage": 11,
+        "passed": 217,
+        "failed": 0,
+        "report": "target/iteration/prepared-call/stage-11.json",
+        "report_sha256": "ec4111ed7e25ec66bd85be33414d662ae2966de520cca1bd30d8299ceae325ad"
+      },
+      {
+        "stage": 48,
+        "passed": 509,
+        "failed": 0,
+        "report": "target/iteration/prepared-call/stage-48.json",
+        "report_sha256": "9cac278986bd27cc24cf70e2a38671919acf0c90cd1040e697a6c62ef307ab68"
+      },
+      {
+        "stage": 62,
+        "passed": 311,
+        "failed": 0,
+        "report": "target/iteration/prepared-call/stage-62.json",
+        "report_sha256": "95a12daa1345f4d3f9c2321ca66de2cd9f663a3614da7867adc5c94e5c2dd2d3"
+      }
+    ],
+    "node_oracle": {
+      "node": "/opt/homebrew/bin/node v26.10.0",
+      "quench_binary_sha256": "a13eed67819174ed0ebd31f9257e356e3dedb00f44e4ee733d51b384ec98eaef",
+      "script": "target/iteration/prepared-call/node-oracle.js",
+      "script_sha256": "79714ac7f01f37742ae873d70affa35da66bd372c3c9d9539b013d94ffe97a9c",
+      "node_stdout": "target/iteration/prepared-call/node.out",
+      "node_stdout_sha256": "1f989aa46ab219c37cc33feeb4c0e6f0a022f5385da1f57a252e10eacd1849a8",
+      "quench_stdout": "target/iteration/prepared-call/quench.out",
+      "quench_stdout_sha256": "1f989aa46ab219c37cc33feeb4c0e6f0a022f5385da1f57a252e10eacd1849a8",
+      "normalized_output_equal": true,
+      "behaviors": [
+        "getter-before-arguments",
+        "argument-time-method-replacement",
+        "callable-proxy-get-and-apply",
+        "primitive-receiver",
+        "super-call-fallback",
+        "optional-call-short-circuit"
+      ]
+    }
+  },
+  "raw_report_directory": "target/iteration/stageb-pilots/prepared-call-pairs",
+  "preliminary_three_round_reports": [
+    {
+      "report": "target/iteration/stageb-pilots/prepared-call-richards-before-2026-10-08.json",
+      "sha256": "e99df443918e6f3523d97beaaa8fa7ee8fb4df0d5435af67a420a03844ac1453"
+    },
+    {
+      "report": "target/iteration/stageb-pilots/prepared-call-richards-after-2026-10-08.json",
+      "sha256": "2b423e0199d246ef17a2465beefe27b183a031c4c635d9008edc83bf7c7cceb8"
+    }
+  ]
+}

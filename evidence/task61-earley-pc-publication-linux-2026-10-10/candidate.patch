@@ -1,0 +1,53 @@
+diff --git a/crates/quench-runtime/src/bytecode.rs b/crates/quench-runtime/src/bytecode.rs
+index 315d451f8..a2a19430c 100644
+--- a/crates/quench-runtime/src/bytecode.rs
++++ b/crates/quench-runtime/src/bytecode.rs
+@@ -62,6 +62,7 @@ impl Effect {
+     pub(crate) const fn contains(self, other: Self) -> bool {
+         self.0 & other.0 == other.0
+     }
++
+ }
+ 
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+@@ -454,6 +455,21 @@ macro_rules! opcodes {
+                 Self::EFFECTS[self as usize]
+             }
+ 
++            pub(crate) const fn skips_frame_pc_publication(self) -> bool {
++                matches!(
++                    self,
++                    Self::Nop
++                        | Self::Wide
++                        | Self::LoadConst
++                        | Self::LoadLocalPlain
++                        | Self::CopyLocalPlain
++                        | Self::StoreLocalPlain
++                        | Self::Move
++                        | Self::JumpFalse
++                        | Self::Return
++                )
++            }
++
+             pub(crate) const fn immediate_layout(self) -> ImmediateLayout {
+                 Self::IMMEDIATE_LAYOUTS[self as usize]
+             }
+diff --git a/crates/quench-runtime/src/vm/dispatch_frame.rs b/crates/quench-runtime/src/vm/dispatch_frame.rs
+index 6f76c2c42..01b00b9f9 100644
+--- a/crates/quench-runtime/src/vm/dispatch_frame.rs
++++ b/crates/quench-runtime/src/vm/dispatch_frame.rs
+@@ -848,9 +848,12 @@ impl<H: Host> Vm<H> {
+                     cursor.function,
+                     instruction_pc,
+                 );
+-                // GC inside a getter or native operation needs this instruction's root map.
+-                self.frames[frame].pc = instruction_pc;
+                 let ins = cursor.instruction(pc);
++                if ins.returns_from_frame() || !ins.op().skips_frame_pc_publication() {
++                    // GC or exception handling inside an effectful operation
++                    // needs this instruction's root map and resume location.
++                    self.frames[frame].pc = instruction_pc;
++                }
+                 pc += 1;
+                 #[cfg(feature = "profile-aggregate")]
+                 self.profile.opcode(

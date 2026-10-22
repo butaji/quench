@@ -1,0 +1,95 @@
+{
+  "schema": "quench.task61.experiment.v1",
+  "task": 61,
+  "experiment": "Per-program function-name string cache",
+  "decision": "rejected",
+  "source_revision": "a4d239fe2f1412fc12ff9b820aea0789e1f9111d",
+  "candidate_source_diff_sha256": "0007edaa4305a4ec9b216d09e3eec34542614eb8f27e45174c4a2bceb8e43fbe",
+  "host": {
+    "platform": "macOS-26.5-arm64",
+    "model": "Mac16,10",
+    "processor": "Apple M4",
+    "memory_bytes": 17179869184,
+    "resource_limits": "No container memory or CPU quota reported"
+  },
+  "baseline": {
+    "commit": "a4d239fe2f1412fc12ff9b820aea0789e1f9111d",
+    "binary_sha256": "cf3916764bd3b59ac3dcb91bd9787cb31ec01537245eaa785ae1cd9e7d6d1d57",
+    "binary_path": "target/pinned/cf3916764bd3b59ac3dcb91bd9787cb31ec01537245eaa785ae1cd9e7d6d1d57/quench-node"
+  },
+  "candidate": {
+    "binary_sha256": "278d8f2a92b76c123814ff39ecbaae723171025810e18845ede76d8903c76885",
+    "binary_path": "target/pinned/278d8f2a92b76c123814ff39ecbaae723171025810e18845ede76d8903c76885/quench-node"
+  },
+  "closure_microbenchmark": {
+    "input_sha256": "08ef4a8476b48cfbc784a53d205769adf3374e8836ad302d36d251b8bad8d109",
+    "input_path": "target/pinned/08ef4a8476b48cfbc784a53d205769adf3374e8836ad302d36d251b8bad8d109/task61-normal-closure-10m-2026-10-09.cjs",
+    "pairs": 11,
+    "stdout_matched": true,
+    "instructions": {
+      "baseline_median": 230290904712,
+      "candidate_median": 197663066699,
+      "median_paired_reduction_percent": 14.173482522974082,
+      "candidate_better_pairs": 11
+    },
+    "elapsed_seconds": {
+      "baseline_median": 8.99,
+      "candidate_median": 7.6,
+      "median_paired_reduction_percent": 15.350389321468297,
+      "candidate_better_pairs": 11
+    },
+    "max_rss_bytes": {
+      "baseline_median": 18071552,
+      "candidate_median": 18284544,
+      "median_paired_change_percent": 1.1786038077969174,
+      "candidate_lower_pairs": 1
+    },
+    "raw_pairs": "tasks/evidence/task61-function-name-cache-closure-pairs-2026-10-09.csv",
+    "raw_pairs_sha256": "89a65eea07db3536e696da9caeae84a9ff46e424e4dcbfd2904216c8c72b88d6"
+  },
+  "earley_boyer_fixture": {
+    "input_sha256": "aa379c1d54f5d13de32ebf2b50729d0cbc64bb23de5e524256c7b2270213cc0b",
+    "input_path": "target/pinned/aa379c1d54f5d13de32ebf2b50729d0cbc64bb23de5e524256c7b2270213cc0b/materialized-earley-boyer.js",
+    "pairs": 11,
+    "all_exits_zero": true,
+    "normalized_outputs_match": true,
+    "score": {
+      "baseline_median": 757,
+      "candidate_median": 772,
+      "median_paired_change_percent": 1.8396846254927726,
+      "candidate_better_pairs": 8
+    },
+    "instructions": {
+      "baseline_median": 327186141600,
+      "candidate_median": 327867473111,
+      "median_paired_change_percent": 0.2101503418322043,
+      "candidate_better_pairs": 1
+    },
+    "elapsed_seconds": {
+      "baseline_median": 12.95,
+      "candidate_median": 12.9,
+      "median_paired_change_percent": 0.15455950540959315,
+      "candidate_better_pairs": 5
+    },
+    "max_rss_bytes": {
+      "baseline_median": 52117504,
+      "candidate_median": 51953664,
+      "median_paired_change_percent": -0.15792798483891346,
+      "candidate_lower_pairs": 5
+    },
+    "raw_pairs": "tasks/evidence/task61-function-name-cache-earley-pairs-2026-10-09.csv",
+    "summary": "tasks/evidence/task61-function-name-cache-earley-summary-2026-10-09.json",
+    "runner": "tasks/evidence/task61-function-name-cache-earley-pairs-2026-10-09.py",
+    "runner_sha256": "7d8c757d74c643153bfe0f00e0b680528fc83c8e99337dac741b8f3d22bbcb7",
+    "raw_pairs_sha256": "284522967b6b18f336061b6a7d3ca4a12f5e97dca99f22dcd3b1f2afefd62d2c",
+    "original_runner_output_sha256": "70282541d45643d42f38777686de8fe768c53992711c75cba523074b941fcd59",
+    "repository_copy_line_endings": "CRLF normalized to LF; row values unchanged",
+    "original_runner_output_path": "target/pinned/70282541d45643d42f38777686de8fe768c53992711c75cba523074b941fcd59/earley-pairs.csv"
+  },
+  "correctness": {
+    "runtime_unit_tests": "535 passed",
+    "test262": "Candidate and baseline have identical failure sets (16 existing failures) across stages 5, 8, 10-11, 36-38 and 48-50.",
+    "node_oracle": "Candidate and baseline output and exit status matched the Node oracle for the function-name cases."
+  },
+  "rationale": "The isolated closure loop improves materially, but the target fixture shows no corresponding instruction or elapsed-time gain. The small score shift is not supported by those primary measurements, so the cache was removed and is not retained as an optimization."
+}

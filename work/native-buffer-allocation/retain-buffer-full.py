@@ -1,0 +1,14 @@
+import json,hashlib,collections
+from pathlib import Path
+base=Path('work/full-native-buffer-pool-stable');r=json.loads((base/'receipt.json').read_text());d=json.loads((base/'results.json').read_text());c=json.loads((base/'comparison.json').read_text())
+counts=dict(collections.Counter(x['status']for x in d['results']));assert counts=={'pass':1787,'skip':637,'fail':2497,'timeout':94},counts
+assert len(d['results'])==5015 and d['inventory_hash']=='a3820c977f97ed07'
+assert len(c['gained'])==5 and c['lost']==['test-shadow-realm-prepare-stack-trace.js'] and not c['new_skips'] and not c['removed_skips']
+assert r['binaries_before']==r['binaries_after'] and not r['changed_sources_after'] and r['protected_before']==r['protected_after']
+def events(s):return dict((k,int(v))for k,v in map(str.split,s.splitlines()))
+a,b=events(r['memory_before']),events(r['memory_after']);delta={k:b[k]-a[k]for k in a};assert delta['oom']==delta['oom_kill']==0
+lost=next(x for x in d['results']if Path(x['fixture']).name==c['lost'][0]);assert lost['status']=='fail'
+def raw(p):
+ p=Path(p);q=p.read_bytes();return {'path':str(p),'bytes':len(q),'sha256':hashlib.sha256(q).hexdigest()}
+out={'scope':'Complete unchanged latest stable parallel inventory after genuine Buffer backing alignment and shared conversion pools','source_commit':r['source_commit'],'latest_stable':r['release'],'fixture_commit':r['fixture_commit'],'counts':counts,'total':5015,'inventory_hash':d['inventory_hash'],'jobs':4,'timeout_seconds':30,'baseline_passes':1783,'gained':c['gained'],'lost':c['lost'],'new_skips':c['new_skips'],'removed_skips':c['removed_skips'],'memory_events_delta':delta,'elapsed_seconds':r['elapsed_seconds'],'raw':{p.name:raw(p)for p in sorted(base.iterdir())if p.is_file()},'limitations':['Goal remains open:1787/5015 passes,2497 failures,94 timeouts and637 skips.','Five gained andone lost pass. Lost ShadowRealm stack test is a real failure after principal Node stack policy adoption; not timing or a replaced outcome.','The ShadowRealm default stack callback incorrectly falls back to the principal realm hook. Assertion failure then exposes missing getErrorSourcePositions. Both gaps remain recorded; a realm-aware host policy fix is being prepared separately.','Compilation overlapped this run; memory max events increased4051 with zero OOM or OOM kills. No speed or isolated source attribution claim.','Frozen b673 source excludes newer9b3 Core integration and current public aligned unsafe/concat/isLatin1 implementation. Selected newer passes are not added to full totals.','All630 frozen source hashes and all3 binary hashes unchanged, permission fixture restored and bytechecked. No fixture/deadline/skip changes.','Pinned full is running from the same b673 bundle; do not infer its totals from this stable run.']}
+Path('evidence/task20-node-stable-buffer-pool-full-2026-10-16.json').write_text(json.dumps(out,indent=2)+'\n');print(counts,c['gained'],c['lost'],delta)

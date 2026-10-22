@@ -1,0 +1,8 @@
+{
+  "qualified": false,
+  "initial_guard": "npm-esm-codecs-final-sync-guard.log",
+  "reason": "The relocated Valgrind binary could not find its Callgrind executable; initial run produced no instruction counts.",
+  "repair": "Set VALGRIND_LIB=/workspace/.local/usr/libexec/valgrind, pass Callgrind help preflight, run into a new output directory.",
+  "corrected_guard": "npm-esm-codecs-configured-sync-guard.log",
+  "jobs": 2
+}

@@ -1,0 +1,980 @@
+{
+  "schema": 5,
+  "created_unix_ns": 1791563256702040000,
+  "rounds_requested": 1,
+  "timeout_ms": 300000,
+  "source_revision": "9cf65fa61c36ac7e46623af6451adf26ff9c7d27",
+  "source_dirty": true,
+  "corpus": {
+    "pinned_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+    "checkout_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+    "checkout_clean": true,
+    "fixture_set_matches": true
+  },
+  "host": {
+    "uname": "Darwin mini.local 25.5.0 Darwin Kernel Version 25.5.0: Mon Apr 27 20:41:26 PDT 2026; root:xnu-12377.121.6~2/RELEASE_ARM64_T8132 arm64",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)\nbinary: rustc\ncommit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4\ncommit-date: 2026-09-28\nhost: aarch64-apple-darwin\nrelease: 1.99.0\nLLVM version: 23.1.2",
+    "model": "Mac16,10",
+    "memory_bytes": 17179869184,
+    "memory_limit_bytes": null,
+    "cpu_quota": null,
+    "process_metrics_backend": "macOS /usr/bin/time -l"
+  },
+  "engines": [
+    {
+      "name": "quench",
+      "executable": "/Users/admin/Code/GitHub/quench-v2/target/pinned/cb2bd6145b60702a99476884ddfa03ceee72629ea06bf09981b793dda792a30e/quench-node",
+      "executable_sha256": "cb2bd6145b60702a99476884ddfa03ceee72629ea06bf09981b793dda792a30e",
+      "version": "Quench shared-VM interpreter build; package 0.1.0",
+      "argv": [],
+      "environment": {
+        "HOME": "/Users/admin",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/Users/admin/.codex/packages/standalone/releases/0.162.0-aarch64-apple-darwin/codex-path:/Users/admin/.local/bin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/opt/homebrew/bin:/Users/admin/.codex/tmp/arg0/codex-arg0hrCNNi:/Users/admin/.codex/packages/standalone/releases/0.162.0-aarch64-apple-darwin/codex-path:/Users/admin/.codex/tmp/arg0/codex-arg0W8VGnz:/Users/admin/.local/bin"
+      },
+      "inherits_environment": false,
+      "jit_mode": "interpreter",
+      "jit_proof_command": [
+        "/Users/admin/Code/GitHub/quench-v2/target/pinned/cb2bd6145b60702a99476884ddfa03ceee72629ea06bf09981b793dda792a30e/quench-node"
+      ],
+      "jit_proof": "the measured shared VM executes interpreter bytecode; no guest JIT path is enabled"
+    },
+    {
+      "name": "quickjs",
+      "executable": "/opt/homebrew/Cellar/quickjs/2026-06-04/bin/qjs",
+      "executable_sha256": "4b0d0da1beae0a88d0724c7a0869797dee7a24c5bc1e74cfb5d2f69d17811c2b",
+      "version": "QuickJS version 2026-06-04",
+      "argv": [],
+      "environment": {
+        "HOME": "/Users/admin",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/Users/admin/.codex/packages/standalone/releases/0.162.0-aarch64-apple-darwin/codex-path:/Users/admin/.local/bin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/opt/homebrew/bin:/Users/admin/.codex/tmp/arg0/codex-arg0hrCNNi:/Users/admin/.codex/packages/standalone/releases/0.162.0-aarch64-apple-darwin/codex-path:/Users/admin/.codex/tmp/arg0/codex-arg0W8VGnz:/Users/admin/.local/bin"
+      },
+      "inherits_environment": false,
+      "jit_mode": "interpreter",
+      "jit_proof_command": [
+        "/opt/homebrew/Cellar/quickjs/2026-06-04/bin/qjs",
+        "--version"
+      ],
+      "jit_proof": "QuickJS qjs executes bytecode in its interpreter; binary version and SHA-256 are recorded"
+    },
+    {
+      "name": "bun",
+      "executable": "/opt/homebrew/Cellar/bun/1.4.2/bin/bun",
+      "executable_sha256": "b36d2e9d9bd50e3a3b6a8f2d481839417d6600d4c1753411b094ee0da3222cef",
+      "version": "1.4.2",
+      "argv": [],
+      "environment": {
+        "BUN_JSC_useJIT": "0",
+        "HOME": "/Users/admin",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/Users/admin/.codex/packages/standalone/releases/0.162.0-aarch64-apple-darwin/codex-path:/Users/admin/.local/bin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/opt/homebrew/bin:/Users/admin/.codex/tmp/arg0/codex-arg0hrCNNi:/Users/admin/.codex/packages/standalone/releases/0.162.0-aarch64-apple-darwin/codex-path:/Users/admin/.codex/tmp/arg0/codex-arg0W8VGnz:/Users/admin/.local/bin"
+      },
+      "inherits_environment": false,
+      "jit_mode": "disabled-and-probed",
+      "jit_proof_command": [
+        "BUN_JSC_useJIT=0",
+        "BUN_JSC_dumpOptions=1",
+        "/opt/homebrew/Cellar/bun/1.4.2/bin/bun",
+        "-e",
+        "console.log(Bun.version)"
+      ],
+      "jit_proof": "command succeeded and reported \"useJIT=false\": 1.4.2\n\nModified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)"
+    },
+    {
+      "name": "node",
+      "executable": "/opt/homebrew/Cellar/node/26.10.0_1/bin/node",
+      "executable_sha256": "4ca2a42d6d55a834b04d0892c5bc646a6869fcebec57f91c849dac0aa1031610",
+      "version": "v26.10.0",
+      "argv": [
+        "--jitless"
+      ],
+      "environment": {
+        "HOME": "/Users/admin",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/Users/admin/.codex/packages/standalone/releases/0.162.0-aarch64-apple-darwin/codex-path:/Users/admin/.local/bin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/opt/homebrew/bin:/Users/admin/.codex/tmp/arg0/codex-arg0hrCNNi:/Users/admin/.codex/packages/standalone/releases/0.162.0-aarch64-apple-darwin/codex-path:/Users/admin/.codex/tmp/arg0/codex-arg0W8VGnz:/Users/admin/.local/bin"
+      },
+      "inherits_environment": false,
+      "jit_mode": "disabled-and-probed",
+      "jit_proof_command": [
+        "/opt/homebrew/Cellar/node/26.10.0_1/bin/node",
+        "--jitless",
+        "-e",
+        "console.log(process.execArgv.includes('--jitless'))"
+      ],
+      "jit_proof": "command succeeded and reported \"true\": true"
+    }
+  ],
+  "suite_inputs": [
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/base.js",
+      "size_bytes": 9351,
+      "modified_unix_ns": 1791399842589165942,
+      "sha256": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/crypto.js",
+      "size_bytes": 48043,
+      "modified_unix_ns": 1791399842589772400,
+      "sha256": "5321d2ada9b61e01d5f281609513467cbaa7c0effb12c577ed08088d812453af"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/deltablue.js",
+      "size_bytes": 25653,
+      "modified_unix_ns": 1791399842589978359,
+      "sha256": "74b5a95f4877701073c6efef08e4ae306562747067e292925b69cbd629a511b9"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/earley-boyer.js",
+      "size_bytes": 195205,
+      "modified_unix_ns": 1791399842590910109,
+      "sha256": "dbf3aeb6b3d056e8ea35b5f19aa8c8a4fb1053e41d07f096c22483b2c1c6ee01"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/navier-stokes.js",
+      "size_bytes": 12690,
+      "modified_unix_ns": 1791399842591090359,
+      "sha256": "ce241465ffeee77b5c4f7119f522aa971fe1fe92c3aed76f7514ea43e07fec84"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/raytrace.js",
+      "size_bytes": 27996,
+      "modified_unix_ns": 1791399842591280317,
+      "sha256": "d52183ca324cdb88d9ee3e78326433fe2ca28d6436f0a6c3ec013ab67cb798eb"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/regexp.js",
+      "size_bytes": 111299,
+      "modified_unix_ns": 1791399842592027317,
+      "sha256": "5268b0d15931fda4e331de35fc58e5beded9a250b60764e1cc7cfc898ab53602"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/richards.js",
+      "size_bytes": 15776,
+      "modified_unix_ns": 1791399842592243692,
+      "sha256": "d86eac4108343a54ba6e10621a77b46f82f554c3b0a46e8fb4032d5cf65a2a11"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/splay.js",
+      "size_bytes": 10746,
+      "modified_unix_ns": 1791399842592552609,
+      "sha256": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d"
+    }
+  ],
+  "fixtures": {
+    "quench-bench/js-engine-benchmark/v8-v7/crypto.js": {
+      "source": {
+        "path": "quench-bench/js-engine-benchmark/v8-v7/crypto.js",
+        "size_bytes": 48043,
+        "modified_unix_ns": 1791399842589772400,
+        "sha256": "5321d2ada9b61e01d5f281609513467cbaa7c0effb12c577ed08088d812453af"
+      },
+      "valid": true,
+      "output_equal": true,
+      "summaries": {
+        "bun": {
+          "median_score": 4157.0,
+          "median_max_rss_bytes": 27983872,
+          "valid_samples": 1
+        },
+        "node": {
+          "median_score": 2533.0,
+          "median_max_rss_bytes": 45121536,
+          "valid_samples": 1
+        },
+        "quench": {
+          "median_score": 392.0,
+          "median_max_rss_bytes": 20905984,
+          "valid_samples": 1
+        },
+        "quickjs": {
+          "median_score": 2407.0,
+          "median_max_rss_bytes": 2949120,
+          "valid_samples": 1
+        }
+      },
+      "rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            "quench",
+            "quickjs",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 4037113625,
+              "peak_rss_bytes": 27983872,
+              "score": 4157.0,
+              "instructions": 134573375329,
+              "cycles": 16144777640,
+              "page_faults": 41,
+              "page_reclaims": 1843,
+              "involuntary_context_switches": 886,
+              "stdout": "__quenchBenchResult: Crypto: 4157\n----\nScore: 4157\n",
+              "stderr": "        4.03 real         4.01 user         0.01 sys\n            27983872  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1843  page reclaims\n                  41  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 886  involuntary context switches\n        134573375329  instructions retired\n         16144777640  cycles elapsed\n            15122960  peak memory footprint\n"
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 5067442500,
+              "peak_rss_bytes": 45121536,
+              "score": 2533.0,
+              "instructions": 146006682748,
+              "cycles": 20230456433,
+              "page_faults": 86,
+              "page_reclaims": 3330,
+              "involuntary_context_switches": 445,
+              "stdout": "__quenchBenchResult: Crypto: 2533\n----\nScore: 2533\n",
+              "stderr": "        5.06 real         5.03 user         0.02 sys\n            45121536  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3330  page reclaims\n                  86  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 445  involuntary context switches\n        146006682748  instructions retired\n         20230456433  cycles elapsed\n            15878280  peak memory footprint\n"
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 13018318125,
+              "peak_rss_bytes": 20905984,
+              "score": 392.0,
+              "instructions": 344284977162,
+              "cycles": 50234982491,
+              "page_faults": 14,
+              "page_reclaims": 1458,
+              "involuntary_context_switches": 1031,
+              "stdout": "__quenchBenchResult: Crypto: 392\n----\nScore: 392\n",
+              "stderr": "       13.01 real        12.46 user         0.03 sys\n            20905984  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1458  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                1031  involuntary context switches\n        344284977162  instructions retired\n         50234982491  cycles elapsed\n            11813248  peak memory footprint\n"
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 5024981458,
+              "peak_rss_bytes": 2949120,
+              "score": 2407.0,
+              "instructions": 119542201575,
+              "cycles": 20102714573,
+              "page_faults": 2,
+              "page_reclaims": 340,
+              "involuntary_context_switches": 301,
+              "stdout": "__quenchBenchResult: Crypto: 2407\n----\nScore: 2407\n",
+              "stderr": "        5.02 real         5.00 user         0.01 sys\n             2949120  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                 340  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 301  involuntary context switches\n        119542201575  instructions retired\n         20102714573  cycles elapsed\n             1933624  peak memory footprint\n"
+            }
+          }
+        }
+      ]
+    },
+    "quench-bench/js-engine-benchmark/v8-v7/deltablue.js": {
+      "source": {
+        "path": "quench-bench/js-engine-benchmark/v8-v7/deltablue.js",
+        "size_bytes": 25653,
+        "modified_unix_ns": 1791399842589978359,
+        "sha256": "74b5a95f4877701073c6efef08e4ae306562747067e292925b69cbd629a511b9"
+      },
+      "valid": true,
+      "output_equal": true,
+      "summaries": {
+        "bun": {
+          "median_score": 2380.0,
+          "median_max_rss_bytes": 38486016,
+          "valid_samples": 1
+        },
+        "node": {
+          "median_score": 2751.0,
+          "median_max_rss_bytes": 51298304,
+          "valid_samples": 1
+        },
+        "quench": {
+          "median_score": 217.0,
+          "median_max_rss_bytes": 19087360,
+          "valid_samples": 1
+        },
+        "quickjs": {
+          "median_score": 1808.0,
+          "median_max_rss_bytes": 2981888,
+          "valid_samples": 1
+        }
+      },
+      "rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            "quench",
+            "quickjs",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2011473709,
+              "peak_rss_bytes": 38486016,
+              "score": 2380.0,
+              "instructions": 49562187862,
+              "cycles": 8057900083,
+              "page_faults": 41,
+              "page_reclaims": 2484,
+              "involuntary_context_switches": 1072,
+              "stdout": "__quenchBenchResult: DeltaBlue: 2380\n----\nScore: 2380\n",
+              "stderr": "        2.00 real         1.99 user         0.01 sys\n            38486016  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                2484  page reclaims\n                  41  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                1072  involuntary context switches\n         49562187862  instructions retired\n          8057900083  cycles elapsed\n            18956816  peak memory footprint\n"
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2052823667,
+              "peak_rss_bytes": 51298304,
+              "score": 2751.0,
+              "instructions": 46708163388,
+              "cycles": 8181700845,
+              "page_faults": 85,
+              "page_reclaims": 3711,
+              "involuntary_context_switches": 335,
+              "stdout": "__quenchBenchResult: DeltaBlue: 2751\n----\nScore: 2751\n",
+              "stderr": "        2.04 real         2.02 user         0.01 sys\n            51298304  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3711  page reclaims\n                  85  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 335  involuntary context switches\n         46708163388  instructions retired\n          8181700845  cycles elapsed\n            22940960  peak memory footprint\n"
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2042163000,
+              "peak_rss_bytes": 19087360,
+              "score": 217.0,
+              "instructions": 43306967481,
+              "cycles": 8143120190,
+              "page_faults": 14,
+              "page_reclaims": 1347,
+              "involuntary_context_switches": 405,
+              "stdout": "__quenchBenchResult: DeltaBlue: 217\n----\nScore: 217\n",
+              "stderr": "        2.03 real         2.02 user         0.00 sys\n            19087360  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1347  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 405  involuntary context switches\n         43306967481  instructions retired\n          8143120190  cycles elapsed\n            10027416  peak memory footprint\n"
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2010504959,
+              "peak_rss_bytes": 2981888,
+              "score": 1808.0,
+              "instructions": 34892627935,
+              "cycles": 8037407205,
+              "page_faults": 2,
+              "page_reclaims": 342,
+              "involuntary_context_switches": 179,
+              "stdout": "__quenchBenchResult: DeltaBlue: 1808\n----\nScore: 1808\n",
+              "stderr": "        2.00 real         1.99 user         0.00 sys\n             2981888  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                 342  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 179  involuntary context switches\n         34892627935  instructions retired\n          8037407205  cycles elapsed\n             1999184  peak memory footprint\n"
+            }
+          }
+        }
+      ]
+    },
+    "quench-bench/js-engine-benchmark/v8-v7/earley-boyer.js": {
+      "source": {
+        "path": "quench-bench/js-engine-benchmark/v8-v7/earley-boyer.js",
+        "size_bytes": 195205,
+        "modified_unix_ns": 1791399842590910109,
+        "sha256": "dbf3aeb6b3d056e8ea35b5f19aa8c8a4fb1053e41d07f096c22483b2c1c6ee01"
+      },
+      "valid": true,
+      "output_equal": true,
+      "summaries": {
+        "bun": {
+          "median_score": 9561.0,
+          "median_max_rss_bytes": 37208064,
+          "valid_samples": 1
+        },
+        "node": {
+          "median_score": 12361.0,
+          "median_max_rss_bytes": 112476160,
+          "valid_samples": 1
+        },
+        "quench": {
+          "median_score": 508.0,
+          "median_max_rss_bytes": 48447488,
+          "valid_samples": 1
+        },
+        "quickjs": {
+          "median_score": 5056.0,
+          "median_max_rss_bytes": 17334272,
+          "valid_samples": 1
+        }
+      },
+      "rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            "quench",
+            "quickjs",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 4025775125,
+              "peak_rss_bytes": 37208064,
+              "score": 9561.0,
+              "instructions": 97378275854,
+              "cycles": 17196909924,
+              "page_faults": 42,
+              "page_reclaims": 2406,
+              "involuntary_context_switches": 24168,
+              "stdout": "__quenchBenchResult: EarleyBoyer: 9561\n----\nScore: 9561\n",
+              "stderr": "        4.02 real         4.19 user         0.15 sys\n            37208064  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                2406  page reclaims\n                  42  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n               24168  involuntary context switches\n         97378275854  instructions retired\n         17196909924  cycles elapsed\n            23708224  peak memory footprint\n"
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 4074321000,
+              "peak_rss_bytes": 112476160,
+              "score": 12361.0,
+              "instructions": 97809875419,
+              "cycles": 16527914230,
+              "page_faults": 85,
+              "page_reclaims": 7443,
+              "involuntary_context_switches": 1460,
+              "stdout": "__quenchBenchResult: EarleyBoyer: 12361\n----\nScore: 12361\n",
+              "stderr": "        4.07 real         4.06 user         0.02 sys\n           112476160  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                7443  page reclaims\n                  85  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                1460  involuntary context switches\n         97809875419  instructions retired\n         16527914230  cycles elapsed\n            90895368  peak memory footprint\n"
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 13719169958,
+              "peak_rss_bytes": 48447488,
+              "score": 508.0,
+              "instructions": 351629735716,
+              "cycles": 55179406592,
+              "page_faults": 14,
+              "page_reclaims": 3139,
+              "involuntary_context_switches": 1010,
+              "stdout": "__quenchBenchResult: EarleyBoyer: 508\n----\nScore: 508\n",
+              "stderr": "       13.71 real        13.67 user         0.03 sys\n            48447488  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3139  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                1010  involuntary context switches\n        351629735716  instructions retired\n         55179406592  cycles elapsed\n            39436744  peak memory footprint\n"
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 5147964667,
+              "peak_rss_bytes": 17334272,
+              "score": 5056.0,
+              "instructions": 108071396676,
+              "cycles": 20690984762,
+              "page_faults": 2,
+              "page_reclaims": 1218,
+              "involuntary_context_switches": 541,
+              "stdout": "__quenchBenchResult: EarleyBoyer: 5056\n----\nScore: 5056\n",
+              "stderr": "        5.14 real         5.12 user         0.01 sys\n            17334272  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1218  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 541  involuntary context switches\n        108071396676  instructions retired\n         20690984762  cycles elapsed\n            16335184  peak memory footprint\n"
+            }
+          }
+        }
+      ]
+    },
+    "quench-bench/js-engine-benchmark/v8-v7/navier-stokes.js": {
+      "source": {
+        "path": "quench-bench/js-engine-benchmark/v8-v7/navier-stokes.js",
+        "size_bytes": 12690,
+        "modified_unix_ns": 1791399842591090359,
+        "sha256": "ce241465ffeee77b5c4f7119f522aa971fe1fe92c3aed76f7514ea43e07fec84"
+      },
+      "valid": true,
+      "output_equal": true,
+      "summaries": {
+        "bun": {
+          "median_score": 4782.0,
+          "median_max_rss_bytes": 19890176,
+          "valid_samples": 1
+        },
+        "node": {
+          "median_score": 3551.0,
+          "median_max_rss_bytes": 49840128,
+          "valid_samples": 1
+        },
+        "quench": {
+          "median_score": 552.0,
+          "median_max_rss_bytes": 19890176,
+          "valid_samples": 1
+        },
+        "quickjs": {
+          "median_score": 4589.0,
+          "median_max_rss_bytes": 5455872,
+          "valid_samples": 1
+        }
+      },
+      "rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            "quench",
+            "quickjs",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2061797542,
+              "peak_rss_bytes": 19890176,
+              "score": 4782.0,
+              "instructions": 59233514848,
+              "cycles": 8292568185,
+              "page_faults": 41,
+              "page_reclaims": 1349,
+              "involuntary_context_switches": 138,
+              "stdout": "__quenchBenchResult: NavierStokes: 4782\n----\nScore: 4782\n",
+              "stderr": "        2.05 real         2.04 user         0.00 sys\n            19890176  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1349  page reclaims\n                  41  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 138  involuntary context switches\n         59233514848  instructions retired\n          8292568185  cycles elapsed\n             7668240  peak memory footprint\n"
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 3111059417,
+              "peak_rss_bytes": 49840128,
+              "score": 3551.0,
+              "instructions": 91655998917,
+              "cycles": 12509181010,
+              "page_faults": 85,
+              "page_reclaims": 3628,
+              "involuntary_context_switches": 399,
+              "stdout": "__quenchBenchResult: NavierStokes: 3551\n----\nScore: 3551\n",
+              "stderr": "        3.10 real         3.08 user         0.01 sys\n            49840128  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3628  page reclaims\n                  85  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 399  involuntary context switches\n         91655998917  instructions retired\n         12509181010  cycles elapsed\n            21449992  peak memory footprint\n"
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 9740248583,
+              "peak_rss_bytes": 19890176,
+              "score": 552.0,
+              "instructions": 289195552278,
+              "cycles": 39201177371,
+              "page_faults": 14,
+              "page_reclaims": 1397,
+              "involuntary_context_switches": 841,
+              "stdout": "__quenchBenchResult: NavierStokes: 552\n----\nScore: 552\n",
+              "stderr": "        9.73 real         9.70 user         0.02 sys\n            19890176  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1397  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 841  involuntary context switches\n        289195552278  instructions retired\n         39201177371  cycles elapsed\n            10846616  peak memory footprint\n"
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 3015964292,
+              "peak_rss_bytes": 5455872,
+              "score": 4589.0,
+              "instructions": 69133098401,
+              "cycles": 12150085087,
+              "page_faults": 2,
+              "page_reclaims": 493,
+              "involuntary_context_switches": 213,
+              "stdout": "__quenchBenchResult: NavierStokes: 4589\n----\nScore: 4589\n",
+              "stderr": "        3.01 real         3.00 user         0.00 sys\n             5455872  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                 493  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 213  involuntary context switches\n         69133098401  instructions retired\n         12150085087  cycles elapsed\n             4473168  peak memory footprint\n"
+            }
+          }
+        }
+      ]
+    },
+    "quench-bench/js-engine-benchmark/v8-v7/raytrace.js": {
+      "source": {
+        "path": "quench-bench/js-engine-benchmark/v8-v7/raytrace.js",
+        "size_bytes": 27996,
+        "modified_unix_ns": 1791399842591280317,
+        "sha256": "d52183ca324cdb88d9ee3e78326433fe2ca28d6436f0a6c3ec013ab67cb798eb"
+      },
+      "valid": true,
+      "output_equal": true,
+      "summaries": {
+        "bun": {
+          "median_score": 6014.0,
+          "median_max_rss_bytes": 36306944,
+          "valid_samples": 1
+        },
+        "node": {
+          "median_score": 8369.0,
+          "median_max_rss_bytes": 52133888,
+          "valid_samples": 1
+        },
+        "quench": {
+          "median_score": 727.0,
+          "median_max_rss_bytes": 19038208,
+          "valid_samples": 1
+        },
+        "quickjs": {
+          "median_score": 3872.0,
+          "median_max_rss_bytes": 2686976,
+          "valid_samples": 1
+        }
+      },
+      "rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            "quench",
+            "quickjs",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2023221625,
+              "peak_rss_bytes": 36306944,
+              "score": 6014.0,
+              "instructions": 47345780027,
+              "cycles": 8435502896,
+              "page_faults": 41,
+              "page_reclaims": 2351,
+              "involuntary_context_switches": 10755,
+              "stdout": "__quenchBenchResult: RayTrace: 6014\n----\nScore: 6014\n",
+              "stderr": "        2.01 real         2.03 user         0.07 sys\n            36306944  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                2351  page reclaims\n                  41  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n               10755  involuntary context switches\n         47345780027  instructions retired\n          8435502896  cycles elapsed\n            23052840  peak memory footprint\n"
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2063986500,
+              "peak_rss_bytes": 52133888,
+              "score": 8369.0,
+              "instructions": 48705483545,
+              "cycles": 8293835096,
+              "page_faults": 85,
+              "page_reclaims": 3760,
+              "involuntary_context_switches": 2268,
+              "stdout": "__quenchBenchResult: RayTrace: 8369\n----\nScore: 8369\n",
+              "stderr": "        2.06 real         2.04 user         0.02 sys\n            52133888  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3760  page reclaims\n                  85  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                2268  involuntary context switches\n         48705483545  instructions retired\n          8293835096  cycles elapsed\n            23858584  peak memory footprint\n"
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 5115734666,
+              "peak_rss_bytes": 19038208,
+              "score": 727.0,
+              "instructions": 118174691755,
+              "cycles": 20601498737,
+              "page_faults": 14,
+              "page_reclaims": 1344,
+              "involuntary_context_switches": 445,
+              "stdout": "__quenchBenchResult: RayTrace: 727\n----\nScore: 727\n",
+              "stderr": "        5.11 real         5.09 user         0.01 sys\n            19038208  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1344  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 445  involuntary context switches\n        118174691755  instructions retired\n         20601498737  cycles elapsed\n             9945496  peak memory footprint\n"
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2022255041,
+              "peak_rss_bytes": 2686976,
+              "score": 3872.0,
+              "instructions": 42268174879,
+              "cycles": 8116072829,
+              "page_faults": 2,
+              "page_reclaims": 324,
+              "involuntary_context_switches": 348,
+              "stdout": "__quenchBenchResult: RayTrace: 3872\n----\nScore: 3872\n",
+              "stderr": "        2.01 real         2.01 user         0.00 sys\n             2686976  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                 324  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 348  involuntary context switches\n         42268174879  instructions retired\n          8116072829  cycles elapsed\n             1671480  peak memory footprint\n"
+            }
+          }
+        }
+      ]
+    },
+    "quench-bench/js-engine-benchmark/v8-v7/regexp.js": {
+      "source": {
+        "path": "quench-bench/js-engine-benchmark/v8-v7/regexp.js",
+        "size_bytes": 111299,
+        "modified_unix_ns": 1791399842592027317,
+        "sha256": "5268b0d15931fda4e331de35fc58e5beded9a250b60764e1cc7cfc898ab53602"
+      },
+      "valid": true,
+      "output_equal": true,
+      "summaries": {
+        "bun": {
+          "median_score": 1685.0,
+          "median_max_rss_bytes": 33849344,
+          "valid_samples": 1
+        },
+        "node": {
+          "median_score": 5971.0,
+          "median_max_rss_bytes": 55394304,
+          "valid_samples": 1
+        },
+        "quench": {
+          "median_score": 127.0,
+          "median_max_rss_bytes": 38518784,
+          "valid_samples": 1
+        },
+        "quickjs": {
+          "median_score": 923.0,
+          "median_max_rss_bytes": 7766016,
+          "valid_samples": 1
+        }
+      },
+      "rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            "quench",
+            "quickjs",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 3168412250,
+              "peak_rss_bytes": 33849344,
+              "score": 1685.0,
+              "instructions": 88130656103,
+              "cycles": 13132805033,
+              "page_faults": 41,
+              "page_reclaims": 2201,
+              "involuntary_context_switches": 10919,
+              "stdout": "__quenchBenchResult: RegExp: 1685\n----\nScore: 1685\n",
+              "stderr": "        3.16 real         3.22 user         0.07 sys\n            33849344  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                2201  page reclaims\n                  41  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n               10919  involuntary context switches\n         88130656103  instructions retired\n         13132805033  cycles elapsed\n            19153424  peak memory footprint\n"
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2092824917,
+              "peak_rss_bytes": 55394304,
+              "score": 5971.0,
+              "instructions": 44451459845,
+              "cycles": 8399032639,
+              "page_faults": 87,
+              "page_reclaims": 3958,
+              "involuntary_context_switches": 552,
+              "stdout": "__quenchBenchResult: RegExp: 5971\n----\nScore: 5971\n",
+              "stderr": "        2.08 real         2.07 user         0.01 sys\n            55394304  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3958  page reclaims\n                  87  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 552  involuntary context switches\n         44451459845  instructions retired\n          8399032639  cycles elapsed\n            27135816  peak memory footprint\n"
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 25202931375,
+              "peak_rss_bytes": 38518784,
+              "score": 127.0,
+              "instructions": 557524655186,
+              "cycles": 102587373691,
+              "page_faults": 14,
+              "page_reclaims": 2534,
+              "involuntary_context_switches": 2112,
+              "stdout": "__quenchBenchResult: RegExp: 127\n----\nScore: 127\n",
+              "stderr": "       25.19 real        25.13 user         0.05 sys\n            38518784  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                2534  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                2112  involuntary context switches\n        557524655186  instructions retired\n        102587373691  cycles elapsed\n            28983728  peak memory footprint\n"
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 4451813333,
+              "peak_rss_bytes": 7766016,
+              "score": 923.0,
+              "instructions": 118096854221,
+              "cycles": 17903375130,
+              "page_faults": 2,
+              "page_reclaims": 634,
+              "involuntary_context_switches": 277,
+              "stdout": "__quenchBenchResult: RegExp: 923\n----\nScore: 923\n",
+              "stderr": "        4.44 real         4.43 user         0.01 sys\n             7766016  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                 634  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 277  involuntary context switches\n        118096854221  instructions retired\n         17903375130  cycles elapsed\n             6750544  peak memory footprint\n"
+            }
+          }
+        }
+      ]
+    },
+    "quench-bench/js-engine-benchmark/v8-v7/richards.js": {
+      "source": {
+        "path": "quench-bench/js-engine-benchmark/v8-v7/richards.js",
+        "size_bytes": 15776,
+        "modified_unix_ns": 1791399842592243692,
+        "sha256": "d86eac4108343a54ba6e10621a77b46f82f554c3b0a46e8fb4032d5cf65a2a11"
+      },
+      "valid": true,
+      "output_equal": true,
+      "summaries": {
+        "bun": {
+          "median_score": 3107.0,
+          "median_max_rss_bytes": 21037056,
+          "valid_samples": 1
+        },
+        "node": {
+          "median_score": 2644.0,
+          "median_max_rss_bytes": 44859392,
+          "valid_samples": 1
+        },
+        "quench": {
+          "median_score": 435.0,
+          "median_max_rss_bytes": 18137088,
+          "valid_samples": 1
+        },
+        "quickjs": {
+          "median_score": 1829.0,
+          "median_max_rss_bytes": 2555904,
+          "valid_samples": 1
+        }
+      },
+      "rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            "quench",
+            "quickjs",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2011423041,
+              "peak_rss_bytes": 21037056,
+              "score": 3107.0,
+              "instructions": 54035692615,
+              "cycles": 8013392906,
+              "page_faults": 41,
+              "page_reclaims": 1419,
+              "involuntary_context_switches": 387,
+              "stdout": "__quenchBenchResult: Richards: 3107\n----\nScore: 3107\n",
+              "stderr": "        2.00 real         1.99 user         0.00 sys\n            21037056  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1419  page reclaims\n                  41  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 387  involuntary context switches\n         54035692615  instructions retired\n          8013392906  cycles elapsed\n             8815096  peak memory footprint\n"
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2049836292,
+              "peak_rss_bytes": 44859392,
+              "score": 2644.0,
+              "instructions": 46159139673,
+              "cycles": 8196762241,
+              "page_faults": 85,
+              "page_reclaims": 3316,
+              "involuntary_context_switches": 188,
+              "stdout": "__quenchBenchResult: Richards: 2644\n----\nScore: 2644\n",
+              "stderr": "        2.04 real         2.02 user         0.01 sys\n            44859392  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3316  page reclaims\n                  85  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 188  involuntary context switches\n         46159139673  instructions retired\n          8196762241  cycles elapsed\n            15632496  peak memory footprint\n"
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2029857000,
+              "peak_rss_bytes": 18137088,
+              "score": 435.0,
+              "instructions": 51049855466,
+              "cycles": 8099990492,
+              "page_faults": 14,
+              "page_reclaims": 1289,
+              "involuntary_context_switches": 143,
+              "stdout": "__quenchBenchResult: Richards: 435\n----\nScore: 435\n",
+              "stderr": "        2.02 real         2.01 user         0.00 sys\n            18137088  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1289  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 143  involuntary context switches\n         51049855466  instructions retired\n          8099990492  cycles elapsed\n             9077144  peak memory footprint\n"
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2006559125,
+              "peak_rss_bytes": 2555904,
+              "score": 1829.0,
+              "instructions": 35045402312,
+              "cycles": 8026820287,
+              "page_faults": 2,
+              "page_reclaims": 316,
+              "involuntary_context_switches": 147,
+              "stdout": "__quenchBenchResult: Richards: 1829\n----\nScore: 1829\n",
+              "stderr": "        2.00 real         1.99 user         0.00 sys\n             2555904  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                 316  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 147  involuntary context switches\n         35045402312  instructions retired\n          8026820287  cycles elapsed\n             1556792  peak memory footprint\n"
+            }
+          }
+        }
+      ]
+    },
+    "quench-bench/js-engine-benchmark/v8-v7/splay.js": {
+      "source": {
+        "path": "quench-bench/js-engine-benchmark/v8-v7/splay.js",
+        "size_bytes": 10746,
+        "modified_unix_ns": 1791399842592552609,
+        "sha256": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d"
+      },
+      "valid": true,
+      "output_equal": true,
+      "summaries": {
+        "bun": {
+          "median_score": 9966.0,
+          "median_max_rss_bytes": 57950208,
+          "valid_samples": 1
+        },
+        "node": {
+          "median_score": 14883.0,
+          "median_max_rss_bytes": 405045248,
+          "valid_samples": 1
+        },
+        "quench": {
+          "median_score": 2876.0,
+          "median_max_rss_bytes": 341196800,
+          "valid_samples": 1
+        },
+        "quickjs": {
+          "median_score": 8597.0,
+          "median_max_rss_bytes": 151044096,
+          "valid_samples": 1
+        }
+      },
+      "rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            "quench",
+            "quickjs",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2075281667,
+              "peak_rss_bytes": 57950208,
+              "score": 9966.0,
+              "instructions": 64713498394,
+              "cycles": 17242615282,
+              "page_faults": 41,
+              "page_reclaims": 3672,
+              "involuntary_context_switches": 61839,
+              "stdout": "__quenchBenchResult: Splay: 9966\n----\nScore: 9966\n",
+              "stderr": "        2.07 real         4.48 user         0.29 sys\n            57950208  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3672  page reclaims\n                  41  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n               61839  involuntary context switches\n         64713498394  instructions retired\n         17242615282  cycles elapsed\n            45449744  peak memory footprint\n"
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2103265458,
+              "peak_rss_bytes": 405045248,
+              "score": 14883.0,
+              "instructions": 58168170540,
+              "cycles": 15379841680,
+              "page_faults": 86,
+              "page_reclaims": 25354,
+              "involuntary_context_switches": 5012,
+              "stdout": "__quenchBenchResult: Splay: 14883\n----\nScore: 14883\n",
+              "stderr": "        2.09 real         3.94 user         0.06 sys\n           405045248  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               25354  page reclaims\n                  86  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                5012  involuntary context switches\n         58168170540  instructions retired\n         15379841680  cycles elapsed\n           408520504  peak memory footprint\n"
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2303164042,
+              "peak_rss_bytes": 341196800,
+              "score": 2876.0,
+              "instructions": 51578577005,
+              "cycles": 9212973733,
+              "page_faults": 14,
+              "page_reclaims": 25125,
+              "involuntary_context_switches": 150,
+              "stdout": "__quenchBenchResult: Splay: 2876\n----\nScore: 2876\n",
+              "stderr": "        2.29 real         2.26 user         0.02 sys\n           341196800  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               25125  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   2  voluntary context switches\n                 150  involuntary context switches\n         51578577005  instructions retired\n          9212973733  cycles elapsed\n           332300960  peak memory footprint\n"
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2192733250,
+              "peak_rss_bytes": 151044096,
+              "score": 8597.0,
+              "instructions": 39541129921,
+              "cycles": 8794833424,
+              "page_faults": 2,
+              "page_reclaims": 9379,
+              "involuntary_context_switches": 147,
+              "stdout": "__quenchBenchResult: Splay: 8597\n----\nScore: 8597\n",
+              "stderr": "        2.18 real         2.17 user         0.01 sys\n           151044096  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                9379  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 147  involuntary context switches\n         39541129921  instructions retired\n          8794833424  cycles elapsed\n           150028720  peak memory footprint\n"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "complete": true,
+  "qualification_ready": false
+}

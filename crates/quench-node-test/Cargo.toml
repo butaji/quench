@@ -13,4 +13,9 @@ sha2 = "0.10"
 tempfile = "3"
 wait-timeout = "0.2.1"
 quench-node = { path = "../quench-node" }
-quench-runtime = { path = "../quench-runtime" }
+
+[dev-dependencies]
+url = "2"
+quench-stack = { path = "../quench-stack" }
+openssl = "0.10"
+wast = "247"

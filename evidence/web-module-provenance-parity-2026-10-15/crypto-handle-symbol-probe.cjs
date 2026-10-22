@@ -1,0 +1,1 @@
+const crypto=require('node:crypto'),utility=require('internal/crypto/util'),key=utility.kHandle,hash=crypto.createHash('sha256');console.log(JSON.stringify([key.description,Symbol.keyFor(key)??null,Object.getOwnPropertySymbols(hash).includes(key)]));

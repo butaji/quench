@@ -1,0 +1,2320 @@
+{
+  "complete": false,
+  "cpu_limits": "400000 100000\n",
+  "engines": {
+    "bun": {
+      "binary": "/workspace/quench/work/bun/bin/bun",
+      "jit_proof": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)\n",
+      "server_args": [],
+      "server_env": {
+        "BUN_JSC_useJIT": "0"
+      },
+      "sha256": "7ce7d6b654eddeec20afddf2396317fba6dc19ab52788a27e894e1806bf8f24b",
+      "version": "1.4.3\n"
+    },
+    "node": {
+      "binary": "/workspace/quench/work/node-v26.12.0-linux-x64/bin/node",
+      "jit_proof": "true\nundefined\n",
+      "server_args": [
+        "--jitless"
+      ],
+      "server_env": {},
+      "sha256": "caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943",
+      "version": "v26.12.0\n"
+    },
+    "quench": {
+      "binary": "/workspace/quench/work/quench-process-fatal-handler-qualified",
+      "jit_proof": "quench-node uses the default interpreted execution mode; no compiled-mode flag",
+      "server_args": [],
+      "server_env": {},
+      "sha256": "e12c4f5597b0294c3cf8a04aa13c1becd3b33b7aa1eda23dbd3b83f6384d4bbe",
+      "version": "v22.0.0\n"
+    }
+  },
+  "host": "Linux 7ba71d3070cc 6.18.44 #1 SMP Sat Sep 26 20:02:31 UTC 2026 x86_64 GNU/Linux\n",
+  "load_generator": {
+    "binary": "/workspace/quench/work/bombardier",
+    "sha256": "d3dc4a9ecec3f8bd43f8c196ad533cb4b79ca55b11fc74c3184231e00a95bc0b",
+    "version": "bombardier version unspecified linux/amd64\n"
+  },
+  "memory_limit": "17179869184\n",
+  "rounds": 1,
+  "runner": {
+    "binary": "/workspace/quench/target/debug/web",
+    "sha256": "58c2307c29affe49f7e5e9ab0e32a394fdde8233d9bd464e1f713dbb678624bb"
+  },
+  "samples": [
+    {
+      "round": 0,
+      "sample": {
+        "entry_sha256": "e53d8ffc7164529c9c62c04bfd63e7712336251d43c1d12209b2713b7a42c386",
+        "result": {
+          "correctness": {
+            "body": "passed",
+            "ping": "passed",
+            "query": "passed",
+            "query-dynamic": "passed",
+            "video": "passed"
+          },
+          "linux_proc_status_after": "Name:\tquench-process-\nUmask:\t0077\nState:\tS (sleeping)\nTgid:\t773873\nNgid:\t0\nPid:\t773873\nPPid:\t773769\nTracerPid:\t0\nUid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\nFDSize:\t512\nGroups:\t \nNStgid:\t773873\nNSpid:\t773873\nNSpgid:\t773261\nNSsid:\t773261\nKthread:\t0\nVmPeak:\t 5180008 kB\nVmSize:\t 5173224 kB\nVmLck:\t       0 kB\nVmPin:\t       0 kB\nVmHWM:\t   81036 kB\nVmRSS:\t   76896 kB\nRssAnon:\t   60192 kB\nRssFile:\t   16704 kB\nRssShmem:\t       0 kB\nVmData:\t  886156 kB\nVmStk:\t     132 kB\nVmExe:\t   23568 kB\nVmLib:\t    3416 kB\nVmPTE:\t     292 kB\nVmSwap:\t       0 kB\nHugetlbPages:\t       0 kB\nCoreDumping:\t0\nTHP_enabled:\t1\nuntag_mask:\t0xffffffffffffffff\nThreads:\t2\nSigQ:\t21/71955\nSigPnd:\t0000000000000000\nShdPnd:\t0000000000000000\nSigBlk:\t000000007ffbfeff\nSigIgn:\t0000000001001000\nSigCgt:\t0000000100000440\nCapInh:\t0000000000000000\nCapPrm:\t0000000000000000\nCapEff:\t0000000000000000\nCapBnd:\t000001ffffffffff\nCapAmb:\t0000000000000000\nNoNewPrivs:\t0\nSeccomp:\t0\nSeccomp_filters:\t0\nSpeculation_Store_Bypass:\tvulnerable\nSpeculationIndirectBranch:\talways enabled\nCpus_allowed:\t1f\nCpus_allowed_list:\t0-4\nMems_allowed:\t00000000,00000001\nMems_allowed_list:\t0\nvoluntary_ctxt_switches:\t1\nnonvoluntary_ctxt_switches:\t0\n",
+          "linux_proc_status_before": "Name:\tquench-process-\nUmask:\t0077\nState:\tS (sleeping)\nTgid:\t773873\nNgid:\t0\nPid:\t773873\nPPid:\t773769\nTracerPid:\t0\nUid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\nFDSize:\t64\nGroups:\t \nNStgid:\t773873\nNSpid:\t773873\nNSpgid:\t773261\nNSsid:\t773261\nKthread:\t0\nVmPeak:\t 5180008 kB\nVmSize:\t 5169664 kB\nVmLck:\t       0 kB\nVmPin:\t       0 kB\nVmHWM:\t   58640 kB\nVmRSS:\t   49172 kB\nRssAnon:\t   38120 kB\nRssFile:\t   11052 kB\nRssShmem:\t       0 kB\nVmData:\t  859872 kB\nVmStk:\t     132 kB\nVmExe:\t   23568 kB\nVmLib:\t    3416 kB\nVmPTE:\t     240 kB\nVmSwap:\t       0 kB\nHugetlbPages:\t       0 kB\nCoreDumping:\t0\nTHP_enabled:\t1\nuntag_mask:\t0xffffffffffffffff\nThreads:\t2\nSigQ:\t21/71955\nSigPnd:\t0000000000000000\nShdPnd:\t0000000000000000\nSigBlk:\t000000007ffbfeff\nSigIgn:\t0000000001001000\nSigCgt:\t0000000100000440\nCapInh:\t0000000000000000\nCapPrm:\t0000000000000000\nCapEff:\t0000000000000000\nCapBnd:\t000001ffffffffff\nCapAmb:\t0000000000000000\nNoNewPrivs:\t0\nSeccomp:\t0\nSeccomp_filters:\t0\nSpeculation_Store_Bypass:\tvulnerable\nSpeculationIndirectBranch:\talways enabled\nCpus_allowed:\t1f\nCpus_allowed_list:\t0-4\nMems_allowed:\t00000000,00000001\nMems_allowed_list:\t0\nvoluntary_ctxt_switches:\t1\nnonvoluntary_ctxt_switches:\t0\n",
+          "startup_ms": 1010.2836639999999,
+          "valid": false,
+          "workloads": [
+            {
+              "error": null,
+              "raw": {
+                "result": {
+                  "bytesRead": 106074,
+                  "bytesWritten": 46314,
+                  "latency": {
+                    "max": 1257154.0,
+                    "mean": 1029717.5087014724,
+                    "percentiles": {
+                      "50": 1220524,
+                      "75": 1245807,
+                      "90": 1246746,
+                      "95": 1247198,
+                      "99": 1247407
+                    },
+                    "stddev": 288841.3630232284
+                  },
+                  "others": 0,
+                  "req1xx": 0,
+                  "req2xx": 747,
+                  "req3xx": 0,
+                  "req4xx": 0,
+                  "req5xx": 0,
+                  "rps": {
+                    "max": 11119.509576677625,
+                    "mean": 285.6203462135031,
+                    "percentiles": {
+                      "50": 0.0,
+                      "75": 0.0,
+                      "90": 0.0,
+                      "95": 552.573947,
+                      "99": 11119.509577
+                    },
+                    "stddev": 1613.2365257024012
+                  },
+                  "timeTakenSeconds": 1.888429383
+                },
+                "spec": {
+                  "body": "",
+                  "client": "fasthttp",
+                  "method": "GET",
+                  "numberOfConnections": 500,
+                  "stream": false,
+                  "testDurationSeconds": 1,
+                  "testType": "timed",
+                  "timeoutSeconds": 2,
+                  "url": "http://127.0.0.1:3000/"
+                }
+              },
+              "valid": true,
+              "workload": "ping"
+            },
+            {
+              "error": null,
+              "raw": {
+                "result": {
+                  "bytesRead": 109990,
+                  "bytesWritten": 48525,
+                  "latency": {
+                    "max": 1663545.0,
+                    "mean": 1057585.5610510046,
+                    "percentiles": {
+                      "50": 1168209,
+                      "75": 1270452,
+                      "90": 1271205,
+                      "95": 1633815,
+                      "99": 1638545
+                    },
+                    "stddev": 369749.6527920905
+                  },
+                  "others": 0,
+                  "req1xx": 0,
+                  "req2xx": 647,
+                  "req3xx": 0,
+                  "req4xx": 0,
+                  "req5xx": 0,
+                  "rps": {
+                    "max": 7642.244948188196,
+                    "mean": 177.72544368292995,
+                    "percentiles": {
+                      "50": 0.0,
+                      "75": 0.0,
+                      "90": 0.0,
+                      "95": 11.769531,
+                      "99": 7642.244948
+                    },
+                    "stddev": 1103.8469405641688
+                  },
+                  "timeTakenSeconds": 1.700610879
+                },
+                "spec": {
+                  "body": "",
+                  "client": "fasthttp",
+                  "method": "GET",
+                  "numberOfConnections": 500,
+                  "stream": false,
+                  "testDurationSeconds": 1,
+                  "testType": "timed",
+                  "timeoutSeconds": 2,
+                  "url": "http://127.0.0.1:3000/id/1?name=bun"
+                }
+              },
+              "valid": true,
+              "workload": "query"
+            },
+            {
+              "error": "load generator reported errors",
+              "raw": {
+                "result": {
+                  "bytesRead": 82984,
+                  "bytesWritten": 108720,
+                  "errors": [
+                    {
+                      "count": 249,
+                      "description": "timeout"
+                    }
+                  ],
+                  "latency": {
+                    "max": 2042377.0,
+                    "mean": 1502359.837086093,
+                    "percentiles": {
+                      "50": 1778311,
+                      "75": 2000374,
+                      "90": 2000946,
+                      "95": 2001192,
+                      "99": 2002070
+                    },
+                    "stddev": 545897.0438437314
+                  },
+                  "others": 249,
+                  "req1xx": 0,
+                  "req2xx": 506,
+                  "req3xx": 0,
+                  "req4xx": 0,
+                  "req5xx": 0,
+                  "rps": {
+                    "max": 9392.664417607106,
+                    "mean": 272.56143651738495,
+                    "percentiles": {
+                      "50": 0.0,
+                      "75": 0.0,
+                      "90": 0.0,
+                      "95": 289.919219,
+                      "99": 9392.664418
+                    },
+                    "stddev": 1407.983422606536
+                  },
+                  "timeTakenSeconds": 2.710497705
+                },
+                "spec": {
+                  "bodyFilePath": "scripts/body.json",
+                  "client": "fasthttp",
+                  "headers": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "method": "POST",
+                  "numberOfConnections": 500,
+                  "stream": false,
+                  "testDurationSeconds": 1,
+                  "testType": "timed",
+                  "timeoutSeconds": 2,
+                  "url": "http://127.0.0.1:3000/json"
+                }
+              },
+              "valid": false,
+              "workload": "body"
+            },
+            {
+              "error": null,
+              "raw": {
+                "result": {
+                  "bytesRead": 198104228,
+                  "bytesWritten": 1960,
+                  "latency": {
+                    "max": 999733,
+                    "mean": 837124.2857142857,
+                    "percentiles": {
+                      "50": 999318,
+                      "75": 999542,
+                      "90": 999718,
+                      "95": 999718,
+                      "99": 999733
+                    },
+                    "stddev": 256710.7572434194
+                  },
+                  "others": 0,
+                  "req1xx": 0,
+                  "req2xx": 14,
+                  "req3xx": 0,
+                  "req4xx": 0,
+                  "req5xx": 0,
+                  "rps": {
+                    "max": 31.102910932320174,
+                    "mean": 0.6347532843330648,
+                    "percentiles": {
+                      "50": 0.0,
+                      "75": 0.0,
+                      "90": 0.0,
+                      "95": 0.0,
+                      "99": 31.102911
+                    },
+                    "stddev": 4.398654013337885
+                  },
+                  "timeTakenSeconds": 1.431047116
+                },
+                "spec": {
+                  "body": "",
+                  "client": "fasthttp",
+                  "headers": [
+                    {
+                      "key": "Cache-Control",
+                      "value": "no-store"
+                    },
+                    {
+                      "key": "If-None-Match",
+                      "value": "\"benchmark-force-full-response\""
+                    }
+                  ],
+                  "method": "GET",
+                  "numberOfConnections": 10,
+                  "stream": false,
+                  "testDurationSeconds": 1,
+                  "testType": "timed",
+                  "timeoutSeconds": 2,
+                  "url": "http://127.0.0.1:3000/video"
+                }
+              },
+              "valid": true,
+              "workload": "video"
+            }
+          ]
+        }
+      },
+      "target": "quench/express",
+      "valid": false
+    },
+    {
+      "round": 0,
+      "sample": {
+        "entry_sha256": "2a6fd9b7c208d8e1fa80d9581fdd1d15c074b6e659cbf76083e5f2ead904b091",
+        "result": {
+          "correctness": {
+            "body": "passed",
+            "ping": "passed",
+            "query": "passed",
+            "query-dynamic": "passed",
+            "video": "passed"
+          },
+          "linux_proc_status_after": "Name:\tquench-process-\nUmask:\t0077\nState:\tS (sleeping)\nTgid:\t773955\nNgid:\t0\nPid:\t773955\nPPid:\t773769\nTracerPid:\t0\nUid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\nFDSize:\t512\nGroups:\t \nNStgid:\t773955\nNSpid:\t773955\nNSpgid:\t773261\nNSsid:\t773261\nKthread:\t0\nVmPeak:\t 5306300 kB\nVmSize:\t 5175228 kB\nVmLck:\t       0 kB\nVmPin:\t       0 kB\nVmHWM:\t  108416 kB\nVmRSS:\t   94884 kB\nRssAnon:\t   77840 kB\nRssFile:\t   17044 kB\nRssShmem:\t       0 kB\nVmData:\t  905028 kB\nVmStk:\t     132 kB\nVmExe:\t   23568 kB\nVmLib:\t    3416 kB\nVmPTE:\t     332 kB\nVmSwap:\t       0 kB\nHugetlbPages:\t       0 kB\nCoreDumping:\t0\nTHP_enabled:\t1\nuntag_mask:\t0xffffffffffffffff\nThreads:\t2\nSigQ:\t21/71955\nSigPnd:\t0000000000000000\nShdPnd:\t0000000000000000\nSigBlk:\t000000007ffbfeff\nSigIgn:\t0000000001001000\nSigCgt:\t0000000100000440\nCapInh:\t0000000000000000\nCapPrm:\t0000000000000000\nCapEff:\t0000000000000000\nCapBnd:\t000001ffffffffff\nCapAmb:\t0000000000000000\nNoNewPrivs:\t0\nSeccomp:\t0\nSeccomp_filters:\t0\nSpeculation_Store_Bypass:\tvulnerable\nSpeculationIndirectBranch:\talways enabled\nCpus_allowed:\t1f\nCpus_allowed_list:\t0-4\nMems_allowed:\t00000000,00000001\nMems_allowed_list:\t0\nvoluntary_ctxt_switches:\t1\nnonvoluntary_ctxt_switches:\t0\n",
+          "linux_proc_status_before": "Name:\tquench-process-\nUmask:\t0077\nState:\tS (sleeping)\nTgid:\t773955\nNgid:\t0\nPid:\t773955\nPPid:\t773769\nTracerPid:\t0\nUid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\nFDSize:\t64\nGroups:\t \nNStgid:\t773955\nNSpid:\t773955\nNSpgid:\t773261\nNSsid:\t773261\nKthread:\t0\nVmPeak:\t 5185172 kB\nVmSize:\t 5177832 kB\nVmLck:\t       0 kB\nVmPin:\t       0 kB\nVmHWM:\t   81196 kB\nVmRSS:\t   81196 kB\nRssAnon:\t   64724 kB\nRssFile:\t   16472 kB\nRssShmem:\t       0 kB\nVmData:\t  886228 kB\nVmStk:\t     132 kB\nVmExe:\t   23568 kB\nVmLib:\t    3416 kB\nVmPTE:\t     296 kB\nVmSwap:\t       0 kB\nHugetlbPages:\t       0 kB\nCoreDumping:\t0\nTHP_enabled:\t1\nuntag_mask:\t0xffffffffffffffff\nThreads:\t2\nSigQ:\t21/71955\nSigPnd:\t0000000000000000\nShdPnd:\t0000000000000000\nSigBlk:\t000000007ffbfeff\nSigIgn:\t0000000001001000\nSigCgt:\t0000000100000440\nCapInh:\t0000000000000000\nCapPrm:\t0000000000000000\nCapEff:\t0000000000000000\nCapBnd:\t000001ffffffffff\nCapAmb:\t0000000000000000\nNoNewPrivs:\t0\nSeccomp:\t0\nSeccomp_filters:\t0\nSpeculation_Store_Bypass:\tvulnerable\nSpeculationIndirectBranch:\talways enabled\nCpus_allowed:\t1f\nCpus_allowed_list:\t0-4\nMems_allowed:\t00000000,00000001\nMems_allowed_list:\t0\nvoluntary_ctxt_switches:\t1\nnonvoluntary_ctxt_switches:\t0\n",
+          "startup_ms": 2612.024902,
+          "valid": true,
+          "workloads": [
+            {
+              "error": null,
+              "raw": {
+                "result": {
+                  "bytesRead": 142142,
+                  "bytesWritten": 62062,
+                  "latency": {
+                    "max": 786798,
+                    "mean": 640772.1578421579,
+                    "percentiles": {
+                      "50": 717179,
+                      "75": 724025,
+                      "90": 728449,
+                      "95": 729825,
+                      "99": 731879
+                    },
+                    "stddev": 138104.26845728152
+                  },
+                  "others": 0,
+                  "req1xx": 0,
+                  "req2xx": 1001,
+                  "req3xx": 0,
+                  "req4xx": 0,
+                  "req5xx": 0,
+                  "rps": {
+                    "max": 12451.985195703195,
+                    "mean": 548.5781409136227,
+                    "percentiles": {
+                      "50": 0.0,
+                      "75": 0.0,
+                      "90": 0.0,
+                      "95": 960.735431,
+                      "99": 12451.985196
+                    },
+                    "stddev": 2475.7339912629427
+                  },
+                  "timeTakenSeconds": 1.511183301
+                },
+                "spec": {
+                  "body": "",
+                  "client": "fasthttp",
+                  "method": "GET",
+                  "numberOfConnections": 500,
+                  "stream": false,
+                  "testDurationSeconds": 1,
+                  "testType": "timed",
+                  "timeoutSeconds": 2,
+                  "url": "http://127.0.0.1:3000/"
+                }
+              },
+              "valid": true,
+              "workload": "ping"
+            },
+            {
+              "error": null,
+              "raw": {
+                "result": {
+                  "bytesRead": 147560,
+                  "bytesWritten": 65100,
+                  "latency": {
+                    "max": 1084817.0,
+                    "mean": 679688.3905529954,
+                    "percentiles": {
+                      "50": 774080,
+                      "75": 781869,
+                      "90": 1042979,
+                      "95": 1045777,
+                      "99": 1048659
+                    },
+                    "stddev": 235082.98678195593
+                  },
+                  "others": 0,
+                  "req1xx": 0,
+                  "req2xx": 868,
+                  "req3xx": 0,
+                  "req4xx": 0,
+                  "req5xx": 0,
+                  "rps": {
+                    "max": 9537.439696400204,
+                    "mean": 417.623341701653,
+                    "percentiles": {
+                      "50": 0.0,
+                      "75": 0.0,
+                      "90": 0.0,
+                      "95": 1173.980509,
+                      "99": 9537.439696
+                    },
+                    "stddev": 1841.0637594691736
+                  },
+                  "timeTakenSeconds": 1.412307709
+                },
+                "spec": {
+                  "body": "",
+                  "client": "fasthttp",
+                  "method": "GET",
+                  "numberOfConnections": 500,
+                  "stream": false,
+                  "testDurationSeconds": 1,
+                  "testType": "timed",
+                  "timeoutSeconds": 2,
+                  "url": "http://127.0.0.1:3000/id/1?name=bun"
+                }
+              },
+              "valid": true,
+              "workload": "query"
+            },
+            {
+              "error": null,
+              "raw": {
+                "result": {
+                  "bytesRead": 138908,
+                  "bytesWritten": 121968,
+                  "latency": {
+                    "max": 1748413.0,
+                    "mean": 1076081.6587957498,
+                    "percentiles": {
+                      "50": 1205491,
+                      "75": 1209407,
+                      "90": 1742614,
+                      "95": 1744555,
+                      "99": 1747040
+                    },
+                    "stddev": 425308.0463796008
+                  },
+                  "others": 0,
+                  "req1xx": 0,
+                  "req2xx": 847,
+                  "req3xx": 0,
+                  "req4xx": 0,
+                  "req5xx": 0,
+                  "rps": {
+                    "max": 11726.120647506186,
+                    "mean": 372.44963079866005,
+                    "percentiles": {
+                      "50": 0.0,
+                      "75": 0.0,
+                      "90": 0.0,
+                      "95": 459.718526,
+                      "99": 11726.120648
+                    },
+                    "stddev": 1820.98102078672
+                  },
+                  "timeTakenSeconds": 2.080285199
+                },
+                "spec": {
+                  "bodyFilePath": "scripts/body.json",
+                  "client": "fasthttp",
+                  "headers": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "method": "POST",
+                  "numberOfConnections": 500,
+                  "stream": false,
+                  "testDurationSeconds": 1,
+                  "testType": "timed",
+                  "timeoutSeconds": 2,
+                  "url": "http://127.0.0.1:3000/json"
+                }
+              },
+              "valid": true,
+              "workload": "body"
+            },
+            {
+              "error": null,
+              "raw": {
+                "result": {
+                  "bytesRead": 141503020,
+                  "bytesWritten": 1400,
+                  "latency": {
+                    "max": 1075751.0,
+                    "mean": 1075476.9,
+                    "percentiles": {
+                      "50": 1075424,
+                      "75": 1075575,
+                      "90": 1075697,
+                      "95": 1075751,
+                      "99": 1075751
+                    },
+                    "stddev": 163.79954212390217
+                  },
+                  "others": 0,
+                  "req1xx": 0,
+                  "req2xx": 10,
+                  "req3xx": 0,
+                  "req4xx": 0,
+                  "req5xx": 0,
+                  "rps": {
+                    "max": 105.85616748783,
+                    "mean": 2.1171233497566,
+                    "percentiles": {
+                      "50": 0.0,
+                      "75": 0.0,
+                      "90": 0.0,
+                      "95": 0.0,
+                      "99": 105.856167
+                    },
+                    "stddev": 14.822949312660368
+                  },
+                  "timeTakenSeconds": 1.075922069
+                },
+                "spec": {
+                  "body": "",
+                  "client": "fasthttp",
+                  "headers": [
+                    {
+                      "key": "Cache-Control",
+                      "value": "no-store"
+                    },
+                    {
+                      "key": "If-None-Match",
+                      "value": "\"benchmark-force-full-response\""
+                    }
+                  ],
+                  "method": "GET",
+                  "numberOfConnections": 10,
+                  "stream": false,
+                  "testDurationSeconds": 1,
+                  "testType": "timed",
+                  "timeoutSeconds": 2,
+                  "url": "http://127.0.0.1:3000/video"
+                }
+              },
+              "valid": true,
+              "workload": "video"
+            }
+          ]
+        }
+      },
+      "target": "quench/fastify",
+      "valid": true
+    },
+    {
+      "round": 0,
+      "sample": {
+        "entry_sha256": "0eeb347f1881eeb760a14ed656860734970375d6dc3dd3b32d2c9a778f719656",
+        "result": {
+          "correctness": {
+            "body": "passed",
+            "ping": "passed",
+            "query": "passed",
+            "query-dynamic": "passed",
+            "video": "passed"
+          },
+          "linux_proc_status_after": "Name:\tquench-process-\nUmask:\t0077\nState:\tS (sleeping)\nTgid:\t774035\nNgid:\t0\nPid:\t774035\nPPid:\t773769\nTracerPid:\t0\nUid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\nFDSize:\t512\nGroups:\t \nNStgid:\t774035\nNSpid:\t774035\nNSpgid:\t773261\nNSsid:\t773261\nKthread:\t0\nVmPeak:\t 5176408 kB\nVmSize:\t 5174572 kB\nVmLck:\t       0 kB\nVmPin:\t       0 kB\nVmHWM:\t   88024 kB\nVmRSS:\t   87396 kB\nRssAnon:\t   70368 kB\nRssFile:\t   17028 kB\nRssShmem:\t       0 kB\nVmData:\t  892724 kB\nVmStk:\t     132 kB\nVmExe:\t   23568 kB\nVmLib:\t    3416 kB\nVmPTE:\t     288 kB\nVmSwap:\t       0 kB\nHugetlbPages:\t       0 kB\nCoreDumping:\t0\nTHP_enabled:\t1\nuntag_mask:\t0xffffffffffffffff\nThreads:\t2\nSigQ:\t21/71955\nSigPnd:\t0000000000000000\nShdPnd:\t0000000000000000\nSigBlk:\t000000007ffbfeff\nSigIgn:\t0000000001001000\nSigCgt:\t0000000100000440\nCapInh:\t0000000000000000\nCapPrm:\t0000000000000000\nCapEff:\t0000000000000000\nCapBnd:\t000001ffffffffff\nCapAmb:\t0000000000000000\nNoNewPrivs:\t0\nSeccomp:\t0\nSeccomp_filters:\t0\nSpeculation_Store_Bypass:\tvulnerable\nSpeculationIndirectBranch:\talways enabled\nCpus_allowed:\t1f\nCpus_allowed_list:\t0-4\nMems_allowed:\t00000000,00000001\nMems_allowed_list:\t0\nvoluntary_ctxt_switches:\t1\nnonvoluntary_ctxt_switches:\t0\n",
+          "linux_proc_status_before": "Name:\tquench-process-\nUmask:\t0077\nState:\tS (sleeping)\nTgid:\t774035\nNgid:\t0\nPid:\t774035\nPPid:\t773769\nTracerPid:\t0\nUid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\nFDSize:\t64\nGroups:\t \nNStgid:\t774035\nNSpid:\t774035\nNSpgid:\t773261\nNSsid:\t773261\nKthread:\t0\nVmPeak:\t 5175460 kB\nVmSize:\t 5170472 kB\nVmLck:\t       0 kB\nVmPin:\t       0 kB\nVmHWM:\t   58984 kB\nVmRSS:\t   49428 kB\nRssAnon:\t   37732 kB\nRssFile:\t   11696 kB\nRssShmem:\t       0 kB\nVmData:\t  859584 kB\nVmStk:\t     132 kB\nVmExe:\t   23568 kB\nVmLib:\t    3416 kB\nVmPTE:\t     220 kB\nVmSwap:\t       0 kB\nHugetlbPages:\t       0 kB\nCoreDumping:\t0\nTHP_enabled:\t1\nuntag_mask:\t0xffffffffffffffff\nThreads:\t2\nSigQ:\t21/71955\nSigPnd:\t0000000000000000\nShdPnd:\t0000000000000000\nSigBlk:\t000000007ffbfeff\nSigIgn:\t0000000001001000\nSigCgt:\t0000000100000440\nCapInh:\t0000000000000000\nCapPrm:\t0000000000000000\nCapEff:\t0000000000000000\nCapBnd:\t000001ffffffffff\nCapAmb:\t0000000000000000\nNoNewPrivs:\t0\nSeccomp:\t0\nSeccomp_filters:\t0\nSpeculation_Store_Bypass:\tvulnerable\nSpeculationIndirectBranch:\talways enabled\nCpus_allowed:\t1f\nCpus_allowed_list:\t0-4\nMems_allowed:\t00000000,00000001\nMems_allowed_list:\t0\nvoluntary_ctxt_switches:\t1\nnonvoluntary_ctxt_switches:\t0\n",
+          "startup_ms": 902.0592160000001,
+          "valid": true,
+          "workloads": [
+            {
+              "error": null,
+              "raw": {
+                "result": {
+                  "bytesRead": 143420,
+                  "bytesWritten": 62620,
+                  "latency": {
+                    "max": 1094965.0,
+                    "mean": 648911.4148514852,
+                    "percentiles": {
+                      "50": 739051,
+                      "75": 746631,
+                      "90": 747047,
+                      "95": 747202,
+                      "99": 755551
+                    },
+                    "stddev": 159878.31148502306
+                  },
+                  "others": 0,
+                  "req1xx": 0,
+                  "req2xx": 1010,
+                  "req3xx": 0,
+                  "req4xx": 0,
+                  "req5xx": 0,
+                  "rps": {
+                    "max": 12436.812512790131,
+                    "mean": 539.4565390107913,
+                    "percentiles": {
+                      "50": 0.0,
+                      "75": 0.0,
+                      "90": 0.0,
+                      "95": 925.485318,
+                      "99": 12436.812513
+                    },
+                    "stddev": 2451.8934890541445
+                  },
+                  "timeTakenSeconds": 1.537537175
+                },
+                "spec": {
+                  "body": "",
+                  "client": "fasthttp",
+                  "method": "GET",
+                  "numberOfConnections": 500,
+                  "stream": false,
+                  "testDurationSeconds": 1,
+                  "testType": "timed",
+                  "timeoutSeconds": 2,
+                  "url": "http://127.0.0.1:3000/"
+                }
+              },
+              "valid": true,
+              "workload": "ping"
+            },
+            {
+              "error": null,
+              "raw": {
+                "result": {
+                  "bytesRead": 126820,
+                  "bytesWritten": 55950,
+                  "latency": {
+                    "max": 1106948.0,
+                    "mean": 871626.6434316353,
+                    "percentiles": {
+                      "50": 1038390,
+                      "75": 1046633,
+                      "90": 1054954,
+                      "95": 1056051,
+                      "99": 1070842
+                    },
+                    "stddev": 249351.20925266185
+                  },
+                  "others": 0,
+                  "req1xx": 0,
+                  "req2xx": 746,
+                  "req3xx": 0,
+                  "req4xx": 0,
+                  "req5xx": 0,
+                  "rps": {
+                    "max": 11723.735875653849,
+                    "mean": 278.9906154452782,
+                    "percentiles": {
+                      "50": 0.0,
+                      "75": 0.0,
+                      "90": 0.0,
+                      "95": 585.482008,
+                      "99": 11723.735876
+                    },
+                    "stddev": 1690.310687794865
+                  },
+                  "timeTakenSeconds": 1.605121763
+                },
+                "spec": {
+                  "body": "",
+                  "client": "fasthttp",
+                  "method": "GET",
+                  "numberOfConnections": 500,
+                  "stream": false,
+                  "testDurationSeconds": 1,
+                  "testType": "timed",
+                  "timeoutSeconds": 2,
+                  "url": "http://127.0.0.1:3000/id/1?name=bun"
+                }
+              },
+              "valid": true,
+              "workload": "query"
+            },
+            {
+              "error": null,
+              "raw": {
+                "result": {
+                  "bytesRead": 134398,
+                  "bytesWritten": 129888,
+                  "latency": {
+                    "max": 1556989.0,
+                    "mean": 1008136.7949002218,
+                    "percentiles": {
+                      "50": 1157432,
+                      "75": 1172930,
+                      "90": 1526263,
+                      "95": 1530215,
+                      "99": 1534317
+                    },
+                    "stddev": 323597.34184082516
+                  },
+                  "others": 0,
+                  "req1xx": 0,
+                  "req2xx": 902,
+                  "req3xx": 0,
+                  "req4xx": 0,
+                  "req5xx": 0,
+                  "rps": {
+                    "max": 11770.742295291768,
+                    "mean": 427.5812347650033,
+                    "percentiles": {
+                      "50": 0.0,
+                      "75": 0.0,
+                      "90": 0.0,
+                      "95": 427.833923,
+                      "99": 11770.742295
+                    },
+                    "stddev": 2003.49770599016
+                  },
+                  "timeTakenSeconds": 2.151342872
+                },
+                "spec": {
+                  "bodyFilePath": "scripts/body.json",
+                  "client": "fasthttp",
+                  "headers": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "method": "POST",
+                  "numberOfConnections": 500,
+                  "stream": false,
+                  "testDurationSeconds": 1,
+                  "testType": "timed",
+                  "timeoutSeconds": 2,
+                  "url": "http://127.0.0.1:3000/json"
+                }
+              },
+              "valid": true,
+              "workload": "body"
+            },
+            {
+              "error": null,
+              "raw": {
+                "result": {
+                  "bytesRead": 141503020,
+                  "bytesWritten": 1400,
+                  "latency": {
+                    "max": 1688264.0,
+                    "mean": 1688077.6,
+                    "percentiles": {
+                      "50": 1688223,
+                      "75": 1688252,
+                      "90": 1688252,
+                      "95": 1688264,
+                      "99": 1688264
+                    },
+                    "stddev": 213.46921089469376
+                  },
+                  "others": 0,
+                  "req1xx": 0,
+                  "req2xx": 10,
+                  "req3xx": 0,
+                  "req4xx": 0,
+                  "req5xx": 0,
+                  "rps": {
+                    "max": 14.13632837309974,
+                    "mean": 0.2827265674619948,
+                    "percentiles": {
+                      "50": 0.0,
+                      "75": 0.0,
+                      "90": 0.0,
+                      "95": 0.0,
+                      "99": 14.136328
+                    },
+                    "stddev": 1.9794980671831952
+                  },
+                  "timeTakenSeconds": 1.688481951
+                },
+                "spec": {
+                  "body": "",
+                  "client": "fasthttp",
+                  "headers": [
+                    {
+                      "key": "Cache-Control",
+                      "value": "no-store"
+                    },
+                    {
+                      "key": "If-None-Match",
+                      "value": "\"benchmark-force-full-response\""
+                    }
+                  ],
+                  "method": "GET",
+                  "numberOfConnections": 10,
+                  "stream": false,
+                  "testDurationSeconds": 1,
+                  "testType": "timed",
+                  "timeoutSeconds": 2,
+                  "url": "http://127.0.0.1:3000/video"
+                }
+              },
+              "valid": true,
+              "workload": "video"
+            }
+          ]
+        }
+      },
+      "target": "quench/hono",
+      "valid": true
+    },
+    {
+      "round": 0,
+      "sample": {
+        "entry_sha256": "e53d8ffc7164529c9c62c04bfd63e7712336251d43c1d12209b2713b7a42c386",
+        "result": {
+          "correctness": {
+            "body": "passed",
+            "ping": "passed",
+            "query": "passed",
+            "query-dynamic": "passed",
+            "video": "passed"
+          },
+          "linux_proc_status_after": "Name:\tnode-MainThread\nUmask:\t0077\nState:\tR (running)\nTgid:\t774117\nNgid:\t0\nPid:\t774117\nPPid:\t773769\nTracerPid:\t0\nUid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\nFDSize:\t1024\nGroups:\t \nNStgid:\t774117\nNSpid:\t774117\nNSpgid:\t773261\nNSsid:\t773261\nKthread:\t0\nVmPeak:\t 1025212 kB\nVmSize:\t 1024892 kB\nVmLck:\t       0 kB\nVmPin:\t       0 kB\nVmHWM:\t  146460 kB\nVmRSS:\t  146460 kB\nRssAnon:\t  106560 kB\nRssFile:\t   39900 kB\nRssShmem:\t       0 kB\nVmData:\t  182568 kB\nVmStk:\t     132 kB\nVmExe:\t   45684 kB\nVmLib:\t    3436 kB\nVmPTE:\t    1640 kB\nVmSwap:\t       0 kB\nHugetlbPages:\t       0 kB\nCoreDumping:\t0\nTHP_enabled:\t1\nuntag_mask:\t0xffffffffffffffff\nThreads:\t11\nSigQ:\t21/71955\nSigPnd:\t0000000000000000\nShdPnd:\t0000000000000000\nSigBlk:\t0000000000000000\nSigIgn:\t0000000001001000\nSigCgt:\t0000000100004602\nCapInh:\t0000000000000000\nCapPrm:\t0000000000000000\nCapEff:\t0000000000000000\nCapBnd:\t000001ffffffffff\nCapAmb:\t0000000000000000\nNoNewPrivs:\t0\nSeccomp:\t0\nSeccomp_filters:\t0\nSpeculation_Store_Bypass:\tvulnerable\nSpeculationIndirectBranch:\talways enabled\nCpus_allowed:\t1f\nCpus_allowed_list:\t0-4\nMems_allowed:\t00000000,00000001\nMems_allowed_list:\t0\nvoluntary_ctxt_switches:\t346\nnonvoluntary_ctxt_switches:\t94\n",
+          "linux_proc_status_before": "Name:\tnode-MainThread\nUmask:\t0077\nState:\tR (running)\nTgid:\t774117\nNgid:\t0\nPid:\t774117\nPPid:\t773769\nTracerPid:\t0\nUid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\nFDSize:\t64\nGroups:\t \nNStgid:\t774117\nNSpid:\t774117\nNSpgid:\t773261\nNSsid:\t773261\nKthread:\t0\nVmPeak:\t  901824 kB\nVmSize:\t  901572 kB\nVmLck:\t       0 kB\nVmPin:\t       0 kB\nVmHWM:\t   54796 kB\nVmRSS:\t   54796 kB\nRssAnon:\t   17096 kB\nRssFile:\t   37700 kB\nRssShmem:\t       0 kB\nVmData:\t   59264 kB\nVmStk:\t     132 kB\nVmExe:\t   45684 kB\nVmLib:\t    3436 kB\nVmPTE:\t     812 kB\nVmSwap:\t       0 kB\nHugetlbPages:\t       0 kB\nCoreDumping:\t0\nTHP_enabled:\t1\nuntag_mask:\t0xffffffffffffffff\nThreads:\t7\nSigQ:\t21/71955\nSigPnd:\t0000000000000000\nShdPnd:\t0000000000000000\nSigBlk:\t0000000000000000\nSigIgn:\t0000000001001000\nSigCgt:\t0000000100004602\nCapInh:\t0000000000000000\nCapPrm:\t0000000000000000\nCapEff:\t0000000000000000\nCapBnd:\t000001ffffffffff\nCapAmb:\t0000000000000000\nNoNewPrivs:\t0\nSeccomp:\t0\nSeccomp_filters:\t0\nSpeculation_Store_Bypass:\tvulnerable\nSpeculationIndirectBranch:\talways enabled\nCpus_allowed:\t1f\nCpus_allowed_list:\t0-4\nMems_allowed:\t00000000,00000001\nMems_allowed_list:\t0\nvoluntary_ctxt_switches:\t9\nnonvoluntary_ctxt_switches:\t1\n",
+          "startup_ms": 100.473043,
+          "valid": true,
+          "workloads": [
+            {
+              "error": null,
+              "raw": {
+                "result": {
+                  "bytesRead": 710985,
+                  "bytesWritten": 267158,
+                  "latency": {
+                    "max": 1099224.0,
+                    "mean": 119848.05221629149,
+                    "percentiles": {
+                      "50": 59738,
+                      "75": 63320,
+                      "90": 74830,
+                      "95": 1026719,
+                      "99": 1075286
+                    },
+                    "stddev": 232974.45699165415
+                  },
+                  "others": 0,
+                  "req1xx": 0,
+                  "req2xx": 4309,
+                  "req3xx": 0,
+                  "req4xx": 0,
+                  "req5xx": 0,
+                  "rps": {
+                    "max": 4471.440782122315,
+                    "mean": 3942.8158033151944,
+                    "percentiles": {
+                      "50": 4087.484735,
+                      "75": 4247.382551,
+                      "90": 4322.63874,
+                      "95": 4382.561568,
+                      "99": 4471.440782
+                    },
+                    "stddev": 552.3605274419258
+                  },
+                  "timeTakenSeconds": 1.155914213
+                },
+                "spec": {
+                  "body": "",
+                  "client": "fasthttp",
+                  "method": "GET",
+                  "numberOfConnections": 500,
+                  "stream": false,
+                  "testDurationSeconds": 1,
+                  "testType": "timed",
+                  "timeoutSeconds": 2,
+                  "url": "http://127.0.0.1:3000/"
+                }
+              },
+              "valid": true,
+              "workload": "ping"
+            },
+            {
+              "error": null,
+              "raw": {
+                "result": {
+                  "bytesRead": 791686,
+                  "bytesWritten": 307650,
+                  "latency": {
+                    "max": 1111639.0,
+                    "mean": 126924.58166747927,
+                    "percentiles": {
+                      "50": 71177,
+                      "75": 72464,
+                      "90": 74359,
+                      "95": 1036343,
+                      "99": 1096683
+                    },
+                    "stddev": 228489.38554149645
+                  },
+                  "others": 0,
+                  "req1xx": 0,
+                  "req2xx": 4102,
+                  "req3xx": 0,
+                  "req4xx": 0,
+                  "req5xx": 0,
+                  "rps": {
+                    "max": 4051.540193004371,
+                    "mean": 3697.2730789729726,
+                    "percentiles": {
+                      "50": 3760.176919,
+                      "75": 3895.80383,
+                      "90": 3938.697906,
+                      "95": 4004.935081,
+                      "99": 4051.540193
+                    },
+                    "stddev": 389.551390349695
+                  },
+                  "timeTakenSeconds": 1.170659875
+                },
+                "spec": {
+                  "body": "",
+                  "client": "fasthttp",
+                  "method": "GET",
+                  "numberOfConnections": 500,
+                  "stream": false,
+                  "testDurationSeconds": 1,
+                  "testType": "timed",
+                  "timeoutSeconds": 2,
+                  "url": "http://127.0.0.1:3000/id/1?name=bun"
+                }
+              },
+              "valid": true,
+              "workload": "query"
+            },
+            {
+              "error": null,
+              "raw": {
+                "result": {
+                  "bytesRead": 539869,
+                  "bytesWritten": 415728,
+                  "latency": {
+                    "max": 1124121.0,
+                    "mean": 181725.3110495324,
+                    "percentiles": {
+                      "50": 101523,
+                      "75": 107523,
+                      "90": 131114,
+                      "95": 1076329,
+                      "99": 1113504
+                    },
+                    "stddev": 274946.6857269596
+                  },
+                  "others": 0,
+                  "req1xx": 0,
+                  "req2xx": 2887,
+                  "req3xx": 0,
+                  "req4xx": 0,
+                  "req5xx": 0,
+                  "rps": {
+                    "max": 3028.4119653053212,
+                    "mean": 2505.0373080273584,
+                    "percentiles": {
+                      "50": 2376.467859,
+                      "75": 2821.806345,
+                      "90": 2933.739471,
+                      "95": 2985.861944,
+                      "99": 3028.411965
+                    },
+                    "stddev": 376.97328064201656
+                  },
+                  "timeTakenSeconds": 1.191617782
+                },
+                "spec": {
+                  "bodyFilePath": "scripts/body.json",
+                  "client": "fasthttp",
+                  "headers": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "method": "POST",
+                  "numberOfConnections": 500,
+                  "stream": false,
+                  "testDurationSeconds": 1,
+                  "testType": "timed",
+                  "timeoutSeconds": 2,
+                  "url": "http://127.0.0.1:3000/json"
+                }
+              },
+              "valid": true,
+              "workload": "body"
+            },
+            {
+              "error": null,
+              "raw": {
+                "result": {
+                  "bytesRead": 566013000,
+                  "bytesWritten": 5600,
+                  "latency": {
+                    "max": 369028,
+                    "mean": 291112.1,
+                    "percentiles": {
+                      "50": 275575,
+                      "75": 280034,
+                      "90": 338993,
+                      "95": 343346,
+                      "99": 369028
+                    },
+                    "stddev": 29566.70197181282
+                  },
+                  "others": 0,
+                  "req1xx": 0,
+                  "req2xx": 40,
+                  "req3xx": 0,
+                  "req4xx": 0,
+                  "req5xx": 0,
+                  "rps": {
+                    "max": 451.1625330570548,
+                    "mean": 31.07522539651987,
+                    "percentiles": {
+                      "50": 0.0,
+                      "75": 0.0,
+                      "90": 52.431984,
+                      "95": 299.156185,
+                      "99": 451.162533
+                    },
+                    "stddev": 84.68688727348783
+                  },
+                  "timeTakenSeconds": 1.170834484
+                },
+                "spec": {
+                  "body": "",
+                  "client": "fasthttp",
+                  "headers": [
+                    {
+                      "key": "Cache-Control",
+                      "value": "no-store"
+                    },
+                    {
+                      "key": "If-None-Match",
+                      "value": "\"benchmark-force-full-response\""
+                    }
+                  ],
+                  "method": "GET",
+                  "numberOfConnections": 10,
+                  "stream": false,
+                  "testDurationSeconds": 1,
+                  "testType": "timed",
+                  "timeoutSeconds": 2,
+                  "url": "http://127.0.0.1:3000/video"
+                }
+              },
+              "valid": true,
+              "workload": "video"
+            }
+          ]
+        }
+      },
+      "target": "node/express",
+      "valid": true
+    },
+    {
+      "round": 0,
+      "sample": {
+        "entry_sha256": "2a6fd9b7c208d8e1fa80d9581fdd1d15c074b6e659cbf76083e5f2ead904b091",
+        "result": {
+          "correctness": {
+            "body": "passed",
+            "ping": "passed",
+            "query": "passed",
+            "query-dynamic": "passed",
+            "video": "passed"
+          },
+          "linux_proc_status_after": "Name:\tnode-MainThread\nUmask:\t0077\nState:\tR (running)\nTgid:\t774199\nNgid:\t0\nPid:\t774199\nPPid:\t773769\nTracerPid:\t0\nUid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\nFDSize:\t1024\nGroups:\t \nNStgid:\t774199\nNSpid:\t774199\nNSpgid:\t773261\nNSsid:\t773261\nKthread:\t0\nVmPeak:\t 1171940 kB\nVmSize:\t 1168924 kB\nVmLck:\t       0 kB\nVmPin:\t       0 kB\nVmHWM:\t  156636 kB\nVmRSS:\t  154568 kB\nRssAnon:\t  112820 kB\nRssFile:\t   41748 kB\nRssShmem:\t       0 kB\nVmData:\t  196668 kB\nVmStk:\t     132 kB\nVmExe:\t   45684 kB\nVmLib:\t    3436 kB\nVmPTE:\t    1772 kB\nVmSwap:\t       0 kB\nHugetlbPages:\t       0 kB\nCoreDumping:\t0\nTHP_enabled:\t1\nuntag_mask:\t0xffffffffffffffff\nThreads:\t11\nSigQ:\t21/71955\nSigPnd:\t0000000000000000\nShdPnd:\t0000000000000000\nSigBlk:\t0000000000000000\nSigIgn:\t0000000001001000\nSigCgt:\t0000000100004602\nCapInh:\t0000000000000000\nCapPrm:\t0000000000000000\nCapEff:\t0000000000000000\nCapBnd:\t000001ffffffffff\nCapAmb:\t0000000000000000\nNoNewPrivs:\t0\nSeccomp:\t0\nSeccomp_filters:\t0\nSpeculation_Store_Bypass:\tvulnerable\nSpeculationIndirectBranch:\talways enabled\nCpus_allowed:\t1f\nCpus_allowed_list:\t0-4\nMems_allowed:\t00000000,00000001\nMems_allowed_list:\t0\nvoluntary_ctxt_switches:\t326\nnonvoluntary_ctxt_switches:\t121\n",
+          "linux_proc_status_before": "Name:\tnode-MainThread\nUmask:\t0077\nState:\tR (running)\nTgid:\t774199\nNgid:\t0\nPid:\t774199\nPPid:\t773769\nTracerPid:\t0\nUid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\nFDSize:\t64\nGroups:\t \nNStgid:\t774199\nNSpid:\t774199\nNSpgid:\t773261\nNSsid:\t773261\nKthread:\t0\nVmPeak:\t 1149096 kB\nVmSize:\t 1083560 kB\nVmLck:\t       0 kB\nVmPin:\t       0 kB\nVmHWM:\t   67860 kB\nVmRSS:\t   67860 kB\nRssAnon:\t   27336 kB\nRssFile:\t   40524 kB\nRssShmem:\t       0 kB\nVmData:\t  111276 kB\nVmStk:\t     132 kB\nVmExe:\t   45684 kB\nVmLib:\t    3436 kB\nVmPTE:\t    1220 kB\nVmSwap:\t       0 kB\nHugetlbPages:\t       0 kB\nCoreDumping:\t0\nTHP_enabled:\t1\nuntag_mask:\t0xffffffffffffffff\nThreads:\t11\nSigQ:\t21/71955\nSigPnd:\t0000000000000000\nShdPnd:\t0000000000000000\nSigBlk:\t0000000000000000\nSigIgn:\t0000000001001000\nSigCgt:\t0000000100004602\nCapInh:\t0000000000000000\nCapPrm:\t0000000000000000\nCapEff:\t0000000000000000\nCapBnd:\t000001ffffffffff\nCapAmb:\t0000000000000000\nNoNewPrivs:\t0\nSeccomp:\t0\nSeccomp_filters:\t0\nSpeculation_Store_Bypass:\tvulnerable\nSpeculationIndirectBranch:\talways enabled\nCpus_allowed:\t1f\nCpus_allowed_list:\t0-4\nMems_allowed:\t00000000,00000001\nMems_allowed_list:\t0\nvoluntary_ctxt_switches:\t14\nnonvoluntary_ctxt_switches:\t4\n",
+          "startup_ms": 200.804251,
+          "valid": true,
+          "workloads": [
+            {
+              "error": null,
+              "raw": {
+                "result": {
+                  "bytesRead": 1243008,
+                  "bytesWritten": 464256,
+                  "latency": {
+                    "max": 1058482.0,
+                    "mean": 67523.81663995727,
+                    "percentiles": {
+                      "50": 18352,
+                      "75": 20216,
+                      "90": 22032,
+                      "95": 363393,
+                      "99": 1029518
+                    },
+                    "stddev": 210525.31186004417
+                  },
+                  "others": 0,
+                  "req1xx": 0,
+                  "req2xx": 7488,
+                  "req3xx": 0,
+                  "req4xx": 0,
+                  "req5xx": 0,
+                  "rps": {
+                    "max": 8109.180809052968,
+                    "mean": 7181.761336545747,
+                    "percentiles": {
+                      "50": 7508.282762,
+                      "75": 7765.279352,
+                      "90": 7832.039176,
+                      "95": 7962.241548,
+                      "99": 8109.180809
+                    },
+                    "stddev": 1008.2312481960432
+                  },
+                  "timeTakenSeconds": 1.120608843
+                },
+                "spec": {
+                  "body": "",
+                  "client": "fasthttp",
+                  "method": "GET",
+                  "numberOfConnections": 500,
+                  "stream": false,
+                  "testDurationSeconds": 1,
+                  "testType": "timed",
+                  "timeoutSeconds": 2,
+                  "url": "http://127.0.0.1:3000/"
+                }
+              },
+              "valid": true,
+              "workload": "ping"
+            },
+            {
+              "error": null,
+              "raw": {
+                "result": {
+                  "bytesRead": 1330258,
+                  "bytesWritten": 514275,
+                  "latency": {
+                    "max": 1068630.0,
+                    "mean": 73231.60040834184,
+                    "percentiles": {
+                      "50": 26393,
+                      "75": 29334,
+                      "90": 40726,
+                      "95": 59604,
+                      "99": 1021095
+                    },
+                    "stddev": 202999.0561520166
+                  },
+                  "others": 0,
+                  "req1xx": 0,
+                  "req2xx": 6857,
+                  "req3xx": 0,
+                  "req4xx": 0,
+                  "req5xx": 0,
+                  "rps": {
+                    "max": 7391.598708907455,
+                    "mean": 6483.809762948891,
+                    "percentiles": {
+                      "50": 6867.264437,
+                      "75": 7052.713884,
+                      "90": 7169.056068,
+                      "95": 7322.036411,
+                      "99": 7391.598709
+                    },
+                    "stddev": 867.7266477821178
+                  },
+                  "timeTakenSeconds": 1.093852982
+                },
+                "spec": {
+                  "body": "",
+                  "client": "fasthttp",
+                  "method": "GET",
+                  "numberOfConnections": 500,
+                  "stream": false,
+                  "testDurationSeconds": 1,
+                  "testType": "timed",
+                  "timeoutSeconds": 2,
+                  "url": "http://127.0.0.1:3000/id/1?name=bun"
+                }
+              },
+              "valid": true,
+              "workload": "query"
+            },
+            {
+              "error": null,
+              "raw": {
+                "result": {
+                  "bytesRead": 955980,
+                  "bytesWritten": 732240,
+                  "latency": {
+                    "max": 1080381.0,
+                    "mean": 100570.92409046214,
+                    "percentiles": {
+                      "50": 56229,
+                      "75": 59139,
+                      "90": 65144,
+                      "95": 78495,
+                      "99": 1058142
+                    },
+                    "stddev": 201761.83900974537
+                  },
+                  "others": 0,
+                  "req1xx": 0,
+                  "req2xx": 5085,
+                  "req3xx": 0,
+                  "req4xx": 0,
+                  "req5xx": 0,
+                  "rps": {
+                    "max": 5343.780950988419,
+                    "mean": 4758.69013797174,
+                    "percentiles": {
+                      "50": 4948.131338,
+                      "75": 5064.033462,
+                      "90": 5158.510252,
+                      "95": 5222.357434,
+                      "99": 5343.780951
+                    },
+                    "stddev": 581.6040279453736
+                  },
+                  "timeTakenSeconds": 1.13261861
+                },
+                "spec": {
+                  "bodyFilePath": "scripts/body.json",
+                  "client": "fasthttp",
+                  "headers": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "method": "POST",
+                  "numberOfConnections": 500,
+                  "stream": false,
+                  "testDurationSeconds": 1,
+                  "testType": "timed",
+                  "timeoutSeconds": 2,
+                  "url": "http://127.0.0.1:3000/json"
+                }
+              },
+              "valid": true,
+              "workload": "body"
+            },
+            {
+              "error": null,
+              "raw": {
+                "result": {
+                  "bytesRead": 566013040,
+                  "bytesWritten": 5600,
+                  "latency": {
+                    "max": 327751,
+                    "mean": 289059.85,
+                    "percentiles": {
+                      "50": 289374,
+                      "75": 304565,
+                      "90": 320233,
+                      "95": 325138,
+                      "99": 327751
+                    },
+                    "stddev": 26520.185829430004
+                  },
+                  "others": 0,
+                  "req1xx": 0,
+                  "req2xx": 40,
+                  "req3xx": 0,
+                  "req4xx": 0,
+                  "req5xx": 0,
+                  "rps": {
+                    "max": 571.7956315499905,
+                    "mean": 31.58562832299489,
+                    "percentiles": {
+                      "50": 0.0,
+                      "75": 0.0,
+                      "90": 56.673234,
+                      "95": 294.516349,
+                      "99": 571.795632
+                    },
+                    "stddev": 98.83920057853676
+                  },
+                  "timeTakenSeconds": 1.157233732
+                },
+                "spec": {
+                  "body": "",
+                  "client": "fasthttp",
+                  "headers": [
+                    {
+                      "key": "Cache-Control",
+                      "value": "no-store"
+                    },
+                    {
+                      "key": "If-None-Match",
+                      "value": "\"benchmark-force-full-response\""
+                    }
+                  ],
+                  "method": "GET",
+                  "numberOfConnections": 10,
+                  "stream": false,
+                  "testDurationSeconds": 1,
+                  "testType": "timed",
+                  "timeoutSeconds": 2,
+                  "url": "http://127.0.0.1:3000/video"
+                }
+              },
+              "valid": true,
+              "workload": "video"
+            }
+          ]
+        }
+      },
+      "target": "node/fastify",
+      "valid": true
+    },
+    {
+      "round": 0,
+      "sample": {
+        "entry_sha256": "0eeb347f1881eeb760a14ed656860734970375d6dc3dd3b32d2c9a778f719656",
+        "result": {
+          "correctness": {
+            "body": "passed",
+            "ping": "passed",
+            "query": "passed",
+            "query-dynamic": "passed",
+            "video": "passed"
+          },
+          "linux_proc_status_after": "Name:\tnode-MainThread\nUmask:\t0077\nState:\tR (running)\nTgid:\t774287\nNgid:\t0\nPid:\t774287\nPPid:\t773769\nTracerPid:\t0\nUid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\nFDSize:\t1024\nGroups:\t \nNStgid:\t774287\nNSpid:\t774287\nNSpgid:\t773261\nNSsid:\t773261\nKthread:\t0\nVmPeak:\t 1035476 kB\nVmSize:\t 1032724 kB\nVmLck:\t       0 kB\nVmPin:\t       0 kB\nVmHWM:\t  152120 kB\nVmRSS:\t  149996 kB\nRssAnon:\t  107272 kB\nRssFile:\t   42724 kB\nRssShmem:\t       0 kB\nVmData:\t  191284 kB\nVmStk:\t     132 kB\nVmExe:\t   45684 kB\nVmLib:\t    3436 kB\nVmPTE:\t    1660 kB\nVmSwap:\t       0 kB\nHugetlbPages:\t       0 kB\nCoreDumping:\t0\nTHP_enabled:\t1\nuntag_mask:\t0xffffffffffffffff\nThreads:\t11\nSigQ:\t21/71955\nSigPnd:\t0000000000000000\nShdPnd:\t0000000000000000\nSigBlk:\t0000000000000000\nSigIgn:\t0000000001001000\nSigCgt:\t0000000100004602\nCapInh:\t0000000000000000\nCapPrm:\t0000000000000000\nCapEff:\t0000000000000000\nCapBnd:\t000001ffffffffff\nCapAmb:\t0000000000000000\nNoNewPrivs:\t0\nSeccomp:\t0\nSeccomp_filters:\t0\nSpeculation_Store_Bypass:\tvulnerable\nSpeculationIndirectBranch:\talways enabled\nCpus_allowed:\t1f\nCpus_allowed_list:\t0-4\nMems_allowed:\t00000000,00000001\nMems_allowed_list:\t0\nvoluntary_ctxt_switches:\t177\nnonvoluntary_ctxt_switches:\t1372\n",
+          "linux_proc_status_before": "Name:\tnode-MainThread\nUmask:\t0077\nState:\tR (running)\nTgid:\t774287\nNgid:\t0\nPid:\t774287\nPPid:\t773769\nTracerPid:\t0\nUid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\nFDSize:\t64\nGroups:\t \nNStgid:\t774287\nNSpid:\t774287\nNSpgid:\t773261\nNSsid:\t773261\nKthread:\t0\nVmPeak:\t  971416 kB\nVmSize:\t  907696 kB\nVmLck:\t       0 kB\nVmPin:\t       0 kB\nVmHWM:\t   57248 kB\nVmRSS:\t   57248 kB\nRssAnon:\t   15948 kB\nRssFile:\t   41300 kB\nRssShmem:\t       0 kB\nVmData:\t   66236 kB\nVmStk:\t     132 kB\nVmExe:\t   45684 kB\nVmLib:\t    3436 kB\nVmPTE:\t     772 kB\nVmSwap:\t       0 kB\nHugetlbPages:\t       0 kB\nCoreDumping:\t0\nTHP_enabled:\t1\nuntag_mask:\t0xffffffffffffffff\nThreads:\t7\nSigQ:\t21/71955\nSigPnd:\t0000000000000000\nShdPnd:\t0000000000000000\nSigBlk:\t0000000000000000\nSigIgn:\t0000000001001000\nSigCgt:\t0000000100004602\nCapInh:\t0000000000000000\nCapPrm:\t0000000000000000\nCapEff:\t0000000000000000\nCapBnd:\t000001ffffffffff\nCapAmb:\t0000000000000000\nNoNewPrivs:\t0\nSeccomp:\t0\nSeccomp_filters:\t0\nSpeculation_Store_Bypass:\tvulnerable\nSpeculationIndirectBranch:\talways enabled\nCpus_allowed:\t1f\nCpus_allowed_list:\t0-4\nMems_allowed:\t00000000,00000001\nMems_allowed_list:\t0\nvoluntary_ctxt_switches:\t8\nnonvoluntary_ctxt_switches:\t1\n",
+          "startup_ms": 200.880202,
+          "valid": true,
+          "workloads": [
+            {
+              "error": null,
+              "raw": {
+                "result": {
+                  "bytesRead": 1167705,
+                  "bytesWritten": 438774,
+                  "latency": {
+                    "max": 1048264.0,
+                    "mean": 70933.4679949131,
+                    "percentiles": {
+                      "50": 35334,
+                      "75": 36934,
+                      "90": 43374,
+                      "95": 60358,
+                      "99": 1018244
+                    },
+                    "stddev": 176477.36859293826
+                  },
+                  "others": 0,
+                  "req1xx": 0,
+                  "req2xx": 7077,
+                  "req3xx": 0,
+                  "req4xx": 0,
+                  "req5xx": 0,
+                  "rps": {
+                    "max": 7616.284759258007,
+                    "mean": 6819.701146723686,
+                    "percentiles": {
+                      "50": 7187.061159,
+                      "75": 7362.031031,
+                      "90": 7524.406919,
+                      "95": 7587.171831,
+                      "99": 7616.284759
+                    },
+                    "stddev": 1062.0421708240417
+                  },
+                  "timeTakenSeconds": 1.10080564
+                },
+                "spec": {
+                  "body": "",
+                  "client": "fasthttp",
+                  "method": "GET",
+                  "numberOfConnections": 500,
+                  "stream": false,
+                  "testDurationSeconds": 1,
+                  "testType": "timed",
+                  "timeoutSeconds": 2,
+                  "url": "http://127.0.0.1:3000/"
+                }
+              },
+              "valid": true,
+              "workload": "ping"
+            },
+            {
+              "error": null,
+              "raw": {
+                "result": {
+                  "bytesRead": 1080993,
+                  "bytesWritten": 420075,
+                  "latency": {
+                    "max": 1144070.0,
+                    "mean": 92130.31869309052,
+                    "percentiles": {
+                      "50": 56199,
+                      "75": 57882,
+                      "90": 62551,
+                      "95": 82656,
+                      "99": 1081370
+                    },
+                    "stddev": 183734.87102144273
+                  },
+                  "others": 0,
+                  "req1xx": 0,
+                  "req2xx": 5601,
+                  "req3xx": 0,
+                  "req4xx": 0,
+                  "req5xx": 0,
+                  "rps": {
+                    "max": 5793.656236104278,
+                    "mean": 5267.99366625961,
+                    "percentiles": {
+                      "50": 5441.308055,
+                      "75": 5554.455506,
+                      "90": 5616.206164,
+                      "95": 5683.584954,
+                      "99": 5793.656236
+                    },
+                    "stddev": 592.7622355537769
+                  },
+                  "timeTakenSeconds": 1.150448188
+                },
+                "spec": {
+                  "body": "",
+                  "client": "fasthttp",
+                  "method": "GET",
+                  "numberOfConnections": 500,
+                  "stream": false,
+                  "testDurationSeconds": 1,
+                  "testType": "timed",
+                  "timeoutSeconds": 2,
+                  "url": "http://127.0.0.1:3000/id/1?name=bun"
+                }
+              },
+              "valid": true,
+              "workload": "query"
+            },
+            {
+              "error": null,
+              "raw": {
+                "result": {
+                  "bytesRead": 825084,
+                  "bytesWritten": 690768,
+                  "latency": {
+                    "max": 1105951.0,
+                    "mean": 106111.82530748384,
+                    "percentiles": {
+                      "50": 59613,
+                      "75": 63257,
+                      "90": 76444,
+                      "95": 91971,
+                      "99": 1049681
+                    },
+                    "stddev": 202136.1096416921
+                  },
+                  "others": 0,
+                  "req1xx": 0,
+                  "req2xx": 4797,
+                  "req3xx": 0,
+                  "req4xx": 0,
+                  "req5xx": 0,
+                  "rps": {
+                    "max": 5012.616408090104,
+                    "mean": 4479.5160000289925,
+                    "percentiles": {
+                      "50": 4637.926781,
+                      "75": 4810.84774,
+                      "90": 4915.338751,
+                      "95": 4940.941525,
+                      "99": 5012.616408
+                    },
+                    "stddev": 623.1038022492208
+                  },
+                  "timeTakenSeconds": 1.123485697
+                },
+                "spec": {
+                  "bodyFilePath": "scripts/body.json",
+                  "client": "fasthttp",
+                  "headers": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "method": "POST",
+                  "numberOfConnections": 500,
+                  "stream": false,
+                  "testDurationSeconds": 1,
+                  "testType": "timed",
+                  "timeoutSeconds": 2,
+                  "url": "http://127.0.0.1:3000/json"
+                }
+              },
+              "valid": true,
+              "workload": "body"
+            },
+            {
+              "error": null,
+              "raw": {
+                "result": {
+                  "bytesRead": 424509750,
+                  "bytesWritten": 4200,
+                  "latency": {
+                    "max": 368185,
+                    "mean": 344969.13333333336,
+                    "percentiles": {
+                      "50": 351125,
+                      "75": 358340,
+                      "90": 364495,
+                      "95": 366977,
+                      "99": 368185
+                    },
+                    "stddev": 16888.365955559137
+                  },
+                  "others": 0,
+                  "req1xx": 0,
+                  "req2xx": 30,
+                  "req3xx": 0,
+                  "req4xx": 0,
+                  "req5xx": 0,
+                  "rps": {
+                    "max": 354.0364402627234,
+                    "mean": 23.5774947849782,
+                    "percentiles": {
+                      "50": 0.0,
+                      "75": 0.0,
+                      "90": 0.0,
+                      "95": 194.602439,
+                      "99": 354.03644
+                    },
+                    "stddev": 72.56310113578411
+                  },
+                  "timeTakenSeconds": 1.037866009
+                },
+                "spec": {
+                  "body": "",
+                  "client": "fasthttp",
+                  "headers": [
+                    {
+                      "key": "Cache-Control",
+                      "value": "no-store"
+                    },
+                    {
+                      "key": "If-None-Match",
+                      "value": "\"benchmark-force-full-response\""
+                    }
+                  ],
+                  "method": "GET",
+                  "numberOfConnections": 10,
+                  "stream": false,
+                  "testDurationSeconds": 1,
+                  "testType": "timed",
+                  "timeoutSeconds": 2,
+                  "url": "http://127.0.0.1:3000/video"
+                }
+              },
+              "valid": true,
+              "workload": "video"
+            }
+          ]
+        }
+      },
+      "target": "node/hono",
+      "valid": true
+    },
+    {
+      "round": 0,
+      "sample": {
+        "entry_sha256": "725a134597664be977601818798572612babc975b8f7baad1bfaa30fa084fd60",
+        "result": {
+          "correctness": {
+            "body": "passed",
+            "ping": "passed",
+            "query": "passed",
+            "query-dynamic": "passed",
+            "video": "passed"
+          },
+          "linux_proc_status_after": "Name:\tbun\nUmask:\t0077\nState:\tS (sleeping)\nTgid:\t774368\nNgid:\t0\nPid:\t774368\nPPid:\t773769\nTracerPid:\t0\nUid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\nFDSize:\t1024\nGroups:\t \nNStgid:\t774368\nNSpid:\t774368\nNSpgid:\t773261\nNSsid:\t773261\nKthread:\t0\nVmPeak:\t 9531744 kB\nVmSize:\t 5625792 kB\nVmLck:\t       0 kB\nVmPin:\t       0 kB\nVmHWM:\t   38336 kB\nVmRSS:\t   28088 kB\nRssAnon:\t    5836 kB\nRssFile:\t   22252 kB\nRssShmem:\t       0 kB\nVmData:\t 5274068 kB\nVmStk:\t     132 kB\nVmExe:\t   63980 kB\nVmLib:\t    2096 kB\nVmPTE:\t     328 kB\nVmSwap:\t       0 kB\nHugetlbPages:\t       0 kB\nCoreDumping:\t0\nTHP_enabled:\t1\nuntag_mask:\t0xffffffffffffffff\nThreads:\t8\nSigQ:\t21/71955\nSigPnd:\t0000000000000000\nShdPnd:\t0000000000000000\nSigBlk:\t0000000000000000\nSigIgn:\t0000000001001000\nSigCgt:\t00000001200004f8\nCapInh:\t0000000000000000\nCapPrm:\t0000000000000000\nCapEff:\t0000000000000000\nCapBnd:\t000001ffffffffff\nCapAmb:\t0000000000000000\nNoNewPrivs:\t0\nSeccomp:\t0\nSeccomp_filters:\t0\nSpeculation_Store_Bypass:\tvulnerable\nSpeculationIndirectBranch:\talways enabled\nCpus_allowed:\t1f\nCpus_allowed_list:\t0-4\nMems_allowed:\t00000000,00000001\nMems_allowed_list:\t0\nvoluntary_ctxt_switches:\t334\nnonvoluntary_ctxt_switches:\t597\n",
+          "linux_proc_status_before": "Name:\tbun\nUmask:\t0077\nState:\tR (running)\nTgid:\t774368\nNgid:\t0\nPid:\t774368\nPPid:\t773769\nTracerPid:\t0\nUid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\nFDSize:\t1024\nGroups:\t \nNStgid:\t774368\nNSpid:\t774368\nNSpgid:\t773261\nNSsid:\t773261\nKthread:\t0\nVmPeak:\t 9531744 kB\nVmSize:\t 5416884 kB\nVmLck:\t       0 kB\nVmPin:\t       0 kB\nVmHWM:\t   24456 kB\nVmRSS:\t   24456 kB\nRssAnon:\t    4892 kB\nRssFile:\t   19564 kB\nRssShmem:\t       0 kB\nVmData:\t 5261384 kB\nVmStk:\t     132 kB\nVmExe:\t   63980 kB\nVmLib:\t    2096 kB\nVmPTE:\t     272 kB\nVmSwap:\t       0 kB\nHugetlbPages:\t       0 kB\nCoreDumping:\t0\nTHP_enabled:\t1\nuntag_mask:\t0xffffffffffffffff\nThreads:\t5\nSigQ:\t21/71955\nSigPnd:\t0000000000000000\nShdPnd:\t0000000000000000\nSigBlk:\t0000000000000000\nSigIgn:\t0000000001001000\nSigCgt:\t00000001200004f8\nCapInh:\t0000000000000000\nCapPrm:\t0000000000000000\nCapEff:\t0000000000000000\nCapBnd:\t000001ffffffffff\nCapAmb:\t0000000000000000\nNoNewPrivs:\t0\nSeccomp:\t0\nSeccomp_filters:\t0\nSpeculation_Store_Bypass:\tvulnerable\nSpeculationIndirectBranch:\talways enabled\nCpus_allowed:\t1f\nCpus_allowed_list:\t0-4\nMems_allowed:\t00000000,00000001\nMems_allowed_list:\t0\nvoluntary_ctxt_switches:\t20\nnonvoluntary_ctxt_switches:\t1\n",
+          "startup_ms": 100.52293900000001,
+          "valid": true,
+          "workloads": [
+            {
+              "error": null,
+              "raw": {
+                "result": {
+                  "bytesRead": 26561106,
+                  "bytesWritten": 11516004,
+                  "latency": {
+                    "max": 63736,
+                    "mean": 2592.368866492231,
+                    "percentiles": {
+                      "50": 2390,
+                      "75": 2802,
+                      "90": 3078,
+                      "95": 3974,
+                      "99": 7472
+                    },
+                    "stddev": 1430.599400020312
+                  },
+                  "others": 0,
+                  "req1xx": 0,
+                  "req2xx": 185742,
+                  "req3xx": 0,
+                  "req4xx": 0,
+                  "req5xx": 0,
+                  "rps": {
+                    "max": 253521.44694249675,
+                    "mean": 196283.69421131897,
+                    "percentiles": {
+                      "50": 199072.697516,
+                      "75": 227471.065466,
+                      "90": 241370.999391,
+                      "95": 249141.493484,
+                      "99": 253521.446942
+                    },
+                    "stddev": 44756.27142865547
+                  },
+                  "timeTakenSeconds": 1.002470515
+                },
+                "spec": {
+                  "body": "",
+                  "client": "fasthttp",
+                  "method": "GET",
+                  "numberOfConnections": 500,
+                  "stream": false,
+                  "testDurationSeconds": 1,
+                  "testType": "timed",
+                  "timeoutSeconds": 2,
+                  "url": "http://127.0.0.1:3000/"
+                }
+              },
+              "valid": true,
+              "workload": "ping"
+            },
+            {
+              "error": null,
+              "raw": {
+                "result": {
+                  "bytesRead": 4731640,
+                  "bytesWritten": 2447400,
+                  "latency": {
+                    "max": 66906,
+                    "mean": 14791.4896727139,
+                    "percentiles": {
+                      "50": 14765,
+                      "75": 15508,
+                      "90": 16389,
+                      "95": 17699,
+                      "99": 18751
+                    },
+                    "stddev": 2103.2133038932143
+                  },
+                  "others": 0,
+                  "req1xx": 0,
+                  "req2xx": 32632,
+                  "req3xx": 0,
+                  "req4xx": 0,
+                  "req5xx": 0,
+                  "rps": {
+                    "max": 41813.48066616677,
+                    "mean": 33156.20984965988,
+                    "percentiles": {
+                      "50": 33818.167119,
+                      "75": 34703.069486,
+                      "90": 35467.336357,
+                      "95": 36579.740176,
+                      "99": 41813.480666
+                    },
+                    "stddev": 3555.551244230955
+                  },
+                  "timeTakenSeconds": 1.014970014
+                },
+                "spec": {
+                  "body": "",
+                  "client": "fasthttp",
+                  "method": "GET",
+                  "numberOfConnections": 500,
+                  "stream": false,
+                  "testDurationSeconds": 1,
+                  "testType": "timed",
+                  "timeoutSeconds": 2,
+                  "url": "http://127.0.0.1:3000/id/1?name=bun"
+                }
+              },
+              "valid": true,
+              "workload": "query"
+            },
+            {
+              "error": null,
+              "raw": {
+                "result": {
+                  "bytesRead": 4500125,
+                  "bytesWritten": 4662000,
+                  "latency": {
+                    "max": 78887,
+                    "mean": 14885.365436293436,
+                    "percentiles": {
+                      "50": 14466,
+                      "75": 15502,
+                      "90": 17067,
+                      "95": 18042,
+                      "99": 19654
+                    },
+                    "stddev": 3181.446559234677
+                  },
+                  "others": 0,
+                  "req1xx": 0,
+                  "req2xx": 32375,
+                  "req3xx": 0,
+                  "req4xx": 0,
+                  "req5xx": 0,
+                  "rps": {
+                    "max": 43371.9136593764,
+                    "mean": 33394.949401238286,
+                    "percentiles": {
+                      "50": 34261.011489,
+                      "75": 35919.666017,
+                      "90": 36953.713848,
+                      "95": 38302.000711,
+                      "99": 43371.913659
+                    },
+                    "stddev": 4785.241435343
+                  },
+                  "timeTakenSeconds": 1.018490307
+                },
+                "spec": {
+                  "bodyFilePath": "scripts/body.json",
+                  "client": "fasthttp",
+                  "headers": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "method": "POST",
+                  "numberOfConnections": 500,
+                  "stream": false,
+                  "testDurationSeconds": 1,
+                  "testType": "timed",
+                  "timeoutSeconds": 2,
+                  "url": "http://127.0.0.1:3000/json"
+                }
+              },
+              "valid": true,
+              "workload": "body"
+            },
+            {
+              "error": null,
+              "raw": {
+                "result": {
+                  "bytesRead": 2773093848,
+                  "bytesWritten": 27440,
+                  "latency": {
+                    "max": 142513,
+                    "mean": 52270.301020408166,
+                    "percentiles": {
+                      "50": 50541,
+                      "75": 58444,
+                      "90": 87930,
+                      "95": 98299,
+                      "99": 129296
+                    },
+                    "stddev": 24053.490572060487
+                  },
+                  "others": 0,
+                  "req1xx": 0,
+                  "req2xx": 196,
+                  "req3xx": 0,
+                  "req4xx": 0,
+                  "req5xx": 0,
+                  "rps": {
+                    "max": 351.0158398404984,
+                    "mean": 186.433569591936,
+                    "percentiles": {
+                      "50": 199.286763,
+                      "75": 200.628579,
+                      "90": 252.997502,
+                      "95": 300.060732,
+                      "99": 351.01584
+                    },
+                    "stddev": 58.87183055595349
+                  },
+                  "timeTakenSeconds": 1.042596853
+                },
+                "spec": {
+                  "body": "",
+                  "client": "fasthttp",
+                  "headers": [
+                    {
+                      "key": "Cache-Control",
+                      "value": "no-store"
+                    },
+                    {
+                      "key": "If-None-Match",
+                      "value": "\"benchmark-force-full-response\""
+                    }
+                  ],
+                  "method": "GET",
+                  "numberOfConnections": 10,
+                  "stream": false,
+                  "testDurationSeconds": 1,
+                  "testType": "timed",
+                  "timeoutSeconds": 2,
+                  "url": "http://127.0.0.1:3000/video"
+                }
+              },
+              "valid": true,
+              "workload": "video"
+            }
+          ]
+        }
+      },
+      "target": "bun/elysia",
+      "valid": true
+    },
+    {
+      "round": 0,
+      "sample": {
+        "entry_sha256": "1d11b657372ced59445ba905b33759dd9e8379161c7653710bff39bc64cf07b9",
+        "result": {
+          "correctness": {
+            "body": "passed",
+            "ping": "passed",
+            "query": "passed",
+            "query-dynamic": "passed",
+            "video": "passed"
+          },
+          "linux_proc_status_after": "Name:\tbun\nUmask:\t0077\nState:\tS (sleeping)\nTgid:\t774451\nNgid:\t0\nPid:\t774451\nPPid:\t773769\nTracerPid:\t0\nUid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\nFDSize:\t1024\nGroups:\t \nNStgid:\t774451\nNSpid:\t774451\nNSpgid:\t773261\nNSsid:\t773261\nKthread:\t0\nVmPeak:\t 9531744 kB\nVmSize:\t 5556156 kB\nVmLck:\t       0 kB\nVmPin:\t       0 kB\nVmHWM:\t   40080 kB\nVmRSS:\t   26844 kB\nRssAnon:\t    5932 kB\nRssFile:\t   20912 kB\nRssShmem:\t       0 kB\nVmData:\t 5269840 kB\nVmStk:\t     132 kB\nVmExe:\t   63980 kB\nVmLib:\t    2096 kB\nVmPTE:\t     312 kB\nVmSwap:\t       0 kB\nHugetlbPages:\t       0 kB\nCoreDumping:\t0\nTHP_enabled:\t1\nuntag_mask:\t0xffffffffffffffff\nThreads:\t7\nSigQ:\t21/71955\nSigPnd:\t0000000000000000\nShdPnd:\t0000000000000000\nSigBlk:\t0000000000000000\nSigIgn:\t0000000001001000\nSigCgt:\t00000001200004f8\nCapInh:\t0000000000000000\nCapPrm:\t0000000000000000\nCapEff:\t0000000000000000\nCapBnd:\t000001ffffffffff\nCapAmb:\t0000000000000000\nNoNewPrivs:\t0\nSeccomp:\t0\nSeccomp_filters:\t0\nSpeculation_Store_Bypass:\tvulnerable\nSpeculationIndirectBranch:\talways enabled\nCpus_allowed:\t1f\nCpus_allowed_list:\t0-4\nMems_allowed:\t00000000,00000001\nMems_allowed_list:\t0\nvoluntary_ctxt_switches:\t545\nnonvoluntary_ctxt_switches:\t1020\n",
+          "linux_proc_status_before": "Name:\tbun\nUmask:\t0077\nState:\tR (running)\nTgid:\t774451\nNgid:\t0\nPid:\t774451\nPPid:\t773769\nTracerPid:\t0\nUid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\nFDSize:\t1024\nGroups:\t \nNStgid:\t774451\nNSpid:\t774451\nNSpgid:\t773261\nNSsid:\t773261\nKthread:\t0\nVmPeak:\t 9531744 kB\nVmSize:\t 5416884 kB\nVmLck:\t       0 kB\nVmPin:\t       0 kB\nVmHWM:\t   19204 kB\nVmRSS:\t   19204 kB\nRssAnon:\t    3028 kB\nRssFile:\t   16176 kB\nRssShmem:\t       0 kB\nVmData:\t 5261384 kB\nVmStk:\t     132 kB\nVmExe:\t   63980 kB\nVmLib:\t    2096 kB\nVmPTE:\t     256 kB\nVmSwap:\t       0 kB\nHugetlbPages:\t       0 kB\nCoreDumping:\t0\nTHP_enabled:\t1\nuntag_mask:\t0xffffffffffffffff\nThreads:\t5\nSigQ:\t21/71955\nSigPnd:\t0000000000000000\nShdPnd:\t0000000000000000\nSigBlk:\t0000000000000000\nSigIgn:\t0000000001001000\nSigCgt:\t00000001200004f8\nCapInh:\t0000000000000000\nCapPrm:\t0000000000000000\nCapEff:\t0000000000000000\nCapBnd:\t000001ffffffffff\nCapAmb:\t0000000000000000\nNoNewPrivs:\t0\nSeccomp:\t0\nSeccomp_filters:\t0\nSpeculation_Store_Bypass:\tvulnerable\nSpeculationIndirectBranch:\talways enabled\nCpus_allowed:\t1f\nCpus_allowed_list:\t0-4\nMems_allowed:\t00000000,00000001\nMems_allowed_list:\t0\nvoluntary_ctxt_switches:\t29\nnonvoluntary_ctxt_switches:\t0\n",
+          "startup_ms": 100.51035,
+          "valid": true,
+          "workloads": [
+            {
+              "error": null,
+              "raw": {
+                "result": {
+                  "bytesRead": 5686434,
+                  "bytesWritten": 3013324,
+                  "latency": {
+                    "max": 60673,
+                    "mean": 10035.709188922268,
+                    "percentiles": {
+                      "50": 9361,
+                      "75": 10356,
+                      "90": 11920,
+                      "95": 14655,
+                      "99": 21960
+                    },
+                    "stddev": 2806.011528351515
+                  },
+                  "others": 0,
+                  "req1xx": 0,
+                  "req2xx": 48602,
+                  "req3xx": 0,
+                  "req4xx": 0,
+                  "req5xx": 0,
+                  "rps": {
+                    "max": 61024.68476632558,
+                    "mean": 49858.14644971411,
+                    "percentiles": {
+                      "50": 51832.50912,
+                      "75": 55440.228995,
+                      "90": 58492.440514,
+                      "95": 60332.931548,
+                      "99": 61024.684766
+                    },
+                    "stddev": 9587.78911007584
+                  },
+                  "timeTakenSeconds": 1.012634492
+                },
+                "spec": {
+                  "body": "",
+                  "client": "fasthttp",
+                  "method": "GET",
+                  "numberOfConnections": 500,
+                  "stream": false,
+                  "testDurationSeconds": 1,
+                  "testType": "timed",
+                  "timeoutSeconds": 2,
+                  "url": "http://127.0.0.1:3000/"
+                }
+              },
+              "valid": true,
+              "workload": "ping"
+            },
+            {
+              "error": null,
+              "raw": {
+                "result": {
+                  "bytesRead": 3573496,
+                  "bytesWritten": 1835700,
+                  "latency": {
+                    "max": 62597,
+                    "mean": 19870.14822683445,
+                    "percentiles": {
+                      "50": 19327,
+                      "75": 20805,
+                      "90": 21959,
+                      "95": 22806,
+                      "99": 30245
+                    },
+                    "stddev": 3453.753436479368
+                  },
+                  "others": 0,
+                  "req1xx": 0,
+                  "req2xx": 24476,
+                  "req3xx": 0,
+                  "req4xx": 0,
+                  "req5xx": 0,
+                  "rps": {
+                    "max": 29971.381826063385,
+                    "mean": 24831.798961283912,
+                    "percentiles": {
+                      "50": 25550.4433,
+                      "75": 26415.032795,
+                      "90": 27174.498092,
+                      "95": 27592.613457,
+                      "99": 29971.381826
+                    },
+                    "stddev": 3446.685086520131
+                  },
+                  "timeTakenSeconds": 1.021945926
+                },
+                "spec": {
+                  "body": "",
+                  "client": "fasthttp",
+                  "method": "GET",
+                  "numberOfConnections": 500,
+                  "stream": false,
+                  "testDurationSeconds": 1,
+                  "testType": "timed",
+                  "timeoutSeconds": 2,
+                  "url": "http://127.0.0.1:3000/id/1?name=bun"
+                }
+              },
+              "valid": true,
+              "workload": "query"
+            },
+            {
+              "error": null,
+              "raw": {
+                "result": {
+                  "bytesRead": 2462250,
+                  "bytesWritten": 2836512,
+                  "latency": {
+                    "max": 70041,
+                    "mean": 24840.044573053103,
+                    "percentiles": {
+                      "50": 24118,
+                      "75": 25931,
+                      "90": 29220,
+                      "95": 30651,
+                      "99": 36010
+                    },
+                    "stddev": 3835.7820598545823
+                  },
+                  "others": 0,
+                  "req1xx": 0,
+                  "req2xx": 19698,
+                  "req3xx": 0,
+                  "req4xx": 0,
+                  "req5xx": 0,
+                  "rps": {
+                    "max": 24838.32926780962,
+                    "mean": 19994.462855195095,
+                    "percentiles": {
+                      "50": 20962.063668,
+                      "75": 21722.966717,
+                      "90": 22569.649464,
+                      "95": 23356.453388,
+                      "99": 24838.329268
+                    },
+                    "stddev": 3254.231492999244
+                  },
+                  "timeTakenSeconds": 1.037230236
+                },
+                "spec": {
+                  "bodyFilePath": "scripts/body.json",
+                  "client": "fasthttp",
+                  "headers": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "method": "POST",
+                  "numberOfConnections": 500,
+                  "stream": false,
+                  "testDurationSeconds": 1,
+                  "testType": "timed",
+                  "timeoutSeconds": 2,
+                  "url": "http://127.0.0.1:3000/json"
+                }
+              },
+              "valid": true,
+              "workload": "body"
+            },
+            {
+              "error": null,
+              "raw": {
+                "result": {
+                  "bytesRead": 2773072288,
+                  "bytesWritten": 27440,
+                  "latency": {
+                    "max": 189002,
+                    "mean": 52489.72959183674,
+                    "percentiles": {
+                      "50": 45877,
+                      "75": 59067,
+                      "90": 74138,
+                      "95": 110273,
+                      "99": 181706
+                    },
+                    "stddev": 28251.048021075683
+                  },
+                  "others": 0,
+                  "req1xx": 0,
+                  "req2xx": 196,
+                  "req3xx": 0,
+                  "req4xx": 0,
+                  "req5xx": 0,
+                  "rps": {
+                    "max": 384.39031915543814,
+                    "mean": 186.02590476545996,
+                    "percentiles": {
+                      "50": 166.668355,
+                      "75": 201.911007,
+                      "90": 249.998175,
+                      "95": 299.747822,
+                      "99": 384.390319
+                    },
+                    "stddev": 59.987520763490544
+                  },
+                  "timeTakenSeconds": 1.058486514
+                },
+                "spec": {
+                  "body": "",
+                  "client": "fasthttp",
+                  "headers": [
+                    {
+                      "key": "Cache-Control",
+                      "value": "no-store"
+                    },
+                    {
+                      "key": "If-None-Match",
+                      "value": "\"benchmark-force-full-response\""
+                    }
+                  ],
+                  "method": "GET",
+                  "numberOfConnections": 10,
+                  "stream": false,
+                  "testDurationSeconds": 1,
+                  "testType": "timed",
+                  "timeoutSeconds": 2,
+                  "url": "http://127.0.0.1:3000/video"
+                }
+              },
+              "valid": true,
+              "workload": "video"
+            }
+          ]
+        }
+      },
+      "target": "bun/hono",
+      "valid": true
+    },
+    {
+      "round": 0,
+      "sample": {
+        "entry_sha256": "2823b737ce8e33c2053fd17ca1db89a8f676ecd667952002408668ae1e46954d",
+        "result": {
+          "correctness": {
+            "body": "passed",
+            "ping": "passed",
+            "query": "passed",
+            "query-dynamic": "passed",
+            "video": "passed"
+          },
+          "linux_proc_status_after": "Name:\tbun\nUmask:\t0077\nState:\tR (running)\nTgid:\t774534\nNgid:\t0\nPid:\t774534\nPPid:\t773769\nTracerPid:\t0\nUid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\nFDSize:\t1024\nGroups:\t \nNStgid:\t774534\nNSpid:\t774534\nNSpgid:\t773261\nNSsid:\t773261\nKthread:\t0\nVmPeak:\t 9531744 kB\nVmSize:\t 5695944 kB\nVmLck:\t       0 kB\nVmPin:\t       0 kB\nVmHWM:\t   48832 kB\nVmRSS:\t   46388 kB\nRssAnon:\t   21144 kB\nRssFile:\t   25244 kB\nRssShmem:\t       0 kB\nVmData:\t 5278808 kB\nVmStk:\t     132 kB\nVmExe:\t   63980 kB\nVmLib:\t    2096 kB\nVmPTE:\t     356 kB\nVmSwap:\t       0 kB\nHugetlbPages:\t       0 kB\nCoreDumping:\t0\nTHP_enabled:\t1\nuntag_mask:\t0xffffffffffffffff\nThreads:\t10\nSigQ:\t21/71955\nSigPnd:\t0000000000000000\nShdPnd:\t0000000000000000\nSigBlk:\t0000000000000000\nSigIgn:\t0000000001001000\nSigCgt:\t00000001200004f8\nCapInh:\t0000000000000000\nCapPrm:\t0000000000000000\nCapEff:\t0000000000000000\nCapBnd:\t000001ffffffffff\nCapAmb:\t0000000000000000\nNoNewPrivs:\t0\nSeccomp:\t0\nSeccomp_filters:\t0\nSpeculation_Store_Bypass:\tvulnerable\nSpeculationIndirectBranch:\talways enabled\nCpus_allowed:\t1f\nCpus_allowed_list:\t0-4\nMems_allowed:\t00000000,00000001\nMems_allowed_list:\t0\nvoluntary_ctxt_switches:\t3890\nnonvoluntary_ctxt_switches:\t850\n",
+          "linux_proc_status_before": "Name:\tbun\nUmask:\t0077\nState:\tR (running)\nTgid:\t774534\nNgid:\t0\nPid:\t774534\nPPid:\t773769\nTracerPid:\t0\nUid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\nFDSize:\t1024\nGroups:\t \nNStgid:\t774534\nNSpid:\t774534\nNSpgid:\t773261\nNSsid:\t773261\nKthread:\t0\nVmPeak:\t 9531744 kB\nVmSize:\t 5556672 kB\nVmLck:\t       0 kB\nVmPin:\t       0 kB\nVmHWM:\t   41184 kB\nVmRSS:\t   39364 kB\nRssAnon:\t   17124 kB\nRssFile:\t   22240 kB\nRssShmem:\t       0 kB\nVmData:\t 5270352 kB\nVmStk:\t     132 kB\nVmExe:\t   63980 kB\nVmLib:\t    2096 kB\nVmPTE:\t     324 kB\nVmSwap:\t       0 kB\nHugetlbPages:\t       0 kB\nCoreDumping:\t0\nTHP_enabled:\t1\nuntag_mask:\t0xffffffffffffffff\nThreads:\t8\nSigQ:\t21/71955\nSigPnd:\t0000000000000000\nShdPnd:\t0000000000000000\nSigBlk:\t0000000000000000\nSigIgn:\t0000000001001000\nSigCgt:\t00000001200004f8\nCapInh:\t0000000000000000\nCapPrm:\t0000000000000000\nCapEff:\t0000000000000000\nCapBnd:\t000001ffffffffff\nCapAmb:\t0000000000000000\nNoNewPrivs:\t0\nSeccomp:\t0\nSeccomp_filters:\t0\nSpeculation_Store_Bypass:\tvulnerable\nSpeculationIndirectBranch:\talways enabled\nCpus_allowed:\t1f\nCpus_allowed_list:\t0-4\nMems_allowed:\t00000000,00000001\nMems_allowed_list:\t0\nvoluntary_ctxt_switches:\t42\nnonvoluntary_ctxt_switches:\t2\n",
+          "startup_ms": 200.746584,
+          "valid": true,
+          "workloads": [
+            {
+              "error": null,
+              "raw": {
+                "result": {
+                  "bytesRead": 994174,
+                  "bytesWritten": 371318,
+                  "latency": {
+                    "max": 193169,
+                    "mean": 83911.9395558524,
+                    "percentiles": {
+                      "50": 81115,
+                      "75": 82766,
+                      "90": 88561,
+                      "95": 121784,
+                      "99": 143210
+                    },
+                    "stddev": 14765.1097291508
+                  },
+                  "others": 0,
+                  "req1xx": 0,
+                  "req2xx": 5989,
+                  "req3xx": 0,
+                  "req4xx": 0,
+                  "req5xx": 0,
+                  "rps": {
+                    "max": 7272.008369730571,
+                    "mean": 5760.559887782292,
+                    "percentiles": {
+                      "50": 5995.190359,
+                      "75": 6656.340262,
+                      "90": 7042.187749,
+                      "95": 7105.690237,
+                      "99": 7272.00837
+                    },
+                    "stddev": 1313.5698498058716
+                  },
+                  "timeTakenSeconds": 1.081171263
+                },
+                "spec": {
+                  "body": "",
+                  "client": "fasthttp",
+                  "method": "GET",
+                  "numberOfConnections": 500,
+                  "stream": false,
+                  "testDurationSeconds": 1,
+                  "testType": "timed",
+                  "timeoutSeconds": 2,
+                  "url": "http://127.0.0.1:3000/"
+                }
+              },
+              "valid": true,
+              "workload": "ping"
+            },
+            {
+              "error": null,
+              "raw": {
+                "result": {
+                  "bytesRead": 1101920,
+                  "bytesWritten": 426000,
+                  "latency": {
+                    "max": 139921,
+                    "mean": 89422.97887323944,
+                    "percentiles": {
+                      "50": 88336,
+                      "75": 89428,
+                      "90": 96330,
+                      "95": 117100,
+                      "99": 129257
+                    },
+                    "stddev": 12850.51573131345
+                  },
+                  "others": 0,
+                  "req1xx": 0,
+                  "req2xx": 5680,
+                  "req3xx": 0,
+                  "req4xx": 0,
+                  "req5xx": 0,
+                  "rps": {
+                    "max": 6441.620739741744,
+                    "mean": 5323.626496952319,
+                    "percentiles": {
+                      "50": 5308.575498,
+                      "75": 6066.298932,
+                      "90": 6211.271595,
+                      "95": 6418.260593,
+                      "99": 6441.62074
+                    },
+                    "stddev": 993.4092600206036
+                  },
+                  "timeTakenSeconds": 1.088273048
+                },
+                "spec": {
+                  "body": "",
+                  "client": "fasthttp",
+                  "method": "GET",
+                  "numberOfConnections": 500,
+                  "stream": false,
+                  "testDurationSeconds": 1,
+                  "testType": "timed",
+                  "timeoutSeconds": 2,
+                  "url": "http://127.0.0.1:3000/id/1?name=bun"
+                }
+              },
+              "valid": true,
+              "workload": "query"
+            },
+            {
+              "error": null,
+              "raw": {
+                "result": {
+                  "bytesRead": 733576,
+                  "bytesWritten": 561888,
+                  "latency": {
+                    "max": 172511,
+                    "mean": 129642.95028190671,
+                    "percentiles": {
+                      "50": 131423,
+                      "75": 140858,
+                      "90": 146271,
+                      "95": 154593,
+                      "99": 163758
+                    },
+                    "stddev": 21769.72712653337
+                  },
+                  "others": 0,
+                  "req1xx": 0,
+                  "req2xx": 3902,
+                  "req3xx": 0,
+                  "req4xx": 0,
+                  "req5xx": 0,
+                  "rps": {
+                    "max": 4445.9857194938695,
+                    "mean": 3582.840369167558,
+                    "percentiles": {
+                      "50": 3660.373021,
+                      "75": 4078.754562,
+                      "90": 4262.581863,
+                      "95": 4374.131822,
+                      "99": 4445.985719
+                    },
+                    "stddev": 637.7830984035336
+                  },
+                  "timeTakenSeconds": 1.119852149
+                },
+                "spec": {
+                  "bodyFilePath": "scripts/body.json",
+                  "client": "fasthttp",
+                  "headers": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "method": "POST",
+                  "numberOfConnections": 500,
+                  "stream": false,
+                  "testDurationSeconds": 1,
+                  "testType": "timed",
+                  "timeoutSeconds": 2,
+                  "url": "http://127.0.0.1:3000/json"
+                }
+              },
+              "valid": true,
+              "workload": "body"
+            },
+            {
+              "error": null,
+              "raw": {
+                "result": {
+                  "bytesRead": 424509780,
+                  "bytesWritten": 4200,
+                  "latency": {
+                    "max": 442438,
+                    "mean": 399866.9,
+                    "percentiles": {
+                      "50": 391025,
+                      "75": 430973,
+                      "90": 437397,
+                      "95": 438026,
+                      "99": 442438
+                    },
+                    "stddev": 25514.044040292792
+                  },
+                  "others": 0,
+                  "req1xx": 0,
+                  "req2xx": 30,
+                  "req3xx": 0,
+                  "req4xx": 0,
+                  "req5xx": 0,
+                  "rps": {
+                    "max": 406.33234420189393,
+                    "mean": 21.00375462738037,
+                    "percentiles": {
+                      "50": 0.0,
+                      "75": 0.0,
+                      "90": 44.382789,
+                      "95": 101.030506,
+                      "99": 406.332344
+                    },
+                    "stddev": 78.49245904481303
+                  },
+                  "timeTakenSeconds": 1.205936374
+                },
+                "spec": {
+                  "body": "",
+                  "client": "fasthttp",
+                  "headers": [
+                    {
+                      "key": "Cache-Control",
+                      "value": "no-store"
+                    },
+                    {
+                      "key": "If-None-Match",
+                      "value": "\"benchmark-force-full-response\""
+                    }
+                  ],
+                  "method": "GET",
+                  "numberOfConnections": 10,
+                  "stream": false,
+                  "testDurationSeconds": 1,
+                  "testType": "timed",
+                  "timeoutSeconds": 2,
+                  "url": "http://127.0.0.1:3000/video"
+                }
+              },
+              "valid": true,
+              "workload": "video"
+            }
+          ]
+        }
+      },
+      "target": "bun/fastify",
+      "valid": true
+    }
+  ],
+  "seconds": 1,
+  "source": "ffc0f8493eae6db6acfcf2c01c16b19826601a6a\n",
+  "source_status": "",
+  "toolchain": "rustc 1.99.0 (b940084d7 2026-09-28)\n",
+  "upstream": "f654bcd175165bce2e3c83b65eaecd8e34294ffd",
+  "upstream_lock_sha256": "0010459cfcdda2e69b2d26b66d89cc344458bd1dee072a506b43cf9418e3dfa0",
+  "verification_only": false
+}

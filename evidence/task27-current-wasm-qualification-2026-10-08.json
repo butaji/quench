@@ -1,0 +1,53 @@
+{
+  "schema": 1,
+  "task": "27",
+  "kind": "current-tree full pinned Wasm shared-VM qualification",
+  "recorded_on": "2026-10-08",
+  "source": {
+    "revision": "1b39839db5d966c0ccfd6a8a622ea29090b3289a",
+    "worktree_dirty": true,
+    "snapshot_algorithm": "SHA-256 over sorted repository-relative path, NUL, file SHA-256 hex, newline records",
+    "snapshot_roots": [
+      "crates/quench-node/src",
+      "crates/quench-node-test/src",
+      "crates/quench-runtime-next/src",
+      "crates/quench-runtime/src",
+      "crates/quench-wasm/src",
+      "crates/quench-wasm-test/src",
+      "vendor/oxc-parser-next/src"
+    ],
+    "snapshot_additional_files": [
+      "Cargo.toml",
+      "Cargo.lock",
+      "crates/quench-node/Cargo.toml",
+      "crates/quench-node-test/Cargo.toml",
+      "crates/quench-runtime-next/Cargo.toml",
+      "crates/quench-runtime/Cargo.toml",
+      "crates/quench-wasm/Cargo.toml",
+      "crates/quench-wasm-test/Cargo.toml",
+      "vendor/oxc-parser-next/Cargo.toml",
+      "crates/quench-node-test/node-tests/parallel.txt",
+      "docs/STAGES.md"
+    ],
+    "snapshot_file_count": 1309,
+    "snapshot_sha256": "716240aec239759f6e04e1b12ec4f1bc8384ad913ef48bc644c8ae04a3fbd156"
+  },
+  "suite": {
+    "pin": "vendored Wasm spec testsuite in crates/quench-wasm-test/testsuite",
+    "file_count": 288,
+    "input_manifest_sha256": "c7ebeaaa1e4ce2938d22806b0dd3d454177dcc0b091e8982b5e8bb142a653914",
+    "report_path": "target/iteration/wasm-task27-current-2026-10-08.json",
+    "report_sha256": "b5a039b60a4634bd63a74b9d2b85d9410559f0e68938329f33387856d7fb1c30",
+    "runner_binary": "target/iteration/run",
+    "runner_sha256": "75b20dbb160ce7bd9b475fb57d0422665d4648d37981496d05a819f11607f498",
+    "timeout_per_file_ms": 60000,
+    "inventory_complete": true,
+    "passed_directives": 67124,
+    "failed_directives": 0,
+    "total_directives": 67124
+  },
+  "command": "WASM_FILE_TIMEOUT_MS=60000 cargo run --profile iteration -p quench-wasm-test --bin run -- --report target/iteration/wasm-task27-current-2026-10-08.json crates/quench-wasm-test/testsuite",
+  "host": "macOS-26.5-arm64-arm-64bit",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "qualification_limit": "This closes the current-tree Wasm suite component only. Task 27 remains open until the NodeHost legacy runtime boundary and transitional runtime package are removed; final Stage A qualification must bind all suite reports to the frozen final build."
+}

@@ -1,0 +1,65 @@
+{
+  "scope": "Debug CLI production wiring; not optimized qualification",
+  "base_source": "cac5edc64d41ce6e76b0bd800e193fbb14493f4b",
+  "patch_sha256": "b7524d9c4d3f54cdc5e8c070be90ed535db6adb0eff7d53af2211d024f2e9d27",
+  "new_module_sha256": "cc412ff2c03337202d79e97ca13e6c137c9fa6d52b5490a957e333073002c390",
+  "cli_sha256": "a2dc3a0ef4662aeae8c7f390f95722fb7c24337d618946520ce91b9f1fdfb222",
+  "cases": 33,
+  "differences": 3,
+  "rows": [
+    {
+      "node": {
+        "name": "encoder-encode-brand",
+        "error": {
+          "name": "TypeError",
+          "code": null,
+          "message": "Receiver must be an instance of class TextEncoder"
+        }
+      },
+      "quench": {
+        "name": "encoder-encode-brand",
+        "error": {
+          "name": "TypeError",
+          "code": null,
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "encoder-getter-brand",
+        "error": {
+          "name": "TypeError",
+          "code": null,
+          "message": "Cannot read private member #encoding from an object whose class did not declare it"
+        }
+      },
+      "quench": {
+        "name": "encoder-getter-brand",
+        "error": {
+          "name": "TypeError",
+          "code": null,
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "encoder-encodeInto-brand",
+        "error": {
+          "name": "TypeError",
+          "code": null,
+          "message": "Receiver must be an instance of class TextEncoder"
+        }
+      },
+      "quench": {
+        "name": "encoder-encodeInto-brand",
+        "error": {
+          "name": "TypeError",
+          "code": null,
+          "message": "private member is not present on this object"
+        }
+      }
+    }
+  ]
+}

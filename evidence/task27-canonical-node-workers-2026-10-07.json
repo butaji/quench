@@ -1,0 +1,45 @@
+{
+  "task": "27",
+  "purpose": "Verify canonical isolated Node workers use the shared VM after removing duplicate next-named runner binaries.",
+  "source_revision": "1d8ee4558aefbf63b5dfa8743b818219acce79c8",
+  "worktree_dirty": true,
+  "parallel_profile": {
+    "command": "cargo run --profile iteration -p quench-node-test --bin run-parallel -- --profile framework-core --timeout-secs 60",
+    "binary": "target/iteration/run-parallel",
+    "binary_sha256": "8ba3609c89b7c76e1b560a7cc5611938cac815d642dceaccb4bab3f13dc21877",
+    "manifest": "crates/quench-node-test/node-tests/parallel.txt",
+    "manifest_sha256": "0209917422a2f0f3fa241d941ec4bc88c9917d5322b69014ab1a662a52e9dfca",
+    "counts": {
+      "pass": 43,
+      "skip": 0,
+      "fail": 0,
+      "timeout": 0,
+      "crash": 0,
+      "unclassified": 0,
+      "total": 43
+    }
+  },
+  "compat_worker_smoke": {
+    "command": "cargo run --profile iteration -p quench-node-test --bin run-compat -- --filter test-buffer.js --quiet",
+    "binary": "target/iteration/run-compat",
+    "binary_sha256": "a7fa0f15782d3c44182c89bd41a9721452d76f48496fce89cae61640604faaa3",
+    "counts": {
+      "pass": 1,
+      "fail": 0,
+      "skip": 0,
+      "total": 1
+    }
+  },
+  "crate_check": {
+    "command": "cargo check --profile iteration -p quench-node-test -p quench-node -p quench-test262 -p quench-wasm-test",
+    "result": "pass"
+  },
+  "source_sha256": {
+    "crates/quench-node-test/src/bin/run-compat.rs": "ba4eff00a767e2cf43cc75191c22ce91cd34bb1348846856fb06d63d9a646607",
+    "crates/quench-node-test/src/bin/run-parallel.rs": "98ebeab43d6b093e4ab8ac1172251c1b7f03e98054fa5842405af09399198171",
+    "crates/quench-node-test/src/case_process.rs": "6d05bb8bbafd971b59b13639da7c11ba362be930b0e73494c883bdbfe2f051a7",
+    "crates/quench-node-test/src/shared_runner.rs": "747ae0f1dabe3c5d8cc665eb443b3b91f7c022ea81568b244b7876500387dd44",
+    "crates/quench-node-test/Cargo.toml": "2a54a777222851ab480f7adc6e87ae0ea12fbbaf33a2c7ec838a73bb10b24d32"
+  },
+  "qualification": "Focused worker-routing evidence only. It does not close Task 27 or qualify the full Node compatibility inventory."
+}

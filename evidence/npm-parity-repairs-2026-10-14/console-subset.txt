@@ -1,0 +1,13 @@
+   Compiling quench-node v0.1.0 (/workspace/quench/crates/quench-node)
+   Compiling quench-node-test v0.1.0 (/workspace/quench/crates/quench-node-test)
+    Finished `iteration` profile [optimized] target(s) in 1m 19s
+     Running tests/child_entry.rs (target/iteration/deps/child_entry-6f33ac6f753c66ce)
+
+running 4 tests
+test console_formats_module_values_without_a_global_require ... ok
+test console_counters_and_timer_coercion_order_match_node ... ok
+test tracing_writes_console_events_to_expanded_file_pattern ... ok
+test console_write_error_policy_preserves_identity_and_guards_stream_errors ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 202 filtered out; finished in 0.34s
+

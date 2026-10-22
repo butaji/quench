@@ -1,0 +1,12 @@
+# JetStream 3 Wasm landscape, 1 round each, stock cli.js under the shell prelude, --no-prefetch
+# host: Linux x86_64, 4 vCPU, 15 GiB cloud container; quench 9172108 production build (interpreter)
+# bars: Bun 1.4.2 BUN_JSC_useJIT=0 (Node --jitless has no WebAssembly); JIT refs: Node v26.10.0, Bun 1.4.2
+sqlite3-wasm quench=3.29 bun_nojit=1.67 node_jit=51.03 bun_jit=62.41
+zlib-wasm quench=17.44 bun_nojit=6.02 node_jit=63.76 bun_jit=58.81
+argon2-wasm quench=0.23 bun_nojit=2.34 node_jit=87.88 bun_jit=75.26
+richards-wasm quench=2.72 bun_nojit=5.82 node_jit=169.17 bun_jit=214.97
+tsf-wasm quench=11.10 bun_nojit=5.14 node_jit=157.75 bun_jit=134.13
+HashSet-wasm quench=20.48 bun_nojit=5.76 node_jit=111.46 bun_jit=93.88
+quicksort-wasm quench=35.36 bun_nojit=12.51 node_jit=111.09 bun_jit=84.10
+gcc-loops-wasm quench=19.07 bun_nojit=4.00 node_jit=152.78 bun_jit=133.71
+source-map-wtb quench=1.65 bun_nojit=23.10 node_jit=83.87 bun_jit=109.21

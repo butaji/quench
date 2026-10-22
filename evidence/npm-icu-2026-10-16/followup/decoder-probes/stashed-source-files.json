@@ -1,0 +1,15 @@
+[
+  "crates/quench-node-test/tests/child_entry.rs",
+  "crates/quench-node/src/host/node_host.rs",
+  "crates/quench-node/src/host/shared_vm.rs",
+  "crates/quench-node/src/host/shared_vm/commonjs.rs",
+  "crates/quench-node/src/modules/buffer_constructor_shared_vm.rs",
+  "crates/quench-node/src/modules/mod.rs",
+  "crates/quench-node/src/modules/process_shared_vm.rs",
+  "crates/quench-node/src/modules/text_decoder_icu.rs",
+  "crates/quench-node/src/modules/text_decoder_shared_vm.rs",
+  "crates/quench-node/src/modules/trace_shared_vm.rs",
+  "crates/quench-node/src/modules/util_shared_vm.rs",
+  "crates/quench-runtime/src/api_native.rs",
+  "crates/quench-node/src/modules/icu_binding_shared_vm.rs"
+]

@@ -1,0 +1,34 @@
+{
+  "scope": "Native util.stripVTControlCharacters and util.parseEnv; shared dotenv parser with process.loadEnvFile",
+  "oracle": "v27.0.0-nightly20260819c79868f102",
+  "oracle_sha256": "ef43ff24059e7598268f84a7ab2e1f212f4d7bdb25236c953432cf728c5077d5",
+  "validation": "All 7 child-entry tests pass, including UTF-16 preservation, incomplete escapes and OSC links, dotenv values/order/descriptors/errors, and loadEnvFile duplicate/quoted semantics.",
+  "utility_subset": {
+    "prior_matched_30": {
+      "pass": 8,
+      "skip": 1,
+      "fail": 21
+    },
+    "current_matched_30": {
+      "pass": 11,
+      "skip": 1,
+      "fail": 18
+    },
+    "current_prefix_31": {
+      "pass": 11,
+      "skip": 1,
+      "fail": 19
+    },
+    "inventory_hash_prefix_31": "9db1c1006acbd125",
+    "timeout_secs": 10,
+    "jobs": 2,
+    "new_passes": [
+      "test-util-isDeepStrictEqual.js",
+      "test-util-parse-env.js",
+      "test-util-stripvtcontrolcharacters.js"
+    ],
+    "no_prior_pass_lost": true
+  },
+  "remaining": "Dotenv CLI/async fixtures still fail; no parser or full-suite completion claim.",
+  "performance_claim": false
+}

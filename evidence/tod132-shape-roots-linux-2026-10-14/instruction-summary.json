@@ -1,0 +1,87 @@
+{
+  "host": "Linux-6.18.44-x86_64-with-glibc2.41",
+  "baseline_commit": "cb077bb75a411a6e2d968c10df9085c7efbb0cb0",
+  "profile": "production",
+  "valgrind": "3.24.0",
+  "cpu_quota": "400000 100000",
+  "fixtures": {
+    "crypto": {
+      "baseline_instructions_per_run": 844717552.0,
+      "candidate_instructions_per_run": 844440601.0,
+      "delta_percent": -0.03278622532990605,
+      "aa_band_percent": 5.919142509469566e-07,
+      "regression_limit_percent": 1.000000591914251,
+      "pass": true
+    },
+    "deltablue": {
+      "baseline_instructions_per_run": 171774084.0,
+      "candidate_instructions_per_run": 171367973.9,
+      "delta_percent": -0.236421054063074,
+      "aa_band_percent": 4.540746534331674e-06,
+      "regression_limit_percent": 1.0000045407465343,
+      "pass": true
+    },
+    "earley-boyer": {
+      "baseline_instructions_per_run": 2107342575.0,
+      "candidate_instructions_per_run": 2099366617.0,
+      "delta_percent": -0.3784841674353778,
+      "aa_band_percent": 0.0,
+      "regression_limit_percent": 1.0,
+      "pass": true
+    },
+    "navier-stokes": {
+      "baseline_instructions_per_run": 644843921.0,
+      "candidate_instructions_per_run": 644845007.0,
+      "delta_percent": 0.00016841284606883278,
+      "aa_band_percent": 7.288574244146417e-06,
+      "regression_limit_percent": 1.0000072885742441,
+      "pass": true
+    },
+    "raytrace": {
+      "baseline_instructions_per_run": 593826048.3333334,
+      "candidate_instructions_per_run": 586395596.0,
+      "delta_percent": -1.2512843372546767,
+      "aa_band_percent": 1.4027194294996548e-06,
+      "regression_limit_percent": 1.0000014027194295,
+      "pass": true
+    },
+    "regexp": {
+      "baseline_instructions_per_run": 1288972456.0,
+      "candidate_instructions_per_run": 1273899344.0,
+      "delta_percent": -1.1693897670067788,
+      "aa_band_percent": 8.249601592957845e-05,
+      "regression_limit_percent": 1.0000824960159296,
+      "pass": true
+    },
+    "richards": {
+      "baseline_instructions_per_run": 76897493.84,
+      "candidate_instructions_per_run": 76897823.12,
+      "delta_percent": 0.00042820641292795614,
+      "aa_band_percent": 1.9246680360573976e-06,
+      "regression_limit_percent": 1.000001924668036,
+      "pass": true
+    },
+    "splay": {
+      "baseline_instructions_per_run": 17899157.85333333,
+      "candidate_instructions_per_run": 17865117.36,
+      "delta_percent": -0.19017930124010096,
+      "aa_band_percent": 3.426664108019395e-06,
+      "regression_limit_percent": 1.000003426664108,
+      "pass": true
+    }
+  },
+  "pass": true,
+  "tokenizer": {
+    "baseline_instructions": 12670792882,
+    "candidate_instructions": 11466542147,
+    "delta_percent": -9.50414663245539,
+    "active_shape_attributes_baseline_inclusive": 1342990799,
+    "active_shape_attributes_candidate_inclusive": 153327589,
+    "oracle_token_count": 32990
+  },
+  "binaries": {
+    "production-baseline": "dac6eedb039e109bbb5b227b4b7612c05d3c67ae42d4eb16db22d8856307962b",
+    "production-candidate": "f2698a03098fc881bb249061aec00f542bcc44d39c8f693daf0678c7af4d696d"
+  },
+  "optimization_decision": "reject: tokenizer peak RSS regression despite instruction guard pass"
+}

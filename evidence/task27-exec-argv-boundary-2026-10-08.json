@@ -1,0 +1,109 @@
+{
+  "schema": 1,
+  "task": "27",
+  "kind": "shared_invocation_state_boundary",
+  "recorded_on": "2026-10-08",
+  "source": {
+    "revision": "1992b5c7d85a47058abadc338bb550aa3f8a1603",
+    "worktree_dirty": true,
+    "platform": "Darwin arm64",
+    "node": "v26.10.0",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+    "files_sha256": {
+      "crates/quench-node/src/host.rs": "7095c725d9bd1c3903501a1927b58bdfaea8d3caa6c2878966f10886416f886d",
+      "crates/quench-node/src/modules/process/shared_vm.rs": "64767335846f572791d60ed1795bebf77c944f9728289a2fb7399513638501d2",
+      "tasks/node-compat-inventory.json": "668c4302964d57f9e693e08f9225a9692072c435468c63f721627a45b3e37702",
+      "crates/quench-node-test/node-tests/parallel.txt": "0209917422a2f0f3fa241d941ec4bc88c9917d5322b69014ab1a662a52e9dfca",
+      "tests/node/test/parallel/test-process-no-deprecation.js": "49e10264d52023ff4fd775faca14f5b8a22c781994148ccb4ecb0d899bc7b692",
+      "tests/node/test/parallel/test-stream-add-abort-signal.js": "9c163ba754bfd81d4f0d0e1b01516b5b795213a1b894db696abcf6a040b60fc7",
+      "tests/node/test/parallel/test-buffer-zero-fill-cli.js": "8e600a17b1514c185e8aae943c70ed895d0a88ca60b777dad4c45298bbc2dfbe",
+      "target/iteration/quench-node": "a9386b9292e761ce727486316cb192f7a1cff72f8859b4fc449302deeb673a96",
+      "target/iteration/run-parallel": "01fbe5b338a7ac99275585c0f00e406740bafd723cbabc2f50865018698bd14f",
+      "target/iteration/task27-exec-argv-2026-10-08/framework-core.stdout": "2f2d921dcfce7bd620f630e927555625fcd4e20465e3fc2110af3973bf050cc9",
+      "target/iteration/task27-exec-argv-2026-10-08/framework-core.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "target/iteration/task27-exec-argv-2026-10-08/apps/express-node.stdout": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+      "target/iteration/task27-exec-argv-2026-10-08/apps/express-node.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "target/iteration/task27-exec-argv-2026-10-08/apps/express-quench.stdout": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+      "target/iteration/task27-exec-argv-2026-10-08/apps/express-quench.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "target/iteration/task27-exec-argv-2026-10-08/apps/koa-node.stdout": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+      "target/iteration/task27-exec-argv-2026-10-08/apps/koa-node.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "target/iteration/task27-exec-argv-2026-10-08/apps/koa-quench.stdout": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+      "target/iteration/task27-exec-argv-2026-10-08/apps/koa-quench.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "target/iteration/task27-exec-argv-2026-10-08/apps/fastify-node.stdout": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+      "target/iteration/task27-exec-argv-2026-10-08/apps/fastify-node.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "target/iteration/task27-exec-argv-2026-10-08/apps/fastify-quench.stdout": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+      "target/iteration/task27-exec-argv-2026-10-08/apps/fastify-quench.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "target/iteration/task27-host-prune-2026-10-08/process-no-deprecation-results.json": "6e89933f9dc92448cb78961437ab24b025b2386e0147b86dfaabfa046c589285",
+      "target/iteration/task27-exec-argv-2026-10-08/stream-add-abort-signal-results.json": "7520ac065bd6cab7e32a6ed620e6b59030fd045e28f01e6c42f5347655b97ffc",
+      "target/iteration/task27-exec-argv-2026-10-08/buffer-zero-fill-cli-results.json": "268deb1cec80f76a7c1bddfc6d08bb8448ba0e5d484d8622d94a3776a52902a1"
+    }
+  },
+  "change": {
+    "authoritative_owner": "SharedNodeState.exec_argv now owns the invocation flag vector used by the shared process adapter.",
+    "derived_state": "NodeHost::with_exec_argv derives ProcessState.unhandled_rejection_mode from the same input; that policy remains in ProcessState for legacy process and pump consumers.",
+    "readers": [
+      "modules/process/shared_vm.rs installs process.execArgv",
+      "modules/process/shared_vm.rs applies --no-warnings when emitting warnings"
+    ],
+    "inventory_membership_changed": false,
+    "runtime_dependency_removed": false
+  },
+  "verification": {
+    "flag_delivery_qualified_by_filtered_probes": false,
+    "qualification_note": "The filtered process-warning and Buffer CLI probes fail before isolating flag behavior; the stream probe fails on an absent shared internal module. These results are recorded as failures, not as flag-delivery validation.",
+    "checks": [
+      {
+        "command": "cargo check --quiet -p quench-node -p quench-node-test",
+        "exit_code": 0,
+        "result": "passed; only two existing deprecated Atomic::fetch_update warnings in quench-runtime"
+      },
+      {
+        "command": "cargo build --profile iteration -p quench-node --bin quench-node -p quench-node-test --bin run-parallel",
+        "exit_code": 0,
+        "result": "passed"
+      },
+      {
+        "command": "target/iteration/run-parallel --profile framework-core --timeout-secs 60",
+        "exit_code": 0,
+        "result": {
+          "pass": 43,
+          "skip": 0,
+          "fail": 0,
+          "timeout": 0,
+          "crash": 0,
+          "unclassified": 0,
+          "total": 43
+        },
+        "stdout_artifact": "target/iteration/task27-exec-argv-2026-10-08/framework-core.stdout",
+        "stderr_artifact": "target/iteration/task27-exec-argv-2026-10-08/framework-core.stderr"
+      },
+      {
+        "command": "From tests/frameworks, compare node driver.cjs and ../../target/iteration/quench-node driver.cjs for scenarios/{express,koa,fastify}.cjs using exact exit status, stdout, and stderr",
+        "exit_code": 0,
+        "result": "All six processes exited 0. Each Quench output matched local Node byte-for-byte; stdout SHA-256 was 6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d and stderr was empty.",
+        "artifacts_directory": "target/iteration/task27-exec-argv-2026-10-08/apps"
+      }
+    ],
+    "unselected_upstream_probes": [
+      {
+        "fixture": "tests/node/test/parallel/test-process-no-deprecation.js",
+        "command": "target/iteration/run-parallel --all --filter test-process-no-deprecation --results target/iteration/task27-host-prune-2026-10-08/process-no-deprecation-results.json",
+        "status": "fail",
+        "reason": "TypeError: value is not callable"
+      },
+      {
+        "fixture": "tests/node/test/parallel/test-stream-add-abort-signal.js",
+        "command": "target/iteration/run-parallel --all --filter test-stream-add-abort-signal --results target/iteration/task27-exec-argv-2026-10-08/stream-add-abort-signal-results.json",
+        "status": "fail",
+        "reason": "Cannot find module internal/streams/add-abort-signal in the shared host"
+      },
+      {
+        "fixture": "tests/node/test/parallel/test-buffer-zero-fill-cli.js",
+        "command": "target/iteration/run-parallel --all --filter test-buffer-zero-fill-cli --results target/iteration/task27-exec-argv-2026-10-08/buffer-zero-fill-cli-results.json",
+        "status": "fail",
+        "reason": "TypeError: class constructor cannot be called without new"
+      }
+    ],
+    "unit_tests": "not run"
+  }
+}

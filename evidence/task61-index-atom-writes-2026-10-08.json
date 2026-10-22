@@ -1,0 +1,145 @@
+{
+  "schema": 1,
+  "task": "61",
+  "experiment": "Avoid interning numeric array-index atoms on query-only and ordinary write paths",
+  "decision": "retain as a measured Stage B candidate; full V8-v7 qualification remains open",
+  "source": {
+    "base_revision": "5092fd263ece37d00e96e75d443d70b29753d1b6",
+    "worktree_dirty_during_build_and_checks": true,
+    "changed_files": {
+      "crates/quench-runtime/src/vm/index.rs": "9ce671b23d0b8e8f6a5c092f8412dbac93617c065c0771894d7e75035c5498b9",
+      "crates/quench-runtime/src/vm/object.rs": "bd04ecb2a5063ea0cbe64eb5465f069d54e8338c16da7937f45a845cbde3fb1a",
+      "crates/quench-runtime/src/vm/object_array.rs": "7c6c6eff3bbcb936cb1fa35091c3de3be8c275239fad51efbbc1ac84e8e80746",
+      "crates/quench-runtime/src/compile/numeric.rs": "9b4d9aed9ad15b64391a2b226e5e247b14b7b8d45fc324f113543f3b93965fb9"
+    },
+    "production_diff_sha256": "9190526701b1b29b2380e4f1a01c7a91fad840b8d0deb4169789c6ac7cf8bd23"
+  },
+  "change": {
+    "behavior": "Format a numeric index into a stack buffer and look up an existing atom for descriptor queries, deletion, and inherited-accessor checks. If an ordinary array receives an unowned index whose canonical atom is absent and whose prototype chain contains no Proxy or TypedArray, write directly to the array's authoritative element storage. Existing generic paths remain for interned keys, descriptors, non-extensible receivers, proxies, typed arrays, and other cases.",
+    "representation": "The existing atom table remains the authority for whether a string-keyed property can exist. No per-array flag, duplicate descriptor index, or new index map was added. Query-only operations do not grow the atom table.",
+    "binding_time": "The canonical decimal index is formatted on the stack; atom-table presence is checked at access time. An absent atom proves no ordinary string-keyed descriptor for that index has been installed. Proxy and TypedArray prototype chains retain the generic path.",
+    "review_note": "The `numeric.rs` diff updates test helper calls to the existing rewrite-rule parameters; it does not alter production code."
+  },
+  "host": {
+    "model": "Mac16,10",
+    "cpu": "Apple M4",
+    "architecture": "aarch64-apple-darwin",
+    "operating_system": "macOS 26.5 (Darwin 25.5.0)",
+    "memory_bytes": 17179869184,
+    "rustc": "1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+    "cargo": "1.99.0 (5f94df478 2026-08-27) (Homebrew)",
+    "process_metrics_backend": "macOS /usr/bin/time -l"
+  },
+  "production_build": {
+    "command": "cargo build --profile production --locked --offline -p quench-runtime --bin quench",
+    "result": "passed",
+    "baseline_binary": "/tmp/quench-index-atoms-baseline-82eb554e",
+    "baseline_binary_sha256": "82eb554ed35507d8f2721e1d150dd4948f88e35affaa19f3bc64c9b7a029c8d1",
+    "candidate_binary": "/tmp/quench-index-atoms-candidate-1de1eebd",
+    "candidate_binary_sha256": "1de1eebd50cfc81704eeb5816323a4f6c305858eebc2121eb8cc0f4b74d1001c",
+    "comparison": "The hash-pinned production binaries share the committed base and other workspace state; the candidate includes the VM changes listed above."
+  },
+  "measurement": {
+    "kind": "diagnostic single-engine paired microbenchmark, not a V8-v7 Score gate",
+    "command": "python3 tasks/evidence/task61-index-atom-paired-2026-10-08.py BASELINE CANDIDATE tasks/evidence/task61-index-atom-paired-2026-10-08.csv",
+    "runner_sha256": "0f6a03dfa2cb83e6d26d75429a739a5a8b5798c4beed655987ed0e4515c42661",
+    "timer": "/usr/bin/time -l",
+    "order": "alternated baseline-first and candidate-first",
+    "pairs_per_fixture": 11,
+    "raw_csv": {
+      "path": "tasks/evidence/task61-index-atom-paired-2026-10-08.csv",
+      "sha256": "e85406e10c5edfc512651b05143060a7a46c40d59dc44ade1fb009a61acc9881",
+      "rows": 33
+    },
+    "analysis": {
+      "runner": "tasks/evidence/task61-index-atom-analyze-2026-10-08.py",
+      "runner_sha256": "607521f5cb33d23a226b69c02681e1d46f457b4e1faf7ca3ab1000b3453ede8f",
+      "method": "100,000 paired bootstrap replicates over median per-round deltas",
+      "seed": 61102028,
+      "summary": "tasks/evidence/task61-index-atom-paired-summary-2026-10-08.json",
+      "summary_sha256": "339ac1a4fb321ac3500c1d9df294cdf8b629acebce4081201450e1c16290e14d",
+      "fixtures": {
+        "fill-1m.js": {
+          "fixture_sha256": "2c8b173a2806c47a9f0f50fe003ccc6eb872730619f473f65f45a9169ecf80d8",
+          "baseline_instruction_median": 43199196753,
+          "candidate_instruction_median": 15772876528,
+          "instruction_delta_median_percent": -63.487810455863084,
+          "instruction_delta_95_interval_percent": [-63.494656514696125, -63.48340238553928],
+          "candidate_lower_instruction_pairs": 11,
+          "baseline_elapsed_median_seconds": 2.56,
+          "candidate_elapsed_median_seconds": 0.56,
+          "elapsed_delta_median_percent": -78.51562499999999,
+          "baseline_max_rss_median_bytes": 197214208,
+          "candidate_max_rss_median_bytes": 23756800,
+          "max_rss_delta_median_bytes": -173457408,
+          "candidate_lower_rss_pairs": 11
+        },
+        "two-arrays-500k.js": {
+          "fixture_sha256": "6c857958efd00b97b341bb6c713dde688747428e5e76598802ce9b3d754cafd2",
+          "baseline_instruction_median": 38103761159,
+          "candidate_instruction_median": 11272994649,
+          "instruction_delta_median_percent": -70.41364504189215,
+          "instruction_delta_95_interval_percent": [-70.41686898720101, -70.41044405703599],
+          "candidate_lower_instruction_pairs": 11,
+          "baseline_elapsed_median_seconds": 2.34,
+          "candidate_elapsed_median_seconds": 0.4,
+          "elapsed_delta_median_percent": -82.83261802575109,
+          "baseline_max_rss_median_bytes": 318767104,
+          "candidate_max_rss_median_bytes": 26476544,
+          "max_rss_delta_median_bytes": -292274176,
+          "candidate_lower_rss_pairs": 11
+        },
+        "dense-overwrite-1m.js": {
+          "fixture_sha256": "bf4ef83c6ebdd3caa1aec9200b88ded2fb99627f1cc1071837d002da33835f55",
+          "baseline_instruction_median": 29581198130,
+          "candidate_instruction_median": 27049081344,
+          "instruction_delta_median_percent": -8.559836767144075,
+          "instruction_delta_95_interval_percent": [-8.577903359892181, -8.554229812104383],
+          "candidate_lower_instruction_pairs": 11,
+          "baseline_elapsed_median_seconds": 1.22,
+          "candidate_elapsed_median_seconds": 1.06,
+          "elapsed_delta_median_percent": -12.195121951219505,
+          "baseline_max_rss_median_bytes": 13942784,
+          "candidate_max_rss_median_bytes": 13877248,
+          "max_rss_delta_median_bytes": -49152,
+          "candidate_lower_rss_pairs": 10
+        }
+      }
+    }
+  },
+  "verification": {
+    "rust_unit_tests": {
+      "command": "cargo test --profile iteration -p quench-runtime vm::index::tests::",
+      "passed": 8,
+      "failed": 0
+    },
+    "test262": {
+      "full_array_stage": {
+        "command": "TEST262_TEST_TIMEOUT_MS=30000 TEST262_JOBS=8 TEST262_REPORT=/tmp/task61-index-array-stage31.json target/iteration/run-stages --from 31 --to 31",
+        "passed": 3081,
+        "failed": 0,
+        "report_sha256": "4684b8dc1f26957ec3f74ab2c3e95a0a89dfca0b6a53aa917b2eee31121fe457"
+      },
+      "focused_additional_cases": 88,
+      "focused_cases_description": "Indexed Set, canonical array indices, inherited indexed properties and setters, array prototype push cases, Array expressions, and indexed descriptor/length cases; all passed. There were 89 filter-pass counts with one overlapping case, for 88 unique tests."
+    },
+    "node_oracle": {
+      "script": "tasks/evidence/task61-index-atom-oracle-2026-10-08.cjs",
+      "script_sha256": "8be48e03c896d9d5d13e06374dd7a38243ed1f54440f1eeef337df4f08296f91",
+      "cases": [
+        "ordinary indexed write",
+        "inherited writable indexed data",
+        "inherited indexed setter and receiver identity",
+        "Proxy prototype set trap",
+        "TypedArray prototype indexed assignment",
+        "sloppy write to non-extensible array",
+        "strict write to non-extensible array"
+      ],
+      "candidate_and_node_exit_code": 0,
+      "stdout_identical": true,
+      "stdout": "indexed-write oracle: PASS"
+    },
+    "format_and_diff_checks": "rustfmt --edition 2024 --check and git diff --check passed"
+  },
+  "scope_limit": "Synthetic M4 array-write workloads establish the mechanism-level effect. V8-v7 fixtures, Linux x86_64, and Task 61's all-engine Score/RSS gate remain to be measured."
+}

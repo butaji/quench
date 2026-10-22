@@ -1,0 +1,290 @@
+[
+  {
+    "side": "base",
+    "fixture": "crypto",
+    "runs": 0,
+    "exit_code": 0,
+    "stdout": "done crypto 0\n",
+    "stderr": "",
+    "pass": true
+  },
+  {
+    "side": "base",
+    "fixture": "crypto",
+    "runs": 1,
+    "exit_code": 0,
+    "stdout": "done crypto 1\n",
+    "stderr": "",
+    "pass": true
+  },
+  {
+    "side": "base",
+    "fixture": "deltablue",
+    "runs": 0,
+    "exit_code": 0,
+    "stdout": "done deltablue 0\n",
+    "stderr": "",
+    "pass": true
+  },
+  {
+    "side": "base",
+    "fixture": "deltablue",
+    "runs": 10,
+    "exit_code": 0,
+    "stdout": "done deltablue 10\n",
+    "stderr": "",
+    "pass": true
+  },
+  {
+    "side": "base",
+    "fixture": "earley-boyer",
+    "runs": 0,
+    "exit_code": 0,
+    "stdout": "done earley-boyer 0\n",
+    "stderr": "",
+    "pass": true
+  },
+  {
+    "side": "base",
+    "fixture": "earley-boyer",
+    "runs": 1,
+    "exit_code": 0,
+    "stdout": "done earley-boyer 1\n",
+    "stderr": "",
+    "pass": true
+  },
+  {
+    "side": "base",
+    "fixture": "navier-stokes",
+    "runs": 0,
+    "exit_code": 0,
+    "stdout": "done navier-stokes 0\n",
+    "stderr": "",
+    "pass": true
+  },
+  {
+    "side": "base",
+    "fixture": "navier-stokes",
+    "runs": 1,
+    "exit_code": 0,
+    "stdout": "done navier-stokes 1\n",
+    "stderr": "",
+    "pass": true
+  },
+  {
+    "side": "base",
+    "fixture": "raytrace",
+    "runs": 0,
+    "exit_code": 0,
+    "stdout": "done raytrace 0\n",
+    "stderr": "",
+    "pass": true
+  },
+  {
+    "side": "base",
+    "fixture": "raytrace",
+    "runs": 3,
+    "exit_code": 0,
+    "stdout": "done raytrace 3\n",
+    "stderr": "",
+    "pass": true
+  },
+  {
+    "side": "base",
+    "fixture": "regexp",
+    "runs": 0,
+    "exit_code": 0,
+    "stdout": "done regexp 0\n",
+    "stderr": "",
+    "pass": true
+  },
+  {
+    "side": "base",
+    "fixture": "regexp",
+    "runs": 1,
+    "exit_code": 0,
+    "stdout": "done regexp 1\n",
+    "stderr": "",
+    "pass": true
+  },
+  {
+    "side": "base",
+    "fixture": "richards",
+    "runs": 0,
+    "exit_code": 0,
+    "stdout": "done richards 0\n",
+    "stderr": "",
+    "pass": true
+  },
+  {
+    "side": "base",
+    "fixture": "richards",
+    "runs": 25,
+    "exit_code": 0,
+    "stdout": "done richards 25\n",
+    "stderr": "",
+    "pass": true
+  },
+  {
+    "side": "base",
+    "fixture": "splay",
+    "runs": 0,
+    "exit_code": 0,
+    "stdout": "done splay 0\n",
+    "stderr": "",
+    "pass": true
+  },
+  {
+    "side": "base",
+    "fixture": "splay",
+    "runs": 75,
+    "exit_code": 0,
+    "stdout": "done splay 75\n",
+    "stderr": "",
+    "pass": true
+  },
+  {
+    "side": "cand",
+    "fixture": "crypto",
+    "runs": 0,
+    "exit_code": 0,
+    "stdout": "done crypto 0\n",
+    "stderr": "",
+    "pass": true
+  },
+  {
+    "side": "cand",
+    "fixture": "crypto",
+    "runs": 1,
+    "exit_code": 0,
+    "stdout": "done crypto 1\n",
+    "stderr": "",
+    "pass": true
+  },
+  {
+    "side": "cand",
+    "fixture": "deltablue",
+    "runs": 0,
+    "exit_code": 0,
+    "stdout": "done deltablue 0\n",
+    "stderr": "",
+    "pass": true
+  },
+  {
+    "side": "cand",
+    "fixture": "deltablue",
+    "runs": 10,
+    "exit_code": 0,
+    "stdout": "done deltablue 10\n",
+    "stderr": "",
+    "pass": true
+  },
+  {
+    "side": "cand",
+    "fixture": "earley-boyer",
+    "runs": 0,
+    "exit_code": 0,
+    "stdout": "done earley-boyer 0\n",
+    "stderr": "",
+    "pass": true
+  },
+  {
+    "side": "cand",
+    "fixture": "earley-boyer",
+    "runs": 1,
+    "exit_code": 0,
+    "stdout": "done earley-boyer 1\n",
+    "stderr": "",
+    "pass": true
+  },
+  {
+    "side": "cand",
+    "fixture": "navier-stokes",
+    "runs": 0,
+    "exit_code": 0,
+    "stdout": "done navier-stokes 0\n",
+    "stderr": "",
+    "pass": true
+  },
+  {
+    "side": "cand",
+    "fixture": "navier-stokes",
+    "runs": 1,
+    "exit_code": 0,
+    "stdout": "done navier-stokes 1\n",
+    "stderr": "",
+    "pass": true
+  },
+  {
+    "side": "cand",
+    "fixture": "raytrace",
+    "runs": 0,
+    "exit_code": 0,
+    "stdout": "done raytrace 0\n",
+    "stderr": "",
+    "pass": true
+  },
+  {
+    "side": "cand",
+    "fixture": "raytrace",
+    "runs": 3,
+    "exit_code": 0,
+    "stdout": "done raytrace 3\n",
+    "stderr": "",
+    "pass": true
+  },
+  {
+    "side": "cand",
+    "fixture": "regexp",
+    "runs": 0,
+    "exit_code": 0,
+    "stdout": "done regexp 0\n",
+    "stderr": "",
+    "pass": true
+  },
+  {
+    "side": "cand",
+    "fixture": "regexp",
+    "runs": 1,
+    "exit_code": 0,
+    "stdout": "done regexp 1\n",
+    "stderr": "",
+    "pass": true
+  },
+  {
+    "side": "cand",
+    "fixture": "richards",
+    "runs": 0,
+    "exit_code": 0,
+    "stdout": "done richards 0\n",
+    "stderr": "",
+    "pass": true
+  },
+  {
+    "side": "cand",
+    "fixture": "richards",
+    "runs": 25,
+    "exit_code": 0,
+    "stdout": "done richards 25\n",
+    "stderr": "",
+    "pass": true
+  },
+  {
+    "side": "cand",
+    "fixture": "splay",
+    "runs": 0,
+    "exit_code": 0,
+    "stdout": "done splay 0\n",
+    "stderr": "",
+    "pass": true
+  },
+  {
+    "side": "cand",
+    "fixture": "splay",
+    "runs": 75,
+    "exit_code": 0,
+    "stdout": "done splay 75\n",
+    "stderr": "",
+    "pass": true
+  }
+]

@@ -1,0 +1,964 @@
+{
+  "schema": 1,
+  "task": "61",
+  "kind": "stage-b-eleven-round-no-jit-baseline",
+  "recorded_at": "2026-10-08",
+  "branch": "v2-cloud",
+  "source": {
+    "revision": "dd11a8927b4cfe5dbe52339739afa822514dd2fd",
+    "dirty": false
+  },
+  "campaign": {
+    "rounds": 11,
+    "timeout_ms": 300000,
+    "complete": true,
+    "qualification_ready": true,
+    "qualified": false,
+    "command": "target/production/quench-bench --all --runs 11 --timeout-ms 300000 --quench target/production/quench-node --qjs target/tooling/quickjs/qjs --node node --bun target/tooling/bunbin/bun --checkpoint target/production/stageb-v2-cloud-2026-10-08/v8-v7-11-rounds-dd11a8927.checkpoint.json --out target/production/stageb-v2-cloud-2026-10-08/v8-v7-11-rounds-dd11a8927.json",
+    "raw_report": {
+      "path": "target/production/stageb-v2-cloud-2026-10-08/v8-v7-11-rounds-dd11a8927.json",
+      "sha256": "bc1ee780266cffa1d8e0335368009d550f84abebe3fcceb65c755690618559db"
+    },
+    "provenance_corrected_analysis_input": {
+      "path": "target/production/stageb-v2-cloud-2026-10-08/v8-v7-11-rounds-dd11a8927-provenance-corrected.json",
+      "sha256": "5d085728272b8457430b273a9a1b166668b581b8099b2c6520102e78ee64fbda"
+    },
+    "analysis": {
+      "path": "target/production/stageb-v2-cloud-2026-10-08/v8-v7-analysis-dd11a8927.json",
+      "sha256": "10c9144748ca28daabaf841f42155789b77877eb93a87fe5ecca75ea54bee6f1",
+      "input_sha256": "5d085728272b8457430b273a9a1b166668b581b8099b2c6520102e78ee64fbda"
+    },
+    "runner_binary": {
+      "path": "/workspace/quench/target/production/quench-bench",
+      "size_bytes": 879008,
+      "modified_unix_ns": 1791466595909368900,
+      "sha256": "f89a1558df3684810d872837da153bd074e5f1f31e80b0c5dfd83760ddda32e7"
+    },
+    "raw_provenance_note": "The immutable raw report recorded an empty host.rustc because the workspace Rust toolchain was not on PATH. A separate copy was annotated with the exact rustc -Vv present in target/.rustc_info.json, matching the Stage A production build record. All timed samples and other metadata are unchanged."
+  },
+  "corpus": {
+    "pinned_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+    "checkout_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+    "checkout_clean": true,
+    "fixture_set_matches": true
+  },
+  "host": {
+    "uname": "Linux 8d342269933b 6.18.44 #1 SMP Sat Sep 26 20:02:31 UTC 2026 x86_64 GNU/Linux",
+    "architecture": "x86_64",
+    "cpu_model": "AMD EPYC 9V74 80-Core Processor",
+    "cpu_quota": "400000 100000",
+    "memory_bytes": 18882699264,
+    "memory_limit_bytes": 17179869184,
+    "model_field_in_runner": null,
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)\nbinary: rustc\ncommit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4\ncommit-date: 2026-09-28\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.0\nLLVM version: 23.1.1",
+    "cargo": "cargo 1.99.0 (5f94df478 2026-08-27)"
+  },
+  "engines": [
+    {
+      "name": "quench",
+      "executable": "/workspace/quench/target/production/quench-node",
+      "executable_sha256": "b5aa8ed50e34f45a8d76d7b3ffda7be68fe8103fe6be7909879b96fc741dc3e5",
+      "version": "Quench shared-VM interpreter build; package 0.1.0",
+      "argv": [],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "interpreter",
+      "jit_proof_command": [
+        "/workspace/quench/target/production/quench-node"
+      ],
+      "jit_proof": "the measured shared VM executes interpreter bytecode; no guest JIT path is enabled"
+    },
+    {
+      "name": "quickjs",
+      "executable": "/workspace/quench/target/tooling/quickjs/qjs",
+      "executable_sha256": "7cd7c72a29d2ccd2c4e7680c92ce91cc03c6477d8432ad8ee6666ba5421e6b19",
+      "version": "QuickJS version 2026-06-04",
+      "argv": [],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "interpreter",
+      "jit_proof_command": [
+        "/workspace/quench/target/tooling/quickjs/qjs",
+        "--version"
+      ],
+      "jit_proof": "QuickJS qjs executes bytecode in its interpreter; binary version and SHA-256 are recorded"
+    },
+    {
+      "name": "bun",
+      "executable": "/workspace/quench/target/tooling/bunbin/bun",
+      "executable_sha256": "a83d263767d839e4d2649ca8e35d07159c7afc99afdc96d731ced29e056dda0c",
+      "version": "1.4.2",
+      "argv": [],
+      "environment": {
+        "BUN_JSC_useJIT": "0",
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "disabled-and-probed",
+      "jit_proof_command": [
+        "BUN_JSC_useJIT=0",
+        "BUN_JSC_dumpOptions=1",
+        "/workspace/quench/target/tooling/bunbin/bun",
+        "-e",
+        "console.log(Bun.version)"
+      ],
+      "jit_proof": "command succeeded and reported \"useJIT=false\": 1.4.2\n\nModified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)"
+    },
+    {
+      "name": "node",
+      "executable": "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+      "executable_sha256": "bc17c508ffeed0ec622934f9b7fa72f8e78da65350e63c3eceb56fa688aa5e12",
+      "version": "v24.19.0",
+      "argv": [
+        "--jitless"
+      ],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "disabled-and-probed",
+      "jit_proof_command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "-e",
+        "console.log(process.execArgv.includes('--jitless'))"
+      ],
+      "jit_proof": "command succeeded and reported \"true\": true"
+    }
+  ],
+  "summary": {
+    "fixtures": 8,
+    "valid_rounds_per_fixture": 11,
+    "score_losses": 24,
+    "score_comparisons": 24,
+    "score_intervals_exclude_tie": true,
+    "quench_rss_loses_to_quickjs_fixtures": 8,
+    "quench_rss_loses_to_bun_fixtures": 4,
+    "quench_rss_loses_to_node_fixtures": 1,
+    "quench_score_percent_of_best_comparator_range": [
+      0.321,
+      7.803
+    ],
+    "all_observable_outputs_equal": true,
+    "all_fixture_qualifications_false": true
+  },
+  "fixtures": {
+    "crypto.js": {
+      "input_sha256": "5321d2ada9b61e01d5f281609513467cbaa7c0effb12c577ed08088d812453af",
+      "paired_rounds": 11,
+      "output_equal": true,
+      "score_median": {
+        "quench": 65.9,
+        "quickjs": 1126.0,
+        "bun": 1793.0,
+        "node": 1445.0
+      },
+      "quench_as_percent_of_best_comparator": 3.675,
+      "max_rss_median_bytes": {
+        "quench": 20353024.0,
+        "quickjs": 2330624.0,
+        "bun": 25210880.0,
+        "node": 26460160.0
+      },
+      "comparisons": {
+        "bun": {
+          "score": {
+            "quench_median": 65.9,
+            "comparator_median": 1793.0,
+            "median_delta": -1727.1,
+            "paired_interval_95": [
+              -1756.9,
+              -1672.4
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0xc29e2087e50e31d7"
+          },
+          "max_rss": {
+            "quench_median": 20353024.0,
+            "comparator_median": 25210880.0,
+            "median_delta": -4857856.0,
+            "paired_interval_95": [
+              -5136384.0,
+              -4681728.0
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0xbd2867306395d9d0"
+          },
+          "qualified": false
+        },
+        "node": {
+          "score": {
+            "quench_median": 65.9,
+            "comparator_median": 1445.0,
+            "median_delta": -1379.1,
+            "paired_interval_95": [
+              -1399.9,
+              -1375.4
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0x54aba4062f28268a"
+          },
+          "max_rss": {
+            "quench_median": 20353024.0,
+            "comparator_median": 26460160.0,
+            "median_delta": -6107136.0,
+            "paired_interval_95": [
+              -6385664.0,
+              -5926912.0
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0x36c6547aa9340251"
+          },
+          "qualified": false
+        },
+        "quickjs": {
+          "score": {
+            "quench_median": 65.9,
+            "comparator_median": 1126.0,
+            "median_delta": -1060.1,
+            "paired_interval_95": [
+              -1083.8,
+              -1008.4
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0x561142eb80f2f95a"
+          },
+          "max_rss": {
+            "quench_median": 20353024.0,
+            "comparator_median": 2330624.0,
+            "median_delta": 18022400.0,
+            "paired_interval_95": [
+              17739776.0,
+              18227200.0
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0xbee6324f7310c401"
+          },
+          "qualified": false
+        }
+      },
+      "qualified": false
+    },
+    "deltablue.js": {
+      "input_sha256": "74b5a95f4877701073c6efef08e4ae306562747067e292925b69cbd629a511b9",
+      "paired_rounds": 11,
+      "output_equal": true,
+      "score_median": {
+        "quench": 45.4,
+        "quickjs": 881.0,
+        "bun": 1106.0,
+        "node": 1753.0
+      },
+      "quench_as_percent_of_best_comparator": 2.59,
+      "max_rss_median_bytes": {
+        "quench": 18288640.0,
+        "quickjs": 2564096.0,
+        "bun": 25907200.0,
+        "node": 28426240.0
+      },
+      "comparisons": {
+        "bun": {
+          "score": {
+            "quench_median": 45.4,
+            "comparator_median": 1106.0,
+            "median_delta": -1060.6,
+            "paired_interval_95": [
+              -1085.6,
+              -1042.6
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0xd97cefb0f63a0412"
+          },
+          "max_rss": {
+            "quench_median": 18288640.0,
+            "comparator_median": 25907200.0,
+            "median_delta": -7618560.0,
+            "paired_interval_95": [
+              -7692288.0,
+              -7340032.0
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0x1a46e0ef5f44e1d9"
+          },
+          "qualified": false
+        },
+        "node": {
+          "score": {
+            "quench_median": 45.4,
+            "comparator_median": 1753.0,
+            "median_delta": -1707.6,
+            "paired_interval_95": [
+              -1814.6,
+              -1633.6
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0xcf717871fa174ac5"
+          },
+          "max_rss": {
+            "quench_median": 18288640.0,
+            "comparator_median": 28426240.0,
+            "median_delta": -10137600.0,
+            "paired_interval_95": [
+              -10199040.0,
+              -9822208.0
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0xd6dcf2653257b5fe"
+          },
+          "qualified": false
+        },
+        "quickjs": {
+          "score": {
+            "quench_median": 45.4,
+            "comparator_median": 881.0,
+            "median_delta": -835.6,
+            "paired_interval_95": [
+              -879.5,
+              -806.0
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0xbd9d97edb48a8c47"
+          },
+          "max_rss": {
+            "quench_median": 18288640.0,
+            "comparator_median": 2564096.0,
+            "median_delta": 15724544.0,
+            "paired_interval_95": [
+              15667200.0,
+              16023552.0
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0x95020b765d0089a0"
+          },
+          "qualified": false
+        }
+      },
+      "qualified": false
+    },
+    "earley-boyer.js": {
+      "input_sha256": "dbf3aeb6b3d056e8ea35b5f19aa8c8a4fb1053e41d07f096c22483b2c1c6ee01",
+      "paired_rounds": 11,
+      "output_equal": true,
+      "score_median": {
+        "quench": 96.9,
+        "quickjs": 2295.0,
+        "bun": 5078.0,
+        "node": 6879.0
+      },
+      "quench_as_percent_of_best_comparator": 1.409,
+      "max_rss_median_bytes": {
+        "quench": 56610816.0,
+        "quickjs": 16158720.0,
+        "bun": 28344320.0,
+        "node": 161636352.0
+      },
+      "comparisons": {
+        "bun": {
+          "score": {
+            "quench_median": 96.9,
+            "comparator_median": 5078.0,
+            "median_delta": -4981.1,
+            "paired_interval_95": [
+              -5110.6,
+              -4784.4
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0xb57a126f2c8e5cee"
+          },
+          "max_rss": {
+            "quench_median": 56610816.0,
+            "comparator_median": 28344320.0,
+            "median_delta": 28266496.0,
+            "paired_interval_95": [
+              22327296.0,
+              28626944.0
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0xe4c14d67ae3a32f5"
+          },
+          "qualified": false
+        },
+        "node": {
+          "score": {
+            "quench_median": 96.9,
+            "comparator_median": 6879.0,
+            "median_delta": -6782.1,
+            "paired_interval_95": [
+              -6991.1,
+              -6659.2
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0xa76da75eb93a60b9"
+          },
+          "max_rss": {
+            "quench_median": 56610816.0,
+            "comparator_median": 161636352.0,
+            "median_delta": -105025536.0,
+            "paired_interval_95": [
+              -105750528.0,
+              -104775680.0
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0x8e031ce59d18bdd2"
+          },
+          "qualified": false
+        },
+        "quickjs": {
+          "score": {
+            "quench_median": 96.9,
+            "comparator_median": 2295.0,
+            "median_delta": -2198.1,
+            "paired_interval_95": [
+              -2289.6,
+              -2142.4
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0x4d9350db35c0e24b"
+          },
+          "max_rss": {
+            "quench_median": 56610816.0,
+            "comparator_median": 16158720.0,
+            "median_delta": 40452096.0,
+            "paired_interval_95": [
+              39673856.0,
+              40718336.0
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0x3135e158db98ed24"
+          },
+          "qualified": false
+        }
+      },
+      "qualified": false
+    },
+    "navier-stokes.js": {
+      "input_sha256": "ce241465ffeee77b5c4f7119f522aa971fe1fe92c3aed76f7514ea43e07fec84",
+      "paired_rounds": 11,
+      "output_equal": true,
+      "score_median": {
+        "quench": 23.5,
+        "quickjs": 2272.0,
+        "bun": 2781.0,
+        "node": 2005.0
+      },
+      "quench_as_percent_of_best_comparator": 0.845,
+      "max_rss_median_bytes": {
+        "quench": 24281088.0,
+        "quickjs": 4218880.0,
+        "bun": 17637376.0,
+        "node": 31043584.0
+      },
+      "comparisons": {
+        "bun": {
+          "score": {
+            "quench_median": 23.5,
+            "comparator_median": 2781.0,
+            "median_delta": -2757.5,
+            "paired_interval_95": [
+              -2882.4,
+              -2688.6
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0xbe23644b8961d579"
+          },
+          "max_rss": {
+            "quench_median": 24281088.0,
+            "comparator_median": 17637376.0,
+            "median_delta": 6643712.0,
+            "paired_interval_95": [
+              6463488.0,
+              6778880.0
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0xdf38d992a9324492"
+          },
+          "qualified": false
+        },
+        "node": {
+          "score": {
+            "quench_median": 23.5,
+            "comparator_median": 2005.0,
+            "median_delta": -1981.5,
+            "paired_interval_95": [
+              -2048.1,
+              -1956.5
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0xfc69fa03053c2c48"
+          },
+          "max_rss": {
+            "quench_median": 24281088.0,
+            "comparator_median": 31043584.0,
+            "median_delta": -6762496.0,
+            "paired_interval_95": [
+              -6942720.0,
+              -6627328.0
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0xf3cd3b59687097c7"
+          },
+          "qualified": false
+        },
+        "quickjs": {
+          "score": {
+            "quench_median": 23.5,
+            "comparator_median": 2272.0,
+            "median_delta": -2248.5,
+            "paired_interval_95": [
+              -2368.5,
+              -2213.5
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0x48bab000d195c1b4"
+          },
+          "max_rss": {
+            "quench_median": 24281088.0,
+            "comparator_median": 4218880.0,
+            "median_delta": 20062208.0,
+            "paired_interval_95": [
+              19869696.0,
+              20221952.0
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0xe230e083776d3c53"
+          },
+          "qualified": false
+        }
+      },
+      "qualified": false
+    },
+    "raytrace.js": {
+      "input_sha256": "d52183ca324cdb88d9ee3e78326433fe2ca28d6436f0a6c3ec013ab67cb798eb",
+      "paired_rounds": 11,
+      "output_equal": true,
+      "score_median": {
+        "quench": 115.0,
+        "quickjs": 2011.0,
+        "bun": 2792.0,
+        "node": 4362.0
+      },
+      "quench_as_percent_of_best_comparator": 2.636,
+      "max_rss_median_bytes": {
+        "quench": 19038208.0,
+        "quickjs": 2195456.0,
+        "bun": 26177536.0,
+        "node": 33275904.0
+      },
+      "comparisons": {
+        "bun": {
+          "score": {
+            "quench_median": 115.0,
+            "comparator_median": 2792.0,
+            "median_delta": -2677.0,
+            "paired_interval_95": [
+              -2732.0,
+              -2588.0
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0x86cb636b9d4d8a7b"
+          },
+          "max_rss": {
+            "quench_median": 19038208.0,
+            "comparator_median": 26177536.0,
+            "median_delta": -7139328.0,
+            "paired_interval_95": [
+              -7221248.0,
+              -6987776.0
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0x6593bc77cb99ff34"
+          },
+          "qualified": false
+        },
+        "node": {
+          "score": {
+            "quench_median": 115.0,
+            "comparator_median": 4362.0,
+            "median_delta": -4247.0,
+            "paired_interval_95": [
+              -4483.0,
+              -4174.0
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0x03ae44b0d5c79b56"
+          },
+          "max_rss": {
+            "quench_median": 19038208.0,
+            "comparator_median": 33275904.0,
+            "median_delta": -14237696.0,
+            "paired_interval_95": [
+              -14319616.0,
+              -14090240.0
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0x45a299fe012084bd"
+          },
+          "qualified": false
+        },
+        "quickjs": {
+          "score": {
+            "quench_median": 115.0,
+            "comparator_median": 2011.0,
+            "median_delta": -1896.0,
+            "paired_interval_95": [
+              -1914.0,
+              -1841.0
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0x8448b334cb681456"
+          },
+          "max_rss": {
+            "quench_median": 19038208.0,
+            "comparator_median": 2195456.0,
+            "median_delta": 16842752.0,
+            "paired_interval_95": [
+              16760832.0,
+              17002496.0
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0x069b3b2e951ee5bd"
+          },
+          "qualified": false
+        }
+      },
+      "qualified": false
+    },
+    "regexp.js": {
+      "input_sha256": "5268b0d15931fda4e331de35fc58e5beded9a250b60764e1cc7cfc898ab53602",
+      "paired_rounds": 11,
+      "output_equal": true,
+      "score_median": {
+        "quench": 11.2,
+        "quickjs": 531.0,
+        "bun": 892.0,
+        "node": 3493.0
+      },
+      "quench_as_percent_of_best_comparator": 0.321,
+      "max_rss_median_bytes": {
+        "quench": 41570304.0,
+        "quickjs": 5615616.0,
+        "bun": 30486528.0,
+        "node": 36814848.0
+      },
+      "comparisons": {
+        "bun": {
+          "score": {
+            "quench_median": 11.2,
+            "comparator_median": 892.0,
+            "median_delta": -880.8,
+            "paired_interval_95": [
+              -887.8,
+              -874.8
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0x07a95747ba47cb17"
+          },
+          "max_rss": {
+            "quench_median": 41570304.0,
+            "comparator_median": 30486528.0,
+            "median_delta": 11083776.0,
+            "paired_interval_95": [
+              10899456.0,
+              11456512.0
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0xed6fe81898042610"
+          },
+          "qualified": false
+        },
+        "node": {
+          "score": {
+            "quench_median": 11.2,
+            "comparator_median": 3493.0,
+            "median_delta": -3481.8,
+            "paired_interval_95": [
+              -3614.7,
+              -3412.8
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0x41df18642d7dbeca"
+          },
+          "max_rss": {
+            "quench_median": 41570304.0,
+            "comparator_median": 36814848.0,
+            "median_delta": 4755456.0,
+            "paired_interval_95": [
+              4579328.0,
+              4812800.0
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0xa1f719eadfb29691"
+          },
+          "qualified": false
+        },
+        "quickjs": {
+          "score": {
+            "quench_median": 11.2,
+            "comparator_median": 531.0,
+            "median_delta": -519.8,
+            "paired_interval_95": [
+              -529.8,
+              -504.8
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0xee309c909b6fec9a"
+          },
+          "max_rss": {
+            "quench_median": 41570304.0,
+            "comparator_median": 5615616.0,
+            "median_delta": 35954688.0,
+            "paired_interval_95": [
+              35778560.0,
+              36028416.0
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0x3cab293761d30b41"
+          },
+          "qualified": false
+        }
+      },
+      "qualified": false
+    },
+    "richards.js": {
+      "input_sha256": "d86eac4108343a54ba6e10621a77b46f82f554c3b0a46e8fb4032d5cf65a2a11",
+      "paired_rounds": 11,
+      "output_equal": true,
+      "score_median": {
+        "quench": 57.4,
+        "quickjs": 1038.0,
+        "bun": 1617.0,
+        "node": 1776.0
+      },
+      "quench_as_percent_of_best_comparator": 3.232,
+      "max_rss_median_bytes": {
+        "quench": 16973824.0,
+        "quickjs": 2191360.0,
+        "bun": 17244160.0,
+        "node": 26333184.0
+      },
+      "comparisons": {
+        "bun": {
+          "score": {
+            "quench_median": 57.4,
+            "comparator_median": 1617.0,
+            "median_delta": -1559.6,
+            "paired_interval_95": [
+              -1574.4,
+              -1540.6
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0x48e3ce1cd15a0004"
+          },
+          "max_rss": {
+            "quench_median": 16973824.0,
+            "comparator_median": 17244160.0,
+            "median_delta": -270336.0,
+            "paired_interval_95": [
+              -339968.0,
+              -139264.0
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0xe19b0dfe8856f9c3"
+          },
+          "qualified": false
+        },
+        "node": {
+          "score": {
+            "quench_median": 57.4,
+            "comparator_median": 1776.0,
+            "median_delta": -1718.6,
+            "paired_interval_95": [
+              -1817.3,
+              -1686.7
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0x7cc0175e582e7d73"
+          },
+          "max_rss": {
+            "quench_median": 16973824.0,
+            "comparator_median": 26333184.0,
+            "median_delta": -9359360.0,
+            "paired_interval_95": [
+              -9428992.0,
+              -9261056.0
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0x965b5d823a4c3bcc"
+          },
+          "qualified": false
+        },
+        "quickjs": {
+          "score": {
+            "quench_median": 57.4,
+            "comparator_median": 1038.0,
+            "median_delta": -980.6,
+            "paired_interval_95": [
+              -1055.7,
+              -943.6
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0x2a6ea7677be65d89"
+          },
+          "max_rss": {
+            "quench_median": 16973824.0,
+            "comparator_median": 2191360.0,
+            "median_delta": 14782464.0,
+            "paired_interval_95": [
+              14712832.0,
+              14938112.0
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0x8aec248bf54d4a02"
+          },
+          "qualified": false
+        }
+      },
+      "qualified": false
+    },
+    "splay.js": {
+      "input_sha256": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d",
+      "paired_rounds": 11,
+      "output_equal": true,
+      "score_median": {
+        "quench": 538.0,
+        "quickjs": 3045.0,
+        "bun": 5023.0,
+        "node": 6895.0
+      },
+      "quench_as_percent_of_best_comparator": 7.803,
+      "max_rss_median_bytes": {
+        "quench": 250322944.0,
+        "quickjs": 149544960.0,
+        "bun": 58277888.0,
+        "node": 502906880.0
+      },
+      "comparisons": {
+        "bun": {
+          "score": {
+            "quench_median": 538.0,
+            "comparator_median": 5023.0,
+            "median_delta": -4485.0,
+            "paired_interval_95": [
+              -4604.0,
+              -4306.0
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0x4db3a5244f506861"
+          },
+          "max_rss": {
+            "quench_median": 250322944.0,
+            "comparator_median": 58277888.0,
+            "median_delta": 192045056.0,
+            "paired_interval_95": [
+              191909888.0,
+              192483328.0
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0x61b6c6395a0a657a"
+          },
+          "qualified": false
+        },
+        "node": {
+          "score": {
+            "quench_median": 538.0,
+            "comparator_median": 6895.0,
+            "median_delta": -6357.0,
+            "paired_interval_95": [
+              -6641.0,
+              -6210.0
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0xaab8dd8c1c5f61d0"
+          },
+          "max_rss": {
+            "quench_median": 250322944.0,
+            "comparator_median": 502906880.0,
+            "median_delta": -252583936.0,
+            "paired_interval_95": [
+              -254545920.0,
+              -219418624.0
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0xc478e422d726e7ef"
+          },
+          "qualified": false
+        },
+        "quickjs": {
+          "score": {
+            "quench_median": 538.0,
+            "comparator_median": 3045.0,
+            "median_delta": -2507.0,
+            "paired_interval_95": [
+              -2741.0,
+              -2334.0
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0x918c6bf0c8858c5c"
+          },
+          "max_rss": {
+            "quench_median": 250322944.0,
+            "comparator_median": 149544960.0,
+            "median_delta": 100777984.0,
+            "paired_interval_95": [
+              100757504.0,
+              100896768.0
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0xa7ed53935a3ec13b"
+          },
+          "qualified": false
+        }
+      },
+      "qualified": false
+    }
+  },
+  "challenged_v2_hypotheses": [
+    {
+      "commit": "1b39839db",
+      "claim": "allocation-free existing atom lookups; Richards Score median +34.7 on a different host",
+      "decision": "do not port without a local paired result; the full reported gain would leave local Quench Richards 57.4 far below QuickJS 1038"
+    },
+    {
+      "commit": "b69bf8248",
+      "claim": "RegExp fallback backtracking optimization; three-run median +56% on a different host",
+      "decision": "do not port without a local paired result; the reported gain scale would leave local Quench RegExp 11.2 far below QuickJS 531"
+    }
+  ],
+  "host_path_diagnostic": {
+    "fixture": "richards.js",
+    "rounds": 1,
+    "same_session": true,
+    "output_equal": true,
+    "bare_quench": {
+      "score": 64.0,
+      "max_rss_bytes": 12918784
+    },
+    "quench_node": {
+      "score": 57.7,
+      "max_rss_bytes": 16924672
+    },
+    "interpretation": "Diagnostic only; one sample does not qualify a host-path change and is excluded from the eleven-round production Node-host baseline."
+  },
+  "research_sources": [
+    "https://arxiv.org/abs/2411.10559",
+    "https://doi.org/10.1017/S0956796800001167",
+    "https://github.com/v8/v8/blob/main/docs/interpreter/interpreter-ignition.md",
+    "https://bibliography.selflanguage.org/pics.html"
+  ]
+}

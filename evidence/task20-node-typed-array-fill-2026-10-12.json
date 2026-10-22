@@ -1,0 +1,433 @@
+{
+  "scope": "Validated non-shared intrinsic typed-array bulk fill, unified element byte encoding, and initialized util codec aliases",
+  "branch": "v2-cloud-node",
+  "parent_commit": "b3f0f34afebf07e8d4a57ac73152f64062584b0c",
+  "validation": {
+    "runtime_tests": 549,
+    "runtime_log": "work/typed-fill-runtime.log",
+    "root_cleanup_regression": "Specialized and unspecialized value/index coercion, throwing and detachment paths retain original root counts",
+    "node_oracle_tests": 68,
+    "oracle_log": "work/typed-fill-final-oracles.log",
+    "framework_tests": 43,
+    "framework_log": "work/typed-fill-final-framework.log",
+    "scopes": {
+      "buffer": {
+        "counts": {
+          "fail": 34,
+          "skip": 2,
+          "pass": 35,
+          "timeout": 1
+        },
+        "changes_from_frozen_full": [],
+        "metadata": {
+          "schema_version": 2,
+          "inventory_hash": "463e41f6e56dd224",
+          "timeout_secs": 30,
+          "jobs": 1,
+          "node_version": "v27.0.0-nightly20260819c79868f102",
+          "runtime_commit": "b3f0f34afebf07e8d4a57ac73152f64062584b0c",
+          "tests_node_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+          "platform": "linux-x86_64"
+        },
+        "results": [
+          {
+            "fixture": "test-buffer-alloc-alignment.js",
+            "status": "fail"
+          },
+          {
+            "fixture": "test-buffer-alloc-unsafe-is-initialized-with-zero-fill-flag.js",
+            "status": "skip"
+          },
+          {
+            "fixture": "test-buffer-alloc-unsafe-is-uninitialized.js",
+            "status": "skip"
+          },
+          {
+            "fixture": "test-buffer-alloc.js",
+            "status": "fail"
+          },
+          {
+            "fixture": "test-buffer-arraybuffer.js",
+            "status": "fail"
+          },
+          {
+            "fixture": "test-buffer-ascii.js",
+            "status": "pass"
+          },
+          {
+            "fixture": "test-buffer-backing-arraybuffer.js",
+            "status": "fail"
+          },
+          {
+            "fixture": "test-buffer-badhex.js",
+            "status": "pass"
+          },
+          {
+            "fixture": "test-buffer-bigint64.js",
+            "status": "fail"
+          },
+          {
+            "fixture": "test-buffer-bytelength.js",
+            "status": "pass"
+          },
+          {
+            "fixture": "test-buffer-compare-offset.js",
+            "status": "pass"
+          },
+          {
+            "fixture": "test-buffer-compare.js",
+            "status": "pass"
+          },
+          {
+            "fixture": "test-buffer-concat.js",
+            "status": "pass"
+          },
+          {
+            "fixture": "test-buffer-constants.js",
+            "status": "fail"
+          },
+          {
+            "fixture": "test-buffer-constructor-deprecation-error.js",
+            "status": "fail"
+          },
+          {
+            "fixture": "test-buffer-constructor-node-modules-paths.js",
+            "status": "fail"
+          },
+          {
+            "fixture": "test-buffer-constructor-node-modules.js",
+            "status": "fail"
+          },
+          {
+            "fixture": "test-buffer-constructor-outside-node-modules.js",
+            "status": "fail"
+          },
+          {
+            "fixture": "test-buffer-copy-immutable.js",
+            "status": "pass"
+          },
+          {
+            "fixture": "test-buffer-copy.js",
+            "status": "pass"
+          },
+          {
+            "fixture": "test-buffer-equals.js",
+            "status": "pass"
+          },
+          {
+            "fixture": "test-buffer-failed-alloc-typed-arrays.js",
+            "status": "pass"
+          },
+          {
+            "fixture": "test-buffer-fakes.js",
+            "status": "fail"
+          },
+          {
+            "fixture": "test-buffer-fill.js",
+            "status": "fail"
+          },
+          {
+            "fixture": "test-buffer-from.js",
+            "status": "fail"
+          },
+          {
+            "fixture": "test-buffer-generic-methods.js",
+            "status": "fail"
+          },
+          {
+            "fixture": "test-buffer-includes.js",
+            "status": "fail"
+          },
+          {
+            "fixture": "test-buffer-indexof.js",
+            "status": "fail"
+          },
+          {
+            "fixture": "test-buffer-inheritance.js",
+            "status": "pass"
+          },
+          {
+            "fixture": "test-buffer-inspect.js",
+            "status": "fail"
+          },
+          {
+            "fixture": "test-buffer-isascii.js",
+            "status": "pass"
+          },
+          {
+            "fixture": "test-buffer-isencoding.js",
+            "status": "pass"
+          },
+          {
+            "fixture": "test-buffer-isutf8-isascii-fast.js",
+            "status": "fail"
+          },
+          {
+            "fixture": "test-buffer-isutf8.js",
+            "status": "pass"
+          },
+          {
+            "fixture": "test-buffer-iterator.js",
+            "status": "pass"
+          },
+          {
+            "fixture": "test-buffer-new.js",
+            "status": "fail"
+          },
+          {
+            "fixture": "test-buffer-no-negative-allocation.js",
+            "status": "fail"
+          },
+          {
+            "fixture": "test-buffer-nopendingdep-map.js",
+            "status": "pass"
+          },
+          {
+            "fixture": "test-buffer-of-no-deprecation.js",
+            "status": "pass"
+          },
+          {
+            "fixture": "test-buffer-over-max-length.js",
+            "status": "fail"
+          },
+          {
+            "fixture": "test-buffer-parent-property.js",
+            "status": "fail"
+          },
+          {
+            "fixture": "test-buffer-pending-deprecation.js",
+            "status": "fail"
+          },
+          {
+            "fixture": "test-buffer-pool-untransferable.js",
+            "status": "fail"
+          },
+          {
+            "fixture": "test-buffer-prototype-inspect.js",
+            "status": "fail"
+          },
+          {
+            "fixture": "test-buffer-read.js",
+            "status": "pass"
+          },
+          {
+            "fixture": "test-buffer-readdouble.js",
+            "status": "pass"
+          },
+          {
+            "fixture": "test-buffer-readfloat.js",
+            "status": "pass"
+          },
+          {
+            "fixture": "test-buffer-readint.js",
+            "status": "pass"
+          },
+          {
+            "fixture": "test-buffer-readuint.js",
+            "status": "pass"
+          },
+          {
+            "fixture": "test-buffer-resizable.js",
+            "status": "pass"
+          },
+          {
+            "fixture": "test-buffer-safe-unsafe.js",
+            "status": "pass"
+          },
+          {
+            "fixture": "test-buffer-set-inspect-max-bytes.js",
+            "status": "fail"
+          },
+          {
+            "fixture": "test-buffer-sharedarraybuffer.js",
+            "status": "pass"
+          },
+          {
+            "fixture": "test-buffer-slice.js",
+            "status": "fail"
+          },
+          {
+            "fixture": "test-buffer-slow.js",
+            "status": "pass"
+          },
+          {
+            "fixture": "test-buffer-swap-fast.js",
+            "status": "fail"
+          },
+          {
+            "fixture": "test-buffer-swap.js",
+            "status": "fail"
+          },
+          {
+            "fixture": "test-buffer-tojson.js",
+            "status": "pass"
+          },
+          {
+            "fixture": "test-buffer-tostring-4gb.js",
+            "status": "fail"
+          },
+          {
+            "fixture": "test-buffer-tostring-range.js",
+            "status": "pass"
+          },
+          {
+            "fixture": "test-buffer-tostring-rangeerror.js",
+            "status": "fail"
+          },
+          {
+            "fixture": "test-buffer-tostring.js",
+            "status": "pass"
+          },
+          {
+            "fixture": "test-buffer-write-fast.js",
+            "status": "fail"
+          },
+          {
+            "fixture": "test-buffer-write-utf8-two-byte.js",
+            "status": "timeout"
+          },
+          {
+            "fixture": "test-buffer-write.js",
+            "status": "pass"
+          },
+          {
+            "fixture": "test-buffer-writedouble.js",
+            "status": "pass"
+          },
+          {
+            "fixture": "test-buffer-writefloat.js",
+            "status": "pass"
+          },
+          {
+            "fixture": "test-buffer-writeint.js",
+            "status": "pass"
+          },
+          {
+            "fixture": "test-buffer-writeuint.js",
+            "status": "pass"
+          },
+          {
+            "fixture": "test-buffer-zero-fill-cli.js",
+            "status": "fail"
+          },
+          {
+            "fixture": "test-buffer-zero-fill-reset.js",
+            "status": "pass"
+          },
+          {
+            "fixture": "test-buffer-zero-fill.js",
+            "status": "fail"
+          }
+        ]
+      },
+      "decoder": {
+        "counts": {
+          "pass": 3,
+          "timeout": 1
+        },
+        "changes_from_frozen_full": [
+          {
+            "fixture": "test-string-decoder.js",
+            "before": "timeout",
+            "after": "pass"
+          }
+        ],
+        "metadata": {
+          "schema_version": 2,
+          "inventory_hash": "59f68e781bc64250",
+          "timeout_secs": 30,
+          "jobs": 4,
+          "node_version": "v27.0.0-nightly20260819c79868f102",
+          "runtime_commit": "b3f0f34afebf07e8d4a57ac73152f64062584b0c",
+          "tests_node_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+          "platform": "linux-x86_64"
+        },
+        "results": [
+          {
+            "fixture": "test-string-decoder-end.js",
+            "status": "pass"
+          },
+          {
+            "fixture": "test-string-decoder-fuzz.js",
+            "status": "pass"
+          },
+          {
+            "fixture": "test-string-decoder-utf8-large.js",
+            "status": "timeout"
+          },
+          {
+            "fixture": "test-string-decoder.js",
+            "status": "pass"
+          }
+        ]
+      }
+    }
+  },
+  "diagnostic": {
+    "operation": "const size=require('buffer').constants.MAX_STRING_LENGTH+1;const buffer=Buffer.alloc(size).fill('a');let code;try{new(require('string_decoder').StringDecoder)().write(buffer)}catch(error){code=error.code}console.log(JSON.stringify({length:buffer.length,first:buffer[0],last:buffer[buffer.length-1],code}));",
+    "platform": "linux-x86_64",
+    "cpu_max": "400000 100000",
+    "memory_max": "17179869184",
+    "qualification": "One isolated diagnostic round; iteration builds, 30s bound. Prior frozen constructor source 873a5ec2d has identical typed-array source blobs to listener-store a4a96a954; Node host startup differs. No matched production or aggregate performance claim.",
+    "results": [
+      {
+        "engine": "prior-core-frozen-constructor",
+        "argv": [
+          "work/sweep-emitter-constructor-bin/quench-node"
+        ],
+        "binary_sha256": "648fff4b78187991a7998e85f56d42f200665c0fb4064aa3b9a268f957b7e4d1",
+        "exit_code": 0,
+        "timed_out": false,
+        "elapsed_seconds": 27.568027945999347,
+        "peak_rss_kib": 641068,
+        "stdout": "{\"length\":536870889,\"first\":97,\"last\":97,\"code\":\"ERR_STRING_TOO_LONG\"}\n",
+        "stderr": ""
+      },
+      {
+        "engine": "bulk-fill-iteration",
+        "argv": [
+          "target/iteration/quench-node"
+        ],
+        "binary_sha256": "e6fe2a97eb73a300cc452824e7ca79089f8218de7494273aa2df1b1725f00853",
+        "exit_code": 0,
+        "timed_out": false,
+        "elapsed_seconds": 0.6222790559986606,
+        "peak_rss_kib": 639432,
+        "stdout": "{\"length\":536870889,\"first\":97,\"last\":97,\"code\":\"ERR_STRING_TOO_LONG\"}\n",
+        "stderr": ""
+      },
+      {
+        "engine": "node27-jitless",
+        "argv": [
+          "work/node-v27.0.0-nightly20260819c79868f102-linux-x64/bin/node",
+          "--jitless"
+        ],
+        "binary_sha256": "ab33e5793484170822fe3931a978b3a5e802ccf6b13bf2101922a1b37323b2e7",
+        "exit_code": 0,
+        "timed_out": false,
+        "elapsed_seconds": 0.47300222700141603,
+        "peak_rss_kib": 567064,
+        "stdout": "{\"length\":536870889,\"first\":97,\"last\":97,\"code\":\"ERR_STRING_TOO_LONG\"}\n",
+        "stderr": ""
+      }
+    ]
+  },
+  "representation": {
+    "element_bytes": "One encoding operation serves indexed stores and bulk fill for all numeric and BigInt kinds",
+    "range": "Original conversion order and live-view/detach/immutable checks retained; only validated non-shared backing takes bulk path",
+    "shared": "Existing per-element write path preserved",
+    "util_exports": "Text codec globals installed before canonical util module captures constructor aliases"
+  },
+  "memory_events": "low 0\nhigh 0\nmax 4864178\noom 177\noom_kill 47\noom_group_kill 0\n",
+  "binary_sha256": {
+    "quench-node": "e6fe2a97eb73a300cc452824e7ca79089f8218de7494273aa2df1b1725f00853",
+    "run-parallel": "06a33c5f6baa4e9c0f1efe333617d64673eb3e81685abda82a3d647d8e49cae1"
+  },
+  "qualifications": [
+    "Iteration-profile isolated operation diagnostic; old constructor source has identical typed-array source blobs to the newer listener checkpoint, but Node host startup differs. One round, no matched production or aggregate performance claim.",
+    "Buffer scope uses one worker to bound memory for large allocation cases; decoder scope uses four.",
+    "The util singleton checkpoint a4a96a954 cached codecs before global install, losing buffer-isascii/isutf8; this initialization ordering fix restores both focused passes.",
+    "Large UTF-8 StringDecoder threshold/chunking fixture still TIMEOUT; broader Buffer/codec behavior incomplete.",
+    "Last full remains 1288 PASS /685 SKIP /2636 FAIL /118 TIMEOUT /0 CRASH of4727; focused outcomes are not a new full total."
+  ]
+}

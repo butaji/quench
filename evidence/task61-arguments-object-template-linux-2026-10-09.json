@@ -1,0 +1,1225 @@
+{
+  "schema": 1,
+  "task": "61",
+  "experiment": "V2 arguments-object final-shape reuse, isolated Linux production pairs",
+  "source": {
+    "baseline_revision": "4bfd8a0cf0622ac6fcfe871fd4cd593ff36b102c",
+    "candidate_base_revision": "e420c5fc924283e9768ce6240bbc24ac20612c61",
+    "candidate_dirty": true,
+    "candidate_patch_sha256": "4da046c1574d0a82fe531009dd0977b0e0760d2fd3f1647ec5479e403372937d"
+  },
+  "host": {
+    "uname": {
+      "system": "Linux",
+      "node": "1c7595109800",
+      "release": "6.18.44",
+      "version": "#1 SMP Sat Sep 26 20:02:31 UTC 2026",
+      "machine": "x86_64",
+      "processor": ""
+    },
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)\nbinary: rustc\ncommit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4\ncommit-date: 2026-09-28\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.0\nLLVM version: 23.1.1",
+    "cpu_quota": "400000 100000",
+    "memory_limit_bytes": 17179869184,
+    "rss_backend": "Linux wait4 ru_maxrss, KiB normalized to bytes"
+  },
+  "corpus_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+  "runner_sha256": "bea0602534b7380a975daac1e518086ec41c0330c3d3aa9d6fda5774337bf232",
+  "rounds_per_fixture": 11,
+  "bootstrap_resamples": 100000,
+  "binary_sha256": {
+    "baseline": "9196108119f93745f12da83d40bb628871b6b5af770cf4cdf0ed9116a8a4b54d",
+    "candidate": "2b859df0861e17dd53626845e7ba4979047a3aebe31ded62cff540c1ce428f45"
+  },
+  "commands": {
+    "baseline": [
+      "/workspace/quench/target/production/stageb-candidates/arguments-template/baseline-quench-node",
+      "<materialized-fixture>"
+    ],
+    "candidate": [
+      "/workspace/quench/target/production/stageb-candidates/arguments-template/candidate-quench-node",
+      "<materialized-fixture>"
+    ]
+  },
+  "measurement_environment": {
+    "HOME": "/home/agent",
+    "LANG": "C.UTF-8",
+    "LC_ALL": "C.UTF-8",
+    "PATH": "/workspace/quench/work/stageb-tools/cargo-home/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+  },
+  "fixtures": {
+    "raytrace.js": {
+      "source_sha256": "d52183ca324cdb88d9ee3e78326433fe2ca28d6436f0a6c3ec013ab67cb798eb",
+      "materialized_sha256": "ccd66592e52747004326c0ce469d24e82212c25decfdd534be5fa74dc6edf18b",
+      "materialized_path": "target/iteration/materialized/raytrace-materialized.js",
+      "valid": true,
+      "output_equal": true,
+      "rounds": [
+        {
+          "pair": 1,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "baseline": {
+              "command": [
+                "/workspace/quench/target/production/stageb-candidates/arguments-template/baseline-quench-node",
+                "/workspace/quench/target/iteration/materialized/raytrace-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 138.0,
+              "maximum_rss_bytes": 21192704,
+              "wall_ns": 19010553081,
+              "result_lines": [
+                "__quenchBenchResult: RayTrace: 138"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: RayTrace: 138\n----\nScore: 138\n",
+              "stderr": ""
+            },
+            "candidate": {
+              "command": [
+                "/workspace/quench/target/production/stageb-candidates/arguments-template/candidate-quench-node",
+                "/workspace/quench/target/iteration/materialized/raytrace-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 184.0,
+              "maximum_rss_bytes": 21250048,
+              "wall_ns": 14501296773,
+              "result_lines": [
+                "__quenchBenchResult: RayTrace: 184"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: RayTrace: 184\n----\nScore: 184\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "pair": 2,
+          "execution_order": [
+            "candidate",
+            "baseline"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "candidate": {
+              "command": [
+                "/workspace/quench/target/production/stageb-candidates/arguments-template/candidate-quench-node",
+                "/workspace/quench/target/iteration/materialized/raytrace-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 185.0,
+              "maximum_rss_bytes": 21446656,
+              "wall_ns": 14473614342,
+              "result_lines": [
+                "__quenchBenchResult: RayTrace: 185"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: RayTrace: 185\n----\nScore: 185\n",
+              "stderr": ""
+            },
+            "baseline": {
+              "command": [
+                "/workspace/quench/target/production/stageb-candidates/arguments-template/baseline-quench-node",
+                "/workspace/quench/target/iteration/materialized/raytrace-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 143.0,
+              "maximum_rss_bytes": 21233664,
+              "wall_ns": 18114688380,
+              "result_lines": [
+                "__quenchBenchResult: RayTrace: 143"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: RayTrace: 143\n----\nScore: 143\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "pair": 3,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "baseline": {
+              "command": [
+                "/workspace/quench/target/production/stageb-candidates/arguments-template/baseline-quench-node",
+                "/workspace/quench/target/iteration/materialized/raytrace-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 136.0,
+              "maximum_rss_bytes": 21233664,
+              "wall_ns": 19090130699,
+              "result_lines": [
+                "__quenchBenchResult: RayTrace: 136"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: RayTrace: 136\n----\nScore: 136\n",
+              "stderr": ""
+            },
+            "candidate": {
+              "command": [
+                "/workspace/quench/target/production/stageb-candidates/arguments-template/candidate-quench-node",
+                "/workspace/quench/target/iteration/materialized/raytrace-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 166.0,
+              "maximum_rss_bytes": 21499904,
+              "wall_ns": 15714465287,
+              "result_lines": [
+                "__quenchBenchResult: RayTrace: 166"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: RayTrace: 166\n----\nScore: 166\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "pair": 4,
+          "execution_order": [
+            "candidate",
+            "baseline"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "candidate": {
+              "command": [
+                "/workspace/quench/target/production/stageb-candidates/arguments-template/candidate-quench-node",
+                "/workspace/quench/target/iteration/materialized/raytrace-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 171.0,
+              "maximum_rss_bytes": 21712896,
+              "wall_ns": 15795518826,
+              "result_lines": [
+                "__quenchBenchResult: RayTrace: 171"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: RayTrace: 171\n----\nScore: 171\n",
+              "stderr": ""
+            },
+            "baseline": {
+              "command": [
+                "/workspace/quench/target/production/stageb-candidates/arguments-template/baseline-quench-node",
+                "/workspace/quench/target/iteration/materialized/raytrace-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 146.0,
+              "maximum_rss_bytes": 21356544,
+              "wall_ns": 17337457931,
+              "result_lines": [
+                "__quenchBenchResult: RayTrace: 146"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: RayTrace: 146\n----\nScore: 146\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "pair": 5,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "baseline": {
+              "command": [
+                "/workspace/quench/target/production/stageb-candidates/arguments-template/baseline-quench-node",
+                "/workspace/quench/target/iteration/materialized/raytrace-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 139.0,
+              "maximum_rss_bytes": 21196800,
+              "wall_ns": 18115714514,
+              "result_lines": [
+                "__quenchBenchResult: RayTrace: 139"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: RayTrace: 139\n----\nScore: 139\n",
+              "stderr": ""
+            },
+            "candidate": {
+              "command": [
+                "/workspace/quench/target/production/stageb-candidates/arguments-template/candidate-quench-node",
+                "/workspace/quench/target/iteration/materialized/raytrace-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 183.0,
+              "maximum_rss_bytes": 21725184,
+              "wall_ns": 14656121794,
+              "result_lines": [
+                "__quenchBenchResult: RayTrace: 183"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: RayTrace: 183\n----\nScore: 183\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "pair": 6,
+          "execution_order": [
+            "candidate",
+            "baseline"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "candidate": {
+              "command": [
+                "/workspace/quench/target/production/stageb-candidates/arguments-template/candidate-quench-node",
+                "/workspace/quench/target/iteration/materialized/raytrace-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 186.0,
+              "maximum_rss_bytes": 21786624,
+              "wall_ns": 14358184721,
+              "result_lines": [
+                "__quenchBenchResult: RayTrace: 186"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: RayTrace: 186\n----\nScore: 186\n",
+              "stderr": ""
+            },
+            "baseline": {
+              "command": [
+                "/workspace/quench/target/production/stageb-candidates/arguments-template/baseline-quench-node",
+                "/workspace/quench/target/iteration/materialized/raytrace-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 131.0,
+              "maximum_rss_bytes": 20971520,
+              "wall_ns": 19702515236,
+              "result_lines": [
+                "__quenchBenchResult: RayTrace: 131"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: RayTrace: 131\n----\nScore: 131\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "pair": 7,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "baseline": {
+              "command": [
+                "/workspace/quench/target/production/stageb-candidates/arguments-template/baseline-quench-node",
+                "/workspace/quench/target/iteration/materialized/raytrace-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 140.0,
+              "maximum_rss_bytes": 21090304,
+              "wall_ns": 18144893078,
+              "result_lines": [
+                "__quenchBenchResult: RayTrace: 140"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: RayTrace: 140\n----\nScore: 140\n",
+              "stderr": ""
+            },
+            "candidate": {
+              "command": [
+                "/workspace/quench/target/production/stageb-candidates/arguments-template/candidate-quench-node",
+                "/workspace/quench/target/iteration/materialized/raytrace-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 176.0,
+              "maximum_rss_bytes": 21409792,
+              "wall_ns": 15233245094,
+              "result_lines": [
+                "__quenchBenchResult: RayTrace: 176"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: RayTrace: 176\n----\nScore: 176\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "pair": 8,
+          "execution_order": [
+            "candidate",
+            "baseline"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "candidate": {
+              "command": [
+                "/workspace/quench/target/production/stageb-candidates/arguments-template/candidate-quench-node",
+                "/workspace/quench/target/iteration/materialized/raytrace-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 177.0,
+              "maximum_rss_bytes": 21966848,
+              "wall_ns": 14588098861,
+              "result_lines": [
+                "__quenchBenchResult: RayTrace: 177"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: RayTrace: 177\n----\nScore: 177\n",
+              "stderr": ""
+            },
+            "baseline": {
+              "command": [
+                "/workspace/quench/target/production/stageb-candidates/arguments-template/baseline-quench-node",
+                "/workspace/quench/target/iteration/materialized/raytrace-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 140.0,
+              "maximum_rss_bytes": 21422080,
+              "wall_ns": 18639647287,
+              "result_lines": [
+                "__quenchBenchResult: RayTrace: 140"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: RayTrace: 140\n----\nScore: 140\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "pair": 9,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "baseline": {
+              "command": [
+                "/workspace/quench/target/production/stageb-candidates/arguments-template/baseline-quench-node",
+                "/workspace/quench/target/iteration/materialized/raytrace-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 139.0,
+              "maximum_rss_bytes": 21151744,
+              "wall_ns": 18213430261,
+              "result_lines": [
+                "__quenchBenchResult: RayTrace: 139"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: RayTrace: 139\n----\nScore: 139\n",
+              "stderr": ""
+            },
+            "candidate": {
+              "command": [
+                "/workspace/quench/target/production/stageb-candidates/arguments-template/candidate-quench-node",
+                "/workspace/quench/target/iteration/materialized/raytrace-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 169.0,
+              "maximum_rss_bytes": 21569536,
+              "wall_ns": 15738899378,
+              "result_lines": [
+                "__quenchBenchResult: RayTrace: 169"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: RayTrace: 169\n----\nScore: 169\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "pair": 10,
+          "execution_order": [
+            "candidate",
+            "baseline"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "candidate": {
+              "command": [
+                "/workspace/quench/target/production/stageb-candidates/arguments-template/candidate-quench-node",
+                "/workspace/quench/target/iteration/materialized/raytrace-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 158.0,
+              "maximum_rss_bytes": 21909504,
+              "wall_ns": 16494138765,
+              "result_lines": [
+                "__quenchBenchResult: RayTrace: 158"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: RayTrace: 158\n----\nScore: 158\n",
+              "stderr": ""
+            },
+            "baseline": {
+              "command": [
+                "/workspace/quench/target/production/stageb-candidates/arguments-template/baseline-quench-node",
+                "/workspace/quench/target/iteration/materialized/raytrace-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 130.0,
+              "maximum_rss_bytes": 21319680,
+              "wall_ns": 19372393623,
+              "result_lines": [
+                "__quenchBenchResult: RayTrace: 130"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: RayTrace: 130\n----\nScore: 130\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "pair": 11,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "baseline": {
+              "command": [
+                "/workspace/quench/target/production/stageb-candidates/arguments-template/baseline-quench-node",
+                "/workspace/quench/target/iteration/materialized/raytrace-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 141.0,
+              "maximum_rss_bytes": 21135360,
+              "wall_ns": 19130223155,
+              "result_lines": [
+                "__quenchBenchResult: RayTrace: 141"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: RayTrace: 141\n----\nScore: 141\n",
+              "stderr": ""
+            },
+            "candidate": {
+              "command": [
+                "/workspace/quench/target/production/stageb-candidates/arguments-template/candidate-quench-node",
+                "/workspace/quench/target/iteration/materialized/raytrace-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 184.0,
+              "maximum_rss_bytes": 21712896,
+              "wall_ns": 14596790511,
+              "result_lines": [
+                "__quenchBenchResult: RayTrace: 184"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: RayTrace: 184\n----\nScore: 184\n",
+              "stderr": ""
+            }
+          }
+        }
+      ],
+      "summary": {
+        "baseline_median_score": 139.0,
+        "candidate_median_score": 177.0,
+        "score_delta": 38.0,
+        "score_delta_percent": 27.338129496402885,
+        "score_delta_95_percentile_interval": {
+          "lower_95": 30.0,
+          "upper_95": 46.0,
+          "resamples": 100000,
+          "method": "paired percentile bootstrap of difference in medians",
+          "seed": 20261009
+        },
+        "baseline_median_maximum_rss_bytes": 21196800,
+        "candidate_median_maximum_rss_bytes": 21712896,
+        "maximum_rss_delta_bytes": 516096,
+        "maximum_rss_delta_95_percentile_interval": {
+          "lower_95": 253952.0,
+          "upper_95": 589824.0,
+          "resamples": 100000,
+          "method": "paired percentile bootstrap of difference in medians",
+          "seed": 20261009
+        },
+        "candidate_lower_score_pairs": 0,
+        "candidate_lower_rss_pairs": 0
+      }
+    },
+    "earley-boyer.js": {
+      "source_sha256": "dbf3aeb6b3d056e8ea35b5f19aa8c8a4fb1053e41d07f096c22483b2c1c6ee01",
+      "materialized_sha256": "aa379c1d54f5d13de32ebf2b50729d0cbc64bb23de5e524256c7b2270213cc0b",
+      "materialized_path": "target/iteration/materialized/earley-boyer-materialized.js",
+      "valid": true,
+      "output_equal": true,
+      "rounds": [
+        {
+          "pair": 1,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "baseline": {
+              "command": [
+                "/workspace/quench/target/production/stageb-candidates/arguments-template/baseline-quench-node",
+                "/workspace/quench/target/iteration/materialized/earley-boyer-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 165.0,
+              "maximum_rss_bytes": 53514240,
+              "wall_ns": 43897281064,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 165"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 165\n----\nScore: 165\n",
+              "stderr": ""
+            },
+            "candidate": {
+              "command": [
+                "/workspace/quench/target/production/stageb-candidates/arguments-template/candidate-quench-node",
+                "/workspace/quench/target/iteration/materialized/earley-boyer-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 189.0,
+              "maximum_rss_bytes": 55312384,
+              "wall_ns": 43418970152,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 189"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 189\n----\nScore: 189\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "pair": 2,
+          "execution_order": [
+            "candidate",
+            "baseline"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "candidate": {
+              "command": [
+                "/workspace/quench/target/production/stageb-candidates/arguments-template/candidate-quench-node",
+                "/workspace/quench/target/iteration/materialized/earley-boyer-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 180.0,
+              "maximum_rss_bytes": 55164928,
+              "wall_ns": 43927465596,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 180"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 180\n----\nScore: 180\n",
+              "stderr": ""
+            },
+            "baseline": {
+              "command": [
+                "/workspace/quench/target/production/stageb-candidates/arguments-template/baseline-quench-node",
+                "/workspace/quench/target/iteration/materialized/earley-boyer-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 164.0,
+              "maximum_rss_bytes": 54456320,
+              "wall_ns": 44866052002,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 164"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 164\n----\nScore: 164\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "pair": 3,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "baseline": {
+              "command": [
+                "/workspace/quench/target/production/stageb-candidates/arguments-template/baseline-quench-node",
+                "/workspace/quench/target/iteration/materialized/earley-boyer-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 167.0,
+              "maximum_rss_bytes": 54915072,
+              "wall_ns": 43791171927,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 167"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 167\n----\nScore: 167\n",
+              "stderr": ""
+            },
+            "candidate": {
+              "command": [
+                "/workspace/quench/target/production/stageb-candidates/arguments-template/candidate-quench-node",
+                "/workspace/quench/target/iteration/materialized/earley-boyer-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 173.0,
+              "maximum_rss_bytes": 54849536,
+              "wall_ns": 43980015825,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 173"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 173\n----\nScore: 173\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "pair": 4,
+          "execution_order": [
+            "candidate",
+            "baseline"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "candidate": {
+              "command": [
+                "/workspace/quench/target/production/stageb-candidates/arguments-template/candidate-quench-node",
+                "/workspace/quench/target/iteration/materialized/earley-boyer-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 183.0,
+              "maximum_rss_bytes": 54964224,
+              "wall_ns": 41905672639,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 183"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 183\n----\nScore: 183\n",
+              "stderr": ""
+            },
+            "baseline": {
+              "command": [
+                "/workspace/quench/target/production/stageb-candidates/arguments-template/baseline-quench-node",
+                "/workspace/quench/target/iteration/materialized/earley-boyer-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 163.0,
+              "maximum_rss_bytes": 55144448,
+              "wall_ns": 44240755519,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 163"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 163\n----\nScore: 163\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "pair": 5,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "baseline": {
+              "command": [
+                "/workspace/quench/target/production/stageb-candidates/arguments-template/baseline-quench-node",
+                "/workspace/quench/target/iteration/materialized/earley-boyer-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 154.0,
+              "maximum_rss_bytes": 54661120,
+              "wall_ns": 44681005751,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 154"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 154\n----\nScore: 154\n",
+              "stderr": ""
+            },
+            "candidate": {
+              "command": [
+                "/workspace/quench/target/production/stageb-candidates/arguments-template/candidate-quench-node",
+                "/workspace/quench/target/iteration/materialized/earley-boyer-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 182.0,
+              "maximum_rss_bytes": 55160832,
+              "wall_ns": 41921393667,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 182"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 182\n----\nScore: 182\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "pair": 6,
+          "execution_order": [
+            "candidate",
+            "baseline"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "candidate": {
+              "command": [
+                "/workspace/quench/target/production/stageb-candidates/arguments-template/candidate-quench-node",
+                "/workspace/quench/target/iteration/materialized/earley-boyer-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 193.0,
+              "maximum_rss_bytes": 55672832,
+              "wall_ns": 42428652084,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 193"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 193\n----\nScore: 193\n",
+              "stderr": ""
+            },
+            "baseline": {
+              "command": [
+                "/workspace/quench/target/production/stageb-candidates/arguments-template/baseline-quench-node",
+                "/workspace/quench/target/iteration/materialized/earley-boyer-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 157.0,
+              "maximum_rss_bytes": 54304768,
+              "wall_ns": 43697229959,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 157"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 157\n----\nScore: 157\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "pair": 7,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "baseline": {
+              "command": [
+                "/workspace/quench/target/production/stageb-candidates/arguments-template/baseline-quench-node",
+                "/workspace/quench/target/iteration/materialized/earley-boyer-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 165.0,
+              "maximum_rss_bytes": 54943744,
+              "wall_ns": 44714116005,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 165"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 165\n----\nScore: 165\n",
+              "stderr": ""
+            },
+            "candidate": {
+              "command": [
+                "/workspace/quench/target/production/stageb-candidates/arguments-template/candidate-quench-node",
+                "/workspace/quench/target/iteration/materialized/earley-boyer-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 172.0,
+              "maximum_rss_bytes": 55144448,
+              "wall_ns": 43912772683,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 172"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 172\n----\nScore: 172\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "pair": 8,
+          "execution_order": [
+            "candidate",
+            "baseline"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "candidate": {
+              "command": [
+                "/workspace/quench/target/production/stageb-candidates/arguments-template/candidate-quench-node",
+                "/workspace/quench/target/iteration/materialized/earley-boyer-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 173.0,
+              "maximum_rss_bytes": 54235136,
+              "wall_ns": 43680789107,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 173"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 173\n----\nScore: 173\n",
+              "stderr": ""
+            },
+            "baseline": {
+              "command": [
+                "/workspace/quench/target/production/stageb-candidates/arguments-template/baseline-quench-node",
+                "/workspace/quench/target/iteration/materialized/earley-boyer-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 159.0,
+              "maximum_rss_bytes": 54288384,
+              "wall_ns": 45138187529,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 159"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 159\n----\nScore: 159\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "pair": 9,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "baseline": {
+              "command": [
+                "/workspace/quench/target/production/stageb-candidates/arguments-template/baseline-quench-node",
+                "/workspace/quench/target/iteration/materialized/earley-boyer-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 165.0,
+              "maximum_rss_bytes": 54788096,
+              "wall_ns": 43444103502,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 165"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 165\n----\nScore: 165\n",
+              "stderr": ""
+            },
+            "candidate": {
+              "command": [
+                "/workspace/quench/target/production/stageb-candidates/arguments-template/candidate-quench-node",
+                "/workspace/quench/target/iteration/materialized/earley-boyer-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 169.0,
+              "maximum_rss_bytes": 54816768,
+              "wall_ns": 43184971097,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 169"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 169\n----\nScore: 169\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "pair": 10,
+          "execution_order": [
+            "candidate",
+            "baseline"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "candidate": {
+              "command": [
+                "/workspace/quench/target/production/stageb-candidates/arguments-template/candidate-quench-node",
+                "/workspace/quench/target/iteration/materialized/earley-boyer-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 164.0,
+              "maximum_rss_bytes": 55504896,
+              "wall_ns": 46826138524,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 164"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 164\n----\nScore: 164\n",
+              "stderr": ""
+            },
+            "baseline": {
+              "command": [
+                "/workspace/quench/target/production/stageb-candidates/arguments-template/baseline-quench-node",
+                "/workspace/quench/target/iteration/materialized/earley-boyer-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 149.0,
+              "maximum_rss_bytes": 54603776,
+              "wall_ns": 47211391858,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 149"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 149\n----\nScore: 149\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "pair": 11,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "baseline": {
+              "command": [
+                "/workspace/quench/target/production/stageb-candidates/arguments-template/baseline-quench-node",
+                "/workspace/quench/target/iteration/materialized/earley-boyer-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 157.0,
+              "maximum_rss_bytes": 54476800,
+              "wall_ns": 44788030200,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 157"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 157\n----\nScore: 157\n",
+              "stderr": ""
+            },
+            "candidate": {
+              "command": [
+                "/workspace/quench/target/production/stageb-candidates/arguments-template/candidate-quench-node",
+                "/workspace/quench/target/iteration/materialized/earley-boyer-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 174.0,
+              "maximum_rss_bytes": 54718464,
+              "wall_ns": 43966847506,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 174"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 174\n----\nScore: 174\n",
+              "stderr": ""
+            }
+          }
+        }
+      ],
+      "summary": {
+        "baseline_median_score": 163.0,
+        "candidate_median_score": 174.0,
+        "score_delta": 11.0,
+        "score_delta_percent": 6.748466257668717,
+        "score_delta_95_percentile_interval": {
+          "lower_95": 7.0,
+          "upper_95": 25.0,
+          "resamples": 100000,
+          "method": "paired percentile bootstrap of difference in medians",
+          "seed": 20261009
+        },
+        "baseline_median_maximum_rss_bytes": 54603776,
+        "candidate_median_maximum_rss_bytes": 55144448,
+        "maximum_rss_delta_bytes": 540672,
+        "maximum_rss_delta_95_percentile_interval": {
+          "lower_95": 49152.0,
+          "upper_95": 860160.0,
+          "resamples": 100000,
+          "method": "paired percentile bootstrap of difference in medians",
+          "seed": 20261009
+        },
+        "candidate_lower_score_pairs": 0,
+        "candidate_lower_rss_pairs": 3
+      }
+    }
+  },
+  "valid": true,
+  "qualification_ready": false,
+  "decision_rule": "Keep only if output matches and both score interval is above zero and maximum-RSS interval below zero on affected fixtures; this Quench-only screen does not establish Task 61 engine leadership.",
+  "candidate_v2_commit": "ff60d06c5 perf(vm): reuse arguments object shapes",
+  "decision": "Reject the arguments-object shape cache for Stage B retention on this Linux host: both Score intervals are positive, but both maximum-RSS intervals are also positive. Retain only the independent ownKeys semantic correction in object_keys.rs and its regression fixture; discard the shape anchor/cache and direct initialization changes.",
+  "correctness": {
+    "test262_corpus_revision": "f2d1435644797268dca1f7988cad5a4e89ccd8d2",
+    "test262_stages": [
+      {
+        "stage": 1,
+        "baseline": {
+          "passed": 263,
+          "failed": 0,
+          "total": 263,
+          "report_path": "target/iteration/task61-arguments-baseline-stage-1.json",
+          "report_sha256": "c713cc35ebc9261d8ad9bc5aa6f73f70878cb94e5c28ba9614c17db9aa986574"
+        },
+        "candidate": {
+          "passed": 263,
+          "failed": 0,
+          "total": 263,
+          "report_path": "target/iteration/task61-arguments-candidate-stage-1.json",
+          "report_sha256": "27371b0159fb9cf37599ebb54842f33bda2f1ad6832301877a64faaec691e9a1"
+        },
+        "compare_runs_regressions": 0
+      },
+      {
+        "stage": 8,
+        "baseline": {
+          "passed": 347,
+          "failed": 0,
+          "total": 347,
+          "report_path": "target/iteration/task61-arguments-baseline-stage-8.json",
+          "report_sha256": "7250449ff78829867be313bf5546c55a99ac2fddb8a0a1d88b40e6d3e867c2df"
+        },
+        "candidate": {
+          "passed": 347,
+          "failed": 0,
+          "total": 347,
+          "report_path": "target/iteration/task61-arguments-candidate-stage-8.json",
+          "report_sha256": "3e8ef9a10ba04f34bb206850a6d979ab160ad0becab651e1656e3dffad2ac099"
+        },
+        "compare_runs_regressions": 0
+      },
+      {
+        "stage": 11,
+        "baseline": {
+          "passed": 217,
+          "failed": 0,
+          "total": 217,
+          "report_path": "target/iteration/task61-arguments-baseline-stage-11.json",
+          "report_sha256": "4c89d490a73ff3191f88ef14746ddc76a99db1bfe68c4e3ef47a9424f113590e"
+        },
+        "candidate": {
+          "passed": 217,
+          "failed": 0,
+          "total": 217,
+          "report_path": "target/iteration/task61-arguments-candidate-stage-11.json",
+          "report_sha256": "17bd013630a038248adf3fea4ae767f93f56eaea1cfca8c2f2f918aac73c8159"
+        },
+        "compare_runs_regressions": 0
+      },
+      {
+        "stage": 23,
+        "baseline": {
+          "passed": 11,
+          "failed": 0,
+          "total": 11,
+          "report_path": "target/iteration/task61-arguments-baseline-stage-23.json",
+          "report_sha256": "ed3c50e90ca60734bebcd1d1ccb1ec15e126c8e03ec6695e56b61a932d9efdab"
+        },
+        "candidate": {
+          "passed": 11,
+          "failed": 0,
+          "total": 11,
+          "report_path": "target/iteration/task61-arguments-candidate-stage-23.json",
+          "report_sha256": "8e8288413c6248776feb08dc64eb257e79dcec6c130d858116268b7ff379fc1b"
+        },
+        "compare_runs_regressions": 0
+      }
+    ],
+    "node_oracle": {
+      "node_version": "v24.19.0",
+      "script_path": "stageb-tools/argument-object-node-oracle.cjs",
+      "script_sha256": "37acec375a9bdf399bbb9d7e2cc56631503b6722a9208e5ca1d230bb85055f6a",
+      "candidate_matches_node": true,
+      "baseline_matches_node": false,
+      "node_output_sha256": "91229fd9becc1155bb51441ddc78e91c407eacd866cb654228082e1e2d802371",
+      "candidate_output_sha256": "91229fd9becc1155bb51441ddc78e91c407eacd866cb654228082e1e2d802371",
+      "baseline_mismatch": "baseline Reflect.ownKeys(arguments) lists length twice; candidate has Node key order and descriptors"
+    },
+    "unit_test": {
+      "command": "cargo test --profile iteration -p quench-runtime regression_function_arguments_retain_original_values_after_residual_round_trip -- --nocapture",
+      "result": "passed (1 test)"
+    }
+  },
+  "retained_correction": {
+    "source_files": [
+      "crates/quench-runtime/src/api.rs",
+      "crates/quench-runtime/src/vm/object_keys.rs"
+    ],
+    "patch_sha256": "22ec0c72b97237f583ab751795a739437f34922a5da09b3b0a69083d79f5f5f4",
+    "production_binary_sha256": "3ebe4c096583703828444e5ef1d858b152f9564f568ba3d35c4bdbcb958cbd19",
+    "node_oracle_output_sha256": "91229fd9becc1155bb51441ddc78e91c407eacd866cb654228082e1e2d802371",
+    "current_output_sha256": "91229fd9becc1155bb51441ddc78e91c407eacd866cb654228082e1e2d802371",
+    "matches_node": true,
+    "test262_stage_1": {
+      "passed": 263,
+      "failed": 0,
+      "total": 263,
+      "report_path": "target/iteration/task61-arguments-ownkeys-only-stage-1.json",
+      "report_sha256": "27371b0159fb9cf37599ebb54842f33bda2f1ad6832301877a64faaec691e9a1",
+      "compare_runs_regressions": 0
+    },
+    "result": "retained semantic correction only; no performance claim"
+  }
+}

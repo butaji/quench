@@ -1,0 +1,13 @@
+{
+  "gained": [
+    "test-fs-glob-throw.mjs",
+    "test-fs-glob.mjs",
+    "test-icu-env.js",
+    "test-stream2-read-sync-stack.js",
+    "test-stringbytes-external.js"
+  ],
+  "lost": [
+    "test-os-checked-function.js"
+  ],
+  "skip_changes": {}
+}
