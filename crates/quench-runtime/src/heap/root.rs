@@ -39,6 +39,26 @@ pub(crate) struct RootTable {
     id: RootTableId,
     entries: Vec<Entry>,
     free: Vec<u32>,
+    scope: ScopedRoots,
+}
+
+/// The roots native callback scopes make (`insert_scoped`): a stack, as those scopes nest,
+/// whose end truncates it to the scope's mark at once instead of returning each slot to the
+/// free list. Its handles name their own table, so a handle of either kind never reads the
+/// other's entries.
+struct ScopedRoots {
+    id: RootTableId,
+    entries: Vec<Entry>,
+    /// The generation the next scoped entry takes. Each entry takes a new one, so a handle to
+    /// a truncated entry does not name the value its slot holds next (until 2^32 scoped roots
+    /// later, when it would have outlived the scope by that much).
+    next_generation: u32,
+}
+
+impl Default for ScopedRoots {
+    fn default() -> Self {
+        Self { id: RootTableId::fresh(), entries: Vec::new(), next_generation: 1 }
+    }
 }
 
 impl Default for RootTable {
@@ -47,6 +67,7 @@ impl Default for RootTable {
             id: RootTableId::fresh(),
             entries: Vec::new(),
             free: Vec::new(),
+            scope: ScopedRoots::default(),
         }
     }
 }
@@ -73,7 +94,7 @@ impl RootTable {
         let entries = crate::snapshot::read_list(reader, |reader| {
             Ok(Entry { generation: reader.u32()?, value: reader.option_value()? })
         })?;
-        Ok(Self { id: RootTableId::fresh(), entries, free: reader.u32s()? })
+        Ok(Self { id: RootTableId::fresh(), entries, free: reader.u32s()?, scope: ScopedRoots::default() })
     }
 
     /// The parts of `root` a snapshot keeps: its slot and generation.
@@ -113,7 +134,56 @@ impl RootTable {
         }
     }
 
+    /// A root that lasts until the scope that made it ends (`release_scope`).
+    pub(crate) fn insert_scoped(&mut self, value: Value) -> RootId {
+        let scope = &mut self.scope;
+        let generation = scope.next_generation;
+        scope.next_generation = generation.wrapping_add(1).max(1);
+        let slot = u32::try_from(scope.entries.len()).expect("scoped root stack exhausted");
+        scope.entries.push(Entry { generation, value: Some(value) });
+        RootId { table: scope.id, slot, generation }
+    }
+
+    /// The scoped stack's height, where a scope's own scoped roots begin.
+    pub(crate) fn scoped_height(&self) -> usize {
+        self.scope.entries.len()
+    }
+
+    /// Releases the scoped roots made since `height`, as their scope ends.
+    pub(crate) fn release_scope(&mut self, height: usize) {
+        self.scope.entries.truncate(height);
+    }
+
+    /// Releases the scoped roots made since `height` except `keep`, which stay for the
+    /// enclosing scope.
+    pub(crate) fn release_scope_keeping(&mut self, height: usize, keep: &[RootId]) {
+        let id = self.scope.id;
+        for (slot, entry) in self.scope.entries.iter_mut().enumerate().skip(height) {
+            let root = RootId { table: id, slot: slot as u32, generation: entry.generation };
+            if !keep.contains(&root) {
+                entry.value = None;
+            }
+        }
+        self.trim_scope();
+    }
+
+    /// Drops released entries from the top of the scoped stack.
+    fn trim_scope(&mut self) {
+        while self.scope.entries.last().is_some_and(|entry| entry.value.is_none()) {
+            self.scope.entries.pop();
+        }
+    }
+
+    /// The scoped entry `root` names, while it holds it.
+    fn scoped_entry(&mut self, root: RootId) -> Option<&mut Entry> {
+        let entry = self.scope.entries.get_mut(root.slot as usize)?;
+        (entry.generation == root.generation && entry.value.is_some()).then_some(entry)
+    }
+
     pub(crate) fn update(&mut self, root: RootId, value: Value) -> bool {
+        if root.table == self.scope.id {
+            return self.scoped_entry(root).map(|entry| entry.value = Some(value)).is_some();
+        }
         if root.table != self.id {
             return false;
         }
@@ -128,6 +198,10 @@ impl RootTable {
     }
 
     pub(crate) fn get(&self, root: RootId) -> Option<Value> {
+        if root.table == self.scope.id {
+            let entry = self.scope.entries.get(root.slot as usize)?;
+            return (entry.generation == root.generation).then_some(entry.value).flatten();
+        }
         if root.table != self.id {
             return None;
         }
@@ -138,6 +212,14 @@ impl RootTable {
     }
 
     pub(crate) fn remove(&mut self, root: RootId) -> bool {
+        if root.table == self.scope.id {
+            let Some(entry) = self.scoped_entry(root) else {
+                return false;
+            };
+            entry.value = None;
+            self.trim_scope();
+            return true;
+        }
         if root.table != self.id {
             return false;
         }
@@ -154,14 +236,16 @@ impl RootTable {
 
     /// Entry slots, live or free: the most values `values` yields.
     pub(crate) fn slot_count(&self) -> usize {
-        self.entries.len()
+        self.entries.len() + self.scope.entries.len()
     }
 
     pub(crate) fn values(&self) -> impl Iterator<Item = Value> + '_ {
-        self.entries.iter().filter_map(|entry| entry.value)
+        self.entries.iter().chain(&self.scope.entries).filter_map(|entry| entry.value)
     }
 
     pub(crate) fn clear(&mut self) {
+        // A fresh scoped table, so no handle made before the reset names a later root.
+        self.scope = ScopedRoots::default();
         self.free.clear();
         for (slot, entry) in self.entries.iter_mut().enumerate() {
             entry.value = None;
@@ -224,6 +308,40 @@ mod tests {
         assert_eq!(roots.get(replacement), Some(Value::number(2.0)));
         assert!(!roots.free.contains(&last_generation.slot));
         assert!(roots.entries[last_generation.slot as usize].value.is_none());
+    }
+
+    #[test]
+    fn scoped_roots_end_with_their_scope() {
+        let mut roots = RootTable::default();
+        let outer = roots.insert_scoped(Value::number(1.0));
+        let height = roots.scoped_height();
+        let inner = roots.insert_scoped(Value::number(2.0));
+        assert_eq!(roots.get(inner), Some(Value::number(2.0)));
+        assert_eq!(roots.values().count(), 2);
+        roots.release_scope(height);
+        assert_eq!(roots.get(inner), None);
+        assert!(!roots.update(inner, Value::number(3.0)));
+        let reused = roots.insert_scoped(Value::number(4.0));
+        assert_eq!(reused.slot, inner.slot);
+        assert_eq!(roots.get(inner), None);
+        assert_eq!(roots.get(reused), Some(Value::number(4.0)));
+        assert_eq!(roots.get(outer), Some(Value::number(1.0)));
+    }
+
+    #[test]
+    fn scoped_release_keeps_escaped_roots() {
+        let mut roots = RootTable::default();
+        let height = roots.scoped_height();
+        let dropped = roots.insert_scoped(Value::number(1.0));
+        let kept = roots.insert_scoped(Value::number(2.0));
+        let last = roots.insert_scoped(Value::number(3.0));
+        roots.release_scope_keeping(height, &[kept]);
+        assert_eq!(roots.get(dropped), None);
+        assert_eq!(roots.get(last), None);
+        assert_eq!(roots.get(kept), Some(Value::number(2.0)));
+        assert_eq!(roots.scoped_height(), height + 2);
+        assert!(roots.remove(kept));
+        assert_eq!(roots.scoped_height(), height);
     }
 
     #[test]
