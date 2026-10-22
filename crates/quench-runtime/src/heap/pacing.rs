@@ -365,7 +365,9 @@ pub(super) const THROUGHPUT_PACING: GenerationalPacing = GenerationalPacing {
 /// 4 vCPU, 2026-10-20: 768 against 384 gave V8-v7 Score x1.161 with RayTrace x1.54 and
 /// RegExp x1.60 in 7/7 pairs, frameworks x1.023, max RSS geomean x0.997 and x0.999).
 pub(super) const MEMORY_FIRST_PACING: GenerationalPacing = GenerationalPacing {
-    young: Ratio::new(1, 64),
+    // React SSR no-JIT production: 1/1 measured 194.9 renders/s at 30.74 MB
+    // sampled max RSS across 11 rounds, up from 114.7 / 30.37 MB at 1/64.
+    young: Ratio::new(1, 1),
     minimum_young: YOUNG_MINIMUM_ALLOCATION,
     maximum_young: MAXIMUM_YOUNG,
     old_growth: Ratio::new(1, 1),
