@@ -205,7 +205,7 @@ impl ProgramEntry {
         let residual = Rc::new(residual);
         Ok(Self {
             regexp_literals: vec![None; residual.regexp_literal_sites.len()],
-            lane_views: residual.functions.iter().map(|_| std::cell::OnceCell::new()).collect(),
+            lane_views: super::LaneViews::default(),
             lane_deferred: vec![std::cell::Cell::new(0); residual.functions.len()],
             residual,
             wasm_signatures: None,
