@@ -1786,6 +1786,9 @@ pub(crate) struct Vm<H> {
     wasm_js: wasm_js::WasmJsIntrinsics,
     direct_eval: bool,
     direct_eval_var_program: Option<ProgramId>,
+    /// The Function-constructor programs this VM may still offer the host's compile cache
+    /// (`DYNAMIC_FUNCTIONS_KEPT`).
+    dynamic_functions_to_keep: u16,
     parameter_eval: bool,
     eval_script_context: bool,
     deferred_dependency_batch: bool,

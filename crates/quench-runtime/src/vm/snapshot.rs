@@ -387,6 +387,8 @@ impl<H: Host> Vm<H> {
             construct_target,
             // Each process draws its own sequence (`fresh_random_seed`).
             random_state: _,
+            // Each process keeps its own budget.
+            dynamic_functions_to_keep: _,
         } = self;
         let Realm {
             globals,
