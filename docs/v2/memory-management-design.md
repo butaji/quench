@@ -325,12 +325,16 @@ measured on the same binary and lost.
 | Trim array slack at full collections | No max RSS gain; the tails stay in malloc's arena | `tod137-array-slack-trim-…` |
 | Load and compile-phase release interval 0–20 ms under MemoryFirst | Max RSS unchanged (0.616–0.620 of Throughput) | session sweep, TOD-137 comment |
 | `single_pass` register allocation, `opt_level=none` for the JIT | −1.6 / −0.5 MB on NavierStokes, Score ÷3 / −20% | TOD-110 comment |
+| Charge property-arena growth toward the next collection | Max RSS 0.619 → 0.617 of Throughput (RegExp −0.2 MB), Score −1.6% | branch `meas-gc-charge-arena`, TOD-137 comment |
 
 ### 8.3 Where the peak is now (MemoryFirst, no JIT)
 
 At each peak, sampled from `/proc` with resident pages attributed by symbol size:
 - **Code:** 1.3–1.8 MB, of which the interpreter's own working set is 0.8–0.9 MB (`vm` and
   `dispatch_fast`). Quench's code pages are fewer than QuickJS's 2.9 MB, which includes libc.
+- **Heap, besides start-up state:** the property arena is a 516 KiB malloc mapping after it
+  doubles on Richards (`mremap` 132 → 260 → 516 KiB; 288 KiB resident), set by the allocation
+  burst before the first collection. Charging its growth to pacing did not move the peaks.
 - **Heap:** 1.7–2.1 MB on the small fixtures. 1.58 MB of it is start-up state: about 1 MB for
   the runtime's builtins, 958 native function objects among them, and about 0.6 MB for the
   Node host (EventEmitter 164 KiB, `process` 168 KiB). QuickJS's whole heap is 0.55 MB.
