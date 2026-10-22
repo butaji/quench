@@ -2,6 +2,14 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
+    fn method_cache_index(&self, site: usize) -> usize {
+        self.method_cache_offsets
+            .get(self.active_program.raw() as usize)
+            .copied()
+            .unwrap_or(0)
+            + site
+    }
+
     pub(super) fn invalidate_method_caches(&mut self) {
         self.clear_method_caches(1);
     }
@@ -157,10 +165,11 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn record_method_cache(&mut self, site: usize, cache: MethodCache) {
+        let site = self.method_cache_index(site);
         if let Some(set) = self
             .megamorphic_methods
             .iter_mut()
-            .find(|set| usize::from(set.site) == site)
+            .find(|set| set.site == site)
         {
             if let Some(entry) = set.entries[..usize::from(set.len)]
                 .iter_mut()
@@ -184,7 +193,7 @@ impl<H: Host> Vm<H> {
             return;
         }
         let mut set = MethodCacheSet {
-            site: site as u16,
+            site,
             len: 3,
             entries: [EMPTY_METHOD_CACHE; METHOD_MEGAMORPHIC_LIMIT],
         };
@@ -336,8 +345,9 @@ impl<H: Host> Vm<H> {
             .map(|object| (object.shape(), object.proto))
             .unwrap_or((u32::MAX - 1, Value::UNDEFINED));
 
+        let cache_site = self.method_cache_index(site);
         let mut candidate = if self.specialized {
-            self.method_caches[site]
+            self.method_caches[cache_site]
                 .iter()
                 .enumerate()
                 .find(|(_, entry)| {
@@ -353,7 +363,7 @@ impl<H: Host> Vm<H> {
             candidate = self
                 .megamorphic_methods
                 .iter()
-                .find(|set| usize::from(set.site) == site)
+                .find(|set| set.site == cache_site)
                 .and_then(|set| {
                     set.entries[..usize::from(set.len)]
                         .iter()
@@ -408,7 +418,7 @@ impl<H: Host> Vm<H> {
         {
             let cache_proto = if guard.depth == 0 { this } else { proto };
             #[cfg(feature = "profile-aggregate")]
-            self.profile_method_refill(site, shape, cache_proto, target);
+            self.profile_method_refill(cache_site, shape, cache_proto, target);
             self.record_method_cache(
                 site,
                 MethodCache {

@@ -266,7 +266,7 @@ struct MethodCache {
 }
 const METHOD_MEGAMORPHIC_LIMIT: usize = 8;
 struct MethodCacheSet {
-    site: u16,
+    site: usize,
     len: u8,
     entries: [MethodCache; METHOD_MEGAMORPHIC_LIMIT],
 }
@@ -520,6 +520,7 @@ pub(crate) struct Vm<H> {
     string_concats: Option<Box<[StringConcatCache]>>,
     field_caches: Vec<FieldCache>,
     megamorphic_field_indices: Vec<u32>,
+    field_cache_offsets: Vec<usize>,
     megamorphic_fields: Vec<FieldCacheSet>,
     length_atom: Atom,
     size_atom: Atom,
@@ -529,10 +530,12 @@ pub(crate) struct Vm<H> {
     to_fixed_atom: Atom,
     to_precision_atom: Atom,
     method_caches: Vec<[MethodCache; 2]>,
+    method_cache_offsets: Vec<usize>,
     megamorphic_methods: Vec<MethodCacheSet>,
     #[cfg(feature = "profile-aggregate")]
     invalidated_methods: FxHashMap<MethodCacheKey, InvalidatedMethod>,
     object_shapes: Vec<u32>,
+    object_shape_offsets: Vec<usize>,
     descriptors: FxHashMap<(Value, property_key::PropertyKey), PropertyAttributes>,
     // Weak identities; captured environments remain authoritative in function cells.
     function_values: FxHashMap<(ProgramId, u32), Vec<WeakHandle>>,
@@ -945,6 +948,7 @@ impl<H: Host> Vm<H> {
         }
         self.field_caches = vec![EMPTY_CACHE; program.cache_sites as usize];
         self.megamorphic_field_indices = vec![NO_MEGAMORPHIC_FIELD; program.cache_sites as usize];
+        self.field_cache_offsets = vec![0];
         self.megamorphic_fields.clear();
         self.length_atom = self.intern_atom("length");
         self.size_atom = self.intern_atom("size");
@@ -954,8 +958,10 @@ impl<H: Host> Vm<H> {
         self.to_fixed_atom = self.intern_atom("toFixed");
         self.to_precision_atom = self.intern_atom("toPrecision");
         self.method_caches = vec![[EMPTY_METHOD_CACHE; 2]; program.method_sites.len()];
+        self.method_cache_offsets = vec![0];
         self.megamorphic_methods.clear();
         self.object_shapes = vec![u32::MAX; program.object_sites.len()];
+        self.object_shape_offsets = vec![0];
         self.descriptors.clear();
         self.function_values.clear();
         self.programs.reset(program);
@@ -999,6 +1005,7 @@ impl<H: Host> Vm<H> {
         self.intern_program_atoms(&program);
         let id = self.programs.insert_module(program)?;
         let residual = self.programs.get(id)?;
+        self.allocate_program_cache_tables(id, &residual);
         self.materialize_program_constants(id, &residual);
         Some(id)
     }
@@ -1006,8 +1013,35 @@ impl<H: Host> Vm<H> {
         self.intern_program_atoms(&program);
         let id = self.programs.insert(program)?;
         let residual = self.programs.get(id)?;
+        self.allocate_program_cache_tables(id, &residual);
         self.materialize_program_constants(id, &residual);
         Some(id)
+    }
+    fn allocate_program_cache_tables(&mut self, id: ProgramId, program: &ResidualProgram) {
+        let index = id.raw() as usize;
+        self.field_cache_offsets
+            .resize(index + 1, self.field_caches.len());
+        self.method_cache_offsets
+            .resize(index + 1, self.method_caches.len());
+        self.object_shape_offsets
+            .resize(index + 1, self.object_shapes.len());
+        self.field_cache_offsets[index] = self.field_caches.len();
+        self.method_cache_offsets[index] = self.method_caches.len();
+        self.object_shape_offsets[index] = self.object_shapes.len();
+        self.field_caches
+            .resize(self.field_caches.len() + program.cache_sites as usize, EMPTY_CACHE);
+        self.megamorphic_field_indices.resize(
+            self.megamorphic_field_indices.len() + program.cache_sites as usize,
+            NO_MEGAMORPHIC_FIELD,
+        );
+        self.method_caches.resize(
+            self.method_caches.len() + program.method_sites.len(),
+            [EMPTY_METHOD_CACHE; 2],
+        );
+        self.object_shapes.resize(
+            self.object_shapes.len() + program.object_sites.len(),
+            u32::MAX,
+        );
     }
     fn intern_program_atoms(&mut self, program: &ResidualProgram) {
         let first_new_atom = self.atom_text.len() + self.dynamic_atoms.len();
