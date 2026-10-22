@@ -7,6 +7,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 static EXITS: [AtomicU64; Op::COUNT] = [const { AtomicU64::new(0) }; Op::COUNT];
 static OPCODES: [AtomicU64; Op::COUNT] = [const { AtomicU64::new(0) }; Op::COUNT];
 static MOVE_SUCCESSORS: [AtomicU64; Op::COUNT] = [const { AtomicU64::new(0) }; Op::COUNT];
+static MOVE_CALL_RELATIONS: [AtomicU64; 8] = [const { AtomicU64::new(0) }; 8];
+static MOVE_CALL_ARITIES: [AtomicU64; 9] = [const { AtomicU64::new(0) }; 9];
 static TRANSITIONS: [[AtomicU64; Op::COUNT]; Op::COUNT] =
     [const { [const { AtomicU64::new(0) }; Op::COUNT] }; Op::COUNT];
 static REPORT: std::sync::Once = std::sync::Once::new();
@@ -80,6 +82,25 @@ pub(super) fn record_move_successor(op: Op) {
     MOVE_SUCCESSORS[op as usize].fetch_add(1, Ordering::Relaxed);
 }
 
+/// Classify the destination written by a Move immediately before a Call.
+/// Categories: callee, receiver, argument slots 0-3, later argument, or unused.
+pub(super) fn record_move_call(destination: u16, callee: u16, receiver: u16, immediate: u32) {
+    let base = crate::bytecode::ImmediateLayout::call_window_base(immediate);
+    let argc = crate::bytecode::ImmediateLayout::argument_count(immediate);
+    let category = if destination == callee {
+        0
+    } else if destination == receiver {
+        1
+    } else if destination >= base && destination < base + argc {
+        (2 + (destination - base).min(4)) as usize
+    } else {
+        7
+    };
+    MOVE_CALL_RELATIONS[category].fetch_add(1, Ordering::Relaxed);
+    MOVE_CALL_ARITIES[usize::from(argc).min(MOVE_CALL_ARITIES.len() - 1)]
+        .fetch_add(1, Ordering::Relaxed);
+}
+
 pub(super) fn record_transition(from: Op, to: Op) {
     TRANSITIONS[from as usize][to as usize].fetch_add(1, Ordering::Relaxed);
 }
@@ -130,6 +151,20 @@ extern "C" fn report() {
     eprintln!("Move record successor opcodes:");
     for (count, op) in move_successors.into_iter().take(REPORTED_OPCODES) {
         eprintln!("  {count:>12} {}", Op::NAMES[op]);
+    }
+    eprintln!("Move -> Call destination relation (callee, receiver, args 0-3, later, unused):");
+    for (category, count) in MOVE_CALL_RELATIONS.iter().enumerate() {
+        let count = count.load(Ordering::Relaxed);
+        if count > 0 {
+            eprintln!("  {count:>12} category={category}");
+        }
+    }
+    eprintln!("Move -> Call argument counts (8 means 8 or more):");
+    for (argc, count) in MOVE_CALL_ARITIES.iter().enumerate() {
+        let count = count.load(Ordering::Relaxed);
+        if count > 0 {
+            eprintln!("  {count:>12} argc={argc}");
+        }
     }
     let mut transitions: Vec<(u64, usize, usize)> = TRANSITIONS
         .iter()

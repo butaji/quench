@@ -1694,6 +1694,20 @@ lane_handler! {
 
 lane_handler! {
     fn lane_move<ACC: u8>(cx, r, ip, i, view) {
+        #[cfg(feature = "profile-lane-exits")]
+        {
+            // SAFETY: validated bytecode bounds a Move's fallthrough to another record.
+            let next = unsafe { ip.add(1) };
+            // SAFETY: records retain their opcode and operand fields for the lane run.
+            if unsafe { (*next).opcode } == Op::Call {
+                super::lane_exits::record_move_call(
+                    i.a,
+                    unsafe { (*next).b },
+                    unsafe { (*next).c },
+                    unsafe { (*next).imm() },
+                );
+            }
+        }
         produce!(cx, r, ip, i.a, read::<ACC, ACC_B>(r, i.b, view), view)
     }
 }
