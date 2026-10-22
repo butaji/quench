@@ -62,7 +62,7 @@ pub fn release_read_only_pages() {
     if let Ok(mut last) = LAST_RELEASE.lock() {
         *last = Some(std::time::Instant::now());
     }
-    for (start, end) in read_only_segments() {
+    for (start, end) in loaded_segments(ReleasedSegment::Clean) {
         // SAFETY: each segment is a private file mapping that is never written, so discarding
         // its pages loses nothing.
         unsafe {
@@ -251,14 +251,7 @@ pub fn unmap_tracked_mapping(start: usize, length: usize) {
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub fn release_read_only_code_and_data() {
     release_read_only_pages();
-    // The tracked mappings were just released whole; only the others are paged out.
-    let tracked = |start: usize| {
-        TRACKED_MAPPINGS.lock().is_ok_and(|mappings| {
-            mappings.arena.as_ref().is_some_and(|arena| arena.holds(start))
-                || mappings.outside.iter().any(|&(mapping, _)| mapping == start)
-        })
-    };
-    for (start, end) in file_mappings(&[DATA_MAPPING]).into_iter().filter(|&(start, _)| !tracked(start)) {
+    for (start, end) in loaded_segments(ReleasedSegment::LibraryData) {
         // SAFETY: paging out never changes a mapping's contents.
         unsafe {
             libc::madvise(start as *mut libc::c_void, end - start, libc::MADV_PAGEOUT);
@@ -334,23 +327,38 @@ pub fn release_before_entry_compile() {
     }
 }
 
-/// The page-aligned address ranges of the segments above, from the loader's own table: every
-/// non-writable segment of the executable, which the table lists without a name, and every
-/// library's non-writable code segment. The kernel's vDSO, whose name is not a path, is left
-/// out. Each segment is released on its own: one range across the executable's segments spans
+/// The loaded segments a release reaches, by the loader's program headers.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ReleasedSegment {
+    /// Every non-writable segment of the executable, and every library's code segment: clean
+    /// file pages a release discards (`release_read_only_pages`).
+    Clean,
+    /// Every library's non-writable data segment, which `release_read_only_code_and_data`
+    /// pages out. A library's RELRO pages lie in its writable segment, and the executable's
+    /// read-only data is `Clean`. The read-only file mappings had been found by parsing the
+    /// whole mapping table, a line per compile-cache entry: 4.9% of the undici npm scenario's
+    /// instructions (x86_64, 2026-10-22).
+    LibraryData,
+}
+
+/// The page-aligned address ranges of the segments `kind` names, from the loader's own table,
+/// which names the executable with an empty string. The kernel's vDSO, whose name is not a
+/// path, is left out. Each segment is released on its own: one range across the executable's segments spans
 /// the unmapped page between them, and the kernel then rejects it. Releases run at every
 /// collection, and reading `MAPS_PATH` for them made the kernel format, and the host parse,
 /// the whole mapping table each time (about 4% of a `require('util')` run).
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-fn read_only_segments() -> Vec<(usize, usize)> {
+fn loaded_segments(kind: ReleasedSegment) -> Vec<(usize, usize)> {
     unsafe extern "C" fn visit(
         info: *mut libc::dl_phdr_info,
         _size: libc::size_t,
-        segments: *mut libc::c_void,
+        found: *mut libc::c_void,
     ) -> libc::c_int {
-        // SAFETY: the loader passes a valid record for each object, and `segments` is the
-        // vector below for the duration of the call.
-        let (info, segments) = unsafe { (&*info, &mut *segments.cast::<Vec<(usize, usize)>>()) };
+        // SAFETY: the loader passes a valid record for each object, and `found` is the pair
+        // below for the duration of the call.
+        let (info, (kind, segments)) =
+            unsafe { (&*info, &mut *found.cast::<(ReleasedSegment, Vec<(usize, usize)>)>()) };
         // SAFETY: a non-null name is a NUL-terminated string the loader owns.
         let first = (!info.dlpi_name.is_null()).then(|| unsafe { *info.dlpi_name });
         let executable = first == Some(0);
@@ -365,9 +373,13 @@ fn read_only_segments() -> Vec<(usize, usize)> {
             headers
                 .iter()
                 .filter(|header| {
+                    let code = header.p_flags & libc::PF_X != 0;
                     header.p_type == libc::PT_LOAD
                         && header.p_flags & libc::PF_W == 0
-                        && (executable || header.p_flags & libc::PF_X != 0)
+                        && match kind {
+                            ReleasedSegment::Clean => executable || code,
+                            ReleasedSegment::LibraryData => library && !code,
+                        }
                 })
                 .map(|header| {
                     let start = info.dlpi_addr as usize + header.p_vaddr as usize;
@@ -377,12 +389,12 @@ fn read_only_segments() -> Vec<(usize, usize)> {
         );
         0
     }
-    let mut segments = Vec::new();
-    // SAFETY: `visit` only reads the records and pushes onto `segments`.
+    let mut found = (kind, Vec::new());
+    // SAFETY: `visit` only reads the records and pushes onto the pair's segments.
     unsafe {
-        libc::dl_iterate_phdr(Some(visit), (&raw mut segments).cast());
+        libc::dl_iterate_phdr(Some(visit), (&raw mut found).cast());
     }
-    segments
+    found.1
 }
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
