@@ -1966,7 +1966,7 @@ impl<H: Host> Vm<H> {
     }
 }
 
-fn exponentiate(base: f64, exponent: f64) -> f64 {
+pub(super) fn exponentiate(base: f64, exponent: f64) -> f64 {
     if exponent.is_nan() {
         return f64::NAN;
     }
