@@ -4235,8 +4235,23 @@ fn lane_private_brand<H: Host>(
     code: &ResidualProgram,
     atom: crate::bytecode::Atom,
 ) -> Option<crate::heap::PrivateBrand> {
+    let (environment, function, frame) = lane_private_site(cx)?;
+    unsafe { vm(cx) }.site_private_brand(code, ip.addr(), environment, function, frame, atom)
+}
+
+/// What a lane read of a private name of an object resolves to (`lane_get_private_field`).
+enum PrivateRead {
+    Value(Value),
+    /// A private accessor's getter, called with the object.
+    Getter(Value, Value),
+}
+
+/// The running function's private-name scope: the environment its frame, or its activation,
+/// captures from, the function, and whether it runs in a frame (`Vm::site_private_brand`).
+#[inline(always)]
+fn lane_private_site<H: Host>(cx: *mut LaneContext<H>) -> Option<(Value, u32, bool)> {
     let vm = unsafe { vm(cx) };
-    let (environment, function, frame) = match vm.lane_stack.activations.last() {
+    Some(match vm.lane_stack.activations.last() {
         None => {
             // The running frame is the top one, whose home `Vm::private_name_home` finds.
             let frame = vm.frames.len().checked_sub(1)?;
@@ -4244,8 +4259,7 @@ fn lane_private_brand<H: Host>(
         }
         // SAFETY: the context outlives the lane run.
         Some(activation) => (unsafe { (*cx).env }, activation.script().map(|_| activation.function)?, false),
-    };
-    vm.site_private_brand(code, ip.addr(), environment, function, frame, atom)
+    })
 }
 
 /// The store of private field `atom` of `object` at the record `ip`, under its brand there
@@ -4335,6 +4349,25 @@ script_handler! {
 }
 
 script_handler! {
+    /// `PrivateIn` (`#x in object`) of an object with its own data (`Vm::object_data`): whether
+    /// it carries the name's brand at this record (`lane_private_brand`), a field's or a
+    /// method's. Any other operand, which may raise, takes `lane_general_step`.
+    #[inline(never)]
+    fn lane_private_in<>(cx, r, ip, i, view) {
+        // SAFETY: the context's program outlives the lane run.
+        let code = unsafe { &*(*cx).code };
+        let carries = lane_private_brand(cx, ip, code, i.imm()).and_then(|brand| {
+            (unsafe { vm(cx) }).object_data(r.get(i.b)).map(|data| data.has_private_name(brand))
+        });
+        let Some(carries) = carries else {
+            sibling!(lane_general_step::<H>, r, ip, Carried::script(cx))
+        };
+        r.set(i.a, Value::boolean(carries));
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
     /// `GetField` of a private name (`Vm::is_private_name`) from a register or `this`, which
     /// no field cache records (`lane_get_field_first`): the object's private element under
     /// the name's brand at this record (`lane_private_brand`). Any other read, a private
@@ -4343,15 +4376,34 @@ script_handler! {
     fn lane_get_private_field<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
-        let value = unsafe { lane_field_base(cx, r, crate::bytecode::FieldBase(i.b)) }.and_then(|object| {
+        let read = unsafe { lane_field_base(cx, r, crate::bytecode::FieldBase(i.b)) }.and_then(|object| {
             let brand = lane_private_brand(cx, ip, code, i.imm())?;
-            (unsafe { vm(cx) }).object_data(object)?.private_field(brand)
+            let data = (unsafe { vm(cx) }).object_data(object)?;
+            match data.private_field(brand) {
+                Some(value) => Some(PrivateRead::Value(value)),
+                // A method or accessor of a brand the object carries (`Vm::site_private_element`).
+                None if data.has_private_name(brand) => {
+                    let (environment, ..) = lane_private_site(cx)?;
+                    match (unsafe { vm(cx) }).site_private_element(ip.addr(), environment, brand, object)? {
+                        super::private_site_home::PrivateElement::Method(value) => Some(PrivateRead::Value(value)),
+                        super::private_site_home::PrivateElement::Getter(getter) => Some(PrivateRead::Getter(object, getter)),
+                    }
+                }
+                None => None,
+            }
         });
-        let Some(value) = value else {
-            sibling!(lane_get_field::<H>, r, ip, Carried::script(cx))
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script(cx))
+        match read {
+            Some(PrivateRead::Value(value)) => {
+                r.set(i.a, value);
+                next!(cx, r, following(ip), Carried::script(cx))
+            }
+            // The getter runs as the read's activation, as a cached accessor's does.
+            Some(PrivateRead::Getter(object, getter)) => match lane_activate_getter(cx, r, ip, getter, object) {
+                Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
+                Err(next) => next,
+            },
+            None => sibling!(lane_get_field::<H>, r, ip, Carried::script(cx)),
+        }
     }
 }
 
@@ -7475,6 +7527,18 @@ impl<H: Host> Vm<H> {
         } else {
             self.lane_view_any(program, function)
         };
+        #[cfg(feature = "profile-lane-exits")]
+        if view.is_none() {
+            let closures = body.code.iter().any(|packed| decoded_instruction(body, *packed).op() == Op::MakeClosure);
+            super::lane_exits::record_detail(format!(
+                "frame entry {} plain={} registers_only={} env_activation={} environment={} arrow={} rest={} closures={} arguments={} handlers={} class_ctor={} derived={} async={} generator={} locals_promoted={} simple_params={} selective={} cross={} numeric={}",
+                body.name.map(|atom| code.atoms[atom as usize].to_string()).unwrap_or_default(),
+                plan.plain, plan.registers_only, plan.environment_activation, environment, body.is_arrow, body.rest, closures,
+                body.arguments_slot.is_some(), !body.handlers.is_empty(), body.is_class_constructor, body.derived_constructor,
+                body.is_async, body.is_generator, body.local_registers.len(), body.simple_parameters,
+                body.selective_capture_slots.is_some(), cross, numeric,
+            ));
+        }
         let Some(view) = view else {
             // The function needs a frame, which the target records so its calls take one
             // without resolving it again.
@@ -7968,7 +8032,7 @@ script_handler! {
         let vm = unsafe { vm(cx) };
         if vm.atom_class(i.imm()).contains(AtomClass::INTERNAL)
             && let Some(native) =
-                super::environment::internal_name_native(&code.atoms[i.imm() as usize])
+                crate::bytecode::intrinsic_name_native(&code.atoms[i.imm() as usize])
         {
             r.set(i.a, vm.native_value(native));
             if CALL {
@@ -7990,8 +8054,30 @@ script_handler! {
             requicken(ip, lane_load_global_name::<H, CALL>);
             sibling!(lane_load_global_name::<H, CALL>, r, ip, Carried::script(cx))
         }
+        if crate::bytecode::is_intrinsic_name(vm.atom_name(i.imm())) {
+            requicken(ip, lane_load_intrinsic_name::<H, CALL>);
+            sibling!(lane_load_intrinsic_name::<H, CALL>, r, ip, Carried::script(cx))
+        }
         requicken(ip, lane_exit::<H>);
         exit(ip)
+    }
+}
+
+script_handler! {
+    /// A `LoadName` of an intrinsic name (`bytecode::is_intrinsic_name`), as the compiler
+    /// emits for `{ __proto__: v }` or `super`: the native it stands for, which no binding
+    /// can shadow and no scope affects (`Vm::intrinsic_name_value`).
+    #[inline(never)]
+    fn lane_load_intrinsic_name<CALL: bool>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let Some(value) = vm.intrinsic_name_value(vm.atom_name(i.imm())) else {
+            return exit(ip);
+        };
+        r.set(i.a, value);
+        if CALL {
+            r.set(i.b, Value::UNDEFINED);
+        }
+        next!(cx, r, following(ip), Carried::script(cx))
     }
 }
 
@@ -10986,6 +11072,32 @@ fn lane_push_frame_call<H: Host>(
     {
         return exit(ip);
     }
+    #[cfg(feature = "profile-lane-exits")]
+    if let Some(body) = vm.programs.residual(target.0).and_then(|callee_code| {
+        let body = callee_code.function_get(target.1 as usize)?;
+        let plan = body.call_plan(callee_code);
+        let closures = body.code.iter().any(|packed| decoded_instruction(body, *packed).op() == Op::MakeClosure);
+        Some(format!(
+            "{} @{:?} registers_only={} env_activation={} arrow={} rest={} closures={} arguments={} handlers={} class_ctor={} async={} generator={} promoted={}/{} simple_params={} selective={} self={} plain={} in_loop={} legacy={} live={} addresses={} initial={:?} name_ops={:?} unpromoted={:?}",
+            body.name.map(|atom| callee_code.atoms[atom as usize].to_string()).unwrap_or_default(),
+            body.source_span.map(|span| span.start), plan.registers_only, plan.environment_activation, body.is_arrow, body.rest,
+            closures, body.arguments_slot.is_some(), !body.handlers.is_empty(), body.is_class_constructor, body.is_async,
+            body.is_generator, body.local_registers.len(), body.locals, body.simple_parameters, body.selective_capture_slots.is_some(),
+            body.self_binding_slot.is_some(), plan.plain, plan.in_loop, plan.legacy_reflection, plan.live_parameters,
+            plan.addresses_locals, body.initial_register,
+            body.code.iter().map(|packed| decoded_instruction(body, *packed)).filter(|instruction| matches!(instruction.op(),
+                Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof | Op::ResolveName | Op::LoadResolvedName | Op::DeleteName
+                | Op::StoreName | Op::StoreResolvedName | Op::StoreVarBinding | Op::CloneEnv | Op::InitializeThis | Op::SuperCallCheck))
+                .map(|instruction| format!("{:?}:{}", instruction.op(), { let atom = instruction.atom_index() as usize; if atom < callee_code.atoms.len() { callee_code.atoms[atom].replace('\0', "~") } else { "?".into() } }))
+                .collect::<Vec<_>>(),
+            body.local_atoms.iter().enumerate()
+                .filter(|(slot, _)| !body.local_registers.iter().any(|entry| usize::from(entry.local) == *slot))
+                .map(|(_, atom)| callee_code.atoms[*atom as usize].replace('\0', "~"))
+                .collect::<Vec<_>>(),
+        ))
+    }) {
+        super::lane_exits::record_detail(format!("frame call {body}"));
+    }
     let window = ImmediateLayout::call_window_base(i.imm());
     let argc = ImmediateLayout::argument_count(i.imm());
     // A function the JavaScript tier promoted is entered directly, as the general loop's
@@ -11388,6 +11500,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::DefineField => Some(lane_define_field::<H>),
         Op::DefinePrivateField => Some(lane_define_private_field::<H>),
         Op::CheckPrivate => Some(lane_check_private::<H>),
+        Op::PrivateIn => Some(lane_private_in::<H>),
         op if lane_steps_in_place(op) => Some(lane_general_step::<H>),
         Op::IncDec => Some(lane_inc_dec::<H, false>),
         Op::Binary | Op::NumericAdd | Op::NumericMultiply => Some(lane_binary::<H>),
