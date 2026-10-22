@@ -2674,6 +2674,7 @@ lane_handler! {
             .or_else(|| vm.plain_keyed_get(base, key))
             .or_else(|| vm.plain_typed_element(base, key))
             .or_else(|| lane_string_element(vm, base, key))
+            .or_else(|| vm.string_index_element(base, key))
         else {
             return exit(ip);
         };
@@ -2713,6 +2714,7 @@ script_handler! {
             .or_else(|| lane_site_keyed_get(vm, ip, base, key))
             .or_else(|| vm.plain_typed_element(base, key))
             .or_else(|| lane_string_element(vm, base, key))
+            .or_else(|| vm.string_index_element(base, key))
         else {
             match lane_index_getter_activation(cx, r, ip, base, key) {
                 Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
@@ -4184,6 +4186,74 @@ fn lane_private_field_store<H: Host>(
         return false;
     };
     (unsafe { vm(cx) }).object_data_mut(object).is_some_and(|data| data.set_private_field(brand, value))
+}
+
+/// Leave the lane at `ip` after its instruction failed with `error` before any effect: a frame
+/// run raises it there (`Vm::lane_raised`); an activation leaves the instruction to the general
+/// path, which runs it again and raises the same error.
+#[inline(never)]
+fn lane_raise<H: Host>(cx: *mut LaneContext<H>, ip: Ip, error: JsError) -> Ip {
+    let vm = unsafe { vm(cx) };
+    if vm.lane_stack.activations.is_empty() {
+        vm.lane_raised = Some(error);
+    }
+    exit(ip)
+}
+
+script_handler! {
+    /// `DefineField` (`Vm::define_field_cached`), as the general step defines it. A Proxy
+    /// receiver's define runs its trap, which a frameless activation leaves to the general path.
+    #[inline(never)]
+    fn lane_define_field<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let object = r.get(i.b);
+        if !vm.lane_stack.activations.is_empty() && vm.proxy_parts(object).is_some() {
+            return exit(ip);
+        }
+        // SAFETY: the context's program outlives the lane run.
+        let code = unsafe { &*(*cx).code };
+        if let Err(error) = vm.define_field_cached(code, object, i.imm(), r.get(i.a), i.c) {
+            return lane_raise(cx, ip, error);
+        }
+        // Adding a property can allocate.
+        note_allocation(vm);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// `DefinePrivateField` (`Vm::initialize_private_field`) of the object in `b` under the home
+    /// in `c`, which runs no guest code.
+    #[inline(never)]
+    fn lane_define_private_field<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        // SAFETY: the context's program outlives the lane run.
+        let code = unsafe { &*(*cx).code };
+        if let Err(error) = vm.initialize_private_field(code, r.get(i.b), r.get(i.c), i.imm(), r.get(i.a)) {
+            return lane_raise(cx, ip, error);
+        }
+        // Adding a private element can allocate.
+        note_allocation(vm);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// `CheckPrivate` of an object holding the private field under the name's brand at this
+    /// record (`lane_private_brand`), which proves the check; any other check takes
+    /// `lane_general_step`.
+    #[inline(never)]
+    fn lane_check_private<>(cx, r, ip, i, view) {
+        // SAFETY: the context's program outlives the lane run.
+        let code = unsafe { &*(*cx).code };
+        let present = lane_private_brand(cx, ip, code, i.imm()).is_some_and(|brand| {
+            (unsafe { vm(cx) }).object_data(r.get(i.a)).is_some_and(|data| data.private_field(brand).is_some())
+        });
+        if !present {
+            sibling!(lane_general_step::<H>, r, ip, Carried::script(cx))
+        }
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
 }
 
 script_handler! {
@@ -8277,7 +8347,8 @@ fn lane_promise_native<H: Host>(
 /// allocates its string, `Number`'s predicates, which coerce nothing
 /// (`number::number_predicate`), the global `isNaN` and `isFinite` of an argument whose
 /// ToNumber reads nothing (`Value::immediate_number`), `Boolean` called as a function, whose
-/// ToBoolean runs no guest code, and `ArrayBuffer.isView`. `None` leaves any other call to
+/// ToBoolean runs no guest code, `String` called with a string or an immediate primitive, and
+/// `ArrayBuffer.isView`. `None` leaves any other call to
 /// `lane_call_native`.
 #[inline(never)]
 fn lane_pure_native<H: Host>(vm: &mut Vm<H>, callee: Value, receiver: Value, args: &[Value]) -> Option<Value> {
@@ -8294,6 +8365,17 @@ fn lane_pure_native<H: Host>(vm: &mut Vm<H>, callee: Value, receiver: Value, arg
         }
         Native::ArrayBufferIsView => Some(Value::boolean(vm.is_array_buffer_view(argument))),
         Native::Boolean => Some(Value::boolean(vm.truthy(argument))),
+        // `String(value)` of a string is that string; of a primitive whose ToString reads no
+        // cell, its spelling (`coercion::immediate_to_string`).
+        Native::String if !args.is_empty() => {
+            if vm.heap.string(argument).is_some() {
+                return Some(argument);
+            }
+            let text = super::coercion::immediate_to_string(argument)?;
+            let value = vm.heap.alloc_string(super::wtf16::JsString::from_str(&text));
+            note_allocation(vm);
+            Some(value)
+        }
         Native::GlobalIsNaN | Native::GlobalIsFinite => {
             super::number::global_number_predicate(*native, argument.immediate_number()?).map(Value::boolean)
         }
@@ -11092,6 +11174,9 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::SetThisField | Op::SetThisFieldStrict => Some(lane_set_this_field_own::<H>),
         Op::ToNumeric => Some(lane_to_numeric::<H>),
         Op::RequireObjectCoercible => Some(lane_require_object_coercible::<H>),
+        Op::DefineField => Some(lane_define_field::<H>),
+        Op::DefinePrivateField => Some(lane_define_private_field::<H>),
+        Op::CheckPrivate => Some(lane_check_private::<H>),
         op if lane_steps_in_place(op) => Some(lane_general_step::<H>),
         Op::IncDec => Some(lane_inc_dec::<H, false>),
         Op::Binary | Op::NumericAdd | Op::NumericMultiply => Some(lane_binary::<H>),
