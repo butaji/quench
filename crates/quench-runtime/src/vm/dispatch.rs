@@ -246,60 +246,66 @@ impl<H: Host> Vm<H> {
         let mut this = window.first().copied().unwrap_or(Value::UNDEFINED);
         let apply_arguments;
         let bound_arguments;
-        let arguments = match self.heap.function(callee) {
-            // A bound function calls its target with its bound `this`, its bound arguments
-            // and then the call's, and takes no observable step of its own.
-            Some(FunctionRecord {
-                kind: FunctionKind::Native(Native::FunctionBoundCall),
-                env,
-                ..
-            }) => {
-                // A forwarded `arguments` reaches here unmaterialized, which only `apply`
-                // takes as its list.
-                if i.op() != Op::Call {
-                    return None;
-                }
-                let (bound_target, bound_this, bound) = self.bound_function_parts(*env)?;
-                (target, this) = (bound_target, bound_this);
-                bound_arguments = bound.iter().chain(window).copied().collect::<Vec<_>>();
-                bound_arguments.as_slice()
+        // `f.call(...)`, a bound function without bound arguments, or an uncurried builtin
+        // (`Vm::forwarded_call`). A forwarded `arguments` reaches here unmaterialized, which
+        // only `apply` takes as its list.
+        let forwarded = if i.op() == Op::Call { self.forwarded_call(callee, target, window) } else { None };
+        let arguments = match forwarded {
+            Some((forwarded_target, forwarded_this, forwarded_arguments)) => {
+                (target, this) = (forwarded_target, forwarded_this);
+                forwarded_arguments
             }
-            Some(FunctionRecord {
-                kind: FunctionKind::Native(Native::FunctionCall),
-                ..
-            }) => window.get(1..).unwrap_or_default(),
-            // `Reflect.apply` takes its target and receiver as arguments and requires a list
-            // object, which only a dense array answers here.
-            Some(FunctionRecord {
-                kind: FunctionKind::Native(Native::ReflectApply),
-                ..
-            }) => {
-                let list = window.get(2).copied().unwrap_or(Value::UNDEFINED);
-                if i.op() != Op::Call || self.heap.array(list).is_none() {
-                    return None;
+            None => match self.heap.function(callee) {
+                // A bound function calls its target with its bound `this`, its bound arguments
+                // and then the call's, and takes no observable step of its own.
+                Some(FunctionRecord {
+                    kind: FunctionKind::Native(Native::FunctionBoundCall),
+                    env,
+                    ..
+                }) => {
+                    // A forwarded `arguments` reaches here unmaterialized, which only `apply`
+                    // takes as its list.
+                    if i.op() != Op::Call {
+                        return None;
+                    }
+                    let (bound_target, bound_this, bound) = self.bound_function_parts(*env)?;
+                    (target, this) = (bound_target, bound_this);
+                    bound_arguments = bound.iter().chain(window).copied().collect::<Vec<_>>();
+                    bound_arguments.as_slice()
                 }
-                target = window.first().copied().unwrap_or(Value::UNDEFINED);
-                this = window.get(1).copied().unwrap_or(Value::UNDEFINED);
-                apply_arguments = self.dense_apply_arguments(list)?;
-                apply_arguments.as_slice()
-            }
-            Some(FunctionRecord {
-                kind: FunctionKind::Native(Native::FunctionApply),
-                ..
-            }) => match window.get(1).copied().unwrap_or(Value::UNDEFINED) {
-                // The caller's unmaterialized `arguments`: the values its frame kept.
-                Value::UNMATERIALIZED_ARGUMENTS => {
-                    let kept: *const [Value] = self.frames[f].original_arguments.as_slice();
-                    // SAFETY: the caller's frame stays on the stack and is not mutated while
-                    // the callee is set up; its buffer does not move when `frames` grows.
-                    unsafe { &*kept }
-                }
-                list => {
+                // `Reflect.apply` takes its target and receiver as arguments and requires a list
+                // object, which only a dense array answers here.
+                Some(FunctionRecord {
+                    kind: FunctionKind::Native(Native::ReflectApply),
+                    ..
+                }) => {
+                    let list = window.get(2).copied().unwrap_or(Value::UNDEFINED);
+                    if i.op() != Op::Call || self.heap.array(list).is_none() {
+                        return None;
+                    }
+                    target = window.first().copied().unwrap_or(Value::UNDEFINED);
+                    this = window.get(1).copied().unwrap_or(Value::UNDEFINED);
                     apply_arguments = self.dense_apply_arguments(list)?;
                     apply_arguments.as_slice()
                 }
+                Some(FunctionRecord {
+                    kind: FunctionKind::Native(Native::FunctionApply),
+                    ..
+                }) => match window.get(1).copied().unwrap_or(Value::UNDEFINED) {
+                    // The caller's unmaterialized `arguments`: the values its frame kept.
+                    Value::UNMATERIALIZED_ARGUMENTS => {
+                        let kept: *const [Value] = self.frames[f].original_arguments.as_slice();
+                        // SAFETY: the caller's frame stays on the stack and is not mutated while
+                        // the callee is set up; its buffer does not move when `frames` grows.
+                        unsafe { &*kept }
+                    }
+                    list => {
+                        apply_arguments = self.dense_apply_arguments(list)?;
+                        apply_arguments.as_slice()
+                    }
+                },
+                _ => return None,
             },
-            _ => return None,
         };
         let resolved = self.in_loop_call_target(p, target)?;
         self.profile.call_source(0);
@@ -737,8 +743,10 @@ impl<H: Host> Vm<H> {
                         cache_site,
                     } => {
                         let base = self.resolve_field_base(p, f, base)?;
+                        // A read fused with its frame's return pushes the getter as a call
+                        // whose completion returns from the frame (`PendingGeneralCall::returns`);
+                        // a getter is no tail call, so a strict frame pushes it too.
                         if allow_inline_calls
-                            && !i.returns_from_frame()
                             && !i.writes_current_this()
                             && let Some(getter) =
                                 self.cached_field_getter(base, atom, self.field_cache_index(cache_site))
@@ -1578,14 +1586,26 @@ impl<H: Host> Vm<H> {
                         i.construct_arguments()
                 {
                     let callee = self.read(f, i.register_b());
-                    if let Some((id, env, this)) = self.inline_construct_target(p, f, callee) {
+                    if let Some((program, id, env, this)) = self.inline_construct_target(p, f, callee) {
                         let arguments: *const [Value] = self.register_window(f, window);
                         self.frames[f].pc = *pc;
                         self.frames[f].pc_is_resume = true;
                         self.construct_target = Some(ConstructionTarget { callee, new_target: callee });
+                        // A constructor of another program is pushed in its own, as
+                        // `push_in_loop_call` pushes a call; the loop's `PushFrame` saves and
+                        // restores the caller's.
+                        let caller_program = self.active_program;
+                        let callee_residual = if program == caller_program {
+                            None
+                        } else {
+                            self.programs.get(program)
+                        };
+                        if callee_residual.is_some() {
+                            self.set_active_program(program);
+                        }
                         // SAFETY: see `push_general_user_frame`; the window outlives callee setup.
                         let pushed = self.push_general_user_frame(
-                            p,
+                            callee_residual.as_deref().unwrap_or(p),
                             id,
                             env,
                             this,
@@ -1593,6 +1613,9 @@ impl<H: Host> Vm<H> {
                             CallContext::user_function(id, callee),
                         );
                         self.construct_target = None;
+                        if pushed.is_err() && callee_residual.is_some() {
+                            self.set_active_program(caller_program);
+                        }
                         return Ok(StepResult::PushFrame {
                             destination: i.result_register(),
                             call_guard: pushed?,

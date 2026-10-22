@@ -88,10 +88,18 @@ pub trait Host {
         false
     }
 
+    /// Whether `promise_job_boundary` may do anything now; while it is false the VM skips
+    /// the call, and its context, around each Promise job.
+    fn observes_promise_job_boundaries(&self) -> bool {
+        true
+    }
+
     /// A collection has finished, or a full one is starting: a host may return memory the
     /// process no longer needs resident (its read-only pages), which nothing observable
     /// depends on. At these boundaries the code about to run differs from the code that ran.
-    fn at_collection_boundary(&mut self) {}
+    /// The runtime's memory policy says whether it should
+    /// (`MemoryPolicy::returns_pages_at_collections`).
+    fn at_collection_boundary(&mut self, _policy: crate::MemoryPolicy) {}
 
     /// A compiled host program kept across runs: the bytes `keep_compiled_program` was given
     /// for compiling `parts` (the program's text, in order) under `name` in this build. The
@@ -101,6 +109,12 @@ pub trait Host {
     fn kept_compiled_program(&mut self, _name: &str, _parts: &[&str]) -> Option<crate::KeptBytes> {
         None
     }
+
+    /// A program kept by `kept_compiled_program` has decoded, in place of its compilation,
+    /// and is about to run. It parsed nothing, so it took none of a compilation's phase
+    /// boundaries (`set_compile_phase_boundary`): a host may return the pages loading it
+    /// touched here instead.
+    fn cached_program_decoded(&mut self) {}
 
     /// Offers the host a compiled host program's compact form (`kept_compiled_program`).
     fn keep_compiled_program(&mut self, _name: &str, _parts: &[&str], _bytes: &[u8]) {}
@@ -231,6 +245,10 @@ pub trait Host {
     fn release_job_context(&mut self, _context: HostExecutionContext) -> Vec<crate::RootId> {
         Vec::new()
     }
+
+    /// Release the contexts `create_promise_context` gave promises that a collection freed.
+    /// No promise, reaction or job names them again.
+    fn release_promise_contexts(&mut self, _contexts: &[HostExecutionContext]) {}
 
     fn call_wasm(
         &mut self,

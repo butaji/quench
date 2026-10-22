@@ -7,6 +7,31 @@ pub(crate) const LEXICAL_THIS_BINDING: &str = "\0quench:lexical-this";
 /// The `Unary` operator a template literal substitution compiles to: ToString (ECMA-262
 /// 13.15.5.1 step 5), which no source operator spells. It extends oxc's operator numbering.
 pub(crate) const UNARY_TO_STRING: u32 = oxc_ast::ast::UnaryOperator::Delete as u32 + 1;
+/// The names `typeof` yields (ECMA-262 13.5.3.1), indexed as `typeof_name_index` (vm/coercion.rs) classifies
+/// values.
+pub(crate) const TYPEOF_NAMES: [&str; 8] =
+    ["undefined", "object", "boolean", "number", "string", "bigint", "symbol", "function"];
+/// The `Unary` operators that compare `typeof` of their operand with a name in
+/// `TYPEOF_NAMES` (`typeof x === "function"`): this plus the name's index tests equality,
+/// and that plus `TYPEOF_NAMES.len()` inequality. The comparison of two strings that
+/// `typeof` and a literal would make has no effects, so it needs neither string.
+pub(crate) const UNARY_TYPEOF_IS: u32 = UNARY_TO_STRING + 1;
+const UNARY_TYPEOF_TESTS: u32 = 2 * TYPEOF_NAMES.len() as u32;
+
+/// The `UNARY_TYPEOF_IS` operator testing `typeof x` against `name`, negated for an
+/// inequality; `None` when no value's `typeof` is `name`.
+pub(crate) fn typeof_test_operator(name: &str, negated: bool) -> Option<u32> {
+    let index = TYPEOF_NAMES.iter().position(|candidate| *candidate == name)? as u32;
+    Some(UNARY_TYPEOF_IS + index + if negated { TYPEOF_NAMES.len() as u32 } else { 0 })
+}
+
+/// The name index and negation a `UNARY_TYPEOF_IS` operator tests.
+#[inline(always)]
+pub(crate) fn typeof_test(operator: u32) -> Option<(usize, bool)> {
+    let offset = operator.checked_sub(UNARY_TYPEOF_IS).filter(|offset| *offset < UNARY_TYPEOF_TESTS)?;
+    let names = TYPEOF_NAMES.len() as u32;
+    Some(((offset % names) as usize, offset >= names))
+}
 pub(crate) const NEW_TARGET_BINDING: &str = "\0quench:new-target";
 
 pub type Atom = u32;
@@ -2437,14 +2462,25 @@ pub(crate) struct FieldBase(pub(crate) u16);
 impl FieldBase {
     pub(crate) const THIS: Self = Self(u16::MAX);
     pub(crate) const NESTED: u16 = u16::MAX - 1;
+    const LOCAL_FLAG: u16 = 0x4000;
 
     pub(crate) fn register(value: Register) -> Self {
-        debug_assert!(value < Self::NESTED);
+        debug_assert!(value <= REGISTER_MASK);
         Self(value)
     }
 
     pub(crate) fn register_index(self) -> Option<Register> {
-        (self != Self::THIS).then_some(self.0)
+        (self.0 <= REGISTER_MASK).then_some(self.0)
+    }
+
+    pub(crate) fn local(value: u16) -> Option<Self> {
+        (value <= REGISTER_MASK).then_some(Self(Self::LOCAL_FLAG | value))
+    }
+
+    pub(crate) fn local_index(self) -> Option<u16> {
+        (self.0 & Self::LOCAL_FLAG != 0
+            && self.0 & !(Self::LOCAL_FLAG | REGISTER_MASK) == 0)
+            .then_some(self.0 & REGISTER_MASK)
     }
 }
 
@@ -3010,6 +3046,7 @@ impl ResidualProgram {
     #[inline(never)]
     fn recompile_function(&self, index: usize) -> &Function {
         self.functions[index].record.get_or_init(|| {
+            crate::compile::compile_phase_boundary(crate::compile::CompilePhase::FirstCall);
             let deferred = self
                 .encoded_records
                 .as_deref()
@@ -3101,7 +3138,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 101;
+    pub const FORMAT_VERSION: u8 = 102;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;

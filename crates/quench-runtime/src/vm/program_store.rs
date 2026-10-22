@@ -19,6 +19,7 @@ struct JsJitCounters {
     guard_strict_comparisons: u32,
     guard_relational_comparisons: u32,
     entries: u64,
+    lane_entries: u64,
     numeric_entries: u64,
     promotions: u64,
     compile_attempts: u64,
@@ -29,6 +30,9 @@ struct JsJitCounters {
     field_return_candidate_entries: u64,
     field_return_fixed_this_entries: u64,
     field_return_fast_entries: u64,
+    field_increment_candidate_entries: u64,
+    field_increment_fixed_this_entries: u64,
+    field_increment_fast_entries: u64,
     numeric_find_fast_entries: u64,
     fallback_entries: u64,
     interpreter_completions: u64,
@@ -89,9 +93,11 @@ struct ProgramEntry {
     residual: Rc<ResidualProgram>,
     wasm_signatures: Option<Rc<crate::wasm::WasmSignatures>>,
     constants: Vec<Value>,
-    const_arrays: Vec<Option<Rc<Vec<Value>>>>,
+    const_arrays: Vec<Option<crate::heap::ArrayElements>>,
     function_sources: Vec<Option<Value>>,
-    regexp_literals: Vec<Option<Result<Rc<quench_regexp::Regex>, Rc<str>>>>,
+    /// Each RegExp literal site's record, shared by every object it evaluates to, or its
+    /// compile error.
+    regexp_literals: Vec<Option<Result<Rc<crate::heap::RegExpMeta>, Rc<str>>>>,
     module_environment: Option<Value>,
     import_meta: Option<Value>,
     module_imports: Vec<(u16, ModuleImport)>,
@@ -218,6 +224,9 @@ pub(crate) struct ProgramStore {
     jit_mapped_bytes: usize,
     /// Allocated only when opt-in JavaScript JIT diagnostics are requested.
     js_jit_diagnostics: Option<FxHashMap<(u32, u32), JsJitCounters>>,
+    js_jit_dataview_float64_enabled: bool,
+    js_jit_dataview_float64_get_entries: u64,
+    js_jit_dataview_float64_set_entries: u64,
 }
 
 impl Default for ProgramStore {
@@ -239,6 +248,11 @@ impl Default for ProgramStore {
             js_jit_diagnostics: std::env::var_os("QUENCH_JS_JIT_STATS")
                 .is_some_and(|value| value == "1")
                 .then(FxHashMap::default),
+            js_jit_dataview_float64_enabled:
+                std::env::var_os("QUENCH_JS_JIT_DATAVIEW_FLOAT64")
+                    .is_none_or(|value| value != "0"),
+            js_jit_dataview_float64_get_entries: 0,
+            js_jit_dataview_float64_set_entries: 0,
         }
     }
 }
@@ -597,7 +611,11 @@ impl ProgramStore {
         let id = ProgramId::from_index(self.programs.len())?;
         // A function compiles again on its first call; until then it keeps only its header.
         // A program other owners share keeps its records.
-        if let Some(program) = Rc::get_mut(&mut program) {
+        #[cfg(feature = "profile-aggregate")]
+        let retain_profile_records = std::env::var_os("QUENCH_PROFILE_RETAIN_BYTECODE").is_some();
+        #[cfg(not(feature = "profile-aggregate"))]
+        let retain_profile_records = false;
+        if !retain_profile_records && let Some(program) = Rc::get_mut(&mut program) {
             program.release_replayable_records();
         }
         let regexp_literals = vec![None; program.regexp_literal_sites.len()];
@@ -1141,6 +1159,21 @@ impl ProgramStore {
         self.js_jit_diagnostics.is_some()
     }
 
+    pub(super) fn js_jit_dataview_float64_enabled(&self) -> bool {
+        self.js_jit_dataview_float64_enabled
+    }
+
+    pub(super) fn note_js_jit_dataview_float64(&mut self, setter: bool) {
+        if self.js_jit_diagnostics.is_none() {
+            return;
+        }
+        if setter {
+            self.js_jit_dataview_float64_set_entries += 1;
+        } else {
+            self.js_jit_dataview_float64_get_entries += 1;
+        }
+    }
+
     /// Record the input guard outcome. Promotion checks only at prespecified
     /// sample sizes; exact binomial cutoffs spend alpha across those looks.
     pub(super) fn note_js_function_entry(
@@ -1286,6 +1319,24 @@ impl ProgramStore {
         numeric: bool,
         parameter_count: u16,
     ) {
+        self.record_js_jit_counter_entry(id, function, Some(numeric), parameter_count);
+    }
+
+    pub(super) fn record_js_jit_lane_entry(&mut self, id: ProgramId, function: u32) {
+        let parameter_count = self
+            .entry(id)
+            .and_then(|entry| entry.residual.function_get(function as usize))
+            .map_or(0, |function| function.params);
+        self.record_js_jit_counter_entry(id, function, None, parameter_count);
+    }
+
+    fn record_js_jit_counter_entry(
+        &mut self,
+        id: ProgramId,
+        function: u32,
+        numeric: Option<bool>,
+        parameter_count: u16,
+    ) {
         let key = (id.raw(), function);
         let Some(diagnostics) = self.js_jit_diagnostics.as_ref() else {
             return;
@@ -1296,11 +1347,15 @@ impl ProgramStore {
                 .as_mut()
                 .and_then(|diagnostics| diagnostics.get_mut(&key))
             {
-                counters.entries = counters.entries.saturating_add(1);
                 counters.parameter_count = parameter_count;
-                counters.numeric_entries = counters
-                    .numeric_entries
-                    .saturating_add(u64::from(numeric));
+                if let Some(numeric) = numeric {
+                    counters.entries = counters.entries.saturating_add(1);
+                    counters.numeric_entries = counters
+                        .numeric_entries
+                        .saturating_add(u64::from(numeric));
+                } else {
+                    counters.lane_entries = counters.lane_entries.saturating_add(1);
+                }
             }
             return;
         }
@@ -1415,10 +1470,14 @@ impl ProgramStore {
             counters.guard_typeof_ops = guard_census.1;
             counters.guard_strict_comparisons = guard_census.2;
             counters.guard_relational_comparisons = guard_census.3;
-            counters.entries = counters.entries.saturating_add(1);
-            counters.numeric_entries = counters
-                .numeric_entries
-                .saturating_add(u64::from(numeric));
+            if let Some(numeric) = numeric {
+                counters.entries = counters.entries.saturating_add(1);
+                counters.numeric_entries = counters
+                    .numeric_entries
+                    .saturating_add(u64::from(numeric));
+            } else {
+                counters.lane_entries = counters.lane_entries.saturating_add(1);
+            }
         }
     }
 
@@ -1512,6 +1571,36 @@ impl ProgramStore {
         {
             counters.field_return_fast_entries =
                 counters.field_return_fast_entries.saturating_add(1);
+        }
+    }
+
+    pub(super) fn record_js_jit_field_increment_candidate(
+        &mut self,
+        id: ProgramId,
+        function: u32,
+        fixed_this: bool,
+    ) {
+        if let Some(counters) = self
+            .js_jit_diagnostics
+            .as_mut()
+            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
+        {
+            counters.field_increment_candidate_entries =
+                counters.field_increment_candidate_entries.saturating_add(1);
+            counters.field_increment_fixed_this_entries = counters
+                .field_increment_fixed_this_entries
+                .saturating_add(u64::from(fixed_this));
+        }
+    }
+
+    pub(super) fn record_js_jit_field_increment_entry(&mut self, id: ProgramId, function: u32) {
+        if let Some(counters) = self
+            .js_jit_diagnostics
+            .as_mut()
+            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
+        {
+            counters.field_increment_fast_entries =
+                counters.field_increment_fast_entries.saturating_add(1);
         }
     }
 
@@ -1639,7 +1728,13 @@ impl ProgramStore {
         }
         Some(view.get_or_init(|| {
             let live = entry.residual.register_root_masks(function);
-            derive(code, &entry.constants, entry.residual.kind, live)
+            let view = derive(code, &entry.constants, entry.residual.kind, live);
+            #[cfg(feature = "profile-lane-exits")]
+            {
+                let (start, end) = view.record_range();
+                super::lane_exits::register_view(start, end, census_label(entry, function), code.instructions().map(|instruction| instruction.op()).collect());
+            }
+            view
         }))
     }
 
@@ -1651,7 +1746,7 @@ impl ProgramStore {
         let Some(entry) = self.entry(id) else {
             return false;
         };
-        let derived = entry.lane_views.derived(function);
+        let derived = entry.lane_views.derived(function).is_some();
         derived
             || entry
                 .lane_deferred
@@ -1675,7 +1770,13 @@ impl ProgramStore {
         let view = entry.lane_views.of(&entry.residual).get(function as usize)?;
         Some(view.get_or_init(|| {
             let live = entry.residual.register_root_masks(function);
-            derive(code, &entry.constants, entry.residual.kind, live)
+            let view = derive(code, &entry.constants, entry.residual.kind, live);
+            #[cfg(feature = "profile-lane-exits")]
+            {
+                let (start, end) = view.record_range();
+                super::lane_exits::register_view(start, end, census_label(entry, function), code.instructions().map(|instruction| instruction.op()).collect());
+            }
+            view
         }))
     }
 
@@ -1693,12 +1794,12 @@ impl ProgramStore {
         id: ProgramId,
         start: usize,
         count: usize,
-    ) -> Option<Rc<Vec<Value>>> {
+    ) -> Option<crate::heap::ArrayElements> {
         let entry = self.entry_mut(id)?;
         let end = start.checked_add(count)?;
         let cached = entry.const_arrays.get_mut(start)?;
         if cached.is_none() {
-            *cached = Some(Rc::new(entry.constants.get(start..end)?.to_vec()));
+            *cached = Some(crate::heap::ArrayElements::from_slice(entry.constants.get(start..end)?));
         }
         cached.clone()
     }
@@ -1724,19 +1825,19 @@ impl ProgramStore {
         Some(*cached.get_or_insert(source))
     }
 
-    pub(crate) fn regexp_literal_matcher(
+    pub(crate) fn regexp_literal_meta(
         &self,
         id: ProgramId,
         site: usize,
-    ) -> Option<Result<Rc<quench_regexp::Regex>, Rc<str>>> {
+    ) -> Option<Result<Rc<crate::heap::RegExpMeta>, Rc<str>>> {
         self.entry(id)?.regexp_literals.get(site)?.as_ref().cloned()
     }
 
-    pub(crate) fn cache_regexp_literal_matcher(
+    pub(crate) fn cache_regexp_literal_meta(
         &mut self,
         id: ProgramId,
         site: usize,
-        matcher: Result<Rc<quench_regexp::Regex>, Rc<str>>,
+        matcher: Result<Rc<crate::heap::RegExpMeta>, Rc<str>>,
     ) -> bool {
         let Some(entry) = self.entry_mut(id) else {
             return false;
@@ -1812,7 +1913,11 @@ impl Drop for ProgramStore {
                     JsTierState::Unsupported => "unsupported",
                     JsTierState::Compiled(_) => "compiled",
                 })
-                .unwrap_or("reclaimed");
+                .unwrap_or(if counters.lane_entries != 0 {
+                    "lane-only"
+                } else {
+                    "reclaimed"
+                });
             let function_name = entry
                 .and_then(|entry| entry.residual.functions.get(*function as usize).map(|f| (entry, f)))
                 .and_then(|(entry, function)| {
@@ -1833,6 +1938,18 @@ impl Drop for ProgramStore {
                     / u128::from(counters.entries))
                     .min(1_000_000) as u64
             };
+            let total_entries = counters.entries.saturating_add(counters.lane_entries);
+            let all_entry_native_coverage_ppm = if total_entries == 0 {
+                0
+            } else {
+                (u128::from(counters.native_entries) * 1_000_000
+                    / u128::from(total_entries))
+                .min(1_000_000) as u64
+            };
+            let osr = entry
+                .and_then(|entry| entry.lane_views.derived(*function))
+                .map(super::dispatch_fast::LaneView::osr_diagnostics)
+                .unwrap_or_default();
             let _ = write!(
                 stderr,
                 "QUENCH_JS_JIT_STATS {{\"program\":{program},\"function\":{function},\"function_name\":"
@@ -1848,10 +1965,11 @@ impl Drop for ProgramStore {
             }
             let _ = write!(
                 stderr,
-                ",\"status\":\"{status}\",\"parameter_count\":{},\"instruction_count\":{},\"entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"compile_ns\":{},\"native_entries\":{},\"native_entry_coverage_ppm\":{},\"field_return_candidate_entries\":{},\"field_return_fixed_this_entries\":{},\"field_return_fast_entries\":{},\"numeric_find_fast_entries\":{},\"fallback_entries\":{},\"interpreter_completions\":{},\"interpreter_inclusive_ns\":{},\"guard_census\":{{\"conditional_branch_sites\":{},\"typeof_operations\":{},\"strict_comparison_sites\":{},\"relational_comparison_sites\":{}}},\"opcodes\":[",
+                ",\"status\":\"{status}\",\"parameter_count\":{},\"instruction_count\":{},\"entries\":{},\"lane_entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"compile_ns\":{},\"native_entries\":{},\"native_entry_coverage_ppm\":{},\"all_entry_native_coverage_ppm\":{},\"field_return_candidate_entries\":{},\"field_return_fixed_this_entries\":{},\"field_return_fast_entries\":{},\"field_increment_candidate_entries\":{},\"field_increment_fixed_this_entries\":{},\"field_increment_fast_entries\":{},\"numeric_find_fast_entries\":{},\"fallback_entries\":{},\"interpreter_completions\":{},\"interpreter_inclusive_ns\":{},\"guard_census\":{{\"conditional_branch_sites\":{},\"typeof_operations\":{},\"strict_comparison_sites\":{},\"relational_comparison_sites\":{}}},\"osr\":{{\"plain_backward_jump_sites\":{},\"admitted_sites\":{},\"compile_attempts\":{},\"compile_successes\":{},\"currently_compiled_sites\":{},\"native_entry_attempts\":{},\"native_region_runs\":{},\"entry_guard_misses\":{},\"exits\":{},\"widenings\":{}}},\"opcodes\":[",
                 counters.parameter_count,
                 counters.instruction_count,
                 counters.entries,
+                counters.lane_entries,
                 counters.numeric_entries,
                 counters.promotions,
                 counters.compile_attempts,
@@ -1859,9 +1977,13 @@ impl Drop for ProgramStore {
                 counters.compile_ns,
                 counters.native_entries,
                 native_entry_coverage_ppm,
+                all_entry_native_coverage_ppm,
                 counters.field_return_candidate_entries,
                 counters.field_return_fixed_this_entries,
                 counters.field_return_fast_entries,
+                counters.field_increment_candidate_entries,
+                counters.field_increment_fixed_this_entries,
+                counters.field_increment_fast_entries,
                 counters.numeric_find_fast_entries,
                 counters.fallback_entries,
                 counters.interpreter_completions,
@@ -1870,6 +1992,16 @@ impl Drop for ProgramStore {
                 counters.guard_typeof_ops,
                 counters.guard_strict_comparisons,
                 counters.guard_relational_comparisons,
+                osr.plain_backward_jump_sites,
+                osr.admitted_sites,
+                osr.compile_attempts,
+                osr.compile_successes,
+                osr.currently_compiled_sites,
+                osr.native_entry_attempts,
+                osr.native_region_runs,
+                osr.entry_guard_misses,
+                osr.exits,
+                osr.widenings,
             );
             for (index, (opcode, count)) in counters.opcode_counts.iter().enumerate() {
                 if index != 0 {
@@ -1889,6 +2021,13 @@ impl Drop for ProgramStore {
                 counters.code_bytes
             );
         }
+        let _ = writeln!(
+            stderr,
+            "QUENCH_JS_JIT_DATAVIEW_FLOAT64 {{\"enabled\":{},\"get_entries\":{},\"set_entries\":{}}}",
+            self.js_jit_dataview_float64_enabled,
+            self.js_jit_dataview_float64_get_entries,
+            self.js_jit_dataview_float64_set_entries
+        );
     }
 }
 
@@ -1915,6 +2054,19 @@ fn numeric_promotion_decision(numeric: u8, observations: u8) -> Option<bool> {
         .iter()
         .find_map(|(look, minimum)| (*look == observations).then_some(*minimum))?;
     Some(numeric >= minimum)
+}
+
+/// The label the `profile-lane-exits` function census gives `function` of `entry`'s program.
+#[cfg(feature = "profile-lane-exits")]
+fn census_label(entry: &ProgramEntry, function: u32) -> String {
+    let code = &entry.residual;
+    let body = code.function_get(function as usize);
+    format!(
+        "{} f{function} {} @{:?}",
+        code.source_name,
+        body.and_then(|body| body.name).map(|atom| code.atoms[atom as usize].to_string()).unwrap_or_default(),
+        body.and_then(|body| body.source_span).map(|span| span.start),
+    )
 }
 
 /// The runs a function makes on the general path before it derives its lane view, which costs
@@ -1948,12 +2100,9 @@ impl LaneViews {
         self.0.get_or_init(|| residual.functions.iter().map(|_| std::cell::OnceCell::new()).collect())
     }
 
-    /// Whether `function` has its view, without making the table.
-    fn derived(&self, function: u32) -> bool {
-        self.0
-            .get()
-            .and_then(|views| views.get(function as usize))
-            .is_some_and(|view| view.get().is_some())
+    /// `function`'s view if it has one, without making the table.
+    fn derived(&self, function: u32) -> Option<&super::dispatch_fast::LaneView> {
+        self.0.get()?.get(function as usize)?.get()
     }
 }
 

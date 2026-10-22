@@ -857,21 +857,10 @@ impl<H: Host> Vm<H> {
             Native::JsonStringify => self.json_stringify(p, args),
             Native::JsonRawJson => self.json_raw_json(p, args),
             Native::JsonIsRawJson => self.json_is_raw_json(args),
-            Native::GlobalIsNaN => {
+            Native::GlobalIsNaN | Native::GlobalIsFinite => {
                 let value = args.first().copied().unwrap_or(Value::UNDEFINED);
-                Ok(if self.to_number(p, value)?.is_nan() {
-                    Value::TRUE
-                } else {
-                    Value::FALSE
-                })
-            }
-            Native::GlobalIsFinite => {
-                let value = args.first().copied().unwrap_or(Value::UNDEFINED);
-                Ok(if self.to_number(p, value)?.is_finite() {
-                    Value::TRUE
-                } else {
-                    Value::FALSE
-                })
+                let number = self.to_number(p, value)?;
+                Ok(Value::boolean(super::number::global_number_predicate(native, number).unwrap_or_default()))
             }
             Native::MathLog => {
                 let v = args.first().copied().unwrap_or(Value::UNDEFINED);
@@ -1652,6 +1641,20 @@ impl<H: Host> Vm<H> {
     pub(super) fn bigint_binary_value(&mut self, op: u32, left: Value, right: Value) -> Option<Value> {
         let value = self.bigint_operation(op, left, right)?.ok()?;
         Some(self.heap.alloc(Cell::bigint(value)))
+    }
+
+    /// A relational operator (`<`, `<=`, `>`, `>=`) of two strings: IsLessThan orders them by
+    /// code units, which runs no guest code.
+    pub(super) fn string_relation(&self, op: u32, left: Value, right: Value) -> Option<bool> {
+        let (left, right) = (self.heap.string(left)?, self.heap.string(right)?);
+        let ordering = left.units().cmp(&right.units());
+        Some(match NumberRelation::from_operator(op)? {
+            NumberRelation::LessThan => ordering.is_lt(),
+            NumberRelation::LessEqual => ordering.is_le(),
+            NumberRelation::GreaterThan => ordering.is_gt(),
+            NumberRelation::GreaterEqual => ordering.is_ge(),
+            NumberRelation::Equal | NumberRelation::NotEqual => return None,
+        })
     }
 
     /// A relational operator (`<`, `<=`, `>`, `>=`) of two BigInt values.

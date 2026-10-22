@@ -372,8 +372,8 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
         }
         context.seal_startup_intrinsics();
     }
-    if context.host_mut().building_snapshot {
-        return crate::host::startup_snapshot::preload(context);
+    if let Some(kind) = context.host_mut().building_snapshot {
+        return crate::host::startup_snapshot::preload(context, kind);
     }
     finish_initialize(context)
 }
@@ -2830,9 +2830,7 @@ const getLinkedBinding = () => ({});
                     format!("{WRAPPER_PREFIX}{internal_binding}")
                 };
                 if parent.is_none() {
-                    // The entry's compilation is the start-up peak: only the parser's and
-                    // compiler's pages, not the bootstrap's, need be resident across it.
-                    crate::host::resident_pages::release_read_only_code_and_data();
+                    crate::host::resident_pages::release_before_entry_compile();
                 }
                 // Node's primordials file fills the object its wrapper passes and exports it.
                 let (prefix, suffix) = if is_primordials {

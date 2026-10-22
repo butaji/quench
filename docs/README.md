@@ -9,7 +9,7 @@
 - [Native Node host contracts](node-host-contracts.md)
 - [Shared array operation contracts](shared-array-contracts.md)
 - [V8-v7 commands](v8_v7.md)
-- [GC verification and experiment strategy](v2/gc-verification.md)
+- [GC verification, memory policy and experiment strategy](v2/gc-verification.md)
 - [JetStream 3 commands](jetstream3.md)
 - [Benchmark micros](../quench-bench/micros/README.md)
 
@@ -222,7 +222,14 @@ Entries live in `$QUENCH_COMPILE_CACHE`, else `$XDG_CACHE_HOME/quench/compile`, 
 keyed by the executable that wrote it (path, size, modification time and runtime ABI), the
 module's name and the exact text compiled, and is written to a temporary file renamed into
 place. An entry that is missing, unreadable or does not decode costs only the compilation it
-would have saved. Package modules (`node_modules`) still compile on every run, so their
+would have saved.
+
+A decoded program parses nothing, so it reaches none of a compilation's phase boundaries
+(`set_compile_phase_boundary`), where the host releases its read-only pages. The runtime calls
+`Host::cached_program_decoded` after each decode instead. Once bootstrap has finished,
+`quench-node` releases there: without it, a run whose programs all decode keeps the loader's,
+decoder's and bootstrap's pages resident until its first collection. Bootstrap's own programs
+decode back to back without that release, which there only refaulted the same loader code. Package modules (`node_modules`) still compile on every run, so their
 functions keep compiling again on first call.
 
 ## Startup snapshot
@@ -242,16 +249,25 @@ snapshot holds of the builder's process: `process.argv`, `execArgv`, `execPath`,
 `Math.random` seed. While a snapshot is built, reading `process.env`, `process.cwd()` or
 `perf_hooks` fails the build, since the snapshot would keep the builder's.
 
-A process uses a snapshot when it runs a file entry on the main thread with no CLI options
-and no IPC channel (`NODE_CHANNEL_FD`). Snapshots live in a `snapshot` directory beside the
-compile cache's, one directory per build, keyed by the library root and the variables the
-bootstrap reads (`HOME`, `NODE_OPTIONS`, `NODE_PENDING_DEPRECATION`, `NODE_DEBUG`,
-`NODE_PATH`, `QUENCH_PLATFORM`). When an eligible process finds none it starts the
+A process uses a snapshot when `QUENCH_STARTUP_SNAPSHOT` is `on` or `trace` and it runs a
+file entry on the main thread with no CLI options and no IPC channel (`NODE_CHANNEL_FD`).
+Without it processes boot without one. Restoring decodes all a snapshot holds (heap,
+programs, shapes and atoms: about 5 MB resident for the preloaded builtins), so there are
+two kinds (`SnapshotKind`): `preloaded`, as above, and `bootstrap`, without the builtins. A
+process restores `bootstrap` when its entry's static graph cannot reach a builtin
+(`startup_snapshot/entry_graph.rs`): the scan resolves static imports, re-exports and a
+WebAssembly module's imports as the ES module loader does, through packages, and stops at a
+builtin specifier, a dynamic `import()`, the text `require` or `getBuiltinModule`, a `.node`
+addon, a file it cannot resolve or parse, or past 64 files or 1 MiB. Either kind runs a
+program the same way: the kind decides only which builtins are loaded before it starts.
+Snapshots live in a `snapshot` directory beside the compile cache's, one directory per
+build, keyed by the library root and the variables the bootstrap reads (`HOME`,
+`NODE_OPTIONS`, `NODE_PENDING_DEPRECATION`, `NODE_DEBUG`, `NODE_PATH`, `QUENCH_PLATFORM`),
+with the kind in the file name. When an eligible process finds none it starts the
 executable with `QUENCH_BUILD_STARTUP_SNAPSHOT=<file>`, detached and holding a lock file, which
 builds it for later runs and removes other builds' snapshots. A snapshot that does not
-restore boots the process as if there were none. `QUENCH_STARTUP_SNAPSHOT=off` boots every
-process without one; `QUENCH_STARTUP_SNAPSHOT=trace` reports on stderr whether one was
-restored.
+restore boots the process as if there were none. `QUENCH_STARTUP_SNAPSHOT=trace` also
+reports on stderr whether one was restored, and which kind.
 
 ## Shared runtime host roots
 
@@ -621,6 +637,12 @@ calls up to a large budget, since a call costs it a frame and a dispatch, while
 the compiled mode keeps every call, since Cranelift calls cheaply and a copied
 body only adds register pressure. The residual's meaning is the same in both.
 
+`QUENCH_WASM_JIT_PERF_MAP` (diagnostics) names each compiled Wasm function in
+`/tmp/perf-PID.map` for `perf report` and writes the module's code to
+`/tmp/quench-jit-PID-BASE.bin` for `objdump -b binary --adjust-vma=0xBASE`; the
+`profile-lane-exits` feature reports, beside lane exits, the most dispatched interpreter
+records by function and instruction index (`wasm-disasm` prints the same indices).
+
 On Linux the harness binaries link position-dependent, and on x86-64 with
 `ld.lld` available they link in the trained symbol order
 `crates/quench-wasm-test/link/x86_64-linux.order`: executed functions share
@@ -645,6 +667,12 @@ target/production/symbol-order target/production/coremark \
   train/coremark-no-jit.out train/coremark-jit.out \
   train/KERNEL-no-jit.out... train/KERNEL-jit.out...
 ```
+
+An order names symbols with the profile's crate hashes, so a change that moves them disables
+it silently. `tools/check-link-order.sh BINARY ORDER` reports the share of the order's
+symbols the binary still has and fails below 90%. Check `quench-node`'s production build
+against `crates/quench-node/link/x86_64-linux.order` after manifest or dependency changes
+(TOD-171).
 
 Profiles go in priority order. Functions are laid out in first-appearance
 order, so the first profile's run touches one contiguous region and later
@@ -697,9 +725,29 @@ target/production/bolt-profile $PROFILED_BINARY bolt --order $ORDER \
 # relink with $ORDER, then:
 llvm-bolt $BINARY -o $BINARY-bolt -data=bolt/profile.fdata \
   -reorder-blocks=ext-tsp -split-functions -split-all-cold \
-  -reorder-functions=user -function-order=bolt/function.order \
-  -skip-funcs-file=bolt/skip.funcs -use-gnu-stack
+  -reorder-functions=cdsort -skip-funcs-file=bolt/skip.funcs -use-gnu-stack \
+  -jump-tables=move
 ```
+
+`-reorder-functions=cdsort` orders hot functions by the profile's call graph instead of the
+trained symbol order (`bolt/function.order`), which places them by first execution: callers
+and callees a run alternates between share pages. A V8-v7 run had executed about 613 KB of
+code lines spread over 1184 KB of pages; with the call-graph order its max RSS is 50-280 KB
+lower on every fixture without and with `--jit` (bolted static x86_64, 2026-10-22: Richards
+2340 -> 2064 KiB, Crypto 2956 -> 2768, NavierStokes 4180 -> 3996), Score within noise. The
+linked order still lays out start-up and cold code.
+
+The static `quench-node` order and its BOLT profile train on the same scripts without and
+with `--jit` (start-up cachegrind and run-phase callgrind profiles of each), the `--jit`
+profiles after the others: without them the JS tier's Cranelift compiler is laid out as
+cold code, and a `--jit` run faulted in about 1.1 MB more of it (V8-v7 `--jit` max RSS,
+bolted static x86_64, 2026-10-22: Crypto 4620 -> 3968 KiB, DeltaBlue 3908 -> 3368,
+Richards 2724 -> 2468; no-JIT equal or lower).
+
+`-jump-tables=move` lays the jump tables of hot code beside it, apart from the cold
+ones: in place, the `match` tables of the dispatch and the compiler sit among
+`.rodata`'s merged constants, and a run kept about 120 KB of them resident (V8-v7
+max RSS, bolted static x86_64, 2026-10-22: 20-160 KB lower on every fixture).
 
 `quench-node` registers its read-only file mappings with userfaultfd for
 asynchronous write protection at start (`resident_pages::map_touched_pages_only`,

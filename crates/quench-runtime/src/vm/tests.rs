@@ -216,7 +216,7 @@ fn fallback_descriptor_edges_follow_their_owner_lifetime() {
     let owner = vm.heap.alloc(Cell::Array {
         object: crate::heap::ArrayObject::new(
             Vm::<SilentHost>::empty_object(Value::NULL),
-            Rc::new(Vec::new()),
+            Vec::new(),
         ),
     });
     let setter = vm.native_with_env(Native::Object, owner);
@@ -891,8 +891,13 @@ fn for_of_iterator_cleanup_survives_body_temporaries() {
 }
 
 fn global_text(source: &str, name: &str) -> String {
+    global_text_under(crate::MemoryPolicy::default(), source, name)
+}
+
+fn global_text_under(policy: crate::MemoryPolicy, source: &str, name: &str) -> String {
     let program = Engine::specialize(source, "global-text.js").unwrap();
     let mut vm = Vm::new(SilentHost);
+    vm.set_memory_policy(policy);
     vm.execute(&program).unwrap();
     let name = vm.intern_atom(name);
     let value = vm.own_property(vm.realm.globals, name).unwrap();
@@ -1139,8 +1144,10 @@ fn finished_jobs_release_their_values_while_the_queue_keeps_draining() {
     // A job leaves the queue before it runs, so a value only its arguments held is
     // collectable while later jobs of the same drain still run: its cleanup is observed
     // inside the await loop instead of never. Each iteration allocates at least one cell,
-    // so the bound lets the drain pass the collection headroom several times.
-    let iterations = 4 * crate::heap::FULL_COLLECTION_ALLOCATION_BOUND;
+    // so the bound lets the drain pass the collection headroom several times. Memory-first
+    // pacing collects soonest, which keeps the drain short.
+    let policy = crate::MemoryPolicy::MemoryFirst;
+    let iterations = 4 * crate::heap::full_collection_allocation_bound(policy);
     let source = format!(
         "var finalized = false, registry = new FinalizationRegistry(function () {{ finalized = true; }});\n\
          function make() {{ var o = {{}}; registry.register(o, 0); return o; }}\n\
@@ -1151,7 +1158,7 @@ fn finished_jobs_release_their_values_while_the_queue_keeps_draining() {
            result = String(finalized);\n\
          }})();"
     );
-    assert_eq!(global_text(&source, "result"), "true");
+    assert_eq!(global_text_under(policy, &source, "result"), "true");
 }
 
 #[test]
@@ -5137,7 +5144,7 @@ fn property_copy_roots_release_after_callback_completion() {
                 let args = vm
                     .heap
                     .array_elements(operands)
-                    .map(|elements| elements.as_ref().clone())
+                    .map(|elements| elements.to_vec())
                     .expect("operands");
                 let handles = args
                     .iter()
@@ -5230,7 +5237,7 @@ fn descriptor_snapshot_and_assign_root_fresh_native_arguments() {
                 let args = vm
                     .heap
                     .array_elements(operands)
-                    .map(|elements| elements.as_ref().clone())
+                    .map(|elements| elements.to_vec())
                     .expect("operands");
                 let source_handle = vm.heap.weak_handle(args[1]).unwrap();
                 let later_handle = vm.heap.weak_handle(args[2]).unwrap();
@@ -5380,7 +5387,7 @@ fn for_in_roots_release_after_prototype_and_key_callbacks() {
                         let elements = vm
                             .heap
                             .array_elements(result)
-                            .map(|elements| elements.as_ref().clone())
+                            .map(|elements| elements.to_vec())
                             .expect("key snapshot");
                         let names = elements
                             .into_iter()
@@ -5511,7 +5518,7 @@ fn proxy_introspection_roots_release_after_nested_validation() {
                 let args = vm
                     .heap
                     .array_elements(operands)
-                    .map(|elements| elements.as_ref().clone())
+                    .map(|elements| elements.to_vec())
                     .expect("operands");
                 let handles = args
                     .iter()
@@ -5659,7 +5666,7 @@ fn proxy_reads_root_operands_and_results_through_nested_callbacks() {
                 let args = vm
                     .heap
                     .array_elements(operands)
-                    .map(|elements| elements.as_ref().clone())
+                    .map(|elements| elements.to_vec())
                     .expect("operands");
                 let handles = args
                     .iter()
@@ -10941,6 +10948,52 @@ fn js_jit_compiles_cached_numeric_kind_field_switches() {
     feature = "profile-memory",
     feature = "profile-gc-time"
 )))]
+fn js_jit_lowers_guarded_numeric_field_reads_into_arithmetic() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function twice(node) { return node.value * 2; }
+          for (let index = 0; index < 40; index++) {
+            if (twice({value: index}) !== index * 2) throw Error('numeric field result');
+          }
+          let reads = 0;
+          const accessor = { get value() { reads++; return 7; } };
+          if (twice(accessor) !== 14 || reads !== 1) throw Error('accessor fallback');
+          if (twice({value: '7'}) !== 14) throw Error('cache replacement fallback');
+        "#,
+        "js-jit-guarded-field-arithmetic.js",
+    ))
+    .unwrap();
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "twice")
+        })
+        .unwrap() as u32;
+    let mut vm = Vm::new(SilentHost);
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+    let Some(super::program_store::JsTierState::Compiled(compiled)) = vm
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, function_id)
+    else {
+        panic!("numeric field arithmetic should compile");
+    };
+    assert!(compiled.field_argument().is_some());
+    assert!(compiled.native_entries() >= 9);
+}
+
+#[test]
+#[cfg(not(any(
+    feature = "profile-aggregate",
+    feature = "profile-trace",
+    feature = "profile-memory",
+    feature = "profile-gc-time"
+)))]
 fn js_jit_field_reject_resumes_interpreter_on_match_and_accessor() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
@@ -11868,6 +11921,33 @@ fn bound_calls_and_base_class_constructions_pushed_in_place_keep_their_semantics
 }
 
 #[test]
+fn lane_forwarded_calls_run_callees_of_other_programs_in_their_program() {
+    // `f.call(...)` and a bound call of a callee compiled as another program, made from a
+    // lane function often enough that its cross-program target is cached: the callee reads
+    // its own program's names, constants and field sites (`globalThis`, a defined property,
+    // string keys), not the caller's.
+    let source = r#"
+      const loose = Function('return function(){ return this === globalThis ? "global" : typeof this; }')();
+      const definer = Function('o', 'k', 'Object.defineProperty(o, k, { value: k.length, enumerable: true }); o[k + "x"] = "v"; return Object.keys(o).join("+");');
+      function run(i) {
+        const bound = loose.bind(null);
+        return [bound(), loose.call(null), loose.call(i), definer.call(null, {}, 'key' + i)].join(",");
+      }
+      const out = [];
+      for (let i = 0; i < 24; i++) out.push(run(i % 2));
+      print(out.join("|"));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "lane-cross-program-forwarded.js").unwrap()).unwrap();
+    let expected = (0..24)
+        .map(|i| format!("global,global,object,key{0}+key{0}x", i % 2))
+        .collect::<Vec<_>>()
+        .join("|");
+    assert_eq!(output.borrow().as_slice(), [expected]);
+}
+
+#[test]
 fn lane_regexp_exec_keeps_last_index_and_coercion_order() {
     // Exec calls made from frameless activations: a global pattern advances `lastIndex`,
     // an object `lastIndex` is still converted exactly once per call, and a frozen global
@@ -12090,6 +12170,59 @@ print(JSON.stringify(out));
     let mut vm = Vm::new(RecordingHost(output.clone()));
     vm.execute(&Engine::specialize(source, "cross-program-applies.js").unwrap()).unwrap();
     assert_eq!(output.borrow().as_slice(), [r#"["object:0:x:2","u:0::1","object:0:y:2","object:::0","object:0:z:3","object:0:1","object:0:1","object::0","t0:0:1","t0:0:2",6,"RangeErrorr0","RangeErrorr0","TypeError","TypeError","object:al:b:2","object::hole:2","g","object:got:2:2","object:B:0:2","object:B:c:2","object:B:d:2","object:A1:A2:2","object:1:x:2","u:1::1","object:1:y:2","object:::0","object:1:z:3","object:1:1","object:1:1","object::0","t1:1:1","t1:1:2",6,"RangeErrorr1","RangeErrorr1","TypeError","TypeError","object:al:b:2","object::hole:2","g","object:got:2:2","object:B:1:2","object:B:c:2","object:B:d:2","object:A1:A2:2","object:2:x:2","u:2::1","object:2:y:2","object:::0","object:2:z:3","object:2:1","object:2:1","object::0","t2:2:1","t2:2:2",6,"RangeErrorr2","RangeErrorr2","TypeError","TypeError","object:al:b:2","object::hole:2","g","object:got:2:2","object:B:2:2","object:B:c:2","object:B:d:2","object:A1:A2:2","0-0,1-1,2-2"]"#]);
+}
+
+#[test]
+fn json_stringify_fast_path_keeps_the_full_algorithms_results() {
+    // JSON.stringify of plain data takes the direct writer; replacers, gaps, toJSON on any link, accessors,
+    // holes, arguments objects, boxed primitives, BigInt, cycles and depth keep the full algorithm.
+    let source = r#"
+const out = [];
+const S = (v, ...a) => out.push(String(JSON.stringify(v, ...a)));
+S({ a: 1, b: 'two', c: [1, 2, 3], d: { e: true } }); S([]); S({}); S(null); S(undefined); S(() => 1); S(Symbol('x'));
+S({ u: undefined, f() {}, s: Symbol('s'), n: null, nan: NaN, inf: -Infinity, z: -0, big: 1e21, small: 1e-7 });
+S([undefined, () => 1, Symbol('y'), NaN]); S('quote " back \\ nl \n tab \t ctl \u0001 uni é 😀 lone \ud800');
+S({ 2: 'b', 1: 'a', x: 'x', 0: 'z' }); S({ 'ke"y': 1, 'k\u0002': 2, 'é': 3 });
+const o = { a: 1 }; Object.defineProperty(o, 'hidden', { value: 2, enumerable: false }); Object.defineProperty(o, 'g', { get() { return 'got'; }, enumerable: true }); S(o);
+S({ d: new Date(0) }); S({ t: { toJSON(k) { return 'tj:' + k; } } }); S([1, , 3]); const sp = [1]; sp[5] = 6; S(sp);
+(function () { S(arguments); })(1, 2); S(Object.create({ inherited: 1 })); S(new Map([[1, 2]])); S(new Number(5)); S(new String('s')); S(Object(true));
+try { S({ b: 10n }); } catch (e) { out.push(e.constructor.name); }
+const cyc = { a: {} }; cyc.a.self = cyc; try { S(cyc); } catch (e) { out.push(e.constructor.name); }
+let deep = {}; let cur = deep; for (let i = 0; i < 100; i++) { cur.n = {}; cur = cur.n; } out.push(JSON.stringify(deep).length);
+S({ a: [1, { b: 2 }] }, null, 2); S({ a: 1, b: 2 }, ['b']); S({ a: 1 }, (k, v) => (k === 'a' ? v + 1 : v));
+Object.prototype.toJSON = function () { return 'proto'; }; S({ a: 1 }); delete Object.prototype.toJSON;
+Array.prototype.toJSON = function () { return 'arr'; }; S([1]); delete Array.prototype.toJSON;
+class K { constructor() { this.x = 1; this.y = [true]; } } S(new K()); S([new K(), { z: 'w' }]);
+S({ __proto__: null, a: 1 }); const p = new Proxy({ a: 1 }, {}); S(p); S(new Uint8Array([1, 2]));
+print(JSON.stringify(out));
+"#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "json_stringify_fast_path_keeps_the_full_algorithms_results.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), [r#"["{\"a\":1,\"b\":\"two\",\"c\":[1,2,3],\"d\":{\"e\":true}}","[]","{}","null","undefined","undefined","undefined","{\"n\":null,\"nan\":null,\"inf\":null,\"z\":0,\"big\":1e+21,\"small\":1e-7}","[null,null,null,null]","\"quote \\\" back \\\\ nl \\n tab \\t ctl \\u0001 uni é 😀 lone \\ud800\"","{\"0\":\"z\",\"1\":\"a\",\"2\":\"b\",\"x\":\"x\"}","{\"ke\\\"y\":1,\"k\\u0002\":2,\"é\":3}","{\"a\":1,\"g\":\"got\"}","{\"d\":\"1970-01-01T00:00:00.000Z\"}","{\"t\":\"tj:t\"}","[1,null,3]","[1,null,null,null,null,6]","{\"0\":1,\"1\":2}","{}","{}","5","\"s\"","true","TypeError","TypeError",602,"{\n  \"a\": [\n    1,\n    {\n      \"b\": 2\n    }\n  ]\n}","{\"b\":2}","{\"a\":2}","\"proto\"","\"arr\"","{\"x\":1,\"y\":[true]}","[{\"x\":1,\"y\":[true]},{\"z\":\"w\"}]","{\"a\":1}","{\"a\":1}","{\"0\":1,\"1\":2}"]"#]);
+}
+
+#[test]
+fn json_parse_literal_shapes_keep_create_data_property_semantics() {
+    // JSON.parse objects allocated with their literal shape keep duplicate-key, index-key, __proto__,
+    // wide-object, reviver and inherited-setter behavior.
+    let source = r#"
+const out = [];
+const P = (s, r) => { try { const v = JSON.parse(s, r); out.push(JSON.stringify(v), Object.keys(v ?? {}).join(','), typeof v); } catch (e) { out.push(e.constructor.name); } };
+P('{"a":1,"b":"two","c":[1,2,3],"d":{"e":true}}'); P('{"a":1,"a":2,"b":3}'); P('{"2":"b","1":"a","x":1}'); P('{"__proto__":{"p":1},"q":2}');
+const pr = JSON.parse('{"__proto__":{"p":1}}'); out.push(Object.getPrototypeOf(pr) === Object.prototype, Object.keys(pr).join(), pr.p === undefined);
+let wide = '{' + Array.from({ length: 40 }, (_, i) => `"k${i}":${i}`).join(',') + '}'; P(wide);
+P('[{"x":1},{"x":2,"y":3},{"y":4,"x":5}]'); P('{"":1,"é":2,"\\u0041":3}'); P('{"a":{"b":{"c":{"d":[null,true,false,-0,1e300]}}}}');
+P('{"a":1,"b":2}', (k, v) => (typeof v === 'number' ? v * 10 : v)); P('{bad}'); P('[1,]'); P('"\\ud800"'); P('  {"s":"x"}  ');
+Object.defineProperty(Object.prototype, 'trap', { set(v) { out.push('setter-called'); }, configurable: true });
+P('{"trap":1}'); delete Object.prototype.trap;
+const a = JSON.parse('{"m":1,"n":2}'), b = JSON.parse('{"m":3,"n":4}'); out.push(Object.keys(a).join() === Object.keys(b).join()); a.z = 1; out.push(JSON.stringify(a), JSON.stringify(b));
+print(JSON.stringify(out));
+"#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "json_parse_literal_shapes_keep_create_data_property_semantics.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), [r#"["{\"a\":1,\"b\":\"two\",\"c\":[1,2,3],\"d\":{\"e\":true}}","a,b,c,d","object","{\"a\":2,\"b\":3}","a,b","object","{\"1\":\"a\",\"2\":\"b\",\"x\":1}","1,2,x","object","{\"__proto__\":{\"p\":1},\"q\":2}","__proto__,q","object",true,"__proto__",true,"{\"k0\":0,\"k1\":1,\"k2\":2,\"k3\":3,\"k4\":4,\"k5\":5,\"k6\":6,\"k7\":7,\"k8\":8,\"k9\":9,\"k10\":10,\"k11\":11,\"k12\":12,\"k13\":13,\"k14\":14,\"k15\":15,\"k16\":16,\"k17\":17,\"k18\":18,\"k19\":19,\"k20\":20,\"k21\":21,\"k22\":22,\"k23\":23,\"k24\":24,\"k25\":25,\"k26\":26,\"k27\":27,\"k28\":28,\"k29\":29,\"k30\":30,\"k31\":31,\"k32\":32,\"k33\":33,\"k34\":34,\"k35\":35,\"k36\":36,\"k37\":37,\"k38\":38,\"k39\":39}","k0,k1,k2,k3,k4,k5,k6,k7,k8,k9,k10,k11,k12,k13,k14,k15,k16,k17,k18,k19,k20,k21,k22,k23,k24,k25,k26,k27,k28,k29,k30,k31,k32,k33,k34,k35,k36,k37,k38,k39","object","[{\"x\":1},{\"x\":2,\"y\":3},{\"y\":4,\"x\":5}]","0,1,2","object","{\"\":1,\"é\":2,\"A\":3}",",é,A","object","{\"a\":{\"b\":{\"c\":{\"d\":[null,true,false,0,1e+300]}}}}","a","object","{\"a\":10,\"b\":20}","a,b","object","SyntaxError","SyntaxError","\"\\ud800\"","0","string","{\"s\":\"x\"}","s","object","{\"trap\":1}","trap","object",true,"{\"m\":1,\"n\":2,\"z\":1}","{\"m\":3,\"n\":4}"]"#]);
 }
 
 #[test]

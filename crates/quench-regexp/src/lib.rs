@@ -453,6 +453,23 @@ impl Regex {
     }
 
     /// The repository matcher, lowered from the kept source on first use.
+    /// Whether a search from `start` of a subject of `length` code units whose unit at
+    /// `start` is `first` (`None` past its end) finds no match, decided before the subject
+    /// is prepared: too few units remain for the shortest match, or the pattern's start
+    /// anchor rules the position out (`backtrack::Program::anchor_excludes`). Code units
+    /// are pattern units only outside Unicode mode, so the anchor applies only there. The
+    /// complete matcher's facts are lowered once per pattern on first use, even for a
+    /// pattern the automata backend matches.
+    pub fn excludes_search(&self, length: usize, start: usize, first: Option<u16>) -> bool {
+        let complete = self.complete();
+        length.saturating_sub(start) < complete.min_length
+            || (!(self.flags.unicode || self.flags.unicode_sets)
+                && complete
+                    .backtracking
+                    .as_ref()
+                    .is_some_and(|program| program.anchor_excludes(start, first.map(u32::from))))
+    }
+
     fn complete(&self) -> &CompleteMatcher {
         self.complete.get_or_init(|| {
             self.with_parsed_source(|parsed| {
@@ -576,6 +593,28 @@ impl Regex {
         Matches {
             item: self.find_units(units, first_unit_at(units, start)),
         }
+    }
+
+    /// A searcher of `subject`'s match ranges, as `find_range_in_subject` finds them, with
+    /// the backend chosen once for every search of a loop over the subject's matches.
+    pub fn range_searcher<'a>(&'a self, subject: &'a Subject) -> RangeSearcher<'a> {
+        let cr_admitted =
+            || !self.compiled_dot_requires_cr_guard || !subject.has_carriage_return();
+        let backend = match subject.ascii() {
+            Some(bytes) => match self.range_matcher().or(self.compiled()) {
+                Some(automata) if cr_admitted() => RangeBackend::Automata { automata, bytes },
+                _ => match self.complete().backtracking.as_ref() {
+                    Some(program) => RangeBackend::Backtracking {
+                        program,
+                        bytes,
+                        linear: self.compiled().is_some() && cr_admitted(),
+                    },
+                    None => RangeBackend::General,
+                },
+            },
+            None => RangeBackend::General,
+        };
+        RangeSearcher { regex: self, subject, backend }
     }
 
     /// The match that starts exactly at `start`, as a sticky (`y`) search requires. Only that
@@ -877,6 +916,18 @@ impl Subject {
         }
     }
 
+    /// A subject over UTF-16 text known to hold a non-ASCII unit, as a string's wide
+    /// storage always does: neither the ASCII narrowing `new` tries nor its carriage-return
+    /// scan can pay off, so preparing the subject touches no unit.
+    pub fn from_non_ascii(units: std::rc::Rc<[u16]>) -> Self {
+        debug_assert!(units.iter().any(|unit| *unit > ASCII_MAX));
+        Self {
+            text: SubjectText::Wide { units, ascii: None },
+            carriage_return: std::cell::OnceCell::new(),
+            decoded: Default::default(),
+        }
+    }
+
     /// A subject over the bytes `range` of ASCII text, matched in place without a copy.
     pub fn from_ascii(text: std::rc::Rc<str>, range: std::ops::Range<usize>) -> Self {
         debug_assert!(text.is_ascii() && range.end <= text.len());
@@ -901,6 +952,26 @@ impl Subject {
             carriage_return: std::cell::OnceCell::new(),
             decoded: Default::default(),
         }
+    }
+
+    /// Makes this the subject `short_ascii(text)` makes, in place: no new subject is built
+    /// and moved in, and whatever was prepared for the old text is dropped.
+    pub fn respell_short_ascii(&mut self, text: &str) {
+        debug_assert!(text.is_ascii());
+        let length = u8::try_from(text.len()).expect("short text fits its length byte");
+        match &mut self.text {
+            SubjectText::Inline { length: own, bytes } => {
+                bytes[..text.len()].copy_from_slice(text.as_bytes());
+                *own = length;
+            }
+            other => {
+                let mut bytes = [0; INLINE_SUBJECT_BYTES];
+                bytes[..text.len()].copy_from_slice(text.as_bytes());
+                *other = SubjectText::Inline { length, bytes };
+            }
+        }
+        self.carriage_return.take();
+        self.decoded.iter_mut().for_each(|decoded| drop(decoded.take()));
     }
 
     fn has_carriage_return(&self) -> bool {
@@ -958,6 +1029,56 @@ impl Subject {
     /// Whether this subject spells exactly the ASCII `text`, compared by content.
     pub fn spells_ascii(&self, text: &str) -> bool {
         self.ascii() == Some(text.as_bytes())
+    }
+}
+
+/// `Regex::range_searcher`'s searcher.
+pub struct RangeSearcher<'a> {
+    regex: &'a Regex,
+    subject: &'a Subject,
+    backend: RangeBackend<'a>,
+}
+
+/// The backend that answers a range search of an ASCII subject: the steps
+/// `find_range_in_subject` takes for every search, decided once.
+enum RangeBackend<'a> {
+    /// The automata serve ranges and the subject passes their carriage-return guard.
+    Automata { automata: &'a regex::bytes::Regex, bytes: &'a [u8] },
+    /// The backtracking program, with the step budget when the automata can take over.
+    Backtracking { program: &'a backtrack::Program, bytes: &'a [u8], linear: bool },
+    General,
+}
+
+impl RangeSearcher<'_> {
+    /// `Regex::find_range_in_subject(subject, start)`.
+    pub fn find(&self, start: usize) -> Option<Range<usize>> {
+        let regex = self.regex;
+        if start > self.subject.len() {
+            return None;
+        }
+        match self.backend {
+            RangeBackend::Automata { automata, bytes } => {
+                automata.find_at(bytes, start).map(|matched| matched.range())
+            }
+            RangeBackend::Backtracking { program, bytes, linear } => {
+                let complete = regex.complete();
+                if bytes.len().saturating_sub(start) < complete.min_length {
+                    return None;
+                }
+                if let Some(literal) = complete.required_bytes.as_ref() {
+                    if literal.find(&bytes[start..]).is_none() {
+                        return None;
+                    }
+                }
+                let budget = linear.then(|| backtrack::Program::budget(bytes.len()));
+                match program.find_bounds(bytes, start, false, budget) {
+                    Ok(found) => found,
+                    // Past the budget the automata answer, as `find_range_in_subject` does.
+                    Err(_) => regex.find_range_in_subject(self.subject, start),
+                }
+            }
+            RangeBackend::General => regex.find_range_in_subject(self.subject, start),
+        }
     }
 }
 

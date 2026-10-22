@@ -1,0 +1,6 @@
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=UTF-8
+x-powered-by: benchmark
+Date: Wed, 21 Oct 2026 22:28:38 GMT
+Content-Length: 5
+

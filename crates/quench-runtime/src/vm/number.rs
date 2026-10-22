@@ -399,42 +399,39 @@ impl<H: Host> Vm<H> {
                 };
                 Value::number(number)
             }
-            Native::NumberIsNaN => {
-                if value.as_number().is_some_and(f64::is_nan) {
-                    Value::TRUE
-                } else {
-                    Value::FALSE
-                }
-            }
-            Native::NumberIsFinite => {
-                if value.as_number().is_some_and(f64::is_finite) {
-                    Value::TRUE
-                } else {
-                    Value::FALSE
-                }
-            }
-            Native::NumberIsInteger => {
-                if value
-                    .as_number()
-                    .is_some_and(|value| value.is_finite() && value.fract() == 0.0)
-                {
-                    Value::TRUE
-                } else {
-                    Value::FALSE
-                }
-            }
-            Native::NumberIsSafeInteger => {
-                if value.as_number().is_some_and(|value| {
-                    value.is_finite() && value.fract() == 0.0 && value.abs() <= MAX_SAFE_INTEGER
-                }) {
-                    Value::TRUE
-                } else {
-                    Value::FALSE
-                }
+            Native::NumberIsNaN
+            | Native::NumberIsFinite
+            | Native::NumberIsInteger
+            | Native::NumberIsSafeInteger => {
+                Value::boolean(number_predicate(native, value).unwrap_or_default())
             }
             _ => return Err(JsError("invalid Number native".into())),
         })
     }
+}
+
+/// What the global `isNaN` or `isFinite` returns for the Number its argument converted to;
+/// `None` for any other native.
+pub(super) fn global_number_predicate(native: Native, number: f64) -> Option<bool> {
+    Some(match native {
+        Native::GlobalIsNaN => number.is_nan(),
+        Native::GlobalIsFinite => number.is_finite(),
+        _ => return None,
+    })
+}
+
+/// What `Number.isNaN`, `isFinite`, `isInteger` or `isSafeInteger` returns for `value`: none
+/// coerces its argument, so a non-Number answers `false`. `None` for any other native.
+pub(super) fn number_predicate(native: Native, value: Value) -> Option<bool> {
+    let number = value.as_number();
+    let integral = |number: f64| number.is_finite() && number.fract() == 0.0;
+    Some(match native {
+        Native::NumberIsNaN => number.is_some_and(f64::is_nan),
+        Native::NumberIsFinite => number.is_some_and(f64::is_finite),
+        Native::NumberIsInteger => number.is_some_and(integral),
+        Native::NumberIsSafeInteger => number.is_some_and(|number| integral(number) && number.abs() <= MAX_SAFE_INTEGER),
+        _ => return None,
+    })
 }
 
 fn format_scientific(number: f64, digits: usize) -> String {

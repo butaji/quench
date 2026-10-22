@@ -67,6 +67,8 @@ struct RuntimeAtoms {
     /// An iterator result's keys, in its literal order.
     value: Atom,
     done: Atom,
+    /// The iterator protocol's close method.
+    iterator_return: Atom,
     /// A property descriptor object's other keys (`value` above), which
     /// `Object.getOwnPropertyDescriptor` writes on every call.
     writable: Atom,
@@ -152,6 +154,8 @@ mod object;
 mod shape_memo;
 mod symbol_write_proof;
 mod symbol_load_proof;
+mod private_site_home;
+mod enumerable_key_memo;
 mod name_atom_memo;
 mod object_assignment;
 mod object_array;
@@ -507,6 +511,7 @@ enum PendingJob {
         args: Vec<Value>,
     },
     Reaction(promise::PromiseJob),
+    Thenable(promise::ThenableJob),
 }
 
 impl PendingJob {
@@ -522,6 +527,7 @@ impl PendingJob {
                 roots.extend_from_slice(args);
             }
             Self::Reaction(job) => roots.extend([job.realm, job.handler, job.next, job.value]),
+            Self::Thenable(job) => roots.extend([job.realm, job.then, job.thenable, job.promise]),
         }
     }
 }
@@ -641,14 +647,16 @@ const BOUND_TARGET_KEY: &str = "\0quench:bound-target";
 const BOUND_THIS_KEY: &str = "\0quench:bound-this";
 const BOUND_ARGS_KEY: &str = "\0quench:bound-args";
 const NO_FIELD_HOLDER: u32 = u32::MAX;
-/// A field site's read of an accessor on a prototype of a shaped receiver: it holds while
-/// the receiver keeps its shape and prototype and the chain to `holder` keeps the layout it
-/// was proved under, `holder`'s `slot` attributes carrying the getter.
+/// A field site's read of an accessor of a shaped receiver, its own or on a prototype: it
+/// holds while the receiver keeps its shape and prototype and the chain to `holder` keeps the
+/// layout it was proved under, `holder`'s `slot` attributes carrying the getter.
 #[derive(Clone, Copy)]
 struct AccessorFieldCache {
     receiver: u32,
     /// The receiver's prototype, where the chain to `holder` starts.
     prototype: Value,
+    /// The prototype holding the accessor, or `OWN_ACCESSOR` for the receiver itself, whose
+    /// own slot each receiver of the shape fills with its own accessor.
     holder: Value,
     slot: u16,
     /// The `prototype_layout_epoch` the chain was proved under.
@@ -665,6 +673,7 @@ const INHERITED_FIELD_CACHE_MAX_DEPTH: usize = 16;
 #[derive(Clone, Copy)]
 struct InheritedFieldCache {
     receiver: u32,
+    atom: Atom,
     prototype_shapes: [u32; INHERITED_FIELD_CACHE_MAX_DEPTH],
     depth: u8,
     answer: InheritedFieldAnswer,
@@ -1660,6 +1669,10 @@ pub(crate) struct Vm<H> {
     function_name_shapes: provenance::FunctionNameShapes,
     symbol_write_proofs: symbol_write_proof::SymbolWriteProofs,
     symbol_load_proofs: symbol_load_proof::SymbolLoadProofs,
+    /// Lane private-name sites' homes (`private_site_home`).
+    private_site_homes: private_site_home::PrivateSiteHomes,
+    array_iteration_proof: Option<iterators::ArrayIterationProof>,
+    enumerable_keys: enumerable_key_memo::EnumerableKeyMemo,
     shape_attribute_memo: shape_memo::ShapeAttributeMemo,
     name_atom_memo: name_atom_memo::NameAtomMemo,
     atom_text: AtomTable,
@@ -1699,9 +1712,10 @@ pub(crate) struct Vm<H> {
     /// `NO_INHERITED_FIELD`.
     inherited_field_indices: Vec<u32>,
     inherited_field_caches: Vec<InheritedFieldCache>,
-    /// Accessor reads by field-cache index (`AccessorFieldCache`); cleared with the field
-    /// caches.
-    accessor_field_caches: FxHashMap<usize, AccessorFieldCache>,
+    /// Accessor reads by field-cache index (`AccessorFieldCache`), up to
+    /// `INHERITED_FIELD_CACHE_WAYS` receiver shapes a site, oldest first, as an inherited
+    /// method's site sees one shape per subclass; cleared with the field caches.
+    accessor_field_caches: FxHashMap<usize, Vec<AccessorFieldCache>>,
     field_add_indices: Vec<u32>,
     field_add_sets: Vec<FieldAddCacheSet>,
     megamorphic_field_indices: Vec<u32>,
@@ -1729,6 +1743,9 @@ pub(crate) struct Vm<H> {
     /// The shape of an iterator result `{ value, done }` (`Vm::iterator_result`); derived
     /// from shapes, so field-cache invalidation clears it.
     iterator_result_shape: Option<u32>,
+    /// The one `{ value, done }` result a lane iterator step reuses (`Vm::reused_iterator_result`),
+    /// `undefined` until the first; cleared with `iterator_result_shape`.
+    reused_iterator_result: Value,
     /// The shapes of a complete data and accessor property descriptor object
     /// (`Vm::property_descriptor_object`), indexed by `accessor`; derived from shapes, so
     /// field-cache invalidation clears them.
@@ -2205,6 +2222,8 @@ impl<H: Host> Vm<H> {
         self.instantiate_global_declarations(program)?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("initialized");
+        #[cfg(feature = "profile-allocator")]
+        self.report_allocator_if_enabled("initialized");
         let root = self.closure(program, 0, Value::NULL)?;
         let this = if program.is_module() {
             Value::UNDEFINED
@@ -2227,6 +2246,8 @@ impl<H: Host> Vm<H> {
     }
 
     fn report_execution(&mut self, program: &ResidualProgram) {
+        #[cfg(feature = "profile-allocator")]
+        self.report_allocator_if_enabled("complete");
         #[cfg(feature = "profile-gc-time")]
         self.report_gc_time_if_enabled();
         #[cfg(feature = "profile-aggregate")]
@@ -2235,8 +2256,9 @@ impl<H: Host> Vm<H> {
                 let id = ProgramId::from_raw(index as u32);
                 if let Some(residual) = self.programs.get(id) {
                     eprintln!(
-                        "{{\"kind\":\"quench-profile-program\",\"program_id\":{}}}",
+                        "{{\"kind\":\"quench-profile-program\",\"program_id\":{},\"source_name\":{:?}}}",
                         id.raw(),
+                        residual.source_name,
                     );
                     self.profile.report(&self.heap, id.raw(), &residual);
                 }
@@ -2264,6 +2286,12 @@ impl<H: Host> Vm<H> {
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("complete");
     }
+    #[cfg(feature = "profile-allocator")]
+    fn report_allocator_if_enabled(&self, phase: &str) {
+        if std::env::var_os("QUENCH_ALLOCATOR_MEMORY").is_some() {
+            crate::report_allocator_memory(phase);
+        }
+    }
     #[cfg(feature = "profile-gc-time")]
     fn report_gc_time_if_enabled(&self) {
         if std::env::var_os("QUENCH_GC_TIME_PROFILE").is_none() {
@@ -2285,9 +2313,8 @@ impl<H: Host> Vm<H> {
         eprintln!("{{\"kind\":\"quench-live-cells\",\"top\":{:?}}}", &kinds[..kinds.len().min(8)]);
         let promise = &self.realm.promise;
         eprintln!(
-            "{{\"kind\":\"quench-vm-tables\",\"live_slots\":{},\"thenable_jobs\":{},\"reaction_capabilities\":{},\"jobs\":{},\"descriptors\":{},\"function_values\":{},\"frames\":{},\"active_call_roots\":{}}}",
+            "{{\"kind\":\"quench-vm-tables\",\"live_slots\":{},\"reaction_capabilities\":{},\"jobs\":{},\"descriptors\":{},\"function_values\":{},\"frames\":{},\"active_call_roots\":{}}}",
             self.heap.live_slots(),
-            promise.thenable_jobs.len(),
             promise.reaction_capabilities.len(),
             self.realm.jobs.len(),
             self.descriptors.len(),
@@ -2578,6 +2605,9 @@ impl<H: Host> Vm<H> {
         self.function_name_shapes.clear();
         self.symbol_write_proofs.clear();
         self.symbol_load_proofs.clear();
+        self.private_site_homes.clear();
+        self.array_iteration_proof = None;
+        self.enumerable_keys.clear();
         self.shape_attribute_memo.clear();
         self.atom_strings.clear();
         // The sealed holders and their shapes belong to the discarded heap.
@@ -2623,6 +2653,7 @@ impl<H: Host> Vm<H> {
             empty: self.intern_atom(""),
             value: self.intern_atom("value"),
             done: self.intern_atom("done"),
+            iterator_return: self.intern_atom("return"),
             writable: self.intern_atom("writable"),
             enumerable: self.intern_atom("enumerable"),
             configurable: self.intern_atom("configurable"),
@@ -2659,6 +2690,7 @@ impl<H: Host> Vm<H> {
         self.function_name_shapes.clear();
         self.closure_templates.fill(None);
         self.iterator_result_shape = None;
+        self.reused_iterator_result = Value::UNDEFINED;
         self.descriptor_shapes = [None; 2];
         self.descriptor_layout = None;
         self.regexp_object_shapes = None;
