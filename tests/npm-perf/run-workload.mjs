@@ -58,7 +58,11 @@ function engineSpecs() {
       { name: "quench-interpreter", binary: binaries.quench, args: [workload], env: {} },
     ];
     if (binaries.quenchControl) {
-      specs.push({ name: "quench-control", binary: binaries.quenchControl, args: [workload], env: {} });
+      const controlEnv = {};
+      if (process.env.QUENCH_CONTROL_GC_MAX_YOUNG) {
+        controlEnv.QUENCH_GC_MAX_YOUNG = process.env.QUENCH_CONTROL_GC_MAX_YOUNG;
+      }
+      specs.push({ name: "quench-control", binary: binaries.quenchControl, args: [workload], env: controlEnv });
     }
     specs.push(
       { name: "node-jitless", binary: binaries.node, args: ["--jitless", workload], env: {} },

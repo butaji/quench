@@ -57,6 +57,9 @@ For a same-run Quench build comparison, set `QUENCH_CONTROL_BIN` to a second
 `quench-node` binary. The runner interleaves both Quench binaries with Node
 and Bun and records the control binary hash separately. This helps distinguish
 small PGO or code-change effects from host load drift across separate reports.
+For no-JIT GC pacing comparisons, set `QUENCH_CONTROL_GC_MAX_YOUNG` to override
+the control row's young-generation cap while the candidate uses
+`QUENCH_GC_MAX_YOUNG`.
 
 Winning means at least 20% higher throughput and at least 20% lower maximum
 RSS than both Node and Bun in the active phase. Compare the throughput and RSS
@@ -354,3 +357,17 @@ a 3.0% speed gain for 4.7% more RSS. Output matched at 24,980,000 bytes and
 checksum 414318. RSS was 22.3% below Node and 24.9% below Bun, but the 512-unit
 build remains the better memory/speed balance. Report:
 `work/react-perf/react-pgo-prefix-256-vs-512-memory-first-max-young-32k-nojit-11.json`.
+
+A 256-entry capture-walk memo table was screened against the default 64-entry
+table, targeting the repeated outer-capture walks in React's lane profile. The
+3-round screen appeared 8.3% faster, but the paired 11-round full-size run was
+only 4.0% faster (314.5 renders/s vs 302.5) and used 4.6% more RSS (28.06 MB
+vs 26.83 MB). Output matched at 24,980,000 bytes/checksum 414318, but the small
+speed increase did not justify the memory cost, so the table was restored to 64.
+Report: `work/react-perf/react-pgo-capture-walks-256-vs-64-memory-first-max-young-32k-nojit-11.json`.
+
+A 64K young-generation cap did not improve the paired 32K PGO+512 control. The
+11-round full-size run measured 303.0 renders/s / 26.82 MB at 64K versus 325.9 /
+26.83 MB at 32K (-7.0% speed, effectively identical RSS), with matching output.
+The 32K cap remains selected. Report:
+`work/react-perf/react-pgo-prefix-512-young64k-vs-32k-11.json`.
