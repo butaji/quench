@@ -3208,7 +3208,8 @@ impl<'a> Compiler<'a> {
             && !options.class_initializer
             && !options.implicit_super
             && options.with_depth == 0
-            && self.eval_context.is_none()
+            // A nested function's own parameters and locals are its own in eval code and host
+            // scripts too: names it does not declare resolve as they would without promotion.
             && !dynamic_eval;
         let (promoted_local_slots, clobbered_local_slots) = self.promoted_local_plan(
             promote_plain_locals,
