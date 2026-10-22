@@ -8,8 +8,8 @@ use crate::snapshot::{read_list, Reader, SnapshotError, SnapshotResult, Writer};
 
 impl Heap {
     pub(crate) fn write_snapshot(&self, writer: &mut Writer) -> SnapshotResult<()> {
-        if !self.abandoned_job_contexts.is_empty() {
-            return Err(SnapshotError::unsupported("host job contexts awaiting release"));
+        if !self.abandoned_contexts.is_empty() {
+            return Err(SnapshotError::unsupported("host contexts awaiting release"));
         }
         writer.len(self.slots.len());
         for slot in self.slots.iter() {
