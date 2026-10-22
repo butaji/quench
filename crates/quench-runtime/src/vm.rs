@@ -1,6 +1,7 @@
 mod compiled;
 mod js_compiled;
 mod jit_backend;
+mod loop_compiled;
 mod shape_transitions;
 mod snapshot;
 mod startup_intrinsics;
