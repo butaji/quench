@@ -535,8 +535,19 @@ pub(super) fn fixed_register_local_facts(
         }
 
         fn visit_unary_expression(&mut self, expression: &UnaryExpression<'a>) {
+            // Only `delete name` reaches a binding, and `delete arguments[k]` unmaps a
+            // parameter from a mapped `arguments`; deleting any other member (`delete o[k]`)
+            // leaves every local where it was.
             if expression.operator == oxc_syntax::operator::UnaryOperator::Delete {
-                self.safe = false;
+                let reaches_binding = match expression.argument.without_parentheses() {
+                    Expression::Identifier(_) => true,
+                    expression => expression.as_member_expression().is_none_or(|member| {
+                        matches!(member.object().without_parentheses(), Expression::Identifier(object) if object.name == "arguments")
+                    }),
+                };
+                if reaches_binding {
+                    self.safe = false;
+                }
             }
             walk::walk_unary_expression(self, expression);
         }
