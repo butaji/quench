@@ -5,6 +5,8 @@ use crate::bytecode::Op;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static EXITS: [AtomicU64; Op::COUNT] = [const { AtomicU64::new(0) }; Op::COUNT];
+static OPCODES: [AtomicU64; Op::COUNT] = [const { AtomicU64::new(0) }; Op::COUNT];
+static MOVE_SUCCESSORS: [AtomicU64; Op::COUNT] = [const { AtomicU64::new(0) }; Op::COUNT];
 static REPORT: std::sync::Once = std::sync::Once::new();
 /// Opcodes the report lists, most frequent first.
 const REPORTED_OPCODES: usize = 30;
@@ -65,6 +67,14 @@ pub(super) fn record(op: Op) {
     EXITS[op as usize].fetch_add(1, Ordering::Relaxed);
 }
 
+pub(super) fn record_opcode(op: Op) {
+    OPCODES[op as usize].fetch_add(1, Ordering::Relaxed);
+}
+
+pub(super) fn record_move_successor(op: Op) {
+    MOVE_SUCCESSORS[op as usize].fetch_add(1, Ordering::Relaxed);
+}
+
 extern "C" fn report() {
     let mut counts: Vec<(u64, usize)> = EXITS
         .iter()
@@ -76,6 +86,28 @@ extern "C" fn report() {
     let total: u64 = counts.iter().map(|(count, _)| count).sum();
     eprintln!("lane exits: {total}");
     for (count, op) in counts.into_iter().take(REPORTED_OPCODES) {
+        eprintln!("  {count:>12} {}", Op::NAMES[op]);
+    }
+    let mut opcodes: Vec<(u64, usize)> = OPCODES
+        .iter()
+        .enumerate()
+        .map(|(op, count)| (count.load(Ordering::Relaxed), op))
+        .filter(|(count, _)| *count > 0)
+        .collect();
+    opcodes.sort_unstable_by(|a, b| b.cmp(a));
+    eprintln!("lane records by opcode:");
+    for (count, op) in opcodes.into_iter().take(REPORTED_OPCODES) {
+        eprintln!("  {count:>12} {}", Op::NAMES[op]);
+    }
+    let mut move_successors: Vec<(u64, usize)> = MOVE_SUCCESSORS
+        .iter()
+        .enumerate()
+        .map(|(op, count)| (count.load(Ordering::Relaxed), op))
+        .filter(|(count, _)| *count > 0)
+        .collect();
+    move_successors.sort_unstable_by(|a, b| b.cmp(a));
+    eprintln!("Move record successor opcodes:");
+    for (count, op) in move_successors.into_iter().take(REPORTED_OPCODES) {
         eprintln!("  {count:>12} {}", Op::NAMES[op]);
     }
     if let Some(details) = DETAILS.lock().expect("lane exit details").as_ref() {

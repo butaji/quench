@@ -44,6 +44,8 @@ pub(super) struct LaneInstruction {
     a: u16,
     b: u16,
     c: u16,
+    #[cfg(feature = "profile-lane-exits")]
+    opcode: Op,
 }
 
 /// The immediate, resolved by its role: a jump target becomes the byte
@@ -1523,7 +1525,16 @@ fn profile_script_call_target<H: Host>(
 #[inline(always)]
 fn handler<H: Host>(ip: Ip) -> Handler {
     #[cfg(feature = "profile-lane-exits")]
-    super::lane_exits::count_record(ip.addr());
+    {
+        super::lane_exits::count_record(ip.addr());
+        // SAFETY: `ip` points to an initialized record in the current lane view.
+        let opcode = unsafe { (*ip).opcode };
+        super::lane_exits::record_opcode(opcode);
+        if opcode == Op::Move {
+            // SAFETY: a Move is not a function terminator, so its view has a successor.
+            super::lane_exits::record_move_successor(unsafe { (*ip.add(1)).opcode });
+        }
+    }
     // SAFETY: a view is only run by the VM type whose handlers built it, and
     // every reachable record is initialized.
     unsafe { std::mem::transmute::<*const (), Handler>((*ip).handler) }
@@ -11047,6 +11058,8 @@ fn derive_lane_view<H: Host>(
                 a: instruction.a(),
                 b: instruction.b(),
                 c: instruction.c(),
+                #[cfg(feature = "profile-lane-exits")]
+                opcode: instruction.op(),
             }
         })
         .collect();
@@ -11241,6 +11254,8 @@ fn derive_lane_view<H: Host>(
             a: absorbed.a(),
             b: absorbed.b(),
             c,
+            #[cfg(feature = "profile-lane-exits")]
+            opcode: decoded[pc].op(),
         };
     }
     // Two plain moves in a row run as one record.
@@ -11868,6 +11883,8 @@ fn specialize_updates<H: Host>(records: &mut [LaneInstruction]) {
             a: conversion.a,
             b: conversion.b,
             c: update.a,
+            #[cfg(feature = "profile-lane-exits")]
+            opcode: conversion.opcode,
         };
     }
 }

@@ -407,3 +407,14 @@ and left the same four sites on top. These profile builds are intentionally
 instrumented; the extended run's 52.9 renders/s is not a performance result.
 Output matched at 2,498,000 bytes/checksum 41826. Full diagnostic output:
 `work/react-perf/react-call-target-profile-all.log`.
+
+The lane profiler now reports dynamic record counts by opcode and the next
+opcode after each Move. Over the same 500-render React input, Move led with
+20.9M records, followed by GetField (14.2M), JumpBinaryFalse (10.7M),
+LoadLocalPlain (8.6M), JumpFalse (8.2M), and Call (7.9M). Move's successors
+were Move (5.8M), Call (4.5M), JumpFalse (3.6M), and GetField (1.1M); the
+existing Move-pair fusion already handles adjacent moves. This supports testing
+a Move-to-JumpFalse fusion, which skips a dispatch on about 3.6M records in this
+sample. Diagnostic output:
+`work/react-perf/react-lane-opcode-profile.log` and
+`work/react-perf/react-lane-move-successors.log`.
