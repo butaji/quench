@@ -1069,16 +1069,11 @@ impl<H: Host> Vm<H> {
         flags: RegExpFlags,
         result_used: bool,
     ) -> Result<Value, JsError> {
-        // The legacy statics keep the input as given; the replacement reads a flat copy only
-        // while it runs, as matching does (`regexp_subject`): V8-v7 RegExp's input variants
-        // are ropes of slices, which a kept flat copy each had held 837 KiB of.
-        let given = input;
-        let input = &input.unkept_flat();
         let subject = self.regexp_subject(input);
         if let FastReplacement::Template(template) = replacement {
             if !template.units().iter().any(|unit| unit == u16::from(b'$')) {
                 return self.regexp_replace_with_literal(
-                    p, receiver, given, input, &subject, template, matcher, flags, result_used,
+                    p, receiver, input, &subject, template, matcher, flags, result_used,
                 );
             }
         }
@@ -1098,11 +1093,9 @@ impl<H: Host> Vm<H> {
                 .into_iter()
                 .collect()
         };
-        let Some(last) = matches.last() else {
-            // Without a match the result is the input itself, not a copy of its units.
-            return Ok(self.heap.alloc_string(given.clone()));
-        };
-        self.record_regexp_legacy_match(receiver, given.clone(), last.clone())?;
+        if let Some(last) = matches.last() {
+            self.record_regexp_legacy_match(receiver, input.clone(), last.clone())?;
+        }
 
         let mut output = super::wtf16::JsStringBuilder::default();
         let mut next_source = 0;
@@ -1191,13 +1184,10 @@ impl<H: Host> Vm<H> {
     /// the legacy statics record. A global replace therefore finds match ranges only and
     /// recaptures the last match, which a search from its start finds again.
     #[allow(clippy::too_many_arguments)]
-    /// `given` is the input as the caller holds it, which the result without a match and the
-    /// legacy statics keep; `input` is its flat units for this call (`JsString::unkept_flat`).
     fn regexp_replace_with_literal(
         &mut self,
         p: &ResidualProgram,
         receiver: Value,
-        given: &JsString,
         input: &JsString,
         subject: &quench_regexp::Subject,
         template: &JsString,
@@ -1230,11 +1220,11 @@ impl<H: Host> Vm<H> {
             if !result_used {
                 return Ok(Value::UNDEFINED);
             }
-            return Ok(self.heap.alloc_string(given.clone()));
+            return Ok(self.heap.alloc_string(input.clone()));
         };
         match last {
-            Ok(found) => self.record_regexp_legacy_match(receiver, given.clone(), found)?,
-            Err(start) => self.record_regexp_legacy_pending(receiver, given.clone(), matcher, start)?,
+            Ok(found) => self.record_regexp_legacy_match(receiver, input.clone(), found)?,
+            Err(start) => self.record_regexp_legacy_pending(receiver, input.clone(), matcher, start)?,
         }
         // Nothing reads the result: building it runs no guest code, so only its one
         // observable outcome, a length past the limit raising, needs the length.
