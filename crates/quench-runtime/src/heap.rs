@@ -3052,6 +3052,36 @@ impl Heap {
         self.note_object_slots(object, slot + 1);
     }
 
+    /// `record_property_add_at` out of line, for an add whose storage moves or whose store
+    /// the write barrier logs, so a caller's plain appends keep their code call-free.
+    #[inline(never)]
+    pub(crate) fn record_property_add_moving(&mut self, object: Value, slot: usize, value: Value, shape: u32) {
+        self.record_property_add_at(object, slot, value, shape);
+    }
+
+    /// `record_property_add_at` of an add the record admits as a plain append
+    /// (`Object::admits_plain_append`): the store into storage that does not move. A store
+    /// the write barrier would log is left to the caller (`false`, nothing changed), as for
+    /// `record_property_set_flat`, so this one makes no call.
+    #[inline(always)]
+    pub(crate) fn record_property_append_plain(&mut self, record_id: u32, slot: usize, value: Value, shape: u32) -> bool {
+        if self.object_records.store_logs(record_id, value) {
+            return false;
+        }
+        let Self {
+            object_records,
+            properties,
+            ..
+        } = &mut *self;
+        // SAFETY: the caller read the record from a direct-object Value; `&mut self` is
+        // exclusive, and the barrier logs nothing for this store.
+        let data = unsafe { object_records.get_live_mut_unbarriered(record_id) };
+        data.append_plain(properties, slot, value, shape);
+        #[cfg(feature = "profile-memory")]
+        self.note_object_slots(Value::direct_object(record_id), slot + 1);
+        true
+    }
+
     #[cfg(feature = "profile-memory")]
     pub(crate) fn set_memory_allocation_site(&mut self, program: u32, function: u32, pc: usize) {
         self.memory_profile
@@ -3696,8 +3726,13 @@ fn widen_inline_storage(
 fn append_property(data: &mut Object, properties: &mut ValueArena, slot: usize, value: Value, shape: u32) {
     let mut vector = data.properties();
     if !vector.has_inline_property_storage() {
+        let before = vector.into_parts();
         properties.push(&mut vector, value);
-        data.set_properties(vector);
+        // An append within its range leaves the storage as it was; `set_shape` below
+        // records the grown shape.
+        if vector.into_parts() != before {
+            data.set_properties(vector);
+        }
     } else if slot < INLINE_PROPERTY_COUNT {
         if !data.store_inline_narrow(slot, value) {
             widen_inline_storage(data, properties, shape, slot + 1, slot, value);

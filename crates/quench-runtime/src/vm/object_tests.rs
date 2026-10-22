@@ -1,26 +1,10 @@
 use super::*;
 use crate::Engine;
+use crate::test_host::TestHost;
 use std::{cell::RefCell, rc::Rc};
 
-struct SilentHost;
-impl Host for SilentHost {
-    fn write_line(&mut self, _: &str) {}
-    fn clock_millis(&mut self) -> f64 {
-        0.0
-    }
-}
 
-struct RecordingHost(Rc<RefCell<Vec<String>>>);
 
-impl Host for RecordingHost {
-    fn write_line(&mut self, line: &str) {
-        self.0.borrow_mut().push(line.into());
-    }
-
-    fn clock_millis(&mut self) -> f64 {
-        0.0
-    }
-}
 
 fn field_cache_entries<H: Host>(
     vm: &Vm<H>,
@@ -135,7 +119,7 @@ fn method_cache_program(mut program: ResidualProgram) -> ResidualProgram {
 
 #[test]
 fn third_receiver_promotes_field_site_to_megamorphic() {
-    let mut vm = Vm::new(SilentHost);
+    let mut vm = Vm::new(TestHost::default());
     vm.field_caches.push(EMPTY_CACHE);
     vm.megamorphic_field_indices.push(NO_MEGAMORPHIC_FIELD);
     for receiver in 1..=4 {
@@ -156,7 +140,7 @@ fn third_receiver_promotes_field_site_to_megamorphic() {
 
 #[test]
 fn shape_slot_index_is_derived_from_immutable_shape_keys() {
-    let mut vm = Vm::new(SilentHost);
+    let mut vm = Vm::new(TestHost::default());
     let first = vm.intern_atom("first");
     let second = vm.intern_atom("second");
     let first_shape = vm.transition_shape(0, first);
@@ -182,7 +166,7 @@ fn cached_field_reads_follow_in_place_writes() {
         ("unspecialized", Engine::specialize_unspecialized),
     ] {
         let output = Rc::new(RefCell::new(Vec::new()));
-        let mut vm = Vm::new(RecordingHost(output.clone()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
         let program = compile(source, "field-cache-write.js").unwrap();
         program.compile_released();
         vm.execute(&program).unwrap();
@@ -299,7 +283,7 @@ fn static_three_field_object_literals_share_the_shape_site() {
         );
 
         let output = Rc::new(RefCell::new(Vec::new()));
-        let mut vm = Vm::new(RecordingHost(output.clone()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
         vm.execute(&program).unwrap();
         assert_eq!(output.borrow().as_slice(), expected, "{mode}");
     }
@@ -325,7 +309,7 @@ fn custom_prototype_fallback_tracks_changes_and_rejects_cycles() {
         ("unspecialized", Engine::specialize_unspecialized),
     ] {
         let output = Rc::new(RefCell::new(Vec::new()));
-        let mut vm = Vm::new(RecordingHost(output.clone()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
         let program = compile(source, "field-cache-prototype.js").unwrap();
         vm.execute(&program).unwrap();
         assert_eq!(
@@ -348,7 +332,7 @@ fn inherited_field_cache_reads_live_object_prototype_data() {
       print(readValue(receiver));
     "#;
     let output = Rc::new(RefCell::new(Vec::new()));
-    let mut vm = Vm::new(RecordingHost(output.clone()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
     let program = Engine::specialize(source, "inherited-field-cache-live.js").unwrap();
     program.compile_released();
     vm.execute(&program).unwrap();
@@ -380,7 +364,7 @@ fn direct_object_field_cache_probes_nonordinary_prototype_holder() {
         ("unspecialized", Engine::specialize_unspecialized),
     ] {
         let output = Rc::new(RefCell::new(Vec::new()));
-        let mut vm = Vm::new(RecordingHost(output.clone()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
         let program = compile(source, "direct-object-holder-cache.js").unwrap();
         program.compile_released();
         #[cfg(feature = "profile-aggregate")]
@@ -431,7 +415,7 @@ fn direct_object_field_cache_probes_megamorphic_prototype_holders() {
       print(readValue(third));
     "#;
     let output = Rc::new(RefCell::new(Vec::new()));
-    let mut vm = Vm::new(RecordingHost(output.clone()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
     let program = Engine::specialize(source, "direct-object-megamorphic-holder-cache.js").unwrap();
     program.compile_released();
     #[cfg(feature = "profile-aggregate")]
@@ -488,7 +472,7 @@ fn custom_prototype_fallback_reads_live_data_and_keeps_accessor_fallback() {
         ("unspecialized", Engine::specialize_unspecialized),
     ] {
         let output = Rc::new(RefCell::new(Vec::new()));
-        let mut vm = Vm::new(RecordingHost(output.clone()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
         let program = compile(source, "inherited-field-cache.js").unwrap();
         vm.execute(&program).unwrap();
         assert_eq!(
@@ -527,7 +511,7 @@ fn inherited_builtin_fields_cache_array_and_object_prototypes() {
         ("unspecialized", Engine::specialize_unspecialized),
     ] {
         let output = Rc::new(RefCell::new(Vec::new()));
-        let mut vm = Vm::new(RecordingHost(output.clone()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
         let program = compile(source, "inherited-builtin-fields.js").unwrap();
         program.compile_released();
         vm.execute(&program).unwrap();
@@ -565,7 +549,7 @@ fn optional_method_call_field_cache_observes_callable_replacement() {
         ("unspecialized", Engine::specialize_unspecialized),
     ] {
         let output = Rc::new(RefCell::new(Vec::new()));
-        let mut vm = Vm::new(RecordingHost(output.clone()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
         let program = compile(source, "optional-method-cache-write.js").unwrap();
         program.compile_released();
         vm.execute(&program).unwrap();
@@ -598,7 +582,7 @@ fn optional_method_cache_observes_callable_replacement_without_shape_change() {
         ("unspecialized", Engine::specialize_unspecialized),
     ] {
         let output = Rc::new(RefCell::new(Vec::new()));
-        let mut vm = Vm::new(RecordingHost(output.clone()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
         let program = method_cache_program(
             compile(source, "optional-method-cache-callable-replacement.js").unwrap(),
         );
@@ -645,7 +629,7 @@ fn optional_method_cache_invalidates_when_inherited_callable_changes() {
         ("unspecialized", Engine::specialize_unspecialized),
     ] {
         let output = Rc::new(RefCell::new(Vec::new()));
-        let mut vm = Vm::new(RecordingHost(output.clone()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
         let program = method_cache_program(
             compile(source, "optional-method-cache-inherited-replacement.js").unwrap(),
         );
@@ -684,7 +668,7 @@ fn optional_method_cache_executes_megamorphic_receiver_shapes() {
         ("unspecialized", Engine::specialize_unspecialized),
     ] {
         let output = Rc::new(RefCell::new(Vec::new()));
-        let mut vm = Vm::new(RecordingHost(output.clone()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
         let program =
             method_cache_program(compile(source, "optional-method-cache-megamorphic.js").unwrap());
         assert_eq!(program.method_sites.len(), 1, "test needs one method site");
@@ -742,7 +726,7 @@ fn field_cache_fallback_preserves_accessor_reentry() {
         ("unspecialized", Engine::specialize_unspecialized),
     ] {
         let output = Rc::new(RefCell::new(Vec::new()));
-        let mut vm = Vm::new(RecordingHost(output.clone()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
         let program = compile(source, "field-cache-accessor-reentry.js").unwrap();
         program.compile_released();
         vm.execute(&program).unwrap();
@@ -781,7 +765,7 @@ fn field_cache_fallback_preserves_proxy_get_trap_reentry() {
         ("unspecialized", Engine::specialize_unspecialized),
     ] {
         let output = Rc::new(RefCell::new(Vec::new()));
-        let mut vm = Vm::new(RecordingHost(output.clone()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
         let program = compile(source, "field-cache-proxy-get.js").unwrap();
         program.compile_released();
         vm.execute(&program).unwrap();
@@ -820,7 +804,7 @@ fn inherited_field_cache_preserves_proxy_prototype_traps() {
         ("unspecialized", Engine::specialize_unspecialized),
     ] {
         let output = Rc::new(RefCell::new(Vec::new()));
-        let mut vm = Vm::new(RecordingHost(output.clone()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
         let program = compile(source, "inherited-proxy-field-cache.js").unwrap();
         program.compile_released();
         vm.execute(&program).unwrap();
@@ -859,7 +843,7 @@ fn method_cache_fallback_preserves_proxy_get_trap_and_receiver() {
         ("unspecialized", Engine::specialize_unspecialized),
     ] {
         let output = Rc::new(RefCell::new(Vec::new()));
-        let mut vm = Vm::new(RecordingHost(output.clone()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
         let program = method_cache_program(compile(source, "method-cache-proxy-get.js").unwrap());
         program.compile_released();
         assert!(
@@ -915,7 +899,7 @@ fn optional_method_lookup_reenters_accessor_once_and_preserves_receiver() {
         ("unspecialized", Engine::specialize_unspecialized),
     ] {
         let output = Rc::new(RefCell::new(Vec::new()));
-        let mut vm = Vm::new(RecordingHost(output.clone()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
         let program = method_cache_program(compile(source, "optional-method-accessor.js").unwrap());
         program.compile_released();
         assert!(
@@ -966,7 +950,7 @@ fn static_index_field_cache_admits_only_shape_backed_storage() {
         ("unspecialized", Engine::specialize_unspecialized),
     ] {
         let output = Rc::new(RefCell::new(Vec::new()));
-        let mut vm = Vm::new(RecordingHost(output.clone()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
         let program = compile(source, "static-index-cache.js").unwrap();
         program.compile_released();
         vm.execute(&program).unwrap();
@@ -1011,7 +995,7 @@ fn exhausted_field_cache_preserves_generic_reads() {
         ("unspecialized", Engine::specialize_unspecialized),
     ] {
         let output = Rc::new(RefCell::new(Vec::new()));
-        let mut vm = Vm::new(RecordingHost(output.clone()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
         let program = compile(&source, "field-cache-exhaustion.js").unwrap();
         vm.initialize(&program).unwrap();
         vm.heap.retain_allocations_for_test();
@@ -1098,7 +1082,7 @@ fn getter_only_accessors_keep_their_getters_in_slots_and_share_shapes() {
         ("unspecialized", Engine::specialize_unspecialized),
     ] {
         let output = Rc::new(RefCell::new(Vec::new()));
-        let mut vm = Vm::new(RecordingHost(output.clone()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
         let program = compile(source, "slot-getters.js").unwrap();
         vm.execute(&program).unwrap();
         assert_eq!(
@@ -1124,7 +1108,7 @@ fn getter_only_accessors_keep_their_getters_in_slots_and_share_shapes() {
                 "for (var i = 0; i < {count}; i++) {{ var o = {{}}; for (var key of ['a', 'b', 'c']) \
                  Object.defineProperty(o, key, {{ get: function () {{ return i; }} }}); }}"
             );
-            let mut vm = Vm::new(SilentHost);
+            let mut vm = Vm::new(TestHost::default());
             vm.execute(&compile(&source, "slot-getter-shapes.js").unwrap()).unwrap();
             vm.shapes.len()
         };
@@ -1146,13 +1130,13 @@ fn only_arrow_closures_keep_their_creator_s_implicit_bindings() {
         target().join(), new target().join()].join(" "));
     "#;
     let output = Rc::new(RefCell::new(Vec::new()));
-    let mut vm = Vm::new(RecordingHost(output.clone()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
     vm.execute(&Engine::specialize(source, "implicit-bindings.js").unwrap()).unwrap();
     assert_eq!(
         output.borrow().as_slice(),
         ["1 outer inner evaluated undefined,false undefined,true"]
     );
-    let environment_bindings = |vm: &mut Vm<RecordingHost>, name: &str| {
+    let environment_bindings = |vm: &mut Vm<TestHost>, name: &str| {
         let atom = vm.intern_atom(name);
         let closure = vm.own_property(vm.realm.globals, atom).unwrap();
         let Some(crate::heap::FunctionRecord { env, .. }) = vm.heap.function(closure) else {
@@ -1175,18 +1159,18 @@ fn only_arrow_closures_keep_their_creator_s_implicit_bindings() {
 #[test]
 fn field_cache_invalidation_resets_every_written_site() {
     const SITES: usize = 64;
-    let mut vm = Vm::new(SilentHost);
+    let mut vm = Vm::new(TestHost::default());
     vm.field_caches = vec![EMPTY_CACHE; SITES];
     vm.megamorphic_field_indices = vec![NO_MEGAMORPHIC_FIELD; SITES];
     vm.field_add_indices = vec![NO_FIELD_ADD_SET; SITES];
     vm.inherited_field_indices = vec![NO_INHERITED_FIELD; SITES];
     vm.field_cache_writes = Some(Vec::new());
-    let record = |vm: &mut Vm<SilentHost>, site: usize| {
+    let record = |vm: &mut Vm<TestHost>, site: usize| {
         for receiver in 1..=3 {
             vm.record_field_cache(site, FieldCache { receiver, holder: NO_FIELD_HOLDER, slot: 0 });
         }
     };
-    let all_empty = |vm: &Vm<SilentHost>| {
+    let all_empty = |vm: &Vm<TestHost>| {
         vm.field_caches.iter().all(|cache| cache.receiver == EMPTY_CACHE.receiver)
             && vm.megamorphic_field_indices.iter().all(|&index| index == NO_MEGAMORPHIC_FIELD)
     };

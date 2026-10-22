@@ -711,6 +711,34 @@ impl<H: Host> Vm<H> {
         )))
     }
 
+    /// `hasOwnProperty` or `propertyIsEnumerable` (`native`) of a string key on an object
+    /// whose own lookup runs no guest code: neither a Proxy (traps) nor a module namespace
+    /// (a deferred one evaluates its module; a binding may be uninitialized). ToPropertyKey
+    /// of a string is the string, so the answer is the general path's
+    /// (`own_property_enumerable`); `None` leaves the call to it.
+    pub(super) fn plain_own_property_query(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        receiver: Value,
+        key: Value,
+    ) -> Option<Value> {
+        if matches!(self.heap.get(receiver), Some(Cell::Proxy { .. }))
+            || !self
+                .object_data(receiver)
+                .is_some_and(|object| !object.is_module_namespace() && object.deferred_module().is_none())
+        {
+            return None;
+        }
+        let text = self.heap.string(key)?.clone();
+        let atom = self.string_key_atom(key)?;
+        let found = self.ordinary_own_string_property(p, receiver, &text, atom).ok()?;
+        let holds = found.is_some_and(|(_, attributes)| {
+            native == Native::ObjectPrototypeHasOwnProperty || attributes.enumerable
+        });
+        Some(if holds { Value::TRUE } else { Value::FALSE })
+    }
+
     /// Whether `key` is an own enumerable property of `target`; `None` when it
     /// is not an own property. Proxies answer through their traps.
     pub(super) fn own_property_enumerable(

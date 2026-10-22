@@ -121,6 +121,16 @@ pub(super) fn decode_trusted_program(bytes: super::KeptBytes) -> Result<super::R
     decode_program(&bytes, encoding, ReadAtoms::Program, None)
 }
 
+/// `decode_trusted_program`, with each atom of the program's table named by `intern`'s id,
+/// as a compact encoding's reader names them.
+pub(super) fn decode_trusted_program_interned(
+    bytes: super::KeptBytes,
+    intern: &mut dyn FnMut(&str) -> u32,
+) -> Result<super::ResidualProgram, String> {
+    let encoding = sealed_encoding_length(bytes.as_ref().as_ref())?;
+    decode_program(&bytes, encoding, ReadAtoms::Interned(intern), None)
+}
+
 /// The length of a sealed encoding without its checksum, when the checksum holds over its
 /// body. The region of deferred records is left unread.
 fn sealed_encoding_length(bytes: &[u8]) -> Result<usize, String> {
@@ -293,9 +303,14 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding) -> (Vec
             Vec::new()
         }
         AtomEncoding::Compact(compact) => {
+            // The names' lengths, then their text as one run, which the reader validates as
+            // UTF-8 at once instead of name by name.
             header.u32(compact.order.len() as u32);
             for &atom in &compact.order {
-                header.string(&program.atoms[atom as usize]);
+                header.u32(program.atoms[atom as usize].len() as u32);
+            }
+            for &atom in &compact.order {
+                header.bytes.extend_from_slice(program.atoms[atom as usize].as_bytes());
             }
             compact.order
         }
@@ -355,6 +370,8 @@ enum ReadAtoms<'a> {
     Program,
     /// A compact table, whose names `intern` gives the reader's ids.
     Compact(&'a mut dyn FnMut(&str) -> u32),
+    /// The program's own table, whose names `intern` gives the reader's ids.
+    Interned(&'a mut dyn FnMut(&str) -> u32),
     /// Only the length of the table the program shares with its reader, written here.
     Shared(&'a mut usize),
 }
@@ -431,13 +448,29 @@ fn decode_program(
             **count = input.u32()? as usize;
             AtomTable::default()
         }
-        ReadAtoms::Compact(intern) => {
+        ReadAtoms::Interned(intern) => {
             let count = input.u32()? as usize;
             let mut ids = Vec::with_capacity(count);
             for _ in 0..count {
                 let len = input.u32()? as usize;
                 let name = std::str::from_utf8(input.take(len)?).map_err(|_| "invalid residual string")?;
                 ids.push(intern(name));
+            }
+            input.atoms = Some(ids.into());
+            AtomTable::default()
+        }
+        ReadAtoms::Compact(intern) => {
+            let count = input.u32()? as usize;
+            let lengths = (0..count).map(|_| input.u32().map(|len| len as usize)).collect::<Result<Vec<_>, _>>()?;
+            let total = lengths.iter().try_fold(0usize, |total, &len| total.checked_add(len));
+            let text = std::str::from_utf8(input.take(total.ok_or("invalid residual string")?)?)
+                .map_err(|_| "invalid residual string")?;
+            let mut ids = Vec::with_capacity(count);
+            let mut start = 0;
+            for len in lengths {
+                let name = text.get(start..start + len).ok_or("invalid residual string")?;
+                ids.push(intern(name));
+                start += len;
             }
             input.atoms = Some(ids.into());
             AtomTable::default()
@@ -1046,6 +1079,7 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
             activation_bindings: Default::default(),
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
+            js_tier_candidate: Default::default(),
             call_plan: Default::default(),
             handlers: handlers.into(),
             register_roots,

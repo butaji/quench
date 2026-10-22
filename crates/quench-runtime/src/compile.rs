@@ -1545,6 +1545,14 @@ impl SpecializationMode {
     }
 }
 
+/// A named property access, by which past its unique sites a program shares cache sites
+/// (`Compiler::name_shared_cache_site`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum NamedAccess {
+    Load,
+    Store,
+}
+
 struct Compiler<'a> {
     source: &'a str,
     text: &'a str,
@@ -1574,6 +1582,10 @@ struct Compiler<'a> {
     functions: replay::FunctionTable<'a>,
     errors: Vec<Diagnostic>,
     cache_sites: u16,
+    /// The name-shared cache sites given out, by access and atom
+    /// (`name_shared_cache_site`), and the next one to give.
+    name_shared_sites: FxHashMap<(NamedAccess, u32), u16>,
+    next_name_shared_site: u16,
     template_sites: u32,
     method_sites: SiteTable<'a, MethodSiteSpec>,
     field_sites: SiteTable<'a, FieldSite>,
@@ -1963,6 +1975,8 @@ impl<'a> Compiler<'a> {
             functions: replay::FunctionTable::default(),
             errors: vec![],
             cache_sites: 0,
+            name_shared_sites: FxHashMap::default(),
+            next_name_shared_site: crate::bytecode::UNIQUE_CACHE_SITES,
             template_sites: 0,
             method_sites: SiteTable::default(),
             field_sites: SiteTable::default(),
@@ -2977,9 +2991,47 @@ impl<'a> Compiler<'a> {
     }
 
     fn cache_site(&mut self) -> u16 {
-        let site = self.cache_sites.min(crate::bytecode::SHARED_UNCACHED_SITE);
-        self.cache_sites = site + 1;
+        if self.cache_sites < crate::bytecode::UNIQUE_CACHE_SITES {
+            self.cache_sites += 1;
+            return self.cache_sites - 1;
+        }
+        // Past the unique sites the program spans the whole site space: the name-shared
+        // sites and the shared uncached one.
+        self.cache_sites = crate::bytecode::SHARED_UNCACHED_SITE + 1;
+        crate::bytecode::SHARED_UNCACHED_SITE
+    }
+
+    /// The site a named load or store of `atom` shares past the unique sites
+    /// (`NAME_SHARED_CACHE_SITES`), given on first use. A replay, which does not see the
+    /// load's assignments, and a program that used them all keep the shared uncached site.
+    fn name_shared_cache_site(&mut self, access: NamedAccess, atom: u32) -> u16 {
+        if self.replay_target.is_some() {
+            return crate::bytecode::SHARED_UNCACHED_SITE;
+        }
+        if let Some(&site) = self.name_shared_sites.get(&(access, atom)) {
+            return site;
+        }
+        let site = self.next_name_shared_site;
+        if site == crate::bytecode::SHARED_UNCACHED_SITE {
+            return site;
+        }
+        self.next_name_shared_site += 1;
+        self.name_shared_sites.insert((access, atom), site);
         site
+    }
+
+    /// The cache site instruction `op` keeps for `site`: a named field load or store emitted
+    /// with the shared uncached site takes its name's shared one instead.
+    fn emitted_cache_site(&mut self, op: Op, base: Register, site: Register, imm: u32) -> Register {
+        if site != crate::bytecode::SHARED_UNCACHED_SITE {
+            return site;
+        }
+        let access = match op {
+            Op::GetField if base != crate::bytecode::FieldBase::NESTED => NamedAccess::Load,
+            Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict => NamedAccess::Store,
+            _ => return site,
+        };
+        self.name_shared_cache_site(access, imm)
     }
 
     fn template_site(&mut self) -> u32 {
@@ -3439,6 +3491,7 @@ impl<'a> Compiler<'a> {
             activation_bindings: Default::default(),
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
+            js_tier_candidate: Default::default(),
             call_plan: Default::default(),
             handlers: function.handlers.into(),
             register_roots: Default::default(),
