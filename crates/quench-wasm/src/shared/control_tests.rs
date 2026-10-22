@@ -1,13 +1,6 @@
 use super::*;
-use quench_runtime::{Host, Runtime, WasmTrap};
-
-struct TestHost;
-impl Host for TestHost {
-    fn write_line(&mut self, _: &str) {}
-    fn clock_millis(&mut self) -> f64 {
-        0.0
-    }
-}
+use super::tests::TestHost;
+use quench_runtime::{Runtime, WasmTrap};
 
 fn lower(body: &str) -> WasmI32Function {
     crate::Engine::new()

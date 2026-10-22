@@ -1,24 +1,20 @@
-//! WebAssembly format: parse, validate, and wast scoring.
+//! WebAssembly format: parse, validate and lower for the shared VM.
 //!
-//! This crate owns the binary/text format and the spec-suite harness.
-//! Quench's shared VM owns execution; this crate owns Wasm decoding and WAST scoring.
+//! This crate owns the binary and text formats. Quench's shared VM owns execution; the
+//! spec-suite (WAST) harness lives in quench-wasm-test, so builds of quench-node do not
+//! compile the harness host's copy of the VM.
 
 use std::fmt;
 
 mod decode;
 mod interface;
 pub use interface::{interface, Export, ExternKind, Import, Interface};
-mod legacy_try;
 mod shared;
-mod shared_wast;
-pub use shared_wast::EXECUTION_MODE_VARIABLE;
-mod wast_protocol;
-mod wast_script;
+pub use shared::decode_globals;
 
 pub use decode::{
     core_features, features_for_path, inspect_binary, inspect_binary_with, ModuleStatus,
 };
-pub use wast_script::{run_wast, DirectiveResult, WastReport};
 
 /// Errors at the Wasm frontend boundary.
 #[derive(Debug)]
@@ -80,11 +76,6 @@ impl Engine {
             ModuleStatus::ValidateError(message) => Err(Error::Validate(message)),
         }
     }
-
-    /// Score every directive in a wast script using features implied by `filename`.
-    pub fn run_wast(&self, filename: &str, source: &str) -> WastReport {
-        shared_wast::run_wast(filename, source)
-    }
 }
 
 /// A parsed and validated module. Instantiation is not implemented in this phase.
@@ -94,6 +85,12 @@ pub struct Module {
 }
 
 impl Module {
+    /// A module of `bytes` its caller already parsed and validated under the features it
+    /// runs with (the WAST harness validates each directive's module itself).
+    pub fn from_validated(bytes: Vec<u8>) -> Self {
+        Self { bytes }
+    }
+
     pub fn bytes(&self) -> &[u8] {
         &self.bytes
     }
@@ -117,21 +114,5 @@ mod tests {
             .compile_wat("(module (func (unreachable) (drop (local.get 0))))")
             .expect_err("invalid");
         assert!(matches!(error, super::Error::Validate(_)), "{error:?}");
-    }
-
-    #[test]
-    fn engine_run_wast_scores_directives() {
-        let report = Engine::new().run_wast(
-            "mix.wast",
-            r#"
-(assert_malformed (module binary "") "unexpected end")
-(module (func (export "x") (result i32) i32.const 1))
-(assert_return (invoke "x") (i32.const 1))
-"#,
-        );
-        assert_eq!(report.results.len(), 3);
-        assert!(report.results[0].passed);
-        assert!(report.results[1].passed);
-        assert!(report.results[2].passed, "{:?}", report.results[2]);
     }
 }
