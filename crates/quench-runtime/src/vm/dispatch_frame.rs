@@ -13,7 +13,16 @@ pub(super) struct GeneralCodeCursor {
     decoded: *const WideInstruction,
     /// The function's lane view, or null where the lane does not run.
     lane: *const dispatch_fast::LaneView,
+    /// The backward jumps the activation took in the general path while it may still gain a
+    /// view (`note_back_edge`); `None` once it cannot.
+    back_edges: Option<u16>,
 }
+
+/// The backward jumps a JavaScript activation takes in the general path before its function's
+/// lane view is derived and the lane runs its loop (`Vm::note_back_edge`). Deriving a view
+/// costs some hundreds of instructions per instruction of the function; a module body that
+/// loops a few times (over its exports, say) ran faster without one.
+const HOT_LOOP_BACK_EDGES: u16 = 16;
 
 /// A caller suspended by an in-loop frame push, resumed when its callee completes.
 pub(super) struct PendingGeneralCall {
@@ -72,6 +81,7 @@ impl GeneralCodeCursor {
             wide: function_code.wide.as_ptr(),
             decoded,
             lane: std::ptr::null(),
+            back_edges: None,
         }
     }
 
@@ -106,13 +116,29 @@ impl<H: Host> Vm<H> {
         function: u32,
         lane: bool,
     ) -> GeneralCodeCursor {
+        let admitted = lane && self.lane_admits(program);
+        let view = if admitted { self.entry_lane_view(program_id, function) } else { std::ptr::null() };
         GeneralCodeCursor {
-            lane: if lane && self.lane_admits(program) {
-                self.entry_lane_view(program_id, function)
-            } else {
-                std::ptr::null()
-            },
+            lane: view,
+            // A JavaScript activation deferred its view; a loop that turns hot derives it.
+            back_edges: (admitted && view.is_null() && program.kind != crate::bytecode::ProgramKind::Wasm)
+                .then_some(0),
             ..GeneralCodeCursor::new(program_id, program, function)
+        }
+    }
+
+    /// Counts a backward jump of `cursor`'s activation in the general path; at
+    /// `HOT_LOOP_BACK_EDGES` its function's lane view is derived, which the lane enters at the
+    /// loop's next instruction.
+    #[inline(always)]
+    fn note_back_edge(&self, cursor: &mut GeneralCodeCursor) {
+        let Some(taken) = cursor.back_edges.as_mut() else {
+            return;
+        };
+        *taken += 1;
+        if *taken >= HOT_LOOP_BACK_EDGES {
+            cursor.back_edges = None;
+            cursor.lane = self.hot_loop_lane_view(cursor.program, cursor.function);
         }
     }
 
@@ -1649,6 +1675,9 @@ impl<H: Host> Vm<H> {
                         .branch_value(value.profile_kind() as usize, truthy);
                     if truthy == (ins.op() == Op::JumpTrue) {
                         pc = ins.jump_target() as usize;
+                        if pc <= instruction_pc {
+                            self.note_back_edge(&mut cursor);
+                        }
                     }
                     continue;
                 }
@@ -1669,6 +1698,9 @@ impl<H: Host> Vm<H> {
                         );
                         if !truthy {
                             pc = ins.jump_target() as usize;
+                            if pc <= instruction_pc {
+                                self.note_back_edge(&mut cursor);
+                            }
                         }
                         continue;
                     }
@@ -1824,6 +1856,9 @@ impl<H: Host> Vm<H> {
                 // A back edge collects only once the allocation threshold is reached.
                 Op::Jump if !self.heap.should_collect() => {
                     pc = ins.jump_target() as usize;
+                    if pc <= instruction_pc {
+                        self.note_back_edge(&mut cursor);
+                    }
                     continue;
                 }
                 _ => {}

@@ -7757,6 +7757,11 @@ impl<H: Host> Vm<H> {
         program.kind == crate::bytecode::ProgramKind::Wasm || (self.specialized && program.specialized)
     }
 
+    /// The lane view a hot loop of `function` runs with (`Vm::note_back_edge`), or null.
+    pub(super) fn hot_loop_lane_view(&self, program: ProgramId, function: u32) -> *const LaneView {
+        self.lane_view_any(program, function).unwrap_or(std::ptr::null())
+    }
+
     /// The lane view of `function`, derived on first use.
     fn lane_view_any(&self, program: ProgramId, function: u32) -> Option<*const LaneView> {
         let diagnostics = self.programs.reports_on_drop();
@@ -13514,8 +13519,11 @@ impl<H: Host> Vm<H> {
     /// without one (`ProgramStore::entry_lane_view`).
     pub(super) fn entry_lane_view(&self, program: ProgramId, function: u32) -> *const LaneView {
         let diagnostics = self.programs.reports_on_drop();
+        // A Wasm function that may loop gets its view at entry; a JavaScript one derives it
+        // once a loop turns hot (`Vm::note_back_edge`).
+        let wasm = self.programs.residual(program).is_some_and(|code| code.kind == crate::bytecode::ProgramKind::Wasm);
         self.programs
-            .entry_lane_view(program, function, may_loop, |code, constants, kind, live| {
+            .entry_lane_view(program, function, |code| wasm && may_loop(code), |code, constants, kind, live| {
                 derive_lane_view::<H>(code, constants, kind, live, self.js_tier_runs(), diagnostics)
             })
             .unwrap_or(std::ptr::null())
