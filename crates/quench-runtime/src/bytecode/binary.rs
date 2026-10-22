@@ -623,6 +623,7 @@ fn write_function(out: &mut BinaryWriter, function: &Function, superinstructions
         out.u8(u8::from(function.constructible));
         out.u8(u8::from(function.class_initializer));
         out.u8(u8::from(function.parameter_eval_arguments_error));
+        out.u8(u8::from(function.unaliased_arguments));
         out.u8(u8::from(function.simple_parameters));
         out.u8(u8::from(function.strict));
         out.u16(function.arguments_slot.unwrap_or(u16::MAX));
@@ -834,6 +835,11 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
             1 => true,
             _ => return Err("invalid parameter eval flag".into()),
         };
+        let unaliased_arguments = match input.u8()? {
+            0 => false,
+            1 => true,
+            _ => return Err("invalid unaliased arguments flag".into()),
+        };
         let simple_parameters = match input.u8()? {
             0 => false,
             1 => true,
@@ -1014,6 +1020,7 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
             constructible,
             class_initializer,
             parameter_eval_arguments_error,
+            unaliased_arguments,
             arguments_slot,
             simple_parameters,
             strict,
