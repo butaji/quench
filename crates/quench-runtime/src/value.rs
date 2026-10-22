@@ -556,6 +556,23 @@ impl Value {
             )
     }
 
+    /// ToNumber where the value alone decides it: a Number, a Boolean, `null` or `undefined`
+    /// (the deleted marker reads as `undefined`). `None` for a heap value, whose conversion
+    /// reads its cell and may run guest code.
+    #[inline(always)]
+    pub(crate) fn immediate_number(self) -> Option<f64> {
+        if let Some(number) = self.as_number() {
+            return Some(number);
+        }
+        if let Some(value) = self.as_bool() {
+            return Some(if value { 1.0 } else { 0.0 });
+        }
+        if self.is_null() {
+            return Some(0.0);
+        }
+        (self.is_undefined() || self.is_deleted()).then_some(f64::NAN)
+    }
+
     /// ToBoolean where the value alone decides it: Numbers, the primitive tags, and object
     /// and array records, which hold only ordinary objects and arrays and so never "", 0n or
     /// the IsHTMLDDA function. `None` leaves another heap value to its cell.

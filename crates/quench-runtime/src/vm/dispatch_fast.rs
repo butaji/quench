@@ -7582,25 +7582,29 @@ fn lane_string_or_native_call<H: Host>(
 /// place so the lane's activations need not become frames (`lane_call_native`): a dense
 /// array's `indexOf` (`Vm::dense_index_of`), `String.fromCharCode` of Numbers, which
 /// allocates its string, `Number`'s predicates, which coerce nothing
-/// (`number::number_predicate`), and `ArrayBuffer.isView`. `None` leaves any other call to
+/// (`number::number_predicate`), the global `isNaN` and `isFinite` of an argument whose
+/// ToNumber reads nothing (`Value::immediate_number`), `Boolean` called as a function, whose
+/// ToBoolean runs no guest code, and `ArrayBuffer.isView`. `None` leaves any other call to
 /// `lane_call_native`.
 #[inline(never)]
 fn lane_pure_native<H: Host>(vm: &mut Vm<H>, callee: Value, receiver: Value, args: &[Value]) -> Option<Value> {
     let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = vm.heap.function(callee) else {
         return None;
     };
-    match *native {
+    let argument = args.first().copied().unwrap_or(Value::UNDEFINED);
+    match native {
         Native::ArrayIndexOf => vm.dense_index_of(receiver, args),
         Native::StringFromCharCode => {
             let text = vm.from_char_code_numbers(args)?;
             note_allocation(vm);
             Some(text)
         }
-        Native::ArrayBufferIsView => {
-            Some(Value::boolean(vm.is_array_buffer_view(args.first().copied().unwrap_or(Value::UNDEFINED))))
+        Native::ArrayBufferIsView => Some(Value::boolean(vm.is_array_buffer_view(argument))),
+        Native::Boolean => Some(Value::boolean(vm.truthy(argument))),
+        Native::GlobalIsNaN | Native::GlobalIsFinite => {
+            super::number::global_number_predicate(*native, argument.immediate_number()?).map(Value::boolean)
         }
-        native => super::number::number_predicate(native, args.first().copied().unwrap_or(Value::UNDEFINED))
-            .map(Value::boolean),
+        native => super::number::number_predicate(*native, argument).map(Value::boolean),
     }
 }
 
