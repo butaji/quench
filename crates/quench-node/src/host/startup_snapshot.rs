@@ -208,15 +208,13 @@ const KEYED_VARIABLES: &[&str] = &[
     "NODE_PATH",
     "QUENCH_PLATFORM",
 ];
-/// An eligible process boots from a snapshot unless this is `off`; `trace` also reports why
-/// one was not used. A restored `Preloaded` realm keeps every preloaded builtin resident, which
-/// a script that loads none of them would pay for (V8-v7 max RSS, bolted static x86_64,
-/// 2026-10-21, before `SnapshotKind`: Richards 2200 -> 7040 KiB, RegExp 6160 -> 10484); since
-/// `SnapshotKind`, such a script restores the bootstrap alone. The npm lane boots from one by
-/// default: without it every process bootstraps Node's core from the compile cache (x86_64 VM,
-/// 2026-10-22, ms: empty script 27 -> 15, lodash 125 -> 79, semver 296 -> 262 with it).
+/// `on` boots an eligible process from a snapshot; `trace` does, and reports why one was not
+/// used. Otherwise processes boot without one: a restored `Preloaded` realm keeps every
+/// preloaded builtin resident, which a script that loads none of them would pay for (V8-v7
+/// max RSS, bolted static x86_64, 2026-10-21, before `SnapshotKind`: Richards 2200 -> 7040
+/// KiB, RegExp 6160 -> 10484).
 pub(crate) const SNAPSHOT_ENV: &str = "QUENCH_STARTUP_SNAPSHOT";
-const SNAPSHOT_OFF: &str = "off";
+const SNAPSHOT_ON: &str = "on";
 const SNAPSHOT_TRACE: &str = "trace";
 /// Set in the environment of the process that builds a snapshot, to the file it writes.
 pub(crate) const BUILD_ENV: &str = "QUENCH_BUILD_STARTUP_SNAPSHOT";
@@ -316,7 +314,7 @@ pub(crate) fn snapshot_path(
         return None;
     }
     if REFUSED_VARIABLES.iter().any(|name| std::env::var_os(name).is_some())
-        || std::env::var_os(SNAPSHOT_ENV).is_some_and(|value| value == SNAPSHOT_OFF)
+        || !std::env::var_os(SNAPSHOT_ENV).is_some_and(|value| value == SNAPSHOT_ON || value == SNAPSHOT_TRACE)
     {
         return None;
     }

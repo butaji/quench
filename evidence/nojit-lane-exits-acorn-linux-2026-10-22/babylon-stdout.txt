@@ -1,0 +1,23 @@
+Starting JetStream3
+Running babylon-wtb:
+babylon-wtb First-Score                          0.65 pts
+babylon-wtb Worst-Score                          0.42 pts
+babylon-wtb Average-Score                        0.60 pts
+babylon-wtb Score                                0.55 pts
+babylon-wtb First-Time                        7643.40 ms 
+babylon-wtb Worst-Time                        11949.41 ms 
+babylon-wtb Average-Time                      8302.53 ms 
+babylon-wtb Total-Time                        27895.34 ms 
+babylon-wtb Wall-Time                         124064.06 ms 
+
+Overall:
+Overall First-Score                              0.65 pts
+Overall Worst-Score                              0.42 pts
+Overall Average-Score                            0.60 pts
+Overall First-Time                            7643.40 ms 
+Overall Worst-Time                            11949.41 ms 
+Overall Average-Time                          8302.53 ms 
+
+Overall Score                                    0.55 pts
+Overall Wall-Time                             124105.35 ms 
+

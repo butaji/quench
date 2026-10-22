@@ -536,12 +536,11 @@ impl<H: Host> Vm<H> {
         frame.env = parent;
         let arrow = function.is_arrow;
         let derived = function.derived_constructor;
+        let captured_this = if arrow { self.captured_lexical_this(parent) } else { None };
         let this = if derived {
             Value::DELETED
-        } else if arrow {
-            self.captured_lexical_this(parent).unwrap_or(this)
         } else {
-            this
+            captured_this.unwrap_or(this)
         };
         frame.this = if derived || arrow {
             this
@@ -572,6 +571,9 @@ impl<H: Host> Vm<H> {
             id == super::ROOT_FUNCTION_ID
                 || function.activation_bindings_observable(&p.atoms, &p.functions),
         );
+        // An arrow whose creator's `this` binding is initialized keeps that receiver: the
+        // binding never changes once initialized (`Vm::lexical_this`).
+        frame.fixed_this |= captured_this.is_some_and(|this| !this.is_deleted());
         frame.prepare_registers_for(function);
         frame.bind_register_parameters(function, args);
         frame.initialize_promoted_registers(function, args);
@@ -623,12 +625,11 @@ impl<H: Host> Vm<H> {
         frame.env = parent;
         let arrow = function.is_arrow;
         let derived = function.derived_constructor;
+        let captured_this = if arrow { self.captured_lexical_this(parent) } else { None };
         let this = if derived {
             Value::DELETED
-        } else if arrow {
-            self.captured_lexical_this(parent).unwrap_or(this)
         } else {
-            this
+            captured_this.unwrap_or(this)
         };
         frame.this = if derived || arrow || function.strict {
             this
@@ -649,6 +650,9 @@ impl<H: Host> Vm<H> {
             id == super::ROOT_FUNCTION_ID
                 || function.activation_bindings_observable(&p.atoms, &p.functions),
         );
+        // An arrow whose creator's `this` binding is initialized keeps that receiver: the
+        // binding never changes once initialized (`Vm::lexical_this`).
+        frame.fixed_this |= captured_this.is_some_and(|this| !this.is_deleted());
         frame.prepare_registers_for(function);
         frame.bind_register_parameters(function, args);
         frame.initialize_promoted_registers(function, args);
@@ -1396,11 +1400,16 @@ impl<H: Host> Vm<H> {
                         let caller = p.function_get(self.frames[frame].function as usize).map(|f| (f.is_async, Self::lane_runs(cursor.lane, pc), self.frames.len() - 1 - frame, pending_calls.len()));
                         super::lane_exits::record_detail(format!("{:?} {detail} caller(async,arrow,depth,pending)={caller:?}", instruction.op()));
                     }
-                    if matches!(instruction.op(), Op::CloneEnv | Op::Return | Op::GetField | Op::GetIndex | Op::SetIndex | Op::LoadName | Op::SetFieldStrict | Op::SetField | Op::LoadNameCall | Op::PrivateIn) {
+                    if matches!(instruction.op(), Op::CloneEnv | Op::Return | Op::GetField | Op::GetIndex | Op::SetIndex | Op::LoadName | Op::SetFieldStrict | Op::SetField | Op::SetThisFieldStrict | Op::SetThisField | Op::LoadNameCall | Op::PrivateIn) {
                         let function = p.function_get(self.frames[frame].function as usize);
                         let name = function.and_then(|f| f.name).map(|a| p.atoms[a as usize].to_string()).unwrap_or_default();
                         let span = function.map(|f| format!("{:?}", f.source_span)).unwrap_or_default();
-                        super::lane_exits::record_detail(format!("{:?} in {name} {span} pc={pc} lane={}", instruction.op(), Self::lane_runs(cursor.lane, pc)));
+                        // A store names its cache site and field, which tell a shared overflow site
+                        // (`SHARED_UNCACHED_SITE`) from a polymorphic one.
+                        let store = matches!(instruction.op(), Op::SetFieldStrict | Op::SetField | Op::SetThisFieldStrict | Op::SetThisField)
+                            .then(|| format!(" site={} field={}", instruction.c(), &p.atoms[instruction.imm() as usize]))
+                            .unwrap_or_default();
+                        super::lane_exits::record_detail(format!("{:?} in {name} {span} pc={pc} lane={}{store}", instruction.op(), Self::lane_runs(cursor.lane, pc)));
                     }
                     // A `Return` exit of the loop's own entry frame: which native's call into
                     // JavaScript started this nested run.
@@ -1749,6 +1758,8 @@ impl<H: Host> Vm<H> {
                         }) = ins.field_lookup()
                         && let Some(object) = match base.register_index() {
                             Some(register) => Some(self.read(frame, register)),
+                            // A local base (`FieldBase::local`) is the general path's read.
+                            None if base.local_index().is_some() => None,
                             None => self.frames[frame]
                                 .fixed_this
                                 .then(|| self.frames[frame].this),

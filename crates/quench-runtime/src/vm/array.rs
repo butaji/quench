@@ -87,31 +87,8 @@ impl<H: Host> Vm<H> {
             self.set_array_like_length(p, object, 0)?;
             return Ok(Value::UNDEFINED);
         }
-        // Every index is an ordinary own data element, so shifting cannot
-        // consult prototype getters/setters or run guest code. Exceptional
-        // descriptors, holes, mapped arguments and integrity states use the
-        // same ordered property algorithm below.
-        let dense = self.heap.sparse_length(object).is_none()
-            && self.heap.array(object).is_some_and(|data| {
-                let elements = data.elements();
-                data.is_extensible()
-                    && !data.is_arguments_object()
-                    && !data.has_indexed_descriptors()
-                    && elements.len() == length
-                    && elements.iter().all(|value| !value.is_deleted())
-            });
-        let writable_length = self
-            .property_attributes(
-                object,
-                super::property_key::PropertyKey::string(self.length_atom),
-            )
-            .is_some_and(|attributes| attributes.writable);
-        if dense && writable_length {
-            let elements = self
-                .heap
-                .array_elements_mut(object)
-                .expect("dense array guard");
-            return Ok(super::index::mutable_array_elements(elements).remove(0));
+        if let Some(first) = self.shift_dense(object, length) {
+            return Ok(first);
         }
         let first = self.get_index(p, object, Value::number(0.0))?;
         for index in 1..length {
@@ -141,6 +118,9 @@ impl<H: Host> Vm<H> {
             .checked_add(args.len())
             .filter(|length| *length as f64 <= MAX_SAFE_INTEGER)
             .ok_or_else(|| self.type_error(p, "array-like length exceeds safe integer".into()))?;
+        if self.splice_dense_elements(object, length, 0, 0, args).is_some() {
+            return Ok(Value::number(new_length as f64));
+        }
         if !args.is_empty() {
             for index in (1..=length).rev() {
                 let source = Value::number((index - 1) as f64);
@@ -158,6 +138,37 @@ impl<H: Host> Vm<H> {
         }
         self.set_array_like_length(p, object, new_length)?;
         Ok(Value::number(new_length as f64))
+    }
+
+    /// `shift` of a non-empty array of `length` whose every index is an ordinary own data
+    /// element and whose `length` is writable, so shifting consults no prototype accessor
+    /// and runs no guest code: one vector removal. Exceptional descriptors, holes, mapped
+    /// arguments and integrity states leave `None`, for the ordered property algorithm.
+    fn shift_dense(&mut self, object: Value, length: usize) -> Option<Value> {
+        let dense = length > 0
+            && self.heap.sparse_length(object).is_none()
+            && self.heap.array(object).is_some_and(|data| {
+                let elements = data.elements();
+                data.is_extensible()
+                    && !data.is_arguments_object()
+                    && !data.has_indexed_descriptors()
+                    && elements.len() == length
+                    && elements.iter().all(|value| !value.is_deleted())
+            });
+        let writable_length = self
+            .property_attributes(object, super::property_key::PropertyKey::string(self.length_atom))
+            .is_some_and(|attributes| attributes.writable);
+        if !dense || !writable_length {
+            return None;
+        }
+        let elements = self.heap.array_elements_mut(object).expect("dense array guard");
+        Some(super::index::mutable_array_elements(elements).remove(0))
+    }
+
+    /// `shift` of an array as `shift_dense` makes it, which observes nothing.
+    pub(super) fn plain_array_shift(&mut self, this: Value) -> Option<Value> {
+        let length = self.own_array_length(this)?;
+        self.shift_dense(this, length)
     }
 
     pub(super) fn delete_array_like_property(
@@ -182,27 +193,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let object = self.box_object_or_type_error(p, this)?;
         let length = self.array_like_length(p, object)?;
-        let start = args
-            .first()
-            .copied()
-            .map(|value| self.array_relative_index(p, value, length))
-            .transpose()?
-            .unwrap_or(0);
-        let available = length - start;
-        let delete_count = match args.get(1).copied() {
-            None if args.len() == 1 => available,
-            None => 0,
-            Some(value) => {
-                let number = self.to_number(p, value)?;
-                if number.is_nan() || number <= 0.0 {
-                    0
-                } else if number.is_infinite() {
-                    available
-                } else {
-                    (number.trunc() as usize).min(available)
-                }
-            }
-        };
+        let (start, delete_count) = self.splice_window(p, args, length)?;
         let removed = self.array_species_create(p, object, delete_count)?;
         let items = args.get(2..).unwrap_or_default();
         if self.array_splice_dense(object, length, start, delete_count, items, removed) {
@@ -276,7 +267,7 @@ impl<H: Host> Vm<H> {
         items: &[Value],
         removed: Value,
     ) -> bool {
-        if this == removed || self.dense_array_length(this) != Some(length) {
+        if this == removed {
             return false;
         }
         let Some(removed_length) = self.dense_array_length(removed) else {
@@ -287,33 +278,135 @@ impl<H: Host> Vm<H> {
                 .heap
                 .array_elements(removed)
                 .is_some_and(|elements| elements.iter().all(|value| value.is_deleted()));
+        if !removed_holds_holes {
+            return false;
+        }
+        let Some(taken) = self.splice_dense_elements(this, length, start, delete_count, items) else {
+            return false;
+        };
+        let Some(removed_object) = self.heap.array_mut(removed) else {
+            unreachable!("matched an array above");
+        };
+        *removed_object.elements_mut() = taken.into();
+        true
+    }
+
+    /// The receiver's half of `array_splice_dense`, which `unshift` also is, as
+    /// `splice(0, 0, ...items)`: `this` is still a dense array of `length`
+    /// (`dense_array_length`), each element from `start` on is present, and each index it
+    /// grows into stores plainly, so every generic step reads, writes or deletes an own
+    /// writable data element. The elements it removed, or `None` with nothing changed.
+    fn splice_dense_elements(
+        &mut self,
+        this: Value,
+        length: usize,
+        start: usize,
+        delete_count: usize,
+        items: &[Value],
+    ) -> Option<Vec<Value>> {
+        if self.dense_array_length(this) != Some(length) {
+            return None;
+        }
         let moved_present = self
             .heap
             .array_elements(this)
             .is_some_and(|elements| elements[start..].iter().all(|value| !value.is_deleted()));
-        let Some(new_length) = (length - delete_count)
+        let new_length = (length - delete_count)
             .checked_add(items.len())
-            .filter(|length| *length <= MAX_ARRAY_LENGTH)
-        else {
-            return false;
-        };
-        if !removed_holds_holes
-            || !moved_present
-            || !self.array_indices_store_plainly(this, length..new_length)
-        {
-            return false;
+            .filter(|length| *length <= MAX_ARRAY_LENGTH)?;
+        if !moved_present || !self.array_indices_store_plainly(this, length..new_length) {
+            return None;
         }
         let Some(object) = self.heap.array_mut(this) else {
             unreachable!("matched an array above");
         };
         let elements = super::index::mutable_array_elements(object.elements_mut());
         let taken = elements[start..start + delete_count].to_vec();
-        elements.splice(start..start + delete_count, &items);
-        let Some(removed_object) = self.heap.array_mut(removed) else {
-            unreachable!("matched an array above");
+        elements.splice(start..start + delete_count, items);
+        Some(taken)
+    }
+
+    /// `splice`'s start and delete count over an array-like of `length`: its first two
+    /// arguments as relative index and clamped count, which convert Numbers without
+    /// observing anything.
+    fn splice_window(
+        &mut self,
+        p: &ResidualProgram,
+        args: &[Value],
+        length: usize,
+    ) -> Result<(usize, usize), JsError> {
+        let start = args
+            .first()
+            .copied()
+            .map(|value| self.array_relative_index(p, value, length))
+            .transpose()?
+            .unwrap_or(0);
+        let available = length - start;
+        let delete_count = match args.get(1).copied() {
+            None if args.len() == 1 => available,
+            None => 0,
+            Some(value) => {
+                let number = self.to_number(p, value)?;
+                if number.is_nan() || number <= 0.0 {
+                    0
+                } else if number.is_infinite() {
+                    available
+                } else {
+                    (number.trunc() as usize).min(available)
+                }
+            }
         };
-        *removed_object.elements_mut() = taken.into();
-        true
+        Ok((start, delete_count))
+    }
+
+    /// `splice` of this realm (`callee`) on a dense array whose steps run no guest code:
+    /// Number window arguments (`splice_window`), an ArraySpeciesCreate that reads plain
+    /// data to the intrinsic `%Array%` (`array_species_is_intrinsic`) and so makes a fresh
+    /// array, and the dense splice (`array_splice_dense`). `None` leaves the call, with
+    /// nothing observable done, to the general path.
+    pub(super) fn plain_array_splice(
+        &mut self,
+        p: &ResidualProgram,
+        callee: Value,
+        this: Value,
+        args: &[Value],
+    ) -> Option<Value> {
+        if !self.is_current_realm_native(callee, Native::ArraySplice)
+            || args.iter().take(2).any(|value| value.as_number().is_none())
+            || !self.array_species_is_intrinsic(this)
+        {
+            return None;
+        }
+        let length = self.dense_array_length(this)?;
+        let (start, delete_count) = self.splice_window(p, args, length).ok()?;
+        let removed = self.array_create(p, delete_count).ok()?;
+        let items = args.get(2..).unwrap_or_default();
+        self.array_splice_dense(this, length, start, delete_count, items, removed)
+            .then_some(removed)
+    }
+
+    /// `unshift` of a dense array as `splice_dense_elements` makes it, which observes
+    /// nothing; `None` leaves the general path's steps.
+    pub(super) fn plain_array_unshift(&mut self, this: Value, items: &[Value]) -> Option<Value> {
+        let length = self.dense_array_length(this)?;
+        self.splice_dense_elements(this, length, 0, 0, items)?;
+        Some(Value::number((length + items.len()) as f64))
+    }
+
+    /// Whether ArraySpeciesCreate of `array` provably makes a plain array of this realm:
+    /// its `constructor` reads as plain data (`plain_named_load`) to `undefined` or to this
+    /// realm's `%Array%`, whose `@@species` getter is intrinsic. The reads observe nothing.
+    fn array_species_is_intrinsic(&mut self, array: Value) -> bool {
+        let constructor_atom = self.runtime_atoms.constructor;
+        let Some(constructor) = self.plain_named_load(array, constructor_atom) else {
+            return false;
+        };
+        constructor.is_undefined()
+            || (matches!(
+                self.heap.function(constructor),
+                Some(FunctionRecord { kind: FunctionKind::Native(Native::Array), realm, .. })
+                    if *realm == self.realm.globals
+            ) && self.has_intrinsic_species_getter(constructor))
     }
 
     fn move_array_like_property(

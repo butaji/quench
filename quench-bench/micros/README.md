@@ -114,14 +114,14 @@ not change runtime code or build a new binary.
 
 ```sh
 node quench-bench/micros/run.mjs diagnose calls --variant direct \
-  --trace-engine target-exec-trace/bench-throughput/quench-node --instrument counters
+  --trace-engine target-exec-trace/production/quench-node --instrument counters
 
 node quench-bench/micros/run.mjs diagnose objects --variant read \
-  --trace-engine target-exec-trace/bench-throughput/quench-node --instrument sites
+  --trace-engine target-exec-trace/production/quench-node --instrument sites
 
 # Focus existing site output by CODE:PC or the build-qualified ID in the report.
 node quench-bench/micros/run.mjs diagnose objects --variant read \
-  --trace-engine target-exec-trace/bench-throughput/quench-node \
+  --trace-engine target-exec-trace/production/quench-node \
   --instrument sites --site 2:3
 ```
 

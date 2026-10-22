@@ -1,13 +1,6 @@
 use super::*;
-use quench_runtime::{Host, Runtime, WasmTrap};
-
-struct TestHost;
-impl Host for TestHost {
-    fn write_line(&mut self, _: &str) {}
-    fn clock_millis(&mut self) -> f64 {
-        0.0
-    }
-}
+use super::tests::TestHost;
+use quench_runtime::{Runtime, WasmTrap};
 
 fn lower(body: &str) -> WasmI32Function {
     crate::Engine::new()
@@ -416,4 +409,36 @@ fn wrapping_addresses_match_wasm_semantics_in_both_modes() {
         assert_eq!(call(2, &[I32(-2)]), Err(Some(WasmTrap::OutOfBoundsMemory)), "{mode:?}");
         assert_eq!(call(3, &[I32(-4)]), Ok(Some(I32(42))), "{mode:?}");
     }
+}
+
+/// Unbounded recursion through `call_indirect` traps as exhausted in both execution
+/// modes: a compiled call through the indirect-call callout keeps its caller's stack
+/// limit instead of a fresh budget per level, so it cannot overflow the native stack.
+#[test]
+fn runaway_call_indirect_exhausts_the_stack_in_both_modes() {
+    const RUNAWAY: &str = r#"(module
+      (type $t (func))
+      (table funcref (elem $runaway))
+      (func $runaway (export "runaway") (call_indirect (type $t) (i32.const 0))))"#;
+    std::thread::Builder::new()
+        .stack_size(quench_runtime::WORKER_STACK_SIZE)
+        .spawn(|| {
+            let engine = crate::Engine::new().compile_wat(RUNAWAY).unwrap();
+            for mode in [
+                quench_runtime::ExecutionMode::Interpreted,
+                quench_runtime::ExecutionMode::Compiled,
+            ] {
+                let module = engine.lower_shared_module_for(mode).unwrap();
+                let mut runtime = Runtime::new(TestHost);
+                runtime.set_execution_mode(mode);
+                let instance = runtime.instantiate_wasm_module(&module).unwrap();
+                let trap = runtime
+                    .invoke_wasm(&instance, 0, &[])
+                    .map_err(|error| error.wasm_trap());
+                assert_eq!(trap, Err(Some(WasmTrap::CallStackExhausted)), "{mode:?}");
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
 }

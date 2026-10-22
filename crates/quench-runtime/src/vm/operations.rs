@@ -85,6 +85,32 @@ const NUMERIC_BINARY_OPERATORS: [BinaryOperator; NUMERIC_BINARY_OPERATOR_COUNT] 
     BinaryOperator::BitwiseAnd,
 ];
 
+/// Binary operator `op` of two integers where the integers alone decide its result: a
+/// comparison's boolean, or the integer operators' result (`numeric_integer_result`); `None`
+/// for any other operator and for a result the integer case leaves to Numbers. One match, so
+/// the common operators take one branch.
+#[inline(always)]
+pub(super) fn integer_binary(op: u32, left: i32, right: i32) -> Option<Value> {
+    const EQUALITY: u32 = BinaryOperator::Equality as u32;
+    const STRICT_EQUALITY: u32 = BinaryOperator::StrictEquality as u32;
+    const INEQUALITY: u32 = BinaryOperator::Inequality as u32;
+    const STRICT_INEQUALITY: u32 = BinaryOperator::StrictInequality as u32;
+    const LESS_THAN: u32 = BinaryOperator::LessThan as u32;
+    const LESS_EQUAL: u32 = BinaryOperator::LessEqualThan as u32;
+    const GREATER_THAN: u32 = BinaryOperator::GreaterThan as u32;
+    const GREATER_EQUAL: u32 = BinaryOperator::GreaterEqualThan as u32;
+    let boolean = |holds: bool| if holds { Value::TRUE } else { Value::FALSE };
+    Some(match op {
+        EQUALITY | STRICT_EQUALITY => boolean(left == right),
+        INEQUALITY | STRICT_INEQUALITY => boolean(left != right),
+        LESS_THAN => boolean(left < right),
+        LESS_EQUAL => boolean(left <= right),
+        GREATER_THAN => boolean(left > right),
+        GREATER_EQUAL => boolean(left >= right),
+        _ => return numeric_integer_result(numeric_binary_operator(op)?, left, right),
+    })
+}
+
 /// `number_relation` of two integers alone: `None` for any other pair. Few values stay live,
 /// so a lane handler inlining it saves no registers.
 #[inline(always)]
@@ -2024,11 +2050,17 @@ pub(super) fn equality_operator(op: u32) -> Option<(bool, bool)> {
     const INEQUALITY: u32 = BinaryOperator::Inequality as u32;
     const STRICT_EQUALITY: u32 = BinaryOperator::StrictEquality as u32;
     const STRICT_INEQUALITY: u32 = BinaryOperator::StrictInequality as u32;
-    match op {
-        EQUALITY => Some((false, false)),
-        INEQUALITY => Some((false, true)),
-        STRICT_EQUALITY => Some((true, false)),
-        STRICT_INEQUALITY => Some((true, true)),
-        _ => None,
-    }
+    // The four operators are consecutive from an aligned first, each negation right after
+    // its test and the strict pair after the loose one, so two bits of the offset decide
+    // them, with no table of branches.
+    const NEGATED: u32 = INEQUALITY - EQUALITY;
+    const STRICT: u32 = STRICT_EQUALITY - EQUALITY;
+    const _: () = assert!(
+        NEGATED == 1
+            && STRICT == 2
+            && STRICT_INEQUALITY - EQUALITY == STRICT | NEGATED
+            && EQUALITY % (STRICT << 1) == 0
+    );
+    let offset = op.wrapping_sub(EQUALITY);
+    (offset <= STRICT | NEGATED).then_some((offset & STRICT != 0, offset & NEGATED != 0))
 }
