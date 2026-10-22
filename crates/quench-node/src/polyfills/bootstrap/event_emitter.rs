@@ -41,10 +41,11 @@ class EventEmitterBridge {
 
 }
 const prototype = EventEmitterBridge.prototype;
-const EventEmitter = function EventEmitter(options) {
+// A declaration, not a named expression: its calls need no self binding, so no frame.
+function EventEmitter(options) {
   'use strict';
   EventEmitter.init.call(this, options);
-};
+}
 EventEmitter.prototype = prototype;
 Object.defineProperty(prototype, 'constructor', {value: EventEmitter, writable: true, configurable: true});
 // Node assigns these anonymous functions, so they have no name. Node's EventEmitter.init,
