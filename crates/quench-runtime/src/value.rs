@@ -525,6 +525,18 @@ impl Value {
         (self.0 & HEAP_FAMILY_MASK == TAG_HEAP | DIRECT_FUNCTION_HANDLE_BITS).then_some(self.0 as u32)
     }
 
+    /// Whether the value names a direct record of an object family: an ordinary object,
+    /// array, function, promise or iterator. Every such value is an object; strings and
+    /// await states, the other direct families, are not.
+    #[inline(always)]
+    pub(crate) fn is_direct_object_family(self) -> bool {
+        self.direct_object_index().is_some()
+            || self.direct_array_index().is_some()
+            || self.direct_function_index().is_some()
+            || self.direct_promise_index().is_some()
+            || self.direct_iterator_index().is_some()
+    }
+
     pub fn is_undefined(self) -> bool {
         self.0 == TAG_UNDEFINED
     }
