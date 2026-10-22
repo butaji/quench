@@ -810,6 +810,9 @@ impl Native {
                 | Self::StringToUpperCase
                 | Self::StringToLowerCase
                 | Self::StringConcat
+                | Self::StringRepeat
+                | Self::StringPadStart
+                | Self::StringPadEnd
         )
     }
 

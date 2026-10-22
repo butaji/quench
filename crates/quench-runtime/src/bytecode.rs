@@ -102,6 +102,16 @@ pub(crate) const RETURN_REGISTER: Register = 1 << 15;
 /// past the range this last one, for which the VM never records a cache entry, so those
 /// sites always take the uncached lookup.
 pub(crate) const SHARED_UNCACHED_SITE: u16 = u16::MAX - 1;
+/// The sites below `SHARED_UNCACHED_SITE` a program shares by property name once its
+/// `UNIQUE_CACHE_SITES` run out: every named load, or every named store, of one atom past
+/// that point names the same one (`Compiler::name_shared_cache_site`). A site's entries are
+/// right for its single atom whichever instruction records them; the loads and stores of a
+/// name keep separate sites, since a load's entry (a read-only field, an inherited holder)
+/// is no store's. TypeScript's 3.6 MB bundle runs out of unique sites before its node and
+/// symbol constructors, whose `this` field adds went uncached.
+pub(crate) const NAME_SHARED_CACHE_SITES: u16 = 8192;
+/// The sites a program numbers one per instruction, below the name-shared ones.
+pub(crate) const UNIQUE_CACHE_SITES: u16 = SHARED_UNCACHED_SITE - NAME_SHARED_CACHE_SITES;
 pub(crate) const SET_THIS_REGISTER: Register = 1 << 14;
 pub(crate) const REGISTER_MASK: Register = SET_THIS_REGISTER - 1;
 pub(crate) const INLINE_OBJECT_SITE_ATOMS: usize = 2;

@@ -8611,8 +8611,9 @@ fn lane_promise_native<H: Host>(
 /// property query by a string key (`Vm::plain_own_property_query`), and a dense array's
 /// `splice` (`Vm::plain_array_splice`, which allocates the removed array), `unshift`
 /// (`Vm::plain_array_unshift`) and `shift` (`Vm::plain_array_shift`), `Object.hasOwn`,
-/// `Object.is`, and the Map and Set mutators on their own collections
-/// (`Vm::plain_collection_mutation`). `None` leaves any other call to `lane_call_native`.
+/// `Object.is`, `Symbol.for` of a string, and the Map and Set mutators on their own
+/// collections (`Vm::plain_collection_mutation`). `None` leaves any other call to
+/// `lane_call_native`.
 #[inline(never)]
 fn lane_pure_native<H: Host>(
     vm: &mut Vm<H>,
@@ -8650,6 +8651,12 @@ fn lane_pure_native<H: Host>(
         ),
         // Pure of any arguments: SameValue.
         Native::ObjectIs => vm.call_object_native(code, Native::ObjectIs, args).ok(),
+        // The registry lookup of a string key, which ToString leaves as it is.
+        Native::SymbolFor if args.first().is_some_and(|key| vm.heap.is_string(*key)) => {
+            let symbol = vm.call_symbol_native(code, Native::SymbolFor, args).ok()?;
+            note_allocation(vm);
+            Some(symbol)
+        }
         native @ (Native::MapSet
         | Native::MapDelete
         | Native::MapClear
