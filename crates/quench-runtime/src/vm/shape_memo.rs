@@ -5,30 +5,80 @@
 //! reached through a reused symbol. Entries are dropped whenever shape ids or atoms are
 //! reassigned (shape compaction, VM reset).
 
-use std::cell::Cell;
+use std::cell::{Cell, OnceCell};
 use std::hash::{Hash, Hasher};
 
-/// Direct-mapped entries: a power of two. Every VM fills each memo when it starts, so the
-/// table is resident from then on: memory-first (TOD-123), 1024 entries, a quarter of the
-/// 4096 sized for the Node HTTP stack's working set, which cost 80 KiB of anon memory for
-/// the two memos in every run.
+/// Direct-mapped entries: a power of two. Memory-first (TOD-123): 1024 entries, a quarter
+/// of the 4096 sized for the Node HTTP stack's working set.
 const SHAPE_MEMO_ENTRIES: usize = 1 << 10;
+
+/// A direct-mapped memo of `ENTRIES` entries (a power of two) that allocates them on its
+/// first record. A memo a program never records into costs no memory: built at VM
+/// construction, the memos cost every run 48 to 254 KiB of peak RSS on V8-v7 whether or
+/// not it used private names, symbol keys or enumeration
+/// (`evidence/tod137-lazy-memo-tables-linux-2026-10-22`).
+pub(super) struct DirectMappedTable<T: Copy, const ENTRIES: usize> {
+    entries: OnceCell<Box<[Cell<Option<T>>]>>,
+}
+
+impl<T: Copy, const ENTRIES: usize> Default for DirectMappedTable<T, ENTRIES> {
+    fn default() -> Self {
+        Self { entries: OnceCell::new() }
+    }
+}
+
+impl<T: Copy, const ENTRIES: usize> DirectMappedTable<T, ENTRIES> {
+    const POWER_OF_TWO: () = assert!(ENTRIES.is_power_of_two() && ENTRIES > 1);
+
+    /// The entry at `index`, if one was recorded since the last clear.
+    #[inline(always)]
+    pub(super) fn get(&self, index: usize) -> Option<T> {
+        self.entries.get()?[index].get()
+    }
+
+    /// Records `value` at `index`, replacing what the entry held.
+    #[inline(always)]
+    pub(super) fn set(&self, index: usize, value: T) {
+        let entries = match self.entries.get() {
+            Some(entries) => entries,
+            None => self.allocate(),
+        };
+        entries[index].set(Some(value));
+    }
+
+    /// The first record's allocation, kept out of line so the record and probe paths that
+    /// inline `set` and `get` stay as small as the eager table's: inlined, it cost DeltaBlue
+    /// `--jit` about 8%.
+    #[cold]
+    #[inline(never)]
+    fn allocate(&self) -> &[Cell<Option<T>>] {
+        let () = Self::POWER_OF_TWO;
+        self.entries.get_or_init(|| (0..ENTRIES).map(|_| Cell::new(None)).collect())
+    }
+
+    pub(super) fn clear(&self) {
+        for entry in self.entries.get().into_iter().flat_map(|entries| entries.iter()) {
+            entry.set(None);
+        }
+    }
+}
 
 /// One question kind about shapes: `K` names what is asked of a shape, `V` is the answer.
 pub(super) struct ShapeMemo<K: Copy + Eq + Hash, V: Copy> {
-    entries: Box<[Cell<Option<(u32, K, V)>>]>,
+    entries: DirectMappedTable<(u32, K, V), SHAPE_MEMO_ENTRIES>,
 }
 
 /// The slot a property key has in a shape, or `None` for its absence.
 pub(super) type ShapeSlotMemo = ShapeMemo<super::property_key::PropertyKey, Option<u32>>;
 /// The attributes a shape gives a slot, or `None` when no transition describes it.
 pub(super) type ShapeAttributeMemo = ShapeMemo<u32, Option<super::ShapeAttributes>>;
+/// The shape an empty object of a shape reaches by a plain copy (`Vm::copy_plain_properties`)
+/// of a source of the keyed shape: its enumerable data properties added in order.
+pub(super) type PlainCopyShapeMemo = ShapeMemo<u32, u32>;
 
 impl<K: Copy + Eq + Hash, V: Copy> Default for ShapeMemo<K, V> {
     fn default() -> Self {
-        Self {
-            entries: (0..SHAPE_MEMO_ENTRIES).map(|_| Cell::new(None)).collect(),
-        }
+        Self { entries: DirectMappedTable::default() }
     }
 }
 
@@ -63,7 +113,7 @@ impl<K: Copy + Eq + Hash, V: Copy> ShapeMemo<K, V> {
     /// The memoized answer for `key` in `shape`, if one is recorded.
     #[inline(always)]
     pub(super) fn get(&self, shape: u32, key: K) -> Option<V> {
-        match self.entries[Self::index(shape, key)].get() {
+        match self.entries.get(Self::index(shape, key)) {
             Some((recorded, recorded_key, value)) if recorded == shape && recorded_key == key => {
                 Some(value)
             }
@@ -72,12 +122,10 @@ impl<K: Copy + Eq + Hash, V: Copy> ShapeMemo<K, V> {
     }
 
     pub(super) fn record(&self, shape: u32, key: K, value: V) {
-        self.entries[Self::index(shape, key)].set(Some((shape, key, value)));
+        self.entries.set(Self::index(shape, key), (shape, key, value));
     }
 
     pub(super) fn clear(&self) {
-        for entry in self.entries.iter() {
-            entry.set(None);
-        }
+        self.entries.clear();
     }
 }

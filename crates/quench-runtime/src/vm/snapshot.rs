@@ -9,7 +9,6 @@
 //! empty, as after the collection that invalidates them.
 
 use super::*;
-use crate::heap::CellDecoder;
 use crate::snapshot::{read_list, Reader, Snap, SnapshotError, SnapshotResult, Writer};
 
 /// Every VM field that holds the active realm's or the VM's prototype of a builtin family.
@@ -319,6 +318,7 @@ impl<H: Host> Vm<H> {
             shape_accessors,
             transitions,
             shape_slot_memo: _,
+            plain_copy_shapes: _,
             symbol_write_proofs: _,
             symbol_load_proofs: _,
             private_site_homes: _,
@@ -503,20 +503,7 @@ impl<H: Host> Vm<H> {
         let mut reader = Reader::new((*bytes).as_ref(), Some(H::snapshot_bytes_read))?;
         self.specialized = reader.bool()?;
         self.read_atoms(&mut reader)?;
-        let mut matchers: FxHashMap<(JsString, String), Rc<quench_regexp::Regex>> = FxHashMap::default();
-        let mut regexp = |source: &JsString, flags: &str| -> SnapshotResult<Rc<quench_regexp::Regex>> {
-            let key = (source.clone(), flags.to_owned());
-            if let Some(matcher) = matchers.get(&key) {
-                return Ok(matcher.clone());
-            }
-            let matcher = Rc::new(
-                Self::compile_regexp(source, flags, super::regexp::PatternValidity::EarlyChecked)
-                    .map_err(|error| SnapshotError(format!("snapshot regexp: {error:?}")))?,
-            );
-            matchers.insert(key, matcher.clone());
-            Ok(matcher)
-        };
-        self.heap = Heap::read_snapshot(&mut reader, &mut CellDecoder { regexp: &mut regexp }, self.heap.memory_policy())?;
+        self.heap = Heap::read_snapshot(&mut reader, self.heap.memory_policy())?;
         self.realm.globals = reader.value()?;
         self.realm.global_lexical_declarations = Snap::unsnap(&mut reader)?;
         self.realm.global_lexical_bindings = Snap::unsnap(&mut reader)?;
