@@ -100,6 +100,8 @@ struct ProgramEntry {
     module: bool,
     /// Per-function lane views, derived from the residual on first lane entry.
     lane_views: LaneViews,
+    /// Per function: what the JavaScript tier found at its entries (`js_entry_facts`).
+    js_entry_facts: JsEntryFactsTable,
     /// Per function: the runs it has made without its lane view (`entry_lane_view`,
     /// `lane_call_may_derive`), up to `LANE_VIEW_DEFERRED_RUNS`.
     lane_deferred: Vec<std::cell::Cell<u8>>,
@@ -216,9 +218,6 @@ pub(crate) struct ProgramStore {
     jit_mapped_bytes: usize,
     /// Allocated only when opt-in JavaScript JIT diagnostics are requested.
     js_jit_diagnostics: Option<FxHashMap<(u32, u32), JsJitCounters>>,
-    /// Last matched numeric loop shape; hot entries keep reusing the same artifact.
-    js_jit_numeric_find_candidate:
-        Option<(ProgramId, u32, super::js_compiled::JsJitNumericFind)>,
 }
 
 impl Default for ProgramStore {
@@ -240,27 +239,22 @@ impl Default for ProgramStore {
             js_jit_diagnostics: std::env::var_os("QUENCH_JS_JIT_STATS")
                 .is_some_and(|value| value == "1")
                 .then(FxHashMap::default),
-            js_jit_numeric_find_candidate: None,
         }
     }
 }
 
 impl ProgramStore {
-    pub(super) fn js_jit_numeric_find_candidate(
-        &mut self,
-        id: ProgramId,
-        function_id: u32,
-        function: &crate::bytecode::Function,
-    ) -> Option<super::js_compiled::JsJitNumericFind> {
-        if let Some((cached_id, cached_function, candidate)) = self.js_jit_numeric_find_candidate
-            && cached_id == id
-            && cached_function == function_id
-        {
-            return Some(candidate);
-        }
-        let candidate = super::js_compiled::numeric_find_candidate(function)?;
-        self.js_jit_numeric_find_candidate = Some((id, function_id, candidate));
-        Some(candidate)
+    /// What the JavaScript tier finds at the entries of `function` (`JsEntryFacts`), derived on
+    /// its first entry.
+    pub(super) fn js_entry_facts(&self, id: ProgramId, function: u32) -> Option<Rc<super::js_compiled::JsEntryFacts>> {
+        let entry = self.entry(id)?;
+        let body = entry.residual.function_get(function as usize)?;
+        let cells = entry.js_entry_facts.0.get_or_init(|| {
+            entry.residual.functions.iter().map(|_| std::cell::OnceCell::new()).collect()
+        });
+        Some(Rc::clone(cells.get(function as usize)?.get_or_init(|| {
+            Rc::new(super::js_compiled::JsEntryFacts::of(&entry.residual, body))
+        })))
     }
 
     pub(super) fn cached_global_eval(&self, source: &JsString) -> Option<ProgramId> {
@@ -624,6 +618,7 @@ impl ProgramStore {
             root_slots: std::cell::OnceCell::new(),
             module: false,
             lane_views,
+            js_entry_facts: JsEntryFactsTable::default(),
             lane_deferred,
             compiled: None,
             js_tiers: FxHashMap::default(),
@@ -1961,3 +1956,9 @@ impl LaneViews {
             .is_some_and(|view| view.get().is_some())
     }
 }
+
+/// A program's `JsEntryFacts` by function, the table made on the tier's first entry of one.
+#[derive(Default)]
+pub(super) struct JsEntryFactsTable(
+    std::cell::OnceCell<Box<[std::cell::OnceCell<Rc<super::js_compiled::JsEntryFacts>>]>>,
+);

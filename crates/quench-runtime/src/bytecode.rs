@@ -1168,6 +1168,9 @@ pub struct Function {
     pub(crate) live_parameter_reflection: std::cell::OnceCell<bool>,
     /// Lazily derived `names_resolve_statically`; never serialized.
     pub(crate) static_name_scope: std::cell::OnceCell<bool>,
+    /// Whether the JavaScript tier's candidate filter admits the function
+    /// (`js_compiled::function_candidate`), derived on its first entry; never serialized.
+    pub(crate) js_tier_candidate: std::cell::OnceCell<bool>,
     /// Lazily derived `call_plan`; never serialized.
     pub(crate) call_plan: std::cell::OnceCell<CallPlan>,
     pub(crate) handlers: crate::heap::ThinBoxSlice<Handler>,
