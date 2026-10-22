@@ -8,7 +8,7 @@ import { spawnSync } from "node:child_process";
 const engineIndex = process.argv.indexOf("--engine");
 const engine = engineIndex >= 0
   ? process.argv[engineIndex + 1]
-  : "target/debug/quench-node";
+  : "target/iteration/quench-node";
 if (!engine) throw new Error("--engine requires a path");
 
 const probes = [

@@ -417,6 +417,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(crate) fn embedding_source_stack_frames(&mut self, limit: usize) -> Vec<crate::SourceStackFrame> {
+        self.materialize_deferred_lane();
         let records: Vec<_> = self.frames.iter().rev().filter_map(|frame| {
             self.source_call_site_record(frame, false).map(|(record, module)| (frame.program, record, module))
         }).take(limit).collect();

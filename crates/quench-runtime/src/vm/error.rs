@@ -617,6 +617,7 @@ impl<H: Host> Vm<H> {
         program: &ResidualProgram,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        self.materialize_deferred_lane();
         let target = args.first().copied().unwrap_or(Value::UNDEFINED);
         if !self.is_object_like(target) {
             return Err(self.type_error(program, "invalid_argument".into()));

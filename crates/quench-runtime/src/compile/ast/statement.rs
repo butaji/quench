@@ -575,13 +575,22 @@ impl FunctionCompiler<'_, '_> {
             self.emit_hoisted(&case.consequent);
         }
         let mut case_edges = Vec::with_capacity(item.cases.len());
+        // Every case test is an expression evaluated before any clause body runs, so no
+        // statement boundary releases this register before the last test reads it: one load
+        // serves every comparison, not one per case (`switch (node.kind)` with dozens of
+        // cases tests them in turn).
+        let discriminant = item
+            .cases
+            .iter()
+            .any(|case| case.test.is_some())
+            .then(|| self.load_atom(discriminant_binding));
         for case in &item.cases {
             case_edges.push(case.test.as_ref().map(|test| {
                 let test = match binding_time::expression(test).static_value() {
                     Some(constant) => self.constant_operand(constant),
                     None => Operand::register(self.expression(test)),
                 };
-                let discriminant = self.load_atom(discriminant_binding);
+                let discriminant = discriminant.expect("a case with a test loaded the discriminant");
                 // `!(d !== t)` is exactly `d === t`: one fused test selects the clause.
                 self.emit(
                     Op::JumpBinaryFalse,

@@ -1,0 +1,983 @@
+lane exits: 2829002
+       1979925 SetFieldStrict
+        587925 Call
+        101045 Binary
+         69470 CreateRegExpLiteral
+         54582 LoadName
+         11100 Delete
+          7367 GetField
+          4743 DefineField
+          4357 LoadEnvLocal
+          1579 Return
+          1416 GetIndex
+          1097 Construct
+           821 StoreEnvLocal
+           724 SetThisFieldStrict
+           672 DefinePropertyRecord
+           647 Jump
+           464 SetIndex
+           330 ValidateClassHeritage
+           248 CloneEnv
+           233 LoadCapture
+           117 MakeObjectLiteral
+            66 JumpBinaryFalse
+            26 Await
+            22 LoadNameCall
+             9 MakeConstArray
+             6 MakeClosure
+             4 CallArray
+             3 SetField
+             2 MakeLiteralTemplate
+             2 LoadNameTypeof
+       5344263 capture walk in /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js c span=Some(3873) depth=0 frame_run=true (root, dense)=Some((false, true, 7))
+        987871 SetFieldStrict in finishNodeAt Some(SourceSpan { start: 169018, end: 169231 }) pc=0 lane=true
+        987871 SetFieldStrict in finishNodeAt Some(SourceSpan { start: 169018, end: 169231 }) pc=1 lane=true
+        621299 capture walk in /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js  span=Some(128188) depth=0 frame_run=true (root, dense)=Some((false, true, 146))
+        599765 capture walk in /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js  span=Some(136049) depth=0 frame_run=true (root, dense)=Some((false, true, 146))
+        525810 capture walk in /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js  span=Some(125008) depth=0 frame_run=true (root, dense)=Some((false, true, 146))
+        335880 capture walk in /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js  span=Some(62328) depth=0 frame_run=true (root, dense)=Some((false, true, 146))
+        196201 capture walk in /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js  span=Some(121893) depth=0 frame_run=true (root, dense)=Some((false, true, 146))
+        186723 capture walk in /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js  span=Some(77330) depth=0 frame_run=true (root, dense)=Some((false, true, 146))
+        120975 capture walk in /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js  span=Some(165902) depth=0 frame_run=true (root, dense)=Some((false, true, 146))
+        114225 capture walk in /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js  span=Some(126368) depth=0 frame_run=true (root, dense)=Some((false, true, 146))
+        103440 capture walk in /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js  span=Some(79414) depth=0 frame_run=true (root, dense)=Some((false, true, 146))
+         98420 Binary op1 int null
+         97048 capture walk in /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js  span=Some(122492) depth=0 frame_run=true (root, dense)=Some((false, true, 146))
+         72090 capture walk in /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js  span=Some(159415) depth=0 frame_run=true (root, dense)=Some((false, true, 146))
+         61357 capture walk in /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js  span=Some(235769) depth=0 frame_run=true (root, dense)=Some((false, true, 146))
+         52670 capture walk in /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js  span=Some(142940) depth=0 frame_run=true (root, dense)=Some((false, true, 146))
+         43591 materializes for native ObjectHasOwn
+         43485 capture walk in /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js  span=Some(71519) depth=0 frame_run=true (root, dense)=Some((false, true, 146))
+         41015 capture walk in /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js  span=Some(110422) depth=0 frame_run=true (root, dense)=Some((false, true, 146))
+         40860 LoadName in  Some(SourceSpan { start: 169522, end: 169673 }) pc=20 lane=true
+         34814 capture walk in /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js  span=Some(81055) depth=0 frame_run=true (root, dense)=Some((false, true, 146))
+         32844 capture walk in /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js  span=Some(149458) depth=0 frame_run=true (root, dense)=Some((false, true, 146))
+         32604 capture walk in /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js Token span=Some(218464) depth=0 frame_run=true (root, dense)=Some((false, true, 146))
+         30675 Call user  same_program=true pc=181 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 7))
+         26971 capture walk in /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js  span=Some(132937) depth=0 frame_run=true (root, dense)=Some((false, true, 146))
+         24959 capture walk in /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js  span=Some(158846) depth=0 frame_run=true (root, dense)=Some((false, true, 146))
+         12993 capture walk in /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js  span=Some(143195) depth=0 frame_run=true (root, dense)=Some((false, true, 146))
+         11357 capture walk in /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js  span=Some(58134) depth=0 frame_run=true (root, dense)=Some((false, true, 146))
+          9018 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 29))
+          8541 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 15))
+          8509 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 57))
+          8277 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 45))
+          8137 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 24))
+          7801 capture walk in /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js  span=Some(147681) depth=0 frame_run=true (root, dense)=Some((false, true, 146))
+          7538 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 28))
+          7148 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 56))
+          7139 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 19))
+          7020 capture walk in /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js  span=Some(156777) depth=0 frame_run=true (root, dense)=Some((false, true, 146))
+          6810 capture walk in /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js  span=Some(169522) depth=0 frame_run=true (root, dense)=Some((false, true, 146))
+          6674 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 38))
+          6593 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 32))
+          6591 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 22))
+          6567 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 30))
+          6329 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 36))
+          6323 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 65))
+          6257 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 35))
+          6187 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 52))
+          6180 capture walk in /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js  span=Some(148297) depth=0 frame_run=true (root, dense)=Some((false, true, 146))
+          6052 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 34))
+          5969 LoadName in  Some(SourceSpan { start: 169522, end: 169673 }) pc=9 lane=false
+          5956 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 16))
+          5909 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 54))
+          5896 capture walk in /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js  span=Some(78039) depth=0 frame_run=true (root, dense)=Some((false, true, 146))
+          5856 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 41))
+          5714 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 23))
+          5655 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 18))
+          5572 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 43))
+          5563 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 33))
+          5458 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 40))
+          5286 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 42))
+          5216 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 26))
+          5129 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 37))
+          5066 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 47))
+          5045 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 17))
+          4802 capture walk in /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js getOptions span=Some(44212) depth=0 frame_run=true (root, dense)=Some((false, true, 146))
+          4709 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 25))
+          4695 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 49))
+          4570 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 58))
+          4560 LoadName in getOptions Some(SourceSpan { start: 44212, end: 45335 }) pc=20 lane=true
+          4513 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 44))
+          4467 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 60))
+          4335 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 48))
+          4299 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 22))
+          4238 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 61))
+          4197 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 39))
+          4186 resolve  span=Some(243828) cross=false known=true
+          4172 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 27))
+          4124 resolve  span=Some(237655) cross=false known=true
+          4064 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 46))
+          4000 resolve  span=Some(238656) cross=false known=true
+          3863 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 55))
+          3782 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 51))
+          3670 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 31))
+          3659 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 20))
+          3615 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 50))
+          3600 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 14))
+          3579 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 62))
+          3510 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 68))
+          3491 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 53))
+          3447 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 64))
+          3398 capture walk in /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js  span=Some(231370) depth=0 frame_run=true (root, dense)=Some((false, true, 146))
+          3354 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 59))
+          3347 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 40))
+          3297 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 66))
+          3238 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 63))
+          3107 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 44))
+          3043 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 21))
+          3027 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 69))
+          2995 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 17))
+          2882 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 10))
+          2849 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 70))
+          2844 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 42))
+          2805 capture walk in /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js  span=Some(146301) depth=0 frame_run=true (root, dense)=Some((false, true, 146))
+          2759 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 67))
+          2671 capture walk in /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js  span=Some(96940) depth=0 frame_run=true (root, dense)=Some((false, true, 146))
+          2633 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 43))
+          2613 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 30))
+          2581 Binary op6 int int
+          2549 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 71))
+          2520 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 76))
+          2508 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 72))
+          2363 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 74))
+          2340 capture walk in /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js  span=Some(72428) depth=0 frame_run=true (root, dense)=Some((false, true, 146))
+          2337 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 73))
+          2326 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 23))
+          2287 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 65))
+          2251 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 38))
+          2221 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 36))
+          2220 Call user  same_program=true pc=102 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 17))
+          2208 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 60))
+          2178 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 45))
+          2174 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 77))
+          2146 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 37))
+          2143 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 80))
+          2115 capture walk in /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js  span=Some(75422) depth=0 frame_run=true (root, dense)=Some((false, true, 146))
+          2098 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 51))
+          2014 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 26))
+          1987 SetFieldStrict in  Some(SourceSpan { start: 182814, end: 183732 }) pc=19 lane=true
+          1986 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 62))
+          1967 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 33))
+          1944 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 41))
+          1936 capture walk in /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js  span=Some(83046) depth=0 frame_run=true (root, dense)=Some((false, true, 146))
+          1920 Call user  same_program=true pc=102 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 36))
+          1905 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 50))
+          1897 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 32))
+          1867 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 78))
+          1828 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 35))
+          1800 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 49))
+          1756 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 46))
+          1741 capture walk in /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js  span=Some(78571) depth=0 frame_run=true (root, dense)=Some((false, true, 146))
+          1725 Call user  same_program=true pc=102 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 59))
+          1710 GetField type on immediate
+          1680 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 81))
+          1655 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 58))
+          1635 Call user  same_program=true pc=102 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 31))
+          1633 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 27))
+          1624 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 47))
+          1620 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 75))
+          1620 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 48))
+          1606 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 54))
+          1605 Call user  same_program=true pc=102 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 21))
+          1593 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 64))
+          1576 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 25))
+          1567 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 61))
+          1566 capture walk in /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js  span=Some(80567) depth=0 frame_run=true (root, dense)=Some((false, true, 146))
+          1560 Call user  same_program=true pc=102 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 37))
+          1550 capture walk in /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js  span=Some(68311) depth=0 frame_run=true (root, dense)=Some((false, true, 146))
+          1530 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 79))
+          1505 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 31))
+          1485 Call user  same_program=true pc=102 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 55))
+          1443 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 39))
+          1437 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 29))
+          1403 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 24))
+          1403 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 52))
+          1403 SetFieldStrict in  Some(SourceSpan { start: 182814, end: 183732 }) pc=19 lane=false
+          1395 Call user  same_program=true pc=181 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 41))
+          1364 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 88))
+          1349 materializes for native String
+          1338 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 66))
+          1303 Call user  same_program=true pc=110 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 8))
+          1294 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 53))
+          1290 Call user  same_program=true pc=102 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 18))
+          1290 Call user  same_program=true pc=102 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 35))
+          1290 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 82))
+          1268 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 34))
+          1230 Call user  same_program=true pc=102 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 58))
+          1222 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 28))
+          1185 Call user  same_program=true pc=181 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 22))
+          1166 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 57))
+          1153 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 85))
+          1139 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 83))
+          1125 GetField left on immediate
+          1125 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 68))
+          1115 resolve  span=Some(225000) cross=false known=false
+          1111 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 70))
+          1110 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 84))
+          1102 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 55))
+          1081 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 19))
+          1080 capture walk in /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js  span=Some(74407) depth=0 frame_run=true (root, dense)=Some((false, true, 146))
+          1068 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 69))
+          1066 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 71))
+          1065 Call user  same_program=true pc=102 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 39))
+          1065 Call user  same_program=true pc=102 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 60))
+          1059 capture walk in /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js  span=Some(106094) depth=0 frame_run=true (root, dense)=Some((false, true, 146))
+          1057 Call user  same_program=true pc=31 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 74))
+          1050 Call user  same_program=true pc=102 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 33))
+          1035 Call user  same_program=true pc=102 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 25))
+          1020 Call user  same_program=true pc=102 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 45))
+          1010 resolve  span=Some(243828) cross=false known=false
+function census: 2651935416 instructions, 3517405 general
+     277815360 lane=  277815360 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f454  @Some(243828)
+     257805780 lane=  257805780 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171)
+     180300000 lane=  180300000 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f425  @Some(220658)
+     153462004 lane=  153462004 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f423  @Some(219914)
+     103123279 lane=  103123279 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f419  @Some(218814)
+      95129865 lane=   95129865 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f85 isIdentifierChar @Some(30313)
+      84315780 lane=   84315780 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f427  @Some(221590)
+      83916540 lane=   83916540 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f325  @Some(164809)
+      83914332 lane=   83914332 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f429  @Some(223292)
+      75126510 lane=   75126510 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f88 isNewLine @Some(36653)
+      68209072 lane=   68209072 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f266  @Some(115435)
+      67595897 lane=   67595897 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f418 Token @Some(218464)
+      56517210 lane=   56517210 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f424  @Some(220346)
+      52284090 lane=   52284090 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f440  @Some(228581)
+      46671555 lane=   46671555 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f290  @Some(132937)
+      45079245 lane=   45079245 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f14 c @Some(3873)
+      42351748 lane=   42351748 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f335 Node @Some(168382)
+      38664390 lane=   38664390 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f291  @Some(136049)
+      38032425 lane=   38032425 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f333  @Some(167786)
+      34967745 lane=   34967745 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f465  @Some(251149)
+      28871370 lane=   28871370 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f455  @Some(244917)
+      28494780 lane=   28494780 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f89 nextLineBreak @Some(36757)
+      28069890 lane=   28069890 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f285  @Some(128188)
+      27075885 lane=   27075885 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f318  @Some(160226)
+      25830477 lane=   25830477 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f280  @Some(122492)
+      25694820 lane=   25694820 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f263  @Some(114147)
+      25118355 lane=   25118355 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f170  @Some(54084)
+      24149778 lane=   24149778 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f153 SourceLocation @Some(38309)
+      23367045 lane=   23367045 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f287  @Some(131757)
+      21881985 lane=   21881985 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f191  @Some(62328)
+      21783986 lane=   21783986 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f277  @Some(118220)
+      20247120 lane=   20247120 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f102 finishNodeAt @Some(169018)
+      19533090 lane=   19533090 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f334  @Some(168119)
+      19419330 lane=   19419330 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f84 isIdentifierStart @Some(29856)
+      18647050 lane=   18647050 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f422  @Some(219522)
+      17984355 lane=   17984355 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f182  @Some(56738)
+      17065380 lane=   17065380 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f447  @Some(237655)
+      16982340 lane=   16982340 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f450  @Some(239152)
+      15342795 lane=   15342795 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f286  @Some(130918)
+      15302115 lane=   15302115 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f319  @Some(161615)
+      14380080 lane=   14380080 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f282  @Some(125622)
+      13887861 lane=   13887861 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f420  @Some(219283)
+      13497240 lane=   13497240 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f338  @Some(169251)
+      13066755 lane=   13066755 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f171  @Some(54274)
+      11120668 lane=   11120668 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f271  @Some(116634)
+      10558200 lane=   10558200 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f281  @Some(125008)
+      10542600 lane=   10542600 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f347 at @Some(179157)
+      10489481 lane=   10489481 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f268  @Some(116056)
+       9117285 lane=    9117285 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f283  @Some(126368)
+       8531340 lane=    8531340 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f264  @Some(114231)
+       8499810 lane=    8499810 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f430  @Some(223798)
+       8198035 lane=    8198035 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f174  @Some(54799)
+       7711031 lane=    7711031 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f320  @Some(161925)
+       7675290 lane=    7675290 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f336  @Some(168812)
+       6181642 lane=    6181642 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f441  @Some(231213)
+       6156240 lane=    6156240 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f437  @Some(227091)
+       6098730 lane=    6098730 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f330  @Some(165902)
+       6074640 lane=    6074640 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f466  @Some(251558)
+       5730435 lane=    5730435 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f317  @Some(159415)
+       5590800 lane=    5590800 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f443  @Some(232938)
+       5184990 lane=    5184990 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f257  @Some(110422)
+       5105040 lane=    5105040 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f26 skipThrough @Some(7387)
+       4999905 lane=    4999905 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f210  @Some(77330)
+       4577068 lane=    4577068 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f352 eat @Some(180502)
+       4535940 lane=    4535940 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f445  @Some(235769)
+       3941067 lane=    3941067 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f158  @Some(50734)
+       3808977 lane=    3808977 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f157  @Some(50623)
+       3808977 lane=    3808977 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f164  @Some(52075)
+       3426954 lane=    3426954 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f180 DestructuringErrors @Some(56028)
+       3327630 lane=    3327630 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f349 current @Some(180001)
+       3264800 lane=    3264800 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f178  @Some(55801)
+       3212505 lane=    3212505 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f186  @Some(58843)
+       3053756 lane=    3053756 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f269  @Some(116355)
+       2637090 lane=    2637090 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f71  @Some(13443)
+       2364255 lane=    2364255 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f279  @Some(121893)
+       2288880 lane=    2288880 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f40  @Some(7564)
+       2269529 lane=    2269529 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f314  @Some(156777)
+       2216010 lane=    2216010 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f213  @Some(79414)
+       2208600 lane=    2208600 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f258  @Some(111854)
+       1975918 lane=          0 general=   1975918 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js finishNodeAt @Some(169018)
+       1940880 lane=    1940880 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f215  @Some(81055)
+       1848540 lane=    1848540 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f442  @Some(231370)
+       1792480 lane=    1792480 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f307  @Some(150115)
+       1770986 lane=    1770986 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f273  @Some(117043)
+       1743000 lane=    1743000 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f296  @Some(142563)
+       1714260 lane=    1714260 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f176  @Some(55314)
+       1632080 lane=    1632080 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f337  @Some(168899)
+       1630050 lane=    1630050 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f426  @Some(220932)
+       1594740 lane=    1594740 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f188  @Some(60600)
+       1500480 lane=    1500480 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f348 nextIndex @Some(179588)
+       1446060 lane=    1446060 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f59  @Some(10832)
+       1445160 lane=    1445160 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f306  @Some(149458)
+       1442100 lane=    1442100 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f253  @Some(106094)
+       1369950 lane=    1369950 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f433  @Some(225000)
+       1332960 lane=    1332960 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f72  @Some(13703)
+       1331730 lane=    1331730 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f27 ignore @Some(7438)
+       1294185 lane=    1294185 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f299  @Some(143195)
+       1230225 lane=    1230225 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f284  @Some(127718)
+       1217427 lane=    1217427 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f309  @Some(152457)
+       1211070 lane=    1211070 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f369  @Some(190901)
+       1171585 lane=    1171585 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f198  @Some(71519)
+       1054950 lane=    1054950 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f58  @Some(10548)
+       1053360 lane=    1053360 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f316  @Some(158846)
+       1045527 lane=    1045527 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f248  @Some(101747)
+       1009395 lane=    1009395 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f214  @Some(80567)
+        967320 lane=     967320 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f199  @Some(71872)
+        919665 lane=     919665 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f259  @Some(112519)
+        901586 lane=     901586 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f360  @Some(185458)
+        860502 lane=     860502 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f310  @Some(154325)
+        842640 lane=     842640 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f297  @Some(142940)
+        841335 lane=     841335 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f278  @Some(119769)
+        839829 lane=     839829 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f326 Scope @Some(164969)
+        835425 lane=     835425 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f252  @Some(105686)
+        818190 lane=     818190 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f373  @Some(192508)
+        797550 lane=     797550 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f68  @Some(12986)
+        750460 lane=     750460 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f256  @Some(107202)
+        746517 lane=     746517 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f327  @Some(165451)
+        743415 lane=     743415 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f56  @Some(10246)
+        714405 lane=     714405 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f187  @Some(60081)
+        701430 lane=     701430 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f340  @Some(169522)
+        685665 lane=     685665 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f209  @Some(77035)
+        641606 lane=     641606 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f274  @Some(117564)
+        629340 lane=     629340 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f204  @Some(75193)
+        609090 lane=     609090 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f362  @Some(186718)
+        597960 lane=     597960 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f359  @Some(184731)
+        591418 lane=     591418 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f351 advance @Some(180339)
+        585840 lane=     585840 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f57  @Some(10421)
+        565320 lane=     565320 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f435  @Some(225732)
+        562800 lane=     562800 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f42  @Some(7953)
+        531270 lane=     531270 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f329  @Some(165774)
+        505575 lane=     505575 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f69  @Some(13136)
+        492964 lane=     492964 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f216  @Some(82754)
+        466941 lane=     466941 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f254  @Some(106907)
+        465335 lane=     465335 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f328  @Some(165532)
+        462720 lane=     462720 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f358  @Some(184543)
+        452535 lane=          0 general=    452535 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js  @Some(125622)
+        431235 lane=     431235 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f247  @Some(101276)
+        429470 lane=     429470 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f313  @Some(156060)
+        412965 lane=     412965 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f246  @Some(101053)
+        392490 lane=     392490 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f363  @Some(186942)
+        388830 lane=     388830 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f315  @Some(158518)
+        387580 lane=     387580 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f190  @Some(61996)
+        387580 lane=     387580 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f189  @Some(61917)
+        374070 lane=     374070 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f177  @Some(55438)
+        371513 lane=     371513 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f311  @Some(154819)
+        358455 lane=     358455 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f181  @Some(56224)
+        354345 lane=     354345 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f195  @Some(68311)
+        344040 lane=     344040 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f436  @Some(226315)
+        343198 lane=     343198 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f448  @Some(238656)
+        306752 lane=          0 general=    306752 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js stringToNumber @Some(234666)
+record census:
+      18030000 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f425  @Some(220658) @10
+      18030000 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f425  @Some(220658) @9
+      18030000 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f425  @Some(220658) @7
+      18030000 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f425  @Some(220658) @6
+      18030000 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f425  @Some(220658) @5
+      18030000 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f425  @Some(220658) @4
+      18030000 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f425  @Some(220658) @3
+      18030000 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f425  @Some(220658) @2
+      18030000 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f425  @Some(220658) @1
+      18030000 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f425  @Some(220658) @0
+      13374060 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f85 isIdentifierChar @Some(30313) @0
+      13338150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f454  @Some(243828) @18
+      13338150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f454  @Some(243828) @17
+      13338150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f454  @Some(243828) @15
+      13338150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f454  @Some(243828) @14
+      13338150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f454  @Some(243828) @13
+      13338150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f454  @Some(243828) @12
+      13338150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f454  @Some(243828) @11
+      13338150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f454  @Some(243828) @10
+      13338150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f454  @Some(243828) @9
+      13338150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f454  @Some(243828) @8
+      11752500 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f85 isIdentifierChar @Some(30313) @2
+      11726805 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f85 isIdentifierChar @Some(30313) @5
+      11570790 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f85 isIdentifierChar @Some(30313) @8
+      11496090 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f454  @Some(243828) @84
+      11496090 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f454  @Some(243828) @83
+      11496090 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f454  @Some(243828) @27
+      11496090 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f454  @Some(243828) @26
+      11496090 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f454  @Some(243828) @25
+      11496090 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f454  @Some(243828) @23
+      11496090 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f454  @Some(243828) @22
+      11496090 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f454  @Some(243828) @21
+      11496090 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f454  @Some(243828) @20
+      11496090 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f454  @Some(243828) @19
+      10903125 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f85 isIdentifierChar @Some(30313) @11
+      10844550 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @2
+      10844550 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @1
+      10844550 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @0
+      10844190 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @9
+      10844190 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @8
+      10844190 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @7
+      10844190 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @6
+      10844190 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @5
+      10844190 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @4
+      10844190 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @3
+      10782975 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f85 isIdentifierChar @Some(30313) @13
+      10776375 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f85 isIdentifierChar @Some(30313) @15
+      10776375 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f85 isIdentifierChar @Some(30313) @14
+       9324060 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f325  @Some(164809) @8
+       9324060 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f325  @Some(164809) @7
+       9324060 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f325  @Some(164809) @6
+       9324060 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f325  @Some(164809) @5
+       9324060 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f325  @Some(164809) @4
+       9324060 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f325  @Some(164809) @3
+       9324060 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f325  @Some(164809) @2
+       9324060 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f325  @Some(164809) @1
+       9324060 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f325  @Some(164809) @0
+       8384790 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f88 isNewLine @Some(36653) @7
+       8384790 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f88 isNewLine @Some(36653) @5
+       8384790 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f88 isNewLine @Some(36653) @4
+       8384790 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f88 isNewLine @Some(36653) @2
+       8384790 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f88 isNewLine @Some(36653) @1
+       8384790 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f88 isNewLine @Some(36653) @0
+       8216490 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f88 isNewLine @Some(36653) @9
+       8216490 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f88 isNewLine @Some(36653) @6
+       8216490 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f88 isNewLine @Some(36653) @3
+       6328920 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @12
+       6328920 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @11
+       6328920 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @10
+       5485695 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f170  @Some(54084) @1
+       5485695 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f170  @Some(54084) @0
+       5434350 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @15
+       5434350 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @14
+       5434350 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @13
+       5330160 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @82
+       5330160 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @70
+       5330160 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @69
+       5330160 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @68
+       5330160 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @67
+       5330160 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @66
+       5330160 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @65
+       5330160 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @16
+       5138964 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f263  @Some(114147) @4
+       5138964 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f263  @Some(114147) @3
+       5138964 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f263  @Some(114147) @2
+       5138964 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f263  @Some(114147) @1
+       5138964 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f263  @Some(114147) @0
+       4697100 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f84 isIdentifierStart @Some(29856) @0
+       4661910 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f423  @Some(219914) @22
+       4661910 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f423  @Some(219914) @21
+       4661910 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f423  @Some(219914) @20
+       4661910 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f423  @Some(219914) @19
+       4661910 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f423  @Some(219914) @18
+       4661910 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f423  @Some(219914) @17
+       4661910 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f423  @Some(219914) @16
+       4661910 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f423  @Some(219914) @15
+       4661910 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f423  @Some(219914) @14
+       4661910 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f423  @Some(219914) @13
+       4661910 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f423  @Some(219914) @12
+       4661910 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f429  @Some(223292) @10
+       4661910 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f429  @Some(223292) @9
+       4661910 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f429  @Some(223292) @8
+       4661910 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f429  @Some(223292) @7
+       4661910 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f429  @Some(223292) @6
+       4661910 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f429  @Some(223292) @5
+       4661910 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f429  @Some(223292) @4
+       4661910 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f429  @Some(223292) @3
+       4661910 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f429  @Some(223292) @2
+       4661910 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f429  @Some(223292) @1
+       4661910 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f429  @Some(223292) @0
+       4661909 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f423  @Some(219914) @8
+       4661909 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f423  @Some(219914) @7
+       4661909 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f423  @Some(219914) @6
+       4661909 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f423  @Some(219914) @5
+       4661909 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f423  @Some(219914) @4
+       4661909 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f423  @Some(219914) @3
+       4661909 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f423  @Some(219914) @2
+       4661909 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f423  @Some(219914) @1
+       4661909 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f423  @Some(219914) @0
+       4661909 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f266  @Some(115435) @7
+       4661909 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f266  @Some(115435) @3
+       4661909 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f266  @Some(115435) @2
+       4661909 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f266  @Some(115435) @1
+       4661909 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f266  @Some(115435) @0
+       4661908 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f429  @Some(223292) @15
+       4661908 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f429  @Some(223292) @14
+       4661908 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f429  @Some(223292) @13
+       4661908 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f429  @Some(223292) @12
+       4661908 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f429  @Some(223292) @11
+       4661891 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f429  @Some(223292) @17
+       4661891 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f429  @Some(223292) @16
+       4661891 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f266  @Some(115435) @23
+       4661891 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f266  @Some(115435) @22
+       4661790 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f419  @Some(218814) @29
+       4661790 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f419  @Some(218814) @28
+       4661790 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f419  @Some(218814) @27
+       4661790 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f419  @Some(218814) @26
+       4661790 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f419  @Some(218814) @25
+       4661790 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f419  @Some(218814) @24
+       4661790 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f419  @Some(218814) @17
+       4661790 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f419  @Some(218814) @16
+       4661790 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f419  @Some(218814) @8
+       4661790 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f419  @Some(218814) @5
+       4661790 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f419  @Some(218814) @4
+       4661790 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f419  @Some(218814) @2
+       4661790 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f419  @Some(218814) @1
+       4661790 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f419  @Some(218814) @0
+       4661788 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f419  @Some(218814) @34
+       4661788 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f419  @Some(218814) @33
+       4661788 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f419  @Some(218814) @32
+       4661788 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f419  @Some(218814) @31
+       4661788 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f419  @Some(218814) @30
+       4661550 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f423  @Some(219914) @30
+       4661550 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f423  @Some(219914) @29
+       4659959 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f266  @Some(115435) @13
+       4659959 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f266  @Some(115435) @12
+       4659959 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f266  @Some(115435) @11
+       4630710 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @91
+       4630710 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @90
+       4630709 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f423  @Some(219914) @11
+       4630709 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f423  @Some(219914) @10
+       4630709 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f423  @Some(219914) @9
+       4630350 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f423  @Some(219914) @40
+       4630350 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f423  @Some(219914) @39
+       4630350 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f423  @Some(219914) @38
+       4630350 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f423  @Some(219914) @37
+       4630350 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f423  @Some(219914) @36
+       4630350 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f423  @Some(219914) @35
+       4630350 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f424  @Some(220346) @8
+       4630350 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f424  @Some(220346) @6
+       4630350 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f424  @Some(220346) @5
+       4630350 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f424  @Some(220346) @4
+       4630350 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f424  @Some(220346) @3
+       4630350 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f424  @Some(220346) @2
+       4630350 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f424  @Some(220346) @1
+       4630350 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f424  @Some(220346) @0
+       4626540 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @88
+       4626540 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @81
+       4626540 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @73
+       4626540 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @72
+       4626540 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @71
+       4596802 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f419  @Some(218814) @36
+       4596802 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f419  @Some(218814) @35
+       4565363 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f423  @Some(219914) @42
+       4565363 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f423  @Some(219914) @41
+       4515270 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @21
+       4515270 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @20
+       4515270 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @19
+       4515270 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @18
+       4515270 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @17
+       4497105 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f419  @Some(218814) @3
+       4416990 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f170  @Some(54084) @9
+       4416990 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f170  @Some(54084) @8
+       4396170 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f427  @Some(221590) @26
+       4396170 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f427  @Some(221590) @21
+       4396170 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f427  @Some(221590) @20
+       4396170 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f427  @Some(221590) @19
+       4396170 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f427  @Some(221590) @18
+       4396170 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f427  @Some(221590) @17
+       4396140 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f427  @Some(221590) @25
+       4396140 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f427  @Some(221590) @24
+       4396140 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f427  @Some(221590) @23
+       4396140 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f427  @Some(221590) @22
+       4308540 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f427  @Some(221590) @35
+       4308540 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f427  @Some(221590) @34
+       4308540 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f427  @Some(221590) @33
+       4308540 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f427  @Some(221590) @32
+       4308540 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f427  @Some(221590) @31
+       4308540 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f427  @Some(221590) @30
+       4308540 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f427  @Some(221590) @29
+       4308540 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f427  @Some(221590) @28
+       4308540 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f427  @Some(221590) @27
+       4024963 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f153 SourceLocation @Some(38309) @7
+       4024963 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f153 SourceLocation @Some(38309) @6
+       4024963 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f153 SourceLocation @Some(38309) @3
+       4024963 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f153 SourceLocation @Some(38309) @2
+       4024963 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f153 SourceLocation @Some(38309) @1
+       4024963 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f153 SourceLocation @Some(38309) @0
+       3029205 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f333  @Some(167786) @11
+       3029205 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f333  @Some(167786) @10
+       3029205 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f333  @Some(167786) @9
+       3029205 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f333  @Some(167786) @8
+       3029205 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f333  @Some(167786) @7
+       3029205 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f333  @Some(167786) @6
+       3029205 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f333  @Some(167786) @5
+       3029205 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f333  @Some(167786) @4
+       3029205 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f333  @Some(167786) @3
+       3029205 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f333  @Some(167786) @2
+       3009405 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f14 c @Some(3873) @19
+       3009405 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f14 c @Some(3873) @18
+       3009405 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f14 c @Some(3873) @11
+       3009405 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f14 c @Some(3873) @10
+       3009405 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f14 c @Some(3873) @9
+       3009405 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f14 c @Some(3873) @7
+       3009405 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f14 c @Some(3873) @6
+       3009405 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f14 c @Some(3873) @5
+       3009405 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f14 c @Some(3873) @4
+       3009405 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f14 c @Some(3873) @3
+       3009405 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f14 c @Some(3873) @1
+       3009405 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f14 c @Some(3873) @0
+       2791680 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f424  @Some(220346) @15
+       2791680 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f424  @Some(220346) @14
+       2791680 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f424  @Some(220346) @13
+       2791680 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f424  @Some(220346) @12
+       2791680 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f424  @Some(220346) @7
+       2791680 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f440  @Some(228581) @1
+       2791680 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f440  @Some(228581) @0
+       2784060 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f89 nextLineBreak @Some(36757) @3
+       2771310 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f89 nextLineBreak @Some(36757) @10
+       2771310 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f89 nextLineBreak @Some(36757) @9
+       2771310 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f89 nextLineBreak @Some(36757) @8
+       2771310 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f89 nextLineBreak @Some(36757) @7
+       2771310 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f89 nextLineBreak @Some(36757) @6
+       2771310 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f89 nextLineBreak @Some(36757) @5
+       2771310 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f89 nextLineBreak @Some(36757) @4
+       2744699 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f266  @Some(115435) @18
+       2744699 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f266  @Some(115435) @17
+       2744699 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f266  @Some(115435) @16
+       2744699 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f266  @Some(115435) @15
+       2744699 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f266  @Some(115435) @14
+       2744683 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f266  @Some(115435) @19
+       2691540 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f89 nextLineBreak @Some(36757) @26
+       2691540 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f89 nextLineBreak @Some(36757) @25
+       2529690 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f440  @Some(228581) @2
+       2402580 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f84 isIdentifierStart @Some(29856) @2
+       2362950 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f84 isIdentifierStart @Some(29856) @5
+       2330895 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f465  @Some(251149) @45
+       2330895 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f465  @Some(251149) @44
+       2330895 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f465  @Some(251149) @43
+       2330895 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f465  @Some(251149) @42
+       2330895 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f465  @Some(251149) @41
+       2330895 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f465  @Some(251149) @40
+       2330895 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f422  @Some(219522) @2
+       2330895 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f422  @Some(219522) @1
+       2330895 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f422  @Some(219522) @0
+       2330895 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f420  @Some(219283) @2
+       2330895 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f420  @Some(219283) @1
+       2330895 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f420  @Some(219283) @0
+       2330893 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f418 Token @Some(218464) @29
+       2330893 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f418 Token @Some(218464) @28
+       2330893 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f418 Token @Some(218464) @27
+       2330893 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f418 Token @Some(218464) @26
+       2330893 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f418 Token @Some(218464) @25
+       2330893 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f418 Token @Some(218464) @24
+       2330893 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f418 Token @Some(218464) @23
+       2330893 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f418 Token @Some(218464) @22
+       2330893 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f418 Token @Some(218464) @21
+       2330893 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f418 Token @Some(218464) @20
+       2330893 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f418 Token @Some(218464) @19
+       2330893 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f418 Token @Some(218464) @18
+       2330893 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f418 Token @Some(218464) @17
+       2330893 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f418 Token @Some(218464) @16
+       2330893 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f418 Token @Some(218464) @14
+       2330893 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f418 Token @Some(218464) @13
+       2330893 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f418 Token @Some(218464) @12
+       2330893 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f418 Token @Some(218464) @11
+       2330893 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f418 Token @Some(218464) @10
+       2330893 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f418 Token @Some(218464) @9
+       2330893 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f418 Token @Some(218464) @8
+       2330893 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f418 Token @Some(218464) @7
+       2330893 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f418 Token @Some(218464) @6
+       2330893 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f418 Token @Some(218464) @5
+       2330893 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f418 Token @Some(218464) @4
+       2330893 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f418 Token @Some(218464) @3
+       2330893 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f418 Token @Some(218464) @2
+       2330893 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f418 Token @Some(218464) @1
+       2330893 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f418 Token @Some(218464) @0
+       2330873 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f422  @Some(219522) @7
+       2330873 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f422  @Some(219522) @6
+       2330873 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f422  @Some(219522) @5
+       2330873 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f422  @Some(219522) @4
+       2330873 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f422  @Some(219522) @3
+       2330775 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f465  @Some(251149) @60
+       2330775 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f465  @Some(251149) @59
+       2330775 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f465  @Some(251149) @52
+       2330775 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f465  @Some(251149) @51
+       2330775 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f465  @Some(251149) @50
+       2330775 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f465  @Some(251149) @49
+       2330775 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f465  @Some(251149) @48
+       2330775 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f465  @Some(251149) @47
+       2330775 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f465  @Some(251149) @46
+       2298392 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f420  @Some(219283) @5
+       2298392 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f420  @Some(219283) @4
+       2298392 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f420  @Some(219283) @3
+       2294520 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f84 isIdentifierStart @Some(29856) @1
+       2189955 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f84 isIdentifierStart @Some(29856) @7
+       2134350 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f440  @Some(228581) @3
+       2025450 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f182  @Some(56738) @0
+       1919385 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f182  @Some(56738) @7
+       1919385 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f182  @Some(56738) @6
+       1919385 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f182  @Some(56738) @5
+       1919385 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f182  @Some(56738) @4
+       1919385 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f182  @Some(56738) @3
+       1915260 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f266  @Some(115435) @21
+       1915260 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f266  @Some(115435) @20
+       1842060 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f454  @Some(243828) @91
+       1842060 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f454  @Some(243828) @90
+       1842060 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f454  @Some(243828) @88
+       1842060 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f454  @Some(243828) @87
+       1842060 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f454  @Some(243828) @86
+       1842060 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f454  @Some(243828) @85
+       1842060 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f454  @Some(243828) @82
+       1842060 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f454  @Some(243828) @28
+       1842060 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f454  @Some(243828) @7
+       1842060 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f454  @Some(243828) @6
+       1842060 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f454  @Some(243828) @5
+       1842060 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f454  @Some(243828) @4
+       1842060 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f454  @Some(243828) @3
+       1842060 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f454  @Some(243828) @2
+       1842060 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f454  @Some(243828) @1
+       1842060 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f454  @Some(243828) @0
+       1838670 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f424  @Some(220346) @11
+       1838670 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f424  @Some(220346) @10
+       1838670 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f424  @Some(220346) @9
+       1838670 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f455  @Some(244917) @18
+       1838670 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f455  @Some(244917) @16
+       1838670 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f455  @Some(244917) @15
+       1838670 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f455  @Some(244917) @14
+       1838670 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f455  @Some(244917) @10
+       1838670 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f455  @Some(244917) @9
+       1838670 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f455  @Some(244917) @8
+       1838670 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f455  @Some(244917) @7
+       1838670 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f455  @Some(244917) @6
+       1838670 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f455  @Some(244917) @5
+       1838670 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f455  @Some(244917) @4
+       1838670 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f455  @Some(244917) @3
+       1838670 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f455  @Some(244917) @2
+       1838670 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f455  @Some(244917) @1
+       1838670 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f455  @Some(244917) @0
+       1769925 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f84 isIdentifierStart @Some(29856) @9
+       1769925 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f84 isIdentifierStart @Some(29856) @8
+       1739010 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f440  @Some(228581) @4
+       1694070 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f335 Node @Some(168382) @26
+       1694070 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f335 Node @Some(168382) @25
+       1694070 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f335 Node @Some(168382) @24
+       1694070 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f335 Node @Some(168382) @23
+       1694070 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f335 Node @Some(168382) @22
+       1694070 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f335 Node @Some(168382) @21
+       1694070 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f335 Node @Some(168382) @20
+       1694070 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f335 Node @Some(168382) @19
+       1694070 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f335 Node @Some(168382) @15
+       1694070 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f335 Node @Some(168382) @14
+       1694070 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f335 Node @Some(168382) @13
+       1694070 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f335 Node @Some(168382) @12
+       1694070 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f335 Node @Some(168382) @11
+       1694070 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f335 Node @Some(168382) @9
+       1694070 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f335 Node @Some(168382) @8
+       1694070 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f335 Node @Some(168382) @7
+       1694070 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f335 Node @Some(168382) @6
+       1694070 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f335 Node @Some(168382) @5
+       1694070 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f335 Node @Some(168382) @4
+       1694070 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f335 Node @Some(168382) @3
+       1694070 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f335 Node @Some(168382) @2
+       1694070 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f335 Node @Some(168382) @1
+       1694070 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f335 Node @Some(168382) @0
+       1694069 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f335 Node @Some(168382) @28
+       1694069 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f335 Node @Some(168382) @27
+       1687260 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f102 finishNodeAt @Some(169018) @11
+       1687260 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f102 finishNodeAt @Some(169018) @10
+       1687260 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f102 finishNodeAt @Some(169018) @9
+       1687260 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f102 finishNodeAt @Some(169018) @8
+       1687260 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f102 finishNodeAt @Some(169018) @7
+       1687260 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f102 finishNodeAt @Some(169018) @6
+       1687260 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f102 finishNodeAt @Some(169018) @5
+       1687260 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f102 finishNodeAt @Some(169018) @4
+       1687260 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f102 finishNodeAt @Some(169018) @3
+       1687260 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f102 finishNodeAt @Some(169018) @2
+       1687260 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f102 finishNodeAt @Some(169018) @1
+       1687260 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f102 finishNodeAt @Some(169018) @0
+       1687155 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f338  @Some(169251) @9
+       1687155 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f338  @Some(169251) @7
+       1687155 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f338  @Some(169251) @5
+       1687155 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f338  @Some(169251) @4
+       1687155 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f338  @Some(169251) @3
+       1687155 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f338  @Some(169251) @2
+       1687155 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f338  @Some(169251) @1
+       1687155 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f338  @Some(169251) @0
+       1681965 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f333  @Some(167786) @12
+       1681965 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f333  @Some(167786) @1
+       1681965 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f333  @Some(167786) @0
+       1621560 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f85 isIdentifierChar @Some(30313) @1
+       1527690 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f182  @Some(56738) @11
+       1527690 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f182  @Some(56738) @9
+       1527690 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f182  @Some(56738) @8
+       1518660 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f466  @Some(251558) @4
+       1518660 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f466  @Some(251558) @3
+       1518660 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f466  @Some(251558) @1
+       1518660 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f466  @Some(251558) @0
+       1518660 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f14 c @Some(3873) @17
+       1518660 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f14 c @Some(3873) @16
+       1518660 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f14 c @Some(3873) @15
+       1518660 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f14 c @Some(3873) @13
+       1518660 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f14 c @Some(3873) @12
+       1436610 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f440  @Some(228581) @5
+       1408230 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f277  @Some(118220) @27
+       1408230 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f277  @Some(118220) @8
+       1408230 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f277  @Some(118220) @4
+       1408230 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f277  @Some(118220) @3
+       1408230 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f277  @Some(118220) @2
+       1408230 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f277  @Some(118220) @1
+       1408230 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f277  @Some(118220) @0
+       1408228 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f277  @Some(118220) @29
+       1408228 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f277  @Some(118220) @28
+       1397250 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f171  @Some(54274) @8
+       1397250 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f171  @Some(54274) @5
+       1397250 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f171  @Some(54274) @4
+       1397250 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f171  @Some(54274) @3
+       1397250 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f171  @Some(54274) @2
+       1397250 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f171  @Some(54274) @1
+       1397250 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f171  @Some(54274) @0
+       1391055 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f171  @Some(54274) @11
+       1373085 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f14 c @Some(3873) @2
+       1347240 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f333  @Some(167786) @14
+       1347240 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f333  @Some(167786) @13
+       1279215 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f336  @Some(168812) @5
+       1279215 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f336  @Some(168812) @4
+       1279215 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f336  @Some(168812) @3
+       1279215 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f336  @Some(168812) @2
+       1279215 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f336  @Some(168812) @1
+       1279215 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f336  @Some(168812) @0
+       1276260 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f26 skipThrough @Some(7387) @4
+       1276260 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f26 skipThrough @Some(7387) @3
+       1276260 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f26 skipThrough @Some(7387) @2
+       1276260 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f26 skipThrough @Some(7387) @0
+       1168050 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f440  @Some(228581) @6
+       1104000 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f440  @Some(228581) @7
+       1095390 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f334  @Some(168119) @18
+       1095390 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f334  @Some(168119) @13
+       1095390 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f334  @Some(168119) @12
+       1095390 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f334  @Some(168119) @11
+       1095390 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f334  @Some(168119) @10
+       1095390 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f334  @Some(168119) @9
+       1095390 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f334  @Some(168119) @8
+       1095390 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f334  @Some(168119) @7
+       1095390 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f334  @Some(168119) @6
+       1095390 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f334  @Some(168119) @5
+       1095390 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f334  @Some(168119) @4
+       1095390 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f334  @Some(168119) @3
+       1095390 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f334  @Some(168119) @2
+       1068705 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f170  @Some(54084) @4
+       1068705 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f170  @Some(54084) @3
+       1068705 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f170  @Some(54084) @2
+       1053435 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f170  @Some(54084) @6
+       1053435 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f170  @Some(54084) @5
+       1039950 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f440  @Some(228581) @8
+        941280 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f171  @Some(54274) @7
+        941280 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f171  @Some(54274) @6
+        894570 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @44
+        894570 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @43
+        894570 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @42
+        894570 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @41
+        894570 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @40
+        894570 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @39
+        894570 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @38
+        894570 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @37
+        894570 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @36
+        894570 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @35
+        894570 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @34
+        894570 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @33
+        894570 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @32
+        847650 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f440  @Some(228581) @9
+        845010 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f290  @Some(132937) @237
+        845010 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f290  @Some(132937) @50
+        845010 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f290  @Some(132937) @43
+        845010 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f290  @Some(132937) @28
+        845010 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f290  @Some(132937) @27
+        845010 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f290  @Some(132937) @26
+        845010 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f290  @Some(132937) @25
+        845010 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f290  @Some(132937) @24
+        845010 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f290  @Some(132937) @23
+        845010 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f290  @Some(132937) @22
+        845010 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f290  @Some(132937) @21
+        845010 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f290  @Some(132937) @14
+        845010 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f290  @Some(132937) @12
+        845010 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f290  @Some(132937) @10
+        845010 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f290  @Some(132937) @3
+        845010 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f290  @Some(132937) @2
+        845010 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f290  @Some(132937) @1
+        845010 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f290  @Some(132937) @0
+        845010 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f287  @Some(131757) @52
+        845010 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f287  @Some(131757) @49
+        845010 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f287  @Some(131757) @48
+        845010 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f287  @Some(131757) @47
+        845010 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f287  @Some(131757) @45
+        845010 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f287  @Some(131757) @44
+        845010 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f287  @Some(131757) @43
+        845010 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f287  @Some(131757) @42
+        845010 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f287  @Some(131757) @40
+        845010 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f287  @Some(131757) @38
+        845010 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f287  @Some(131757) @36
+        845010 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f287  @Some(131757) @35
+        845010 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f287  @Some(131757) @34
+        820260 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f290  @Some(132937) @49
+        820260 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f290  @Some(132937) @48
+        820260 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f290  @Some(132937) @47
+        820260 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f290  @Some(132937) @46
+        820260 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f290  @Some(132937) @45
+        820260 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f290  @Some(132937) @44
+        820260 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f290  @Some(132937) @41
+        820260 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f290  @Some(132937) @36
+        820260 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f290  @Some(132937) @35
+        820260 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f290  @Some(132937) @30
+        820260 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f290  @Some(132937) @29
+        703620 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @87
+        703620 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @86
+        703620 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @85
+        703620 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @84
+        703620 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f428  @Some(222171) @83
+        699345 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f320  @Some(161925) @6
+        699345 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f320  @Some(161925) @5
+        699345 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f320  @Some(161925) @4
+        699345 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f320  @Some(161925) @3
+        699345 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f320  @Some(161925) @2
+        699345 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f320  @Some(161925) @1
+        699345 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f320  @Some(161925) @0
+        699345 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f319  @Some(161615) @27
+        699345 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f319  @Some(161615) @13
+        699345 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f319  @Some(161615) @12
+        699345 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f319  @Some(161615) @11
+        699345 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f319  @Some(161615) @10
+        699345 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f319  @Some(161615) @9
+        699345 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f319  @Some(161615) @8
+        699345 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f319  @Some(161615) @7
+        699345 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f319  @Some(161615) @6
+        699345 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f319  @Some(161615) @5
+        699345 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f319  @Some(161615) @4
+        699345 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f319  @Some(161615) @3
+        699345 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f319  @Some(161615) @2
+        699345 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f319  @Some(161615) @1
+        699345 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f319  @Some(161615) @0
+        699343 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f320  @Some(161925) @46
+        698190 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f320  @Some(161925) @9
+        698190 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f320  @Some(161925) @8
+        698190 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f320  @Some(161925) @7
+        697620 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f277  @Some(118220) @7
+        697620 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f277  @Some(118220) @6
+        697620 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f277  @Some(118220) @5
+        690765 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f290  @Some(132937) @110
+        690765 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f290  @Some(132937) @103
+        690765 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f290  @Some(132937) @102
+        690765 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f290  @Some(132937) @101
+        689460 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f447  @Some(237655) @20
+        689460 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f447  @Some(237655) @19
+        689460 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f447  @Some(237655) @18
+        689460 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f447  @Some(237655) @17
+        689460 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f447  @Some(237655) @16
+        689460 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f447  @Some(237655) @15
+        689460 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f447  @Some(237655) @8
+        689460 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f447  @Some(237655) @7
+        689460 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f447  @Some(237655) @6
+        687975 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f290  @Some(132937) @109
+        687975 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f290  @Some(132937) @108
+        687975 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f290  @Some(132937) @107
+        687975 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f290  @Some(132937) @106
+        687975 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f290  @Some(132937) @105
+        687975 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f290  @Some(132937) @104
+        667665 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f85 isIdentifierChar @Some(30313) @10
+        667665 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f85 isIdentifierChar @Some(30313) @9
+        666360 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f283  @Some(126368) @12
+        666360 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/acorn.bundle.js f283  @Some(126368) @3
