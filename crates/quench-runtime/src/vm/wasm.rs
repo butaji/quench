@@ -344,7 +344,7 @@ impl<H: Host> Vm<H> {
             parent: Value::NULL,
             function: 0,
             slots: values.into(),
-            scope: Box::new(crate::heap::EnvironmentScope {
+            scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
                 program: Some(id.raw()),
                 root_eval_scope: false,
                 binding_site_pc: None,
@@ -391,17 +391,13 @@ impl<H: Host> Vm<H> {
             })?;
         // An unshared memory32 lives in a guarded reservation in both
         // modes: its pages commit as they are first touched, and growth
-        // never copies. Compiled code also relies on the guard in place
-        // of bounds checks, and on the memory repeating above 2^32 to
-        // form i32 sums in 64 bits; the interpreter forms no addresses
-        // that way, so its memory stays private anonymous pages. The
-        // guard covers exactly the bytes past the memory's length only
-        // when every length is a whole number of host pages.
-        let wraps = self.execution_mode == super::ExecutionMode::Compiled;
+        // never copies. Compiled code relies on the guard in place of
+        // bounds checks, which covers exactly the bytes past the memory's
+        // length only when every length is a whole number of host pages.
         let guarded = (!ty.shared
             && !ty.memory64
             && (ty.page_size() as usize).is_multiple_of(crate::wasm::memory::HOST_PAGE))
-        .then(|| crate::wasm::memory::LinearBytes::reserved(length, wraps))
+        .then(|| crate::wasm::memory::LinearBytes::reserved(length))
         .flatten();
         let bytes = match guarded {
             Some(bytes) => bytes,
@@ -1607,8 +1603,8 @@ impl<H: Host> Vm<H> {
                 if value.is_null() {
                     return nullable;
                 }
-                match self.heap.get(value) {
-                    Some(Cell::Function {
+                match self.heap.function(value) {
+                    Some(FunctionRecord {
                         kind: FunctionKind::User(program, function),
                         ..
                     }) => self.programs.wasm_signatures(*program).is_some_and(|pool| {
@@ -1616,7 +1612,7 @@ impl<H: Host> Vm<H> {
                             pool.matches_declaration(actual, declarations, index, exact)
                         })
                     }),
-                    Some(Cell::Function {
+                    Some(FunctionRecord {
                         kind: FunctionKind::Native(Native::WasmHost),
                         ..
                     }) => self
@@ -1776,6 +1772,90 @@ mod tests {
             .flatten()
             .expect("first call compiled the Wasm root");
         assert_eq!(compiled.native_entries(0), Some(1));
+    }
+
+    /// Compiled code checks for an interrupt on each backward edge and at each function entry:
+    /// a run stops whether it repeats through a loop or only through calls.
+    #[test]
+    fn compiled_wasm_observes_termination_in_loops_and_loop_free_recursion() {
+        use wasmparser::BlockType;
+        let spin = vec![
+            Operator::Loop {
+                blockty: BlockType::Empty,
+            },
+            Operator::Br { relative_depth: 0 },
+            Operator::End,
+            Operator::I32Const { value: 0 },
+            Operator::End,
+        ];
+        // fib(n) = n < 2 ? n : fib(n - 1) + fib(n - 2), with no loop.
+        let fib = vec![
+            Operator::LocalGet { local_index: 0 },
+            Operator::I32Const { value: 2 },
+            Operator::I32LtU,
+            Operator::If {
+                blockty: BlockType::Type(wasmparser::ValType::I32),
+            },
+            Operator::LocalGet { local_index: 0 },
+            Operator::Else,
+            Operator::LocalGet { local_index: 0 },
+            Operator::I32Const { value: 1 },
+            Operator::I32Sub,
+            Operator::Call { function_index: 0 },
+            Operator::LocalGet { local_index: 0 },
+            Operator::I32Const { value: 2 },
+            Operator::I32Sub,
+            Operator::Call { function_index: 0 },
+            Operator::I32Add,
+            Operator::End,
+            Operator::End,
+        ];
+        // block { loop { br_table [0] default 1 (i32.const 0) } }: the loop
+        // repeats through the table alone.
+        static TABLE_SPIN: &[u8] = &[
+            0x02, 0x40, 0x03, 0x40, 0x41, 0x00, 0x0e, 0x01, 0x00, 0x01, 0x0b, 0x0b, 0x41, 0x00,
+            0x0b,
+        ];
+        let table_spin: Vec<_> =
+            wasmparser::OperatorsReader::new(wasmparser::BinaryReader::new(TABLE_SPIN, 0))
+                .into_iter()
+                .map(Result::unwrap)
+                .collect();
+        // loop { br_if 0 (i32.eqz (local.get 0)) } with a zero argument.
+        let zero_spin = vec![
+            Operator::Loop {
+                blockty: BlockType::Empty,
+            },
+            Operator::LocalGet { local_index: 0 },
+            Operator::I32Eqz,
+            Operator::BrIf { relative_depth: 0 },
+            Operator::End,
+            Operator::I32Const { value: 0 },
+            Operator::End,
+        ];
+        for (name, params, operators, args) in [
+            ("compiled-wasm-spin", 0, spin, vec![]),
+            ("compiled-wasm-table-spin", 0, table_spin, vec![]),
+            ("compiled-wasm-zero-spin", 1, zero_spin, vec![0]),
+            ("compiled-wasm-fib", 1, fib, vec![60]),
+        ] {
+            let function = crate::Engine::lower_wasm_i32_module(
+                name,
+                0,
+                [(params, 0, true, operators.into_iter().map(Ok))],
+            )
+            .unwrap();
+            let mut vm = Vm::new(crate::SystemHost);
+            vm.set_execution_mode(crate::ExecutionMode::Compiled);
+            let interrupt = vm.execution_interrupt_handle();
+            let stopper = std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                interrupt.request_termination();
+            });
+            let error = vm.execute_wasm_i32(&function, &args).unwrap_err();
+            assert!(error.is_execution_terminated(), "{name}");
+            stopper.join().unwrap();
+        }
     }
 
     #[test]
@@ -1969,14 +2049,6 @@ mod tests {
         let mut vm = Vm::new(crate::SystemHost);
         vm.set_execution_mode(crate::ExecutionMode::Compiled);
         let instance = vm.instantiate_wasm_module(&module).unwrap();
-        let memory = vm.wasm_memory(&instance, 0).unwrap();
-        let Cell::WasmMemory { bytes, .. } = vm.heap.get(memory).expect("memory binding") else {
-            panic!("memory binding must name a Wasm memory");
-        };
-        let crate::wasm::memory::MemoryStorage::Unshared(state) = &**bytes else {
-            panic!("memory must be unshared");
-        };
-        let repeats = state.borrow().bytes.wraps();
         let base = crate::WasmValue::I32(-16);
         let index = crate::WasmValue::I32(0x30);
         let stored = crate::WasmValue::I32(0x1234_5678);
@@ -1992,41 +2064,39 @@ mod tests {
             vm.invoke_wasm(&instance, 0, &[base, index]).unwrap(),
             Some(crate::WasmValue::I32(0x1234_5678))
         );
-        if repeats {
-            // Reads and writes through the repeated region stay coherent
-            // with accesses to the corresponding low address.
-            assert_eq!(
-                vm.invoke_wasm(
-                    &instance,
-                    1,
-                    &[
-                        crate::WasmValue::I32(0x20),
-                        crate::WasmValue::I32(0),
-                        crate::WasmValue::I32(0x2468_1357),
-                    ],
-                )
+        // Writes through the wrapped form of an address read back through its low form,
+        // and the other way round.
+        assert_eq!(
+            vm.invoke_wasm(
+                &instance,
+                1,
+                &[
+                    crate::WasmValue::I32(0x20),
+                    crate::WasmValue::I32(0),
+                    crate::WasmValue::I32(0x2468_1357),
+                ],
+            )
+            .unwrap(),
+            None
+        );
+        assert_eq!(
+            vm.invoke_wasm(&instance, 0, &[base, index]).unwrap(),
+            Some(crate::WasmValue::I32(0x2468_1357))
+        );
+        assert_eq!(
+            vm.invoke_wasm(&instance, 1, &[base, index, stored])
                 .unwrap(),
-                None
-            );
-            assert_eq!(
-                vm.invoke_wasm(&instance, 0, &[base, index]).unwrap(),
-                Some(crate::WasmValue::I32(0x2468_1357))
-            );
-            assert_eq!(
-                vm.invoke_wasm(&instance, 1, &[base, index, stored])
-                    .unwrap(),
-                None
-            );
-            assert_eq!(
-                vm.invoke_wasm(
-                    &instance,
-                    0,
-                    &[crate::WasmValue::I32(0x20), crate::WasmValue::I32(0)],
-                )
-                .unwrap(),
-                Some(crate::WasmValue::I32(0x1234_5678))
-            );
-        }
+            None
+        );
+        assert_eq!(
+            vm.invoke_wasm(
+                &instance,
+                0,
+                &[crate::WasmValue::I32(0x20), crate::WasmValue::I32(0)],
+            )
+            .unwrap(),
+            Some(crate::WasmValue::I32(0x1234_5678))
+        );
 
         // An i32 address of 0xffff_ffff still points outside this one-page
         // memory for a four-byte load.
@@ -3308,7 +3378,75 @@ mod tests {
     }
 
     #[test]
+    fn compiled_wasm_unrolled_loop_runs_every_trip_count() {
+        // A small program's innermost loop runs as copies of its body; every trip count,
+        // a multiple of the copies or not, takes the same values as the loop once.
+        let signature = crate::WasmSignature {
+            params: vec![crate::WasmType::I32],
+            results: vec![crate::WasmType::I32],
+        };
+        let module = crate::Engine::lower_wasm_module_for(
+            crate::ExecutionMode::Compiled,
+            "compiled-wasm-unrolled-loop",
+            [crate::WasmFunctionBody {
+                ty: crate::WasmCallableType::Embedded(signature),
+                locals: vec![wasmparser::ValType::I32, wasmparser::ValType::I32],
+                operators: vec![
+                    Operator::Block { blockty: wasmparser::BlockType::Empty },
+                    Operator::LocalGet { local_index: 0 },
+                    Operator::I32Eqz,
+                    Operator::BrIf { relative_depth: 0 },
+                    Operator::Loop { blockty: wasmparser::BlockType::Empty },
+                    Operator::LocalGet { local_index: 2 },
+                    Operator::LocalGet { local_index: 1 },
+                    Operator::I32Add,
+                    Operator::LocalSet { local_index: 2 },
+                    Operator::LocalGet { local_index: 1 },
+                    Operator::I32Const { value: 1 },
+                    Operator::I32Add,
+                    Operator::LocalTee { local_index: 1 },
+                    Operator::LocalGet { local_index: 0 },
+                    Operator::I32LtU,
+                    Operator::BrIf { relative_depth: 0 },
+                    Operator::End,
+                    Operator::End,
+                    Operator::LocalGet { local_index: 2 },
+                    Operator::End,
+                ]
+                .into_iter()
+                .map(Ok),
+            }],
+            &crate::WasmTypes::default(),
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+        )
+        .unwrap();
+        let mut vm = Vm::new(crate::SystemHost);
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        let instance = vm.instantiate_wasm_module(&module).unwrap();
+        for trips in 0..13 {
+            assert_eq!(
+                vm.invoke_wasm(&instance, 0, &[crate::WasmValue::I32(trips)]).unwrap(),
+                Some(crate::WasmValue::I32(trips * (trips - 1) / 2)),
+                "{trips} trips"
+            );
+        }
+        let program = vm
+            .programs
+            .find_shared(&module.program)
+            .expect("registered Wasm program");
+        let compiled = vm.programs.compiled(program).flatten().expect("compiled loop");
+        assert_eq!(compiled.native_entries(0), Some(13));
+    }
+
+    #[test]
     fn compiled_wasm_fallback_caller_keeps_native_callee_entries() {
+        crate::wasm::COMPILED_CALLS_KEPT_FOR_TEST.with(|kept| kept.set(true));
         let caller_signature = crate::WasmSignature {
             params: vec![],
             results: vec![crate::WasmType::I32],
@@ -3434,6 +3572,7 @@ mod tests {
 
     #[test]
     fn compiled_wasm_known_fallback_offsets_defined_index_by_import_count() {
+        crate::wasm::COMPILED_CALLS_KEPT_FOR_TEST.with(|kept| kept.set(true));
         let signature = crate::WasmSignature {
             params: vec![],
             results: vec![crate::WasmType::I32],
@@ -3762,7 +3901,7 @@ mod tests {
         let mut vm = Vm::new(crate::SystemHost);
         let script = crate::Engine::specialize("0;", "start-owner.js").unwrap();
         vm.execute(&script).unwrap();
-        let host_value = vm.heap.alloc(Cell::String("start-host-root".into()));
+        let host_value = vm.heap.alloc_string("start-host-root".into());
         let host_root = vm.root(host_value);
         let roots = vm.heap.root_count_for_test();
         // A module carrying an instantiation effect cannot bypass that effect
@@ -3786,7 +3925,7 @@ mod tests {
             assert_eq!(vm.heap.root_count_for_test(), roots);
             vm.collect_now(&script);
             assert_eq!(vm.root_value(host_root), Some(host_value));
-            assert!(matches!(vm.heap.get(host_value), Some(Cell::String(_))));
+            assert!(vm.heap.is_string(host_value));
         }
         vm.release_root(host_root);
     }
@@ -3796,7 +3935,7 @@ mod tests {
         let script = crate::Engine::specialize("0;", "shared-root.js").unwrap();
         let mut vm = Vm::new(crate::SystemHost);
         vm.execute(&script).unwrap();
-        let value = vm.heap.alloc(Cell::String("host-owned".into()));
+        let value = vm.heap.alloc_string("host-owned".into());
         let root = vm.root(value);
         let module = crate::Engine::lower_wasm_i32_module(
             "shared-entries",
@@ -3828,8 +3967,7 @@ mod tests {
             assert_eq!(vm.programs.len(), 2);
             vm.collect_now(&script);
             assert_eq!(vm.root_value(root), Some(value));
-            assert!(matches!(vm.heap.get(value), Some(Cell::String(text))
-                if text.host_string() == "host-owned"));
+            assert!(vm.heap.string(value).is_some_and(|text| text.host_string() == "host-owned"));
         }
         // A deliberate new JS execution retains its existing reset contract.
         vm.execute(&script).unwrap();
@@ -4527,12 +4665,12 @@ mod tests {
         module.program = Rc::new(ResidualProgram::read_binary(&path).unwrap());
         std::fs::remove_file(path).unwrap();
         let mut invalid = (*module.program).clone();
-        let address = invalid.functions[0]
+        let address = invalid.function(0)
             .code
             .iter()
             .map(|packed| {
                 if packed.is_wide() {
-                    invalid.functions[0].wide[packed.wide_index()]
+                    invalid.function(0).wide[packed.wide_index()]
                 } else {
                     packed.as_wide()
                 }
@@ -5132,7 +5270,7 @@ mod tests {
         let module = root_first_hot_fallback_fixture();
         let function = module.select_function(0).unwrap();
         let program_code = &module.module.program;
-        let root_code = &program_code.functions[0];
+        let root_code = &program_code.function(0);
         let root_instructions = root_code
             .code
             .iter()
@@ -5290,7 +5428,7 @@ mod tests {
             .map(|(params, locals, result, ops)| (params, locals, result, ops.into_iter().map(Ok))),
         )
         .unwrap();
-        let root_code = &module.module.program.functions[0];
+        let root_code = &module.module.program.function(0);
         let root_instructions = root_code
             .code
             .iter()

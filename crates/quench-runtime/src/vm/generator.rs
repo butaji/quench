@@ -12,8 +12,8 @@ impl<H: Host> Vm<H> {
         receiver: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let is_running = match self.heap.get(receiver) {
-            Some(Cell::Iterator {
+        let is_running = match self.heap.iterator(receiver) {
+            Some(IteratorRecord {
                 kind: IteratorKind::Generator,
                 ext,
                 ..
@@ -47,8 +47,8 @@ impl<H: Host> Vm<H> {
         &mut self,
         generator: Value,
     ) -> Option<&mut GeneratorRecord> {
-        match self.heap.get_mut(generator) {
-            Some(Cell::Iterator { ext, .. }) => ext.generator.as_deref_mut(),
+        match self.heap.iterator_mut(generator) {
+            Some(IteratorRecord { ext, .. }) => ext.generator.as_deref_mut(),
             _ => None,
         }
     }
@@ -65,14 +65,14 @@ impl<H: Host> Vm<H> {
         self.profile
             .function(self.active_program.raw(), id as usize);
         let parameter_eval_arguments_error =
-            p.functions[id as usize].parameter_eval_arguments_error;
+            p.function(id as usize).parameter_eval_arguments_error;
         if parameter_eval_arguments_error {
             return self.syntax_error_result(
                 p,
                 "arguments binding is not allowed in generator parameters",
             );
         }
-        let function = &p.functions[id as usize];
+        let function = &p.function(id as usize);
         let mut frame = self.pooled_frame();
         frame
             .locals
@@ -86,7 +86,7 @@ impl<H: Host> Vm<H> {
             frame.locals[fixed] = self.heap.alloc(Cell::Array {
                 object: crate::heap::ArrayObject::new(
                     Self::empty_object(self.array_proto),
-                    Rc::new(args.get(fixed..).unwrap_or_default().to_vec()),
+                    args.get(fixed..).unwrap_or_default().to_vec(),
                 ),
             });
         }
@@ -98,7 +98,7 @@ impl<H: Host> Vm<H> {
             let arguments = self.heap.alloc(Cell::Array {
                 object: crate::heap::ArrayObject::new(
                     Self::empty_object(self.object_proto),
-                    Rc::new(args.to_vec()),
+                    args.to_vec(),
                 ),
             });
             frame.locals[usize::from(slot)] = arguments;
@@ -109,7 +109,7 @@ impl<H: Host> Vm<H> {
                 }
             }
         }
-        self.initialize_frame_invocation(&p.atoms, &mut frame, function, context, args);
+        self.initialize_frame_invocation(p, &mut frame, function, context, args);
         frame.function = id;
         frame.program = self.active_program;
         frame.pc = 0;
@@ -144,7 +144,7 @@ impl<H: Host> Vm<H> {
                 }
             }
         }
-        frame.with_objects = self.captured_with_objects_for_function(parent, function, p.kind);
+        frame.with_objects = self.captured_with_objects_for_function(parent, function.inherited_with_scope, p.kind);
         let function_object = context.callee();
         let realm = function_object
             .map(|function| self.function_realm(p, function))
@@ -178,8 +178,8 @@ impl<H: Host> Vm<H> {
         if let Some(function) = function_object {
             self.capture_constructed_name(&mut object, function, true);
         }
-        let generator = self.heap.alloc(Cell::Iterator {
-            object: Box::new(object),
+        let generator = self.heap.alloc_iterator(IteratorRecord {
+            object: object,
             source: Value::NULL,
             kind: if function.is_async {
                 IteratorKind::AsyncGenerator
@@ -188,19 +188,19 @@ impl<H: Host> Vm<H> {
             },
             index: 0,
             done: false,
-            ext: Box::new(crate::heap::IteratorExt {
+            ext: crate::heap::IteratorExt {
                 position_high: 0,
                 next_method: None,
                 helper: None,
                 helper_running: false,
                 helper_started: false,
                 generator: None,
-            }),
+            },
         });
-        if let Some(Cell::Iterator { source, .. }) = self.heap.get_mut(generator) {
+        if let Some(IteratorRecord { source, .. }) = self.heap.iterator_mut(generator) {
             *source = generator;
         }
-        if let Some(Cell::Iterator { ext, .. }) = self.heap.get_mut(generator) {
+        if let Some(IteratorRecord { ext, .. }) = self.heap.iterator_mut(generator) {
             ext.generator = Some(Box::new(GeneratorRecord {
                 continuation: Some(Continuation::from_frame(
                     &mut frame,
@@ -305,11 +305,11 @@ impl<H: Host> Vm<H> {
                 let environment = vm.heap.alloc(Cell::Array {
                     object: crate::heap::ArrayObject::new(
                         Self::empty_object(vm.array_proto),
-                        Rc::new(vec![
+                        vec![
                             generator,
                             iterator,
                             Value::number(f64::from(destination)),
-                        ]),
+                        ],
                     ),
                 });
                 let start =
@@ -352,7 +352,7 @@ impl<H: Host> Vm<H> {
             let environment = vm.heap.alloc(Cell::Array {
                 object: crate::heap::ArrayObject::new(
                     Self::empty_object(vm.array_proto),
-                    Rc::new(vec![generator, promise]),
+                    vec![generator, promise],
                 ),
             });
             let fulfilled = vm.native_with_env(Native::AsyncGeneratorReturnFulfilled, environment);
@@ -456,11 +456,11 @@ impl<H: Host> Vm<H> {
             return Err(JsError("async delegate return state is malformed".into()));
         };
         let value = args.first().copied().unwrap_or(Value::UNDEFINED);
-        if let Some(Cell::Iterator {
+        if let Some(IteratorRecord {
             source,
             kind: IteratorKind::AsyncFromSync,
             ..
-        }) = self.heap.get(*iterator)
+        }) = self.heap.iterator(*iterator)
         {
             return self.return_from_async_from_sync(
                 p,
@@ -488,10 +488,7 @@ impl<H: Host> Vm<H> {
         target: Value,
     ) -> Result<(), JsError> {
         let record = self
-            .realm
-            .promise
-            .records
-            .get(&source)
+            .promise_record(source)
             .cloned()
             .ok_or_else(|| JsError("async generator request result is not a Promise".into()))?;
         self.observe_promise_rejection(source);
@@ -499,13 +496,10 @@ impl<H: Host> Vm<H> {
             on_fulfilled: Value::UNDEFINED,
             on_rejected: Value::UNDEFINED,
             next: target,
-            execution_context: self.host.capture_job_context(self.realm.promise.records.get(&target).and_then(|record| record.host_context)),
+            execution_context: self.host.capture_job_context(self.promise_record(target).and_then(|record| record.host_context)),
         };
         if record.state == PromiseState::Pending {
-            self.realm
-                .promise
-                .records
-                .get_mut(&source)
+            self.promise_record_mut(source)
                 .expect("source Promise record exists")
                 .reactions
                 .push(reaction);
@@ -516,13 +510,13 @@ impl<H: Host> Vm<H> {
     }
 
     fn yield_star_iterator(&self, generator: Value) -> Option<(Value, u16)> {
-        let record = match self.heap.get(generator) {
-            Some(Cell::Iterator { ext, .. }) => ext.generator.as_ref()?,
+        let record = match self.heap.iterator(generator) {
+            Some(IteratorRecord { ext, .. }) => ext.generator.as_ref()?,
             _ => return None,
         };
         let continuation = record.continuation.as_ref()?;
         let program = self.programs.get(continuation.program)?;
-        let function = program.functions.get(continuation.function as usize)?;
+        let function = program.function_get(continuation.function as usize)?;
         let instruction = *function.code.get(continuation.pc)?;
         let instruction = if instruction.is_wide() {
             function.wide.get(instruction.wide_index()).copied()?
@@ -565,7 +559,7 @@ impl<H: Host> Vm<H> {
             let error = self.type_error(p, "iterator return result is not an object".into());
             return self.resume_generator(p, generator, &[], Some(error));
         }
-        let done_atom = self.intern_atom("done");
+        let done_atom = self.runtime_atoms.done;
         let done = match self.get_property(p, result, done_atom) {
             Ok(done) => done,
             Err(error) => return self.resume_generator(p, generator, &[], Some(error)),
@@ -573,7 +567,7 @@ impl<H: Host> Vm<H> {
         if !self.truthy(done) {
             return Ok(result);
         }
-        let value_atom = self.intern_atom("value");
+        let value_atom = self.runtime_atoms.value;
         let value = match self.get_property(p, result, value_atom) {
             Ok(value) => value,
             Err(error) => return self.resume_generator(p, generator, &[], Some(error)),
@@ -618,8 +612,8 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> Result<bool, JsError> {
         let unwind = {
-            let Some(record) = (match self.heap.get(generator) {
-                Some(Cell::Iterator { ext, .. }) => ext.generator.as_ref(),
+            let Some(record) = (match self.heap.iterator(generator) {
+                Some(IteratorRecord { ext, .. }) => ext.generator.as_ref(),
                 _ => None,
             }) else {
                 return Err(JsError("generator receiver is invalid".into()));
@@ -634,7 +628,7 @@ impl<H: Host> Vm<H> {
                 .programs
                 .get(continuation.program)
                 .ok_or_else(|| JsError("generator continuation program is unavailable".into()))?;
-            let Some(function) = program.functions.get(continuation.function as usize) else {
+            let Some(function) = program.function_get(continuation.function as usize) else {
                 return Err(JsError("generator function is invalid".into()));
             };
             let suspended_instruction = continuation.pc.saturating_sub(1) as u32;
@@ -731,13 +725,13 @@ impl<H: Host> Vm<H> {
         let env = self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_proto),
-                Rc::new(vec![
+                vec![
                     generator,
                     Value::number(f64::from(destination)),
                     Value::FALSE,
                     Value::FALSE,
                     Value::TRUE,
-                ]),
+                ],
             ),
         });
         let fulfilled = self.native_with_env(Native::AsyncGeneratorDelegateFulfilled, env);
@@ -828,8 +822,8 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         if !matches!(
-            self.heap.get(receiver),
-            Some(Cell::Iterator {
+            self.heap.iterator(receiver),
+            Some(IteratorRecord {
                 kind: IteratorKind::AsyncGenerator,
                 ext,
                 ..
@@ -869,8 +863,8 @@ impl<H: Host> Vm<H> {
         argument: Value,
         throwing: bool,
     ) -> Result<Value, JsError> {
-        let (receiver, adapter) = match self.heap.get(iterator) {
-            Some(Cell::Iterator {
+        let (receiver, adapter) = match self.heap.iterator(iterator) {
+            Some(IteratorRecord {
                 source,
                 kind: IteratorKind::AsyncFromSync,
                 ..
@@ -924,7 +918,7 @@ impl<H: Host> Vm<H> {
             let env = self.heap.alloc(Cell::Array {
                 object: crate::heap::ArrayObject::new(
                     Self::empty_object(self.array_proto),
-                    Rc::new(vec![
+                    vec![
                         generator,
                         Value::number(f64::from(destination)),
                         Value::number(if throwing { 1.0 } else { 0.0 }),
@@ -934,7 +928,7 @@ impl<H: Host> Vm<H> {
                         } else {
                             Value::FALSE
                         },
-                    ]),
+                    ],
                 ),
             });
             let fulfilled = self.native_with_env(Native::AsyncGeneratorDelegateFulfilled, env);
@@ -985,13 +979,13 @@ impl<H: Host> Vm<H> {
             let error = self.type_error(p, "iterator result is not an object".into());
             return self.resume_async_generator_with_throw(p, generator, error);
         }
-        let done_atom = self.intern_atom("done");
+        let done_atom = self.runtime_atoms.done;
         let done_value = match self.get_property(p, result, done_atom) {
             Ok(value) => value,
             Err(error) => return self.resume_async_generator_with_throw(p, generator, error),
         };
         let done = self.truthy(done_value);
-        let value_atom = self.intern_atom("value");
+        let value_atom = self.runtime_atoms.value;
         let value = match self.get_property(p, result, value_atom) {
             Ok(value) => value,
             Err(error) => return self.resume_async_generator_with_throw(p, generator, error),
@@ -999,10 +993,7 @@ impl<H: Host> Vm<H> {
         let value = if self.truthy(adapter) {
             let resolved = self.promise_for_value(p, value)?;
             let state = self
-                .realm
-                .promise
-                .records
-                .get(&resolved)
+                .promise_record(resolved)
                 .cloned()
                 .ok_or_else(|| JsError("async-from-sync value lost its Promise".into()))?;
             match state.state {
@@ -1113,8 +1104,7 @@ impl<H: Host> Vm<H> {
                 Ok((rejected, promise))
             })
         })?;
-        let id = self.suspend_continuation(continuation);
-        self.enqueue_async_resume(p, id, promise, Some(generator), rejected, false)?;
+        self.enqueue_async_resume(p, continuation, promise, Some(generator), rejected, false)?;
         Ok(promise)
     }
 
@@ -1146,7 +1136,7 @@ impl<H: Host> Vm<H> {
             let error = self.type_error(p, "iterator throw result is not an object".into());
             return self.resume_generator(p, generator, &[], Some(error));
         }
-        let done_atom = self.intern_atom("done");
+        let done_atom = self.runtime_atoms.done;
         let done = match self.get_property(p, result, done_atom) {
             Ok(done) => self.truthy(done),
             Err(error) => return self.resume_generator(p, generator, &[], Some(error)),
@@ -1154,7 +1144,7 @@ impl<H: Host> Vm<H> {
         if !done {
             return Ok(result);
         }
-        let value_atom = self.intern_atom("value");
+        let value_atom = self.runtime_atoms.value;
         let value = match self.get_property(p, result, value_atom) {
             Ok(value) => value,
             Err(error) => return self.resume_generator(p, generator, &[], Some(error)),
@@ -1205,8 +1195,8 @@ impl<H: Host> Vm<H> {
     }
 
     fn generator_kind(&self, generator: Value) -> Result<IteratorKind, JsError> {
-        match self.heap.get(generator) {
-            Some(Cell::Iterator { kind, .. })
+        match self.heap.iterator(generator) {
+            Some(IteratorRecord { kind, .. })
                 if matches!(kind, IteratorKind::Generator | IteratorKind::AsyncGenerator) =>
             {
                 Ok(*kind)
@@ -1588,8 +1578,7 @@ impl<H: Host> Vm<H> {
                         Some(destination),
                         promise,
                     );
-                    let id = vm.suspend_continuation(continuation);
-                    vm.enqueue_async_resume(p, id, promise, Some(generator), value, false)?;
+                    vm.enqueue_async_resume(p, continuation, promise, Some(generator), value, false)?;
                 }
                 Ok(_) => {
                     vm.pool_frame(frame);
@@ -1630,8 +1619,7 @@ impl<H: Host> Vm<H> {
             self.promise_resolve_value(p, promise, result)?;
             return Ok(());
         }
-        let id = self.suspend_continuation(continuation);
-        self.enqueue_async_resume(p, id, promise, Some(generator), value, true)
+        self.enqueue_async_resume(p, continuation, promise, Some(generator), value, true)
     }
 
     pub(super) fn finish_async_generator(

@@ -45,6 +45,8 @@ impl AtomPrefix for NoAtomPrefix {
 /// A compilation's atoms: the borrowed prefix, then the names this source adds.
 pub(super) struct CompilerAtoms<'a> {
     prefix: &'a dyn AtomPrefix,
+    /// The prefix's atom count, which cannot change while the compilation borrows it.
+    prefix_len: usize,
     added: Vec<Rc<str>>,
     /// Every name this compilation interned, added or found in the prefix: a source repeats
     /// its names, and the prefix answers each one only once.
@@ -55,13 +57,15 @@ impl<'a> CompilerAtoms<'a> {
     pub(super) fn new(prefix: &'a dyn AtomPrefix) -> Self {
         Self {
             prefix,
+            prefix_len: prefix.len(),
             added: Vec::new(),
             index: FxHashMap::default(),
         }
     }
 
     pub(super) fn len(&self) -> usize {
-        self.prefix.len() + self.added.len()
+        debug_assert_eq!(self.prefix_len, self.prefix.len(), "atom prefix grew during compilation");
+        self.prefix_len + self.added.len()
     }
 
     pub(super) fn get(&self, atom: usize) -> Option<&str> {
@@ -88,6 +92,11 @@ impl<'a> CompilerAtoms<'a> {
         atom
     }
 
+    /// Every atom this compilation interned.
+    pub(super) fn interned(&self) -> impl Iterator<Item = Atom> + '_ {
+        self.index.values().copied()
+    }
+
     pub(super) fn table(&self) -> AtomTable {
         AtomTable::extended(self.prefix.table(), &self.added)
     }
@@ -97,7 +106,7 @@ impl Index<usize> for CompilerAtoms<'_> {
     type Output = str;
 
     fn index(&self, atom: usize) -> &str {
-        match atom.checked_sub(self.prefix.len()) {
+        match atom.checked_sub(self.prefix_len) {
             Some(added) => &self.added[added],
             None => self.prefix.name(atom as Atom),
         }

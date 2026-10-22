@@ -16,7 +16,7 @@ fn derive(profile: &Profile, program_id: u32, program: &ResidualProgram) -> Matr
         if site_program != program_id {
             continue;
         }
-        let function = &program.functions[function_id as usize];
+        let function = &program.function(function_id as usize);
         let class = usize::from(function.dispatch == DispatchClass::Numeric);
         let first = function.code[pc as usize];
         let second = function.code[pc as usize + 1];
@@ -132,11 +132,7 @@ mod tests {
             local_registers: Vec::new(),
             inherited_with_scope: false,
             lexical_atoms: vec![],
-            global_lexical_atoms: vec![],
-            global_var_atoms: vec![],
-            global_function_atoms: vec![],
-            global_annex_b_var_atoms: vec![],
-            global_immutable_atoms: vec![],
+            global_declarations: None,
             name_bindings: Default::default(),
             binding_sites: vec![],
             source_positions: Default::default(),
@@ -158,7 +154,7 @@ mod tests {
             static_name_scope: Default::default(),
             call_plan: Default::default(),
             handlers: Vec::new(),
-            register_root_offset: 0,
+            register_roots: Default::default(),
             undefined_register: None,
             parameter_registers: None,
             initial_register: Default::default(),
@@ -193,8 +189,8 @@ mod tests {
             field_sites: Vec::new(),
             object_sites: Vec::new(),
             regexp_literal_sites: Vec::new(),
+            literal_templates: Vec::new(),
             superinstructions: Vec::new(),
-            register_roots: Default::default(),
         };
         let mut pairs = vec![0; PAIRS];
         pairs[Op::LoadLocal as usize * Op::COUNT + Op::StoreLocal as usize] = 4;

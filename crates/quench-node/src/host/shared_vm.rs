@@ -6,8 +6,24 @@ use quench_runtime::{HostFunction, HostFunctionId, NativeContext, RootedError, S
 pub(crate) mod commonjs;
 mod commonjs_exports;
 mod esm_errors;
+pub(crate) mod esm_wasm;
 pub(crate) mod policy_projection;
 pub(crate) use commonjs::source_kind;
+
+thread_local! {
+    /// The import resolver, kept as `commonjs::with_commonjs_resolver` keeps the require one.
+    static IMPORT_RESOLVER: oxc_resolver::Resolver = oxc_resolver::Resolver::new(oxc_resolver::ResolveOptions {
+        extensions: vec![".mjs".into(), ".js".into(), ".json".into(), ".cjs".into()],
+        main_files: vec!["index".into()],
+        condition_names: vec!["node".into(), "import".into(), "default".into()],
+        ..Default::default()
+    });
+}
+
+/// Runs `use_resolver` with the resolver of an ES module's imports.
+pub(crate) fn with_import_resolver<R>(use_resolver: impl FnOnce(&oxc_resolver::Resolver) -> R) -> R {
+    IMPORT_RESOLVER.with(use_resolver)
+}
 
 pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
     quench_runtime::host_functions![
@@ -30,12 +46,15 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "workerPoll" (0) => crate::modules::worker_threads_shared_vm::poll_native,
 
         method "nodeLibraryRequire" (1) => commonjs::require_node_library,
+        method "primordialsCopy" (7) => crate::modules::primordials_shared_vm::copy,
         method "nodeTestMock" (0) => crate::modules::test_shared_vm::mock,
         method "nodeTestNamespace" (0) => crate::modules::test_shared_vm::namespace,
         method "contextifyScript" (0) => crate::modules::contextify_shared_vm::script,
         method "contextifyRunInContext" (0) => crate::modules::contextify_shared_vm::run_in_context,
         method "contextifyCompileFunction" (0) => crate::modules::contextify_shared_vm::compile_function,
         method "nodePrintEvalScript" (1) => crate::shared_run::print_eval_script,
+        method "builtinExportValues" (2) => commonjs::builtin_export_values,
+        method "esmWasmInstantiate" (6) => esm_wasm::instantiate,
         method "callbackify" (1) => crate::modules::util_callbackify_shared_vm::callbackify,
         method "gc" (0) => crate::modules::process_shared_vm::collect_garbage,
         method "utilCallbackified" (2) => crate::modules::util_callbackify_shared_vm::callbackified,
@@ -70,6 +89,9 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "processMetricsResources" (0) => crate::modules::process_metrics_shared_vm::resources,
         #[cfg(target_os = "linux")]
         method "processMetricsRss" (0) => crate::modules::process_metrics_shared_vm::rss,
+        method "processMetricsMemoryUsage" (1) => crate::modules::process_metrics_shared_vm::memory_usage,
+        #[cfg(unix)]
+        method "processExecve" (3) => crate::modules::process_execve_shared_vm::execve,
         method "processExitCodeGet" (0) => crate::modules::process_shared_vm::exit_code_get,
         method "processExitCodeSet" (1) => crate::modules::process_shared_vm::exit_code_set,
         method "processDefaultFatalException" (2) => crate::modules::process_fatal_exception_route::default_handler,
@@ -103,6 +125,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "processKillNative" (2) => crate::modules::process_shared_vm::kill_native,
         method "processKill" (2) => crate::modules::process_shared_vm::kill,
         method "bufferConstructor" (0) => crate::modules::buffer_shared_vm::constructor,
+        method "bufferPrototypeInitialize" (0) => crate::modules::buffer_shared_vm::initialize_prototype,
         method "encodingToAscii" (0) => crate::modules::encoding_binding_shared_vm::to_ascii,
         method "encodingToUnicode" (0) => crate::modules::encoding_binding_shared_vm::to_unicode,
         method "urlBindingDomainToAscii" (0) => crate::modules::url_binding_shared_vm::domain_to_ascii,
@@ -166,6 +189,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "webApisInitialize" (0) => commonjs::initialize_web_apis,
         method "webFetchInitialize" (0) => commonjs::initialize_fetch_apis,
         method "processSurfaceInitialize" (0) => commonjs::initialize_process_surface,
+        method "processReleaseInitialize" (0) => commonjs::initialize_process_release,
         method "processRawDebug" (0) => crate::modules::process_shared_vm::raw_debug,
         method "processReport" (0) => crate::modules::report_configuration_shared_vm::report,
         method "reportConfigGet" (0) => crate::modules::report_configuration_shared_vm::get,
@@ -184,6 +208,9 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "processIpcListenerReference" (1) => crate::modules::child_process_ipc_shared_vm::listener_reference,
         method "require" (1) => commonjs::require,
         method "resolve" (2) => commonjs::resolve,
+        method "resolvePaths" (1) => commonjs::resolve_paths,
+        method "ipcSerdesSerialize" (2) => crate::modules::ipc_serdes_shared_vm::serialize_native,
+        method "ipcSerdesDeserialize" (1) => crate::modules::ipc_serdes_shared_vm::deserialize_native,
         method "childProcessSyncOptions" (2) => crate::modules::child_process_options_shared_vm::sync_options,
         method "childProcessReference" (2) => crate::modules::child_process_shared_vm::reference_child,
         method "childProcessHandleReference" (0) => crate::modules::child_process_shared_vm::reference_handle,
@@ -204,6 +231,11 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "consoleLog" (0) => crate::modules::console_shared_vm::log,
         method "consoleLoad" (0) => crate::modules::console_shared_vm::load,
         method "processWarningListener" (0) => crate::modules::process_shared_vm::warning_listener,
+        method "processWarningLibrary" (1) => crate::modules::process_warning_shared_vm::library,
+        method "processWarningOption" (1) => crate::modules::process_warning_shared_vm::option,
+        method "processWarningBasename" (2) => crate::modules::process_warning_shared_vm::path_basename,
+        method "consoleWarningWriter" (0) => crate::modules::console_shared_vm::warning_writer,
+        method "consoleWarningWrite" (1) => crate::modules::console_shared_vm::warning_write,
         method "processMethodsInitialize" (0) => crate::modules::process_metrics_shared_vm::initialize_methods,
         method "processEmitWarningInitialize" (0) => crate::modules::process_shared_vm::initialize_emit_warning,
         method "processEnvInitialize" (0) => crate::modules::process_shared_vm::initialize_env,
@@ -439,12 +471,13 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "netServerOptions" (1) => crate::modules::net_options_shared_vm::server_options,
         method "netNormalizeEndpoint" (4) => crate::modules::net_endpoint_shared_vm::normalize,
         method "netConnect" (4) => crate::modules::net_shared_vm::connect_operation,
-        method "emitterInitialize" (2) => crate::modules::event_constructor_shared_vm::initialize,
+        method "emitterValidateCaptureRejections" (1) => crate::modules::event_constructor_shared_vm::validate_capture_rejections,
         method "emitterRemoveAllListeners" (3) => crate::modules::event_emitter_shared_vm::remove_all_listeners,
         method "emitterRemoveListener" (3) => crate::modules::event_emitter_shared_vm::remove_listener,
         method "emitterEmit" (3) => crate::modules::event_emitter_shared_vm::emit,
         method "emitterErrorInspector" (0) => crate::modules::events_shared_vm::error_inspector,
         method "emitterEmitListeners" (4) => crate::modules::event_emitter_shared_vm::emit_listeners,
+        method "emitterCaptureResult" (4) => crate::modules::event_emitter_shared_vm::capture_listener_result,
         method "emitterCaptureDefaultGet" (0) => crate::modules::event_constructor_shared_vm::default_get,
         method "emitterCaptureDefaultSet" (1) => crate::modules::event_constructor_shared_vm::default_set,
         method "emitterCaptureRejected" (1) => crate::modules::event_constructor_shared_vm::capture_rejected,
@@ -505,8 +538,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "messagingReceive" (0) => crate::modules::worker_shared_vm::receive,
         method "messagingDrain" (0) => crate::modules::worker_shared_vm::drain,
         method "workerStart" (0) => crate::modules::worker_shared_vm::worker_start,
-        method "workerRef" (0) => crate::modules::worker_shared_vm::worker_ref,
-        method "workerTerminate" (0) => crate::modules::worker_shared_vm::worker_terminate,
+        method "messagingWorkerRef" (0) => crate::modules::worker_shared_vm::worker_ref,
+        method "messagingWorkerTerminate" (0) => crate::modules::worker_shared_vm::worker_terminate,
         method "workerExited" (0) => crate::modules::worker_shared_vm::worker_exited,
         method "workerCaptureError" (0) => crate::modules::worker_shared_vm::capture_error,
         method "eventsAddAbortListener" (2) => crate::modules::events_abort_shared_vm::add_abort_listener,
@@ -553,6 +586,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "httpResponseFinish" (7) => crate::modules::http_shared_vm::response_finish,
         method "httpResponseWriteHead" (6) => crate::modules::http_shared_vm::response_write_head,
         method "httpResponseInitialize" (2) => crate::modules::http_shared_vm::response_initialize,
+        method "httpResponseRelease" (1) => crate::modules::http_shared_vm::response_release,
         method "httpResponseSend" (4) => crate::modules::http_shared_vm::response_send,
         method "assertStrictEqual" (2) => crate::modules::assert_shared_vm::strict_equal,
         method "assertNotStrictEqual" (2) => crate::modules::assert_shared_vm::not_strict_equal,
@@ -698,11 +732,17 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "fsBindingReaddir" (0) => crate::modules::fs_directory_shared_vm::readdir,
         method "fsBindingReaddirRecursive" (0) => crate::modules::fs_directory_shared_vm::readdir_recursive,
         method "fsPromisesGlobInitialize" (0) => crate::modules::fs_shared_vm::initialize_promises_glob_policy,
+        method "fsReadStreamInitialize" (0) => crate::modules::fs_shared_vm::initialize_read_stream,
+        method "fsModuleInitialize" (0) => crate::modules::fs_shared_vm::initialize_module,
+        method "perfHooksObserversInitialize" (0) => crate::modules::perf_hooks::initialize_observers,
+        method "fsLibraryPolicyInitialize" (0) => crate::modules::fs_shared_vm::initialize_library_policy,
+        method "fsWriteStreamInitialize" (0) => crate::modules::fs_shared_vm::write_stream::initialize,
         method "fsVfsPair" (2) => crate::modules::fs_policy_shared_vm::vfs_pair,
         method "fsVfsExistsSync" (1) => crate::modules::fs_policy_shared_vm::vfs_exists_sync,
         method "fsWriteFilePublic" (3) => crate::modules::fs_shared_vm::write_public::write,
         method "fsAppendFilePublic" (3) => crate::modules::fs_shared_vm::write_public::append,
         method "fsVfsReadlinkPromise" (3) => crate::modules::fs_shared_vm::promise_public::readlink_continuation,
+        method "fsPromisesReadlinkInitialize" (0) => crate::modules::fs_shared_vm::promise_public::initialize,
         method "fsVfsExistsComplete" (1) => crate::modules::fs_shared_vm::callback_public::exists_complete,
         method "fsVfsCallback" (0) => crate::modules::fs_shared_vm::callback_public::dispatch,
         method "fsVfsMetadata" (0) => crate::modules::fs_shared_vm::metadata_public::dispatch,
@@ -983,24 +1023,89 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
     ]
 }
 
+/// The host function registered as `name`. Hosts resolve operations per request (an
+/// incoming message's stream methods, an accepted socket's handle), so the names are
+/// indexed once rather than searched among every binding. Each name registers exactly one
+/// function (`operation_names_are_unique`).
 pub(crate) fn operation(name: &str) -> HostFunctionId {
-    let index = bindings()
-        .iter()
-        .position(|binding| binding.name == name)
-        .expect("registered Node operation");
-    HostFunctionId(u32::try_from(index).expect("Node binding index fits u32"))
+    static INDEX: std::sync::OnceLock<std::collections::HashMap<&'static str, u32>> =
+        std::sync::OnceLock::new();
+    let index = INDEX.get_or_init(|| {
+        let mut index = std::collections::HashMap::new();
+        for (position, binding) in bindings().iter().enumerate() {
+            // A repeated name resolves to its first registration.
+            index
+                .entry(binding.name)
+                .or_insert(u32::try_from(position).expect("Node binding index fits u32"));
+        }
+        index
+    });
+    HostFunctionId(*index.get(name).expect("registered Node operation"))
 }
 
 impl quench_runtime::Host for NodeHost {
-    const OBSERVE_PROMISE_LIFECYCLE: bool = true;
-
-    fn observe_promise_lifecycle(&self) -> bool {
-        true
+    fn observes_promise_lifecycle(&self) -> bool {
+        self.shared_state.borrow().async_hooks.tracks_promises()
     }
 
-    fn track_promise_lifecycle_resource(&self) -> bool {
-        let shared = self.shared_state.borrow();
-        shared.async_hooks.tracks_promise_lifecycle_resources()
+    /// A job boundary prunes tracked Promise resources and runs before/after hooks; with
+    /// no Promise tracked and no hook tracking them, it does neither
+    /// (`async_hooks_shared_vm::promise_job_boundary`).
+    fn observes_promise_job_boundaries(&self) -> bool {
+        self.shared_state.borrow().async_hooks.observes_job_boundaries()
+    }
+
+    /// The code a run touched since the last collection leaves the resident set after each
+    /// collection, and before a full one; what still runs comes back from the page cache. The
+    /// collector's code and the program's are then resident one at a time, and the program's
+    /// only as much of it as ran since the last collection (V8-v7 RegExp max RSS, static
+    /// x86_64 unbolted, 2026-10-18: 7244-7500 -> 7136-7328 KiB at every collection's end;
+    /// Splay 39800 -> 38988 KiB with the release before full collections).
+    /// The allocator's free pages, which the collection's sweep just freed, leave with them
+    /// (V8-v7 max RSS, static x86_64 unbolted, 2026-10-19: RegExp 6772-7044 -> 6664-6772 KiB,
+    /// EarleyBoyer 9048-9088 -> 8536-8576, the rest unchanged). Only under a policy that
+    /// returns pages at collections (memory-first); every policy counts the collection for
+    /// the release before output (`resident_pages::note_collection`).
+    fn at_collection_boundary(&mut self, policy: quench_runtime::MemoryPolicy) {
+        if policy.returns_pages_at_collections() {
+            crate::host::resident_pages::release_read_only_pages();
+            crate::host::resident_pages::release_free_heap_pages();
+        }
+        crate::host::resident_pages::note_collection();
+    }
+
+    /// The pages loading, linking and instantiating the module touched leave the resident set
+    /// before the code generator's join it, as compiling the module's bytecode does
+    /// (`compile_wasm`).
+    fn before_wasm_native_compilation(&mut self) {
+        crate::host::resident_pages::release_read_only_pages();
+    }
+
+    /// The snapshot is a tracked read-only mapping (`startup_snapshot::load_or_schedule`).
+    fn snapshot_bytes_read(bytes: &[u8]) {
+        crate::host::resident_pages::release_tracked_bytes(bytes);
+    }
+
+    fn kept_compiled_program(&mut self, name: &str, parts: &[&str]) -> Option<quench_runtime::KeptBytes> {
+        self.compile_cache.entry(name, parts)?.load()
+    }
+    fn keep_compiled_program(&mut self, name: &str, parts: &[&str], bytes: &[u8]) {
+        if let Some(entry) = self.compile_cache.entry(name, parts) {
+            entry.store(bytes);
+        }
+    }
+    /// A decoded program after bootstrap (the entry and its modules, a builtin or library
+    /// module loaded on first use) releases what loading it touched, as its compilation would
+    /// have at its phase boundary: with the compile cache warm, a run otherwise reaches no
+    /// release between bootstrap and its first collection (CoreMark as a Wasm ES module,
+    /// static x86_64 unbolted, 2026-10-21: max RSS 4404 -> 3412 KiB; through
+    /// `WebAssembly.instantiate`, 4920 -> 4016). Bootstrap's own programs decode back to back,
+    /// where a release after each only refaulted the same loader code (an empty script's run
+    /// 11 -> 18 ms).
+    fn cached_program_decoded(&mut self) {
+        if self.bootstrapped {
+            crate::host::resident_pages::release_read_only_code_and_data();
+        }
     }
 
     fn proper_tail_calls(&self) -> bool {
@@ -1044,10 +1149,17 @@ impl quench_runtime::Host for NodeHost {
         bytes: &[u8],
         mode: quench_runtime::ExecutionMode,
     ) -> Result<quench_runtime::WasmModule, String> {
-        quench_wasm::Engine::new()
-            .compile(bytes)
+        // Decoding with validation, and lowering, each run once per module and touch code
+        // the other does not, nor what ran before them: each phase's pages leave the
+        // resident set before the next phase, and the module runs.
+        crate::host::resident_pages::release_read_only_pages();
+        let module = quench_wasm::Engine::new().compile(bytes);
+        crate::host::resident_pages::release_read_only_pages();
+        let module = module
             .and_then(|module| module.lower_shared_module_for(mode))
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string());
+        crate::host::resident_pages::release_read_only_pages();
+        module
     }
 
     fn resolve_dynamic_import(
@@ -1055,11 +1167,13 @@ impl quench_runtime::Host for NodeHost {
         referrer: &str,
         specifier: &str,
     ) -> Result<Option<quench_runtime::ModuleSource>, quench_runtime::ModuleLoadError> {
-        use std::path::Path;
-
-        let builtin_exports: std::collections::BTreeMap<String, Vec<String>> =
+        // Parsed once: every import resolves through here, and the table is 21 KB of JSON.
+        static BUILTIN_EXPORTS: std::sync::OnceLock<std::collections::BTreeMap<String, Vec<String>>> =
+            std::sync::OnceLock::new();
+        let builtin_exports = BUILTIN_EXPORTS.get_or_init(|| {
             serde_json::from_str(include_str!("builtin_esm_exports.json"))
-                .expect("generated Node builtin export names are valid JSON");
+                .expect("generated Node builtin export names are valid JSON")
+        });
         let builtin_name = specifier.strip_prefix("node:").unwrap_or(specifier);
         let builtin = crate::host::shared_vm::commonjs::is_builtin_specifier(specifier);
         if !builtin && specifier.starts_with("node:") {
@@ -1078,142 +1192,74 @@ impl quench_runtime::Host for NodeHost {
                 "const __quenchModule = globalThis[\"\\0quench:require\"]({});\nexport default __quenchModule;\n",
                 serde_json::to_string(require_specifier).map_err(|error| error.to_string())?
             );
-            for name in exports {
-                source.push_str("export const ");
-                source.push_str(name);
-                source.push_str(" = __quenchModule[");
-                source.push_str(&serde_json::to_string(name).map_err(|error| error.to_string())?);
-                source.push_str("];\n");
+            // lib/internal/bootstrap/realm.js `syncExports`: each name is read with `getOwn`,
+            // in the order the module lists its own keys (`builtin_export_values`). A member
+            // still a pending lazy data property is bound to its pending value instead, and
+            // the listener gives the binding the member's value when its group materializes.
+            let assignments: String = exports
+                .iter()
+                .enumerate()
+                .map(|(index, name)| format!("case {index}: {name} = value; break; "))
+                .collect();
+            source.push_str(&format!(
+                "const __quenchExports = globalThis[{}](__quenchModule, {}, (index, value) => {{ switch (index) {{ {assignments}}} }});\n",
+                serde_json::to_string(crate::host::shared_vm::commonjs::BUILTIN_EXPORT_VALUES)
+                    .map_err(|error| error.to_string())?,
+                serde_json::to_string(exports).map_err(|error| error.to_string())?
+            ));
+            for (index, name) in exports.iter().enumerate() {
+                source.push_str(&format!("export let {name} = __quenchExports[{index}];\n"));
             }
-            return Ok(Some(quench_runtime::ModuleSource {
-                name: format!("node:quench-builtin/{builtin_name}"),
-                bytes: source.as_bytes().to_vec(),
+            return Ok(Some(quench_runtime::ModuleSource::text(
+                format!("node:quench-builtin/{builtin_name}"),
                 source,
-            }));
+            )));
         }
 
-        // Node resolves filesystem specifiers as URLs before accessing a file.
-        // The URL suffix belongs to module identity, never to the disk path.
-        let referrer_url = if referrer.starts_with("file:") {
-            Some(url::Url::parse(referrer).map_err(|error| error.to_string())?)
-        } else {
-            None
-        };
-        let referrer_path = match &referrer_url {
-            Some(url) => url
-                .to_file_path()
-                .map_err(|_| "invalid file URL referrer".to_owned())?,
-            None => std::path::PathBuf::from(referrer),
-        };
-        let internal = specifier.starts_with("internal/");
-        let base = if internal {
-            self.node_library_root.join("lib")
-        } else {
-            referrer_path
-                .parent()
-                .unwrap_or(Path::new("."))
-                .to_path_buf()
-        };
-        let file_url = if specifier
-            .get(..5)
-            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("file:"))
+        // Each (referrer, specifier) resolves to one location, as Node's loader caches a
+        // resolution (`ModuleLoader#resolveCache`); module linking asks for each request in
+        // several of its phases.
+        let location = match self
+            .resolved_imports
+            .get(referrer)
+            .and_then(|imports| imports.get(specifier))
         {
-            Some(url::Url::parse(specifier).map_err(|error| error.to_string())?)
-        } else if !internal
-            && (specifier.starts_with("./")
-                || specifier.starts_with("../")
-                || Path::new(specifier).is_absolute())
-        {
-            let base_url = match referrer_url {
-                Some(url) => url,
-                None => {
-                    let absolute = if referrer_path.is_absolute() {
-                        referrer_path.clone()
-                    } else {
-                        std::env::current_dir()
-                            .map_err(|error| error.to_string())?
-                            .join(&referrer_path)
-                    };
-                    url::Url::from_file_path(absolute)
-                        .map_err(|_| "invalid file module referrer".to_owned())?
-                }
-            };
-            Some(
-                base_url
-                    .join(specifier)
-                    .map_err(|error| error.to_string())?,
-            )
-        } else {
-            None
-        };
-        let path = if let Some(url) = &file_url {
-            let encoded = url.path().to_ascii_lowercase();
-            if encoded.contains("%2f") || (cfg!(windows) && encoded.contains("%5c")) {
-                return Err("File URL path must not include encoded path separators".into());
-            }
-            Some(
-                url.to_file_path()
-                    .map_err(|_| "invalid file module URL".to_owned())?,
-            )
-        } else if !internal {
-            commonjs::exact_file_path(&base, specifier)
-        } else {
-            None
-        };
-        let path = match path {
-            Some(path) => path,
+            Some(location) => std::rc::Rc::clone(location),
             None => {
-                let resolver = oxc_resolver::Resolver::new(oxc_resolver::ResolveOptions {
-                    extensions: vec![".mjs".into(), ".js".into(), ".json".into(), ".cjs".into()],
-                    main_files: vec!["index".into()],
-                    condition_names: vec!["node".into(), "import".into(), "default".into()],
-                    ..Default::default()
-                });
-                let resolution_specifier = if internal {
-                    format!("./{specifier}")
-                } else {
-                    specifier.to_owned()
+                let Some(location) = self.import_location(referrer, specifier)? else {
+                    return Ok(None);
                 };
-                let resolution = match resolver.resolve(&base, &resolution_specifier) {
-                    Ok(resolution) => resolution,
-                    Err(oxc_resolver::ResolveError::Specifier(_)) => return Ok(None),
-                    Err(error) => return Err(esm_errors::unresolved(&resolver, error, specifier, &base, &referrer_path)),
-                };
-                resolution.full_path()
+                let location = std::rc::Rc::new(location);
+                self.resolved_imports
+                    .entry(referrer.into())
+                    .or_default()
+                    .insert(specifier.into(), std::rc::Rc::clone(&location));
+                location
             }
         };
-        let path = std::fs::canonicalize(&path).unwrap_or(path);
-        if !internal {
-            if let Some(error) = esm_errors::unloadable(&path) {
-                return Err(error);
-            }
-        }
+        let (path, name) = (location.path.clone(), location.name.clone());
         let bytes = std::fs::read(&path).map_err(|error| match error.kind() {
-            std::io::ErrorKind::NotFound => esm_errors::module_not_found(&path, &referrer_path),
+            std::io::ErrorKind::NotFound => match referrer_location(referrer) {
+                Ok((_, referrer_path)) => esm_errors::module_not_found(&path, &referrer_path),
+                Err(error) => error,
+            },
             _ => format!("module {}: {error}", path.display()).into(),
         })?;
         let extension = path
             .extension()
             .and_then(|value| value.to_str())
             .unwrap_or("");
-        let name = if let Some(original) = file_url.as_ref().filter(|url| {
-            url.query().is_some_and(|value| !value.is_empty())
-                || url.fragment().is_some_and(|value| !value.is_empty())
-        }) {
-            let mut canonical = url::Url::from_file_path(&path)
-                .map_err(|_| "invalid canonical module path".to_owned())?;
-            canonical.set_query(original.query().filter(|value| !value.is_empty()));
-            canonical.set_fragment(original.fragment().filter(|value| !value.is_empty()));
-            canonical.to_string()
-        } else {
-            path.to_string_lossy().into_owned()
-        };
+        if extension == "wasm" {
+            // Node's `wasm` format: the module record is a facade over the instance.
+            let source = esm_wasm::facade(&name, &path, &bytes)?;
+            return Ok(Some(quench_runtime::ModuleSource::text(name, source)));
+        }
         let source = if extension == "json" {
-            String::from_utf8_lossy(&bytes).into_owned()
+            commonjs::source_text(&bytes).into_owned()
         } else {
-            let kind = Self::source_kind(&path)?;
+            let kind = commonjs::source_kind_of_real(&path)?;
             if kind == quench_runtime::SourceKind::Module {
-                String::from_utf8(bytes.clone())
+                String::from_utf8(bytes)
                     .map_err(|error| format!("module {} is not UTF-8: {error}", path.display()))?
             } else {
                 let filename = serde_json::to_string(&path.to_string_lossy())
@@ -1223,7 +1269,7 @@ impl quench_runtime::Host for NodeHost {
                 );
                 source.push_str("export { __quenchModule as 'module.exports' };\n");
                 for (index, export) in
-                    commonjs_exports::names(&path, &String::from_utf8_lossy(&bytes))
+                    commonjs_exports::names(&path, &commonjs::source_text(&bytes))
                         .into_iter()
                         .enumerate()
                 {
@@ -1246,13 +1292,10 @@ impl quench_runtime::Host for NodeHost {
                 source
             }
         };
-        // Keep original bytes for import.meta/source APIs while compiling the
-        // generated CJS/JSON interop wrapper when one is required.
-        Ok(Some(quench_runtime::ModuleSource {
-            name,
-            bytes,
-            source,
-        }))
+        // Node exposes no module's bytes: it rejects `type: "bytes"` and has source-phase
+        // objects only for WebAssembly. So a CommonJS or JSON interop wrapper keeps only the
+        // text it compiles, never the file it wraps.
+        Ok(Some(quench_runtime::ModuleSource::text(name, source)))
     }
 
     fn validate_module_type(
@@ -1309,12 +1352,7 @@ impl quench_runtime::Host for NodeHost {
         &mut self,
         parent: Option<quench_runtime::HostExecutionContext>,
     ) -> Option<quench_runtime::HostExecutionContext> {
-        Some(
-            crate::modules::async_hooks_shared_vm::create_promise_context(
-                &self.shared_state,
-                parent,
-            ),
-        )
+        crate::modules::async_hooks_shared_vm::create_promise_context(&self.shared_state, parent)
     }
 
     fn initialize_promise(
@@ -1373,14 +1411,8 @@ impl quench_runtime::Host for NodeHost {
         crate::modules::async_hooks_shared_vm::release_job_context(&self.shared_state, context.0)
     }
 
-    fn finish_promise_context_collection(
-        &mut self,
-        live_contexts: &[quench_runtime::HostExecutionContext],
-    ) {
-        crate::modules::async_hooks_shared_vm::finish_promise_context_collection(
-            &self.shared_state,
-            live_contexts,
-        );
+    fn release_promise_contexts(&mut self, contexts: &[quench_runtime::HostExecutionContext]) {
+        crate::modules::async_hooks_shared_vm::release_promise_contexts(&self.shared_state, contexts);
     }
 
     fn functions(&self) -> &[HostFunction<Self>] {
@@ -1418,6 +1450,16 @@ impl quench_runtime::Host for NodeHost {
         commonjs::initialize(context)?;
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_commonjs");
+        context.host_mut().bootstrapped = true;
+        Ok(())
+    }
+
+    fn resume(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
+        crate::host::resident_pages::release_read_only_pages();
+        context.scoped(crate::modules::process_shared_vm::refresh_identity)?;
+        context.scoped(crate::modules::performance_binding_shared_vm::refresh_time_origins)?;
+        commonjs::finish_initialize(context)?;
+        context.host_mut().bootstrapped = true;
         Ok(())
     }
 }
@@ -1430,7 +1472,10 @@ fn install_event_emitter(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         .borrow()
         .event_targets_api
         .ok_or_else(|| RootedError::host("event listener configuration missing"))?;
-    let initialize = context.host_function_with_data(operation("emitterInitialize"), event_data)?;
+    let shape_key = crate::modules::event_constructor_shared_vm::get(context, event_data, "shapeKey")?;
+    let capture_key =
+        crate::modules::event_constructor_shared_vm::get(context, event_data, "captureKey")?;
+    let validate = context.host_function(operation("emitterValidateCaptureRejections"))?;
     let dispatch =
         context.host_function_with_data(operation("emitterEmitListeners"), event_data)?;
     let emitter_factory = context.evaluate_script_rooted(
@@ -1439,7 +1484,11 @@ fn install_event_emitter(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     )?;
     let undefined = context.undefined();
     let inspector = context.host_function(operation("emitterErrorInspector"))?;
-    let event_emitter = context.call_rooted(emitter_factory, undefined, &[initialize, dispatch, inspector])?;
+    let event_emitter = context.call_rooted(
+        emitter_factory,
+        undefined,
+        &[shape_key, capture_key, validate, dispatch, inspector],
+    )?;
     context.release_root(event_emitter);
     crate::modules::event_constructor_shared_vm::install(context)?;
     crate::modules::event_emitter_shared_vm::initialize(context)?;
@@ -1503,4 +1552,161 @@ fn install_gc_global(context: &mut NativeContext<'_, NodeHost>) -> Result<(), Ro
         context.define_data_property_rooted(global, key, gc, true, true, false)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn operation_names_are_unique() {
+        let mut names = std::collections::HashSet::new();
+        for binding in super::bindings() {
+            assert!(names.insert(binding.name), "Node operation {} is registered twice", binding.name);
+        }
+    }
+}
+
+/// Where an import loads from (`NodeHost::import_location`).
+pub(crate) struct ImportLocation {
+    path: std::path::PathBuf,
+    name: String,
+}
+
+/// An import referrer's file URL, when it is one, and its path: Node resolves filesystem
+/// specifiers as URLs before accessing a file.
+fn referrer_location(
+    referrer: &str,
+) -> Result<(Option<url::Url>, std::path::PathBuf), quench_runtime::ModuleLoadError> {
+    let Some(url) = referrer
+        .starts_with("file:")
+        .then(|| url::Url::parse(referrer))
+        .transpose()
+        .map_err(|error| error.to_string())?
+    else {
+        return Ok((None, std::path::PathBuf::from(referrer)));
+    };
+    let path = url
+        .to_file_path()
+        .map_err(|_| "invalid file URL referrer".to_owned())?;
+    Ok((Some(url), path))
+}
+
+impl NodeHost {
+    /// Where an import of `specifier` from `referrer` loads from: the file and the module's
+    /// name, which keeps a file URL's query and fragment.
+    fn import_location(
+        &mut self,
+        referrer: &str,
+        specifier: &str,
+    ) -> Result<Option<ImportLocation>, quench_runtime::ModuleLoadError> {
+        use std::path::Path;
+
+        // Node resolves filesystem specifiers as URLs before accessing a file.
+        // The URL suffix belongs to module identity, never to the disk path.
+        let (referrer_url, referrer_path) = referrer_location(referrer)?;
+        let internal = specifier.starts_with("internal/");
+        let base = if internal {
+            self.node_library_root.join("lib")
+        } else {
+            referrer_path
+                .parent()
+                .unwrap_or(Path::new("."))
+                .to_path_buf()
+        };
+        let file_url = if specifier
+            .get(..5)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("file:"))
+        {
+            Some(url::Url::parse(specifier).map_err(|error| error.to_string())?)
+        } else if !internal
+            && (specifier.starts_with("./")
+                || specifier.starts_with("../")
+                || Path::new(specifier).is_absolute())
+        {
+            let base_url = match referrer_url {
+                Some(url) => url,
+                None => {
+                    let absolute = if referrer_path.is_absolute() {
+                        referrer_path.clone()
+                    } else {
+                        std::env::current_dir()
+                            .map_err(|error| error.to_string())?
+                            .join(&referrer_path)
+                    };
+                    url::Url::from_file_path(absolute)
+                        .map_err(|_| "invalid file module referrer".to_owned())?
+                }
+            };
+            Some(
+                base_url
+                    .join(specifier)
+                    .map_err(|error| error.to_string())?,
+            )
+        } else {
+            None
+        };
+        let path = if let Some(url) = &file_url {
+            let encoded = url.path().to_ascii_lowercase();
+            if encoded.contains("%2f") || (cfg!(windows) && encoded.contains("%5c")) {
+                return Err("File URL path must not include encoded path separators".into());
+            }
+            Some(
+                url.to_file_path()
+                    .map_err(|_| "invalid file module URL".to_owned())?,
+            )
+        } else if !internal {
+            commonjs::exact_file_path(&base, specifier)
+        } else {
+            None
+        };
+        let path = match path {
+            Some(path) => path,
+            None => {
+                thread_local! {
+                    /// The import resolver, kept as `commonjs::with_commonjs_resolver` keeps
+                    /// the require one.
+                    static IMPORT_RESOLVER: oxc_resolver::Resolver = oxc_resolver::Resolver::new(oxc_resolver::ResolveOptions {
+                        extensions: vec![".mjs".into(), ".js".into(), ".json".into(), ".cjs".into()],
+                        main_files: vec!["index".into()],
+                        condition_names: vec!["node".into(), "import".into(), "default".into()],
+                        ..Default::default()
+                    });
+                }
+                let resolution_specifier = if internal {
+                    format!("./{specifier}")
+                } else {
+                    specifier.to_owned()
+                };
+                let resolved = IMPORT_RESOLVER.with(|resolver| {
+                    match commonjs::resolve_kept(resolver, |resolver| resolver.resolve(&base, &resolution_specifier)) {
+                        Ok(resolution) => Ok(Some(resolution.full_path())),
+                        Err(oxc_resolver::ResolveError::Specifier(_)) => Ok(None),
+                        Err(error) => Err(esm_errors::unresolved(resolver, error, specifier, &base, &referrer_path)),
+                    }
+                })?;
+                let Some(path) = resolved else {
+                    return Ok(None);
+                };
+                path
+            }
+        };
+        let path = self.real_path(path);
+        if !internal {
+            if let Some(error) = esm_errors::unloadable(&path) {
+                return Err(error);
+            }
+        }
+        let name = if let Some(original) = file_url.as_ref().filter(|url| {
+            url.query().is_some_and(|value| !value.is_empty())
+                || url.fragment().is_some_and(|value| !value.is_empty())
+        }) {
+            let mut canonical = url::Url::from_file_path(&path)
+                .map_err(|_| "invalid canonical module path".to_owned())?;
+            canonical.set_query(original.query().filter(|value| !value.is_empty()));
+            canonical.set_fragment(original.fragment().filter(|value| !value.is_empty()));
+            canonical.to_string()
+        } else {
+            path.to_string_lossy().into_owned()
+        };
+        Ok(Some(ImportLocation { path, name }))
+    }
 }

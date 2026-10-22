@@ -404,3 +404,48 @@ fn shared_atomics_round_trip_negative_bigints() {
         ["-5,-3,0,-1"]
     );
 }
+
+/// A register read only by the catch handler stays live across an `await` that resumes by
+/// throwing into it.
+#[test]
+fn awaited_rejections_reach_handlers_with_their_registers() {
+    assert_eq!(
+        output("async function f() { var err = {}; try { await Promise.reject(err); } catch (e) { print(e === err); } } f();"),
+        ["true"]
+    );
+}
+
+/// IteratorClose looks `return` up through a Proxy iterator's `get` trap.
+#[test]
+fn proxy_iterators_close_through_their_get_trap() {
+    assert_eq!(
+        output("const log = []; const it = new Proxy({ next() { return { done: false, value: 1 }; } }, { get(t, k) { log.push(String(k)); return t[k]; } }); const [a] = { [Symbol.iterator]() { return it; } }; print(log.join());"),
+        ["next,return"]
+    );
+}
+
+/// `@@split` converts an object limit after constructing its splitter, which observes a
+/// prototype `exec` the conversion installs.
+#[test]
+fn regexp_split_observes_exec_replaced_by_its_limit() {
+    assert_eq!(
+        output("const r = /a/[Symbol.split]('abba', { valueOf() { RegExp.prototype.exec = () => null; return 100; } }); print(r.length);"),
+        ["1"]
+    );
+}
+
+/// A `var` read before any write is `undefined`, even when its frame slot moved into a
+/// register of a reused frame (TOD-140: TypeScript's `(function (E) {...})(E || (E = {}))`).
+#[test]
+fn locals_read_before_their_first_write_are_undefined_in_reused_frames() {
+    assert_eq!(
+        output(
+            "function junk() { var a = 'j1', b = 'j2', c = 'j3', d = 'j4', e = 'j5', h = 'j6', i = 'j7', k = 'j8', m = 'j9'; return [a, b, c, d, e, h, i, k, m].join(); }
+             function g() { var A, B; f(A || (A = 1)); function f(x) { return x; } return [A, B, typeof B].join(); }
+             function maybe() { var x; if (junk() === '') x = 1; return typeof x; }
+             function assigned() { var y; y = 2; return y; }
+             junk(); print(g()); junk(); print(maybe()); print(assigned());"
+        ),
+        ["1,,undefined", "undefined", "2"]
+    );
+}

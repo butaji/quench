@@ -35,11 +35,9 @@ pub(crate) fn queue_next_tick(
     args: &[RootId],
 ) -> Result<(), RootedError> {
     let resource = context.object_rooted()?;
-    let key = context.string_rooted("callback");
-    context.define_data_property_rooted(resource, key, callback, true, true, true)?;
+    context.define_named_data_property_rooted(resource, "callback", callback, true, true, true)?;
     let values = if args.is_empty() { context.undefined() } else { context.array_rooted(args)? };
-    let key = context.string_rooted("args");
-    context.define_data_property_rooted(resource, key, values, true, true, true)?;
+    context.define_named_data_property_rooted(resource, "args", values, true, true, true)?;
     let id = super::async_hooks_shared_vm::create_context(&context.host_mut().shared_state());
     super::async_hooks_shared_vm::emit_init(context, resource, "TickObject", id)?;
     let execution = Some(CallbackExecution { lifetime: crate::modules::shared_event_loop::CallbackLifetime::Operation, optional_callback: None, id, resource: context.retain(resource)? });
@@ -447,4 +445,31 @@ impl SharedEventLoop {
 pub(crate) fn optional_callback(context:&mut NativeContext<'_,NodeHost>,receiver:RootId,args:&[RootId])->Result<RootId,RootedError>{
  let callback=context.get_property_rooted(receiver,args[0])?;
  if context.is_callable_rooted(callback)? {Ok(callback)} else {Ok(context.undefined())}
+}
+
+impl SharedEventLoop {
+    /// Whether nothing is scheduled (`startup_snapshot`); the identifier counters carry over
+    /// in no handle, so a restored process numbers from its own.
+    pub(crate) fn snapshot_quiescent(&self) -> bool {
+        let SharedCallbacks {
+            next_ticks,
+            immediates,
+            next_immediate_id: _,
+            immediate_ref_count,
+            immediate_ref_latch,
+            timers,
+            next_timer_id: _,
+            firing_timers,
+            cancelled_timers,
+            exiting,
+        } = &self.shared;
+        next_ticks.is_empty()
+            && immediates.is_empty()
+            && *immediate_ref_count == 0
+            && !immediate_ref_latch
+            && timers.is_empty()
+            && firing_timers.is_empty()
+            && cancelled_timers.is_empty()
+            && !exiting
+    }
 }

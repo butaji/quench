@@ -15,26 +15,11 @@ impl<H: Host> Vm<H> {
             if data.kind == crate::heap::SymbolKind::HostPrivate)
     }
 
+    /// An array of `keys`. Allocation never collects, so the keys need no roots meanwhile.
     pub(super) fn own_keys_array(&mut self, keys: Vec<Value>) -> Value {
-        let roots = keys
-            .iter()
-            .copied()
-            .map(|key| self.heap.root(key))
-            .collect::<Vec<_>>();
-        let keys = roots
-            .iter()
-            .filter_map(|root| self.heap.root_value(*root))
-            .collect::<Vec<_>>();
-        let result = self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
-                Self::empty_object(self.array_proto),
-                Rc::new(keys),
-            ),
-        });
-        roots.into_iter().for_each(|root| {
-            self.heap.release_root(root);
-        });
-        result
+        self.heap.alloc(Cell::Array {
+            object: crate::heap::ArrayObject::new(Self::empty_object(self.array_proto), keys),
+        })
     }
 
     fn is_internal_property_name(&self, atom: Atom) -> bool {
@@ -71,6 +56,16 @@ impl<H: Host> Vm<H> {
             .collect()
     }
 
+    /// The own symbol keys of an ordinary `object` of `shape`, in order: the shape's symbol keys
+    /// the object still holds, but the host's private ones.
+    fn ordinary_own_symbol_keys(&self, object: Value, shape: u32) -> Vec<Value> {
+        self.shape_keys(shape)
+            .iter()
+            .filter_map(|key| key.symbol_value())
+            .filter(|symbol| !self.is_host_private_symbol(*symbol) && self.symbol_property(object, *symbol).is_some())
+            .collect()
+    }
+
     pub(super) fn ordinary_own_key_values(
         &mut self,
         object: Value,
@@ -81,7 +76,7 @@ impl<H: Host> Vm<H> {
         } else if self.heap.array(object).is_some() && self.own_array_length(object).is_some() {
             // Array length is a virtual own string key, not an array index.
             // Keep it before named properties without expanding element keys.
-            vec![self.heap.alloc(Cell::String("length".into()))]
+            vec![self.heap.alloc_string("length".into())]
         } else {
             Vec::new()
         };
@@ -97,16 +92,11 @@ impl<H: Host> Vm<H> {
                     || super::object_static::array_index(self.atom_name(*atom)).is_none()
             })
             .collect::<Vec<_>>();
-        let symbols = self
-            .shape_keys(shape)
-            .iter()
-            .filter_map(|key| key.symbol_value())
-            .filter(|symbol| !self.is_host_private_symbol(*symbol) && self.symbol_property(object, *symbol).is_some())
-            .collect::<Vec<_>>();
+        let symbols = self.ordinary_own_symbol_keys(object, shape);
         values.extend(
             strings
                 .into_iter()
-                .map(|atom| self.heap.alloc(Cell::String(self.atom_value(atom)))),
+                .map(|atom| self.heap.alloc_string(self.atom_value(atom))),
         );
         values.extend(symbols);
         values
@@ -230,15 +220,17 @@ impl<H: Host> Vm<H> {
                 .iter()
                 .copied()
                 .filter(|key| {
-                    !matches!(self.heap.get(*key), Some(Cell::String(name)) if name.host_string().starts_with("\0quench:"))
+                    !self.heap.string(*key).is_some_and(|name| name.host_string().starts_with("\0quench:"))
                 })
                 .collect()
         }))
     }
 
     pub(super) fn same_property_key(&self, left: Value, right: Value) -> bool {
+        if let (Some(l), Some(r)) = (self.heap.string(left), self.heap.string(right)) {
+            return l == r;
+        }
         match (self.heap.get(left), self.heap.get(right)) {
-            (Some(Cell::String(left)), Some(Cell::String(right))) => left == right,
             (Some(Cell::Symbol(_)), Some(Cell::Symbol(_))) => left == right,
             _ => false,
         }
@@ -254,7 +246,7 @@ impl<H: Host> Vm<H> {
         let excluded = self
             .heap
             .array_elements(exclusions)
-            .map_or_else(Vec::new, |elements| elements.as_ref().clone());
+            .map_or_else(Vec::new, |elements| elements.to_vec());
         self.copy_enumerable_properties(
             p,
             target,
@@ -298,14 +290,12 @@ impl<H: Host> Vm<H> {
                 }) {
                     continue;
                 }
-                let descriptor = self.object_get_own_property_descriptor(
+                let enumerable = self.own_property_enumerable(
                     p,
-                    &[
-                        self.heap.root_value(source).unwrap(),
-                        self.heap.root_value(*key).unwrap(),
-                    ],
+                    self.heap.root_value(source).unwrap(),
+                    self.heap.root_value(*key).unwrap(),
                 )?;
-                if descriptor.is_undefined() || !self.descriptor_flag(descriptor, "enumerable") {
+                if enumerable != Some(true) {
                     continue;
                 }
                 let value = self.get_index(
@@ -336,7 +326,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn symbol_property(&self, object: Value, key: Value) -> Option<Value> {
         let data = self.object_data(object)?;
         let slot = self.property_shape_slot(data.shape(), PropertyKey::symbol(key))?;
-        self.heap.property_get(data, slot)
+        self.slot_data_value(data, slot)
     }
 
     pub(super) fn set_symbol_property(
@@ -348,43 +338,49 @@ impl<H: Host> Vm<H> {
         self.set_shape_property(object, PropertyKey::symbol(key), value)
     }
 
-/// `[[Set]]` of a symbol key on its own receiver along a chain of extensible, non-Proxy
-    /// objects, where every step is a shape fact: the nearest data property decides, and an
-    /// absent key is added. `None` leaves an accessor, a Proxy, a non-extensible object or a
-    /// primitive to the general path, which runs no guest code before reaching one.
-    fn set_plain_symbol_property(&mut self, object: Value, key: Value, value: Value) -> Option<bool> {
+    /// `[[Set]]` of a symbol key on its own receiver along a chain of non-Proxy objects, where
+    /// every step is a shape fact: an own data property is written, and an absent key is added
+    /// once the chain is proved to hold it as neither an accessor nor read-only
+    /// (`symbol_write_proofs`). `None` leaves an accessor, a Proxy, a non-extensible receiver
+    /// or a primitive to the general path, which runs no guest code before reaching one.
+    pub(super) fn set_plain_symbol_property(&mut self, object: Value, key: Value, value: Value) -> Option<bool> {
         let symbol = PropertyKey::symbol(key);
-        let mut current = object;
-        loop {
-            if self.proxy_parts(current).is_some() {
-                return None;
-            }
-            let data = self.object_data(current)?;
-            if !data.is_extensible() {
-                return None;
-            }
-            let (shape, proto) = (data.shape(), data.proto());
-            if let Some(slot) = self.property_shape_slot(shape, symbol) {
-                let attributes = self.shape_attribute(shape, slot)?;
-                if attributes.accessor {
-                    return None;
-                }
-                if !attributes.writable {
-                    return Some(false);
-                }
-                if current == object {
-                    self.heap.property_set(object, slot, value);
-                    return Some(true);
-                }
-                break;
-            }
-            if proto.is_null() {
-                break;
-            }
-            current = proto;
+        if self.proxy_parts(object).is_some() {
+            return None;
         }
-        self.set_symbol_property(object, key, value).ok()?;
+        let data = self.object_data(object)?;
+        if !data.is_extensible() {
+            return None;
+        }
+        let (shape, proto) = (data.shape(), data.proto());
+        if let Some(slot) = self.property_shape_slot(shape, symbol) {
+            let attributes = self.slot_attributes(data, slot)?;
+            if attributes.accessor {
+                return None;
+            }
+            if attributes.writable {
+                self.heap.property_set(object, slot, value);
+            }
+            return Some(attributes.writable);
+        }
+        let epoch = crate::heap::prototype_layout_epoch();
+        if !self.symbol_write_proofs.holds(proto, key, epoch) {
+            let guard = self.add_prototype_guard(object, symbol)?;
+            self.mark_prototype_links(proto, guard.prototype_depth);
+            // Marking a link that was no prototype yet leaves the epoch where it was.
+            if crate::heap::prototype_layout_epoch() == epoch {
+                self.symbol_write_proofs.record(proto, key, epoch);
+            }
+        }
+        self.create_shape_data_property(object, symbol, value, DEFAULT_DATA_ATTRIBUTES).ok()?;
         Some(true)
+    }
+
+    /// `object[key] = value` for a symbol `key` that `set_plain_symbol_property` completes as
+    /// a successful write; `false` leaves any other store, unobserved, to the general path.
+    pub(super) fn try_plain_symbol_set(&mut self, object: Value, key: Value, value: Value) -> bool {
+        matches!(self.heap.get(key), Some(Cell::Symbol(symbol)) if symbol.kind != crate::heap::SymbolKind::HostPrivate)
+            && self.set_plain_symbol_property(object, key, value) == Some(true)
     }
 
     pub(super) fn set_symbol_property_with_receiver(
@@ -504,17 +500,23 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         object: Value,
     ) -> Result<Value, JsError> {
-        let values = self
-            .object_own_key_values(p, object)?
-            .into_iter()
-            .filter(|key| matches!(self.heap.get(*key), Some(Cell::Symbol(_))))
-            .collect();
-        Ok(self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
-                Self::empty_object(self.array_proto),
-                Rc::new(values),
-            ),
-        }))
+        if matches!(self.heap.get(object), Some(Cell::Proxy { .. })) {
+            let values = self
+                .object_own_key_values(p, object)?
+                .into_iter()
+                .filter(|key| matches!(self.heap.get(*key), Some(Cell::Symbol(_))))
+                .collect();
+            return Ok(self.own_keys_array(values));
+        }
+        // An ordinary object's symbol keys are its shape's: no string key is made for them.
+        let target = self.box_object(object)?;
+        self.evaluate_deferred_namespace_for_key(p, target, None)?;
+        self.complete_lazy_keys(p, target)?;
+        let symbols = match self.object_data(target) {
+            Some(data) => self.ordinary_own_symbol_keys(target, data.shape()),
+            None => Vec::new(),
+        };
+        Ok(self.own_keys_array(symbols))
     }
 
     pub(super) fn object_own_keys(

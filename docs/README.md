@@ -9,7 +9,7 @@
 - [Native Node host contracts](node-host-contracts.md)
 - [Shared array operation contracts](shared-array-contracts.md)
 - [V8-v7 commands](v8_v7.md)
-- [GC verification and experiment strategy](v2/gc-verification.md)
+- [GC verification, memory policy and experiment strategy](v2/gc-verification.md)
 - [JetStream 3 commands](jetstream3.md)
 - [Benchmark micros](../quench-bench/micros/README.md)
 
@@ -173,6 +173,101 @@ missing baseline passes as regressions.
 For long runs, advance one stage at a time with `run-stages`; it divides
 large stages into deterministic batches of at most 100 cases and preserves
 discovery order. Reserve `run-all` for explicit whole-inventory qualification.
+
+## Compile on first call
+
+A program compiles whole at load, which decides every function's layout, constants and
+sites and reports every early error. A function that can compile again from its own source
+then keeps only its header (`FunctionHeader`: the facts closure creation, `IsConstructor`,
+brand checks and `toString` read) and compiles again on its first call
+(`ResidualProgram::function`). Replayable: function declarations and expressions, arrows,
+object literal methods and class methods, getters and setters (not constructors, field
+initializers, static blocks or decorated methods) of ordinary scripts and modules, that
+resolve every name statically, are reached by no dynamic lookup, resolve no private names,
+and are not called where they are made (an IIFE or a host wrapper). A replayable function
+inside no function that may give it binding sites (direct eval, `with`, `delete` of a name)
+finishes and releases its record as soon as it compiles; the others release theirs when the
+program is stored. Host bodies whose programs keep only static text, and the main
+CommonJS entry, whose functions run at once, stay compiled.
+
+A replay parses the function's text alone in a wrapper that gives it its syntactic context,
+and emits it against what the load recorded (`compile/replay.rs`): table cursors, the
+bindings its scopes provided, its layout inputs and its `arguments` slot. It adds no table
+entry. The `verify-replay` feature checks that each replay equals its load record; run
+Test262 with it and read the log:
+
+```sh
+cargo build --release -p quench-test262 --features verify-replay
+QUENCH_REPLAY_LOG=target/replay.log TEST262_TEST_TIMEOUT_MS=30000 \
+  target/release/run-all
+```
+
+Each program writes a `replay-summary` line; `replay-differs` and `replay-failed` lines name
+a function whose replay does not equal its record or does not compile.
+
+## Host compile cache
+
+`quench-node` keeps the compiled programs of Node's own library modules (the embedded `lib/`
+text) and of its own host scripts across runs, so a process decodes them instead of
+compiling them again. The runtime asks its host for a kept program before compiling one
+(`Host::kept_compiled_program`) and offers it the compiled program's compact form after
+(`Host::keep_compiled_program`). That form names each atom by its text and leaves out the
+source; a later run decodes it under its own VM's atom ids and the text it would have
+compiled. Atom-sorted binding lists are sorted again after decoding. A program naming an
+atom that has no lossless text (a lone surrogate) is not kept. Host scripts are cached only
+outside a direct eval, where their text alone decides what they compile to.
+
+Entries live in `$QUENCH_COMPILE_CACHE`, else `$XDG_CACHE_HOME/quench/compile`, else
+`~/.cache/quench/compile`; an empty `QUENCH_COMPILE_CACHE` turns the cache off. An entry is
+keyed by the executable that wrote it (path, size, modification time and runtime ABI), the
+module's name and the exact text compiled, and is written to a temporary file renamed into
+place. An entry that is missing, unreadable or does not decode costs only the compilation it
+would have saved.
+
+A decoded program parses nothing, so it reaches none of a compilation's phase boundaries
+(`set_compile_phase_boundary`), where the host releases its read-only pages. The runtime calls
+`Host::cached_program_decoded` after each decode instead. Once bootstrap has finished,
+`quench-node` releases there: without it, a run whose programs all decode keeps the loader's,
+decoder's and bootstrap's pages resident until its first collection. Bootstrap's own programs
+decode back to back without that release, which there only refaulted the same loader code. Package modules (`node_modules`) still compile on every run, so their
+functions keep compiling again on first call.
+
+## Startup snapshot
+
+`quench-node` restores a process's bootstrapped realm from a startup snapshot instead of
+running the bootstrap: Node's bootstrap up to the point before the process's options,
+preloads and entry are installed, with the builtins nearly every program loads already
+loaded (`PRELOADED_BUILTINS`: events, buffer, util, path, fs, url, timers, querystring,
+async_hooks, diagnostics_channel, stream, module, child_process and http), as Node's own
+startup snapshot holds them. The runtime writes the VM (`Runtime::build_snapshot`) with
+every identity space at its indices, so values keep their bits, and the host adds the state
+the heap is bound to (`NodeHost::write_snapshot`); a field of either that is neither written
+nor the restoring process's own must be empty at the snapshot point, or the snapshot is
+refused. A restored host continues the bootstrap (`Host::resume`) after replacing what the
+snapshot holds of the builder's process: `process.argv`, `execArgv`, `execPath`, `argv0`,
+`pid`, `ppid`, the process streams' `isTTY`, the performance time origins and the
+`Math.random` seed. While a snapshot is built, reading `process.env`, `process.cwd()` or
+`perf_hooks` fails the build, since the snapshot would keep the builder's.
+
+A process uses a snapshot when `QUENCH_STARTUP_SNAPSHOT` is `on` or `trace` and it runs a
+file entry on the main thread with no CLI options and no IPC channel (`NODE_CHANNEL_FD`).
+Without it processes boot without one. Restoring decodes all a snapshot holds (heap,
+programs, shapes and atoms: about 5 MB resident for the preloaded builtins), so there are
+two kinds (`SnapshotKind`): `preloaded`, as above, and `bootstrap`, without the builtins. A
+process restores `bootstrap` when its entry's static graph cannot reach a builtin
+(`startup_snapshot/entry_graph.rs`): the scan resolves static imports, re-exports and a
+WebAssembly module's imports as the ES module loader does, through packages, and stops at a
+builtin specifier, a dynamic `import()`, the text `require` or `getBuiltinModule`, a `.node`
+addon, a file it cannot resolve or parse, or past 64 files or 1 MiB. Either kind runs a
+program the same way: the kind decides only which builtins are loaded before it starts.
+Snapshots live in a `snapshot` directory beside the compile cache's, one directory per
+build, keyed by the library root and the variables the bootstrap reads (`HOME`,
+`NODE_OPTIONS`, `NODE_PENDING_DEPRECATION`, `NODE_DEBUG`, `NODE_PATH`, `QUENCH_PLATFORM`),
+with the kind in the file name. When an eligible process finds none it starts the
+executable with `QUENCH_BUILD_STARTUP_SNAPSHOT=<file>`, detached and holding a lock file, which
+builds it for later runs and removes other builds' snapshots. A snapshot that does not
+restore boots the process as if there were none. `QUENCH_STARTUP_SNAPSHOT=trace` also
+reports on stderr whether one was restored, and which kind.
 
 ## Shared runtime host roots
 
@@ -567,6 +662,12 @@ target/production/symbol-order target/production/coremark \
   train/KERNEL-no-jit.out... train/KERNEL-jit.out...
 ```
 
+An order names symbols with the profile's crate hashes, so a change that moves them disables
+it silently. `tools/check-link-order.sh BINARY ORDER` reports the share of the order's
+symbols the binary still has and fails below 90%. Check `quench-node`'s production build
+against `crates/quench-node/link/x86_64-linux.order` after manifest or dependency changes
+(TOD-171).
+
 Profiles go in priority order. Functions are laid out in first-appearance
 order, so the first profile's run touches one contiguous region and later
 profiles add only what earlier ones did not execute. With a compiled-mode
@@ -619,8 +720,13 @@ target/production/bolt-profile $PROFILED_BINARY bolt --order $ORDER \
 llvm-bolt $BINARY -o $BINARY-bolt -data=bolt/profile.fdata \
   -reorder-blocks=ext-tsp -split-functions -split-all-cold \
   -reorder-functions=user -function-order=bolt/function.order \
-  -skip-funcs-file=bolt/skip.funcs -use-gnu-stack
+  -skip-funcs-file=bolt/skip.funcs -use-gnu-stack -jump-tables=move
 ```
+
+`-jump-tables=move` lays the jump tables of hot code beside it, apart from the cold
+ones: in place, the `match` tables of the dispatch and the compiler sit among
+`.rodata`'s merged constants, and a run kept about 120 KB of them resident (V8-v7
+max RSS, bolted static x86_64, 2026-10-22: 20-160 KB lower on every fixture).
 
 `quench-node` registers its read-only file mappings with userfaultfd for
 asynchronous write protection at start (`resident_pages::map_touched_pages_only`,
@@ -634,15 +740,16 @@ freshly written binary measured 0.3 MB above the same file evicted, against 8 MB
 with fault-around), but comparisons still evict every binary first
 (`posix_fadvise(POSIX_FADV_DONTNEED)`).
 
-The static build also limits glibc's per-thread cache to two freed chunks per size class
-(`glibc.malloc.tcache_count=2`): the default seven keep freed chunks unmerged, and the
-heap grew past them by 70–280 KiB per V8-v7 fixture. glibc reads its tunables once, before
+The static build also turns off glibc's per-thread cache and its heap's top padding
+(`glibc.malloc.tcache_count=0:glibc.malloc.top_pad=0`): cached chunks stay unmerged, and
+the heap grew past them by 70–280 KiB per V8-v7 fixture with the default seven per size
+class, and by up to 400 KiB (RegExp) with two. glibc reads its tunables once, before
 any code of the executable runs, so a run whose environment sets no `GLIBC_TUNABLES`
 re-executes itself once from `.preinit_array` with the setting added, and the re-executed
 run removes it and its marker before the guest or a child process can observe the
 environment. An environment that sets `GLIBC_TUNABLES` leaves the allocator to it.
 Valgrind does not follow the re-execution, so profiling and guard runs set
-`GLIBC_TUNABLES=glibc.malloc.tcache_count=2` themselves (`callgrind-guard.sh` does).
+`GLIBC_TUNABLES=glibc.malloc.tcache_count=0:glibc.malloc.top_pad=0` themselves (`callgrind-guard.sh` does).
 
 Measure peak RSS with a launcher whose own image is small (`vfork`, `exec`,
 `wait4`): a forked interpreter's pre-`exec` image counts toward the child's

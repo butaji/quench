@@ -14,21 +14,21 @@ fn collect_minor(heap: &mut Heap, roots: impl IntoIterator<Item = Value>) -> Vec
 fn minor_collection_traces_remembered_object_and_sparse_array_edges() {
     let mut heap = Heap::new();
     let owner = heap.alloc(Cell::Array {
-        object: ArrayObject::new(plain_object(), Rc::new(vec![Value::UNDEFINED])),
+        object: ArrayObject::new(plain_object(), vec![Value::UNDEFINED]),
     });
     let sparse = heap.alloc(Cell::Array {
-        object: ArrayObject::new(plain_object(), Rc::new(Vec::new())),
+        object: ArrayObject::new(plain_object(), Vec::new()),
     });
     heap.collect([owner, sparse]);
 
-    let child = heap.alloc(Cell::String("dense child".into()));
+    let child = heap.alloc(Cell::Error("dense child".into()));
     if let Some(elements) = heap.array_elements_mut(owner) {
-        Rc::make_mut(elements)[0] = child;
+        elements.make_mut()[0] = child;
     }
-    let sparse_child = heap.alloc(Cell::String("sparse child".into()));
+    let sparse_child = heap.alloc(Cell::Error("sparse child".into()));
     let sparse_index = MAX_DENSE_ARRAY_HOLE_LENGTH + 1;
     heap.sparse_set(sparse, sparse_index, sparse_child);
-    let garbage = heap.alloc(Cell::String("unreachable young".into()));
+    let garbage = heap.alloc(Cell::Error("unreachable young".into()));
 
     collect_minor(&mut heap, [owner, sparse]);
     assert!(heap.get(child).is_some());
@@ -37,7 +37,7 @@ fn minor_collection_traces_remembered_object_and_sparse_array_edges() {
     assert!(heap.get(garbage).is_none());
 
     if let Some(elements) = heap.array_elements_mut(owner) {
-        Rc::make_mut(elements)[0] = Value::UNDEFINED;
+        elements.make_mut()[0] = Value::UNDEFINED;
     }
     heap.collect([owner, sparse]);
     assert!(heap.get(child).is_none());
@@ -47,7 +47,7 @@ fn minor_collection_traces_remembered_object_and_sparse_array_edges() {
 fn parallel_mark_matches_serial_verifier_for_full_and_minor_collections() {
     let mut heap = Heap::new();
     let children = (0..PARALLEL_MARK_MINIMUM_SLOTS)
-        .map(|_| heap.alloc(Cell::String("parallel survivor".into())))
+        .map(|_| heap.alloc(Cell::Error("parallel survivor".into())))
         .collect::<Vec<_>>();
     // A direct-record array forces the serial collector. Keep this root in
     // the legacy space so the parallel marker and sweep remain covered.
@@ -60,7 +60,7 @@ fn parallel_mark_matches_serial_verifier_for_full_and_minor_collections() {
     assert!(children.iter().all(|child| heap.get(*child).is_some()));
 
     let young = (0..128)
-        .map(|_| heap.alloc(Cell::String("remembered young survivor".into())))
+        .map(|_| heap.alloc(Cell::Error("remembered young survivor".into())))
         .collect::<Vec<_>>();
     if let Some(Cell::Set { entries, .. }) = heap.get_mut(root) {
         // The set is only traced, never searched, so the key hash is immaterial.
@@ -80,7 +80,7 @@ fn parallel_mark_matches_serial_verifier_for_full_and_minor_collections() {
 #[test]
 fn parallel_sweep_releases_shared_array_payloads() {
     let mut heap = Heap::new();
-    let elements = Rc::new(vec![Value::UNDEFINED]);
+    let elements = ArrayElements::from(vec![Value::UNDEFINED]);
     let arrays = (0..PARALLEL_MARK_MINIMUM_SLOTS)
         .map(|_| {
             heap.alloc(Cell::Array {
@@ -140,50 +140,63 @@ fn minor_collection_handles_old_weak_maps_and_weak_refs() {
 }
 
 #[test]
-fn gc_headroom_factors_scale_live_cells_without_overflow() {
-    let live = 781_054usize;
-    assert_eq!(
-        GcHeadroomFactor {
-            numerator: 1,
-            denominator: 2,
-        }
-        .allocation_headroom(live),
-        390_527
-    );
-    assert_eq!(
-        GcHeadroomFactor {
-            numerator: 3,
-            denominator: 4,
-        }
-        .allocation_headroom(live),
-        585_790
-    );
-    assert_eq!(
-        GcHeadroomFactor {
-            numerator: 1,
-            denominator: 1,
-        }
-        .allocation_headroom(live),
-        live
-    );
-    assert_eq!(gc_allocation_headroom(0), MINIMUM_GC_ALLOCATION_HEADROOM);
-    assert_eq!(
-        gc_allocation_headroom(LARGE_HEAP_MINIMUM_LIVE_CELLS - 1),
-        SMALL_HEAP_GC_HEADROOM
-            .allocation_headroom(LARGE_HEAP_MINIMUM_LIVE_CELLS - 1)
-            .max(MINIMUM_GC_ALLOCATION_HEADROOM)
-    );
-    assert_eq!(
-        gc_allocation_headroom(live),
-        LARGE_HEAP_GC_HEADROOM.allocation_headroom(live)
-    );
+fn minor_collection_keeps_records_written_into_old_records_and_frees_young_garbage() {
+    let mut heap = Heap::new();
+    let owner = heap.alloc(Cell::Object(plain_object()));
+    let array = heap.alloc(Cell::Array {
+        object: ArrayObject::new(plain_object(), vec![Value::UNDEFINED]),
+    });
+    assert!(owner.direct_object_index().is_some());
+    assert!(array.direct_array_index().is_some());
+    heap.collect([owner, array]);
+    assert!(heap.is_old(owner) && heap.is_old(array));
+
+    // Young records reachable only through stores into old records.
+    let child = heap.alloc(Cell::Object(plain_object()));
+    heap.object_mut(owner).unwrap().set_inline_property(0, child);
+    let element = heap.alloc(Cell::Object(plain_object()));
+    heap.array_elements_mut(array).unwrap().make_mut()[0] = element;
+    let garbage = heap.alloc(Cell::Object(plain_object()));
+    // The barrier logged both owners, so they are young until the minor traces them.
+    assert!(!heap.is_old(owner) && !heap.is_old(array));
+
+    collect_minor(&mut heap, [owner, array]);
+    assert!(heap.is_live(child) && heap.is_old(child));
+    assert!(heap.is_live(element) && heap.is_old(element));
+    assert!(!heap.is_live(garbage));
+    assert!(heap.is_old(owner) && heap.is_old(array));
+
+    // An old record that loses its last reference survives minors and dies at a full one.
+    heap.object_mut(owner).unwrap().set_inline_property(0, Value::UNDEFINED);
+    collect_minor(&mut heap, [owner, array]);
+    assert!(heap.is_live(child));
+    heap.collect([owner, array]);
+    assert!(!heap.is_live(child));
+    assert!(heap.is_live(element));
 }
+
+#[test]
+fn records_written_twice_are_logged_once_per_cycle() {
+    let mut heap = Heap::new();
+    let owner = heap.alloc(Cell::Object(plain_object()));
+    heap.collect([owner]);
+    for value in 0..4 {
+        heap.object_mut(owner)
+            .unwrap()
+            .set_inline_property(0, Value::number(f64::from(value)));
+    }
+    assert_eq!(heap.object_records.remembered_count(), 1);
+    collect_minor(&mut heap, [owner]);
+    assert_eq!(heap.object_records.remembered_count(), 0);
+    assert!(heap.is_old(owner));
+}
+
 
 #[cfg(feature = "profile-gc-time")]
 #[test]
 fn gc_time_profile_records_collection_phases_without_aggregate_counters() {
     let mut heap = Heap::new();
-    let kept = heap.alloc(Cell::String("kept".into()));
+    let kept = heap.alloc(Cell::Error("kept".into()));
     heap.collect([kept]);
 
     let profile = heap.gc_profile();
@@ -191,36 +204,16 @@ fn gc_time_profile_records_collection_phases_without_aggregate_counters() {
     assert_eq!(heap.stats().1, 1);
 }
 
-#[test]
-fn minor_tracking_matches_the_next_collection_boundary() {
-    let mut heap = Heap::new();
-    heap.full_collection_growth_limit = 1_000;
-    heap.threshold = 500;
-    assert!(heap.minor_collection_scheduled());
-
-    heap.allocations = 200;
-    heap.allocations_since_full = 200;
-    heap.threshold = 800;
-    assert!(heap.minor_collection_scheduled());
-
-    heap.allocations = 700;
-    heap.allocations_since_full = 700;
-    heap.threshold = 500;
-    assert!(heap.minor_collection_scheduled());
-
-    heap.threshold = 1_000;
-    assert!(!heap.minor_collection_scheduled());
-}
 
 #[test]
 fn scope_slot_owners_survive_collection_and_release() {
     let mut heap = Heap::new();
-    let kept = heap.alloc(Cell::String("kept".into()));
+    let kept = heap.alloc(Cell::Error("kept".into()));
     let owner = heap.alloc(Cell::Environment {
         parent: Value::NULL,
         function: 0,
         slots: vec![Value::number(1.0), kept].into_boxed_slice().into(),
-        scope: Box::new(crate::heap::EnvironmentScope {
+        scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
             program: None,
             root_eval_scope: false,
             binding_site_pc: None,
@@ -233,7 +226,7 @@ fn scope_slot_owners_survive_collection_and_release() {
         parent: Value::NULL,
         function: 0,
         slots,
-        scope: Box::new(crate::heap::EnvironmentScope {
+        scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
             program: None,
             root_eval_scope: false,
             binding_site_pc: None,
@@ -265,19 +258,16 @@ fn scope_slot_owners_survive_collection_and_release() {
 #[test]
 fn ordinary_object_payloads_live_in_compact_records() {
     // The prototype reference packs beside the shape and integrity bits, so a record is a
-    // header the size of a property vector plus two inline values.
-    assert_eq!(
-        size_of::<Object>(),
-        size_of::<ValueVec>() + size_of::<[Value; INLINE_PROPERTY_COUNT]>()
-    );
+    // header the size of a property vector plus one payload word of narrow inline values.
+    assert_eq!(size_of::<Object>(), size_of::<ValueVec>() + size_of::<u64>());
     assert_eq!(size_of::<Slot>(), size_of::<Option<Cell>>());
 }
 
 #[test]
 fn strong_root_keeps_cell_alive_until_release() {
     let mut heap = Heap::new();
-    let kept = heap.alloc(Cell::String("kept".into()));
-    let dead = heap.alloc(Cell::String("dead".into()));
+    let kept = heap.alloc(Cell::Error("kept".into()));
+    let dead = heap.alloc(Cell::Error("dead".into()));
     let root = heap.root(kept);
 
     heap.collect([]);
@@ -361,7 +351,7 @@ fn weak_map_values_follow_ephemeron_key_reachability() {
         entries: Box::default(),
     });
     let key = heap.alloc(Cell::Object(plain_object()));
-    let value = heap.alloc(Cell::String("value".into()));
+    let value = heap.alloc(Cell::Error("value".into()));
     if let Some(Cell::WeakMap { entries, .. }) = heap.get_mut(weak_map) {
         entries.insert(key, value);
     }
@@ -385,9 +375,9 @@ fn weak_map_array_keys_follow_direct_record_liveness() {
         entries: Box::default(),
     });
     let key = heap.alloc(Cell::Array {
-        object: ArrayObject::new(plain_object(), Rc::new(Vec::new())),
+        object: ArrayObject::new(plain_object(), Vec::new()),
     });
-    let value = heap.alloc(Cell::String("value".into()));
+    let value = heap.alloc(Cell::Error("value".into()));
     assert!(key.direct_array_index().is_some());
     if let Some(Cell::WeakMap { entries, .. }) = heap.get_mut(weak_map) {
         entries.insert(key, value);
@@ -463,7 +453,7 @@ fn weak_ref_target_is_cleared_after_collection() {
 #[test]
 fn weak_ref_owner_clears_its_handle_before_slot_reuse() {
     let mut heap = Heap::new();
-    let target = heap.alloc(Cell::String("target".into()));
+    let target = heap.alloc(Cell::Error("target".into()));
     let target_slot = target.heap_index().unwrap();
     let target_handle = heap.weak_handle(target).unwrap();
     let reference = heap.alloc(Cell::WeakRef {
@@ -479,7 +469,7 @@ fn weak_ref_owner_clears_its_handle_before_slot_reuse() {
         Some(Cell::WeakRef { target: None, .. })
     ));
 
-    let replacement = heap.alloc(Cell::String("replacement".into()));
+    let replacement = heap.alloc(Cell::Error("replacement".into()));
     assert_eq!(replacement.heap_index(), Some(target_slot));
     assert!(matches!(
         heap.get(reference),
@@ -493,15 +483,15 @@ fn slab_local_free_bitmap_reuses_slots_across_slab_boundaries() {
     let mut heap = Heap::new();
     let slot_count = super::slots::SLOTS_PER_SLAB + 2;
     for _ in 0..slot_count {
-        heap.alloc(Cell::String("temporary".into()));
+        heap.alloc(Cell::Error("temporary".into()));
     }
 
     assert_eq!(heap.collect([]), []);
     assert_eq!(heap.free_slots, slot_count);
 
-    let first = heap.alloc(Cell::String("first".into()));
-    let second = heap.alloc(Cell::String("second".into()));
-    let third = heap.alloc(Cell::String("third".into()));
+    let first = heap.alloc(Cell::Error("first".into()));
+    let second = heap.alloc(Cell::Error("second".into()));
+    let third = heap.alloc(Cell::Error("third".into()));
     assert_eq!(first.heap_index(), Some((slot_count - 1) as u32));
     assert_eq!(second.heap_index(), Some((slot_count - 2) as u32));
     assert_eq!(third.heap_index(), Some((slot_count - 3) as u32));
@@ -547,10 +537,25 @@ fn finalization_registry_clears_dead_tokens_before_slot_reuse() {
 }
 
 #[test]
+fn far_sparse_writes_over_a_holey_dense_prefix_stay_sparse() {
+    let mut heap = Heap::new();
+    let mut prefix = vec![Value::DELETED; MAX_DENSE_ARRAY_HOLE_LENGTH];
+    prefix[0] = Value::number(1.0);
+    let array = heap.alloc(Cell::Array {
+        object: ArrayObject::new(plain_object(), prefix),
+    });
+    let index = 2 * MAX_DENSE_ARRAY_HOLE_LENGTH;
+    heap.sparse_set(array, index, Value::number(2.0));
+    assert_eq!(heap.sparse_length(array), Some(index + 1));
+    assert_eq!(heap.array_elements(array).map(|dense| dense.len()), Some(MAX_DENSE_ARRAY_HOLE_LENGTH));
+    assert_eq!(heap.sparse_get(array, index), Some(Value::number(2.0)));
+}
+
+#[test]
 fn sparse_array_metadata_is_removed_before_a_slot_is_reused() {
     let mut heap = Heap::new();
     let array = heap.alloc(Cell::Array {
-        object: ArrayObject::new(plain_object(), Rc::new(Vec::new())),
+        object: ArrayObject::new(plain_object(), Vec::new()),
     });
     let slot = array.heap_index().unwrap();
     let index = MAX_DENSE_ARRAY_HOLE_LENGTH + 1;
@@ -560,7 +565,7 @@ fn sparse_array_metadata_is_removed_before_a_slot_is_reused() {
     heap.collect([]);
 
     let reused = heap.alloc(Cell::Array {
-        object: ArrayObject::new(plain_object(), Rc::new(Vec::new())),
+        object: ArrayObject::new(plain_object(), Vec::new()),
     });
     assert_eq!(reused.heap_index(), Some(slot));
     assert_eq!(heap.sparse_get(reused, index), None);
@@ -571,14 +576,14 @@ fn sparse_array_metadata_is_removed_before_a_slot_is_reused() {
 fn direct_array_records_trace_values_and_release_shared_backing() {
     let mut heap = Heap::new();
     let object = heap.alloc(Cell::Object(plain_object()));
-    let first_child = heap.alloc(Cell::String("first".into()));
-    let second_child = heap.alloc(Cell::String("second".into()));
-    let shared = Rc::new(vec![first_child, Value::number(1.0)]);
+    let first_child = heap.alloc(Cell::Error("first".into()));
+    let second_child = heap.alloc(Cell::Error("second".into()));
+    let shared = ArrayElements::from(vec![first_child, Value::number(1.0)]);
     let first = heap.alloc(Cell::Array {
-        object: ArrayObject::new(plain_object(), Rc::clone(&shared)),
+        object: ArrayObject::new(plain_object(), shared.clone()),
     });
     let second = heap.alloc(Cell::Array {
-        object: ArrayObject::new(plain_object(), Rc::clone(&shared)),
+        object: ArrayObject::new(plain_object(), shared.clone()),
     });
     drop(shared);
 
@@ -590,11 +595,11 @@ fn direct_array_records_trace_values_and_release_shared_backing() {
     assert!(heap.object(object).is_some());
     assert!(heap.object(first).is_some());
     assert!(heap.get(first).is_none());
-    assert_eq!(Rc::strong_count(heap.array_elements(first).unwrap()), 2);
+    assert_eq!(heap.array_elements(first).unwrap().owner_count(), 2);
     let first_root = heap.root(first);
     {
         let elements = heap.array_elements_mut(first).unwrap();
-        Rc::make_mut(elements)[1] = second_child;
+        elements.make_mut()[1] = second_child;
     }
     assert_eq!(heap.collect([]), Vec::new());
     assert!(heap.is_live(first));
@@ -603,7 +608,7 @@ fn direct_array_records_trace_values_and_release_shared_backing() {
     assert!(heap.is_live(second_child));
     let elements = heap.array_elements(first).unwrap();
     assert_eq!(elements[1], second_child);
-    assert_eq!(Rc::strong_count(elements), 1);
+    assert_eq!(elements.owner_count(), 1);
     assert!(heap.release_root(first_root));
     heap.collect([]);
     assert!(!heap.is_live(first));
@@ -615,9 +620,9 @@ fn direct_array_records_trace_values_and_release_shared_backing() {
 fn direct_array_records_trace_and_remove_sparse_elements() {
     let mut heap = Heap::new();
     let array = heap.alloc(Cell::Array {
-        object: ArrayObject::new(plain_object(), Rc::new(Vec::new())),
+        object: ArrayObject::new(plain_object(), Vec::new()),
     });
-    let child = heap.alloc(Cell::String("sparse child".into()));
+    let child = heap.alloc(Cell::Error("sparse child".into()));
     let index = MAX_DENSE_ARRAY_HOLE_LENGTH + 1;
     heap.sparse_set(array, index, child);
     let array_root = heap.root(array);
@@ -643,7 +648,7 @@ fn object_integrity_metadata_survives_collection() {
         data.set_frozen(true);
     }
     let garbage = (0..512)
-        .map(|_| heap.alloc(Cell::String("garbage".into())))
+        .map(|_| heap.alloc(Cell::Error("garbage".into())))
         .collect::<Vec<_>>();
     heap.collect([object]);
     assert!(
@@ -676,13 +681,18 @@ fn out_of_line_private_brand_keeps_its_home_alive() {
 #[test]
 fn object_property_storage_migration_preserves_writes_and_gc_roots() {
     let mut heap = Heap::new();
-    heap.register_property_shape(1, 1);
-    heap.register_property_shape(2, 2);
-    heap.register_property_shape(3, 3);
-    let first = heap.alloc(Cell::String("first".into()));
-    let replaced = heap.alloc(Cell::String("replaced".into()));
-    let replacement = heap.alloc(Cell::String("replacement".into()));
-    let third = heap.alloc(Cell::String("third".into()));
+    // Shape `n` holds `n` properties; the add past the inline values migrates them.
+    let migrated = INLINE_PROPERTY_COUNT + 1;
+    for shape in 1..=migrated {
+        heap.register_property_shape(shape as u32, shape);
+    }
+    let first = heap.alloc(Cell::Error("first".into()));
+    let replaced = heap.alloc(Cell::Error("replaced".into()));
+    let replacement = heap.alloc(Cell::Error("replacement".into()));
+    let fillers = (2..INLINE_PROPERTY_COUNT)
+        .map(|_| heap.alloc(Cell::Error("filler".into())))
+        .collect::<Vec<_>>();
+    let last = heap.alloc(Cell::Error("last".into()));
     let object = heap.alloc(Cell::Object(plain_object()));
     assert!(heap.object(object).unwrap().inline_properties().is_some());
     heap.object_record_mut(object)
@@ -690,36 +700,43 @@ fn object_property_storage_migration_preserves_writes_and_gc_roots() {
         .set_extensible(false);
     heap.property_add(object, first, 1);
     heap.property_add(object, replaced, 2);
+    for (index, filler) in fillers.iter().enumerate() {
+        heap.property_add(object, *filler, (3 + index) as u32);
+    }
     assert!(heap.object(object).unwrap().inline_properties().is_some());
     heap.property_set(object, 1, replacement);
-    heap.property_add(object, third, 3);
+    heap.property_add(object, last, migrated as u32);
 
     heap.collect([object]);
     let data = heap.object(object).unwrap();
-    assert_eq!(data.shape(), 3);
+    assert_eq!(data.shape(), migrated as u32);
     assert!(data.inline_properties().is_none());
     assert!(!data.is_extensible());
     assert_eq!(heap.property_get(data, 0), Some(first));
     assert_eq!(heap.property_get(data, 1), Some(replacement));
-    assert_eq!(heap.property_get(data, 2), Some(third));
+    for (index, filler) in fillers.iter().enumerate() {
+        assert_eq!(heap.property_get(data, 2 + index), Some(*filler));
+    }
+    assert_eq!(heap.property_get(data, migrated - 1), Some(last));
     assert!(heap.is_live(first));
     assert!(!heap.is_live(replaced));
     assert!(heap.is_live(replacement));
-    assert!(heap.is_live(third));
+    assert!(heap.is_live(last));
 
     heap.collect([]);
     assert!(!heap.is_live(object));
     assert!(!heap.is_live(first));
     assert!(!heap.is_live(replacement));
-    assert!(!heap.is_live(third));
+    assert!(!heap.is_live(last));
 }
 
 #[test]
 fn inline_property_values_are_gc_roots_until_deleted_or_the_owner_dies() {
     let mut heap = Heap::new();
-    heap.register_property_shape(1, INLINE_PROPERTY_COUNT);
-    let kept = heap.alloc(Cell::String("kept".into()));
-    let deleted = heap.alloc(Cell::String("deleted".into()));
+    // A shape of two properties, the pair below, whatever the inline count.
+    heap.register_property_shape(1, 2);
+    let kept = heap.alloc(Cell::Error("kept".into()));
+    let deleted = heap.alloc(Cell::Error("deleted".into()));
     let object = heap.alloc_object_pair(Value::NULL, 1, kept, deleted);
     heap.property_set(object, 1, Value::DELETED);
 
@@ -746,11 +763,7 @@ fn out_of_line_object_metadata_is_included_in_live_memory_totals() {
     data.set_arguments_map(vec![0; 32]);
     data.set_module_namespace();
     data.set_module_bindings(vec![(0, crate::vm::program_store::ProgramId::MAIN, 0)]);
-    data.set_deferred_module(Some(crate::ModuleSource {
-        name: "module.js".into(),
-        source: "export const value = 1;".into(),
-        bytes: vec![1, 2, 3],
-    }));
+    data.set_deferred_module(Some(crate::ModuleSource::text("module.js", "export const value = 1;")));
     data.add_private_name(PrivateBrand {
         home: object,
         name: 0,
@@ -811,12 +824,12 @@ fn regexp_legacy_constructor_is_traced_through_live_instances() {
         let weak_constructor = heap.weak_handle(constructor).unwrap();
         let regexp = heap.alloc(Cell::RegExp {
             object: Box::new(plain_object()),
-            meta: Box::new(crate::heap::RegExpMeta {
+            meta: Rc::new(crate::heap::RegExpMeta {
                 source: "a".into(),
-                flags: String::new(),
+                flags: crate::vm::RegExpFlags::validated(""),
                 legacy_constructor: owner(constructor),
+                matcher: Rc::new(quench_regexp::Regex::with_flags("a", Default::default()).unwrap()),
             }),
-            matcher: Rc::new(quench_regexp::Regex::with_flags("a", Default::default()).unwrap()),
         });
         let root = heap.root(regexp);
         heap.collect([]);
@@ -831,12 +844,12 @@ fn regexp_legacy_constructor_is_traced_through_live_instances() {
 #[test]
 fn resolved_binding_reference_keeps_its_slot_owner_alive() {
     let mut heap = Heap::new();
-    let value = heap.alloc(Cell::String("kept".into()));
+    let value = heap.alloc(Cell::Error("kept".into()));
     let environment = heap.alloc(Cell::Environment {
         parent: Value::NULL,
         function: 0,
         slots: vec![value].into_boxed_slice().into(),
-        scope: Box::new(crate::heap::EnvironmentScope {
+        scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
             program: None,
             root_eval_scope: false,
             binding_site_pc: None,
@@ -954,4 +967,55 @@ fn weak_map_pending_fan_in_releases_every_value_and_resets_between_collections()
     assert!(!heap.is_live(key));
     assert!(values.iter().all(|value| !heap.is_live(*value)));
     assert!(maps.iter().all(|map| heap.is_live(*map)));
+}
+
+#[test]
+fn wide_environment_clones_store_only_the_slots_they_do_not_share() {
+    let mut heap = Heap::new();
+    let width = crate::heap::SPARSE_CLONE_MIN_SLOTS + 8;
+    let kept = heap.alloc(Cell::Error("kept".into()));
+    let environment = |heap: &mut Heap, slots: EnvironmentSlots| {
+        heap.alloc(Cell::Environment {
+            parent: Value::NULL,
+            function: 0,
+            slots,
+            scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
+                program: Some(0),
+                root_eval_scope: false,
+                binding_site_pc: None,
+                dynamic_bindings: Vec::new().into(),
+                with_objects: Box::default(),
+            }),
+        })
+    };
+    let mut values = (0..width).map(|slot| Value::number(slot as f64)).collect::<Vec<_>>();
+    values[width - 1] = kept;
+    let owner = environment(&mut heap, values.into());
+    let first = heap.clone_environment_slots(owner, &[3], &[5]).unwrap();
+    // A length and owner, then the fresh and reset slots, each with its index.
+    assert_eq!((first.len(), first.0.len()), (width, 6));
+    let first = environment(&mut heap, first);
+    assert_eq!(heap.environment_slot(first, 3), Some(Value::number(3.0)));
+    assert_eq!(heap.environment_slot(first, 5), Some(Value::UNDEFINED));
+    assert_eq!(heap.environment_slot(first, 7), Some(Value::number(7.0)));
+    assert_eq!(heap.environment_slot(first, width), None);
+    // Writes reach whichever environment owns the slot.
+    *heap.environment_slot_mut(first, 3).unwrap() = Value::number(30.0);
+    *heap.environment_slot_mut(first, 7).unwrap() = Value::number(70.0);
+    assert_eq!(heap.environment_slot(owner, 3), Some(Value::number(3.0)));
+    assert_eq!(heap.environment_slot(owner, 7), Some(Value::number(70.0)));
+    // A copy of a copy shares the first copy's own slots and the original's others.
+    let second = heap.clone_environment_slots(first, &[], &[]).unwrap();
+    assert_eq!(second.0.len(), 6);
+    let second = environment(&mut heap, second);
+    assert_eq!(heap.environment_slot_owner(second, 3), Some(first));
+    assert_eq!(heap.environment_slot_owner(second, 7), Some(owner));
+    assert_eq!(heap.environment_slot(second, 3), Some(Value::number(30.0)));
+    // The copies keep the original and its values alive.
+    heap.collect_with_object_roots([second], |_, _, _, _, _| {}, None, true);
+    assert_eq!(heap.environment_slot(second, width - 1), Some(kept));
+    assert!(matches!(heap.get(kept), Some(Cell::Error(_))));
+    // A narrow environment's copy stays dense.
+    let narrow = environment(&mut heap, vec![Value::TRUE; 2].into());
+    assert_eq!(heap.clone_environment_slots(narrow, &[0], &[]).unwrap().0.len(), 2);
 }

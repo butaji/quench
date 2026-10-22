@@ -6,7 +6,11 @@ use std::ptr::NonNull;
 /// The header every empty slice shares: an empty slice owns no allocation, so making one and
 /// dropping it cost nothing.
 static EMPTY_HEADER: usize = 0;
+/// The header's top bit: a mark its owner may set on a non-empty slice (`ThinBoxSlice::mark`)
+/// to tell two layouts of its elements apart; the length is the rest of the header.
+const MARK_BIT: usize = 1 << (usize::BITS - 1);
 
+#[repr(transparent)]
 pub(crate) struct ThinBoxSlice<T> {
     /// Points at the header; the elements follow at `elements_offset`.
     header: NonNull<usize>,
@@ -28,18 +32,66 @@ impl<T> ThinBoxSlice<T> {
         }
     }
 
+    /// Where the elements start: after the header, at `T`'s alignment. `layout` derives the
+    /// same offset for every length.
+    const ELEMENTS_OFFSET: usize = size_of::<usize>().next_multiple_of(align_of::<T>());
+
     fn elements(&self) -> *mut T {
         if self.len() == 0 {
             return NonNull::dangling().as_ptr();
         }
-        let (_, offset) = Self::layout(self.len());
-        // SAFETY: the allocation spans the header and `len` elements from `offset`.
-        unsafe { self.header.as_ptr().cast::<u8>().add(offset).cast::<T>() }
+        debug_assert_eq!(Self::layout(self.len()).1, Self::ELEMENTS_OFFSET);
+        // SAFETY: the allocation spans the header and `len` elements from `ELEMENTS_OFFSET`.
+        unsafe { self.header.as_ptr().cast::<u8>().add(Self::ELEMENTS_OFFSET).cast::<T>() }
     }
 
+    #[inline(always)]
     pub(crate) fn len(&self) -> usize {
-        // SAFETY: the header was initialized at allocation and never changes.
+        self.header() & !MARK_BIT
+    }
+
+    #[inline(always)]
+    fn header(&self) -> usize {
+        // SAFETY: the header was initialized at allocation; only `mark` changes it, and only
+        // in an allocation this slice owns.
         unsafe { *self.header.as_ptr() }
+    }
+
+    /// Whether `mark` was set.
+    #[inline(always)]
+    pub(crate) fn marked(&self) -> bool {
+        self.header() & MARK_BIT != 0
+    }
+
+    /// Sets the mark of a non-empty slice, whose header it owns.
+    pub(crate) fn mark(&mut self) {
+        assert!(self.len() != 0, "an empty slice shares the static header");
+        // SAFETY: a non-empty slice owns its allocation, header included.
+        unsafe { *self.header.as_ptr() |= MARK_BIT };
+    }
+
+    /// Words a slice laid out in place (`lay_out_in_place`) takes before its elements: the
+    /// slice itself, then its header.
+    pub(crate) const IN_PLACE_WORDS: usize = 2;
+
+    /// Lays out at `words` a slice of the `len` elements that follow its `IN_PLACE_WORDS`,
+    /// and returns it: a view that owns nothing, which its caller must never drop, valid
+    /// while the words stay put and hold their layout.
+    ///
+    /// # Safety
+    /// `words` is valid for writes of `IN_PLACE_WORDS` words and the `len` initialized
+    /// elements follow them.
+    pub(crate) unsafe fn lay_out_in_place(words: *mut usize, len: usize) -> *const Self {
+        const { assert!(Self::ELEMENTS_OFFSET == size_of::<usize>()) };
+        debug_assert_eq!(len & MARK_BIT, 0);
+        // SAFETY: as the caller guarantees; the header word precedes the elements by
+        // `ELEMENTS_OFFSET`, as an allocated slice's does.
+        unsafe {
+            let header = words.add(1);
+            header.write(len);
+            words.write(header as usize);
+        }
+        words.cast::<Self>()
     }
 
     /// A slice of `len` elements made in place by `element(index)`, or `None` when one is
@@ -62,6 +114,9 @@ impl<T> ThinBoxSlice<T> {
                 }
             }
         }
+        if len == 0 {
+            return Some(Self::empty());
+        }
         let (layout, offset) = Self::layout(len);
         // SAFETY: the layout is non-zero sized, as it always holds the header.
         let raw = unsafe { alloc(layout) };
@@ -82,7 +137,7 @@ impl<T> ThinBoxSlice<T> {
             partial.initialized += 1;
         }
         std::mem::forget(partial);
-        // SAFETY: the header lies at the start of the allocation.
+        // SAFETY: the header slot starts the allocation.
         unsafe { header.as_ptr().write(len) };
         Some(Self {
             header,
@@ -91,32 +146,43 @@ impl<T> ThinBoxSlice<T> {
     }
 
     /// The slice of `values`, written straight into its one allocation.
-    pub(crate) fn from_exact_iter(values: impl ExactSizeIterator<Item = T>) -> Self {
-        let len = values.len();
-        if len == 0 {
-            return Self::empty();
-        }
-        let (layout, offset) = Self::layout(len);
-        // SAFETY: the layout is non-zero sized, as it always holds the header.
-        let raw = unsafe { alloc(layout) };
-        let Some(header) = NonNull::new(raw.cast::<usize>()) else {
-            handle_alloc_error(layout)
-        };
-        let mut written = 0;
-        for value in values {
-            assert!(written < len, "exact-size iterator yielded more than its length");
-            // SAFETY: slot `written` lies within the `len` elements the layout reserves.
-            unsafe { raw.add(offset).cast::<T>().add(written).write(value) };
-            written += 1;
-        }
-        // A short iterator leaks the allocation rather than expose uninitialized elements.
-        assert_eq!(written, len, "exact-size iterator yielded less than its length");
-        // SAFETY: the header slot starts the allocation.
-        unsafe { header.as_ptr().write(len) };
-        Self {
-            header,
-            marker: std::marker::PhantomData,
-        }
+    pub(crate) fn from_exact_iter(mut values: impl ExactSizeIterator<Item = T>) -> Self {
+        let slice = Self::try_from_fn(values.len(), |_| values.next())
+            .expect("exact-size iterator yielded less than its length");
+        assert!(values.next().is_none(), "exact-size iterator yielded more than its length");
+        slice
+    }
+}
+
+impl<T> Default for ThinBoxSlice<T> {
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
+impl<T> From<Vec<T>> for ThinBoxSlice<T> {
+    fn from(values: Vec<T>) -> Self {
+        values.into_boxed_slice().into()
+    }
+}
+
+impl<'a, T> IntoIterator for &'a ThinBoxSlice<T> {
+    type Item = &'a T;
+    type IntoIter = std::slice::Iter<'a, T>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+impl<T> FromIterator<T> for ThinBoxSlice<T> {
+    fn from_iter<I: IntoIterator<Item = T>>(values: I) -> Self {
+        values.into_iter().collect::<Vec<_>>().into()
+    }
+}
+
+impl<T: PartialEq> PartialEq for ThinBoxSlice<T> {
+    fn eq(&self, other: &Self) -> bool {
+        **self == **other
     }
 }
 
@@ -181,7 +247,11 @@ impl<T> Drop for ThinBoxSlice<T> {
 
 impl<T: Clone> Clone for ThinBoxSlice<T> {
     fn clone(&self) -> Self {
-        Self::from_exact_iter(self.iter().cloned())
+        let mut clone = Self::from_exact_iter(self.iter().cloned());
+        if self.marked() {
+            clone.mark();
+        }
+        clone
     }
 }
 
@@ -219,6 +289,11 @@ mod tests {
         assert_eq!(std::rc::Rc::strong_count(&shared), 5);
         drop(slice);
         drop(copy);
+        assert_eq!(std::rc::Rc::strong_count(&shared), 1);
+        let made = ThinBoxSlice::try_from_fn(3, |_| Some(shared.clone())).unwrap();
+        assert_eq!(std::rc::Rc::strong_count(&shared), 4);
+        drop(made);
+        assert!(ThinBoxSlice::try_from_fn(3, |index| (index < 2).then(|| shared.clone())).is_none());
         assert_eq!(std::rc::Rc::strong_count(&shared), 1);
         let empty: ThinBoxSlice<u64> = Vec::new().into_boxed_slice().into();
         assert!(empty.is_empty());

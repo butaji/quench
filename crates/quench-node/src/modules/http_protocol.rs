@@ -209,7 +209,11 @@ pub(crate) fn compose(
     send_date: bool,
     now: std::time::SystemTime,
 ) -> Vec<u8> {
-    let mut out = format!("HTTP/1.1 {status} ").into_bytes();
+    use std::io::Write as _;
+    let header_bytes: usize = headers.iter().map(|(key, value)| key.len() + value.len() + 4).sum();
+    let mut out = Vec::with_capacity(RESPONSE_HEAD_RESERVE + header_bytes + body.len());
+    // Writes into a Vec cannot fail.
+    let _ = write!(out, "HTTP/1.1 {status} ");
     out.extend_from_slice(text);
     out.extend_from_slice(b"\r\n");
     let chunked = headers.iter().any(|(key, value)| {
@@ -221,34 +225,39 @@ pub(crate) fn compose(
             .iter()
             .any(|(key, _)| key.eq_ignore_ascii_case("content-length"))
     {
-        out.extend_from_slice(format!("Content-Length: {}\r\n", body.len()).as_bytes());
+        let _ = write!(out, "Content-Length: {}\r\n", body.len());
     }
     if send_date
         && !headers
             .iter()
             .any(|(key, _)| key.eq_ignore_ascii_case("date"))
     {
-        let now: chrono::DateTime<chrono::Utc> = now.into();
-        out.extend_from_slice(format!("Date: {}\r\n", now.format("%a, %d %b %Y %H:%M:%S GMT")).as_bytes());
+        out.extend_from_slice(b"Date: ");
+        append_http_date(&mut out, now);
+        out.extend_from_slice(b"\r\n");
     }
     let connection = headers
         .iter()
         .find(|(key, _)| key.eq_ignore_ascii_case("connection"))
         .map(|(_, value)| value.as_str())
         .unwrap_or(if keep_alive { "keep-alive" } else { "close" });
-    let transfer_encoding = headers
-        .iter()
-        .filter(|(key, _)| key.eq_ignore_ascii_case("transfer-encoding"))
-        .collect::<Vec<_>>();
+    let header_line = |out: &mut Vec<u8>, key: &str, value: &str| {
+        out.extend_from_slice(key.as_bytes());
+        out.extend_from_slice(b": ");
+        out.extend_from_slice(value.as_bytes());
+        out.extend_from_slice(b"\r\n");
+    };
     for (key, value) in headers {
         if key.eq_ignore_ascii_case("transfer-encoding") || key.eq_ignore_ascii_case("connection") {
             continue;
         }
-        out.extend_from_slice(format!("{key}: {value}\r\n").as_bytes());
+        header_line(&mut out, key, value);
     }
-    out.extend_from_slice(format!("Connection: {connection}\r\n").as_bytes());
-    for (key, value) in transfer_encoding {
-        out.extend_from_slice(format!("{key}: {value}\r\n").as_bytes());
+    header_line(&mut out, "Connection", connection);
+    for (key, value) in headers {
+        if key.eq_ignore_ascii_case("transfer-encoding") {
+            header_line(&mut out, key, value);
+        }
     }
     out.extend_from_slice(b"\r\n");
     if chunked {
@@ -259,14 +268,47 @@ pub(crate) fn compose(
     out
 }
 
+/// Bytes a response head takes beyond its headers: the status line, the framing and date
+/// headers and the blank line.
+const RESPONSE_HEAD_RESERVE: usize = 128;
+
+thread_local! {
+    /// The IMF-fixdate of the last second a response head named, as Node's `utcDate`
+    /// caches it: responses within one second share the formatted text.
+    static HTTP_DATE: std::cell::RefCell<(u64, String)> =
+        const { std::cell::RefCell::new((u64::MAX, String::new())) };
+}
+
+/// Appends `now` as an IMF-fixdate (`Sun, 06 Nov 1994 08:49:37 GMT`).
+fn append_http_date(out: &mut Vec<u8>, now: std::time::SystemTime) {
+    let second = now
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs());
+    HTTP_DATE.with(|cached| {
+        let mut cached = cached.borrow_mut();
+        if cached.0 != second {
+            let date: chrono::DateTime<chrono::Utc> = now.into();
+            *cached = (second, date.format("%a, %d %b %Y %H:%M:%S GMT").to_string());
+        }
+        out.extend_from_slice(cached.1.as_bytes());
+    });
+}
+
 pub(crate) fn chunk_frame(body: &[u8]) -> Vec<u8> {
-    if body.is_empty() {
-        return Vec::new();
-    }
-    let mut frame = format!("{:x}\r\n", body.len()).into_bytes();
-    frame.extend_from_slice(body);
-    frame.extend_from_slice(b"\r\n");
+    let mut frame = Vec::new();
+    append_chunk_frame(&mut frame, body);
     frame
+}
+
+/// Append one chunked-coding frame; an empty body has none, as `0` ends the message.
+pub(crate) fn append_chunk_frame(out: &mut Vec<u8>, body: &[u8]) {
+    if body.is_empty() {
+        return;
+    }
+    use std::io::Write;
+    write!(out, "{:x}\r\n", body.len()).expect("writing to a Vec cannot fail");
+    out.extend_from_slice(body);
+    out.extend_from_slice(b"\r\n");
 }
 
 pub(crate) fn chunk_terminator(trailers: &[(String, String)]) -> Vec<u8> {

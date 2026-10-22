@@ -46,37 +46,82 @@ impl FunctionCompiler<'_, '_> {
         self.literal(Constant::Undefined)
     }
 
+    /// Whether this function binds `atom` in its own scope or an active block, so a reference
+    /// to it does not reach an outer scope.
+    pub(in crate::compile) fn binds_name(&self, atom: Atom) -> bool {
+        self.binds_own_name(atom) || self.scopes.contains(atom)
+    }
+
+    /// Whether this function itself binds `atom`, apart from the scopes it is nested in.
+    pub(in crate::compile) fn binds_own_name(&self, atom: Atom) -> bool {
+        self.function_scope.contains(&atom) || self.active_lexical_binding(atom).is_some()
+    }
+
     pub(super) fn unary(&mut self, value: &UnaryExpression<'_>) -> Register {
         if value.operator == UnaryOperator::Delete {
             return self.delete_expression(&value.argument);
         }
+        if let Some(constant) = binding_time::unary(value).static_value() {
+            return self.literal(constant);
+        }
         let input = if value.operator == UnaryOperator::Typeof {
-            let mut operand = &value.argument;
-            while let Expression::ParenthesizedExpression(parenthesized) = operand {
-                operand = &parenthesized.expression;
-            }
-            if let Expression::Identifier(identifier) = operand {
-                let atom = self.owner.atom(identifier.name.as_str());
-                let bound = self.function_scope.contains(&atom)
-                    || self.active_lexical_binding(atom).is_some()
-                    || self.scopes.iter().any(|scope| scope.contains_key(&atom));
-                if bound {
-                    self.expression(operand)
-                } else {
-                    let input = self.reg();
-                    let cache = self.owner.cache_site();
-                    self.emit(Op::LoadNameTypeof, input, 0, cache, atom);
-                    input
-                }
-            } else {
-                self.expression(operand)
-            }
+            self.typeof_operand(&value.argument)
         } else {
             self.expression(&value.argument)
         };
         let dst = self.reg();
         self.emit(Op::Unary, dst, input, 0, value.operator as u32);
         dst
+    }
+
+    /// The value `typeof` examines: an unresolvable name reads as undefined rather than
+    /// throwing (ECMA-262 13.5.3.1 step 2), which `LoadNameTypeof` does.
+    fn typeof_operand(&mut self, argument: &Expression<'_>) -> Register {
+        let mut operand = argument;
+        while let Expression::ParenthesizedExpression(parenthesized) = operand {
+            operand = &parenthesized.expression;
+        }
+        if let Expression::Identifier(identifier) = operand {
+            let atom = self.owner.atom(identifier.name.as_str());
+            if !self.binds_name(atom) {
+                let input = self.reg();
+                let cache = self.owner.cache_site();
+                self.emit(Op::LoadNameTypeof, input, 0, cache, atom);
+                return input;
+            }
+        }
+        self.expression(operand)
+    }
+
+    /// `typeof x === "name"` and its `!==`, `==` and `!=` forms, either way round, for a name
+    /// some value's `typeof` yields: the boolean of a `UNARY_TYPEOF_IS` test of `x`. Both
+    /// operands are strings, so loose and strict equality agree, and the literal side has
+    /// no effects to order. `None` for any other comparison.
+    pub(super) fn typeof_test(&mut self, value: &BinaryExpression<'_>) -> Option<Register> {
+        let negated = match value.operator {
+            BinaryOperator::StrictEquality | BinaryOperator::Equality => false,
+            BinaryOperator::StrictInequality | BinaryOperator::Inequality => true,
+            _ => return None,
+        };
+        fn unparenthesized<'e, 'a>(mut expression: &'e Expression<'a>) -> &'e Expression<'a> {
+            while let Expression::ParenthesizedExpression(parenthesized) = expression {
+                expression = &parenthesized.expression;
+            }
+            expression
+        }
+        let (typeof_argument, operator) = match (unparenthesized(&value.left), unparenthesized(&value.right)) {
+            (Expression::UnaryExpression(unary), Expression::StringLiteral(name))
+            | (Expression::StringLiteral(name), Expression::UnaryExpression(unary))
+                if unary.operator == UnaryOperator::Typeof =>
+            {
+                (&unary.argument, crate::bytecode::typeof_test_operator(name.value.as_str(), negated)?)
+            }
+            _ => return None,
+        };
+        let input = self.typeof_operand(typeof_argument);
+        let dst = self.reg();
+        self.emit(Op::Unary, dst, input, 0, operator);
+        Some(dst)
     }
 
     fn delete_expression(&mut self, argument: &Expression<'_>) -> Register {
@@ -176,6 +221,7 @@ impl FunctionCompiler<'_, '_> {
     }
 
     pub(super) fn call(&mut self, value: &CallExpression<'_>) -> Register {
+        self.owner.note_invoked_callee(&value.callee);
         if Self::has_spread(&value.arguments) {
             if super::super::early::is_direct_eval_call(value) {
                 return self.direct_eval_spread_call(value);
@@ -369,11 +415,11 @@ impl FunctionCompiler<'_, '_> {
         if self.dynamic_eval && let Some(atom) = self.super_home_atom {
             let location = self.local_slots.get(&atom).copied()
                 .map(crate::bytecode::EvalBindingLocation::Local)
-                .or_else(|| self.scopes.iter().enumerate().find_map(|(depth, scope)| {
-                    let slot = *scope.get(&atom)?;
+                .or_else(|| {
+                    let (depth, slot) = self.scopes.find(atom)?;
                     let depth = u16::try_from(depth).ok()?;
                     Some(crate::bytecode::EvalBindingLocation::Capture { depth, slot })
-                }));
+                });
             if let Some(location) = location
                 && !direct.iter().any(|binding| binding.atom == atom)
             {
@@ -385,15 +431,20 @@ impl FunctionCompiler<'_, '_> {
             }
         }
         direct.sort_unstable_by_key(|binding| binding.atom);
-        let captured = self.owner.captured_names(&self.scopes);
-        let mut hidden: Vec<Atom> = self
-            .function_scope
-            .iter()
-            .copied()
-            .filter(|atom| captured.as_ref().is_some_and(|names| names.contains(*atom)))
-            .collect();
-        hidden.sort_unstable();
-        crate::bytecode::NameBindings::new(direct, hidden, captured)
+        // The captured and hidden names are consulted only by lookups through dynamic name
+        // resolution, which the whole program decides; `Compiler::finish` resolves them for
+        // the functions that may see such a lookup (`capture_layout::dynamic_name_scopes`).
+        self.owner.deferred_name_bindings.insert(
+            self.function_id,
+            super::super::DeferredNameBindings {
+                names_private_members: self.owner.private_name_references
+                    != self.private_name_references,
+                direct: direct.clone(),
+                scopes: self.scopes.clone(),
+                function_scope: self.function_scope.iter().copied().collect(),
+            },
+        );
+        crate::bytecode::NameBindings::new(direct, Vec::new(), None)
     }
 
     fn after_super_call(&mut self, result: Register) {

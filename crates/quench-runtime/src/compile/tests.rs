@@ -24,11 +24,11 @@ fn regression_global_var_lowering_checks_instruction_roles_before_slots() {
                     .iter()
                     .any(|instruction| instruction.op() == Op::StoreEnvLocal)
             );
-            assert!(!root.global_lexical_atoms.is_empty());
+            assert!(!root.global_lexical_atoms().is_empty());
             assert!(
-                root.global_lexical_atoms
+                root.global_lexical_atoms()
                     .iter()
-                    .all(|atom| !root.global_var_atoms.contains(atom))
+                    .all(|atom| !root.global_var_atoms().contains(atom))
             );
             assert_eq!(!root.wide.is_empty(), !suffix.is_empty());
             program.validate().unwrap();
@@ -83,6 +83,7 @@ fn register_promotion_admits_statement_level_and_nested_writes() {
     ] {
         let source = format!("function update(value) {{ var other; {body} return value; }}");
         let program = Engine::specialize(&source, "write.js").unwrap();
+        program.compile_released();
         assert_eq!(
             program.functions[1].local_registers.len(),
             2,
@@ -95,6 +96,7 @@ fn register_promotion_admits_statement_level_and_nested_writes() {
         "delete.js",
     )
     .unwrap();
+    program.compile_released();
     assert!(program.functions[1].local_registers.is_empty());
     program.validate().unwrap();
 }
@@ -106,6 +108,7 @@ fn validator_rejects_a_promoted_binding_read_through_its_local_slot() {
         "promoted-register-validation.js",
     )
     .unwrap();
+    program.compile_released();
     let function = &mut program.functions[1];
     assert_eq!(function.local_registers.len(), 1);
     let local = function.local_registers[0].local;
@@ -153,6 +156,7 @@ fn regexp_literals_lower_to_validated_site_metadata() {
         "regexp-site.js",
     )
     .unwrap();
+    program.compile_released();
     assert_eq!(program.regexp_literal_sites.len(), 1);
     let site = &program.regexp_literal_sites[0];
     assert!(matches!(

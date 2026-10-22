@@ -19,6 +19,8 @@ impl FunctionCompiler<'_, '_> {
             && !Self::anonymous_function_definition(&second.value)
             && let (Some(first_key), Some(second_key)) =
                 (Self::static_key(&first.key), Self::static_key(&second.key))
+            // A shape gains only keys it lacks; `{ a, a }` defines one property.
+            && first_key != second_key
         {
             let first_value = self.expression(&first.value);
             let second_value = self.expression(&second.value);
@@ -66,7 +68,12 @@ impl FunctionCompiler<'_, '_> {
             })
             .then(|| self.hidden_local(&format!("\0quench:object-home:{}", value.span.start)));
         if let Some(super_atom) = super_atom {
-            self.clone_environment_slots(vec![self.local_slots[&super_atom]]);
+            // Each evaluation's methods find their own home only through `super`: a literal
+            // whose methods cannot reference it shares the binding, rather than cloning the
+            // environment, which every later closure of the scope would then capture.
+            if Self::object_methods_may_reference_super(value) {
+                self.clone_environment_slots(vec![self.local_slots[&super_atom]]);
+            }
             self.store_atom(super_atom, dst);
         }
         // Each property's temporaries are dead once it is defined on `dst`.
@@ -224,13 +231,14 @@ impl FunctionCompiler<'_, '_> {
             if Self::anonymous_function_definition(&property.value) {
                 self.emit_function_name(item, atom);
             }
-            self.emit(Op::DefineField, item, dst, 0, atom);
+            let cache = self.owner.cache_site();
+            self.emit(Op::DefineField, item, dst, cache, atom);
         }
         self.next_reg = temporaries;
         dst
     }
 
-    fn static_object_data_properties<'property, 'ast>(
+    pub(super) fn static_object_data_properties<'property, 'ast>(
         value: &'property ObjectExpression<'ast>,
     ) -> Option<Vec<(&'property ObjectProperty<'ast>, &'property str)>> {
         value
@@ -277,6 +285,35 @@ impl FunctionCompiler<'_, '_> {
         );
     }
 
+    /// Whether a method or accessor of `value` may read its home object: some `super`
+    /// within it, nested functions and classes included, or a direct `eval`, whose code
+    /// may name `super`.
+    fn object_methods_may_reference_super(value: &ObjectExpression<'_>) -> bool {
+        use oxc_ast_visit::{Visit, walk};
+        struct SuperFinder(bool);
+        impl<'a> Visit<'a> for SuperFinder {
+            fn visit_super(&mut self, _: &oxc_ast::ast::Super) {
+                self.0 = true;
+            }
+            fn visit_call_expression(&mut self, call: &oxc_ast::ast::CallExpression<'a>) {
+                if super::super::early::is_direct_eval_call(call) {
+                    self.0 = true;
+                } else {
+                    walk::walk_call_expression(self, call);
+                }
+            }
+        }
+        let mut finder = SuperFinder(false);
+        for property in &value.properties {
+            if let ObjectPropertyKind::ObjectProperty(property) = property
+                && (property.method || property.kind != PropertyKind::Init)
+            {
+                finder.visit_expression(&property.value);
+            }
+        }
+        finder.0
+    }
+
     fn object_method(
         &mut self,
         value: &Expression<'_>,
@@ -286,36 +323,15 @@ impl FunctionCompiler<'_, '_> {
         let Expression::FunctionExpression(function) = value else {
             return self.expression(value);
         };
-        let params = Self::params_from_formals(&function.params, self.owner);
-        let body = function
-            .body
-            .as_ref()
-            .map_or(&[][..], |body| body.statements.as_slice());
-        let scopes = self.capture_scopes();
-        let id = self.owner.compile_function(
-            None,
-            &params,
-            FunctionBody::Statements(body),
-            &scopes,
-            Some(self.function_id),
-            FunctionOptions {
-                defaults: Some(&function.params),
-                source_span: self.owner.source_span(source_span),
-                async_function: function.r#async,
-                generator: function.generator,
-                with_depth: self.with_depth,
-                non_constructible: true,
-                super_home: true,
-                super_home_atom: Some(super_atom),
-                strict: self.strict
-                    || function.body.as_ref().is_some_and(|body| {
-                        body.directives
-                            .iter()
-                            .any(|directive| directive.directive == "use strict")
-                    }),
-                ..FunctionOptions::default()
-            },
-        );
+        let context = super::super::replay::ObjectMethodContext {
+            property_span: source_span,
+            home_atom: super_atom,
+            scopes: self.capture_scopes(),
+            parent: self.function_id,
+            with_depth: self.with_depth,
+            inherited_strict: self.strict,
+        };
+        let id = self.owner.compile_replayable_object_method(function, context);
         let dst = self.reg();
         self.emit(Op::MakeClosure, dst, 0, 0, id);
         dst

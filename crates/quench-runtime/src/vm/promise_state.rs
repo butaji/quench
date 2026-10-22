@@ -2,8 +2,26 @@ use super::promise::{PromiseRejectionState, PromiseState, RejectionNotification}
 use super::*;
 
 impl<H: Host> Vm<H> {
+    /// The state of `promise`, or `None` when the value is not a promise.
+    pub(super) fn promise_record(&self, promise: Value) -> Option<&super::promise::PromiseRecord> {
+        self.heap.promise(promise).map(|promise| &promise.record)
+    }
+
+    /// The state of `promise` for an update; the heap's write barrier logs the promise, so a
+    /// minor collection sees the reactions and result stored into an old one.
+    pub(super) fn promise_record_mut(
+        &mut self,
+        promise: Value,
+    ) -> Option<&mut super::promise::PromiseRecord> {
+        self.heap.promise_mut(promise).map(|promise| &mut promise.record)
+    }
+
+    pub(super) fn is_promise(&self, value: Value) -> bool {
+        self.promise_record(value).is_some()
+    }
+
     pub(super) fn observe_promise_rejection(&mut self, promise: Value) {
-        let Some(record) = self.realm.promise.records.get_mut(&promise) else {
+        let Some(record) = self.promise_record_mut(promise) else {
             return;
         };
         let notification = match record.rejection {
@@ -44,13 +62,13 @@ impl<H: Host> Vm<H> {
                 continue;
             };
             let Some(id) = (|| {
-                let record = self.realm.promise.records.get_mut(&promise)?;
+                let record = self.promise_record_mut(promise)?;
                 if record.rejection != PromiseRejectionState::HandledReported
                     || record.state != PromiseState::Rejected
                 {
                     return None;
                 }
-                let id = record.rejection_id?;
+                let id = record.rejection_id?.get();
                 record.rejection = PromiseRejectionState::Handled;
                 Some(id)
             })() else {
@@ -77,13 +95,13 @@ impl<H: Host> Vm<H> {
                 continue;
             };
             let Some((id, result)) = (|| {
-                let record = self.realm.promise.records.get_mut(&promise)?;
+                let record = self.promise_record_mut(promise)?;
                 if record.rejection != PromiseRejectionState::AwaitingReport
                     || record.state != PromiseState::Rejected
                 {
                     return None;
                 }
-                let id = record.rejection_id?;
+                let id = record.rejection_id?.get();
                 record.rejection = PromiseRejectionState::Reporting;
                 Some((id, record.result))
             })() else {
@@ -103,7 +121,7 @@ impl<H: Host> Vm<H> {
         &mut self,
         promise: Value,
     ) -> Result<(), JsError> {
-        let Some(record) = self.realm.promise.records.get_mut(&promise) else {
+        let Some(record) = self.promise_record_mut(promise) else {
             return Err(JsError("invalid Promise rejection report".into()));
         };
         if record.state != PromiseState::Rejected
@@ -122,8 +140,8 @@ impl<H: Host> Vm<H> {
         state: PromiseState,
         result: Value,
     ) -> Result<(), JsError> {
-        let (reactions, notify_unhandled) = {
-            let Some(record) = self.realm.promise.records.get_mut(&promise) else {
+        let (reactions, notify_unhandled, module_evaluation) = {
+            let Some(record) = self.promise_record_mut(promise) else {
                 return Err(JsError("invalid Promise state".into()));
             };
             if record.state != PromiseState::Pending {
@@ -131,6 +149,7 @@ impl<H: Host> Vm<H> {
             }
             record.state = state;
             record.result = result;
+            let module_evaluation = record.module_evaluation;
             let notify_unhandled = if state == PromiseState::Rejected
                 && record.rejection == PromiseRejectionState::Unobserved
             {
@@ -139,9 +158,10 @@ impl<H: Host> Vm<H> {
             } else {
                 false
             };
-            (std::mem::take(&mut record.reactions), notify_unhandled)
+            (std::mem::take(&mut record.reactions), notify_unhandled, module_evaluation)
         };
-        if let Some(resource) = self.realm.promise.records[&promise].host_context {
+        self.realm.promise.async_module_settled |= module_evaluation;
+        if let Some(resource) = self.promise_record(promise).expect("promise record").host_context {
             // The reactions have left the authoritative record but are not
             // queued yet. Hooks may collect, so keep their entire payload live.
             let roots = std::iter::once(promise).chain(std::iter::once(result)).chain(
@@ -161,12 +181,9 @@ impl<H: Host> Vm<H> {
                 .checked_add(1)
                 .expect("Promise rejection identifier space exhausted");
             self.realm.promise.last_rejection_id = id;
-            self.realm
-                .promise
-                .records
-                .get_mut(&promise)
+            self.promise_record_mut(promise)
                 .expect("settled Promise record remains registered")
-                .rejection_id = Some(id);
+                .rejection_id = std::num::NonZeroU64::new(id);
             self.realm
                 .promise
                 .rejection_notifications

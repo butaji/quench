@@ -33,6 +33,30 @@ impl<H: Host> Vm<H> {
         })
     }
 
+    /// The length of a string primitive, in UTF-16 code units: its own `length`, which no
+    /// prototype can shadow.
+    pub(super) fn string_length(&self, value: Value) -> Option<usize> {
+        self.heap.string(value).map(|string| string.len())
+    }
+
+    /// The own data `length` of an arguments object that keeps the layout it was made with
+    /// (a realm's `ArgumentsObjectTemplate` shape, which fixes the property, its attributes
+    /// and its slot); `None` for any other value or layout.
+    pub(super) fn arguments_object_length(&self, target: Value) -> Option<Value> {
+        let object = self.heap.object(target)?;
+        if !self.heap.array(target)?.is_arguments_object() {
+            return None;
+        }
+        let shape = object.shape();
+        [true, false].into_iter().find_map(|expose_callee| {
+            let template =
+                self.realm.intrinsics.arguments_objects.get(&(self.realm.globals, expose_callee))?;
+            (self.heap.object(template.anchor)?.shape() == shape)
+                .then(|| self.heap.property_get(object, template.length_slot))
+                .flatten()
+        })
+    }
+
     pub(super) fn has_own_array_index(&self, target: Value, index: usize) -> bool {
         self.array_descriptor(target, index).is_some()
             || self.heap.array_elements(target).is_some() && self.own_element_present(target, index)
@@ -101,7 +125,7 @@ impl<H: Host> Vm<H> {
                 if let Some(blocked_index) = blocked_index {
                     let partial_len = blocked_index + 1;
                     if let Some(elements) = self.heap.array_elements_mut(target) {
-                        Rc::make_mut(elements).truncate(partial_len);
+                        elements.make_mut().truncate(partial_len);
                     }
                     self.heap.sparse_set_length(target, partial_len);
                     for (atom, index, _) in &tail {
@@ -123,7 +147,7 @@ impl<H: Host> Vm<H> {
                     return Ok(false);
                 }
                 if let Some(elements) = self.heap.array_elements_mut(target) {
-                    Rc::make_mut(elements).truncate(next_len);
+                    elements.make_mut().truncate(next_len);
                 }
                 for (atom, _, _) in &tail {
                     self.descriptors
@@ -399,7 +423,7 @@ impl<H: Host> Vm<H> {
             if let Some(elements) = self.heap.array_elements_mut(target)
                 && index < elements.len()
             {
-                Rc::make_mut(elements)[index] = Value::DELETED;
+                elements.make_mut()[index] = Value::DELETED;
             } else {
                 self.heap.sparse_set(target, index, Value::DELETED);
             }

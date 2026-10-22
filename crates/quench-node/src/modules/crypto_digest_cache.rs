@@ -129,3 +129,10 @@ impl Registry {
             .cloned()
     }
 }
+
+impl Registry {
+    /// Whether the registry was never filled (`startup_snapshot`).
+    pub(crate) fn snapshot_quiescent(&self) -> bool {
+        self.generation.is_none() && self.entries.is_empty()
+    }
+}

@@ -4,20 +4,67 @@ use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 const FACTORY: &str = quench_js_check::checked_js!(
-    r#"(namesNative, listenersNative, rawNative, countNative, addNative, onceNative, removeNative, allNative, emitNative) => {
+    r#"(namesNative, listenersNative, rawNative, countNative, addNative, onceNative, removeNative, allNative, emitNative, emitListenersNative, captureNative, apply, shapeKey) => {
   'use strict';
   return {
     eventNames: function eventNames() { return namesNative(this); },
     listeners: function listeners(type) { return listenersNative(this, type); },
     rawListeners: function rawListeners(type) { return rawNative(this, type); },
     listenerCount: function listenerCount(type, listener) { return countNative(this, type, listener); },
-    addListener: function addListener(type, listener) { return addNative(this, type, listener, false); },
+    // The first listener of a type, with no "newListener" subscriber, is stored and counted
+    // here as `addNative` stores and counts it; any other registration takes the native store.
+    addListener: function addListener(type, listener) {
+      if (typeof listener === "function") {
+        const events = this._events;
+        if (events !== undefined && events.newListener === undefined && events[type] === undefined) {
+          events[type] = listener;
+          this._eventsCount++;
+          return this;
+        }
+      }
+      return addNative(this, type, listener, false);
+    },
     prependListener: function prependListener(type, listener) { return addNative(this, type, listener, true); },
     once: function once(type, listener) { return onceNative(this, type, listener, false); },
     prependOnceListener: function prependOnceListener(type, listener) { return onceNative(this, type, listener, true); },
-    removeListener: function removeListener(type, listener) { return removeNative(this, type, listener); },
+    // Removing a type's lone listener (or the once wrapper of it) retires the type here as
+    // `removeNative` retires it (`event_removed`, then the "removeListener" notification);
+    // a listener array and every other case take the native store.
+    removeListener: function removeListener(type, listener) {
+      if (typeof listener === "function") {
+        const events = this._events;
+        if (events === undefined) return this;
+        const record = events[type];
+        if (record === undefined) return this;
+        if (typeof record === "function" && (record === listener || record.listener === listener)) {
+          const count = this._eventsCount - 1;
+          this._eventsCount = count;
+          if (this[shapeKey]) events[type] = undefined;
+          else if (count === 0) this._events = { __proto__: null };
+          else delete events[type];
+          if (events.removeListener !== undefined) {
+            const original = record.listener;
+            this.emit("removeListener", type, original ? original : listener);
+          }
+          return this;
+        }
+      }
+      return removeNative(this, type, listener);
+    },
     removeAllListeners: function removeAllListeners(type) { return allNative(this, type, arguments.length > 0); },
-    emit: function emit(type, ...args) { return emitNative(this, type, args); }
+    // Any event but "error" with one function listener calls it here, as `emitListenersNative`
+    // would, so the listener runs without a native boundary; a listener array, the "error"
+    // event and every other case take the native store's dispatch.
+    emit: function emit(type, ...args) {
+      if (type === "error") return emitNative(this, type, args);
+      const events = this._events;
+      if (events === undefined) return false;
+      const handler = events[type];
+      if (typeof handler !== "function") return emitListenersNative(this, type, args, handler);
+      const result = apply(handler, this, args);
+      if (result !== undefined && result !== null) captureNative(this, result, type, args);
+      return true;
+    }
   };
 }"#
 );
@@ -111,11 +158,16 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         "emitterRemoveListener",
         "emitterRemoveAllListeners",
         "emitterEmit",
+        "emitterEmitListeners",
+        "emitterCaptureResult",
     ] {
         operations.push(
             context.host_function_with_data(crate::host::shared_vm::operation(operation), data)?,
         );
     }
+    let reflect = get(context, global, "Reflect")?;
+    operations.push(get(context, reflect, "apply")?);
+    operations.push(get(context, data, "shapeKey")?);
     let factory = context.evaluate_script_rooted(FACTORY, "node:events/inspection.js")?;
     let undefined = context.undefined();
     let api = context.call_rooted(factory, undefined, &operations)?;
@@ -234,14 +286,34 @@ fn listener_arguments(
     context: &mut NativeContext<'_, NodeHost>,
     arguments: RootId,
 ) -> Result<Vec<RootId>, RootedError> {
-    let length = get(context, arguments, "length")?;
-    let length = context
-        .rooted_value(length)
-        .and_then(|value| value.as_number())
-        .unwrap_or_default() as usize;
-    (0..length)
-        .map(|index| get(context, arguments, &index.to_string()))
-        .collect()
+    context.array_like_values_rooted(arguments)
+}
+
+/// The retained string `"error"` (`SharedNodeState::error_event_name`).
+fn error_event_name(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    let shared = context.host_mut().shared_state();
+    if let Some(name) = shared.borrow().error_event_name {
+        return Ok(name);
+    }
+    let name = context.string_rooted("error");
+    let name = context.retain(name)?;
+    shared.borrow_mut().error_event_name = Some(name);
+    Ok(name)
+}
+
+/// A single listener's result from the JavaScript `emit`: captured rejections apply to it as
+/// `emit_listeners` applies them (`capture_result`).
+pub(crate) fn capture_listener_result(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let missing = context.undefined();
+    let [target, result, event, arguments] =
+        std::array::from_fn(|index| args.get(index).copied().unwrap_or(missing));
+    let data = context.host_function_data()?;
+    super::event_constructor_shared_vm::capture_result(context, data, target, result, event, arguments)?;
+    Ok(missing)
 }
 
 /// The emitting counter belongs to the listener array, including nested emits.
@@ -704,7 +776,7 @@ pub(crate) fn emit(
     let target = args.first().copied().unwrap_or(missing);
     let event = args.get(1).copied().unwrap_or(missing);
     let arguments = args.get(2).copied().unwrap_or(missing);
-    let error = context.string_rooted("error");
+    let error = error_event_name(context)?;
     if !context.strict_equal_rooted(event, error)? {
         let events = get(context, target, "_events")?;
         if undefined(context, events) {

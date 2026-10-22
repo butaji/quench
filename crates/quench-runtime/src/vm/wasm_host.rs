@@ -13,17 +13,30 @@ enum WasmHostInvocation {
 }
 
 impl<H: Host> Vm<H> {
+    /// A host function of an embedding signature, whose types name no declarations.
     pub(crate) fn create_wasm_host_function(
         &mut self,
         name: &str,
         target: crate::heap::WasmHostTarget,
         signature: WasmSignature,
     ) -> Result<Value, JsError> {
-        if signature
-            .params
-            .iter()
-            .chain(&signature.results)
-            .any(|ty| ty.requires_declarations())
+        self.create_owned_wasm_host_function(name, target, signature, None)
+    }
+
+    /// A host function whose signature's declared types, if any, resolve in `owner`.
+    pub(crate) fn create_owned_wasm_host_function(
+        &mut self,
+        name: &str,
+        target: crate::heap::WasmHostTarget,
+        signature: WasmSignature,
+        owner: Option<Rc<crate::wasm::WasmSignatures>>,
+    ) -> Result<Value, JsError> {
+        if owner.is_none()
+            && signature
+                .params
+                .iter()
+                .chain(&signature.results)
+                .any(|ty| ty.requires_declarations())
         {
             return Err(JsError::validation(
                 "embedded Wasm signature requires a declaration owner".into(),
@@ -45,11 +58,11 @@ impl<H: Host> Vm<H> {
         let length = signature.params.len();
         let environment = self.heap.alloc(Cell::WasmHostFunction {
             target,
-            signature: Rc::new(signature),
+            signature: Rc::new(crate::wasm::WasmHostSignature { signature, owner }),
         });
         let function = self.native_with_env(Native::WasmHost, environment);
         self.set_builtin_function_name(function, name)?;
-        let atom = self.intern_atom("length");
+        let atom = self.length_atom;
         self.set_property_with_attributes(
             function,
             atom,
@@ -74,11 +87,11 @@ impl<H: Host> Vm<H> {
         let function = self
             .root_value(root)
             .ok_or_else(|| JsError::wasm_link("invalid Wasm host function root"))?;
-        let Some(Cell::Function {
+        let Some(FunctionRecord {
             kind: FunctionKind::Native(Native::WasmHost),
             env,
             ..
-        }) = self.heap.get(function)
+        }) = self.heap.function(function)
         else {
             return Err(JsError::wasm_link("not a typed Wasm host function"));
         };
@@ -103,16 +116,16 @@ impl<H: Host> Vm<H> {
             .get(self.active_program)
             .ok_or_else(|| JsError::validation("missing host caller program".into()))?;
         let result = self.call_value(&program, function, Value::UNDEFINED, &arguments)?;
-        self.decode_wasm_result_types(&signature.results, result, None)
+        self.decode_wasm_result_types(&signature.results, result, signature.declarations())
     }
 
     pub(super) fn wasm_callable_signature(&self, function: Value) -> Option<&WasmSignature> {
-        match self.heap.get(function)? {
-            Cell::Function {
+        match self.heap.function(function)? {
+            FunctionRecord {
                 kind: FunctionKind::User(program, index),
                 ..
             } => self.programs.wasm_function_signature(*program, *index),
-            Cell::Function {
+            FunctionRecord {
                 kind: FunctionKind::Native(Native::WasmHost),
                 env,
                 ..
@@ -133,8 +146,8 @@ impl<H: Host> Vm<H> {
         expected_index: u32,
         exact: bool,
     ) -> Option<bool> {
-        match self.heap.get(function)? {
-            Cell::Function {
+        match self.heap.function(function)? {
+            FunctionRecord {
                 kind: FunctionKind::User(program, index),
                 ..
             } => {
@@ -146,7 +159,7 @@ impl<H: Host> Vm<H> {
                     exact,
                 ))
             }
-            Cell::Function {
+            FunctionRecord {
                 kind: FunctionKind::Native(Native::WasmHost),
                 ..
             } => Some(
@@ -289,7 +302,7 @@ impl<H: Host> Vm<H> {
                 _ => self.heap.alloc(Cell::Array {
                     object: crate::heap::ArrayObject::new(
                         Self::empty_object(Value::NULL),
-                        values.into(),
+                        values,
                     ),
                 }),
             })
@@ -327,12 +340,11 @@ impl<H: Host> Vm<H> {
         self.profile
             .call_target(0, args.len() + raw_i32_args.map_or(0, |_| 3));
 
-        let realm = match self.heap.get(wrapper) {
-            Some(Cell::Function { object, .. })
-                if object.realm == self.realm.globals
-                    || !self.shared_natives.contains(&wrapper) =>
+        let realm = match self.heap.function(wrapper) {
+            Some(FunctionRecord { realm, .. })
+                if *realm == self.realm.globals || !self.shared_natives.contains(&wrapper) =>
             {
-                object.realm
+                *realm
             }
             _ => self.realm.globals,
         };
@@ -609,20 +621,23 @@ mod tests {
             )
             .unwrap();
         let exports = vm.evaluate_embedding_compiled_script(&script).unwrap();
+        // The helper and its replacement view are reached only through `exports` until the
+        // test stores them; collections in between must keep them.
+        let _exports_root = vm.root(exports);
         let helper_atom = vm.intern_atom("helper");
         let helper = vm.own_property(exports, helper_atom).unwrap();
         let replacement_atom = vm.intern_atom("replacement");
         let replacement = vm.own_property(exports, replacement_atom).unwrap();
-        let Cell::Function {
+        let FunctionRecord {
             kind: FunctionKind::User(program_id, function_id),
             env,
             ..
-        } = vm.heap.get(helper).unwrap()
+        } = vm.heap.function(helper).unwrap()
         else {
             panic!("helper should be a user function")
         };
         let helper_program = vm.programs.get(*program_id).unwrap();
-        let helper_metadata = &helper_program.functions[*function_id as usize];
+        let helper_metadata = &helper_program.function(*function_id as usize);
         let helper_source = helper_metadata.source_span.map(|span| {
             &helper_program.source.as_ref().unwrap().text[span.start as usize..span.end as usize]
         });
@@ -1294,7 +1309,7 @@ mod tests {
                 signature,
             )
             .unwrap();
-        let Some(Cell::Function { env, .. }) = vm.heap.get(function) else {
+        let Some(FunctionRecord { env, .. }) = vm.heap.function(function) else {
             panic!()
         };
         let descriptor = *env;

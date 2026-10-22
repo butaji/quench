@@ -126,6 +126,9 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        if let Some(found) = self.dense_index_of(this, args) {
+            return Ok(found);
+        }
         let object = self.box_object_or_type_error(p, this)?;
         let length = self.array_like_length(p, object)?;
         if length == 0 {
@@ -157,6 +160,37 @@ impl<H: Host> Vm<H> {
             }
         }
         Ok(Value::number(-1.0))
+    }
+
+    /// `Array.prototype.indexOf` of a dense array (`dense_array_length`) from an integer or
+    /// absent `fromIndex`: each element is its own data property, compared by strict
+    /// equality, and a hole no prototype holds (`inherited_index_absent`) is skipped, so no
+    /// guest code runs. `None` for any other receiver or start, or a hole a prototype holds.
+    pub(super) fn dense_index_of(&self, array: Value, args: &[Value]) -> Option<Value> {
+        let length = self.dense_array_length(array)?;
+        let start = match args.get(1) {
+            None => 0,
+            Some(from) => {
+                let from = from.as_int()?;
+                if from < 0 {
+                    length.saturating_sub(from.unsigned_abs() as usize)
+                } else {
+                    (from as usize).min(length)
+                }
+            }
+        };
+        let search = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let elements = self.heap.array(array)?.elements();
+        for (index, value) in elements.iter().enumerate().take(length).skip(start) {
+            if value.is_deleted() {
+                if !self.inherited_index_absent(array, index) {
+                    return None;
+                }
+            } else if self.strict_equal(*value, search) {
+                return Some(Value::number(index as f64));
+            }
+        }
+        Some(Value::number(-1.0))
     }
 
     pub(super) fn array_copy_within_native(
@@ -373,7 +407,7 @@ impl<H: Host> Vm<H> {
         if let Some(length) = self.own_array_length(object) {
             return Ok(length);
         }
-        let length_atom = self.intern_atom("length");
+        let length_atom = self.length_atom;
         let value = self.get_property(p, object, length_atom)?;
         let number = self.to_number(p, value)?;
         if number.is_nan() || number <= 0.0 {

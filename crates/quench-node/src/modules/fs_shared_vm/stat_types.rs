@@ -12,7 +12,7 @@ pub(crate) struct State {
     stats_warning_emitted: bool,
 }
 const FACTORY: &str = quench_js_check::checked_js!(
-    r#"(statsConstruct, mode, checkMode, date, DateConstructor, NumberConstructor, round, emitWarning) => {
+    r#"(statsConstruct, mode, checkMode, date, DateConstructor, NumberConstructor, round) => {
  'use strict';
  function StatsBase(dev, mode, nlink, uid, gid, rdev, blksize, ino, size, blocks) {}
  StatsBase.prototype.isDirectory = function() { return mode(this, 'isDirectory'); };
@@ -47,7 +47,7 @@ const FACTORY: &str = quench_js_check::checked_js!(
  });
  for (const name of ['atime', 'mtime', 'ctime', 'birthtime']) Object.defineProperty(BigIntStats.prototype, name, Object.getOwnPropertyDescriptor(Stats.prototype, name));
  Object.defineProperty(BigIntStats.prototype, 'constructor', { value: BigIntStats, writable: true, configurable: true });
- return { Stats: deprecated, BigIntStats, DateConstructor, NumberConstructor, round, emitWarning };
+ return { Stats: deprecated, BigIntStats, DateConstructor, NumberConstructor, round };
 }"#
 );
 fn get(
@@ -86,8 +86,6 @@ pub(crate) fn install(
     arguments.push(get(context, global, "Number")?);
     let math = get(context, global, "Math")?;
     arguments.push(get(context, math, "round")?);
-    let process = get(context, global, "process")?;
-    arguments.push(get(context, process, "emitWarning")?);
     let factory = context.evaluate_script_rooted(FACTORY, "node:fs/stat-types-facade.js")?;
     let undefined = context.undefined();
     let api = context.call_rooted(factory, undefined, &arguments)?;
@@ -183,14 +181,14 @@ pub(crate) fn construct(
             .fs_stats
             .api
             .ok_or_else(|| RootedError::host("stat API missing"))?;
-        let warning = get(context, api, "emitWarning")?;
+        // lib/internal/util.js `deprecate`: the warning goes through the `process.emitWarning`
+        // in place when it is emitted, with the deprecated function as its constructor.
+        let warning = get(context, process, "emitWarning")?;
+        let deprecated = get(context, api, "Stats")?;
         let text = context.string_rooted("fs.Stats constructor is deprecated.");
-        let options = context.object_rooted()?;
         let kind = context.string_rooted("DeprecationWarning");
         let code = context.string_rooted("DEP0180");
-        set(context, options, "type", kind)?;
-        set(context, options, "code", code)?;
-        context.call_rooted(warning, process, &[text, options])?;
+        context.call_rooted(warning, process, &[text, kind, code, deprecated])?;
     }
     let field_names = BASE_FIELDS;
     for (index, name) in field_names.into_iter().enumerate() {
@@ -322,3 +320,5 @@ pub(crate) fn date(
     set(context, target, &name, date)?;
     Ok(date)
 }
+
+crate::host::startup_snapshot::host_snap_state!(State { api, stats_warning_emitted });

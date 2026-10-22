@@ -310,3 +310,5 @@ pub(crate) fn vfs_pair(
     }
     context.call_rooted(original, this, &forwarded)
 }
+
+crate::host::startup_snapshot::host_snap_state!(State { utilities, vfs_state, exists_type_warning_emitted });

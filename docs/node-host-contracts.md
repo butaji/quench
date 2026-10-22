@@ -631,6 +631,24 @@ Qualification must record both engines' ICU versions: converter tables can vary
 between releases. Complete-buffer comparisons do not qualify streaming decode,
 all input coercions, detached/shared buffers, or constructor metadata.
 
+## WebAssembly modules
+
+A `.wasm` file is an ES module, as Node's `wasm` translator and
+`createDynamicModule` define it, both as an import and as the entry
+(`quench-node main.wasm`). Its record is a generated facade
+(`host/shared_vm/esm_wasm.rs`) that imports each import module's namespace by
+its specifier and, when it evaluates, compiles the file through the
+`WebAssembly` namespace, instantiates it with those namespaces and binds each
+export. An exported global binds its value (`undefined` for `v128`), an
+imported Wasm module's global arrives as its `WebAssembly.Global`, and the
+first instantiation emits Node's `ExperimentalWarning`. Node compiles and
+rejects a module when it translates it, before any module of the graph
+evaluates; the facade throws the same classes when it evaluates: the
+`CompileError` prefixed with the module's path, and a reserved import module
+(`wasm-js:`) or import or export name (`wasm:`, `wasm-js:`) as Node's
+`LinkError`, without resolving the import modules. Messages from compilation
+and instantiation are the runtime's `WebAssembly` messages, not V8's.
+
 ## Buffer string construction byte projection
 
 `Buffer.from(string, encoding)` obtains encoded bytes from the shared Rust
@@ -1090,8 +1108,12 @@ compatibility backlog remain unqualified.
 
 The configured SDK's onWarning function is the actual default listener. Native
 warning dispatch only emits the warning event, so listener removal and warning
-suppression follow the common EventEmitter store. The original global console
-is initialized with its lazy process streams before this policy can write.
+suppression follow the common EventEmitter store. The SDK's `writeOut` reads the
+global console's `error` when it first writes: while that member is still the
+unloaded SDK console's, it is a writer that writes the line to `process.stderr`
+as the SDK's `error` writes one string, and calls the SDK's own `error` once the
+SDK console has loaded (`console_shared_vm::warning_writer`); a replaced
+`console.error` is used as Node uses it.
 The CLI option owner supplies repeatable disable-warning values, redirect paths
 and trace/deprecation flags. Truthy startup aliases have Node's read-only,
 configurable descriptors; absent flags do not create false-valued properties.
@@ -1112,6 +1134,14 @@ scheduler retains an invocation view rather than a second callback policy.
 
 `process.emitWarning` is the configured Node SDK function, including argument
 validation, option getter order, stack-constructor handling and function source.
+`internal/process/warning.js` runs unchanged, but with its own `require` and
+`primordials` (`process_warning_shared_vm`) instead of the library loader's:
+the primordials it uses come from the startup intrinsics, `getOptionValue` from
+the parsed CLI options, and `validateString`, `assert` and `ERR_INVALID_ARG_TYPE`
+load the SDK's own modules only on the paths that throw, with the stacks those
+give. A first warning so no longer loads `internal/errors`, the validators, the
+primordials module and the SDK console (about 6 MB of a run's max RSS). With
+`--expose-internals` the library module itself is used.
 Rust promise-rejection delivery calls this public function with the normal
 string/type or Error arguments; it does not attach private string-key options.
 The SDK also owns the default warning listener. Full diagnostic report generation,

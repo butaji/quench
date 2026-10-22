@@ -166,7 +166,7 @@ fn object_literal_site_executions(
     program: &crate::bytecode::ResidualProgram,
 ) -> Vec<ObjectLiteralSiteExecution> {
     let mut sites = Vec::new();
-    for (function_id, function) in program.functions.iter().enumerate() {
+    for (function_id, function) in program.functions.iter().enumerate().filter_map(|(id, slot)| slot.record().map(|function| (id, function))) {
         for (pc, encoded) in function.code.iter().copied().enumerate() {
             let Some((dispatch_op, site_op, site)) =
                 object_literal_site(encoded, function, program)
@@ -233,8 +233,25 @@ impl Profile {
 
     #[cfg(feature = "profile-aggregate")]
     pub fn report_dispatch_census_if_enabled(&self, program: u32) -> bool {
-        if std::env::var_os("QUENCH_OPCODE_CENSUS").is_none() {
+        let Some(census) = std::env::var_os("QUENCH_OPCODE_CENSUS") else {
             return false;
+        };
+        // `all` sums the dispatches of every program, whose code a benchmark harness loads
+        // apart from the main program.
+        if census == "all" {
+            let mut counts = vec![0u64; crate::bytecode::Op::COUNT];
+            for program in &self.dispatched_opcodes {
+                for (count, dispatched) in counts.iter_mut().zip(program) {
+                    *count += dispatched;
+                }
+            }
+            eprint!("{{\"kind\":\"quench-dispatch-opcode-census-all\",\"counts\":{{");
+            for (opcode, count) in counts.iter().enumerate() {
+                let separator = if opcode == 0 { "" } else { "," };
+                eprint!("{separator}\"{}\":{count}", crate::bytecode::Op::NAMES[opcode]);
+            }
+            eprintln!("}}}}");
+            return true;
         }
         let dispatched = self
             .dispatched_opcodes
@@ -653,6 +670,14 @@ impl Profile {
         let binary_dependencies = dependencies::binary_pairs(&self.pair_sites, program_id, program);
         regional::report(self, program_id, program);
         eprintln!(
+            "{{\"kind\":\"quench-allocation-variants\",\"counts\":{{{}}}}}",
+            heap.allocated_variants()
+                .iter()
+                .map(|(name, count)| format!("\"{name}\":{count}"))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        eprintln!(
             "{{\"kind\":\"quench-gc-breakdown\",\"collections\":{},\"mark_nanos\":{},\"sweep_nanos\":{},\"mark_clear_nanos\":{},\"allocations_between_collections\":{{\"total\":{},\"min\":{},\"max\":{}}},\"survivors\":{{\"total\":{},\"min\":{},\"max\":{}}},\"sweep_slots\":{}}}",
             heap_stats.1,
             gc.mark_nanos,
@@ -765,7 +790,7 @@ impl Profile {
             if position != 0 {
                 eprint!(",");
             }
-            let code = &program.functions[*function as usize].code;
+            let code = &program.function(*function as usize).code;
             eprint!(
                 "{{\"function\":{},\"pc\":{},\"first\":\"{}\",\"second\":\"{}\",\"count\":{}}}",
                 function,

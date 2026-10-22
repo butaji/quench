@@ -32,7 +32,7 @@ impl<H: Host> Vm<H> {
                     let arguments = vm.heap.alloc(Cell::Array {
                         object: crate::heap::ArrayObject::new(
                             Self::empty_object(vm.array_proto),
-                            Rc::new(args.to_vec()),
+                            args.to_vec(),
                         ),
                     });
                     return vm.call_value(p, trap, handler, &[target, this, arguments]);
@@ -76,7 +76,7 @@ impl<H: Host> Vm<H> {
                     let arguments = vm.heap.alloc(Cell::Array {
                         object: crate::heap::ArrayObject::new(
                             Self::empty_object(vm.array_proto),
-                            Rc::new(args.to_vec()),
+                            args.to_vec(),
                         ),
                     });
                     let result =
@@ -121,8 +121,8 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn proxy_revoke(&mut self, revoke: Value) -> Result<Value, JsError> {
-        let proxy = match self.heap.get_mut(revoke) {
-            Some(Cell::Function {
+        let proxy = match self.heap.function_mut(revoke) {
+            Some(FunctionRecord {
                 kind: FunctionKind::Native(Native::ProxyRevoke),
                 env,
                 ..

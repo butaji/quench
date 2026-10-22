@@ -7,28 +7,18 @@ const ARRAY_INDEX_GET_DENSE: usize = 0;
 const ARRAY_INDEX_GET_SPARSE: usize = 1;
 
 #[inline(always)]
-pub(super) fn mutable_array_elements(elements: &mut Rc<Vec<Value>>) -> &mut Vec<Value> {
-    if Rc::strong_count(elements) == 1 {
-        debug_assert_eq!(Rc::weak_count(elements), 0);
-        // SAFETY: this module is the only array-storage mutation boundary. A
-        // strong count of one proves that no other Rc can observe the vector,
-        // the VM creates no Weak handles, and Rc is single-threaded.
-        unsafe { &mut *Rc::as_ptr(elements).cast_mut() }
-    } else {
-        detach_array_elements(elements)
-    }
-}
-
-#[cold]
-#[inline(never)]
-fn detach_array_elements(elements: &mut Rc<Vec<Value>>) -> &mut Vec<Value> {
-    Rc::make_mut(elements)
+pub(super) fn mutable_array_elements(
+    elements: &mut crate::heap::ArrayElements,
+) -> &mut crate::heap::UniqueElements {
+    elements.make_mut()
 }
 
 impl<H: Host> Vm<H> {
     pub(super) fn primitive_prototype(&self, value: Value) -> Option<Value> {
+        if self.heap.is_string(value) {
+            return Some(self.string_proto);
+        }
         let native = match self.heap.get(value) {
-            Some(Cell::String(_)) => return Some(self.string_proto),
             Some(Cell::Symbol(_)) => Native::Symbol,
             Some(Cell::BigInt(_)) => Native::BigInt,
             _ if value.as_bool().is_some() => Native::Boolean,
@@ -54,11 +44,32 @@ impl<H: Host> Vm<H> {
     /// one-unit string at `index`, or `None` past its end, where lookup continues on the
     /// prototype.
     pub(super) fn string_index_value(&mut self, string: Value, index: usize) -> Option<Value> {
-        let Some(Cell::String(text)) = self.heap.get(string) else {
+        let Some(text) = self.heap.string(string) else {
             return None;
         };
         let unit = text.units().get(index)?;
-        Some(self.heap.alloc(Cell::String(JsString::from_units(&[unit]))))
+        Some(self.heap.alloc_string(JsString::from_units(&[unit])))
+    }
+
+    /// `get_index` of a string at an integer key inside its length: the one-unit string
+    /// there (`string_index_value`). `None` for any other read.
+    pub(super) fn string_element(&mut self, string: Value, key: Value) -> Option<Value> {
+        let index = key
+            .as_number()
+            .filter(|number| number.fract() == 0.0 && (0.0..=f64::from(u32::MAX)).contains(number))?;
+        self.string_index_value(string, index as usize)
+    }
+
+    /// `get_index` of a typed array at an index key where it allocates nothing: an element
+    /// of a non-BigInt kind, or `undefined` past the end. `None` for any other read.
+    pub(super) fn plain_typed_element(&mut self, object: Value, key: Value) -> Option<Value> {
+        let index = self.array_index_key(key)? as usize;
+        match self.heap.get(object) {
+            Some(Cell::TypedArray { kind, .. })
+                if !matches!(kind, TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64) => {}
+            _ => return None,
+        }
+        self.typed_array_get(object, index)
     }
 
     pub(super) fn get_index(
@@ -79,6 +90,9 @@ impl<H: Host> Vm<H> {
             {
                 #[cfg(feature = "profile-aggregate")]
                 self.profile.index_get(ARRAY_INDEX_GET_DENSE);
+                return Ok(value);
+            }
+            if let Some(value) = self.absent_array_element(object, key) {
                 return Ok(value);
             }
             if let Some(value) = self.typed_array_get(object, index) {
@@ -103,6 +117,11 @@ impl<H: Host> Vm<H> {
                 return Ok(value);
             }
         }
+        // A symbol or an existing non-index name that the plain chain walk answers, as the
+        // lane reads it (`plain_keyed_get`): no guest code runs before the slow path would.
+        if let Some(value) = self.plain_keyed_get(object, key) {
+            return Ok(value);
+        }
         self.get_index_slow(p, object, key)
     }
 
@@ -120,16 +139,22 @@ impl<H: Host> Vm<H> {
                 else { Some(self.to_string(p, key)?) };
             return Err(self.nullish_property_error(p, object, property.as_deref()));
         }
-        let key = match self.heap.get(key) {
-            Some(Cell::String(_) | Cell::Symbol(_)) => key,
-            _ => self.to_property_key(p, key)?,
+        let key = if self.heap.is_string(key) || matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
+            key
+        } else {
+            self.to_property_key(p, key)?
         };
         if matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
             return self.get_symbol_property_with_receiver(p, object, key, object);
         }
 
-        let key = self.coerce_js_string(p, key)?;
-        let atom = self.intern_js_atom(&key);
+        let atom = match self.string_key_atom(key) {
+            Some(atom) => atom,
+            None => {
+                let key = self.coerce_js_string(p, key)?;
+                self.intern_js_atom(&key)
+            }
+        };
         self.get_property(p, object, atom)
     }
 
@@ -254,6 +279,11 @@ impl<H: Host> Vm<H> {
                 return Ok(());
             }
         }
+        // A symbol or an existing non-index name that the plain chain walk decides, as the
+        // lane stores it: no guest code runs and nothing fails before the slow path would.
+        if self.try_plain_symbol_set(object, key, value) || self.try_plain_string_key_set(object, key, value) {
+            return Ok(());
+        }
         self.set_index_slow(p, object, key, value, strict)
     }
 
@@ -267,6 +297,47 @@ impl<H: Host> Vm<H> {
             .get(index)
             .copied()
             .filter(|value| !value.is_deleted())
+    }
+
+    /// `base[key]` for a non-negative integer key that names no element of a plain array
+    /// and that nothing on its prototype chain holds: `undefined`, as [[Get]] finds it. An
+    /// object on the chain holds the index as an element of an array, as a property keyed by
+    /// the index's canonical atom (none exists without one, `lookup_array_index_atom`), or
+    /// through exotic behaviour, where this declines.
+    pub(super) fn absent_array_element(&self, base: Value, key: Value) -> Option<Value> {
+        let index = usize::try_from(key.as_int()?).ok()?;
+        let elements = self.heap.array(base)?.elements();
+        if elements.get(index).is_some_and(|value| !value.is_deleted()) {
+            return None;
+        }
+        let atom = self.lookup_array_index_atom(index).map(PropertyKey::string);
+        let mut current = base;
+        loop {
+            let data = self.object_data(current)?;
+            if data.has_indexed_descriptors()
+                || data.is_arguments_object()
+                || data.boxed_primitive().is_some()
+                || data.is_module_namespace()
+                || data.deferred_module().is_some()
+                || self.heap.sparse_length(current).is_some()
+                || atom.is_some_and(|key| self.property_shape_slot(data.shape(), key).is_some())
+            {
+                return None;
+            }
+            match self.heap.array(current) {
+                Some(array) if array.elements().get(index).is_some_and(|value| !value.is_deleted()) => {
+                    return None;
+                }
+                Some(_) => {}
+                None => {
+                    self.heap.ordinary_object(current)?;
+                }
+            }
+            current = data.proto();
+            if current.is_null() {
+                return Some(Value::UNDEFINED);
+            }
+        }
     }
 
     /// The present dense element `base[key]` for a non-negative integer key: a data property.
@@ -318,7 +389,7 @@ impl<H: Host> Vm<H> {
         key: Value,
         value: Value,
     ) -> bool {
-        self.try_replace_element_of::<true>(object, key, value, crate::heap::Heap::array_mut)
+        self.try_replace_element_of::<true>(object, key, value, crate::heap::Heap::array_store_mut)
     }
 
     /// `object[key] = value` that appends to a dense array at its length
@@ -329,8 +400,17 @@ impl<H: Host> Vm<H> {
             .is_some_and(|index| self.append_dense_element(object, index, value))
     }
 
+    /// `object[key] = value` that fills a hole of a dense array (`fill_dense_hole`); `false`
+    /// leaves the store, unobserved, to the general path.
+    pub(super) fn try_fill_dense_hole(&mut self, object: Value, key: Value, value: Value) -> bool {
+        key.as_int()
+            .and_then(|index| usize::try_from(index).ok())
+            .is_some_and(|index| self.fill_dense_hole(object, index, value))
+    }
+
     /// `try_replace_dense_element` of an array whose object is a record and whose elements no
-    /// other array shares; `false` for any other object, so the write calls nothing.
+    /// other array shares, for a value the write barrier passes without logging; `false` for
+    /// any other write, so the write calls nothing.
     #[inline(always)]
     pub(super) fn try_replace_record_element(
         &mut self,
@@ -342,7 +422,7 @@ impl<H: Host> Vm<H> {
             object,
             key,
             value,
-            crate::heap::Heap::record_array_mut,
+            crate::heap::Heap::record_array_store_mut_unlogged,
         )
     }
 
@@ -354,12 +434,12 @@ impl<H: Host> Vm<H> {
         object: Value,
         key: Value,
         value: Value,
-        array: fn(&mut crate::heap::Heap, Value) -> Option<&mut crate::heap::ArrayObject>,
+        array: fn(&mut crate::heap::Heap, Value, Value) -> Option<&mut crate::heap::ArrayObject>,
     ) -> bool {
         let Some(index) = key.as_int().and_then(|index| usize::try_from(index).ok()) else {
             return false;
         };
-        let Some(array) = array(&mut self.heap, object) else {
+        let Some(array) = array(&mut self.heap, object, value) else {
             return false;
         };
         if array.has_indexed_descriptors() || array.is_frozen() || array.arguments_map().is_some() {
@@ -367,13 +447,13 @@ impl<H: Host> Vm<H> {
         }
         let elements = array.elements_mut();
         if !elements.get(index).is_some_and(|value| !value.is_deleted())
-            || (!DETACH && Rc::strong_count(elements) != 1)
+            || (!DETACH && elements.owner_count() != 1)
         {
             return false;
         }
         #[cfg(feature = "profile-aggregate")]
         self.profile
-            .array_write_ownership(Rc::strong_count(elements) != 1);
+            .array_write_ownership(elements.owner_count() != 1);
         mutable_array_elements(elements)[index] = value;
         #[cfg(feature = "profile-aggregate")]
         self.profile.index_set(0);
@@ -383,7 +463,7 @@ impl<H: Host> Vm<H> {
     /// Overwrites a present dense array element after every guard has passed.
     #[inline(always)]
     pub(super) fn replace_dense_element(&mut self, object: Value, index: usize, value: Value) {
-        let Some(array_object) = self.heap.array_mut(object) else {
+        let Some(array_object) = self.heap.array_store_mut(object, value) else {
             unreachable!("dense element replacement requires an array")
         };
         // Only a mapped arguments object mirrors its elements into parameter bindings.
@@ -391,7 +471,7 @@ impl<H: Host> Vm<H> {
         let elements = array_object.elements_mut();
         #[cfg(feature = "profile-aggregate")]
         self.profile
-            .array_write_ownership(Rc::strong_count(elements) != 1);
+            .array_write_ownership(elements.owner_count() != 1);
         mutable_array_elements(elements)[index] = value;
         if mapped {
             self.sync_mapped_argument(object, index, value);
@@ -409,9 +489,10 @@ impl<H: Host> Vm<H> {
         value: Value,
         strict: bool,
     ) -> Result<(), JsError> {
-        let key = match self.heap.get(key) {
-            Some(Cell::String(_) | Cell::Symbol(_)) => key,
-            _ => self.to_property_key(p, key)?,
+        let key = if self.heap.is_string(key) || matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
+            key
+        } else {
+            self.to_property_key(p, key)?
         };
         if matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
             let succeeded =
@@ -428,6 +509,7 @@ impl<H: Host> Vm<H> {
             return self.set_property_with_program(p, object, atom, value);
         }
 
+        let key_value = key;
         let key = self.coerce_js_string(p, key)?;
         if let Some(index) = super::object_static::array_index(key.host_string())
             && self.heap.array(object).is_some()
@@ -468,7 +550,10 @@ impl<H: Host> Vm<H> {
                 return Ok(());
             }
         }
-        let atom = self.intern_js_atom(&key);
+        let atom = match self.string_key_atom(key_value) {
+            Some(atom) => atom,
+            None => self.intern_js_atom(&key),
+        };
         self.set_property_with_program_mode(p, object, atom, value, strict)
     }
 
@@ -476,7 +561,7 @@ impl<H: Host> Vm<H> {
         if let Some(index) = key.as_int() {
             return u32::try_from(index).ok();
         }
-        let Some(Cell::String(key)) = self.heap.get(key) else {
+        let Some(key) = self.heap.string(key) else {
             return None;
         };
         super::object_static::array_index(key.host_string())
@@ -499,13 +584,13 @@ impl<H: Host> Vm<H> {
         let elements = array_object.elements();
         let dense_len = elements.len();
         if index < dense_len {
-            let Some(array_object) = self.heap.array_mut(object) else {
+            let Some(array_object) = self.heap.array_store_mut(object, value) else {
                 unreachable!()
             };
             let elements = array_object.elements_mut();
             #[cfg(feature = "profile-aggregate")]
             self.profile
-                .array_write_ownership(Rc::strong_count(elements) != 1);
+                .array_write_ownership(elements.owner_count() != 1);
             mutable_array_elements(elements)[index] = value;
             self.sync_mapped_argument(object, index, value);
             return true;
@@ -517,7 +602,7 @@ impl<H: Host> Vm<H> {
             let elements = array_object.elements_mut();
             #[cfg(feature = "profile-aggregate")]
             self.profile
-                .array_write_ownership(Rc::strong_count(elements) != 1);
+                .array_write_ownership(elements.owner_count() != 1);
             let elements = mutable_array_elements(elements);
             let capacity = elements.capacity();
             elements.resize(index + 1, Value::DELETED);
@@ -629,7 +714,7 @@ mod tests {
         let array = vm.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
                 Vm::<SilentHost>::empty_object(Value::NULL),
-                Rc::new(vec![]),
+                vec![],
             ),
         });
         assert!(vm.set_array_element(array, 1_000_000, Value::TRUE));
@@ -671,7 +756,7 @@ mod tests {
         let array = vm.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
                 Vm::<SilentHost>::empty_object(Value::NULL),
-                Rc::new(Vec::new()),
+                Vec::new(),
             ),
         });
 
@@ -693,7 +778,7 @@ mod tests {
         let array = vm.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
                 Vm::<SilentHost>::empty_object(Value::NULL),
-                Rc::new(Vec::new()),
+                Vec::new(),
             ),
         });
         vm.heap.sparse_set_length(array, 1_000_000);
@@ -719,7 +804,7 @@ mod tests {
         let array = vm.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
                 Vm::<SilentHost>::empty_object(Value::NULL),
-                Rc::new(Vec::new()),
+                Vec::new(),
             ),
         });
         let atom_count = vm.atom_sequence.len();
@@ -747,7 +832,7 @@ mod tests {
         let array = vm.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
                 Vm::<SilentHost>::empty_object(Value::NULL),
-                Rc::new(vec![Value::FALSE; 1024]),
+                vec![Value::FALSE; 1024],
             ),
         });
         let atom_count = vm.atom_sequence.len();
@@ -810,20 +895,20 @@ mod tests {
 
     #[test]
     fn unique_array_mutation_keeps_the_allocation() {
-        let mut elements = Rc::new(vec![Value::FALSE]);
-        let allocation = Rc::as_ptr(&elements);
+        let mut elements = crate::heap::ArrayElements::from(vec![Value::FALSE]);
+        let allocation = elements.as_ptr();
         mutable_array_elements(&mut elements)[0] = Value::TRUE;
-        assert_eq!(Rc::as_ptr(&elements), allocation);
+        assert_eq!(elements.as_ptr(), allocation);
         assert_eq!(elements[0], Value::TRUE);
     }
 
     #[test]
     fn shared_array_mutation_detaches_the_template() {
-        let template = Rc::new(vec![Value::FALSE]);
-        let mut elements = Rc::clone(&template);
+        let template = crate::heap::ArrayElements::from(vec![Value::FALSE]);
+        let mut elements = template.clone();
         mutable_array_elements(&mut elements)[0] = Value::TRUE;
         assert_eq!(template[0], Value::FALSE);
         assert_eq!(elements[0], Value::TRUE);
-        assert!(!Rc::ptr_eq(&template, &elements));
+        assert_ne!(template.as_ptr(), elements.as_ptr());
     }
 }

@@ -13,14 +13,81 @@ accessors, and prunes VM metadata after collection. Objects and arrays may live
 in direct record spaces rather than legacy slots. `heap.get` only sees legacy
 slots; collector changes must visit both representations.
 
-`Heap::collection_is_full` currently forces a full trace when direct records
-exist. Legacy minor collection tests do not establish record-heap generational
-correctness. `ParallelShapeTrace` reads immutable transition metadata and atomic
-shape marks; it must not read the interior-mutable shape lookup caches.
+Collections are generational over records and legacy cells alike (TOD-137
+stage 2). Survivors keep their mark bits (old); a full collection clears them.
+A minor traces roots, the old owners the write barrier logged, and program
+roots that changed since the last collection, and sweeps only unmarked cells
+and records. The write barrier has one owner-level rule: `RecordSpace::get_live_mut`
+and `Heap::get_mut` log an old owner once per cycle (records by clearing the
+mark); `get_live_mut_storing` skips non-reference stores; `Heap::write_barrier`
+covers edges kept beside the owner (sparse elements). Any new path that stores
+a heap reference into an existing object must go through one of these. The
+collector's own compaction uses `get_live_mut_unbarriered`.
+`ParallelShapeTrace` reads immutable transition metadata and atomic shape
+marks; it must not read the interior-mutable shape lookup caches.
 
-Allocation pressure is currently a cell count weighted by flat string bytes.
-Array element growth and other external payload growth are not a complete byte
-budget. Measure this gap separately from the cost of marking the live heap.
+Pacing has one authority, `heap/pacing.rs` (`GenerationalPacing::plan`), a
+state machine over measured young survival: generational while most young
+allocations die, full collections with a larger interval while most survive.
+Allocation is charged in weight: one per cell or record plus one per 64
+payload bytes. `Cell::payload_bytes` is the authority for a cell's payload
+(string units, array element storage, ArrayBuffer and Wasm memory/table
+bytes); the heap's payload ledger adds it at allocation and growth and
+subtracts it at reclamation, and every full sweep resets it to the survivors'
+sum, since a live array shrinking is not charged back. Survival compares live
+weight with allocated weight; budgets stay proportional to live cells and
+records, which also hold memory the weight does not see. A `gc-tuning` + `profile-gc-time` build
+with `QUENCH_GC_TRACE=1` prints each plan and recounts the ledger after every
+full collection. Rope
+flattening, the property arena and collection entries are not yet charged.
+
+## Memory policy
+
+`MemoryPolicy` (`heap/pacing.rs`, TOD-167) is the one authority for how a
+runtime trades memory for speed. A runtime chooses it once, at startup
+(`Runtime::set_memory_policy`), and it decides two things:
+
+| | `Throughput` (default) | `MemoryFirst` |
+|---|---|---|
+| Pacing table | `THROUGHPUT_PACING` | `MEMORY_FIRST_PACING` |
+| Young share of the live set | 1/8 | 1/64 |
+| Young minimum / maximum | 2^16 / 2^17 | 768 / 2^17 |
+| Full-collection minimum | 2^18 | 384 |
+| Allocation-cap back-off after unproductive fulls | up to 2 doublings | none |
+| Pages returned at collection boundaries | no | read-only and free heap pages |
+
+The throughput table is the JetStream lane's. The other lanes' measurements
+(npm, Score, web) bound each of its values; the doc comments on the constants
+cite them. The runtime passes the policy to `Host::at_collection_boundary`, and
+the Node host returns pages only when
+`MemoryPolicy::returns_pages_at_collections` says so. Every policy counts the
+collection for the release before output. Releases after library loads, at
+compile phases and at teardown follow their own intervals under both policies.
+A restored snapshot paces under the restoring runtime's policy.
+
+`quench-node` selects one policy per process, because the pages a policy
+returns belong to the process. The entry, a snapshot restore's replacement
+runtime and Workers all share it. The selection order is
+`--memory-policy=<throughput|memory-first>`, then `QUENCH_MEMORY_POLICY`, then
+the default. An unknown name is an error, and the CLI exits with status 1.
+Child processes inherit the variable but not the flag. Embedders and the
+runtime's tests get `Throughput` unless they set a policy. Tests that need
+frequent collections set `MemoryFirst` explicitly.
+
+A `gc-tuning` build reads its `QUENCH_GC_*` overrides on top of the selected
+table.
+
+Follow-ups, each compile-time and in need of its own matched measurement under
+both policies:
+
+- the allocator, the `quench-node` `quench-alloc` Cargo feature (off by default);
+- the object layout: `INLINE_PROPERTY_COUNT` (2 inline slots) and the 16-byte
+  narrow records (TOD-166).
+
+Every minor collection in a `debug_assertions` build is compared with a full
+trace with old objects pinned (`debug_verify_minor`), records included; the
+runtime lib suite runs it, and so does a release build with
+`CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true` over the V8-v7 fixtures.
 
 ## Experiment loop
 

@@ -8,7 +8,7 @@ pub use embedding::RootedError;
 mod native;
 pub(crate) use native::CompiledScriptState;
 pub use native::{
-    BufferStorage, BuiltinBrand, ValueType, BuiltinData, CollectionPreview, PromiseSnapshot, HostFunction, HostFunctionId, HostWeakRoot, PreparedScript, NativeArithmetic,
+    BufferStorage, BuiltinBrand, DescriptorFields, ValueType, BuiltinData, CollectionPreview, PromiseSnapshot, HostFunction, HostFunctionId, HostWeakRoot, PreparedScript, NativeArithmetic,
     CompiledScript, NativeContext, RootedIterator, ErrorSourcePosition, SourceStackFrame, SynchronousModule,
     DeserializerDelegate, SerializerDelegate,
 };
@@ -87,6 +87,16 @@ impl<H: Host> Runtime<H> {
         self.vm.set_execution_mode(mode);
     }
 
+    /// Choose how this runtime trades memory for speed; see [`crate::MemoryPolicy`]. Set it
+    /// at startup, before the program runs; a runtime that sets none uses the default.
+    pub fn set_memory_policy(&mut self, policy: crate::MemoryPolicy) {
+        self.vm.set_memory_policy(policy);
+    }
+
+    pub fn memory_policy(&self) -> crate::MemoryPolicy {
+        self.vm.memory_policy()
+    }
+
     /// Construct the Vm on this thread with an owned cancellation authority.
     pub fn new_with_execution_interrupt(host:H,interrupt:crate::ExecutionInterrupt)->Self { Self { vm:Vm::new_with_execution_interrupt(host,interrupt) } }
 
@@ -94,6 +104,14 @@ impl<H: Host> Runtime<H> {
 
     pub fn execution_mode(&self) -> crate::ExecutionMode {
         self.vm.execution_mode()
+    }
+
+    /// Ends this runtime for a process that exits next. The host is dropped, so its effects
+    /// (flushed output, terminated workers, closed handles) happen as on any drop; the heap
+    /// and compiled programs, which hold only this process's memory, are left to the
+    /// operating system instead of being freed one allocation at a time.
+    pub fn end_for_process_exit(self) {
+        self.vm.end_for_process_exit();
     }
 
     pub fn host_mut(&mut self) -> &mut H {
@@ -105,7 +123,7 @@ impl<H: Host> Runtime<H> {
     }
 
     fn execute_value(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
-        program.validate().map_err(JsError::validation)?;
+        program.validate_unless_proven().map_err(JsError::validation)?;
         self.vm.execute(program)
     }
 
@@ -122,16 +140,84 @@ impl<H: Host> Runtime<H> {
         scripts: &[(&str, &str)],
         program: &ResidualProgram,
     ) -> Result<(), JsError> {
-        program.validate().map_err(JsError::validation)?;
+        program.validate_unless_proven().map_err(JsError::validation)?;
         self.vm.execute_after_scripts(scripts, program).map(drop)
     }
 
     /// Execute the entry while leaving VM jobs queued for the embedder's
     /// event-loop checkpoint. Call `run_host_jobs` after host nextTick work,
     /// then `finish_deferred_execution` once the host loop is complete.
+    /// Compiles an application's entry program, as `Engine::compile` does, through the host's
+    /// compile cache (`Host::kept_compiled_program`), keyed by the entry's name, parse goal and
+    /// text: a program this build kept for them decodes instead, valid as the compiler output
+    /// it is. A program compiled here is validated before it is kept.
+    pub fn compile_entry(
+        &mut self,
+        request: ExecutionRequest<'_>,
+    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        let goal = match request.kind {
+            SourceKind::Script => "script",
+            SourceKind::Module => "module",
+            SourceKind::Eval => return Engine::compile(request),
+        };
+        let parts = [goal, request.source];
+        if let Some(bytes) = self.vm.host.kept_compiled_program(request.name, &parts)
+            && let Ok(program) = ResidualProgram::decode_trusted(bytes)
+            && program.source_name == request.name
+        {
+            return Ok(program);
+        }
+        let program = Engine::compile(request)?;
+        if program.validate().is_ok() {
+            let bytes = program.encode_trusted();
+            self.vm.host.keep_compiled_program(&program.source_name, &parts, &bytes);
+            program.validated.establish();
+        }
+        Ok(program)
+    }
+
+    /// Installs the realm and the host for `program` without running it, then writes the VM
+    /// as a startup snapshot, with the host's state that `write_host` adds. The host ends its
+    /// `initialize` at the point its `resume` continues from.
+    pub fn build_snapshot(
+        &mut self,
+        program: &ResidualProgram,
+        write_host: impl FnOnce(&H, &mut crate::SnapshotWriter<'_>) -> Result<(), String>,
+    ) -> Result<Vec<u8>, String> {
+        program.validate_unless_proven().map_err(|error| error.to_string())?;
+        self.vm.initialize_for_snapshot(program).map_err(|error| error.to_string())?;
+        // A restored heap starts as a full collection leaves it, every cell old: garbage the
+        // snapshot kept would stay until the next full collection.
+        self.vm.collect_now(program);
+        self.vm.write_snapshot(write_host).map_err(|error| error.0)
+    }
+
+    /// Makes this new runtime the one a `build_snapshot` wrote into `snapshot`, with `entry`
+    /// as its main program and the host state `read_host` reads back. Returns the entry as the
+    /// restored runtime runs it, for `execute_restored` and every later call naming it.
+    pub fn restore_snapshot(
+        &mut self,
+        snapshot: crate::KeptBytes,
+        entry: &ResidualProgram,
+        read_host: impl FnOnce(&mut H, &mut crate::SnapshotReader<'_, '_>) -> Result<(), String>,
+    ) -> Result<ResidualProgram, String> {
+        entry.validate_unless_proven().map_err(|error| error.to_string())?;
+        self.vm.restore_snapshot(snapshot, entry, read_host).map_err(|error| error.0)
+    }
+
+    /// `execute_deferred_jobs` for a restored runtime (`restore_snapshot`).
+    pub fn execute_restored(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
+        self.vm.execute_restored(program).map(drop)
+    }
+
     pub fn execute_deferred_jobs(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
-        program.validate().map_err(JsError::validation)?;
+        program.validate_unless_proven().map_err(JsError::validation)?;
         self.vm.execute_deferred_jobs(program).map(drop)
+    }
+
+    /// Counts collections: a host weak root can die only when this changes.
+    pub fn collection_epoch(&self) -> u64 {
+        self.vm.collection_epoch()
     }
 
     /// Release WeakRef targets after the host completes a job and its microtasks.
@@ -141,7 +227,7 @@ impl<H: Host> Runtime<H> {
 
     /// Drain VM jobs at a host-selected checkpoint, including module jobs.
     pub fn run_host_jobs(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
-        program.validate().map_err(JsError::validation)?;
+        program.validate_unless_proven().map_err(JsError::validation)?;
         self.vm.drain_host_jobs(program).map(drop)
     }
 
@@ -171,7 +257,7 @@ impl<H: Host> Runtime<H> {
 
     /// Finish profiling and execution reporting after deferred host work.
     pub fn finish_deferred_execution(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
-        program.validate().map_err(JsError::validation)?;
+        program.validate_unless_proven().map_err(JsError::validation)?;
         self.vm.finish_deferred_execution(program);
         Ok(())
     }
@@ -432,7 +518,7 @@ impl<H: Host> Runtime<H> {
     }
 
     fn run_jobs_value(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
-        program.validate().map_err(JsError::validation)?;
+        program.validate_unless_proven().map_err(JsError::validation)?;
         self.vm.drain_jobs(program)
     }
 
@@ -454,8 +540,17 @@ impl<H: Host> Runtime<H> {
     /// Force the VM's named GC safepoint. The residual program supplies the
     /// frame root maps used when a host asks for collection between calls.
     pub fn collect(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
-        program.validate().map_err(JsError::validation)?;
+        program.validate_unless_proven().map_err(JsError::validation)?;
         self.vm.collect_now(program);
+        Ok(())
+    }
+
+    /// The VM's GC safepoint between calls: a collection runs when the VM's own pacing
+    /// makes one due, as at a back edge. A host's event-loop turn, which may run no guest
+    /// loop, names it so a due collection does not wait for one.
+    pub fn collect_if_due(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
+        program.validate_unless_proven().map_err(JsError::validation)?;
+        self.vm.maybe_collect(program);
         Ok(())
     }
 
@@ -2060,11 +2155,7 @@ checkSources().then(()=>print('done'),e=>{print('unexpected');print(e);});
                 Ok(MODULES
                     .iter()
                     .find(|(name, _)| *name == file)
-                    .map(|(_, source)| crate::host::ModuleSource {
-                        name: format!("task20-module-source-fixtures/{file}"),
-                        source: (*source).into(),
-                        bytes: source.as_bytes().to_vec(),
-                    }))
+                    .map(|(_, source)| crate::host::ModuleSource::text(format!("task20-module-source-fixtures/{file}"), *source)))
             }
         }
         for compile in [
@@ -4867,9 +4958,7 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
             fn clock_millis(&mut self) -> f64 { 0.0 }
             fn resolve_dynamic_import(&mut self, _: &str, specifier: &str) -> Result<Option<crate::ModuleSource>, crate::ModuleLoadError> {
                 let name = specifier.rsplit('/').next().unwrap();
-                Ok(MODULES.iter().find(|(candidate, _)| *candidate == name).map(|(_, source)| crate::ModuleSource {
-                    name: format!("cyclic-module-graph/{name}"), source: (*source).into(), bytes: source.as_bytes().to_vec(),
-                }))
+                Ok(MODULES.iter().find(|(candidate, _)| *candidate == name).map(|(_, source)| crate::ModuleSource::text(format!("cyclic-module-graph/{name}"), *source)))
             }
         }
         for compile in [Engine::specialize_module as fn(&str, &str) -> _, Engine::specialize_module_unspecialized] {
@@ -4914,12 +5003,10 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
             fn has_module_source(&self, module: &crate::ModuleSource) -> bool { module.name == "<source>" }
             fn resolve_dynamic_import(&mut self, _: &str, specifier: &str) -> Result<Option<crate::ModuleSource>, crate::ModuleLoadError> {
                 if specifier == "<source>" {
-                    return Ok(Some(crate::ModuleSource { name: specifier.into(), source: String::new(), bytes: Vec::new() }));
+                    return Ok(Some(crate::ModuleSource::text(specifier, "")));
                 }
                 let name = specifier.rsplit('/').next().unwrap();
-                Ok(MODULES.iter().find(|(candidate, _)| *candidate == name).map(|(_, source)| crate::ModuleSource {
-                    name: format!("deferred-module-graph/{name}"), source: (*source).into(), bytes: source.as_bytes().to_vec(),
-                }))
+                Ok(MODULES.iter().find(|(candidate, _)| *candidate == name).map(|(_, source)| crate::ModuleSource::text(format!("deferred-module-graph/{name}"), *source)))
             }
         }
         for compile in [Engine::specialize_module as fn(&str, &str) -> _, Engine::specialize_module_unspecialized] {
@@ -4977,11 +5064,7 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
                 specifier: &str,
             ) -> Result<Option<crate::host::ModuleSource>, crate::ModuleLoadError> {
                 assert_eq!(specifier, "./integrity-dependency.mjs");
-                Ok(Some(crate::host::ModuleSource {
-                    name: "integrity-dependency.mjs".into(),
-                    source: DEPENDENCY.into(),
-                    bytes: vec![],
-                }))
+                Ok(Some(crate::host::ModuleSource::text("integrity-dependency.mjs", DEPENDENCY)))
             }
         }
         for compile in [
@@ -5073,11 +5156,7 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
                 specifier: &str,
             ) -> Result<Option<crate::host::ModuleSource>, crate::ModuleLoadError> {
                 assert_eq!(specifier, "./ordered-namespace.mjs");
-                Ok(Some(crate::host::ModuleSource {
-                    name: "ordered-namespace.mjs".into(),
-                    source: DEPENDENCY.into(),
-                    bytes: vec![],
-                }))
+                Ok(Some(crate::host::ModuleSource::text("ordered-namespace.mjs", DEPENDENCY)))
             }
         }
         for compile in [
@@ -10101,3 +10180,13 @@ print(Object.getPrototypeOf(new A(2).transferToFixedLength(3)) === P);
 #[cfg(test)]
 #[path = "api_promise_tests.rs"]
 mod promise_tests;
+
+/// The origin a host wrapper's `prefix` gives the source after it: the prefix's line
+/// count and its last line's UTF-16 length, which compiler positions and diagnostic
+/// excerpts discount. `None` past the compiler's position range.
+pub fn wrapper_origin(prefix: &str) -> Option<(u32, u32)> {
+    let lines = u32::try_from(prefix.bytes().filter(|byte| *byte == b'\n').count()).ok()?;
+    let columns =
+        u32::try_from(prefix.rsplit('\n').next().unwrap_or("").encode_utf16().count()).ok()?;
+    Some((lines, columns))
+}
