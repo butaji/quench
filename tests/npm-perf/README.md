@@ -443,3 +443,12 @@ throughput win, the change was reverted. The existing PGO profile also dropped
 counts for inlined call handlers after the change, so a fresh profile would be
 needed to evaluate the candidate fairly. Report:
 `work/react-perf/react-activation-fill-after-args-11.json`.
+
+The feature-only lane profiler now counts dynamic opcode transitions. Across
+500 React SSR renders, the most frequent pairs were `LoadLocalPlain` →
+`JumpBinaryFalse` (5.75M), `Move` → `Call` (5.57M), `JumpBinaryFalse` →
+`LoadLocalPlain` (5.22M), and `Move` → `JumpFalse` (4.22M). These dynamic counts
+include taken control flow and are more useful for choosing fusion candidates
+than static instruction adjacency. The instrumented run produced the expected
+2,498,000 bytes/checksum 41826; its throughput is diagnostic only. Report:
+`work/react-perf/react-dynamic-transition-profile.log`.

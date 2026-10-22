@@ -7,7 +7,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 static EXITS: [AtomicU64; Op::COUNT] = [const { AtomicU64::new(0) }; Op::COUNT];
 static OPCODES: [AtomicU64; Op::COUNT] = [const { AtomicU64::new(0) }; Op::COUNT];
 static MOVE_SUCCESSORS: [AtomicU64; Op::COUNT] = [const { AtomicU64::new(0) }; Op::COUNT];
+static TRANSITIONS: [[AtomicU64; Op::COUNT]; Op::COUNT] =
+    [const { [const { AtomicU64::new(0) }; Op::COUNT] }; Op::COUNT];
 static REPORT: std::sync::Once = std::sync::Once::new();
+thread_local! {
+    static PREVIOUS_OPCODE: std::cell::Cell<Option<Op>> = const { std::cell::Cell::new(None) };
+}
 /// Opcodes the report lists, most frequent first.
 const REPORTED_OPCODES: usize = 30;
 /// Detail lines reported, most frequent first.
@@ -75,6 +80,22 @@ pub(super) fn record_move_successor(op: Op) {
     MOVE_SUCCESSORS[op as usize].fetch_add(1, Ordering::Relaxed);
 }
 
+pub(super) fn record_transition(from: Op, to: Op) {
+    TRANSITIONS[from as usize][to as usize].fetch_add(1, Ordering::Relaxed);
+}
+
+pub(super) fn begin_lane_run() {
+    PREVIOUS_OPCODE.with(|previous| previous.set(None));
+}
+
+pub(super) fn record_dispatch(op: Op) {
+    PREVIOUS_OPCODE.with(|previous| {
+        if let Some(from) = previous.replace(Some(op)) {
+            record_transition(from, op);
+        }
+    });
+}
+
 extern "C" fn report() {
     let mut counts: Vec<(u64, usize)> = EXITS
         .iter()
@@ -109,6 +130,21 @@ extern "C" fn report() {
     eprintln!("Move record successor opcodes:");
     for (count, op) in move_successors.into_iter().take(REPORTED_OPCODES) {
         eprintln!("  {count:>12} {}", Op::NAMES[op]);
+    }
+    let mut transitions: Vec<(u64, usize, usize)> = TRANSITIONS
+        .iter()
+        .enumerate()
+        .flat_map(|(from, row)| {
+            row.iter().enumerate().filter_map(move |(to, count)| {
+                let count = count.load(Ordering::Relaxed);
+                (count > 0).then_some((count, from, to))
+            })
+        })
+        .collect();
+    transitions.sort_unstable_by(|a, b| b.cmp(a));
+    eprintln!("dynamic lane opcode transitions:");
+    for (count, from, to) in transitions.into_iter().take(REPORTED_DETAILS) {
+        eprintln!("  {count:>12} {} -> {}", Op::NAMES[from], Op::NAMES[to]);
     }
     if let Some(details) = DETAILS.lock().expect("lane exit details").as_ref() {
         let mut details: Vec<_> = details.iter().collect();

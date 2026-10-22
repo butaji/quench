@@ -1529,6 +1529,7 @@ fn handler<H: Host>(ip: Ip) -> Handler {
         super::lane_exits::count_record(ip.addr());
         // SAFETY: `ip` points to an initialized record in the current lane view.
         let opcode = unsafe { (*ip).opcode };
+        super::lane_exits::record_dispatch(opcode);
         super::lane_exits::record_opcode(opcode);
         if opcode == Op::Move {
             // SAFETY: a Move is not a function terminator, so its view has a successor.
@@ -1561,8 +1562,9 @@ macro_rules! next {
 #[cfg(not(quench_lane_tail_calls))]
 macro_rules! next {
     ($cx:expr, $r:expr, $ip:expr, $view:expr) => {{
+        let ip: Ip = $ip;
         let _ = ($cx, $r, $view);
-        return $ip;
+        return ip;
     }};
 }
 
@@ -12252,6 +12254,8 @@ impl<H: Host> Vm<H> {
         // SAFETY: the view has one record per instruction, and residual
         // validation establishes every reachable PC.
         let mut ip = unsafe { base.add(pc) };
+        #[cfg(feature = "profile-lane-exits")]
+        super::lane_exits::begin_lane_run();
         loop {
             // SAFETY: handlers have returned, so no other access is live.
             let (view, registers) = unsafe { ((*cx).memory, (*cx).registers) };
