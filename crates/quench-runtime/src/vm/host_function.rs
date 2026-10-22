@@ -198,7 +198,7 @@ impl<H: Host> Vm<H> {
             .map_err(|error| context.finish_error(error))
     }
 
-    pub(super) fn initialize_host(&mut self, _program: &ResidualProgram) -> Result<(), JsError> {
+    pub(super) fn initialize_host(&mut self) -> Result<(), JsError> {
         for index in 0..self.host.functions().len() {
             let Some(name) = self.host.functions()[index].global else {
                 continue;
