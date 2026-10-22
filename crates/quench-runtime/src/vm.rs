@@ -1604,14 +1604,11 @@ pub(crate) struct Vm<H> {
     temporal_plain_time_proto: Value,
     temporal_plain_month_day_proto: Value,
     temporal_plain_year_month_proto: Value,
-    natives: Vec<(Native, Value)>,
+    natives: builtins::NativeTable,
     /// One shared string value per program atom a function name spells (`atom_string`):
     /// strings are immutable, so every closure of a plan can hold the same name value.
     /// Only program atoms and the anonymous name are kept, so the loaded program bounds it.
     atom_strings: FxHashMap<Atom, Value>,
-    /// The function values in `natives`. One native serves every realm, so it runs in the
-    /// realm of its caller rather than switching to the creator's.
-    shared_natives: FxHashSet<Value>,
     frames: Vec<Box<Frame>>,
     native_stack_frames: Vec<(usize, String)>,
     /// Emptied root lists of finished native calls, reused by the next `NativeContext`.
@@ -2582,8 +2579,7 @@ impl<H: Host> Vm<H> {
         self.startup_intrinsics = Default::default();
         self.shared_async_waiters.clear();
         self.heap.reset();
-        self.natives.clear();
-        self.shared_natives.clear();
+        self.natives = Default::default();
         self.frames.clear();
         self.frame_pool.clear();
         self.realm.jobs.clear();

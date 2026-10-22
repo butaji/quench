@@ -43,9 +43,10 @@ impl<H: Host> Vm<H> {
                 if decoded.failed {
                     return self.syntax_error_result(p, "invalid base64/hex input");
                 }
+                let native_uint8_array = self.native_value(Native::Uint8Array);
                 let target = self.construct_value(
                     p,
-                    self.native_value(Native::Uint8Array),
+                    native_uint8_array,
                     &[Value::number(decoded.bytes.len() as f64)],
                 )?;
                 self.validate_typed_array_result(p, target, decoded.bytes.len(), true)?;
