@@ -9,7 +9,7 @@ mod native;
 pub(crate) use native::CompiledScriptState;
 pub use native::{
     BufferStorage, BuiltinBrand, DescriptorFields, ValueType, BuiltinData, CollectionPreview, PromiseSnapshot, HostFunction, HostFunctionId, HostWeakRoot, PreparedScript, NativeArithmetic,
-    CompiledScript, NativeContext, RootedIterator, ErrorSourcePosition, SourceStackFrame, SynchronousModule,
+    CompiledScript, NativeContext, RootScopeMark, RootedIterator, ErrorSourcePosition, SourceStackFrame, SynchronousModule,
     DeserializerDelegate, SerializerDelegate,
 };
 
