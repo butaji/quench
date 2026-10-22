@@ -1101,6 +1101,45 @@ impl<H: Host> Vm<H> {
         Some(brand)
     }
 
+    /// The private method or accessor that `object`, which carries `brand`, reads at lane site
+    /// `site`, whose function captures from `environment`: the element the site recorded under
+    /// the brand's home (`PrivateSiteHomes::element`), else the one `[[Get]]`'s walk of the
+    /// object's chain meets, recorded for the next read. `None` leaves the read to the general
+    /// path: a missing getter, a proxy on the chain, or a site without a recorded home.
+    pub(super) fn site_private_element(
+        &self,
+        site: usize,
+        environment: Value,
+        brand: PrivateBrand,
+        object: Value,
+    ) -> Option<super::private_site_home::PrivateElement> {
+        use super::private_site_home::PrivateElement;
+        let epoch = self.heap.collection_epoch();
+        if let Some(element) = self.private_site_homes.element(site, environment, epoch, brand.home) {
+            return Some(element);
+        }
+        let key = PropertyKey::string(brand.name);
+        let mut link = object;
+        let element = loop {
+            if matches!(self.heap.get(link), Some(Cell::Proxy { .. })) {
+                return None;
+            }
+            if let Some(attributes) = self.property_attributes(link, key) {
+                break if attributes.accessor {
+                    PrivateElement::Getter(attributes.getter?)
+                } else {
+                    PrivateElement::Method(self.own_property(link, brand.name)?)
+                };
+            }
+            link = self.object_data(link)?.proto();
+            if link.is_null() {
+                return None;
+            }
+        };
+        self.private_site_homes.record_element(site, environment, epoch, brand.home, element);
+        Some(element)
+    }
+
     /// `private_field_value` through `memoized_private_brand`.
     pub(super) fn memoized_private_field_value(
         &self,
