@@ -2073,7 +2073,7 @@ fn census_label(entry: &ProgramEntry, function: u32) -> String {
     let code = &entry.residual;
     let body = code.function_get(function as usize);
     format!(
-        "{} {} @{:?}",
+        "{} f{function} {} @{:?}",
         code.source_name,
         body.and_then(|body| body.name).map(|atom| code.atoms[atom as usize].to_string()).unwrap_or_default(),
         body.and_then(|body| body.source_span).map(|span| span.start),
