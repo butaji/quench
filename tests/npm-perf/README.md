@@ -126,3 +126,17 @@ matched across engines. This improves on the prior 196.7 renders/s / 29.74 MB
 Quench screen, but still misses the required 20% throughput advantage and 20%
 RSS reduction against both engines. Linux RSS sampling remains diagnostic,
 not qualification.
+
+The next profile found frequent `$$typeof` reads on arrays whose absent-property
+proof stopped at `Array.prototype`, because inherited field caches only walked
+ordinary-object prototypes. The cache now carries the field atom while walking
+shape-supported prototypes, including arrays, and admits absent non-index,
+non-virtual names on direct arrays. Prototype links remain guarded by shape and
+prototype-layout proofs. The 11-round Linux diagnostic is saved at
+[`reports/react-no-jit-array-prototype-cache-linux-11.json`](reports/react-no-jit-array-prototype-cache-linux-11.json).
+It produced 245.0 renders/s and 29.41 MB sampled max RSS, versus Node
+`--jitless` at 1683.5 / 31.92 MB and Bun no-JIT at 1184.8 / 36.98 MB. Output
+matched across engines. The lane-exit census dropped these `GetField` exits
+from 5,390 over 55 renders to 2 over 55 renders. This improves on the prior
+220.6 renders/s screen, but still misses the 20% throughput and RSS gates
+against Node. Linux RSS sampling remains diagnostic, not qualification.
