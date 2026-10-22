@@ -1607,6 +1607,10 @@ pub(crate) struct Vm<H> {
     /// strings are immutable, so every closure of a plan can hold the same name value.
     /// Only program atoms and the anonymous name are kept, so the loaded program bounds it.
     atom_strings: FxHashMap<Atom, Value>,
+    /// Whether a stable root table (`natives`, `atom_strings`, the startup intrinsics' sealed
+    /// roots and swap list) changed since the last collection. Every value those tables held
+    /// then was traced and is old, so a minor collection scans them only after a change.
+    stable_roots_changed: bool,
     /// The function values in `natives`. One native serves every realm, so it runs in the
     /// realm of its caller rather than switching to the creator's.
     shared_natives: FxHashSet<Value>,

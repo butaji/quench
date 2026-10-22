@@ -350,6 +350,15 @@ impl<H: Host> Vm<H> {
             .retain(|(program, _, _), _| !reclaimed.contains(program));
     }
 
+    /// The values of the root tables `stable_roots_changed` covers.
+    fn stable_roots(&self) -> impl Iterator<Item = Value> + '_ {
+        self.natives
+            .iter()
+            .map(|(_, value)| *value)
+            .chain(self.atom_strings.values().copied())
+            .chain(self.startup_intrinsic_roots())
+    }
+
     pub(super) fn collect_slow(&mut self, _program: &ResidualProgram, full: bool) {
         self.invalidate_wasm_reference_caches();
         let full = self.heap.collection_is_full(full);
@@ -648,8 +657,12 @@ impl<H: Host> Vm<H> {
                 .iter()
                 .flat_map(|(realm, prototype)| [*realm, *prototype]),
         );
-        roots.extend(self.natives.iter().map(|(_, value)| *value));
-        roots.extend(self.atom_strings.values().copied());
+        // The stable root tables: unchanged since the last collection, they hold only old values.
+        let scan_stable_roots = full || self.stable_roots_changed;
+        if scan_stable_roots {
+            roots.extend(self.stable_roots());
+        }
+        self.stable_roots_changed = false;
         roots.extend(self.realm.intrinsics.iterator_prototypes.iter().flat_map(
             |(realm, prototypes)| {
                 [
@@ -710,7 +723,6 @@ impl<H: Host> Vm<H> {
         roots.extend(self.symbol_registry.values().copied());
         roots.extend(self.well_known_symbols.values());
         roots.extend(self.typeof_names);
-        roots.extend(self.startup_intrinsic_roots());
         roots.extend(self.frames.iter().flat_map(|frame| {
             // A missing map means the function uses a register form
             // the liveness pass cannot represent; keep the safe
@@ -794,6 +806,16 @@ impl<H: Host> Vm<H> {
         );
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         let after_collection_started = std::time::Instant::now();
+        // A skipped table survives only if it gained no young value: every change sets the flag.
+        #[cfg(debug_assertions)]
+        if !scan_stable_roots {
+            for root in self.stable_roots() {
+                assert!(
+                    root.heap_index().is_none() || self.heap.is_live(root),
+                    "a stable root table gained a young value without recording the change: {root:?}"
+                );
+            }
+        }
         let mut live_shapes = shape_trace.live_shapes();
         // The startup snapshot reads its holders' sealed shapes, which no object may hold now.
         live_shapes.extend(self.startup_intrinsics.sealed_shapes());
