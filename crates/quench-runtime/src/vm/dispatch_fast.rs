@@ -884,9 +884,11 @@ const EMPTY_SCRIPT_CALL_TARGET: ScriptCallTarget = ScriptCallTarget {
 /// Entries of the script call cache, in sets of `SCRIPT_TARGET_WAYS` that a hash of the
 /// callee's heap index picks (`ScriptTargets::set`), at most: Express's router calls a
 /// matcher closure per layer, some 400 distinct callees a request, which 256 entries
-/// thrashed (Callgrind: 2.4% of a ping request re-resolving); 1024 hold them in 64 KiB per
-/// table.
-const SCRIPT_CALL_TARGETS: usize = 1024;
+/// thrashed (Callgrind: 2.4% of a ping request re-resolving). 1024 still met conflicts in
+/// their two-way sets, re-resolving 34 callees a body request (~380 instructions each);
+/// 4096 (256 KiB per table, reached only by a cache that keeps displacing live targets) cut
+/// express body and ping 1.3% (Callgrind, per request).
+const SCRIPT_CALL_TARGETS: usize = 4096;
 /// Entries a script call cache starts with: a program that calls few distinct callees keeps
 /// 16 KiB per table resident instead of 64 (V8-v7 max RSS, both tables: about 100 KiB per
 /// fixture). A cache grows to `SCRIPT_CALL_TARGETS` by this factor each time it has

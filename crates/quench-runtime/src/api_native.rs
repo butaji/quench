@@ -340,9 +340,21 @@ macro_rules! host_functions {
 /// host to release later; fresh execution invalidates promoted roots too.
 pub struct NativeContext<'a, H: Host> {
     vm: &'a mut Vm<H>,
+    /// The listed roots this scope releases one by one when it ends.
     roots: Vec<RootId>,
+    /// Where this scope's scoped roots (`scoped_value`) begin on the root table's stack,
+    /// which its end truncates to.
+    scoped_height: usize,
     /// `new.target` when this context runs a host constructor's [[Construct]].
     new_target: Option<Value>,
+}
+
+/// Where a native scope's roots begin (`NativeContext::root_scope_mark`): the roots made
+/// after it, listed or scoped, are a nested scope's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RootScopeMark {
+    listed: usize,
+    scoped: usize,
 }
 
 impl<'a, H: Host> NativeContext<'a, H> {
@@ -373,9 +385,11 @@ impl<'a, H: Host> NativeContext<'a, H> {
     /// the pool stays as deep as the native calls nested at once.
     pub(crate) fn with_new_target(vm: &'a mut Vm<H>, new_target: Option<Value>) -> Self {
         let roots = vm.native_root_lists.pop().unwrap_or_default();
+        let scoped_height = vm.scoped_root_height();
         Self {
             vm,
             roots,
+            scoped_height,
             new_target,
         }
     }
@@ -396,19 +410,20 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.new_target.map(|value| self.scoped_value(value))
     }
 
-    /// The number of roots this callback scope holds; a later
+    /// Where the roots this callback scope makes next begin; a later
     /// [`release_roots_since`](Self::release_roots_since) closes a nested scope at it.
-    pub fn root_scope_mark(&self) -> usize {
-        self.roots.len()
+    pub fn root_scope_mark(&self) -> RootScopeMark {
+        RootScopeMark { listed: self.roots.len(), scoped: self.vm.scoped_root_height() }
     }
 
     /// Release the roots created after `mark`, except `keep`, which move to the
     /// enclosing scope (an escaped handle).
-    pub fn release_roots_since(&mut self, mark: usize, keep: &[RootId]) {
-        if mark >= self.roots.len() {
+    pub fn release_roots_since(&mut self, mark: RootScopeMark, keep: &[RootId]) {
+        self.vm.release_root_scope_keeping(mark.scoped, keep);
+        if mark.listed >= self.roots.len() {
             return;
         }
-        let created = self.roots.split_off(mark);
+        let created = self.roots.split_off(mark.listed);
         for root in created {
             if keep.contains(&root) {
                 self.roots.push(root);
@@ -434,9 +449,7 @@ impl<'a, H: Host> NativeContext<'a, H> {
     }
 
     pub(crate) fn scoped_value(&mut self, value: Value) -> RootId {
-        let root = self.vm.root(value);
-        self.roots.push(root);
-        root
+        self.vm.root_scoped(value)
     }
 
     fn error(&mut self, error: JsError) -> RootedError {
@@ -1935,7 +1948,9 @@ impl<'a, H: Host> NativeContext<'a, H> {
         step: impl FnOnce(&mut Self) -> Result<(), RootedError>,
     ) -> Result<(), RootedError> {
         let mark = self.roots.len();
+        let scoped = self.vm.scoped_root_height();
         step(self)?;
+        self.vm.release_root_scope(scoped);
         for root in self.roots.drain(mark..) {
             self.vm.release_root(root);
         }
@@ -1986,6 +2001,7 @@ const RETAINED_NATIVE_ROOT_LIST_CAPACITY: usize = 256;
 
 impl<H: Host> Drop for NativeContext<'_, H> {
     fn drop(&mut self) {
+        self.vm.release_root_scope(self.scoped_height);
         for root in &self.roots {
             self.vm.release_root(*root);
         }
