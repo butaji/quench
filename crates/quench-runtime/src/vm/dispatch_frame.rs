@@ -1402,6 +1402,23 @@ impl<H: Host> Vm<H> {
                         let span = function.map(|f| format!("{:?}", f.source_span)).unwrap_or_default();
                         super::lane_exits::record_detail(format!("{:?} in {name} {span} pc={pc} lane={}", instruction.op(), Self::lane_runs(cursor.lane, pc)));
                     }
+                    // A `Return` exit of the loop's own entry frame: which native's call into
+                    // JavaScript started this nested run.
+                    if instruction.op() == Op::Return && pending_calls.is_empty() {
+                        let starter = self.realm.promise.active_native.last().map(|activation| activation.callable);
+                        let described = match starter.and_then(|callable| self.heap.function(callable)) {
+                            Some(crate::heap::FunctionRecord { kind: FunctionKind::Native(native), .. }) => {
+                                let name = starter
+                                    .and_then(|callable| self.own_property(callable, self.runtime_atoms.name))
+                                    .and_then(|name| self.heap.string(name).map(|text| text.to_string()))
+                                    .unwrap_or_default();
+                                format!("{native:?} {name}")
+                            }
+                            Some(crate::heap::FunctionRecord { kind: FunctionKind::User(..), .. }) => "user".into(),
+                            None => "none".into(),
+                        };
+                        super::lane_exits::record_detail(format!("Return nested run started by {described}"));
+                    }
                     if instruction.op() == Op::GetField
                         && let Some(lookup) = instruction.field_lookup()
                     {

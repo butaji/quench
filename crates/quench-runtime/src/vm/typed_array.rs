@@ -3,6 +3,11 @@ use super::typed_array_install::{TYPED_ARRAY_BASE_METHODS, TYPED_ARRAY_CALLBACK_
 use super::typed_array_install::{UINT8_ARRAY_PROTOTYPE_METHODS, UINT8_ARRAY_STATIC_METHODS};
 use super::*;
 impl<H: Host> Vm<H> {
+    /// `ArrayBuffer.isView(value)`: whether `value` is a typed array or a DataView.
+    pub(super) fn is_array_buffer_view(&self, value: Value) -> bool {
+        matches!(self.heap.get(value), Some(Cell::TypedArray { .. } | Cell::DataView { .. }))
+    }
+
     pub(super) fn maybe_call_typed_array_native(
         &mut self,
         p: &ResidualProgram,
@@ -229,16 +234,8 @@ impl<H: Host> Vm<H> {
             return self.typed_array_callback_native(p, array_native, this, args);
         }
         if native == Native::ArrayBufferIsView {
-            return Ok(
-                if matches!(
-                    args.first().and_then(|value| self.heap.get(*value)),
-                    Some(Cell::TypedArray { .. }) | Some(Cell::DataView { .. })
-                ) {
-                    Value::TRUE
-                } else {
-                    Value::FALSE
-                },
-            );
+            let value = args.first().copied().unwrap_or(Value::UNDEFINED);
+            return Ok(Value::boolean(self.is_array_buffer_view(value)));
         }
         let buffer = self.validate_typed_array_method(p, native, this)?;
         let length = self.typed_array_length(this).unwrap_or_default();

@@ -1,7 +1,6 @@
 mod compiled;
 mod js_compiled;
 mod jit_backend;
-mod loop_compiled;
 mod shape_transitions;
 mod snapshot;
 mod startup_intrinsics;
@@ -155,6 +154,7 @@ mod object;
 mod shape_memo;
 mod symbol_write_proof;
 mod symbol_load_proof;
+mod private_site_home;
 mod enumerable_key_memo;
 mod name_atom_memo;
 mod object_assignment;
@@ -673,6 +673,7 @@ const INHERITED_FIELD_CACHE_MAX_DEPTH: usize = 16;
 #[derive(Clone, Copy)]
 struct InheritedFieldCache {
     receiver: u32,
+    atom: Atom,
     prototype_shapes: [u32; INHERITED_FIELD_CACHE_MAX_DEPTH],
     depth: u8,
     answer: InheritedFieldAnswer,
@@ -1668,6 +1669,8 @@ pub(crate) struct Vm<H> {
     function_name_shapes: provenance::FunctionNameShapes,
     symbol_write_proofs: symbol_write_proof::SymbolWriteProofs,
     symbol_load_proofs: symbol_load_proof::SymbolLoadProofs,
+    /// Lane private-name sites' homes (`private_site_home`).
+    private_site_homes: private_site_home::PrivateSiteHomes,
     array_iteration_proof: Option<iterators::ArrayIterationProof>,
     enumerable_keys: enumerable_key_memo::EnumerableKeyMemo,
     shape_attribute_memo: shape_memo::ShapeAttributeMemo,
@@ -1740,6 +1743,9 @@ pub(crate) struct Vm<H> {
     /// The shape of an iterator result `{ value, done }` (`Vm::iterator_result`); derived
     /// from shapes, so field-cache invalidation clears it.
     iterator_result_shape: Option<u32>,
+    /// The one `{ value, done }` result a lane iterator step reuses (`Vm::reused_iterator_result`),
+    /// `undefined` until the first; cleared with `iterator_result_shape`.
+    reused_iterator_result: Value,
     /// The shapes of a complete data and accessor property descriptor object
     /// (`Vm::property_descriptor_object`), indexed by `accessor`; derived from shapes, so
     /// field-cache invalidation clears them.
@@ -1797,6 +1803,9 @@ pub(crate) struct Vm<H> {
     wasm_js: wasm_js::WasmJsIntrinsics,
     direct_eval: bool,
     direct_eval_var_program: Option<ProgramId>,
+    /// The Function-constructor programs this VM may still offer the host's compile cache
+    /// (`DYNAMIC_FUNCTIONS_KEPT`).
+    dynamic_functions_to_keep: u16,
     parameter_eval: bool,
     eval_script_context: bool,
     deferred_dependency_batch: bool,
@@ -2247,8 +2256,9 @@ impl<H: Host> Vm<H> {
                 let id = ProgramId::from_raw(index as u32);
                 if let Some(residual) = self.programs.get(id) {
                     eprintln!(
-                        "{{\"kind\":\"quench-profile-program\",\"program_id\":{}}}",
+                        "{{\"kind\":\"quench-profile-program\",\"program_id\":{},\"source_name\":{:?}}}",
                         id.raw(),
+                        residual.source_name,
                     );
                     self.profile.report(&self.heap, id.raw(), &residual);
                 }
@@ -2595,6 +2605,7 @@ impl<H: Host> Vm<H> {
         self.function_name_shapes.clear();
         self.symbol_write_proofs.clear();
         self.symbol_load_proofs.clear();
+        self.private_site_homes.clear();
         self.array_iteration_proof = None;
         self.enumerable_keys.clear();
         self.shape_attribute_memo.clear();
@@ -2679,6 +2690,7 @@ impl<H: Host> Vm<H> {
         self.function_name_shapes.clear();
         self.closure_templates.fill(None);
         self.iterator_result_shape = None;
+        self.reused_iterator_result = Value::UNDEFINED;
         self.descriptor_shapes = [None; 2];
         self.descriptor_layout = None;
         self.regexp_object_shapes = None;
