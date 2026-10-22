@@ -293,9 +293,14 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding) -> (Vec
             Vec::new()
         }
         AtomEncoding::Compact(compact) => {
+            // The names' lengths, then their text as one run, which the reader validates as
+            // UTF-8 at once instead of name by name.
             header.u32(compact.order.len() as u32);
             for &atom in &compact.order {
-                header.string(&program.atoms[atom as usize]);
+                header.u32(program.atoms[atom as usize].len() as u32);
+            }
+            for &atom in &compact.order {
+                header.bytes.extend_from_slice(program.atoms[atom as usize].as_bytes());
             }
             compact.order
         }
@@ -433,11 +438,16 @@ fn decode_program(
         }
         ReadAtoms::Compact(intern) => {
             let count = input.u32()? as usize;
+            let lengths = (0..count).map(|_| input.u32().map(|len| len as usize)).collect::<Result<Vec<_>, _>>()?;
+            let total = lengths.iter().try_fold(0usize, |total, &len| total.checked_add(len));
+            let text = std::str::from_utf8(input.take(total.ok_or("invalid residual string")?)?)
+                .map_err(|_| "invalid residual string")?;
             let mut ids = Vec::with_capacity(count);
-            for _ in 0..count {
-                let len = input.u32()? as usize;
-                let name = std::str::from_utf8(input.take(len)?).map_err(|_| "invalid residual string")?;
+            let mut start = 0;
+            for len in lengths {
+                let name = text.get(start..start + len).ok_or("invalid residual string")?;
                 ids.push(intern(name));
+                start += len;
             }
             input.atoms = Some(ids.into());
             AtomTable::default()
