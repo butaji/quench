@@ -723,6 +723,13 @@ llvm-bolt $BINARY -o $BINARY-bolt -data=bolt/profile.fdata \
   -skip-funcs-file=bolt/skip.funcs -use-gnu-stack -jump-tables=move
 ```
 
+The static `quench-node` order and its BOLT profile train on the same scripts without and
+with `--jit` (start-up cachegrind and run-phase callgrind profiles of each), the `--jit`
+profiles after the others: without them the JS tier's Cranelift compiler is laid out as
+cold code, and a `--jit` run faulted in about 1.1 MB more of it (V8-v7 `--jit` max RSS,
+bolted static x86_64, 2026-10-22: Crypto 4620 -> 3968 KiB, DeltaBlue 3908 -> 3368,
+Richards 2724 -> 2468; no-JIT equal or lower).
+
 `-jump-tables=move` lays the jump tables of hot code beside it, apart from the cold
 ones: in place, the `match` tables of the dispatch and the compiler sit among
 `.rodata`'s merged constants, and a run kept about 120 KB of them resident (V8-v7
