@@ -676,6 +676,8 @@ struct InheritedFieldCache {
     atom: Atom,
     prototype_shapes: [u32; INHERITED_FIELD_CACHE_MAX_DEPTH],
     depth: u8,
+    /// Whether a function may stand on the chain (`Vm::function_links_answer` of the name).
+    function_links: bool,
     answer: InheritedFieldAnswer,
     /// The `prototype_layout_epoch` under which a walk last proved the chain from
     /// `proved_prototype` up to `proved_holder`, its last recorded prototype, or
@@ -732,7 +734,9 @@ struct FieldAddCache {
     /// The `prototype_layout_epoch` under which a walk last proved the chain from
     /// `proved_prototype`, or `NO_PROVED_EPOCH`; while both hold the chain needs no walk.
     proved_epoch: u64,
-    proved_prototype: Value,
+    /// The receiver's prototype link the proof holds for, compared undecoded; a collection
+    /// advances the epoch, so it never outlives the record it names.
+    proved_prototype: ProtoLink,
 }
 /// A `FieldAddCache::proved_epoch` no epoch reaches: the chain is unproven.
 const NO_PROVED_EPOCH: u64 = u64::MAX;
@@ -745,10 +749,16 @@ impl FieldAddCache {
         prototype_depth: 0,
         prototype_shapes: [NO_FIELD_RECEIVER; FIELD_ADD_CACHE_MAX_PROTO_DEPTH],
         proved_epoch: NO_PROVED_EPOCH,
-        proved_prototype: Value::UNDEFINED,
+        proved_prototype: ProtoLink::NULL,
     };
     fn prototype_shapes(&self) -> &[u32] {
         &self.prototype_shapes[..usize::from(self.prototype_depth)]
+    }
+    /// Whether the chain proof (`proved_epoch`, `proved_prototype`) holds for a receiver
+    /// whose prototype `link` names: then the chain needs no walk.
+    #[inline(always)]
+    fn proof_holds(&self, link: ProtoLink) -> bool {
+        self.proved_epoch == crate::heap::prototype_layout_epoch() && self.proved_prototype == link
     }
 }
 /// The add transitions one site remembers, oldest first.
@@ -764,7 +774,8 @@ impl FieldAddCacheSet {
     };
     #[inline(always)]
     fn find(&self, source_shape: u32, atom: Atom) -> Option<&FieldAddCache> {
-        self.entries[..usize::from(self.len)]
+        // SAFETY: `insert` keeps `len` within the entries.
+        unsafe { self.entries.get_unchecked(..usize::from(self.len)) }
             .iter()
             .find(|cache| cache.source_shape == source_shape && cache.atom == atom)
     }
@@ -2722,7 +2733,7 @@ impl<H: Host> Vm<H> {
         self.install_builtins(program, scope)?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_builtins");
-        self.initialize_host(program)?;
+        self.initialize_host()?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("host_bootstrap");
         Ok(())

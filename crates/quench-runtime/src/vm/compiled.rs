@@ -2306,6 +2306,7 @@ pub(super) struct CompiledJsFunction {
     mapped_bytes: usize,
     return_constants: Vec<(u32, u32)>,
     field_argument: Option<super::js_compiled::JsJitFieldArgument>,
+    numeric_field_inputs: Vec<super::js_compiled::JsJitNumericFieldInput>,
     capture_argument: Option<super::js_compiled::JsJitCaptureArgument>,
     capture_arguments: Vec<super::js_compiled::JsJitCaptureArgument>,
     #[cfg(test)]
@@ -2368,6 +2369,7 @@ impl CompiledJsFunction {
         let code = CodeMemory::new(&artifact.code)?;
         let mapped_bytes = code.length;
         let field_argument = artifact.field_argument;
+        let numeric_field_inputs = artifact.numeric_field_inputs;
         let capture_arguments = artifact.capture_arguments;
         let (entry, return_constants, capture_argument) = match artifact.result {
             super::js_compiled::JsJitResultKind::Number => {
@@ -2513,6 +2515,7 @@ impl CompiledJsFunction {
             mapped_bytes,
             return_constants,
             field_argument,
+            numeric_field_inputs,
             capture_argument,
             capture_arguments,
             #[cfg(test)]
@@ -2530,6 +2533,14 @@ impl CompiledJsFunction {
 
     pub(super) fn field_argument(&self) -> Option<super::js_compiled::JsJitFieldArgument> {
         self.field_argument
+    }
+
+    pub(super) fn numeric_field_inputs(&self) -> &[super::js_compiled::JsJitNumericFieldInput] {
+        &self.numeric_field_inputs
+    }
+
+    fn uses_numeric_field_argument(&self) -> bool {
+        self.field_argument.is_some() && matches!(self.entry, CompiledJsEntry::Number(_))
     }
 
     fn capture_argument(&self) -> Option<super::js_compiled::JsJitCaptureArgument> {
@@ -6786,19 +6797,14 @@ impl<H: Host> Vm<H> {
         let program_id = self.frames[frame].program;
         let function_id = self.frames[frame].function;
         let function = program.function_get(function_id as usize)?;
-        let numeric_find_candidate = if jit_numeric_find_enabled() {
-            self.programs
-                .js_jit_numeric_find_candidate(program_id, function_id, function)
-        } else {
-            None
-        };
+        let facts = self.programs.js_entry_facts(program_id, function_id)?;
+        let numeric_find_candidate = facts.numeric_find.filter(|_| jit_numeric_find_enabled());
         if let Some(candidate) = numeric_find_candidate
             && let Some(result) = self.js_jit_numeric_find_at_entry(program, frame, candidate)
         {
             return Some(result);
         }
-        let field_increment_candidate =
-            super::js_compiled::cached_this_field_increment_candidate(program, function);
+        let field_increment_candidate = facts.field_increment;
         let mut field_increment_diagnostic_entry_recorded = false;
         if let Some(candidate) = field_increment_candidate {
             let fixed_this = self.frames[frame].fixed_this;
@@ -6838,7 +6844,7 @@ impl<H: Host> Vm<H> {
             }
         }
         let field_return_candidate =
-            super::js_compiled::cached_this_field_return_candidate(function);
+            facts.field_return;
         let mut field_return_diagnostic_entry_recorded = field_increment_diagnostic_entry_recorded;
         if let Some(candidate) = field_return_candidate {
             let fixed_this = self.frames[frame].fixed_this;
@@ -6898,21 +6904,21 @@ impl<H: Host> Vm<H> {
             _ => None,
         };
         let numeric_loop_candidate =
-            compiled_tier.is_none() && super::js_compiled::has_numeric_loop_candidate(function);
+            compiled_tier.is_none() && facts.numeric_loop;
         let int32_bitwise_candidate =
-            super::js_compiled::has_int32_bitwise_candidate(program, function);
+            facts.int32_bitwise;
         let int32_identity_candidate =
-            super::js_compiled::int32_identity_return_candidate(program, function).is_some();
+            facts.int32_identity;
         let capture_argument = match compiled_tier {
             Some(compiled) => compiled.capture_argument(),
-            None => super::js_compiled::number_capture_candidate(function),
+            None => facts.number_capture,
         };
         let mut capture_arguments: smallvec::SmallVec<
             [super::js_compiled::JsJitCaptureArgument; 4],
         > = smallvec::SmallVec::new();
         if let Some(compiled) = compiled_tier {
             capture_arguments.extend_from_slice(compiled.capture_arguments());
-        } else if let Some(candidate) = super::js_compiled::numeric_capture_candidate(function) {
+        } else if let Some(candidate) = facts.numeric_capture.clone() {
             capture_arguments.extend(candidate);
         }
         let capture_number = capture_argument.and_then(|capture| {
@@ -6921,19 +6927,41 @@ impl<H: Host> Vm<H> {
         });
 
         let params = usize::from(function.params);
-        let registers = self.frames[frame].registers.get(..params)?;
+        let registers = self.frames[frame].registers.get(..params)?.to_vec();
         let first_argument = registers.first().copied();
-        let field_argument = match compiled_tier {
-            Some(compiled) => compiled.field_argument(),
-            None => super::js_compiled::cached_field_argument_candidate(function),
+        let mut numeric_field_inputs: smallvec::SmallVec<
+            [super::js_compiled::JsJitNumericFieldInput; 4],
+        > = smallvec::SmallVec::new();
+        if let Some(compiled) = compiled_tier {
+            numeric_field_inputs.extend_from_slice(compiled.numeric_field_inputs());
+        } else if let Some(inputs) = &facts.numeric_field_inputs {
+            numeric_field_inputs.extend_from_slice(inputs);
+        }
+        let parameter_zero_is_field = numeric_field_inputs.iter().any(|input| {
+            input.receiver == super::js_compiled::JsJitFieldReceiver::ParameterZero
+        });
+        let numeric_field_argument = match compiled_tier {
+            Some(compiled) if compiled.uses_numeric_field_argument() => compiled.field_argument(),
+            Some(_) => None,
+            None => facts.numeric_field_argument,
         };
+        let field_argument_uses_numeric_abi = numeric_field_argument.is_some();
+        let field_argument = numeric_field_argument.or_else(|| match compiled_tier {
+            Some(compiled) => compiled.field_argument(),
+            None if numeric_field_inputs.is_empty() => facts.field_argument,
+            None => None,
+        });
         let field_reject_candidate = match compiled_tier {
             Some(compiled) => compiled.is_field_reject(),
-            None => super::js_compiled::is_field_reject_candidate(function),
+            None => facts.field_reject,
         };
         let mut arguments: smallvec::SmallVec<[f64; 8]> = smallvec::SmallVec::new();
         let mut numeric = true;
-        for value in registers {
+        for (index, value) in registers.iter().copied().enumerate() {
+            if index == 0 && parameter_zero_is_field {
+                arguments.push(0.0);
+                continue;
+            }
             match value.as_number() {
                 Some(value) => arguments.push(value),
                 None => {
@@ -6956,20 +6984,90 @@ impl<H: Host> Vm<H> {
         } else {
             numeric = false;
         }
+        if !numeric_field_inputs.is_empty() {
+            for input in numeric_field_inputs.iter().copied() {
+                let receiver = match input.receiver {
+                    super::js_compiled::JsJitFieldReceiver::This => {
+                        if !self.frames[frame].fixed_this {
+                            numeric = false;
+                            break;
+                        }
+                        self.frames[frame].this
+                    }
+                    super::js_compiled::JsJitFieldReceiver::ParameterZero => {
+                        let Some(receiver) = first_argument else {
+                            numeric = false;
+                            break;
+                        };
+                        receiver
+                    }
+                };
+                match self.cached_field_hit(program, receiver, input.cache_site) {
+                    super::object::FieldCacheProbe::Hit(value) => {
+                        if let Some(value) = value.as_number() {
+                            arguments.push(value);
+                        } else {
+                            numeric = false;
+                            break;
+                        }
+                    }
+                    super::object::FieldCacheProbe::OrdinaryMiss
+                    | super::object::FieldCacheProbe::Ineligible => {
+                        numeric = false;
+                        break;
+                    }
+                }
+            }
+        }
         if let Some(field_argument) = field_argument {
             let receiver = first_argument?;
             arguments.clear();
-            numeric = false;
-            if let super::object::FieldCacheProbe::Hit(value) =
-                self.cached_field_hit(program, receiver, field_argument.cache_site)
-            {
-                if let Some(number) = value.as_number() {
-                    arguments.push(number);
-                    numeric = true;
-                } else if field_reject_candidate {
-                    // Strict inequality against a Number is true for every non-Number
-                    // value. NaN therefore takes the guarded early-return path.
-                    arguments.push(f64::NAN);
+            if !field_argument_uses_numeric_abi {
+                numeric = false;
+                if let super::object::FieldCacheProbe::Hit(value) =
+                    self.cached_field_hit(program, receiver, field_argument.cache_site)
+                {
+                    if let Some(value) = value.as_number() {
+                        arguments.push(value);
+                        numeric = true;
+                    } else if field_reject_candidate {
+                        // Strict inequality against a Number is true for every
+                        // non-Number value, so NaN takes the guarded early return.
+                        arguments.push(f64::NAN);
+                    }
+                } else {
+                    arguments.clear();
+                }
+            } else {
+                numeric = true;
+                // Preserve numeric arguments after the receiver. The compiler
+                // keeps the object's ABI slot as a placeholder, then appends
+                // the guarded field value after parameters and captures.
+                for (index, value) in registers.iter().copied().enumerate() {
+                    if index == 0 {
+                        arguments.push(0.0);
+                    } else if let Some(value) = value.as_number() {
+                        arguments.push(value);
+                    } else {
+                        numeric = false;
+                        break;
+                    }
+                }
+                if captures_numeric {
+                    arguments.extend(capture_values.iter().copied());
+                } else {
+                    numeric = false;
+                }
+                if let super::object::FieldCacheProbe::Hit(value) =
+                    self.cached_field_hit(program, receiver, field_argument.cache_site)
+                {
+                    if let Some(number) = value.as_number() {
+                        arguments.push(number);
+                    } else {
+                        numeric = false;
+                    }
+                } else {
+                    numeric = false;
                 }
             }
         }
@@ -6980,7 +7078,7 @@ impl<H: Host> Vm<H> {
         }
         let string_hash_candidate = match compiled_tier {
             Some(compiled) => compiled.is_string_hash_loop(),
-            None => super::js_compiled::has_string_hash_loop_candidate(program, function),
+            None => facts.string_hash_loop,
         } && params == 1
             && self.js_jit_string_hash_guard()
             && first_argument.is_some_and(|value| self.heap.is_string(value));
@@ -6995,7 +7093,7 @@ impl<H: Host> Vm<H> {
         };
         let string_transform_kind = match compiled_tier {
             Some(compiled) => compiled.string_transform_kind(),
-            None => super::js_compiled::string_transform_candidate(program, function),
+            None => facts.string_transform,
         };
         let string_transform = string_transform_kind
             .filter(|kind| self.js_jit_string_transform_guard(*kind))
@@ -7080,7 +7178,10 @@ impl<H: Host> Vm<H> {
                     program_id,
                     function_id,
                     numeric,
-                    (numeric && (numeric_loop_candidate || field_argument.is_some()))
+                    (numeric
+                        && (numeric_loop_candidate
+                            || field_argument.is_some()
+                            || !numeric_field_inputs.is_empty()))
                         || int32_identity_candidate
                         || (field_reject_candidate && arguments.len() == 1)
                         || capture_number.is_some()
@@ -7306,6 +7407,7 @@ impl<H: Host> Vm<H> {
         // captures. Those artifacts must use the ordinary frame-entry path,
         // where the capture guards and ABI values are assembled together.
         if compiled.field_argument().is_some()
+            || !compiled.numeric_field_inputs().is_empty()
             || compiled.is_capture_number()
             || !compiled.capture_arguments().is_empty()
             || compiled.is_string_transform()

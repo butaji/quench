@@ -1,6 +1,34 @@
 use smallvec::SmallVec;
 
 pub(crate) const INTRINSIC_REGEXP_BINDING: &str = "\0quench:intrinsic-regexp";
+
+/// The native an engine-internal intrinsic name stands for: a by-name read of it resolves to
+/// that native before consulting any binding (`Vm::intrinsic_name_value`), and no source
+/// identifier can spell it, so the read observes no scope.
+pub(crate) fn intrinsic_name_native(name: &str) -> Option<crate::heap::Native> {
+    use crate::heap::Native;
+    Some(match name {
+        "\0quench:dynamic-import" => Native::DynamicImport,
+        "\0quench:intrinsic-promise" => Native::Promise,
+        "\0quench:super-get" => Native::ReflectGet,
+        "\0quench:super-set" => Native::SuperSet,
+        "\0quench:super-base" => Native::ReflectGetPrototypeOf,
+        "\0quench:object-literal-prototype" => Native::ObjectLiteralPrototype,
+        "\0quench:object-define-property" => Native::ObjectDefineProperty,
+        "\0quench:object-freeze" => Native::ObjectFreeze,
+        // The iteration helpers each realm also installs on its global object.
+        "\0quench:iterator-close" => Native::IteratorClose,
+        "\0quench:for-in-keys" => Native::ForInKeys,
+        "\0quench:for-in-key-is-enumerable" => Native::ForInKeyIsEnumerable,
+        _ => return None,
+    })
+}
+
+/// Whether a by-name read of `name` is an intrinsic's (`intrinsic_name_native` or the RegExp
+/// intrinsic), which reads no binding.
+pub(crate) fn is_intrinsic_name(name: &str) -> bool {
+    name == INTRINSIC_REGEXP_BINDING || intrinsic_name_native(name).is_some()
+}
 /// The engine-internal global a `with` statement calls to enter its object scope.
 pub(crate) const WITH_ENTER_BINDING: &str = "\0quench:with-enter";
 pub(crate) const LEXICAL_THIS_BINDING: &str = "\0quench:lexical-this";
@@ -1193,6 +1221,9 @@ pub struct Function {
     pub(crate) live_parameter_reflection: std::cell::OnceCell<bool>,
     /// Lazily derived `names_resolve_statically`; never serialized.
     pub(crate) static_name_scope: std::cell::OnceCell<bool>,
+    /// Whether the JavaScript tier's candidate filter admits the function
+    /// (`js_compiled::function_candidate`), derived on its first entry; never serialized.
+    pub(crate) js_tier_candidate: std::cell::OnceCell<bool>,
     /// Lazily derived `call_plan`; never serialized.
     pub(crate) call_plan: std::cell::OnceCell<CallPlan>,
     pub(crate) handlers: crate::heap::ThinBoxSlice<Handler>,
@@ -1837,7 +1868,9 @@ impl Function {
             || self.is_generator
             || self.is_class_constructor
             || self.derived_constructor
-            || self.class_initializer
+            // A field initializer or static block keeps its instance's implicit bindings; an
+            // arrow inside one (also `class_initializer`) binds none of its own.
+            || (self.class_initializer && !self.is_arrow)
             || self.instance_initializer.is_some()
             || self.inherited_with_scope
             || !self.binding_sites.is_empty()
@@ -1845,8 +1878,10 @@ impl Function {
                 matches!(
                     instruction.op(),
                     Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof
-                ) && usize::try_from(instruction.atom_index())
-                    .is_ok_and(|atom| atom >= atoms.len() || atoms[atom].starts_with('\0'))
+                ) && usize::try_from(instruction.atom_index()).is_ok_and(|atom| {
+                    atom >= atoms.len()
+                        || atoms[atom].starts_with('\0') && !is_intrinsic_name(&atoms[atom])
+                })
                     || matches!(
                         instruction.op(),
                         Op::ResolveName
@@ -1944,9 +1979,9 @@ impl Function {
                 .count();
             // Plain but for an `arguments` binding.
             // An arrow's `this` is its environment's, which its activation binds
-            // (`Vm::lexical_activation_this`); one reaching `super` keeps its frame.
+            // (`Vm::lexical_activation_this`). One that reaches `super` reads a hidden name
+            // (`activation_binding_reads`) or its home as a capture, as any closure reads one.
             let ordinary = self.parent.is_some()
-                && !(self.is_arrow && self.super_home_atom.is_some())
                 && !self.derived_constructor
                 && !self.rest
                 && self.self_binding_slot.is_none()
@@ -3135,7 +3170,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 102;
+    pub const FORMAT_VERSION: u8 = 103;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;
