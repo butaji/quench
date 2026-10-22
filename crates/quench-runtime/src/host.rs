@@ -119,10 +119,14 @@ pub trait Host {
     /// Offers the host a compiled host program's compact form (`kept_compiled_program`).
     fn keep_compiled_program(&mut self, _name: &str, _parts: &[&str], _bytes: &[u8]) {}
 
-    /// A WebAssembly module's native compilation, which runs once per module, is about to
-    /// start: like `at_collection_boundary`, the code about to run (the code generator)
-    /// differs from the code that ran before it (loading, linking, instantiation).
-    fn before_wasm_native_compilation(&mut self) {}
+    /// A native compilation (a WebAssembly module's, or a JavaScript function's or loop
+    /// region's) is about to start: like `at_collection_boundary`, the code about to run (the
+    /// code generator) differs from the code that ran before it.
+    fn before_native_compilation(&mut self) {}
+
+    /// A JavaScript native compilation has finished: the code generator's code and its
+    /// scratch memory, freed by now, are no longer needed while the program runs on.
+    fn after_native_compilation(&mut self) {}
 
     /// A snapshot restore has read `bytes`, part of the snapshot the host gave it
     /// (`Runtime::restore_snapshot`), and reads them again only to decode a function's record
