@@ -17,7 +17,7 @@ use std::cell::Cell;
 /// (a web `Request`'s and `Headers`' `#fields`) with few conflicts. Hono's query route meets
 /// about a hundred such reads a request; 2^7 entries missed nearly half of them, 2^10 misses
 /// under a tenth.
-const PRIVATE_SITE_HOME_ENTRIES: usize = 1 << 10;
+const PRIVATE_SITE_HOME_ENTRIES: usize = 1 << 4;
 
 #[derive(Clone, Copy)]
 struct SiteHome {

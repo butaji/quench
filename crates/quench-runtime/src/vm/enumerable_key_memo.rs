@@ -9,7 +9,7 @@ use std::rc::Rc;
 
 /// Direct-mapped entries: a power of two. A request serializes and enumerates a few dozen
 /// distinct object shapes; 256 entries hold them.
-const ENUMERABLE_KEY_MEMO_ENTRIES: usize = 1 << 8;
+const ENUMERABLE_KEY_MEMO_ENTRIES: usize = 1 << 4;
 
 /// A shape's enumerable string keys in OrdinaryOwnPropertyKeys order, with their slots.
 pub(super) type EnumerableSlots = Rc<[(Atom, u32)]>;

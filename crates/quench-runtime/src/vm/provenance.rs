@@ -6,7 +6,7 @@ const FUNCTION_NATIVE_NAME_DESCRIPTOR_INDEX: usize = 1;
 
 /// Direct-mapped entries of `FunctionNameShapes`: a power of two that holds the distinct
 /// closure names a request path makes.
-const FUNCTION_NAME_SHAPE_ENTRIES: usize = 1 << 8;
+const FUNCTION_NAME_SHAPE_ENTRIES: usize = 1 << 4;
 
 /// Memoized `append_function_name` answers: the shape a closure's shape takes with a name.
 /// Closures of one site take the same name on the same shape, but that shape has a named
