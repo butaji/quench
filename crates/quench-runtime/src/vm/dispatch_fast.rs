@@ -763,6 +763,7 @@ fn forwarding_read_body(body: &Function) -> bool {
     field.op() == Op::GetField
         && !field.returns_from_frame()
         && base.0 != crate::bytecode::FieldBase::NESTED
+        && base.local_index().is_none()
         && base.register_index().is_none_or(|register| register < body.params)
         && method.op() == Op::GetField
         && !method.returns_from_frame()
@@ -789,6 +790,7 @@ fn element_read_body(body: &Function) -> bool {
     field.op() == Op::GetField
         && !field.returns_from_frame()
         && base.0 != crate::bytecode::FieldBase::NESTED
+        && base.local_index().is_none()
         && base.register_index().is_none_or(|register| register < body.params)
         && element.op() == Op::GetIndex
         && element.b() == field.a()
@@ -3450,10 +3452,18 @@ unsafe fn lane_known_field_base<H: Host, const THIS: bool>(
 /// takes `nested`.
 fn single_base_handler(base: u16, this: Handler, register: Handler, nested: Handler) -> Handler {
     match base {
-        crate::bytecode::FieldBase::NESTED => nested,
         base if base == crate::bytecode::FieldBase::THIS.0 => this,
-        _ => register,
+        base if crate::bytecode::FieldBase(base).register_index().is_some() => register,
+        // A nested record names no single base, and a local base (`FieldBase::local`) is no
+        // register the single-base handlers could read.
+        _ => nested,
     }
+}
+
+/// Whether a field record's base is one the single-base handlers read
+/// (`lane_known_field_base`): `this` or a register, not a nested chain or a local slot.
+fn is_single_field_base(base: u16) -> bool {
+    base == crate::bytecode::FieldBase::THIS.0 || crate::bytecode::FieldBase(base).register_index().is_some()
 }
 
 script_handler! {
@@ -10898,6 +10908,8 @@ fn lane_read_base(
 ) -> Option<Value> {
     match base.register_index() {
         Some(register) => arguments.get(register),
+        // A local base (`FieldBase::local`) names no activation register; the call runs.
+        None if base.local_index().is_some() => None,
         None => Some(this),
     }
 }
@@ -10983,7 +10995,7 @@ fn returning_field_first_kind<H: Host>(
     code: &ResidualProgram,
     i: &LaneInstruction,
 ) -> Handler {
-    if i.b != crate::bytecode::FieldBase::NESTED && !vm.reads_function_info(i.imm()) {
+    if is_single_field_base(i.b) && !vm.reads_function_info(i.imm()) {
         lane_returning::<H, RETURNING_FIELD_OWN>
     } else if lane_field_site_tier(vm, code, i) == FieldSiteTier::Nested {
         lane_returning::<H, RETURNING_FIELD_NESTED>
@@ -11006,6 +11018,10 @@ script_handler! {
         let cell_receiver = unsafe { lane_single_field_base(cx, r, i.b) }
             .is_some_and(|object| object.direct_object_index().is_none());
         let handler: Option<Handler> = match lane_field_site_tier(unsafe { vm(cx) }, code, i) {
+            // A local base has no single-base kind (`is_single_field_base`).
+            tier if tier != FieldSiteTier::Nested && !is_single_field_base(i.b) => {
+                Some(lane_returning::<H, RETURNING_FIELD>)
+            }
             FieldSiteTier::Own | FieldSiteTier::Holder | FieldSiteTier::Inherited if cell_receiver => {
                 Some(lane_returning::<H, RETURNING_FIELD>)
             }
