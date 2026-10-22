@@ -106,5 +106,6 @@ screen. An 11-round follow-up at the 2^17 cap measured 194.9 renders/s and
 29.74 MB; Node `--jitless` measured 1432.7 renders/s / 31.94 MB and Bun no-JIT
 1292.0 / 37.50 MB. Quench remains about 7.3x slower than Node and its RSS is
 only 6.9% lower than Node, so this is a partial improvement, not a win. A 2^18
-cap was slower and used slightly more RSS than the selected 2^17 setting in a
-five-round screen. These Linux RSS samples are diagnostic, not qualification.
+cap measured 191.7 renders/s / 30.66 MB versus 208.3 / 31.20 MB at 2^17 in a
+separate five-round screen. The 2^16 cap was selected on the 11-round follow-up.
+These Linux RSS samples are diagnostic, not qualification.
