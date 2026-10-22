@@ -161,6 +161,97 @@ budget both regressed; those iteration-profile diagnostics are recorded at
 and
 [`reports/react-no-jit-memory-first-young-half-linux-11.json`](reports/react-no-jit-memory-first-young-half-linux-11.json).
 The benchmark runner records memory and GC policy settings in each report.
-The lane census also attributes about 268,000 capture reads to the React server
-root over 275 renders; the next optimization target is that repeated global
-capture path. These Linux RSS measurements are diagnostic, not qualification.
+These Linux RSS measurements are diagnostic, not qualification.
+
+Recent no-JIT probes used profile-guided candidates for the remaining React
+dispatch work. Frame-capture cache priming, direct `hasOwnProperty`, a projected
+global-capture shortcut, fused local-branch dispatch, and a single-probe string
+concat path all regressed against the 312.9 renders/s / 41.67 MB production
+baseline and were reverted. The best memory-first policy screen remains
+217.0 renders/s / 23.76 MB; it clears the RSS margin, but is far below Node and
+Bun throughput.
+
+A lane-exit profile showed 6,600 of 6,742 `SetFieldStrict` exits over 500
+renders came from direct-array receivers in React's `flushCompletedQueues`
+function; the hot sites assign `length = 0`. A guarded fast path for this dense
+array case preserved output but measured 288.4 renders/s / 41.39 MB. A version
+that gated the path on the `length` atom before trying the ordinary field cache
+measured 279.6 renders/s / 41.43 MB. Both were reverted after 11-round
+production comparisons. The profile attribution is useful for future work, but
+this array-length shortcut is not a performance win. The reports and profile
+logs from these probes remain under the local `work/react-perf` scratch folder;
+Linux RSS sampling is diagnostic, not qualification.
+
+The full-size no-JIT baseline uses 5,000 renders and 250 warmups per sample.
+Its 11-round Linux report is
+[`reports/react-no-jit-full-linux-11.json`](reports/react-no-jit-full-linux-11.json):
+Quench measured 283.8 renders/s / 39.06 MB, Node `--jitless` 1,483.2 / 36.20
+MB, and Bun no-JIT 1,297.4 / 37.38 MB. Output matched at 24,980,000 bytes
+with checksum 414318. Quench misses both the throughput and RSS targets.
+
+The full-size JIT pilot is
+[`reports/react-jit-full-linux-1.json`](reports/react-jit-full-linux-1.json).
+Quench measured 229.9 renders/s / 36.85 MB, Node 10,352.0 / 48.92 MB, and Bun
+13,888.9 / 81.52 MB, with matching output. This one-round pilot is not a
+qualification; it shows Quench's sampled RSS below both engines while speed
+remains much slower. JS-tier diagnostics show the hot object-heavy React
+functions are unsupported by the current narrow compiler tier and have zero
+compile attempts. Linux RSS sampling remains diagnostic, not qualification.
+
+The full-size no-JIT memory-first policy report is
+[`reports/react-no-jit-memory-first-full-linux-11.json`](reports/react-no-jit-memory-first-full-linux-11.json).
+It measured 228.1 renders/s / 29.30 MB, versus Node `--jitless` at 1,580.3 /
+36.20 MB and Bun no-JIT at 1,375.5 / 37.37 MB, with matching output. It clears
+the 20% RSS margin against Bun and narrowly misses Node, while throughput is
+still far behind both. This policy does not meet the combined performance
+target.
+
+A guarded fast path for non-global/non-sticky RegExp `.test` misses was screened
+on the 500-render React workload. It preserved output (2,498,000 bytes,
+checksum 41,826) but measured 179.2 renders/s and 35.76 MB RSS in the three
+round iteration screen. Because it did not show a throughput case worth a
+production comparison, the change was reverted. The local screen is
+`work/react-perf/react-regex-test-nomatch-iteration-3.json`; Linux RSS sampling
+is diagnostic only.
+
+The aggregate React profile recorded 3.34 million `Move → Call` pairs over
+500 renders. A lane handler that executed both records together preserved
+output but its three-round iteration screen measured 181.6 renders/s no-JIT
+and 204.5 renders/s JIT. Removing the forced inline hint reduced JIT further
+to 165.4 renders/s. This fusion was reverted without a production comparison:
+the small no-JIT signal did not compensate for the JIT regression. Screens
+remain at `work/react-perf/react-move-call-fusion-iteration-3.json`,
+`work/react-perf/react-move-call-fusion-jit-iteration-3.json`, and
+`work/react-perf/react-move-call-fusion-noinline-jit-iteration-3.json`.
+
+A lane-only `LoadConst → Return` fusion also preserved output. Its full 11-round
+no-JIT memory-first run measured 210.5 renders/s / 29.39 MB, below the existing
+228.1 / 29.30 MB baseline. The full 11-round JIT run measured 286.8 / 40.91
+MB, but its comparator baseline is only a one-round full-size pilot and the
+candidate increased Quench RSS. The candidate was reverted because it did not
+improve both modes and memory together. Reports are in
+`work/react-perf/react-const-return-full-nojit-memory-first-linux-11.json` and
+`work/react-perf/react-const-return-full-jit-linux-11.json`; Linux RSS is
+diagnostic only.
+
+A guarded miss path for `RegExp.prototype.exec` on non-global/non-sticky
+builtin regexps preserved the React SSR output. Its three-round iteration
+screens measured 185.4 renders/s / 36.97 MB no-JIT and 179.9 / 36.77 MB JIT.
+They did not provide a compelling signal for a production comparison, so the
+change was reverted. Reports remain at
+`work/react-perf/react-regexp-exec-miss-iteration-nojit-3.json` and
+`work/react-perf/react-regexp-exec-miss-iteration-jit-3.json`; Linux RSS is
+diagnostic only.
+
+A matched full-size JIT baseline is now saved at
+[`reports/react-jit-full-linux-11.json`](reports/react-jit-full-linux-11.json).
+With 5,000 renders and 250 warmups per sample, Quench measured 288.6
+renders/s / 42.72 MB, Node 15,873.0 / 52.04 MB, and Bun 13,404.8 / 92.19
+MB. Output matched at 24,980,000 bytes with checksum 414318. Quench's RSS is
+17.9% lower than Node, short of the required 20%, and throughput trails Node
+by 55x; it trails Bun throughput by 46x. This matched baseline confirms the
+previous `LoadConst → Return` candidate's 286.8 renders/s did not improve
+throughput, despite its lower 40.91 MB sampled RSS. The candidate remains
+reverted. The next React JIT work needs to target the unsupported object-heavy
+render functions with a materially broader compiled path; small dispatch fusions
+have not closed the gap. Linux RSS sampling is diagnostic, not qualification.
