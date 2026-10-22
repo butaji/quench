@@ -6817,7 +6817,8 @@ fn lane_receiver_this<H: Host>(vm: &Vm<H>, binding: ThisBinding, receiver: Value
         // An arrow whose environment binds no `this` takes its caller's receiver.
         return (binding != ThisBinding::Lexical).then_some(receiver);
     }
-    if receiver.direct_object_index().is_some() {
+    // An object receiver binds itself; a direct record of any object family is one.
+    if receiver.is_direct_object_family() {
         Some(receiver)
     } else if receiver.is_null() || receiver.is_undefined() {
         Some(vm.realm.globals)
