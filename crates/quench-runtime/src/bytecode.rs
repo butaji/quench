@@ -1,6 +1,30 @@
 use smallvec::SmallVec;
 
 pub(crate) const INTRINSIC_REGEXP_BINDING: &str = "\0quench:intrinsic-regexp";
+
+/// The native an engine-internal intrinsic name stands for: a by-name read of it resolves to
+/// that native before consulting any binding (`Vm::intrinsic_name_value`), and no source
+/// identifier can spell it, so the read observes no scope.
+pub(crate) fn intrinsic_name_native(name: &str) -> Option<crate::heap::Native> {
+    use crate::heap::Native;
+    Some(match name {
+        "\0quench:dynamic-import" => Native::DynamicImport,
+        "\0quench:intrinsic-promise" => Native::Promise,
+        "\0quench:super-get" => Native::ReflectGet,
+        "\0quench:super-set" => Native::SuperSet,
+        "\0quench:super-base" => Native::ReflectGetPrototypeOf,
+        "\0quench:object-literal-prototype" => Native::ObjectLiteralPrototype,
+        "\0quench:object-define-property" => Native::ObjectDefineProperty,
+        "\0quench:object-freeze" => Native::ObjectFreeze,
+        _ => return None,
+    })
+}
+
+/// Whether a by-name read of `name` is an intrinsic's (`intrinsic_name_native` or the RegExp
+/// intrinsic), which reads no binding.
+pub(crate) fn is_intrinsic_name(name: &str) -> bool {
+    name == INTRINSIC_REGEXP_BINDING || intrinsic_name_native(name).is_some()
+}
 /// The engine-internal global a `with` statement calls to enter its object scope.
 pub(crate) const WITH_ENTER_BINDING: &str = "\0quench:with-enter";
 pub(crate) const LEXICAL_THIS_BINDING: &str = "\0quench:lexical-this";
@@ -1847,8 +1871,10 @@ impl Function {
                 matches!(
                     instruction.op(),
                     Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof
-                ) && usize::try_from(instruction.atom_index())
-                    .is_ok_and(|atom| atom >= atoms.len() || atoms[atom].starts_with('\0'))
+                ) && usize::try_from(instruction.atom_index()).is_ok_and(|atom| {
+                    atom >= atoms.len()
+                        || atoms[atom].starts_with('\0') && !is_intrinsic_name(&atoms[atom])
+                })
                     || matches!(
                         instruction.op(),
                         Op::ResolveName
