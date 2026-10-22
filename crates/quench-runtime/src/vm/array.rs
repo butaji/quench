@@ -141,6 +141,9 @@ impl<H: Host> Vm<H> {
             .checked_add(args.len())
             .filter(|length| *length as f64 <= MAX_SAFE_INTEGER)
             .ok_or_else(|| self.type_error(p, "array-like length exceeds safe integer".into()))?;
+        if self.splice_dense_elements(object, length, 0, 0, args).is_some() {
+            return Ok(Value::number(new_length as f64));
+        }
         if !args.is_empty() {
             for index in (1..=length).rev() {
                 let source = Value::number((index - 1) as f64);
@@ -182,27 +185,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let object = self.box_object_or_type_error(p, this)?;
         let length = self.array_like_length(p, object)?;
-        let start = args
-            .first()
-            .copied()
-            .map(|value| self.array_relative_index(p, value, length))
-            .transpose()?
-            .unwrap_or(0);
-        let available = length - start;
-        let delete_count = match args.get(1).copied() {
-            None if args.len() == 1 => available,
-            None => 0,
-            Some(value) => {
-                let number = self.to_number(p, value)?;
-                if number.is_nan() || number <= 0.0 {
-                    0
-                } else if number.is_infinite() {
-                    available
-                } else {
-                    (number.trunc() as usize).min(available)
-                }
-            }
-        };
+        let (start, delete_count) = self.splice_window(p, args, length)?;
         let removed = self.array_species_create(p, object, delete_count)?;
         let items = args.get(2..).unwrap_or_default();
         if self.array_splice_dense(object, length, start, delete_count, items, removed) {
@@ -276,7 +259,7 @@ impl<H: Host> Vm<H> {
         items: &[Value],
         removed: Value,
     ) -> bool {
-        if this == removed || self.dense_array_length(this) != Some(length) {
+        if this == removed {
             return false;
         }
         let Some(removed_length) = self.dense_array_length(removed) else {
@@ -287,33 +270,136 @@ impl<H: Host> Vm<H> {
                 .heap
                 .array_elements(removed)
                 .is_some_and(|elements| elements.iter().all(|value| value.is_deleted()));
-        let moved_present = self
-            .heap
-            .array_elements(this)
-            .is_some_and(|elements| elements[start..].iter().all(|value| !value.is_deleted()));
-        let Some(new_length) = (length - delete_count)
-            .checked_add(items.len())
-            .filter(|length| *length <= MAX_ARRAY_LENGTH)
-        else {
-            return false;
-        };
-        if !removed_holds_holes
-            || !moved_present
-            || !self.array_indices_store_plainly(this, length..new_length)
-        {
+        if !removed_holds_holes {
             return false;
         }
-        let Some(object) = self.heap.array_mut(this) else {
-            unreachable!("matched an array above");
+        let Some(taken) = self.splice_dense_elements(this, length, start, delete_count, items) else {
+            return false;
         };
-        let taken = super::index::mutable_array_elements(object.elements_mut())
-            .splice(start..start + delete_count, items.iter().copied())
-            .collect::<Vec<_>>();
         let Some(removed_object) = self.heap.array_mut(removed) else {
             unreachable!("matched an array above");
         };
         *super::index::mutable_array_elements(removed_object.elements_mut()) = taken;
         true
+    }
+
+    /// The receiver's half of `array_splice_dense`, which `unshift` also is, as
+    /// `splice(0, 0, ...items)`: `this` is still a dense array of `length`
+    /// (`dense_array_length`), each element from `start` on is present, and each index it
+    /// grows into stores plainly, so every generic step reads, writes or deletes an own
+    /// writable data element. The elements it removed, or `None` with nothing changed.
+    fn splice_dense_elements(
+        &mut self,
+        this: Value,
+        length: usize,
+        start: usize,
+        delete_count: usize,
+        items: &[Value],
+    ) -> Option<Vec<Value>> {
+        if self.dense_array_length(this) != Some(length) {
+            return None;
+        }
+        let moved_present = self
+            .heap
+            .array_elements(this)
+            .is_some_and(|elements| elements[start..].iter().all(|value| !value.is_deleted()));
+        let new_length = (length - delete_count)
+            .checked_add(items.len())
+            .filter(|length| *length <= MAX_ARRAY_LENGTH)?;
+        if !moved_present || !self.array_indices_store_plainly(this, length..new_length) {
+            return None;
+        }
+        let Some(object) = self.heap.array_mut(this) else {
+            unreachable!("matched an array above");
+        };
+        Some(
+            super::index::mutable_array_elements(object.elements_mut())
+                .splice(start..start + delete_count, items.iter().copied())
+                .collect(),
+        )
+    }
+
+    /// `splice`'s start and delete count over an array-like of `length`: its first two
+    /// arguments as relative index and clamped count, which convert Numbers without
+    /// observing anything.
+    fn splice_window(
+        &mut self,
+        p: &ResidualProgram,
+        args: &[Value],
+        length: usize,
+    ) -> Result<(usize, usize), JsError> {
+        let start = args
+            .first()
+            .copied()
+            .map(|value| self.array_relative_index(p, value, length))
+            .transpose()?
+            .unwrap_or(0);
+        let available = length - start;
+        let delete_count = match args.get(1).copied() {
+            None if args.len() == 1 => available,
+            None => 0,
+            Some(value) => {
+                let number = self.to_number(p, value)?;
+                if number.is_nan() || number <= 0.0 {
+                    0
+                } else if number.is_infinite() {
+                    available
+                } else {
+                    (number.trunc() as usize).min(available)
+                }
+            }
+        };
+        Ok((start, delete_count))
+    }
+
+    /// `splice` of this realm (`callee`) on a dense array whose steps run no guest code:
+    /// Number window arguments (`splice_window`), an ArraySpeciesCreate that reads plain
+    /// data to the intrinsic `%Array%` (`array_species_is_intrinsic`) and so makes a fresh
+    /// array, and the dense splice (`array_splice_dense`). `None` leaves the call, with
+    /// nothing observable done, to the general path.
+    pub(super) fn plain_array_splice(
+        &mut self,
+        p: &ResidualProgram,
+        callee: Value,
+        this: Value,
+        args: &[Value],
+    ) -> Option<Value> {
+        if !self.is_current_realm_native(callee, Native::ArraySplice)
+            || args.iter().take(2).any(|value| value.as_number().is_none())
+            || !self.array_species_is_intrinsic(this)
+        {
+            return None;
+        }
+        let length = self.dense_array_length(this)?;
+        let (start, delete_count) = self.splice_window(p, args, length).ok()?;
+        let removed = self.array_create(p, delete_count).ok()?;
+        let items = args.get(2..).unwrap_or_default();
+        self.array_splice_dense(this, length, start, delete_count, items, removed)
+            .then_some(removed)
+    }
+
+    /// `unshift` of a dense array as `splice_dense_elements` makes it, which observes
+    /// nothing; `None` leaves the general path's steps.
+    pub(super) fn plain_array_unshift(&mut self, this: Value, items: &[Value]) -> Option<Value> {
+        let length = self.dense_array_length(this)?;
+        self.splice_dense_elements(this, length, 0, 0, items)?;
+        Some(Value::number((length + items.len()) as f64))
+    }
+
+    /// Whether ArraySpeciesCreate of `array` provably makes a plain array of this realm:
+    /// its `constructor` reads as plain data (`plain_named_load`) to `undefined` or to this
+    /// realm's `%Array%`, whose `@@species` getter is intrinsic. The reads observe nothing.
+    fn array_species_is_intrinsic(&mut self, array: Value) -> bool {
+        let constructor_atom = self.runtime_atoms.constructor;
+        let Some(constructor) = self.plain_named_load(array, constructor_atom) else {
+            return false;
+        };
+        constructor.is_undefined()
+            || (matches!(
+                self.heap.function(constructor),
+                Some(FunctionRecord { kind: FunctionKind::Native(Native::Array), realm, .. })
+                    if *realm == self.realm.globals
+            ) && self.has_intrinsic_species_getter(constructor))
     }
 
     fn move_array_like_property(
