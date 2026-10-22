@@ -13,42 +13,34 @@ const FUNCTION_NAME_SHAPE_ENTRIES: usize = 1 << 8;
 /// child per site, which defeats `Shape::last_child`. Entries name shapes, so they are
 /// cleared with the transition index and whenever a collection renumbers shapes.
 pub(super) struct FunctionNameShapes {
-    entries: Box<[std::cell::Cell<Option<(u32, Atom, u32)>>]>,
+    entries: super::shape_memo::DirectMappedTable<(u32, Atom, u32), FUNCTION_NAME_SHAPE_ENTRIES>,
 }
 
 impl Default for FunctionNameShapes {
     fn default() -> Self {
-        Self {
-            entries: (0..FUNCTION_NAME_SHAPE_ENTRIES)
-                .map(|_| std::cell::Cell::new(None))
-                .collect(),
-        }
+        Self { entries: Default::default() }
     }
 }
 
 impl FunctionNameShapes {
-    fn entry(&self, shape: u32, name: Atom) -> &std::cell::Cell<Option<(u32, Atom, u32)>> {
-        let index = (name ^ shape.rotate_left(FUNCTION_NAME_SHAPE_ENTRIES.trailing_zeros()))
-            as usize
-            & (FUNCTION_NAME_SHAPE_ENTRIES - 1);
-        &self.entries[index]
+    fn index(shape: u32, name: Atom) -> usize {
+        (name ^ shape.rotate_left(FUNCTION_NAME_SHAPE_ENTRIES.trailing_zeros())) as usize
+            & (FUNCTION_NAME_SHAPE_ENTRIES - 1)
     }
 
     fn get(&self, shape: u32, name: Atom) -> Option<u32> {
-        self.entry(shape, name)
-            .get()
+        self.entries
+            .get(Self::index(shape, name))
             .filter(|&(base, atom, _)| base == shape && atom == name)
             .map(|(_, _, named)| named)
     }
 
     fn record(&self, shape: u32, name: Atom, named: u32) {
-        self.entry(shape, name).set(Some((shape, name, named)));
+        self.entries.set(Self::index(shape, name), (shape, name, named));
     }
 
     pub(super) fn clear(&self) {
-        for entry in self.entries.iter() {
-            entry.set(None);
-        }
+        self.entries.clear();
     }
 }
 
