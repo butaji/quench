@@ -12,7 +12,6 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 mod snapshot;
-pub(crate) use snapshot::CellDecoder;
 
 /// Changes whenever the layout an object used as a prototype offers its inheritors can have
 /// changed: its shape, prototype or integrity changes, and at every collection, after which a
@@ -893,8 +892,13 @@ impl Native {
             Self::ObjectLiteralPrototype
                 | Self::ObjectKeys
                 | Self::ObjectDefineProperty
+                | Self::ObjectGetPrototypeOf
                 | Self::StringSplit
                 | Self::JsonStringify
+                | Self::ParseInt
+                | Self::ArrayShift
+                | Self::WeakMapSet
+                | Self::FinalizationRegistryRegister
         )
     }
 
@@ -3027,7 +3031,20 @@ pub(crate) struct RegExpMeta {
     pub(crate) flags: crate::vm::RegExpFlags,
     // One constructor identity owns creation realm and legacy eligibility.
     pub(crate) legacy_constructor: RegExpLegacyOwner,
-    pub(crate) matcher: Rc<quench_regexp::Regex>,
+    pub(crate) matcher: RegExpMatcher,
+}
+
+/// A RegExp's compiled matcher, or none yet: a RegExp restored from a snapshot compiles its
+/// pattern on first use (`Vm::regexp_matcher`). A snapshot holds every pattern its builtins
+/// create, which a run seldom executes; compiling them all was 5% of restoring the preloaded
+/// startup snapshot (x86_64, 2026-10-22).
+#[derive(Clone, Default)]
+pub(crate) struct RegExpMatcher(pub(crate) std::cell::OnceCell<Rc<quench_regexp::Regex>>);
+
+impl RegExpMatcher {
+    pub(crate) fn compiled(matcher: Rc<quench_regexp::Regex>) -> Self {
+        Self(std::cell::OnceCell::from(matcher))
+    }
 }
 
 impl std::fmt::Debug for RegExpMeta {

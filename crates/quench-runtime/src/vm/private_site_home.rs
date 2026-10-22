@@ -11,7 +11,6 @@
 //! accessors once, under its own home, and no program can redefine them.
 
 use super::Value;
-use std::cell::Cell;
 
 /// Direct-mapped entries: a power of two that holds the private-name sites a request runs
 /// (a web `Request`'s and `Headers`' `#fields`) with few conflicts. Hono's query route meets
@@ -38,12 +37,12 @@ pub(super) enum PrivateElement {
 }
 
 pub(super) struct PrivateSiteHomes {
-    entries: Box<[Cell<Option<SiteHome>>]>,
+    entries: super::shape_memo::DirectMappedTable<SiteHome, PRIVATE_SITE_HOME_ENTRIES>,
 }
 
 impl Default for PrivateSiteHomes {
     fn default() -> Self {
-        Self { entries: (0..PRIVATE_SITE_HOME_ENTRIES).map(|_| Cell::new(None)).collect() }
+        Self { entries: Default::default() }
     }
 }
 
@@ -55,19 +54,19 @@ impl PrivateSiteHomes {
     /// The home site `site` found for `environment` under collection `epoch`.
     #[inline(always)]
     pub(super) fn home(&self, site: usize, environment: Value, epoch: u64) -> Option<Value> {
-        let entry = self.entries[Self::index(site)].get()?;
+        let entry = self.entries.get(Self::index(site))?;
         (entry.site == site && entry.environment == environment && entry.epoch == epoch).then_some(entry.home)
     }
 
     pub(super) fn record(&self, site: usize, environment: Value, epoch: u64, home: Value) {
-        self.entries[Self::index(site)].set(Some(SiteHome { site, environment, epoch, home, element: None }));
+        self.entries.set(Self::index(site), SiteHome { site, environment, epoch, home, element: None });
     }
 
     /// The private method or accessor site `site` found for its name under `home`, with
     /// `environment` under collection `epoch` (`record_element`).
     #[inline(always)]
     pub(super) fn element(&self, site: usize, environment: Value, epoch: u64, home: Value) -> Option<PrivateElement> {
-        let entry = self.entries[Self::index(site)].get()?;
+        let entry = self.entries.get(Self::index(site))?;
         (entry.site == site && entry.environment == environment && entry.epoch == epoch && entry.home == home)
             .then_some(entry.element)
             .flatten()
@@ -75,20 +74,18 @@ impl PrivateSiteHomes {
 
     /// Records the element site `site`'s name resolved to, for its entry under `home`.
     pub(super) fn record_element(&self, site: usize, environment: Value, epoch: u64, home: Value, element: PrivateElement) {
-        let cell = &self.entries[Self::index(site)];
-        if let Some(entry) = cell.get()
+        let index = Self::index(site);
+        if let Some(entry) = self.entries.get(index)
             && entry.site == site
             && entry.environment == environment
             && entry.epoch == epoch
             && entry.home == home
         {
-            cell.set(Some(SiteHome { element: Some(element), ..entry }));
+            self.entries.set(index, SiteHome { element: Some(element), ..entry });
         }
     }
 
     pub(super) fn clear(&self) {
-        for entry in self.entries.iter() {
-            entry.set(None);
-        }
+        self.entries.clear();
     }
 }

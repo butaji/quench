@@ -57,6 +57,9 @@ For a same-run Quench build comparison, set `QUENCH_CONTROL_BIN` to a second
 `quench-node` binary. The runner interleaves both Quench binaries with Node
 and Bun and records the control binary hash separately. This helps distinguish
 small PGO or code-change effects from host load drift across separate reports.
+For no-JIT GC pacing comparisons, set `QUENCH_CONTROL_GC_MAX_YOUNG` to override
+the control row's young-generation cap while the candidate uses
+`QUENCH_GC_MAX_YOUNG`.
 
 Winning means at least 20% higher throughput and at least 20% lower maximum
 RSS than both Node and Bun in the active phase. Compare the throughput and RSS
@@ -354,3 +357,53 @@ a 3.0% speed gain for 4.7% more RSS. Output matched at 24,980,000 bytes and
 checksum 414318. RSS was 22.3% below Node and 24.9% below Bun, but the 512-unit
 build remains the better memory/speed balance. Report:
 `work/react-perf/react-pgo-prefix-256-vs-512-memory-first-max-young-32k-nojit-11.json`.
+
+A 256-entry capture-walk memo table was screened against the default 64-entry
+table, targeting the repeated outer-capture walks in React's lane profile. The
+3-round screen appeared 8.3% faster, but the paired 11-round full-size run was
+only 4.0% faster (314.5 renders/s vs 302.5) and used 4.6% more RSS (28.06 MB
+vs 26.83 MB). Output matched at 24,980,000 bytes/checksum 414318, but the small
+speed increase did not justify the memory cost, so the table was restored to 64.
+Report: `work/react-perf/react-pgo-capture-walks-256-vs-64-memory-first-max-young-32k-nojit-11.json`.
+
+A 64K young-generation cap did not improve the paired 32K PGO+512 control. The
+11-round full-size run measured 303.0 renders/s / 26.82 MB at 64K versus 325.9 /
+26.83 MB at 32K (-7.0% speed, effectively identical RSS), with matching output.
+The 32K cap remains selected. Report:
+`work/react-perf/react-pgo-prefix-512-young64k-vs-32k-11.json`.
+
+An early string-pair branch tried to bypass numeric operator checks for the
+625k React string-string additions. The paired three-round screen measured
+307.0 renders/s / 28.02 MB versus 305.4 / 26.89 MB for the unchanged PGO+512
+control: only 0.5% more throughput and 4.2% more RSS, with matching output. The
+fast path was reverted without a full run because it showed no useful signal.
+Report: `work/react-perf/react-pgo-string-pair-fastpath-vs-control-memory-first-32k-screen-3.json`.
+
+After the diagnostic GC builds, the ordinary PGO+512 production `quench-node`
+was restored and rerun with the full 5,000-render workload, 250 warmups,
+memory-first policy, and 32K young cap for 11 interleaved rounds. It measured
+325.9 renders/s / 26.86 MB versus Node `--jitless` at 1,662.2 / 36.22 MB and
+Bun no-JIT at 1,496.6 / 37.44 MB. Output matched at 24,980,000 bytes and
+checksum 414318. RSS remains over 20% lower than both engines, but throughput
+is about five times slower, so React no-JIT is not won. Report:
+`work/react-perf/react-pgo512-restored-full-memoryfirst-32k-nojit-11.json`.
+
+A PGO build with `-Ctarget-cpu=native` looked 5.7% faster in a three-round
+screen, but the full 11-round interleaved comparison reversed that result:
+298.5 renders/s / 27.81 MB versus the generic PGO+512 control at 319.5 /
+28.63 MB. Output matched at 24,980,000 bytes / checksum 414318. Native codegen
+reduced sampled RSS by 2.9% while lowering speed by 6.6%, so it was rejected
+and the ordinary PGO binary restored. Report:
+`work/react-perf/react-pgo512-nativecpu-vs-generic-memoryfirst-32k-nojit-11.json`.
+
+A feature-gated call-target census now samples both lane calls and same-program
+calls entered through the general dispatch loop. In a 500-render React run it
+found four dominant monomorphic sites (two with roughly 90k sampled calls each,
+and two with roughly 13k each); all other sites were sparse. The new general
+dispatch hook did not reveal a second class of high-volume call sites, so a
+per-site target memo has too little likely coverage to justify its complexity
+as the next optimization. A followup also sampled normal frame materialization
+and left the same four sites on top. These profile builds are intentionally
+instrumented; the extended run's 52.9 renders/s is not a performance result.
+Output matched at 2,498,000 bytes/checksum 41826. Full diagnostic output:
+`work/react-perf/react-call-target-profile-all.log`.

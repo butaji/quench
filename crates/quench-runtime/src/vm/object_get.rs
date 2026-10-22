@@ -444,6 +444,17 @@ impl<H: Host> Vm<H> {
         self.plain_property_get(object, PropertyKey::string(atom))
     }
 
+    /// A global object binding's value where reading it runs no guest code: a present data
+    /// property of the global object or its ordinary prototypes (`plain_property_lookup`).
+    /// `None` for an absent name, whose read raises, or any lookup the shapes alone do not
+    /// answer.
+    pub(super) fn plain_global_binding(&self, atom: Atom) -> Option<Value> {
+        if !self.plain_named_key(atom) {
+            return None;
+        }
+        self.plain_property_lookup(self.realm.globals, PropertyKey::string(atom))?
+    }
+
     /// Whether `atom` names a property that ordinary shapes alone decide: no private, index,
     /// `length` or legacy function key.
     #[inline]

@@ -950,6 +950,7 @@ impl<H: Host> Vm<H> {
         self.shape_constructors.clear();
         self.transitions = transitions;
         self.shape_slot_memo.clear();
+        self.plain_copy_shapes.clear();
         self.function_name_shapes.clear();
         self.shape_attribute_memo.clear();
         self.object_shapes.fill(u32::MAX);
