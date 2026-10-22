@@ -10,7 +10,8 @@ pub(super) enum DiagnosticProperty {
 
 impl<H: Host> Vm<H> {
     /// `constructor[@@species]`. Every intrinsic `get [Symbol.species]` returns its receiver
-    /// and observes nothing, so an own accessor that still holds one answers without a call.
+    /// and observes nothing, so an own accessor that still holds one answers without a call
+    /// (`has_intrinsic_species_getter`).
     pub(super) fn species_of(
         &mut self,
         p: &ResidualProgram,
@@ -19,8 +20,20 @@ impl<H: Host> Vm<H> {
         let Some(species) = self.well_known_symbols.get(WellKnownSymbol::Species) else {
             return Ok(Value::UNDEFINED);
         };
-        let intrinsic_getter = self
-            .property_attributes(constructor, PropertyKey::symbol(species))
+        if self.has_intrinsic_species_getter(constructor) {
+            Ok(constructor)
+        } else {
+            self.get_index(p, constructor, species)
+        }
+    }
+
+    /// Whether `constructor`'s own `@@species` is an accessor whose getter is an intrinsic
+    /// `get [Symbol.species]`, which returns its receiver and observes nothing.
+    pub(super) fn has_intrinsic_species_getter(&self, constructor: Value) -> bool {
+        let Some(species) = self.well_known_symbols.get(WellKnownSymbol::Species) else {
+            return false;
+        };
+        self.property_attributes(constructor, PropertyKey::symbol(species))
             .and_then(|attributes| attributes.getter.filter(|_| attributes.accessor))
             .is_some_and(|getter| {
                 matches!(
@@ -30,12 +43,7 @@ impl<H: Host> Vm<H> {
                         ..
                     }) if native.is_intrinsic_species_getter()
                 )
-            });
-        if intrinsic_getter {
-            Ok(constructor)
-        } else {
-            self.get_index(p, constructor, species)
-        }
+            })
     }
 
     pub(super) fn diagnostic_own_property(&self, object: Value, key: PropertyKey) -> DiagnosticProperty {

@@ -7110,8 +7110,10 @@ fn lane_promise_native<H: Host>(
 /// place so the lane's activations need not become frames (`lane_call_native`): a dense
 /// array's `indexOf` (`Vm::dense_index_of`), `String.fromCharCode` of Numbers, which
 /// allocates its string, and an array iterator's step over a plain array
-/// (`Vm::plain_array_iterator_next`), which allocates its result, and an object's own
-/// property query by a string key (`Vm::plain_own_property_query`). `None` leaves any other
+/// (`Vm::plain_array_iterator_next`), which allocates its result, an object's own
+/// property query by a string key (`Vm::plain_own_property_query`), and a dense array's
+/// `splice` (`Vm::plain_array_splice`, which allocates the removed array) and `unshift`
+/// (`Vm::plain_array_unshift`). `None` leaves any other
 /// call to `lane_call_native`.
 #[inline(never)]
 fn lane_pure_native<H: Host>(
@@ -7134,6 +7136,12 @@ fn lane_pure_native<H: Host>(
         Native::ObjectPrototypeHasOwnProperty | Native::ObjectPrototypePropertyIsEnumerable => {
             vm.plain_own_property_query(code, *native, receiver, *args.first()?)
         }
+        Native::ArraySplice => {
+            let removed = vm.plain_array_splice(code, callee, receiver, args)?;
+            note_allocation(vm);
+            Some(removed)
+        }
+        Native::ArrayUnshift => vm.plain_array_unshift(receiver, args),
         Native::ArrayIteratorNext => {
             let result = vm.plain_array_iterator_next(callee, receiver)?;
             note_allocation(vm);
