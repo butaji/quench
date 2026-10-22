@@ -149,6 +149,22 @@ async function runOne(spec, round) {
       NODE_ENV: "production",
       QUENCH_BENCH_ROUNDS: env.QUENCH_BENCH_ROUNDS ?? "5000",
       QUENCH_BENCH_WARMUPS: env.QUENCH_BENCH_WARMUPS ?? "250",
+      ...Object.fromEntries([
+        "QUENCH_MEMORY_POLICY",
+        "QUENCH_GC_YOUNG",
+        "QUENCH_GC_YOUNG_NUM",
+        "QUENCH_GC_YOUNG_DEN",
+        "QUENCH_GC_MIN_YOUNG",
+        "QUENCH_GC_MAX_YOUNG",
+        "QUENCH_GC_OLD_GROWTH",
+        "QUENCH_GC_OLD_GROWTH_NUM",
+        "QUENCH_GC_OLD_GROWTH_DEN",
+        "QUENCH_GC_MIN_OLD_GROWTH",
+        "QUENCH_GC_ALLOCATION_CAP",
+        "QUENCH_GC_ALLOCATION_CAP_NUM",
+        "QUENCH_GC_ALLOCATION_CAP_DEN",
+        "QUENCH_GC_MIN_ALLOCATION_CAP",
+      ].flatMap((name) => env[name] === undefined ? [] : [[name, env[name]]])),
     },
   };
 }

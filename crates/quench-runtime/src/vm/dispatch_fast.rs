@@ -4574,6 +4574,15 @@ script_handler! {
 #[inline(never)]
 fn lane_relation_other<H: Host>(operator: u32, left: Value, right: Value) -> Option<bool> {
     let vm = unsafe { vm(lane_context::<H>()) };
+    // A nullish value is unequal to every Number under both loose and strict equality.
+    // The Number/nullish pair cannot invoke conversion hooks or `document.all`; keep this
+    // check in the shared cold fallback so it does not enlarge each hot comparison handler.
+    if operator <= STRICT_INEQUALITY_OPERATOR
+        && ((left.is_null() || left.is_undefined()) && right.as_number().is_some()
+            || (right.is_null() || right.is_undefined()) && left.as_number().is_some())
+    {
+        return Some(matches!(operator, 1 | STRICT_INEQUALITY_OPERATOR));
+    }
     vm.instanceof_truthy(operator, left, right)
         .or_else(|| vm.plain_in(operator, left, right))
         .or_else(|| vm.identity_equality(operator, left, right))
