@@ -732,7 +732,9 @@ struct FieldAddCache {
     /// The `prototype_layout_epoch` under which a walk last proved the chain from
     /// `proved_prototype`, or `NO_PROVED_EPOCH`; while both hold the chain needs no walk.
     proved_epoch: u64,
-    proved_prototype: Value,
+    /// The receiver's prototype link the proof holds for, compared undecoded; a collection
+    /// advances the epoch, so it never outlives the record it names.
+    proved_prototype: ProtoLink,
 }
 /// A `FieldAddCache::proved_epoch` no epoch reaches: the chain is unproven.
 const NO_PROVED_EPOCH: u64 = u64::MAX;
@@ -745,10 +747,16 @@ impl FieldAddCache {
         prototype_depth: 0,
         prototype_shapes: [NO_FIELD_RECEIVER; FIELD_ADD_CACHE_MAX_PROTO_DEPTH],
         proved_epoch: NO_PROVED_EPOCH,
-        proved_prototype: Value::UNDEFINED,
+        proved_prototype: ProtoLink::NULL,
     };
     fn prototype_shapes(&self) -> &[u32] {
         &self.prototype_shapes[..usize::from(self.prototype_depth)]
+    }
+    /// Whether the chain proof (`proved_epoch`, `proved_prototype`) holds for a receiver
+    /// whose prototype `link` names: then the chain needs no walk.
+    #[inline(always)]
+    fn proof_holds(&self, link: ProtoLink) -> bool {
+        self.proved_epoch == crate::heap::prototype_layout_epoch() && self.proved_prototype == link
     }
 }
 /// The add transitions one site remembers, oldest first.
@@ -764,7 +772,8 @@ impl FieldAddCacheSet {
     };
     #[inline(always)]
     fn find(&self, source_shape: u32, atom: Atom) -> Option<&FieldAddCache> {
-        self.entries[..usize::from(self.len)]
+        // SAFETY: `insert` keeps `len` within the entries.
+        unsafe { self.entries.get_unchecked(..usize::from(self.len)) }
             .iter()
             .find(|cache| cache.source_shape == source_shape && cache.atom == atom)
     }
