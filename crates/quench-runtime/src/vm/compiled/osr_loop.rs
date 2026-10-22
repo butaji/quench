@@ -1630,6 +1630,18 @@ impl<'a, 'b> Lowering<'a, 'b> {
             self.builder.switch_to_block(integer_block);
             return self.builder.ins().ireduce(types::I32, bits);
         }
+        // Every tag is a NaN pattern, so a value that is no NaN as a double is one, which
+        // one comparison finds; only a NaN pattern, a tagged value or a NaN double, takes
+        // the cold test of the tag field.
+        let double = self.builder.ins().bitcast(types::F64, ir::MemFlagsData::new(), bits);
+        let unordered = self.builder.ins().fcmp(FloatCC::Unordered, double, double);
+        let nan_block = self.cold_block();
+        let tagged_block = self.cold_block();
+        let integer_block = self.cold_block();
+        let join = self.builder.create_block();
+        self.builder.append_block_param(join, types::F64);
+        self.builder.ins().brif(unordered, nan_block, &[], join, &[ir::BlockArg::Value(double)]);
+        self.builder.switch_to_block(nan_block);
         // A tag field within the tag range marks a non-double.
         let field = self.builder.ins().ushr_imm_u(bits, i64::from(ValueLayout::TAG_SHIFT));
         let offset = self.builder.ins().iadd_imm_s(field, -(ValueLayout::FIRST_TAG_FIELD as i64));
@@ -1637,15 +1649,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             .builder
             .ins()
             .icmp_imm_u(IntCC::UnsignedLessThanOrEqual, offset, ValueLayout::TAG_FIELD_SPAN as i64);
-        let double_block = self.builder.create_block();
-        let tagged_block = self.cold_block();
-        let integer_block = self.cold_block();
-        let join = self.builder.create_block();
-        self.builder.append_block_param(join, types::F64);
-        self.builder.ins().brif(tagged, tagged_block, &[], double_block, &[]);
-        self.builder.switch_to_block(double_block);
-        let double = self.builder.ins().bitcast(types::F64, ir::MemFlagsData::new(), bits);
-        self.builder.ins().jump(join, &[ir::BlockArg::Value(double)]);
+        self.builder.ins().brif(tagged, tagged_block, &[], join, &[ir::BlockArg::Value(double)]);
         self.builder.switch_to_block(tagged_block);
         let int_field = (ValueLayout::INT_TAG >> ValueLayout::TAG_SHIFT) as i64;
         let is_int = self.builder.ins().icmp_imm_u(IntCC::Equal, field, int_field);
