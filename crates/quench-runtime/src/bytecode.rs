@@ -2169,15 +2169,21 @@ impl Function {
         let Some(slot) = self.arguments_slot else {
             return false;
         };
+        let instructions = self.instructions().collect::<Vec<_>>();
+        // A mapped object's elements alias the parameters; its `length` does not, so a body
+        // that reads only `arguments.length` cannot observe the mapping.
+        let reads_only_length = instructions.iter().all(|instruction| {
+            instruction.op() == Op::ArgumentsLength
+                || !instruction.addressed_local_slots().any(|addressed| addressed == slot)
+        });
         if self.is_generator
             || self.is_async
-            || (self.arguments_are_mapped() && self.params != 0)
+            || (self.arguments_are_mapped() && self.params != 0 && !reads_only_length)
             || self.local_registers.iter().any(|entry| entry.local == slot)
             || self.has_dynamic_scope_access()
         {
             return false;
         }
-        let instructions = self.instructions().collect::<Vec<_>>();
         let mut forwarded = false;
         for (pc, instruction) in instructions.iter().enumerate() {
             if matches!(instruction.op(), Op::MakeClosure | Op::CloneEnv) {
