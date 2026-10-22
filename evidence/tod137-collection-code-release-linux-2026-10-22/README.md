@@ -56,3 +56,31 @@ The two candidate figures come from two separate binaries.
   The code that the per-boundary release keeps out is the part each cycle touches only
   once. A layout that packs the collector's code, so it occupies fewer pages, would shrink
   it without refaults; that is RSS-lane work (link order).
+
+## Which code region carries the cost and the saving (`sweep-seg.json`, `faults-segments.txt`)
+
+The binary has three read-only regions: read-only data (15 MB), the original text, which is
+cold after BOLT (23 MB), and BOLT's hot text (7 MB). Same binary, 3 runs without JIT; each row
+releases the named regions at every collection boundary and the rest at power-of-two
+boundaries:
+
+| Released at every boundary | Score | Max RSS |
+| -- | --: | --: |
+| none (power of two only) | 0.953 | 0.650 |
+| read-only data | 0.978 | 0.651 |
+| cold text | 0.946 | 0.647 |
+| hot text | 0.950 | 0.626 |
+| all three (trunk) | 0.922 | 0.624 |
+
+- **Hot text carries both the saving and the cost.** It accounts for the max RSS difference
+  (about 150–250 KiB per fixture). On EarleyBoyer it also costs the Score: 275K minor faults
+  and 3283 against 47K and 3756 (`faults-segments.txt`).
+- **The geomean understates the cost.** The other fixtures collect less, and three runs are
+  noisy.
+- **The kernel's fault-around inside the hot text** (64 KiB per fault) cuts EarleyBoyer's
+  faults only from 203K to 141K, with no Score change beyond noise.
+- **Conclusion:** in a steady collection cycle the heap reaches the same peak every cycle.
+  The peak then includes whatever code was touched since the last release, so a low peak
+  needs a release at every cycle, and every release refaults the cycle's hot code. Under
+  MemoryFirst this is a fixed trade of about 5% Score for about 4% max RSS. Trunk keeps
+  releasing at every boundary, because max RSS is MemoryFirst's criterion.
