@@ -55,6 +55,8 @@ pub(crate) enum FlatUnits {
     /// A run of longer ASCII storage, shared instead of copied, as V8's sliced strings are:
     /// taking the rest of a scanned text costs one small record, not a copy of the rest.
     AsciiSlice(Rc<AsciiSlice>),
+    /// UTF-16 units, at least one of them non-ASCII: all-ASCII text is always stored narrow
+    /// (`flat_units`, `flattened`), which the regexp subject relies on (`regexp_subject`).
     Wide(Rc<[u16]>),
 }
 
