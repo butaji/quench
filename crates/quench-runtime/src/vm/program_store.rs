@@ -1739,7 +1739,7 @@ impl ProgramStore {
             #[cfg(feature = "profile-lane-exits")]
             {
                 let (start, end) = view.record_range();
-                super::lane_exits::register_view(start, end, census_label(entry, function));
+                super::lane_exits::register_view(start, end, census_label(entry, function), code.instructions().map(|instruction| instruction.op()).collect());
             }
             view
         }))
@@ -1784,7 +1784,7 @@ impl ProgramStore {
             #[cfg(feature = "profile-lane-exits")]
             {
                 let (start, end) = view.record_range();
-                super::lane_exits::register_view(start, end, census_label(entry, function));
+                super::lane_exits::register_view(start, end, census_label(entry, function), code.instructions().map(|instruction| instruction.op()).collect());
             }
             view
         }))
