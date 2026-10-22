@@ -3216,7 +3216,6 @@ impl<'a> Compiler<'a> {
             && !options.class_initializer
             && !options.implicit_super
             && options.with_depth == 0
-            && self.eval_context.is_none()
             && !dynamic_eval;
         let (promoted_local_slots, clobbered_local_slots) = self.promoted_local_plan(
             promote_plain_locals,
