@@ -4376,30 +4376,30 @@ lane_handler! {
     }
 }
 
-/// The nullish constant a `lane_jump_nullish_false` record compares against, in its `c`
-/// field.
+/// The nullish test of a `lane_jump_nullish_false` instantiation (`NULLISH`): strict
+/// identity with `null` or with `undefined`, or loose equality with either.
 const NULLISH_NULL: u16 = 0;
 const NULLISH_UNDEFINED: u16 = 1;
+const NULLISH_LOOSE: u16 = 2;
 
 script_handler! {
     /// `lane_jump_binary_false` of a register under an equality operator against a `null` or
     /// `undefined` constant, decoded when the view was derived
-    /// (`specialize_register_operands`): strict equality is identity with the constant; loose
-    /// equality holds for `null` and `undefined`, and among other values only for
-    /// [[IsHTMLDDA]] objects (`Vm::identity_equality`).
-    fn lane_jump_nullish_false<BACKWARD: bool>(cx, r, ip, i, view) {
+    /// (`specialize_register_operands`) into the instantiation's negation and `NULLISH` test:
+    /// strict equality is identity with the constant; loose equality holds for `null` and
+    /// `undefined`, and among other values only for [[IsHTMLDDA]] objects
+    /// (`Vm::identity_equality`).
+    fn lane_jump_nullish_false<BACKWARD: bool, NEGATED: bool, NULLISH: u16>(cx, r, ip, i, view) {
         let value = r.get(i.b);
-        let Some((strict, negated)) = super::operations::equality_operator(u32::from(i.a)) else {
-            return exit(ip);
+        let equal = match NULLISH {
+            NULLISH_NULL => value == Value::NULL,
+            NULLISH_UNDEFINED => value == Value::UNDEFINED,
+            _ if value.is_heap() && !value.is_record() => {
+                sibling!(lane_jump_nullish_cell::<H, BACKWARD, NEGATED>, r, ip, Carried::script(cx))
+            }
+            _ => value.is_null() || value.is_undefined(),
         };
-        let equal = if strict {
-            value == if i.c == NULLISH_NULL { Value::NULL } else { Value::UNDEFINED }
-        } else if value.is_heap() && !value.is_record() {
-            sibling!(lane_jump_nullish_cell::<H, BACKWARD>, r, ip, Carried::script(cx))
-        } else {
-            value.is_null() || value.is_undefined()
-        };
-        if equal == negated {
+        if equal == NEGATED {
             return lane_jump(cx, r, ip, BACKWARD, Carried::script(cx), None);
         }
         next!(cx, r, following(ip), Carried::script(cx))
@@ -4410,14 +4410,10 @@ script_handler! {
     /// `lane_jump_binary_false` of a register under strict equality against a boolean
     /// constant (`specialize_register_operands`), the `x !== false` truthiness test of
     /// compiled code: a boolean strictly equals only itself, which has one encoding, so the
-    /// test is the register's identity with the constant `c` names.
-    fn lane_jump_boolean_false<BACKWARD: bool>(cx, r, ip, i, view) {
-        let Some((true, negated)) = super::operations::equality_operator(u32::from(i.a)) else {
-            return exit(ip);
-        };
-        let constant = if i.c == STRICT_BOOLEAN_TRUE { Value::TRUE } else { Value::FALSE };
-        let equal = r.get(i.b) == constant;
-        if equal == negated {
+    /// test is the register's identity with the instantiation's constant (`TRUE`).
+    fn lane_jump_boolean_false<BACKWARD: bool, NEGATED: bool, TRUE: bool>(cx, r, ip, i, view) {
+        let equal = r.get(i.b) == if TRUE { Value::TRUE } else { Value::FALSE };
+        if equal == NEGATED {
             return lane_jump(cx, r, ip, BACKWARD, Carried::script(cx), None);
         }
         next!(cx, r, following(ip), Carried::script(cx))
@@ -4425,38 +4421,64 @@ script_handler! {
 }
 
 script_handler! {
-    /// `lane_jump_binary_false` of two registers under `===` or `!==`
+    /// `lane_jump_binary_false` of two registers under `===` (`!==` where `NEGATED`)
     /// (`specialize_register_operands`): strict equality runs no guest code, so the lane
-    /// decides every pair (`Vm::strict_equal`) without the general relation chain.
-    fn lane_jump_strict_equal_false<BACKWARD: bool>(cx, r, ip, i, view) {
-        let Some((true, negated)) = super::operations::equality_operator(u32::from(i.a)) else {
-            return exit(ip);
+    /// decides every pair (`Vm::strict_equal`) without the general relation chain. Values
+    /// outside the heap compare as numbers or by identity, and a heap value equals only
+    /// itself among them, inline; two distinct heap values, which may be equal strings or
+    /// BigInts, take `lane_jump_strict_equal_cells`.
+    fn lane_jump_strict_equal_false<BACKWARD: bool, NEGATED: bool>(cx, r, ip, i, view) {
+        let (left, right) = (r.get(i.b), r.get(i.c));
+        let equal = match (left.as_number(), right.as_number()) {
+            (Some(left), Some(right)) => left == right,
+            _ if left == right => true,
+            _ if left.is_heap() && right.is_heap() => {
+                sibling!(lane_jump_strict_equal_cells::<H, BACKWARD, NEGATED>, r, ip, Carried::script(cx))
+            }
+            _ => false,
         };
-        let equal = unsafe { vm(cx) }.strict_equal(r.get(i.b), r.get(i.c));
-        if equal == negated {
+        if equal == NEGATED {
             return lane_jump(cx, r, ip, BACKWARD, Carried::script(cx), None);
         }
         next!(cx, r, following(ip), Carried::script(cx))
     }
 }
 
-/// The boolean a `lane_jump_boolean_false` record compares against, in its `c` field.
-const STRICT_BOOLEAN_FALSE: u16 = 0;
-const STRICT_BOOLEAN_TRUE: u16 = 1;
+script_handler! {
+    /// `lane_jump_strict_equal_false` of two distinct heap values (`Vm::strict_equal`); out
+    /// of line, so the common tests make no call.
+    #[inline(never)]
+    fn lane_jump_strict_equal_cells<BACKWARD: bool, NEGATED: bool>(cx, r, ip, i, view) {
+        if unsafe { vm(cx) }.strict_equal(r.get(i.b), r.get(i.c)) == NEGATED {
+            return lane_jump(cx, r, ip, BACKWARD, Carried::script(cx), None);
+        }
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
 
 script_handler! {
     /// `lane_jump_nullish_false`'s loose test of a heap value outside the records, which only
     /// an [[IsHTMLDDA]] object passes; out of line, so the common tests make no call.
     #[inline(never)]
-    fn lane_jump_nullish_cell<BACKWARD: bool>(cx, r, ip, i, view) {
-        let Some((_, negated)) = super::operations::equality_operator(u32::from(i.a)) else {
-            return exit(ip);
-        };
-        if unsafe { vm(cx) }.is_html_dda(r.get(i.b)) == negated {
+    fn lane_jump_nullish_cell<BACKWARD: bool, NEGATED: bool>(cx, r, ip, i, view) {
+        if unsafe { vm(cx) }.is_html_dda(r.get(i.b)) == NEGATED {
             return lane_jump(cx, r, ip, BACKWARD, Carried::script(cx), None);
         }
         next!(cx, r, following(ip), Carried::script(cx))
     }
+}
+
+/// The instantiation of an equality jump-test handler for its direction and negation, the
+/// const-generic prefix the view decodes from the record (`specialize_register_operands`).
+macro_rules! equality_test_handler {
+    ($handler:ident::<$host:ident $(, $rest:tt)*>, $backward:expr, $negated:expr) => {
+        match ($backward, $negated) {
+            (false, false) => $handler::<$host, false, false $(, $rest)*> as Handler,
+            (false, true) => $handler::<$host, false, true $(, $rest)*> as Handler,
+            (true, false) => $handler::<$host, true, false $(, $rest)*> as Handler,
+            (true, true) => $handler::<$host, true, true $(, $rest)*> as Handler,
+        }
+    };
 }
 
 /// The tests the general loop decides past Number comparison without running guest code:
@@ -11415,49 +11437,35 @@ fn specialize_register_operands<H: Host>(
             record.c = right.payload();
             continue;
         }
-        let nullish = (right_kind == Constant && record.handler != get_index)
-            .then(|| constants.get(usize::from(right.payload())))
-            .flatten()
-            .and_then(|constant| match *constant {
-                Value::NULL => Some(NULLISH_NULL),
-                Value::UNDEFINED => Some(NULLISH_UNDEFINED),
-                _ => None,
-            })
-            .filter(|_| {
-                super::operations::equality_operator(u32::from(instruction.a())).is_some()
-            });
-        if let Some(constant) = nullish {
-            let handler: Handler = if backward {
-                lane_jump_nullish_false::<H, true>
-            } else {
-                lane_jump_nullish_false::<H, false>
+        let equality = (record.handler != get_index)
+            .then(|| super::operations::equality_operator(u32::from(instruction.a())))
+            .flatten();
+        let constant = (right_kind == Constant)
+            .then(|| constants.get(usize::from(right.payload())).copied())
+            .flatten();
+        let nullish = equality.zip(constant).and_then(|((strict, negated), constant)| {
+            let test = match constant {
+                Value::NULL | Value::UNDEFINED if !strict => NULLISH_LOOSE,
+                Value::NULL => NULLISH_NULL,
+                Value::UNDEFINED => NULLISH_UNDEFINED,
+                _ => return None,
             };
+            Some(match test {
+                NULLISH_NULL => equality_test_handler!(lane_jump_nullish_false::<H, NULLISH_NULL>, backward, negated),
+                NULLISH_UNDEFINED => {
+                    equality_test_handler!(lane_jump_nullish_false::<H, NULLISH_UNDEFINED>, backward, negated)
+                }
+                _ => equality_test_handler!(lane_jump_nullish_false::<H, NULLISH_LOOSE>, backward, negated),
+            })
+        });
+        let boolean = equality.zip(constant).and_then(|((strict, negated), constant)| match constant {
+            Value::TRUE if strict => Some(equality_test_handler!(lane_jump_boolean_false::<H, true>, backward, negated)),
+            Value::FALSE if strict => Some(equality_test_handler!(lane_jump_boolean_false::<H, false>, backward, negated)),
+            _ => None,
+        });
+        if let Some(handler) = nullish.or(boolean) {
             record.handler = handler as *const ();
             record.b = left.payload();
-            record.c = constant;
-            continue;
-        }
-        let boolean = (right_kind == Constant && record.handler != get_index)
-            .then(|| constants.get(usize::from(right.payload())))
-            .flatten()
-            .and_then(|constant| match *constant {
-                Value::TRUE => Some(STRICT_BOOLEAN_TRUE),
-                Value::FALSE => Some(STRICT_BOOLEAN_FALSE),
-                _ => None,
-            })
-            .filter(|_| {
-                super::operations::equality_operator(u32::from(instruction.a()))
-                    .is_some_and(|(strict, _)| strict)
-            });
-        if let Some(constant) = boolean {
-            let handler: Handler = if backward {
-                lane_jump_boolean_false::<H, true>
-            } else {
-                lane_jump_boolean_false::<H, false>
-            };
-            record.handler = handler as *const ();
-            record.b = left.payload();
-            record.c = constant;
             continue;
         }
         if right_kind == Constant
@@ -11498,17 +11506,10 @@ fn specialize_register_operands<H: Host>(
         if right_kind != Register {
             continue;
         }
-        let strict = record.handler != get_index
-            && super::operations::equality_operator(u32::from(instruction.a()))
-                .is_some_and(|(strict, _)| strict);
         let handler: Handler = if record.handler == get_index {
             lane_get_index_registers::<H>
-        } else if strict {
-            if backward {
-                lane_jump_strict_equal_false::<H, true>
-            } else {
-                lane_jump_strict_equal_false::<H, false>
-            }
+        } else if let Some((true, negated)) = equality {
+            equality_test_handler!(lane_jump_strict_equal_false::<H>, backward, negated)
         } else if backward {
             lane_jump_binary_false_registers::<H, true>
         } else {
