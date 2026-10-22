@@ -3201,6 +3201,11 @@ impl ResidualProgram {
 
     /// Decodes `encode_trusted`'s bytes into a program proven valid: this build's compiler
     /// output, which the host keys by build and whose checksum held.
+    /// `decode_trusted`, with the program's atoms named by `intern`'s ids.
+    pub(crate) fn decode_trusted_interned(bytes: KeptBytes, intern: &mut dyn FnMut(&str) -> u32) -> Result<Self, String> {
+        binary::decode_trusted_program_interned(bytes, intern)
+    }
+
     pub(crate) fn decode_trusted(bytes: KeptBytes) -> Result<Self, String> {
         let program = binary::decode_trusted_program(bytes)?;
         program.validated.establish();
