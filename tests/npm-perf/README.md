@@ -463,3 +463,15 @@ resolved constant through the existing activation/frame return path, avoiding
 the temporary register write/read and one dispatch. Reports:
 `work/react-perf/react-loadconst-return-screen-3.json` and
 `work/react-perf/react-loadconst-return-11.json`.
+
+The next diagnostic classified a plain `Move` immediately before `Call` by
+whether its destination supplies the callee, receiver, or a call-window argument.
+Among the classified instances in a 500-render React SSR run, no destinations
+supplied the callee or receiver: 1.77M wrote argument 0, 154K argument 1, 112K
+argument 2, 198K argument 3, and 112K a later argument. Calls with one argument
+accounted for 1.77M instances. This narrows a possible fusion to argument-window
+transfer, but does not establish a profitable or safe generalized call fast path;
+the instrumented run's timing is diagnostic only. Output matched at 2,498,000
+bytes/checksum 41826. Report:
+`work/react-perf/react-movecall-relations-500.json` and
+`work/react-perf/react-movecall-relations-500.log`.
