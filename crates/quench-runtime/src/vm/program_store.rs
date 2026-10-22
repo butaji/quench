@@ -38,6 +38,7 @@ struct JsJitCounters {
     interpreter_completions: u64,
     interpreter_inclusive_ns: u64,
     opcode_counts: Vec<(u16, u32)>,
+    general_dispatch_opcode_counts: Vec<(u16, u64)>,
     code_bytes: usize,
 }
 
@@ -1624,6 +1625,34 @@ impl ProgramStore {
         }
     }
 
+    /// Count bytecodes reaching the general dispatcher for a tracked JS function.
+    /// Threaded fast-lane instructions are excluded, so this reveals dynamic fallback
+    /// work separately from the static opcode-site census.
+    pub(super) fn record_js_jit_general_dispatch_opcode(
+        &mut self,
+        id: ProgramId,
+        function: u32,
+        opcode: crate::bytecode::Op,
+    ) {
+        let Some(counters) = self
+            .js_jit_diagnostics
+            .as_mut()
+            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
+        else {
+            return;
+        };
+        let opcode = opcode as u16;
+        if let Some((_, count)) = counters
+            .general_dispatch_opcode_counts
+            .iter_mut()
+            .find(|(seen, _)| *seen == opcode)
+        {
+            *count = count.saturating_add(1);
+        } else {
+            counters.general_dispatch_opcode_counts.push((opcode, 1));
+        }
+    }
+
     pub(super) fn record_js_jit_fallback_entry(&mut self, id: ProgramId, function: u32) {
         if let Some(counters) = self
             .js_jit_diagnostics
@@ -2026,9 +2055,26 @@ impl Drop for ProgramStore {
                 let _ = write_json_string(&mut stderr, name);
                 let _ = write!(stderr, ",{count}]");
             }
+            let _ = write!(stderr, "],\"general_dispatch_opcodes\":[");
+            for (index, (opcode, count)) in counters
+                .general_dispatch_opcode_counts
+                .iter()
+                .enumerate()
+            {
+                if index != 0 {
+                    let _ = write!(stderr, ",");
+                }
+                let name = crate::bytecode::Op::NAMES
+                    .get(usize::from(*opcode))
+                    .copied()
+                    .unwrap_or("unknown");
+                let _ = write!(stderr, "[");
+                let _ = write_json_string(&mut stderr, name);
+                let _ = write!(stderr, ",{count}]");
+            }
             let _ = writeln!(
                 stderr,
-                "],\"code_bytes\":{},\"guard_census_kind\":\"bytecode-sites-not-proven-redundancies\"}}",
+                "],\"code_bytes\":{},\"guard_census_kind\":\"bytecode-sites-not-proven-redundancies\",\"dynamic_opcode_count_scope\":\"general-dispatch-only; fast-lane-and-native-instructions-excluded\"}}",
                 counters.code_bytes
             );
         }
