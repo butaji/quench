@@ -91,12 +91,20 @@ impl LaneInstruction {
 pub(super) struct LoopSite {
     region: super::loop_compiled::LoopRegion,
     jump: isize,
-    /// Backward jumps taken before the region compiles.
+    /// Backward jumps taken before the region compiles, up to `LOOP_TIER_THRESHOLD`.
     taken: std::cell::Cell<u32>,
     /// Native runs that left at an instruction the general path executes.
     exits: std::cell::Cell<u32>,
-    /// The region's code once it compiled; `None` once Cranelift declined it.
-    code: std::cell::OnceCell<Option<super::loop_compiled::CompiledLoop>>,
+    tier: std::cell::RefCell<LoopTier>,
+}
+
+/// A loop site's compilations: the current code, if any, and the values earlier code found
+/// were no `i32`, which the next compilation holds as `f64`s.
+#[derive(Default)]
+struct LoopTier {
+    code: Option<super::loop_compiled::CompiledLoop>,
+    widened: std::collections::BTreeSet<super::loop_compiled::Widening>,
+    compilations: u32,
 }
 
 /// Backward jumps a loop takes in the interpreter before it compiles: enough that loops
@@ -105,6 +113,9 @@ const LOOP_TIER_THRESHOLD: u32 = 1000;
 /// Native runs that may leave at a general-path instruction before the site stops entering
 /// native code: a loop whose values keep leaving the subset is the interpreter's.
 const LOOP_TIER_MAX_EXITS: u32 = 1000;
+/// Compilations a site may make: each after the first widens a value the last one held as
+/// an `i32`, and a region has few such values.
+const LOOP_TIER_MAX_COMPILATIONS: u32 = 8;
 
 type Ip = *const LaneInstruction;
 
@@ -4385,37 +4396,87 @@ script_handler! {
         if below_floor() || unsafe { vm(cx) }.execution_interrupt.is_termination_requested() {
             return lane_safepoint::<H>(ip, header);
         }
-        let code = match site.code.get() {
-            Some(code) => code.as_ref(),
-            None => {
-                let taken = site.taken.get() + 1;
-                site.taken.set(taken);
-                if taken < LOOP_TIER_THRESHOLD {
-                    next!(cx, r, header, Carried::script(cx))
-                }
-                site.code
-                    .get_or_init(|| super::loop_compiled::compile(&site.region))
-                    .as_ref()
-            }
-        };
-        let Some(code) = code.filter(|_| site.exits.get() < LOOP_TIER_MAX_EXITS) else {
+        if site.taken.get() < LOOP_TIER_THRESHOLD {
+            site.taken.set(site.taken.get() + 1);
             next!(cx, r, header, Carried::script(cx))
-        };
+        }
+        if site.exits.get() >= LOOP_TIER_MAX_EXITS {
+            next!(cx, r, header, Carried::script(cx))
+        }
         let Some(entry) = lane_loop_entry(cx, r, site) else {
             next!(cx, r, header, Carried::script(cx))
         };
-        // SAFETY: `r` is the running activation's register file; the entry was read from it
-        // and the context just now, and native code runs no guest code.
-        let outcome = unsafe { code.run(r.0, &entry) };
+        // The tier's state is borrowed only here, so the dispatch below holds no borrow.
+        let continuation = lane_loop_run(r, site, &entry);
         // SAFETY: native code returns PCs of the function, whose records are contiguous.
         let at = |pc: u32| unsafe { header.offset(pc as isize - site.region.header as isize) };
-        match outcome {
-            super::loop_compiled::LoopOutcome::NotEntered => next!(cx, r, header, Carried::script(cx)),
-            super::loop_compiled::LoopOutcome::Resume(pc) => next!(cx, r, at(pc), Carried::script(cx)),
-            super::loop_compiled::LoopOutcome::Exit(pc) => {
-                site.exits.set(site.exits.get() + 1);
-                exit(at(pc))
+        match continuation {
+            LoopContinuation::Jump => next!(cx, r, header, Carried::script(cx)),
+            LoopContinuation::Resume(pc) => next!(cx, r, at(pc), Carried::script(cx)),
+            LoopContinuation::Exit(pc) => exit(at(pc)),
+        }
+    }
+}
+
+/// Where the lane goes after a loop site's native attempt.
+enum LoopContinuation {
+    /// Take the backward jump in the interpreter.
+    Jump,
+    Resume(u32),
+    /// The general path executes the instruction at this PC.
+    Exit(u32),
+}
+
+/// Compiles `site`'s region if it has no current code, then runs it on `r` with `entry`. A
+/// representation an outcome shows wrong is widened, and the code dropped for the next
+/// compilation.
+#[inline(never)]
+fn lane_loop_run(
+    r: Registers,
+    site: &LoopSite,
+    entry: &super::loop_compiled::LoopEntry,
+) -> LoopContinuation {
+    use super::loop_compiled::LoopOutcome;
+    let mut tier = site.tier.borrow_mut();
+    let tier = &mut *tier;
+    if tier.code.is_none() {
+        if tier.compilations >= LOOP_TIER_MAX_COMPILATIONS {
+            return LoopContinuation::Jump;
+        }
+        tier.compilations += 1;
+        let captures = entry.captures(site.region.captures.len());
+        let observation = super::loop_compiled::Observation {
+            register: &|register| r.get(register),
+            captures: &captures,
+            widened: &tier.widened,
+        };
+        tier.code = super::loop_compiled::compile(&site.region, &observation);
+        if tier.code.is_none() {
+            tier.compilations = LOOP_TIER_MAX_COMPILATIONS;
+            return LoopContinuation::Jump;
+        }
+    }
+    let code = tier.code.as_ref().expect("compiled above");
+    // SAFETY: `r` is the running activation's register file; the entry was read from it
+    // and the context just now, and native code runs no guest code.
+    match unsafe { code.run(r.0, entry) } {
+        LoopOutcome::NotEntered(widening) => {
+            if let Some(widening) = widening {
+                tier.widened.insert(widening);
+                tier.code = None;
             }
+            LoopContinuation::Jump
+        }
+        LoopOutcome::Resume(pc) => LoopContinuation::Resume(pc),
+        LoopOutcome::Exit(pc) => {
+            match code.overflow(pc) {
+                Some(widening) => {
+                    tier.widened.insert(widening);
+                    tier.code = None;
+                }
+                None => site.exits.set(site.exits.get() + 1),
+            }
+            LoopContinuation::Exit(pc)
         }
     }
 }
@@ -7878,12 +7939,25 @@ fn lane_activation_room<H: Host>(vm: &Vm<H>, target: &ScriptCallTarget) -> bool 
         && vm.lane_stack.values.capacity() - vm.lane_stack.values.len() >= usize::from(target.room)
 }
 
+/// Whether activating `target` leaves the running program. Every activation tests it, so an
+/// instantiation whose callers route only same-program targets to it (`MAY_CROSS` false)
+/// still activates a cross-program target exactly, on its cold branch: a routing mistake
+/// costs speed, not the program tables the callee runs with.
+#[inline(always)]
+fn lane_crosses<H: Host, const MAY_CROSS: bool>(cx: *mut LaneContext<H>, target: &ScriptCallTarget) -> bool {
+    let cross = target.program != unsafe { (*cx).program };
+    if !MAY_CROSS && cross {
+        std::hint::cold_path();
+    }
+    cross
+}
+
 /// `lane_activate` past its checks: the call passes at most `target`'s parameters, the lane
 /// stack has room (`lane_activation_room`), and the call may complete its caller. Pushes
 /// the activation and returns its registers and the callee's first record; it makes no
-/// call, so a handler activating through it keeps its registers. Without `MAY_CROSS` the
-/// target is the running program's (`Vm::script_call_entry`), so the activation leaves it
-/// for no other program.
+/// call, so a handler activating through it keeps its registers. Without `MAY_CROSS` its
+/// callers route the running program's targets (`Vm::script_call_entry`), and a cross
+/// target takes the cold branch of `lane_crosses`.
 #[inline(always)]
 fn lane_push_activation<H: Host, const MAY_CROSS: bool>(
     cx: *mut LaneContext<H>,
@@ -7912,8 +7986,7 @@ fn lane_push_activation<H: Host, const MAY_CROSS: bool>(
         Registers(registers)
     };
     // Only a plain call activates another program's callee (`Vm::resolve_script_call_target`).
-    let cross = MAY_CROSS && target.program != unsafe { (*cx).program };
-    debug_assert!(MAY_CROSS || target.program == unsafe { (*cx).program });
+    let cross = lane_crosses::<H, MAY_CROSS>(cx, target);
     debug_assert!(!(cross && constructs));
     let activation = Activation {
         function: target.function,
@@ -8255,8 +8328,9 @@ fn lane_planned_receiver<H: Host>(
 /// `lane_activate` for a target that keeps its passed values, or for values a forwarding
 /// activation or frame kept: the activation's registers and the callee's first record, or
 /// the record to continue at when the call takes the general path. Out of line, so the
-/// common activation keeps its code. Without `MAY_CROSS` the target is the running
-/// program's, as every path but a plain call's makes it (`lane_script_target`).
+/// common activation keeps its code. Without `MAY_CROSS` its callers route the running
+/// program's targets, as every path but a plain call's makes them (`lane_script_target`);
+/// a cross target takes the cold branch of `lane_crosses`.
 #[inline(never)]
 #[allow(clippy::too_many_arguments)]
 fn lane_activate_keeping<H: Host, const MAY_CROSS: bool>(
@@ -8274,8 +8348,7 @@ fn lane_activate_keeping<H: Host, const MAY_CROSS: bool>(
     let i = unsafe { &*ip };
     // A plain call passed more values than its parameters activates another program's callee
     // here too (`lane_activate`).
-    let cross = MAY_CROSS && target.program != unsafe { (*cx).program };
-    debug_assert!(MAY_CROSS || target.program == unsafe { (*cx).program });
+    let cross = lane_crosses::<H, MAY_CROSS>(cx, &target);
     debug_assert!(!(cross && (constructs || forwarder.is_some())));
     let argc = match arguments {
         ActivationArguments::Window(_) => usize::from(ImmediateLayout::argument_count(i.imm())),
@@ -10800,7 +10873,7 @@ fn install_loop_sites<H: Host>(
                     jump: records[pc].jump(),
                     taken: std::cell::Cell::new(0),
                     exits: std::cell::Cell::new(0),
-                    code: std::cell::OnceCell::new(),
+                    tier: std::cell::RefCell::default(),
                 },
             ))
         })
