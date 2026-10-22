@@ -1,10 +1,9 @@
 # npm package performance workloads
 
-The package campaign is part of task 91 and starts after the Stage A task 86
-gate. Work one package at a time: finish its no-JIT comparison first, then
-continue the no-JIT package sequence. Repeat the package sequence with Node and
-Bun JIT enabled afterward. Quench is the interpreter in both phases; its
-production executable is `target/production/quench-node`.
+Work one package at a time: finish its no-JIT comparison first, then continue
+the no-JIT package sequence. Repeat the package sequence with JIT enabled
+afterward. Quench defaults to the interpreter and enables its compiled mode
+with `--jit`; its production executable is `target/production/quench-node`.
 
 ## React / react-dom
 
@@ -46,15 +45,15 @@ After each package's no-JIT win is established, run the JIT-enabled phase:
 node run-workload.mjs react-ssr jit 11 ../../target/react-jit-linux.json
 ```
 
-JIT phase rows use the default JIT-enabled Node and Bun engines alongside
-`quench-node`. A run on Linux is diagnostic; final performance qualification
-uses the Apple M4/macOS target specified in [task 91](../../tasks/91.md).
+JIT phase rows use `quench-node --jit` and the default JIT-enabled Node and Bun
+engines. Linux runs are diagnostic; retain the host, version, output and RSS
+details with each comparison.
 
 Winning means fastest throughput and the smallest maximum RSS against both
 Node and Bun in the active phase. Keep each package's evidence separate.
 
-The current 11-round Linux no-JIT pilot (50 timed renders and 50 warmups per
-sample) is saved at
+The pre-merge runtime's 11-round Linux no-JIT pilot (50 timed renders and 50
+warmups per sample) is saved at
 [`reports/react-no-jit-linux-11.json`](reports/react-no-jit-linux-11.json).
 It verifies matching output but shows Quench behind both comparators on speed
 and maximum RSS; it is a diagnostic baseline, not a win or qualification.

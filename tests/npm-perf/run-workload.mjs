@@ -60,7 +60,7 @@ function engineSpecs() {
     ];
   }
   return [
-    { name: "quench-interpreter", binary: binaries.quench, args: [workload], env: {} },
+    { name: "quench-jit", binary: binaries.quench, args: ["--jit", workload], env: {} },
     { name: "node-jit", binary: binaries.node, args: [workload], env: {} },
     { name: "bun-jit", binary: binaries.bun, args: [workload], env: {} },
   ];
