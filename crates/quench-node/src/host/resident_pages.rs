@@ -70,7 +70,10 @@ pub fn release_read_only_pages() {
         }
     }
     // Held while releasing, so no tracked mapping is unmapped meanwhile.
-    if let Ok(mappings) = TRACKED_MAPPINGS.lock() {
+    if let Ok(mut mappings) = TRACKED_MAPPINGS.lock() {
+        // Every tracked mapping is released below, deferred ranges with it.
+        mappings.pending.clear();
+        mappings.pending_bytes = 0;
         let spans = mappings.arena.as_ref().map(Arena::used).into_iter();
         for (start, length) in spans.chain(mappings.outside.iter().copied()) {
             // SAFETY: a tracked mapping is a live, read-only private file mapping, and the
@@ -89,7 +92,13 @@ pub fn release_read_only_pages() {
 /// calls in a 78 ms run).
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 static TRACKED_MAPPINGS: std::sync::Mutex<TrackedMappings> =
-    std::sync::Mutex::new(TrackedMappings { arena: None, inside: Vec::new(), outside: Vec::new() });
+    std::sync::Mutex::new(TrackedMappings {
+        arena: None,
+        inside: Vec::new(),
+        outside: Vec::new(),
+        pending: Vec::new(),
+        pending_bytes: 0,
+    });
 
 /// The tracked mappings, as start and length: those in the arena and those mapped elsewhere
 /// once it was full or could not be reserved.
@@ -98,12 +107,38 @@ struct TrackedMappings {
     arena: Option<Arena>,
     inside: Vec<(usize, usize)>,
     outside: Vec<(usize, usize)>,
+    /// Page ranges of tracked mappings read and not yet released (`release_tracked_bytes`),
+    /// as start and end, and their bytes.
+    pending: Vec<(usize, usize)>,
+    pending_bytes: usize,
 }
+
+/// The ranges, and their bytes, `release_tracked_bytes` defers before releasing them all: a
+/// release per decoded record was a call per function an npm package's run decodes (about
+/// 6,000 for @babel/helper-module-transforms, x86_64 VM, 2026-10-22), while the deferred
+/// pages stay resident no longer than this many more.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const PENDING_RELEASE_RANGES: usize = 32;
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const PENDING_RELEASE_BYTES: usize = 256 << 10;
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 impl TrackedMappings {
     fn contains(&self, start: usize, end: usize) -> bool {
         self.inside.iter().chain(&self.outside).any(|&(mapping, length)| mapping <= start && end <= mapping + length)
+    }
+
+    /// Releases the deferred ranges (`release_tracked_bytes`).
+    fn release_pending(&mut self) {
+        for &(start, end) in &self.pending {
+            // SAFETY: each range lies in a live, read-only private file mapping (unmapping a
+            // mapping drops its ranges), whose discarded pages fault back in from the file.
+            unsafe {
+                libc::madvise(start as *mut libc::c_void, end - start, libc::MADV_DONTNEED);
+            }
+        }
+        self.pending.clear();
+        self.pending_bytes = 0;
     }
 }
 
@@ -203,15 +238,21 @@ pub fn release_tracked_bytes(bytes: &[u8]) {
         return;
     }
     // Held while releasing, so the mapping is not unmapped meanwhile.
-    let Ok(mappings) = TRACKED_MAPPINGS.lock() else {
+    let Ok(mut mappings) = TRACKED_MAPPINGS.lock() else {
         return;
     };
-    if mappings.contains(start, end) {
-        // SAFETY: the range lies in a live, read-only private file mapping, whose discarded
-        // pages fault back in from the file.
-        unsafe {
-            libc::madvise(start as *mut libc::c_void, end - start, libc::MADV_DONTNEED);
-        }
+    if !mappings.contains(start, end) {
+        return;
+    }
+    // A read that continues the last deferred range, as a restore's sequential reads do,
+    // extends it.
+    match mappings.pending.last_mut() {
+        Some(last) if last.0 <= end && start <= last.1 => *last = (last.0.min(start), last.1.max(end)),
+        _ => mappings.pending.push((start, end)),
+    }
+    mappings.pending_bytes += end - start;
+    if mappings.pending.len() >= PENDING_RELEASE_RANGES || mappings.pending_bytes >= PENDING_RELEASE_BYTES {
+        mappings.release_pending();
     }
 }
 
@@ -221,6 +262,8 @@ pub fn unmap_tracked_mapping(start: usize, length: usize) {
     let mut mappings = TRACKED_MAPPINGS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     mappings.inside.retain(|&mapping| mapping != (start, length));
     mappings.outside.retain(|&mapping| mapping != (start, length));
+    // A deferred range of the mapping must not be released once its addresses are reused.
+    mappings.pending.retain(|&(pending, _)| !(start..start + length).contains(&pending));
     let in_arena = mappings.arena.as_ref().is_some_and(|arena| arena.holds(start));
     // SAFETY: the caller owns the mapping, and the held lock keeps releases off it. An arena
     // mapping's pages are reserved again, so the arena's used span stays wholly mapped.
@@ -288,12 +331,18 @@ pub fn at_compile_phase(phase: quench_runtime::CompilePhase) {
 enum CompileRelease {
     CodeGeneration,
     FirstCall,
+    BeforeNativeCompilation,
+    AfterNativeCompilation,
+}
+
+impl CompileRelease {
+    const COUNT: usize = 4;
 }
 
 /// When each compile-phase release last ran, indexed by `CompileRelease`.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-static LAST_COMPILE_RELEASES: std::sync::Mutex<[Option<std::time::Instant>; 2]> =
-    std::sync::Mutex::new([None; 2]);
+static LAST_COMPILE_RELEASES: std::sync::Mutex<[Option<std::time::Instant>; CompileRelease::COUNT]> =
+    std::sync::Mutex::new([None; CompileRelease::COUNT]);
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 fn release_once_per_interval(release: CompileRelease, action: fn()) {
@@ -319,6 +368,25 @@ fn release_once_per_interval(_: CompileRelease, _: fn()) {}
 /// held that boundary (V8-v7 max RSS, entry compiled with the bootstrap cached, bolted static
 /// x86_64, 2026-10-22: Crypto 3100-3276 -> 2704-3052 KiB, RayTrace 2996 -> 2764, Richards
 /// 2812 -> 2484).
+/// Releases the read-only pages before a native compilation, at most once per
+/// `LOAD_RELEASE_INTERVAL`: each release made the interpreter's code fault in again, and a
+/// program the JavaScript tier compiles several functions of paid that at each (the
+/// @babel/helper-module-transforms npm scenario under --jit took 28,157 page faults against
+/// 23,194 without it, x86_64 VM, 2026-10-22). A program's first compilation still releases,
+/// which is what a short numeric program's peak needs.
+pub fn before_native_compilation() {
+    release_once_per_interval(CompileRelease::BeforeNativeCompilation, release_read_only_pages);
+}
+
+/// Releases the read-only pages and the allocator's free pages after a native compilation,
+/// at most once per `LOAD_RELEASE_INTERVAL`, as `before_native_compilation` does.
+pub fn after_native_compilation() {
+    release_once_per_interval(CompileRelease::AfterNativeCompilation, || {
+        release_read_only_pages();
+        release_free_heap_pages();
+    });
+}
+
 pub fn release_before_entry_compile() {
     release_read_only_code_and_data();
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
