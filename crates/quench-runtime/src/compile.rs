@@ -195,6 +195,37 @@ pub(crate) enum DynamicFunctionKind {
 
 pub(crate) const DYNAMIC_FUNCTION_PUBLIC_NAME: &str = "anonymous";
 
+/// The name of every Function-constructor program. Its frames report their origin, not this
+/// name (`CompilationOrigin::FunctionConstructor`), so one name serves all of them and keys
+/// their compiled form by text alone.
+pub(crate) const DYNAMIC_FUNCTION_SOURCE_NAME: &str = "<Function>";
+
+/// A Function-constructor program's source: the coerced parameter and body strings,
+/// normalized, in the expression the compiler parses (`(function anonymous(…\n) {\n…\n})`),
+/// and where its parameter list ends.
+pub(crate) struct DynamicFunctionSource {
+    pub(crate) text: String,
+    parameter_list_end: usize,
+}
+
+impl DynamicFunctionSource {
+    pub(crate) fn new(parameters: &str, body: &str, kind: DynamicFunctionKind) -> Self {
+        let body = early::normalize_dynamic_function_body(body);
+        let parameters = early::normalize_dynamic_function_parameters(parameters);
+        const EXPRESSION_OPEN: &str = "(";
+        const EXPRESSION_CLOSE: &str = ")";
+        const PARAMETER_LIST_END: &str = "\n)";
+        let function_prefix = format!("{} {DYNAMIC_FUNCTION_PUBLIC_NAME}(", kind.source_prefix());
+        Self {
+            text: format!("{EXPRESSION_OPEN}{}{EXPRESSION_CLOSE}", kind.source(&parameters, &body)),
+            parameter_list_end: EXPRESSION_OPEN.len()
+                + function_prefix.len()
+                + parameters.len()
+                + PARAMETER_LIST_END.len(),
+        }
+    }
+}
+
 impl DynamicFunctionKind {
     fn source_prefix(self) -> &'static str {
         match self {
@@ -232,6 +263,35 @@ enum ParsedProgramShape {
 pub(crate) struct EvalRegExpLiteral {
     pub(crate) span: Range<usize>,
     pub(crate) flags: String,
+}
+
+/// The first characters, past white space, `/*…*/` and `//` comments and opening
+/// parentheses, after which a Script of one parenthesized regular expression literal may
+/// still begin: the literal's own `/`, and the starts of the comments this scan leaves to
+/// the parser (Annex B's `<!--` and `-->`, and a hashbang `#!`).
+const SINGLE_REGEXP_LITERAL_STARTS: [u8; 4] = [b'/', b'<', b'-', b'#'];
+
+/// Whether `source` may be a Script of one (possibly parenthesized) regular expression
+/// literal, which `Engine::eval_single_regexp_literal` then parses to decide: false only when
+/// the first token past white space, ordinary comments and `(` is something else. Skipping
+/// Rust's white space, which is ECMAScript's plus U+0085 and less U+FEFF, as well as U+FEFF,
+/// keeps the test an over-approximation: it rejects no source the parse would accept.
+fn may_begin_single_regexp_literal(source: &str) -> bool {
+    let mut rest = source;
+    loop {
+        rest = rest.trim_start_matches(|character: char| character.is_whitespace() || character == '\u{FEFF}');
+        if let Some(after) = rest.strip_prefix("/*") {
+            let Some(end) = after.find("*/") else { return true };
+            rest = &after[end + "*/".len()..];
+        } else if let Some(after) = rest.strip_prefix("//") {
+            let Some(end) = after.find(['\n', '\r', '\u{2028}', '\u{2029}']) else { return true };
+            rest = &after[end..];
+        } else if let Some(after) = rest.strip_prefix('(') {
+            rest = after;
+        } else {
+            return rest.bytes().next().is_some_and(|first| SINGLE_REGEXP_LITERAL_STARTS.contains(&first));
+        }
+    }
 }
 pub(crate) enum StaticModuleThrow {
     Value(Constant),
@@ -293,6 +353,9 @@ impl Engine {
     }
 
     pub(crate) fn eval_single_regexp_literal(source: &str) -> Option<EvalRegExpLiteral> {
+        if !may_begin_single_regexp_literal(source) {
+            return None;
+        }
         let allocator = Allocator::with_capacity(source.len());
         let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
         if stack::validate_parsed(&parsed).is_err() {
@@ -740,25 +803,18 @@ impl Engine {
     pub fn specialize_module(source: &str, name: &str) -> Result<ResidualProgram, Vec<Diagnostic>> {
         Self::specialize_module_with_mode(source, name, SpecializationMode::Enabled)
     }
-    /// Compile already-coerced Function-constructor parameter and body strings
-    /// through the same OXC script pipeline used by ordinary source.
+    /// Compile a Function-constructor program's source through the same OXC script pipeline
+    /// used by ordinary source.
     pub(crate) fn specialize_function_constructor(
-        parameters: &str,
-        body: &str,
+        source: &DynamicFunctionSource,
         name: &str,
         atom_prefix: &dyn AtomPrefix,
-        kind: DynamicFunctionKind,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        let body = early::normalize_dynamic_function_body(body);
-        let parameters = early::normalize_dynamic_function_parameters(parameters);
-        let expression_wrapper = "(";
-        let function_prefix = format!("{} {DYNAMIC_FUNCTION_PUBLIC_NAME}(", kind.source_prefix());
-        let parameter_list_end = expression_wrapper.len() + function_prefix.len()
-            + parameters.len() + "\n)".len();
-        let source = format!("{expression_wrapper}{})", kind.source(&parameters, &body));
-        let expected_shape = ParsedProgramShape::DynamicFunction { parameter_list_end };
+        let expected_shape = ParsedProgramShape::DynamicFunction {
+            parameter_list_end: source.parameter_list_end,
+        };
         Self::specialize_with_program_shape(
-            &source,
+            &source.text,
             name,
             SpecializationMode::of(atom_prefix),
             atom_prefix,
