@@ -300,6 +300,14 @@ fn rebuild_shape(
 }
 
 impl<H: Host> Vm<H> {
+    pub(crate) fn set_memory_policy(&mut self, policy: crate::MemoryPolicy) {
+        self.heap.set_memory_policy(policy);
+    }
+
+    pub(crate) fn memory_policy(&self) -> crate::MemoryPolicy {
+        self.heap.memory_policy()
+    }
+
     /// Run a named collection safepoint even when the allocation threshold has
     /// not been reached. Hosts and focused conformance tests use this boundary
     /// to validate root ownership and weak/finalization ordering without
@@ -354,7 +362,7 @@ impl<H: Host> Vm<H> {
         self.invalidate_wasm_reference_caches();
         let full = self.heap.collection_is_full(full);
         if full {
-            self.host.at_collection_boundary();
+            self.host.at_collection_boundary(self.memory_policy());
         }
         #[cfg(feature = "profile-memory")]
         if std::env::var_os("QUENCH_FUNCTION_USE").is_some() {
@@ -871,7 +879,7 @@ impl<H: Host> Vm<H> {
         }
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         self.heap.record_vm_gc_phase(3, after_collection_started);
-        self.host.at_collection_boundary();
+        self.host.at_collection_boundary(self.memory_policy());
         #[cfg(feature = "profile-memory")]
         if std::env::var_os("QUENCH_MEMORY_PEAK").is_some() {
             let phase = format!("gc_{}_after", self.heap.collection_count());
