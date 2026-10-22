@@ -365,9 +365,11 @@ pub(super) const THROUGHPUT_PACING: GenerationalPacing = GenerationalPacing {
 /// 4 vCPU, 2026-10-20: 768 against 384 gave V8-v7 Score x1.161 with RayTrace x1.54 and
 /// RegExp x1.60 in 7/7 pairs, frameworks x1.023, max RSS geomean x0.997 and x0.999).
 pub(super) const MEMORY_FIRST_PACING: GenerationalPacing = GenerationalPacing {
-    young: Ratio::new(1, 64),
+    // React SSR no-JIT production: 1/1 measured 194.9 renders/s at 30.74 MB
+    // sampled max RSS across 11 rounds, up from 114.7 / 30.37 MB at 1/64.
+    young: Ratio::new(1, 1),
     minimum_young: YOUNG_MINIMUM_ALLOCATION,
-    maximum_young: MAXIMUM_YOUNG,
+    maximum_young: MEMORY_FIRST_MAXIMUM_YOUNG,
     old_growth: Ratio::new(1, 1),
     minimum_old_growth: MEMORY_FIRST_MINIMUM_ALLOCATION,
     allocation_cap: Ratio::new(1, 1),
@@ -394,6 +396,9 @@ const MEMORY_FIRST_MINIMUM_ALLOCATION: usize = 384;
 /// 46 -> 28 MB and splay 161 -> 92 MB, with Scores within the run-to-run band. 2^16 cut little
 /// more memory.
 const MAXIMUM_YOUNG: usize = 1 << 17;
+/// React SSR no-JIT production, 11 rounds at 1/1: 2^16 measured 196.7 renders/s
+/// and 29.74 MB RSS, versus 194.9 / 30.74 MB at 2^17.
+const MEMORY_FIRST_MAXIMUM_YOUNG: usize = 1 << 16;
 
 /// The fewest allocations between young collections under memory-first. At 768 (twice the
 /// headroom, TOD-161) small heaps collected thousands of times, and collection-time page
