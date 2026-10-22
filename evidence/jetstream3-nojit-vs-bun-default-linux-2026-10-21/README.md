@@ -21,3 +21,17 @@ fixtures, plus stanford-crypto-pbkdf2 1.04, hash-map 1.04, js-tokens 1.05, aes 1
 sha256 1.09, the smallest of them within run-to-run noise); max RSS wins 32/34 (losses:
 doxbee-promise 50 vs 42 MB, babel-wtb 94 vs 93 MB), RSS geomean ratio 0.674. The lowest
 Score ratios: argon2-wasm 0.11, source-map-wtb 0.16, web-ssr 0.22, doxbee-async 0.24.
+
+## Re-sweep at `e787e2ec` (2026-10-22, quiet host, one round)
+
+`scores-e787e2ec.txt`: geomean Score ratio vs Bun no-JIT **0.640** (34 tests), max RSS below
+Bun on 32/34 (RSS geomean 0.665). The tests this session targeted moved: source-map-wtb
+x3.11, babel-wtb x1.43, babylon-wtb x1.30, doxbee-promise x1.19, web-ssr x1.16,
+typescript-lib x1.14, chai-wtb x1.11 against `0028c07f`.
+
+The geomean is lower than 0.656 because one round is noisier than the effects: paired,
+interleaved medians of 3 at `64da6ab8` vs `e787e2ec` show no regression on the tests that read
+lowest here (json-parse-inspector 96.2 vs 96.9, gcc-loops-wasm 17.6 vs 17.9, sync-fs 6.74 vs
+6.79), while this sweep's single json-parse round read 71.5 and that test spans 85-116 within
+three rounds. A per-test single round on this host swings up to ~20%; geomeans of one-round
+sweeps compare only within a few percent. Decisions use paired medians or callgrind counts.
