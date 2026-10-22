@@ -386,6 +386,23 @@ impl<H: Host> Vm<H> {
             .then_some(removed)
     }
 
+    /// `object`'s own data property `atom` (`Some(None)` when it has no own `atom`), read
+    /// from its shape without a call; `None` for an accessor, or for an object keeping
+    /// descriptors outside its shape, which its shape alone does not answer.
+    fn own_plain_data(&self, object: Value, atom: Atom) -> Option<Option<Value>> {
+        let data = self.object_data(object)?;
+        if data.has_side_descriptors() {
+            return None;
+        }
+        let Some(slot) = self.shape_slot(data.shape(), atom) else {
+            return Some(None);
+        };
+        if self.slot_attributes(data, slot)?.accessor {
+            return None;
+        }
+        Some(Some(self.heap.property_get(data, slot)?))
+    }
+
     /// `unshift` of a dense array as `splice_dense_elements` makes it, which observes
     /// nothing; `None` leaves the general path's steps.
     pub(super) fn plain_array_unshift(&mut self, this: Value, items: &[Value]) -> Option<Value> {
@@ -394,13 +411,28 @@ impl<H: Host> Vm<H> {
         Some(Value::number((length + items.len()) as f64))
     }
 
-    /// Whether ArraySpeciesCreate of `array` provably makes a plain array of this realm:
-    /// its `constructor` reads as plain data (`plain_named_load`) to `undefined` or to this
-    /// realm's `%Array%`, whose `@@species` getter is intrinsic. The reads observe nothing.
-    fn array_species_is_intrinsic(&mut self, array: Value) -> bool {
-        let constructor_atom = self.runtime_atoms.constructor;
-        let Some(constructor) = self.plain_named_load(array, constructor_atom) else {
+    /// Whether ArraySpeciesCreate of the array `array` provably makes a plain array of this
+    /// realm: its `constructor` is an own data property, or this realm's `Array.prototype`
+    /// holds it as one (`own_plain_data`), with the value `undefined` or this realm's
+    /// `%Array%`, whose `@@species` getter is intrinsic. The reads observe nothing.
+    fn array_species_is_intrinsic(&self, array: Value) -> bool {
+        let atom = self.runtime_atoms.constructor;
+        if self.heap.array(array).is_none() {
             return false;
+        }
+        let constructor = match self.own_plain_data(array, atom) {
+            Some(Some(constructor)) => constructor,
+            Some(None) => {
+                let prototype = self.array_prototype_for_realm(self.realm.globals);
+                if self.object_data(array).map(Object::proto) != Some(prototype) {
+                    return false;
+                }
+                match self.own_plain_data(prototype, atom) {
+                    Some(Some(constructor)) => constructor,
+                    _ => return false,
+                }
+            }
+            None => return false,
         };
         constructor.is_undefined()
             || (matches!(
