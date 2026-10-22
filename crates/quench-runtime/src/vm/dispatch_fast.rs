@@ -884,9 +884,11 @@ const EMPTY_SCRIPT_CALL_TARGET: ScriptCallTarget = ScriptCallTarget {
 /// Entries of the script call cache, in sets of `SCRIPT_TARGET_WAYS` that a hash of the
 /// callee's heap index picks (`ScriptTargets::set`), at most: Express's router calls a
 /// matcher closure per layer, some 400 distinct callees a request, which 256 entries
-/// thrashed (Callgrind: 2.4% of a ping request re-resolving); 1024 hold them in 64 KiB per
-/// table.
-const SCRIPT_CALL_TARGETS: usize = 1024;
+/// thrashed (Callgrind: 2.4% of a ping request re-resolving). 1024 still met conflicts in
+/// their two-way sets, re-resolving 34 callees a body request (~380 instructions each);
+/// 4096 (256 KiB per table, reached only by a cache that keeps displacing live targets) cut
+/// express body and ping 1.3% (Callgrind, per request).
+const SCRIPT_CALL_TARGETS: usize = 4096;
 /// Entries a script call cache starts with: a program that calls few distinct callees keeps
 /// 16 KiB per table resident instead of 64 (V8-v7 max RSS, both tables: about 100 KiB per
 /// fixture). A cache grows to `SCRIPT_CALL_TARGETS` by this factor each time it has
@@ -6776,6 +6778,263 @@ fn offset_mask_jump_handler<H: Host>(first: Op, jump: Op, backward: bool, acc: u
 }
 
 lane_handler! {
+    /// A bit-field extraction, reading its operand through field `ACC`, and a following i32
+    /// operator `SECOND` (another extraction, or an operator of registers or a constant): both
+    /// records run here, the extraction written before the operator reads its operands.
+    fn lane_bit_field_then<SECOND: u16, ACC: u8>(cx, r, ip, i, view) {
+        let (operator, immediate) = const {
+            match opcode(SECOND) {
+                Op::WasmI32ShiftRightUnsignedAndImmediate => (None, true),
+                op => match I32BinaryOperator::from_register_op(op) {
+                    Some(operator) => (Some(operator), false),
+                    None => match I32BinaryOperator::from_immediate_op(op) {
+                        Some(operator) => (Some(operator), true),
+                        None => panic!("not an i32 operator"),
+                    },
+                },
+            }
+        };
+        let field = crate::wasm::integer::shift_right_unsigned_and(
+            read_i32::<ACC, ACC_B>(r, i.b, view),
+            i32::from(i.c as i16),
+            i.imm() as i32,
+        );
+        r.set(i.a, view.integers.encode(field));
+        let second_ip = following(ip);
+        // SAFETY: the view fuses an extraction only with a following i32 operator.
+        let second = unsafe { &*second_ip };
+        let value = match operator {
+            None => crate::wasm::integer::shift_right_unsigned_and(
+                r.i32(second.b),
+                i32::from(second.c as i16),
+                second.imm() as i32,
+            ),
+            Some(operator) => {
+                let right = if immediate { second.imm() as i32 } else { r.i32(second.c) };
+                let Ok(value) = operator.evaluate(r.i32(second.b), right) else {
+                    return exit(second_ip);
+                };
+                value
+            }
+        };
+        produce!(cx, r, second_ip, second.a, view.integers.encode(value), view)
+    }
+}
+
+/// The extraction-then-operator handler for i32 operator `second`, the extraction read
+/// through field `acc`.
+fn bit_field_then_handler<H: Host>(second: Op, acc: u8) -> Option<Handler> {
+    macro_rules! seconds {
+        ($($second:ident),+) => {
+            match (second, acc) {
+                $(
+                    (Op::$second, ACC_NONE) => Some(lane_bit_field_then::<H, { Op::$second as u16 }, ACC_NONE> as Handler),
+                    (Op::$second, ACC_B) => Some(lane_bit_field_then::<H, { Op::$second as u16 }, ACC_B> as Handler),
+                )+
+                _ => None,
+            }
+        };
+    }
+    seconds!(WasmI32ShiftRightUnsignedAndImmediate, WasmI32Multiply, WasmI32XorImmediate)
+}
+
+lane_handler! {
+    /// An immediate comparison jump `JUMP`, reading its operand through field `ACC`, that
+    /// falls through to direct i32 load `LOAD` (`if c == k goto L; v = *p`): both records run
+    /// here, the load only when the jump falls through.
+    fn lane_compare_jump_load<JUMP: u16, LOAD: u16, BACKWARD: bool, ACC: u8>(cx, r, ip, i, view) {
+        let comparison = const {
+            match I32BinaryOperator::from_immediate_jump_op(opcode(JUMP)) {
+                Some(comparison) => comparison,
+                None => panic!("not an i32 immediate comparison jump"),
+            }
+        };
+        let load = const { direct_load(LOAD) };
+        let Ok(taken) = comparison.evaluate(read_i32::<ACC, ACC_A>(r, i.a, view), i32::from(i.b as i16)) else {
+            return exit(ip);
+        };
+        if taken != 0 {
+            return lane_jump(cx, r, ip, BACKWARD, view, None);
+        }
+        let load_ip = following(ip);
+        // SAFETY: the view fuses a comparison jump only with a following plain load.
+        let access = unsafe { &*load_ip };
+        let address = u64::from(r.get(access.c).wasm_bits32()) + u64::from(access.imm());
+        // SAFETY: as for `lane_load`.
+        let Some(value) = (unsafe { view.memory.read(load, address) }) else {
+            return exit(load_ip);
+        };
+        let Some(value) = lane_encode(view, value) else {
+            return exit(load_ip);
+        };
+        produce!(cx, r, load_ip, access.a, value, view)
+    }
+}
+
+/// The compare-jump-load handler for immediate comparison jump `jump` and i32 load `load`.
+fn compare_jump_load_handler<H: Host>(jump: Op, load: Op, backward: bool, acc: u8) -> Option<Handler> {
+    macro_rules! accs {
+        ($jump:ident, $load:ident) => {
+            match (backward, acc) {
+                (false, ACC_NONE) => Some(lane_compare_jump_load::<H, { Op::$jump as u16 }, { Op::$load as u16 }, false, ACC_NONE> as Handler),
+                (true, ACC_NONE) => Some(lane_compare_jump_load::<H, { Op::$jump as u16 }, { Op::$load as u16 }, true, ACC_NONE> as Handler),
+                (false, ACC_A) => Some(lane_compare_jump_load::<H, { Op::$jump as u16 }, { Op::$load as u16 }, false, ACC_A> as Handler),
+                (true, ACC_A) => Some(lane_compare_jump_load::<H, { Op::$jump as u16 }, { Op::$load as u16 }, true, ACC_A> as Handler),
+                _ => None,
+            }
+        };
+    }
+    macro_rules! loads {
+        ($jump:ident) => {
+            match load {
+                Op::WasmI32Load => accs!($jump, WasmI32Load),
+                Op::WasmI32Load8U => accs!($jump, WasmI32Load8U),
+                _ => None,
+            }
+        };
+    }
+    match jump {
+        Op::WasmJumpI32EqualImmediate => loads!(WasmJumpI32EqualImmediate),
+        Op::WasmJumpI32NotEqualImmediate => loads!(WasmJumpI32NotEqualImmediate),
+        _ => None,
+    }
+}
+
+lane_handler! {
+    /// Two i32 adds (`FIRST`, reading through field `ACC`, then `SECOND`), each of a register
+    /// or a constant, or an add and a counted loop's step and test (`SECOND` is
+    /// `WasmI32AddImmediateJumpNonZero`): a strided loop's pointer and counter updates. The
+    /// first result is written before the second reads its operands, as two records do.
+    fn lane_add_pair<FIRST: u16, SECOND: u16, BACKWARD: bool, ACC: u8>(cx, r, ip, i, view) {
+        let first_immediate = const {
+            match opcode(FIRST) {
+                Op::WasmI32Add => false,
+                Op::WasmI32AddImmediate => true,
+                _ => panic!("not an i32 add"),
+            }
+        };
+        let right = if first_immediate { i.imm() as i32 } else { read_i32::<ACC, ACC_C>(r, i.c, view) };
+        let first = view.integers.encode(read_i32::<ACC, ACC_B>(r, i.b, view).wrapping_add(right));
+        r.set(i.a, first);
+        let second_ip = following(ip);
+        // SAFETY: the view fuses an add only with a following add or loop step.
+        let second = unsafe { &*second_ip };
+        let view = Carried { acc: Slot::of(first), ..view };
+        match const { opcode(SECOND) } {
+            Op::WasmI32AddImmediateJumpNonZero => {
+                let sum = r.i32(second.b).wrapping_add(i32::from(second.c as i16));
+                let encoded = view.integers.encode(sum);
+                if sum != 0 {
+                    return lane_jump(cx, r, second_ip, BACKWARD, view, Some((second.a, encoded)));
+                }
+                produce!(cx, r, second_ip, second.a, encoded, view)
+            }
+            Op::WasmI32AddImmediate => {
+                let sum = r.i32(second.b).wrapping_add(second.imm() as i32);
+                produce!(cx, r, second_ip, second.a, view.integers.encode(sum), view)
+            }
+            _ => {
+                let sum = r.i32(second.b).wrapping_add(r.i32(second.c));
+                produce!(cx, r, second_ip, second.a, view.integers.encode(sum), view)
+            }
+        }
+    }
+}
+
+/// The add-pair handler for add `first` read through field `acc`, then `second`.
+fn add_pair_handler<H: Host>(first: Op, second: Op, backward: bool, acc: u8) -> Option<Handler> {
+    macro_rules! accs {
+        ($first:ident, $second:ident, $backward:literal) => {
+            match acc {
+                ACC_NONE => Some(lane_add_pair::<H, { Op::$first as u16 }, { Op::$second as u16 }, $backward, ACC_NONE> as Handler),
+                ACC_B => Some(lane_add_pair::<H, { Op::$first as u16 }, { Op::$second as u16 }, $backward, ACC_B> as Handler),
+                ACC_C => Some(lane_add_pair::<H, { Op::$first as u16 }, { Op::$second as u16 }, $backward, ACC_C> as Handler),
+                _ => None,
+            }
+        };
+    }
+    macro_rules! seconds {
+        ($first:ident) => {
+            match (second, backward) {
+                (Op::WasmI32Add, _) => accs!($first, WasmI32Add, false),
+                (Op::WasmI32AddImmediate, _) => accs!($first, WasmI32AddImmediate, false),
+                (Op::WasmI32AddImmediateJumpNonZero, false) => accs!($first, WasmI32AddImmediateJumpNonZero, false),
+                (Op::WasmI32AddImmediateJumpNonZero, true) => accs!($first, WasmI32AddImmediateJumpNonZero, true),
+                _ => None,
+            }
+        };
+    }
+    match first {
+        Op::WasmI32Add => seconds!(WasmI32Add),
+        Op::WasmI32AddImmediate => seconds!(WasmI32AddImmediate),
+        _ => None,
+    }
+}
+
+lane_handler! {
+    /// An i32 operator of a constant (`FIRST`) and the register comparison jump `JUMP` reading
+    /// its result as either operand (`(x & mask) == y`): two records run here, the result
+    /// written as its own record writes it.
+    fn lane_immediate_compare_jump<FIRST: u16, JUMP: u16, BACKWARD: bool>(cx, r, ip, i, view) {
+        let operator = const {
+            match I32BinaryOperator::from_immediate_op(opcode(FIRST)) {
+                Some(operator) => operator,
+                None => panic!("not an i32 immediate operator"),
+            }
+        };
+        let comparison = const {
+            match I32BinaryOperator::from_jump_op(opcode(JUMP)) {
+                Some(comparison) => comparison,
+                None => panic!("not an i32 register comparison jump"),
+            }
+        };
+        let Ok(result) = operator.evaluate(r.i32(i.b), i.imm() as i32) else {
+            return exit(ip);
+        };
+        let encoded = view.integers.encode(result);
+        r.set(i.a, encoded);
+        let view = Carried { acc: Slot::of(encoded), ..view };
+        let jump_ip = following(ip);
+        // SAFETY: the view fuses an immediate operator only with a following comparison jump.
+        let jump = unsafe { &*jump_ip };
+        let operand = |register: u16| if register == i.a { result } else { r.i32(register) };
+        let Ok(taken) = comparison.evaluate(operand(jump.a), operand(jump.b)) else {
+            return exit(jump_ip);
+        };
+        if taken != 0 {
+            return lane_jump(cx, r, jump_ip, BACKWARD, view, None);
+        }
+        next!(cx, r, following(jump_ip), view)
+    }
+}
+
+/// The immediate-operator comparison-jump handler for operator `first`, register comparison
+/// jump `jump`.
+fn immediate_compare_jump_handler<H: Host>(first: Op, jump: Op, backward: bool) -> Option<Handler> {
+    macro_rules! jumps {
+        ($first:ident; $($jump:ident),+) => {
+            match (jump, backward) {
+                $(
+                    (Op::$jump, false) => Some(lane_immediate_compare_jump::<H, { Op::$first as u16 }, { Op::$jump as u16 }, false> as Handler),
+                    (Op::$jump, true) => Some(lane_immediate_compare_jump::<H, { Op::$first as u16 }, { Op::$jump as u16 }, true> as Handler),
+                )+
+                _ => None,
+            }
+        };
+    }
+    macro_rules! tested {
+        ($first:ident) => {
+            jumps!($first; WasmJumpI32Equal, WasmJumpI32NotEqual)
+        };
+    }
+    // Masked tag tests; each further pairing is another family of handler copies.
+    match first {
+        Op::WasmI32AndImmediate => tested!(WasmI32AndImmediate),
+        _ => None,
+    }
+}
+
+lane_handler! {
     /// An i32 operator `OP` (reading through field `ACC`; a comparison, typically), a constant
     /// load and a select choosing among their results and other registers (`cur = cur > clip
     /// ? 0 : cur`): three records run here, each result written as its own record writes it,
@@ -8786,6 +9045,15 @@ fn lane_call_native<H: Host>(
     // runs from any activation.
     if let Some(value) = args.first().and_then(|value| value.as_number())
         && let Some(result) = super::number::math_unary(native, value)
+    {
+        return Some(Value::number(result));
+    }
+    // So do `Math.max` and its kin of Numbers (`math_numbers`).
+    if let Some(numbers) = args
+        .iter()
+        .map(|value| value.as_number())
+        .collect::<Option<smallvec::SmallVec<[f64; super::number::MATH_INLINE_ARGUMENTS]>>>()
+        && let Some(result) = super::number::math_numbers(native, &numbers)
     {
         return Some(Value::number(result));
     }
@@ -12135,6 +12403,20 @@ fn derive_lane_view<H: Host>(
         tables[0][usize::from(acc)].get(op as usize).copied().flatten()
             .is_some_and(|served| handler == served.handler as *const ())
     };
+    // The direction and accumulator field (among `accs`) of the plain handler serving `op`
+    // that `handler` is, for an instruction whose handler depends on its jump's direction.
+    let plain_served = |handler: *const (), op: Op, accs: &[u8]| {
+        [false, true].into_iter().find_map(|backward| {
+            accs.iter().copied().find(|&acc| {
+                tables[usize::from(backward)][usize::from(acc)]
+                    .get(op as usize)
+                    .copied()
+                    .flatten()
+                    .is_some_and(|served| handler == served.handler as *const ())
+            })
+            .map(|acc| (backward, acc))
+        })
+    };
     if wasm {
         // A table follows its selected entry's jump, so every entry must run in
         // the lane.
@@ -12303,18 +12585,29 @@ fn derive_lane_view<H: Host>(
             {
                 continue;
             }
-            let Some(backward) = [false, true].into_iter().find(|&backward| {
-                [ACC_NONE, ACC_A].into_iter().any(|acc| {
-                    tables[usize::from(backward)][usize::from(acc)]
-                        .get(jump.op() as usize)
-                        .copied()
-                        .flatten()
-                        .is_some_and(|served| records[pc + 2].handler == served.handler as *const ())
-                })
-            }) else {
+            let Some((backward, _)) = plain_served(records[pc + 2].handler, jump.op(), &[ACC_NONE, ACC_A])
+            else {
                 continue;
             };
             if let Some(fused) = offset_mask_jump_handler::<H>(first.op(), jump.op(), backward, acc) {
+                records[pc].handler = fused as *const ();
+            }
+        }
+        // An i32 operator of a constant and a register comparison jump reading its result run as
+        // one record.
+        for pc in 0..records.len().saturating_sub(1) {
+            let (first, jump) = (decoded[pc], decoded[pc + 1]);
+            if !serves(records[pc].handler, first.op(), ACC_NONE)
+                || I32BinaryOperator::from_jump_op(jump.op()).is_none()
+                || (jump.a() != first.a() && jump.b() != first.a())
+            {
+                continue;
+            }
+            let Some((backward, _)) = plain_served(records[pc + 1].handler, jump.op(), &[ACC_NONE, ACC_A, ACC_B])
+            else {
+                continue;
+            };
+            if let Some(fused) = immediate_compare_jump_handler::<H>(first.op(), jump.op(), backward) {
                 records[pc].handler = fused as *const ();
             }
         }
@@ -12811,6 +13104,60 @@ fn derive_lane_view<H: Host>(
                     records[pc + 2].handler = latch as *const ();
                     reads_accumulator[pc + 2] = true;
                 }
+            }
+        }
+        // A bit-field extraction and a following i32 operator run as one record.
+        for pc in 0..records.len().saturating_sub(1) {
+            let second = decoded[pc + 1];
+            let Some(acc) = [ACC_NONE, ACC_B]
+                .into_iter()
+                .find(|&acc| serves(records[pc].handler, Op::WasmI32ShiftRightUnsignedAndImmediate, acc))
+            else {
+                continue;
+            };
+            if decoded[pc].op() != Op::WasmI32ShiftRightUnsignedAndImmediate
+                || ![ACC_NONE, ACC_B, ACC_C].into_iter().any(|acc| serves(records[pc + 1].handler, second.op(), acc))
+            {
+                continue;
+            }
+            if let Some(fused) = bit_field_then_handler::<H>(second.op(), acc) {
+                records[pc].handler = fused as *const ();
+            }
+        }
+        // An immediate equality jump that falls through to a plain i32 load runs with it as one
+        // record (which reads the address from its register, written whether or not the
+        // accumulator also holds it).
+        for pc in 0..records.len().saturating_sub(1) {
+            let jump = decoded[pc];
+            if !matches!(jump.op(), Op::WasmJumpI32EqualImmediate | Op::WasmJumpI32NotEqualImmediate)
+                || i32_load(&records, pc + 1).is_none()
+            {
+                continue;
+            }
+            let Some((backward, acc)) = plain_served(records[pc].handler, jump.op(), &[ACC_NONE, ACC_A]) else {
+                continue;
+            };
+            if let Some(fused) = compare_jump_load_handler::<H>(jump.op(), decoded[pc + 1].op(), backward, acc) {
+                records[pc].handler = fused as *const ();
+            }
+        }
+        // Two i32 adds, or an add and a counted loop's step and test, run as one record; other
+        // fusions take their records first.
+        for pc in 0..records.len().saturating_sub(1) {
+            let (first, second) = (decoded[pc], decoded[pc + 1]);
+            let Some(acc) = [ACC_NONE, ACC_B, ACC_C].into_iter().find(|&acc| serves(records[pc].handler, first.op(), acc))
+            else {
+                continue;
+            };
+            if !matches!(first.op(), Op::WasmI32Add | Op::WasmI32AddImmediate) {
+                continue;
+            }
+            let Some((backward, _)) = plain_served(records[pc + 1].handler, second.op(), &[ACC_NONE, ACC_B, ACC_C])
+            else {
+                continue;
+            };
+            if let Some(fused) = add_pair_handler::<H>(first.op(), second.op(), backward, acc) {
+                records[pc].handler = fused as *const ();
             }
         }
         // A fused record that runs a following zero-test jump itself carries its own result when

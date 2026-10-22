@@ -526,6 +526,8 @@ pub(crate) struct ProgramReplay {
     pub(super) exits: Box<[TableCursors]>,
     /// The functions a replay can compile, by id.
     pub(super) functions: FxHashMap<u32, FunctionReplay>,
+    /// The cache sites the load shared by name (`Compiler::name_shared_cache_site`).
+    pub(super) name_shared_sites: super::NameSharedSiteMap,
     /// In verifying builds, the records of functions the load released, which their replays
     /// must equal.
     #[cfg(feature = "verify-replay")]
@@ -807,6 +809,7 @@ pub(crate) fn recompile(
         record: None,
     };
     compiler.replay_target = Some((id, &replay.exits));
+    compiler.name_shared_sites = super::NameSharedSites::Replay(&replay.name_shared_sites);
     compiler.seek(function_replay.entry);
     let made = match &function_replay.call {
         ReplayCall::Plain(context) => {
