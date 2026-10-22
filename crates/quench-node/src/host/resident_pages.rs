@@ -176,6 +176,10 @@ pub fn at_compile_phase(phase: quench_runtime::CompilePhase) {
         quench_runtime::CompilePhase::FirstCall => {
             release_once_per_interval(CompileRelease::FirstCall, release_read_only_pages)
         }
+        quench_runtime::CompilePhase::NativeCodeGeneration => {}
+        quench_runtime::CompilePhase::NativeCodeGenerated => {
+            release_once_per_interval(CompileRelease::NativeCodeGenerated, release_free_heap_pages)
+        }
     }
 }
 
@@ -184,12 +188,13 @@ pub fn at_compile_phase(phase: quench_runtime::CompilePhase) {
 enum CompileRelease {
     CodeGeneration,
     FirstCall,
+    NativeCodeGenerated,
 }
 
 /// When each compile-phase release last ran, indexed by `CompileRelease`.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-static LAST_COMPILE_RELEASES: std::sync::Mutex<[Option<std::time::Instant>; 2]> =
-    std::sync::Mutex::new([None; 2]);
+static LAST_COMPILE_RELEASES: std::sync::Mutex<[Option<std::time::Instant>; 3]> =
+    std::sync::Mutex::new([None; 3]);
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 fn release_once_per_interval(release: CompileRelease, action: fn()) {

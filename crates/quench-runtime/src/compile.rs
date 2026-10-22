@@ -1091,6 +1091,17 @@ pub enum CompilePhase {
     /// A function compiles, or decodes from its program's kept bytes, on its first call: code
     /// that has not run before is about to.
     FirstCall,
+    /// The JavaScript tier's code generator is about to compile a function: its pages and
+    /// the interpreter's are rarely needed together.
+    NativeCodeGeneration,
+    /// The JavaScript tier's code generator has compiled a function, whose code runs next.
+    NativeCodeGenerated,
+}
+
+impl CompilePhase {
+    /// Every phase, in declaration order, so a table can hold one entry per phase.
+    pub const ALL: [CompilePhase; 4] =
+        [Self::CodeGeneration, Self::FirstCall, Self::NativeCodeGeneration, Self::NativeCodeGenerated];
 }
 
 /// What a compilation does at each `CompilePhase`, set once by the embedding.
