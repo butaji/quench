@@ -8,7 +8,6 @@
 //! (VM reset, snapshot restore).
 
 use super::{Atom, Value};
-use std::cell::Cell;
 
 /// Direct-mapped entries: a power of two that holds the distinct names the Node host glue
 /// passes on a request path.
@@ -33,16 +32,13 @@ struct StringEntry {
 }
 
 pub(super) struct NameAtomMemo {
-    entries: Box<[Cell<Option<Entry>>]>,
-    strings: Box<[Cell<Option<StringEntry>>]>,
+    entries: super::shape_memo::DirectMappedTable<Entry, NAME_ATOM_MEMO_ENTRIES>,
+    strings: super::shape_memo::DirectMappedTable<StringEntry, STRING_ATOM_MEMO_ENTRIES>,
 }
 
 impl Default for NameAtomMemo {
     fn default() -> Self {
-        Self {
-            entries: (0..NAME_ATOM_MEMO_ENTRIES).map(|_| Cell::new(None)).collect(),
-            strings: (0..STRING_ATOM_MEMO_ENTRIES).map(|_| Cell::new(None)).collect(),
-        }
+        Self { entries: Default::default(), strings: Default::default() }
     }
 }
 
@@ -55,16 +51,12 @@ impl NameAtomMemo {
     /// The atom last recorded for text at `name`'s address and length, to be confirmed.
     #[inline(always)]
     pub(super) fn candidate(&self, name: &str) -> Option<Atom> {
-        let entry = self.entries[Self::index(name)].get()?;
+        let entry = self.entries.get(Self::index(name))?;
         (entry.address == name.as_ptr() as usize && entry.len == name.len()).then_some(entry.atom)
     }
 
     pub(super) fn record(&self, name: &str, atom: Atom) {
-        self.entries[Self::index(name)].set(Some(Entry {
-            address: name.as_ptr() as usize,
-            len: name.len(),
-            atom,
-        }));
+        self.entries.set(Self::index(name), Entry { address: name.as_ptr() as usize, len: name.len(), atom });
     }
 
     fn string_index(string: Value) -> usize {
@@ -74,20 +66,16 @@ impl NameAtomMemo {
     /// The existing atom the heap string `string` names, recorded under collection `epoch`.
     #[inline(always)]
     pub(super) fn string_atom(&self, string: Value, epoch: u64) -> Option<Atom> {
-        let entry = self.strings[Self::string_index(string)].get()?;
+        let entry = self.strings.get(Self::string_index(string))?;
         (entry.string == string && entry.epoch == epoch).then_some(entry.atom)
     }
 
     pub(super) fn record_string(&self, string: Value, epoch: u64, atom: Atom) {
-        self.strings[Self::string_index(string)].set(Some(StringEntry { string, epoch, atom }));
+        self.strings.set(Self::string_index(string), StringEntry { string, epoch, atom });
     }
 
     pub(super) fn clear(&self) {
-        for entry in self.entries.iter() {
-            entry.set(None);
-        }
-        for entry in self.strings.iter() {
-            entry.set(None);
-        }
+        self.entries.clear();
+        self.strings.clear();
     }
 }
