@@ -4622,13 +4622,13 @@ fn lane_loop_entry<H: Host>(
                 return None;
             }
             let elements = object.elements_mut();
-            if Rc::strong_count(elements) != 1 {
+            if elements.owner_count() != 1 {
                 return None;
             }
             let elements = super::index::mutable_array_elements(elements);
             entry.push_array(elements.as_mut_ptr(), elements.len());
         } else {
-            let elements = vm.heap.record_array(value)?.elements();
+            let elements = vm.heap.record_array(value)?.elements().as_slice();
             entry.push_array(elements.as_ptr().cast_mut(), elements.len());
         }
     }
