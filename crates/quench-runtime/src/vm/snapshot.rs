@@ -319,6 +319,7 @@ impl<H: Host> Vm<H> {
             shape_accessors,
             transitions,
             shape_slot_memo: _,
+            plain_copy_shapes: _,
             symbol_write_proofs: _,
             symbol_load_proofs: _,
             private_site_homes: _,
