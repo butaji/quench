@@ -3726,8 +3726,13 @@ fn widen_inline_storage(
 fn append_property(data: &mut Object, properties: &mut ValueArena, slot: usize, value: Value, shape: u32) {
     let mut vector = data.properties();
     if !vector.has_inline_property_storage() {
+        let before = vector.into_parts();
         properties.push(&mut vector, value);
-        data.set_properties(vector);
+        // An append within its range leaves the storage as it was; `set_shape` below
+        // records the grown shape.
+        if vector.into_parts() != before {
+            data.set_properties(vector);
+        }
     } else if slot < INLINE_PROPERTY_COUNT {
         if !data.store_inline_narrow(slot, value) {
             widen_inline_storage(data, properties, shape, slot + 1, slot, value);
