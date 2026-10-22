@@ -157,9 +157,11 @@ const RESPONSE_FACTORY: &str = r#"((Stream, setHeaderOperation, getHeaderOperati
   const kFinished = Symbol("kResponseFinished");
   // A header value as the native exchange takes it: each element of an array as a string,
   // any other value but `undefined` as one string; an array also marks a multiple header.
+  // Hoisted, so `headerValue` makes no closure and its calls need no frame.
+  const headerString = (item) => String(item);
   const headerValue = (value) => {
     if (value === undefined) return value;
-    if (Array.isArray(value)) return value.map((item) => String(item));
+    if (Array.isArray(value)) return value.map(headerString);
     return String(value);
   };
   const validChunk = (chunk) => {

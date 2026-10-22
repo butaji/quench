@@ -1106,10 +1106,13 @@ impl quench_runtime::Host for NodeHost {
     /// static x86_64 unbolted, 2026-10-21: max RSS 4404 -> 3412 KiB; through
     /// `WebAssembly.instantiate`, 4920 -> 4016). Bootstrap's own programs decode back to back,
     /// where a release after each only refaulted the same loader code (an empty script's run
-    /// 11 -> 18 ms).
+    /// 11 -> 18 ms). Decodes after bootstrap release at most once per interval, as code
+    /// generation does (`resident_pages::at_compile_phase`): an npm package decodes hundreds
+    /// of modules back to back, and a release after each paged out every mapping again
+    /// (lodash scenario, x86_64 VM, 2026-10-22: 45,700 madvise calls, 87 -> 372 ms).
     fn cached_program_decoded(&mut self) {
         if self.bootstrapped {
-            crate::host::resident_pages::release_read_only_code_and_data();
+            crate::host::resident_pages::at_compile_phase(quench_runtime::CompilePhase::CodeGeneration);
         }
     }
 
