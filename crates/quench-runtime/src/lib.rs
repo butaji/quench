@@ -7,7 +7,7 @@ mod bytecode;
 mod compile;
 mod heap;
 mod host;
-#[cfg(feature = "profile-memory")]
+#[cfg(any(feature = "profile-memory", feature = "profile-allocator"))]
 mod memory_edge;
 mod module_identity;
 mod number_to_string;
@@ -30,14 +30,14 @@ pub use wasm::{
 
 pub use bytecode::{KeptBytes, ResidualProgram};
 pub use compile::{CompilePhase, Diagnostic, Engine, set_compile_phase_boundary};
-pub use heap::{RootId, HeapMemoryComposition};
+pub use heap::{HeapMemoryComposition, MemoryPolicy, RootId};
 pub use snapshot::{SnapshotReader, SnapshotWriter};
 pub use host::{
     CapabilityId, Host, HostContext, HostExecutionContext, HostGlobal, ModuleLoadError, ModuleLoadErrorKind,
     ModuleSource, SystemHost,
     WasmHostFunctionId, WasmHostValue,
 };
-#[cfg(feature = "profile-memory")]
+#[cfg(any(feature = "profile-memory", feature = "profile-allocator"))]
 pub use memory_edge::report_allocator_memory;
 pub use stack::{STACK_BUDGET_BYTES, STACK_HEADROOM_BYTES, WORKER_STACK_SIZE};
 pub use value::Value;

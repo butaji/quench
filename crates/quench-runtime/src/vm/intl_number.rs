@@ -1049,7 +1049,7 @@ impl<H: Host> Vm<H> {
             Ok(vm.heap.alloc(Cell::Array {
                 object: crate::heap::ArrayObject::new(
                     Self::empty_object(vm.array_prototype_for_realm(vm.realm.globals)),
-                    Rc::new(parts),
+                    parts,
                 ),
             }))
         })
@@ -1161,7 +1161,7 @@ impl<H: Host> Vm<H> {
                     Ok(vm.heap.alloc(Cell::Array {
                         object: crate::heap::ArrayObject::new(
                             Self::empty_object(vm.array_prototype_for_realm(vm.realm.globals)),
-                            Rc::new(parts),
+                            parts,
                         ),
                     }))
                 })

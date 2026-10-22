@@ -905,7 +905,7 @@ impl<H: Host> Vm<H> {
                         "Set.prototype.add called on incompatible receiver".into(),
                     ));
                 }
-                let value = args.first().copied().unwrap_or(Value::UNDEFINED);
+                let value = canonical_collection_key(args.first().copied().unwrap_or(Value::UNDEFINED));
                 let exists = self.set_entry_index(this, value).is_some();
                 let value_hash = self.same_value_zero_hash(value);
                 let Some(Cell::Set { entries, .. }) = self.heap.get_mut(this) else {
@@ -1305,7 +1305,8 @@ impl<H: Host> Vm<H> {
         if !matches!(self.heap.get(map), Some(Cell::Map { .. })) {
             return false;
         }
-        let key = args.first().copied().unwrap_or(Value::UNDEFINED);
+        // Map.prototype.set stores -0 as +0 (`canonical_collection_key`).
+        let key = canonical_collection_key(args.first().copied().unwrap_or(Value::UNDEFINED));
         let value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
         let index = self.map_entry_index(map, key);
         let key_hash = self.same_value_zero_hash(key);
@@ -1422,4 +1423,9 @@ pub(super) fn canonicalize_keyed_collection_key(key: Value) -> Value {
     } else {
         key
     }
+}
+
+/// CanonicalizeKeyedCollectionKey: a Map key or Set value of -0 is stored as +0.
+fn canonical_collection_key(key: Value) -> Value {
+    if key.as_number() == Some(0.0) { Value::integer(0) } else { key }
 }

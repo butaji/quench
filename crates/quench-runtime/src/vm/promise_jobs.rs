@@ -94,7 +94,7 @@ impl<H: Host> Vm<H> {
             let keys = self
                 .heap
                 .array_elements(array)
-                .map_or_else(Vec::new, |elements| elements.as_ref().clone());
+                .map_or_else(Vec::new, |elements| elements.to_vec());
             return Ok(AggregateInput::Keyed {
                 keys: keys.into_iter().map(|key| self.heap.root(key)).collect(),
                 position: 0,

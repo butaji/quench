@@ -7,22 +7,10 @@ const ARRAY_INDEX_GET_DENSE: usize = 0;
 const ARRAY_INDEX_GET_SPARSE: usize = 1;
 
 #[inline(always)]
-pub(super) fn mutable_array_elements(elements: &mut Rc<Vec<Value>>) -> &mut Vec<Value> {
-    if Rc::strong_count(elements) == 1 {
-        debug_assert_eq!(Rc::weak_count(elements), 0);
-        // SAFETY: this module is the only array-storage mutation boundary. A
-        // strong count of one proves that no other Rc can observe the vector,
-        // the VM creates no Weak handles, and Rc is single-threaded.
-        unsafe { &mut *Rc::as_ptr(elements).cast_mut() }
-    } else {
-        detach_array_elements(elements)
-    }
-}
-
-#[cold]
-#[inline(never)]
-fn detach_array_elements(elements: &mut Rc<Vec<Value>>) -> &mut Vec<Value> {
-    Rc::make_mut(elements)
+pub(super) fn mutable_array_elements(
+    elements: &mut crate::heap::ArrayElements,
+) -> &mut crate::heap::UniqueElements {
+    elements.make_mut()
 }
 
 impl<H: Host> Vm<H> {
@@ -459,13 +447,13 @@ impl<H: Host> Vm<H> {
         }
         let elements = array.elements_mut();
         if !elements.get(index).is_some_and(|value| !value.is_deleted())
-            || (!DETACH && Rc::strong_count(elements) != 1)
+            || (!DETACH && elements.owner_count() != 1)
         {
             return false;
         }
         #[cfg(feature = "profile-aggregate")]
         self.profile
-            .array_write_ownership(Rc::strong_count(elements) != 1);
+            .array_write_ownership(elements.owner_count() != 1);
         mutable_array_elements(elements)[index] = value;
         #[cfg(feature = "profile-aggregate")]
         self.profile.index_set(0);
@@ -483,7 +471,7 @@ impl<H: Host> Vm<H> {
         let elements = array_object.elements_mut();
         #[cfg(feature = "profile-aggregate")]
         self.profile
-            .array_write_ownership(Rc::strong_count(elements) != 1);
+            .array_write_ownership(elements.owner_count() != 1);
         mutable_array_elements(elements)[index] = value;
         if mapped {
             self.sync_mapped_argument(object, index, value);
@@ -602,7 +590,7 @@ impl<H: Host> Vm<H> {
             let elements = array_object.elements_mut();
             #[cfg(feature = "profile-aggregate")]
             self.profile
-                .array_write_ownership(Rc::strong_count(elements) != 1);
+                .array_write_ownership(elements.owner_count() != 1);
             mutable_array_elements(elements)[index] = value;
             self.sync_mapped_argument(object, index, value);
             return true;
@@ -614,7 +602,7 @@ impl<H: Host> Vm<H> {
             let elements = array_object.elements_mut();
             #[cfg(feature = "profile-aggregate")]
             self.profile
-                .array_write_ownership(Rc::strong_count(elements) != 1);
+                .array_write_ownership(elements.owner_count() != 1);
             let elements = mutable_array_elements(elements);
             let capacity = elements.capacity();
             elements.resize(index + 1, Value::DELETED);
@@ -726,7 +714,7 @@ mod tests {
         let array = vm.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
                 Vm::<SilentHost>::empty_object(Value::NULL),
-                Rc::new(vec![]),
+                vec![],
             ),
         });
         assert!(vm.set_array_element(array, 1_000_000, Value::TRUE));
@@ -768,7 +756,7 @@ mod tests {
         let array = vm.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
                 Vm::<SilentHost>::empty_object(Value::NULL),
-                Rc::new(Vec::new()),
+                Vec::new(),
             ),
         });
 
@@ -790,7 +778,7 @@ mod tests {
         let array = vm.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
                 Vm::<SilentHost>::empty_object(Value::NULL),
-                Rc::new(Vec::new()),
+                Vec::new(),
             ),
         });
         vm.heap.sparse_set_length(array, 1_000_000);
@@ -816,7 +804,7 @@ mod tests {
         let array = vm.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
                 Vm::<SilentHost>::empty_object(Value::NULL),
-                Rc::new(Vec::new()),
+                Vec::new(),
             ),
         });
         let atom_count = vm.atom_sequence.len();
@@ -844,7 +832,7 @@ mod tests {
         let array = vm.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
                 Vm::<SilentHost>::empty_object(Value::NULL),
-                Rc::new(vec![Value::FALSE; 1024]),
+                vec![Value::FALSE; 1024],
             ),
         });
         let atom_count = vm.atom_sequence.len();
@@ -907,20 +895,20 @@ mod tests {
 
     #[test]
     fn unique_array_mutation_keeps_the_allocation() {
-        let mut elements = Rc::new(vec![Value::FALSE]);
-        let allocation = Rc::as_ptr(&elements);
+        let mut elements = crate::heap::ArrayElements::from(vec![Value::FALSE]);
+        let allocation = elements.as_ptr();
         mutable_array_elements(&mut elements)[0] = Value::TRUE;
-        assert_eq!(Rc::as_ptr(&elements), allocation);
+        assert_eq!(elements.as_ptr(), allocation);
         assert_eq!(elements[0], Value::TRUE);
     }
 
     #[test]
     fn shared_array_mutation_detaches_the_template() {
-        let template = Rc::new(vec![Value::FALSE]);
-        let mut elements = Rc::clone(&template);
+        let template = crate::heap::ArrayElements::from(vec![Value::FALSE]);
+        let mut elements = template.clone();
         mutable_array_elements(&mut elements)[0] = Value::TRUE;
         assert_eq!(template[0], Value::FALSE);
         assert_eq!(elements[0], Value::TRUE);
-        assert!(!Rc::ptr_eq(&template, &elements));
+        assert_ne!(template.as_ptr(), elements.as_ptr());
     }
 }

@@ -86,7 +86,7 @@ impl<H: Host> Vm<H> {
             frame.locals[fixed] = self.heap.alloc(Cell::Array {
                 object: crate::heap::ArrayObject::new(
                     Self::empty_object(self.array_proto),
-                    Rc::new(args.get(fixed..).unwrap_or_default().to_vec()),
+                    args.get(fixed..).unwrap_or_default().to_vec(),
                 ),
             });
         }
@@ -98,7 +98,7 @@ impl<H: Host> Vm<H> {
             let arguments = self.heap.alloc(Cell::Array {
                 object: crate::heap::ArrayObject::new(
                     Self::empty_object(self.object_proto),
-                    Rc::new(args.to_vec()),
+                    args.to_vec(),
                 ),
             });
             frame.locals[usize::from(slot)] = arguments;
@@ -305,11 +305,11 @@ impl<H: Host> Vm<H> {
                 let environment = vm.heap.alloc(Cell::Array {
                     object: crate::heap::ArrayObject::new(
                         Self::empty_object(vm.array_proto),
-                        Rc::new(vec![
+                        vec![
                             generator,
                             iterator,
                             Value::number(f64::from(destination)),
-                        ]),
+                        ],
                     ),
                 });
                 let start =
@@ -352,7 +352,7 @@ impl<H: Host> Vm<H> {
             let environment = vm.heap.alloc(Cell::Array {
                 object: crate::heap::ArrayObject::new(
                     Self::empty_object(vm.array_proto),
-                    Rc::new(vec![generator, promise]),
+                    vec![generator, promise],
                 ),
             });
             let fulfilled = vm.native_with_env(Native::AsyncGeneratorReturnFulfilled, environment);
@@ -725,13 +725,13 @@ impl<H: Host> Vm<H> {
         let env = self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_proto),
-                Rc::new(vec![
+                vec![
                     generator,
                     Value::number(f64::from(destination)),
                     Value::FALSE,
                     Value::FALSE,
                     Value::TRUE,
-                ]),
+                ],
             ),
         });
         let fulfilled = self.native_with_env(Native::AsyncGeneratorDelegateFulfilled, env);
@@ -918,7 +918,7 @@ impl<H: Host> Vm<H> {
             let env = self.heap.alloc(Cell::Array {
                 object: crate::heap::ArrayObject::new(
                     Self::empty_object(self.array_proto),
-                    Rc::new(vec![
+                    vec![
                         generator,
                         Value::number(f64::from(destination)),
                         Value::number(if throwing { 1.0 } else { 0.0 }),
@@ -928,7 +928,7 @@ impl<H: Host> Vm<H> {
                         } else {
                             Value::FALSE
                         },
-                    ]),
+                    ],
                 ),
             });
             let fulfilled = self.native_with_env(Native::AsyncGeneratorDelegateFulfilled, env);
