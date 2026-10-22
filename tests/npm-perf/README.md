@@ -49,8 +49,10 @@ JIT phase rows use `quench-node --jit` and the default JIT-enabled Node and Bun
 engines. Linux runs are diagnostic; retain the host, version, output and RSS
 details with each comparison.
 
-Winning means fastest throughput and the smallest maximum RSS against both
-Node and Bun in the active phase. Keep each package's evidence separate.
+Winning means at least 20% higher throughput and at least 20% lower maximum
+RSS than both Node and Bun in the active phase. Compare the throughput and RSS
+margins independently against each engine, and keep each package's evidence
+separate.
 
 The pre-merge runtime's 11-round Linux no-JIT pilot (50 timed renders and 50
 warmups per sample) is saved at

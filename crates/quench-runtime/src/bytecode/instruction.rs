@@ -57,9 +57,14 @@ impl WideInstruction {
                 ) && operand.kind() == Some(super::OperandKind::Local))
                 .then(|| operand.payload())
             });
+        let field_base = match self.field_lookup() {
+            Some(super::FieldLookup::Atom { base, .. }) => base.local_index(),
+            _ => None,
+        };
         immediate
             .into_iter()
             .chain(self.numeric_local_target())
+            .chain(field_base)
             .chain(operands)
     }
 
