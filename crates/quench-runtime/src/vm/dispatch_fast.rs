@@ -2112,10 +2112,10 @@ script_handler! {
 }
 
 script_handler! {
-    /// Numbers convert to themselves; other values take the general path.
+    /// Numbers and BigInts convert to themselves; other values take the general path.
     fn lane_to_numeric<>(cx, r, ip, i, view) {
         let value = r.get(i.b);
-        if value.as_number().is_none() {
+        if value.as_number().is_none() && !matches!(unsafe { vm(cx) }.heap.get(value), Some(Cell::BigInt(_))) {
             return exit(ip);
         }
         r.set(i.a, value);
@@ -2200,15 +2200,27 @@ const fn lane_steps_in_place(op: Op) -> bool {
 }
 
 script_handler! {
-    /// `IncDec` of a Number; other values take the general path. The view derives the
-    /// direction from the record (`specialize_updates`).
+    /// `IncDec` of a Number or BigInt (`lane_increment`); other values take the general path.
+    /// The view derives the direction from the record (`specialize_updates`).
     fn lane_inc_dec<DECREMENT: bool>(cx, r, ip, i, view) {
-        let Some(value) = super::dispatch::number_increment(r.get(i.b), DECREMENT) else {
+        let Some(value) = lane_increment::<H, DECREMENT>(cx, r.get(i.b)) else {
             return exit(ip);
         };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
     }
+}
+
+/// The update of a Number (`number_increment`) or a BigInt (`Vm::bigint_increment`, which
+/// allocates its result); `None` for any value whose ToNumeric may run guest code.
+#[inline(always)]
+fn lane_increment<H: Host, const DECREMENT: bool>(cx: *mut LaneContext<H>, value: Value) -> Option<Value> {
+    super::dispatch::number_increment(value, DECREMENT).or_else(|| {
+        let vm = unsafe { vm(cx) };
+        let next = vm.bigint_increment(value, DECREMENT)?;
+        note_allocation(vm);
+        Some(next)
+    })
 }
 
 script_handler! {
@@ -2233,12 +2245,12 @@ script_handler! {
 }
 
 script_handler! {
-    /// A postfix update of a Number: `ToNumeric` into `a` and the `IncDec` of its result into
-    /// `c` that follows it (`specialize_updates`). Other values take the general path at the
-    /// conversion.
+    /// A postfix update of a Number or BigInt (`lane_increment`): `ToNumeric` into `a` and the
+    /// `IncDec` of its result into `c` that follows it (`specialize_updates`). Other values
+    /// take the general path at the conversion.
     fn lane_postfix_update<DECREMENT: bool>(cx, r, ip, i, view) {
         let value = r.get(i.b);
-        let Some(updated) = super::dispatch::number_increment(value, DECREMENT) else {
+        let Some(updated) = lane_increment::<H, DECREMENT>(cx, value) else {
             return exit(ip);
         };
         r.set(i.a, value);
@@ -2988,9 +3000,10 @@ script_handler! {
     }
 }
 
-/// A capture of a root environment's global var (`Vm::plain_projected_global_var`), which a
-/// script's functions read for its top-level `var`s: the capture's environment as the general
-/// path finds it, from the frame or from the activation's environment.
+/// A capture of a root environment's global var or global lexical
+/// (`Vm::plain_projected_root_binding`), which a script's functions read for its top-level
+/// `var`s, and in an eval script's context its `let`s and `const`s: the capture's environment
+/// as the general path finds it, from the frame or from the activation's environment.
 #[inline(never)]
 fn lane_projected_capture<H: Host>(cx: *mut LaneContext<H>, depth: u16, slot: u16) -> Option<Value> {
     let vm = unsafe { vm(cx) };
@@ -3000,7 +3013,7 @@ fn lane_projected_capture<H: Host>(cx: *mut LaneContext<H>, depth: u16, slot: u1
     } else {
         vm.environment_capture_env(env, false, depth)?
     };
-    vm.plain_projected_global_var(env, slot)
+    vm.plain_projected_root_binding(env, slot)
 }
 
 /// A frame run's innermost capture slots for `LaneContext::capture`, when the frame's
@@ -4178,8 +4191,9 @@ fn lane_cached_field_miss<H: Host>(
             .array_length_field(object, atom)
             .or_else(|| vm.cached_string_field_hit(code, object, atom, site)),
     }
-    // A collection's `size`, which no cache records (`AtomClass::VIRTUAL_FIELD`).
-    .or_else(|| vm.collection_size_field(object, atom))
+    // A collection's `size` or a buffer view's field, which no cache records
+    // (`AtomClass::VIRTUAL_FIELD`).
+    .or_else(|| vm.pure_virtual_field(object, atom))
 }
 
 script_handler! {
@@ -8466,21 +8480,36 @@ script_handler! {
 }
 
 script_handler! {
-    /// A `LoadName` of a global object property (`lane_load_name_first`) that no global
-    /// lexical binding shadows: the global object's cached field (`Vm::cached_field_hit`).
-    /// Any other read, including a cache miss, takes the general path, which caches it.
+    /// A `LoadName` where names resolve statically to global bindings (`lane_load_name_first`):
+    /// an initialized global lexical binding of the name, which the general path's search
+    /// finds first there, else the global object's cached field (`Vm::cached_field_hit`).
+    /// Any other read, including an uninitialized binding or a cache miss, takes the general
+    /// path, which raises or caches it. A `LoadNameCall` (`CALL`) also writes the call's
+    /// receiver, `undefined` for a global binding.
     fn lane_load_global_name<CALL: bool>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let vm = unsafe { vm(cx) };
         let atom = i.imm();
         if vm.realm.global_lexical_declarations.contains(&atom) {
-            return exit(ip);
+            let Some(value) = vm.realm.global_lexical_bindings.get(&atom).copied().filter(|value| !value.is_deleted())
+            else {
+                return exit(ip);
+            };
+            r.set(i.a, value);
+            if CALL {
+                r.set(i.b, Value::UNDEFINED);
+            }
+            next!(cx, r, following(ip), Carried::script(cx))
         }
-        let super::object::FieldCacheProbe::Hit(value) =
-            vm.cached_field_hit(code, vm.realm.globals, i.c)
-        else {
-            return exit(ip);
+        let value = match vm.cached_field_hit(code, vm.realm.globals, i.c) {
+            super::object::FieldCacheProbe::Hit(value) => value,
+            // A global object no cache records (a dictionary shape) still answers a present
+            // data property through its shape walk; an absent name raises on the general path.
+            _ => match vm.plain_global_binding(atom) {
+                Some(value) => value,
+                None => return exit(ip),
+            },
         };
         r.set(i.a, value);
         if CALL {
@@ -11328,8 +11357,8 @@ fn returning_kind(instruction: WideInstruction) -> Option<u8> {
         Op::Unary => Some(RETURNING_UNARY),
         Op::Binary => Some(RETURNING_BINARY),
         Op::MakeObject2 => Some(RETURNING_OBJECT),
-        Op::SuperConstArrayObject2 => Some(RETURNING_LITERAL),
         Op::MakeObjectLiteral => Some(RETURNING_OBJECT_LITERAL),
+        Op::SuperConstArrayObject2 => Some(RETURNING_LITERAL),
         _ => None,
     }
 }
@@ -12084,8 +12113,8 @@ pub(super) fn lane_fields_fit(instruction: WideInstruction, function: &Function)
                             | Op::GetField
                             | Op::Unary
                             | Op::MakeObject2
-                            | Op::SuperConstArrayObject2
                             | Op::MakeObjectLiteral
+                            | Op::SuperConstArrayObject2
                     )
                         || (op == Op::Binary && instruction.returns_from_frame())) =>
             {
