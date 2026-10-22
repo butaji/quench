@@ -35,3 +35,7 @@ lowest here (json-parse-inspector 96.2 vs 96.9, gcc-loops-wasm 17.6 vs 17.9, syn
 6.79), while this sweep's single json-parse round read 71.5 and that test spans 85-116 within
 three rounds. A per-test single round on this host swings up to ~20%; geomeans of one-round
 sweeps compare only within a few percent. Decisions use paired medians or callgrind counts.
+
+## One-round sweep at `99450a62` (2026-10-22)
+
+`scores-99450a62.txt`: quench `99450a62`, one round per test, same host and harness as above, against the Bun 1.4.2 `BUN_JSC_useJIT=0` rows of this directory. **Score geomean 0.701 of Bun no-JIT** (was 0.640 at `e787e2ec`, 0.656 at `0028c07f`); max RSS below Bun on 32/34 (RSS geomean 0.664; losses doxbee-promise ×1.12, babel-wtb ×1.02). Since `e787e2ec`: typescript-lib 0.39 → 0.55 of Bun (name-shared cache sites past the 16-bit site space, `81cfb3d2`/`64f5988c`, −12.1% instructions; natives the lane answers without frames, −1.5%), UniPoker 0.53 (lane `shift`, −7.1% instructions), babylon 0.67, espree 0.68, esprima 0.72, acorn 0.84. One round varies up to ~10% per test; the per-change decisions rest on callgrind counts and paired medians recorded in TOD-121.

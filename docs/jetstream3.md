@@ -87,6 +87,12 @@ then the server-side Wasm tests. The Score is the test's own JetStream line
 Average scores, computed by JetStream's driver. Maximum RSS comes from the
 runner's process accounting, as for V8-v7.
 
+The analyzer qualifies a JetStream fixture only when Quench's paired 95% lower
+score-ratio bound exceeds 1.20 against every supported comparator, and the
+paired 95% upper RSS-ratio bound is below 1.0 for each comparator. The analysis
+report records this `minimum_score_ratio`; V8-v7 retains its existing 1.0 score
+threshold. A selected fixture subset qualifies only that subset.
+
 JetStream targets the d8, jsc and SpiderMonkey shells. The runner supplies the
 same shell surface to Node-compatible engines through a prelude on `node:vm`:
 `print`, `printErr`, `read`/`readFile`, `load`, and `runString`, which creates
