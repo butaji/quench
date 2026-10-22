@@ -113,6 +113,9 @@ const LOOP_TIER_THRESHOLD: u32 = 1000;
 /// Native runs that may leave at a general-path instruction before the site stops entering
 /// native code: a loop whose values keep leaving the subset is the interpreter's.
 const LOOP_TIER_MAX_EXITS: u32 = 1000;
+/// Elements of an array read to guess whether it holds `i32`s; a wrong guess costs one
+/// compilation.
+const LOOP_TIER_ELEMENT_SAMPLE: usize = 8;
 /// Compilations a site may make: each after the first widens a value the last one held as
 /// an `i32`, and a region has few such values.
 const LOOP_TIER_MAX_COMPILATIONS: u32 = 8;
@@ -4407,7 +4410,7 @@ script_handler! {
             next!(cx, r, header, Carried::script(cx))
         };
         // The tier's state is borrowed only here, so the dispatch below holds no borrow.
-        let continuation = lane_loop_run(r, site, &entry);
+        let continuation = lane_loop_run(cx, r, site, &entry);
         // SAFETY: native code returns PCs of the function, whose records are contiguous.
         let at = |pc: u32| unsafe { header.offset(pc as isize - site.region.header as isize) };
         match continuation {
@@ -4431,7 +4434,8 @@ enum LoopContinuation {
 /// representation an outcome shows wrong is widened, and the code dropped for the next
 /// compilation.
 #[inline(never)]
-fn lane_loop_run(
+fn lane_loop_run<H: Host>(
+    cx: *mut LaneContext<H>,
     r: Registers,
     site: &LoopSite,
     entry: &super::loop_compiled::LoopEntry,
@@ -4445,8 +4449,15 @@ fn lane_loop_run(
         }
         tier.compilations += 1;
         let captures = entry.captures(site.region.captures.len());
+        let heap = &unsafe { vm(cx) }.heap;
+        let int32_elements = |register| {
+            heap.record_array(r.get(register)).is_some_and(|array| {
+                array.elements().iter().take(LOOP_TIER_ELEMENT_SAMPLE).all(|value| value.as_int().is_some())
+            })
+        };
         let observation = super::loop_compiled::Observation {
             register: &|register| r.get(register),
+            int32_elements: &int32_elements,
             captures: &captures,
             widened: &tier.widened,
         };
@@ -4469,13 +4480,14 @@ fn lane_loop_run(
         }
         LoopOutcome::Resume(pc) => LoopContinuation::Resume(pc),
         LoopOutcome::Exit(pc) => {
-            match code.overflow(pc) {
-                Some(widening) => {
-                    tier.widened.insert(widening);
-                    tier.code = None;
-                }
-                None => site.exits.set(site.exits.get() + 1),
+            site.exits.set(site.exits.get() + 1);
+            LoopContinuation::Exit(pc)
+        }
+        LoopOutcome::Widen(pc) => {
+            if let Some(widening) = code.widening(pc) {
+                tier.widened.insert(widening);
             }
+            tier.code = None;
             LoopContinuation::Exit(pc)
         }
     }
