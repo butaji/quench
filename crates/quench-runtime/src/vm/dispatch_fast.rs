@@ -7113,7 +7113,8 @@ fn lane_promise_native<H: Host>(
 /// (`Vm::plain_array_iterator_next`), which allocates its result, an object's own
 /// property query by a string key (`Vm::plain_own_property_query`), and a dense array's
 /// `splice` (`Vm::plain_array_splice`, which allocates the removed array) and `unshift`
-/// (`Vm::plain_array_unshift`). `None` leaves any other
+/// (`Vm::plain_array_unshift`), and the Map and Set mutators on their own collections
+/// (`Vm::plain_collection_mutation`). `None` leaves any other
 /// call to `lane_call_native`.
 #[inline(never)]
 fn lane_pure_native<H: Host>(
@@ -7142,6 +7143,12 @@ fn lane_pure_native<H: Host>(
             Some(removed)
         }
         Native::ArrayUnshift => vm.plain_array_unshift(receiver, args),
+        native @ (Native::MapSet
+        | Native::MapDelete
+        | Native::MapClear
+        | Native::SetAdd
+        | Native::SetDelete
+        | Native::SetClear) => vm.plain_collection_mutation(code, native, receiver, args),
         Native::ArrayIteratorNext => {
             let result = vm.plain_array_iterator_next(callee, receiver)?;
             note_allocation(vm);
