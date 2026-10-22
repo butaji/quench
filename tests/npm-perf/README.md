@@ -74,10 +74,11 @@ It verifies matching output and improves Quench throughput in this Linux
 diagnostic, but the performance gap remains large and max RSS still loses.
 
 The React SSR interpreter then increased its young-generation allocation budget
-from 1/64 to 1/16 of the live heap, retaining the existing young-generation cap.
-The 11-round, 500-render diagnostic is saved at
-`work/react-perf/react-gc-young-1-16-production-500-11.json`. It produced 156.5
-renders/s and 28.68 MB sampled max RSS, with identical output across engines.
-This is a partial no-JIT improvement: it remains about 9.7x slower than Node
-`--jitless`, and its RSS is only about 10% below Node, so it does not meet the
-20% win threshold. Linux RSS sampling remains diagnostic, not qualification.
+from 1/64 to 1/2 of the live heap, retaining the existing young-generation cap.
+The 11-round, 500-render production diagnostic is saved at
+[`reports/react-no-jit-gc-young-1-2-linux-11.json`](reports/react-no-jit-gc-young-1-2-linux-11.json).
+It produced 217.0 renders/s and 27.59 MB sampled max RSS, with identical output
+across engines. This is a partial no-JIT improvement: it remains about 7.5x
+slower than Node `--jitless`, and its RSS is only about 13% below Node, so it
+does not meet the 20% win threshold. Linux RSS sampling remains diagnostic,
+not qualification.

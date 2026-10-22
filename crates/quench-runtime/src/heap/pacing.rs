@@ -264,10 +264,10 @@ impl GenerationalPacing {
 /// 4 vCPU, 2026-10-20: 768 against 384 gave V8-v7 Score x1.161 with RayTrace x1.54 and
 /// RegExp x1.60 in 7/7 pairs, frameworks x1.023, max RSS geomean x0.997 and x0.999).
 pub(super) const PRODUCTION_PACING: GenerationalPacing = GenerationalPacing {
-    // React SSR (500 renders x 11 rounds, Linux x86_64) improved from 119.4 to
-    // 164.8 renders/s at a 1/16 young budget with the existing 2^17 cap; sampled
-    // max RSS moved by 0.21 MiB. Keep the cap in place to bound transient garbage.
-    young: Ratio::new(1, 16),
+    // React SSR (500 renders x 11 rounds, Linux x86_64) screened best at a 1/2
+    // young budget with the existing 2^17 cap: 225.8 renders/s in the tuning
+    // build and 217.0 renders/s in production. The 1/1 screen was slower.
+    young: Ratio::new(1, 2),
     minimum_young: YOUNG_MINIMUM_ALLOCATION,
     maximum_young: MAXIMUM_YOUNG,
     old_growth: Ratio::new(1, 1),
