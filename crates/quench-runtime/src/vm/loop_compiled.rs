@@ -680,6 +680,8 @@ struct Lowering<'a, 'b> {
     leave: ir::Block,
     registers: ir::Value,
     entry: ir::Value,
+    /// The host termination flag's address, loaded at entry.
+    interrupt: Option<ir::Value>,
     /// Each array's element pointer and length, by register.
     arrays: std::collections::BTreeMap<Register, (ir::Value, ir::Value)>,
     widenings: std::collections::BTreeMap<u32, Widening>,
@@ -729,6 +731,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             leave,
             registers,
             entry,
+            interrupt: None,
             arrays: std::collections::BTreeMap::new(),
             widenings: std::collections::BTreeMap::new(),
         }
@@ -782,6 +785,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
     /// Unboxes every Number register and capture in its representation, entering only when
     /// all hold such values.
     fn enter(&mut self) -> Option<()> {
+        self.interrupt = Some(self.word(ENTRY_INTERRUPT));
         for (index, array) in self.region.arrays.iter().enumerate() {
             let base = ENTRY_CAPTURES + self.region.captures.len() + ARRAY_WORDS * index;
             let elements = self.word(base);
@@ -814,27 +818,17 @@ impl<'a, 'b> Lowering<'a, 'b> {
     }
 
     /// The value `bits` encode in `representation`: an encoded `i32` for `Int32`, any Number
-    /// for `Float64`; anything else branches to `otherwise`.
+    /// for `Float64`, testing for a double first; anything else branches to `otherwise`.
     fn unbox(&mut self, bits: ir::Value, representation: Representation, otherwise: ir::Block) -> ir::Value {
-        let tag = self.builder.ins().band_imm_u(bits, ValueLayout::TAG_MASK as i64);
-        let is_int = self.builder.ins().icmp_imm_u(IntCC::Equal, tag, ValueLayout::INT_TAG as i64);
         if representation == Representation::Int32 {
+            let tag = self.builder.ins().band_imm_u(bits, ValueLayout::TAG_MASK as i64);
+            let is_int = self.builder.ins().icmp_imm_u(IntCC::Equal, tag, ValueLayout::INT_TAG as i64);
             let integer_block = self.builder.create_block();
             self.builder.ins().brif(is_int, integer_block, &[], otherwise, &[]);
             self.builder.switch_to_block(integer_block);
             return self.builder.ins().ireduce(types::I32, bits);
         }
-        let integer_block = self.builder.create_block();
-        let other_block = self.builder.create_block();
-        let join = self.builder.create_block();
-        self.builder.append_block_param(join, types::F64);
-        self.builder.ins().brif(is_int, integer_block, &[], other_block, &[]);
-        self.builder.switch_to_block(integer_block);
-        let integer = self.builder.ins().ireduce(types::I32, bits);
-        let number = self.builder.ins().fcvt_from_sint(types::F64, integer);
-        self.builder.ins().jump(join, &[ir::BlockArg::Value(number)]);
-        self.builder.switch_to_block(other_block);
-        // A tag field within the tag range marks a non-Number.
+        // A tag field within the tag range marks a non-double.
         let field = self.builder.ins().ushr_imm_u(bits, i64::from(ValueLayout::TAG_SHIFT));
         let offset = self.builder.ins().iadd_imm_s(field, -(ValueLayout::FIRST_TAG_FIELD as i64));
         let tagged = self
@@ -842,10 +836,22 @@ impl<'a, 'b> Lowering<'a, 'b> {
             .ins()
             .icmp_imm_u(IntCC::UnsignedLessThanOrEqual, offset, ValueLayout::TAG_FIELD_SPAN as i64);
         let double_block = self.builder.create_block();
-        self.builder.ins().brif(tagged, otherwise, &[], double_block, &[]);
+        let tagged_block = self.builder.create_block();
+        let integer_block = self.builder.create_block();
+        let join = self.builder.create_block();
+        self.builder.append_block_param(join, types::F64);
+        self.builder.ins().brif(tagged, tagged_block, &[], double_block, &[]);
         self.builder.switch_to_block(double_block);
         let double = self.builder.ins().bitcast(types::F64, ir::MemFlagsData::new(), bits);
         self.builder.ins().jump(join, &[ir::BlockArg::Value(double)]);
+        self.builder.switch_to_block(tagged_block);
+        let int_field = (ValueLayout::INT_TAG >> ValueLayout::TAG_SHIFT) as i64;
+        let is_int = self.builder.ins().icmp_imm_u(IntCC::Equal, field, int_field);
+        self.builder.ins().brif(is_int, integer_block, &[], otherwise, &[]);
+        self.builder.switch_to_block(integer_block);
+        let integer = self.builder.ins().ireduce(types::I32, bits);
+        let number = self.builder.ins().fcvt_from_sint(types::F64, integer);
+        self.builder.ins().jump(join, &[ir::BlockArg::Value(number)]);
         self.builder.switch_to_block(join);
         self.builder.block_params(join)[0]
     }
@@ -994,7 +1000,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
     /// backward jump polls termination first.
     fn jump(&mut self, pc: u32, target: u32) -> Option<()> {
         if target <= pc {
-            let flag = self.word(ENTRY_INTERRUPT);
+            let flag = self.interrupt?;
             let requested = self.builder.ins().atomic_load(types::I8, flags(), flag);
             self.guard(pc, requested);
         }
