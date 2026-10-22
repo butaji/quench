@@ -213,3 +213,13 @@ round iteration screen. Because it did not show a throughput case worth a
 production comparison, the change was reverted. The local screen is
 `work/react-perf/react-regex-test-nomatch-iteration-3.json`; Linux RSS sampling
 is diagnostic only.
+
+The aggregate React profile recorded 3.34 million `Move → Call` pairs over
+500 renders. A lane handler that executed both records together preserved
+output but its three-round iteration screen measured 181.6 renders/s no-JIT
+and 204.5 renders/s JIT. Removing the forced inline hint reduced JIT further
+to 165.4 renders/s. This fusion was reverted without a production comparison:
+the small no-JIT signal did not compensate for the JIT regression. Screens
+remain at `work/react-perf/react-move-call-fusion-iteration-3.json`,
+`work/react-perf/react-move-call-fusion-jit-iteration-3.json`, and
+`work/react-perf/react-move-call-fusion-noinline-jit-iteration-3.json`.
