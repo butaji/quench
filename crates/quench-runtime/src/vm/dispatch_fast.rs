@@ -8209,9 +8209,16 @@ fn lane_script_target<H: Host>(cx: *mut LaneContext<H>, callee: Value) -> Option
         return None;
     }
     // The paths besides a plain call (constructions, getters, forwarded and applied calls)
-    // activate callees of the running program alone.
+    // activate callees of the running program alone. Another program's callee, once
+    // resolved, is held apart (`cross_call_entry`) for the callers that activate across
+    // programs; resolving it again would only find it so.
     vm.script_call_target(callee)
-        .or_else(|| vm.resolve_script_call_target(unsafe { &*(*cx).code }, callee))
+        .or_else(|| {
+            if vm.cross_call_entry(callee).is_some() {
+                return None;
+            }
+            vm.resolve_script_call_target(unsafe { &*(*cx).code }, callee)
+        })
         .filter(|target| {
             target.program == vm.active_program && !matches!(target.entry, CallEntry::Frame | CallEntry::Environment)
         })
